@@ -300,6 +300,7 @@ alloy-transport = { version = "=2.4.1", default-features = false }
 alloy-primitives = { version = "=1.6.1", default-features = false }
 alloy-trie = { path = "vendor/alloy-trie", default-features = false }
 alloy-eips = { path = "vendor/alloy-eips", default-features = false }
+alloy-transport-http = { version = "=2.4.1", default-features = false }
 alloy-rpc-types-debug = { version = "=2.4.1", default-features = false }
 alloy-sol-macro-input = { version = "=1.6.1", default-features = false }
 alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
@@ -316,7 +317,6 @@ alloy-rpc-types-eth = { path = "vendor/alloy-rpc-types-eth", default-features = 
 alloy-consensus-any = { path = "vendor/alloy-consensus-any", default-features = false }
 alloy-rpc-types-any = { path = "vendor/alloy-rpc-types-any", default-features = false }
 alloy-rpc-types-mev = { path = "vendor/alloy-rpc-types-mev", default-features = false }
-alloy-transport-http = { path = "vendor/alloy-transport-http", default-features = false }
 alloy-rpc-types-admin = { path = "vendor/alloy-rpc-types-admin", default-features = false }
 alloy-rpc-types-anvil = { path = "vendor/alloy-rpc-types-anvil", default-features = false }
 alloy-rpc-types-trace = { path = "vendor/alloy-rpc-types-trace", default-features = false }

@@ -69,7 +69,7 @@ tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt", "serde", "std"] }
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "time"] }
 alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
-alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
+alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 [dev-dependencies]
 mockall = { workspace = true }
 arbitrary = { workspace = true }

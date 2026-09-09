@@ -6,10 +6,9 @@ use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
-use alloy_rpc_types_engine::JwtSecret;
 use alloy_transport::{RpcError, TransportErrorKind};
 use alloy_transport_http::{
-    AuthLayer, Http, HyperClient,
+    Http, HyperClient,
     hyper_util::{client::legacy::Client, rt::TokioExecutor},
 };
 use async_trait::async_trait;
@@ -20,6 +19,7 @@ use base_consensus_derive::{L2ChainProvider, PipelineError, PipelineErrorKind, R
 use base_protocol::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use http_body_util::Full;
 use lru::LruCache;
+use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use tower::ServiceBuilder;
 
 use crate::Metrics;
@@ -177,7 +177,7 @@ impl AlloyL2ChainProvider {
     ) -> Self {
         let hyper_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
 
-        let auth_layer = AuthLayer::new(jwt);
+        let auth_layer = AuthClientLayer::new(jwt);
         let service = ServiceBuilder::new().layer(auth_layer).service(hyper_client);
 
         let layer_transport = HyperClient::with_service(service);
@@ -507,5 +507,38 @@ mod tests {
         assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
 
         mock.assert_calls_async(2).await;
+    }
+
+    #[tokio::test]
+    async fn authenticated_http_provider_sends_valid_jwt() {
+        let server = MockServer::start_async().await;
+        let secret = JwtSecret::random();
+        let mock = server
+            .mock_async(move |when, then| {
+                when.method(POST).path("/").json_body_includes(r#"{"method":"eth_chainId"}"#);
+                then.respond_with(move |req| {
+                    let headers = req.headers();
+                    let token = headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(|value| value.strip_prefix("Bearer "));
+                    let authenticated = token.is_some_and(|token| secret.validate(token).is_ok());
+                    HttpMockResponse::builder()
+                        .status(if authenticated { 200 } else { 401 })
+                        .header("content-type", "application/json")
+                        .body(json_rpc_response(req, json!("0x2105")))
+                        .build()
+                });
+            })
+            .await;
+        let mut provider = AlloyL2ChainProvider::new_http(
+            server.url("/").parse().unwrap(),
+            Arc::new(RollupConfig::default()),
+            16,
+            secret,
+        );
+
+        assert_eq!(provider.chain_id().await.unwrap(), 8453);
+        mock.assert_calls_async(1).await;
     }
 }

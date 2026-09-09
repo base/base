@@ -22,6 +22,7 @@ base-metrics = { workspace = true }
 reth-provider = { workspace = true }
 base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
+reth-rpc-layer = { workspace = true }
 alloy-transport = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
@@ -41,10 +42,9 @@ tokio = { workspace = true, features = ["default", "time"] }
 http-body-util = { workspace = true, features = ["default"] }
 base-common-consensus = { workspace = true, features = ["std"]}
 alloy-rpc-client = { workspace = true, features = ["default"] }
-alloy-rpc-types-engine = { workspace = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, features = ["network"]}
 alloy-provider = { workspace = true, features = ["default", "ws", "reqwest"] }
-alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls", "jwt-auth"] }
+alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 [dev-dependencies]
 reth-db-common = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }

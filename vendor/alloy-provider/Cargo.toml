@@ -82,6 +82,7 @@ alloy-rlp = { workspace = true }
 itertools = { workspace = true }
 alloy-serde = { workspace = true }
 alloy-signer = { workspace = true }
+reth-rpc-layer = { workspace = true }
 alloy-node-bindings = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 http = { workspace = true, features = ["default"] }
@@ -94,7 +95,6 @@ tokio-tungstenite_0_29_0 = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 alloy-transport-http = { workspace = true, features = [
     "reqwest",
-    "jwt-auth",
 ] }
 base-common-network = { workspace = true }
 tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }

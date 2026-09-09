@@ -452,6 +452,7 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "reqwest",
+ "reth-rpc-layer",
  "serde",
  "serde_json",
  "similar-asserts",
@@ -841,17 +842,17 @@ dependencies = [
 
 [[package]]
 name = "alloy-transport-http"
-version = "0.0.0"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8342aa5a7f8dee6d606307eebbc847d9799a823c7e4f37b9c1e32b08715f73c8"
 dependencies = [
  "alloy-json-rpc",
- "alloy-rpc-types-engine",
  "alloy-transport",
  "http-body-util",
  "hyper 1.11.0",
  "hyper-tls",
  "hyper-util",
  "itertools 0.14.0",
- "jsonwebtoken",
  "opentelemetry 0.31.0",
  "opentelemetry-http 0.31.0",
  "reqwest",
@@ -3399,7 +3400,6 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-client",
  "alloy-rpc-types-beacon",
- "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-transport",
@@ -3420,6 +3420,7 @@ dependencies = [
  "reth-db",
  "reth-db-common",
  "reth-provider",
+ "reth-rpc-layer",
  "reth-storage-api",
  "reth-trie-common",
  "serde",

@@ -2039,15 +2039,15 @@ mod tests {
     async fn test_auth_layer_transport() {
         crate::ext::test::async_ci_only(|| async move {
             use alloy_node_bindings::Reth;
-            use alloy_rpc_types_engine::JwtSecret;
-            use alloy_transport_http::{AuthLayer, Http, HyperClient};
+            use alloy_transport_http::{Http, HyperClient};
+            use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 
             let secret = JwtSecret::random();
 
             let reth =
                 Reth::new().arg("--rpc.jwtsecret").arg(hex::encode(secret.as_bytes())).spawn();
 
-            let layer_transport = HyperClient::new().layer(AuthLayer::new(secret));
+            let layer_transport = HyperClient::new().layer(AuthClientLayer::new(secret));
 
             let http_hyper = Http::with_client(layer_transport, reth.endpoint_url());
 
