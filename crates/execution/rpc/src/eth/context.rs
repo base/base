@@ -18,8 +18,8 @@ pub struct EthApiCtx<'a> {
 
 impl<'a> EthApiCtx<'a> {
     /// Provides a [`crate::EthApiBuilder`] with preconfigured config and components.
-    pub fn eth_api_builder(self) -> crate::EthApiBuilder<base_node_context::BaseNodeContext> {
-        crate::EthApiBuilder::new_with_components(self.components.clone())
+    pub fn eth_api_builder(self) -> crate::EthApiBuilder {
+        crate::EthApiBuilder::new_with_components(self.components.into())
             .eth_cache(self.cache)
             .task_spawner(self.components.task_executor().clone())
             .gas_cap(self.config.rpc_gas_cap.into())

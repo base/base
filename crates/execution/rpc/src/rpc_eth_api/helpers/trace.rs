@@ -12,14 +12,15 @@ use base_execution_evm::{
 };
 use futures::Future;
 use reth_primitives_traits::{BlockBody, Recovered, RecoveredBlock};
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, cache::db::StateCacheDb};
 use reth_storage_api::ProviderTx;
 use revm_inspectors::tracing::{TracingInspector, TracingInspectorConfig};
 
-use crate::{BaseEthApi, FromEthApiError, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError, FromEvmError};
 
 /// Executes CPU heavy tasks.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Executes the [`TxEnvFor`] with [`base_execution_evm::EvmEnv`] against the given [`StateCacheDb`]
     /// without committing state changes.
     pub fn inspect<'a>(
@@ -192,7 +193,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                 TransactionInfo,
                 TracingCtx<
                     '_,
-                    Recovered<&ProviderTx<N::Provider>>,
+                    Recovered<&ProviderTx<BlockchainProvider>>,
                     EvmFor<&mut StateCacheDb, TracingInspector>,
                 >,
             ) -> Result<R, BaseEthApiError>
@@ -230,7 +231,11 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     where
         F: Fn(
                 TransactionInfo,
-                TracingCtx<'_, Recovered<&ProviderTx<N::Provider>>, EvmFor<&mut StateCacheDb, Insp>>,
+                TracingCtx<
+                    '_,
+                    Recovered<&ProviderTx<BlockchainProvider>>,
+                    EvmFor<&mut StateCacheDb, Insp>,
+                >,
             ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
@@ -321,7 +326,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                 TransactionInfo,
                 TracingCtx<
                     '_,
-                    Recovered<&ProviderTx<N::Provider>>,
+                    Recovered<&ProviderTx<BlockchainProvider>>,
                     EvmFor<&mut StateCacheDb, TracingInspector>,
                 >,
             ) -> Result<R, BaseEthApiError>
@@ -356,7 +361,11 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     where
         F: Fn(
                 TransactionInfo,
-                TracingCtx<'_, Recovered<&ProviderTx<N::Provider>>, EvmFor<&mut StateCacheDb, Insp>>,
+                TracingCtx<
+                    '_,
+                    Recovered<&ProviderTx<BlockchainProvider>>,
+                    EvmFor<&mut StateCacheDb, Insp>,
+                >,
             ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,

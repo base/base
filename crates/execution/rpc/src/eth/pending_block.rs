@@ -7,9 +7,9 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockReaderIdExt, StateProviderBox};
 
-use crate::{BaseEthApi, BaseEthApiError, RpcNodeCore, RpcNodeCoreExt};
+use crate::{BaseEthApi, BaseEthApiError};
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     #[inline]
     pub fn pending_block(&self) -> &tokio::sync::Mutex<Option<PendingBlock>> {
         self.inner.pending_block()

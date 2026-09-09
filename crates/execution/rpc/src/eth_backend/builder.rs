@@ -2,8 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
-use base_execution_evm::BaseEvmConfig;
 use reth_chain_state::CanonStateSubscriptions;
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,
     GasCap, GasPriceOracle, GasPriceOracleConfig, builder::config::PendingBlockKind,
@@ -15,19 +15,16 @@ use reth_rpc_server_types::constants::{
 };
 use reth_tasks::{Runtime, pool::BlockingTaskPool};
 
-use crate::{
-    BaseEthApi, BaseRpcConverter, RpcNodeCore, RpcNodeCoreAdapter,
-    eth_backend::core::BaseEthApiInner,
-};
+use crate::{BaseEthApi, BaseRpcContext, BaseRpcConverter, eth_backend::core::BaseEthApiInner};
 
 /// A helper to build the `BaseEthApi` handler instance.
 ///
 /// This builder type contains all settings to create an [`BaseEthApiInner`] or an [`BaseEthApi`] instance
 /// directly.
 #[derive(Debug)]
-pub struct EthApiBuilder<N: RpcNodeCore> {
-    components: N,
-    rpc_converter: BaseRpcConverter<N::Provider>,
+pub struct EthApiBuilder {
+    components: BaseRpcContext,
+    rpc_converter: BaseRpcConverter<BlockchainProvider>,
     gas_cap: GasCap,
     max_simulate_blocks: u64,
     compute_state_root_for_eth_simulate: bool,
@@ -37,7 +34,7 @@ pub struct EthApiBuilder<N: RpcNodeCore> {
     eth_state_cache_config: EthStateCacheConfig,
     eth_cache: Option<EthStateCache>,
     gas_oracle_config: GasPriceOracleConfig,
-    gas_oracle: Option<GasPriceOracle<N::Provider>>,
+    gas_oracle: Option<GasPriceOracle<BlockchainProvider>>,
     blocking_task_pool: Option<BlockingTaskPool>,
     task_spawner: Runtime,
     max_batch_size: usize,
@@ -49,22 +46,7 @@ pub struct EthApiBuilder<N: RpcNodeCore> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<Provider, Pool, Network> EthApiBuilder<RpcNodeCoreAdapter<Provider, Pool, Network>>
-where
-    RpcNodeCoreAdapter<Provider, Pool, Network>: RpcNodeCore,
-{
-    /// Creates a new `EthApiBuilder` instance.
-    pub fn new(
-        provider: Provider,
-        pool: Pool,
-        network: Network,
-        evm_config: BaseEvmConfig,
-    ) -> Self {
-        Self::new_with_components(RpcNodeCoreAdapter::new(provider, pool, network, evm_config))
-    }
-}
-
-impl<N: RpcNodeCore> EthApiBuilder<N> {
+impl EthApiBuilder {
     /// Apply a function to the builder
     pub fn apply<F>(self, f: F) -> Self
     where
@@ -74,14 +56,11 @@ impl<N: RpcNodeCore> EthApiBuilder<N> {
     }
 }
 
-impl<N> EthApiBuilder<N>
-where
-    N: RpcNodeCore,
-{
+impl EthApiBuilder {
     /// Creates a builder with the provided components.
-    pub fn new_with_components(components: N) -> Self {
+    pub fn new_with_components(components: BaseRpcContext) -> Self {
         Self {
-            rpc_converter: BaseRpcConverter::new(components.provider().clone(), Default::default()),
+            rpc_converter: BaseRpcConverter::new(components.provider.clone(), Default::default()),
             components,
             eth_cache: None,
             gas_oracle: None,
@@ -106,13 +85,10 @@ where
     }
 }
 
-impl<N> EthApiBuilder<N>
-where
-    N: RpcNodeCore,
-{
+impl EthApiBuilder {
     /// Shares validated BaseTime timestamps with the outer Base RPC handlers.
     pub fn base_time_cache(mut self, cache: crate::BaseTimeCache) -> Self {
-        self.rpc_converter = BaseRpcConverter::new(self.components.provider().clone(), cache);
+        self.rpc_converter = BaseRpcConverter::new(self.components.provider.clone(), cache);
         self
     }
 
@@ -146,7 +122,7 @@ where
     }
 
     /// Sets `gas_oracle` instance
-    pub fn gas_oracle(mut self, gas_oracle: GasPriceOracle<N::Provider>) -> Self {
+    pub fn gas_oracle(mut self, gas_oracle: GasPriceOracle<BlockchainProvider>) -> Self {
         self.gas_oracle = Some(gas_oracle);
         self
     }
@@ -339,7 +315,7 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build_inner(self) -> BaseEthApiInner<N> {
+    pub fn build_inner(self) -> BaseEthApiInner {
         let Self {
             components,
             rpc_converter,
@@ -364,7 +340,7 @@ where
             force_blob_sidecar_upcasting,
         } = self;
 
-        let provider = components.provider().clone();
+        let provider = components.provider.clone();
 
         let eth_cache = eth_cache.unwrap_or_else(|| {
             EthStateCache::spawn_with(
@@ -424,7 +400,7 @@ where
     ///
     /// This function panics if the blocking task pool cannot be built.
     /// This will panic if called outside the context of a Tokio runtime.
-    pub fn build(self) -> BaseEthApi<N> {
+    pub fn build(self) -> BaseEthApi {
         BaseEthApi { inner: Arc::new(self.build_inner()) }
     }
 

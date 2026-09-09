@@ -3,29 +3,29 @@ use jsonrpsee::core::RpcResult as Result;
 use reth_network_api::PeersInfo;
 use reth_rpc_api::NetApiServer;
 
-use crate::{BaseEthApi, RpcNodeCore};
+use crate::BaseEthApi;
 
 /// `Net` API implementation.
 ///
 /// This type provides the functionality for handling `net` related requests.
-pub struct NetApi<Net, Eth> {
+pub struct NetApi<Net> {
     /// An interface to interact with the network
     network: Net,
     /// The implementation of `eth` API
-    eth: Eth,
+    eth: BaseEthApi,
 }
 
 // === impl NetApi ===
 
-impl<Net, ApiNode: RpcNodeCore> NetApi<Net, BaseEthApi<ApiNode>> {
+impl<Net> NetApi<Net> {
     /// Returns a new instance with the given network and eth interface implementations
-    pub const fn new(network: Net, eth: BaseEthApi<ApiNode>) -> Self {
+    pub const fn new(network: Net, eth: BaseEthApi) -> Self {
         Self { network, eth }
     }
 }
 
 /// Net rpc implementation
-impl<Net, ApiNode: RpcNodeCore> NetApiServer for NetApi<Net, BaseEthApi<ApiNode>>
+impl<Net> NetApiServer for NetApi<Net>
 where
     Net: PeersInfo + 'static,
 {
@@ -46,7 +46,7 @@ where
     }
 }
 
-impl<Net, Eth> std::fmt::Debug for NetApi<Net, Eth> {
+impl<Net> std::fmt::Debug for NetApi<Net> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NetApi").finish_non_exhaustive()
     }

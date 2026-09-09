@@ -6,7 +6,7 @@ use alloy_rpc_types::state::StateOverride;
 use base_common_consensus::Eip8130Constants;
 use base_common_precompiles::NonceManagerStorage;
 use base_common_rpc_types::Eip8130Nonce;
-use base_execution_rpc::{BaseEthApi, RpcNodeCore};
+use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_types::EthApiError;
 
@@ -36,8 +36,8 @@ impl ChannelNonceReader {
     ///   replay protection there relies on `valid_before`, not a sequence number.
     /// - Any error from the underlying `eth_api` (e.g. unknown block, state
     ///   read failure) propagates as an `ErrorObjectOwned`.
-    pub async fn read<ApiNode: RpcNodeCore>(
-        eth_api: &BaseEthApi<ApiNode>,
+    pub async fn read(
+        eth_api: &BaseEthApi,
         address: Address,
         nonce_key: U256,
         block_id: BlockId,

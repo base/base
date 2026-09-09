@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
 use crate::{
-    BaseEthApi, RpcNodeCore,
+    BaseEthApi,
     metrics::{DebugApiExtMetrics, DebugApis},
     state::BaseStateProviderFactory,
 };
@@ -69,11 +69,11 @@ pub trait DebugApiOverride<Attributes> {
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for the proofs `ExEx`.
-pub struct DebugApiExt<Eth: RpcNodeCore, Storage, Provider> {
-    inner: Arc<DebugApiExtInner<Eth, Storage, Provider>>,
+pub struct DebugApiExt<Storage, Provider> {
+    inner: Arc<DebugApiExtInner<Storage, Provider>>,
 }
 
-impl<ApiNode: RpcNodeCore, Storage, Provider> DebugApiExt<BaseEthApi<ApiNode>, Storage, Provider>
+impl<Storage, Provider> DebugApiExt<Storage, Provider>
 where
     Storage: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt,
@@ -81,7 +81,7 @@ where
     /// Creates a new instance of the `DebugApiExt`.
     pub fn new(
         provider: Provider,
-        eth_api: BaseEthApi<ApiNode>,
+        eth_api: BaseEthApi,
         preimage_store: BaseProofsStorage<Storage>,
         task_spawner: Runtime,
         evm_config: BaseEvmConfig,
@@ -100,23 +100,23 @@ where
 
 #[derive(Debug)]
 /// Overrides applied to the `debug_` namespace of the RPC API for historical proofs `ExEx`.
-pub struct DebugApiExtInner<Eth: RpcNodeCore, Storage, Provider> {
+pub struct DebugApiExtInner<Storage, Provider> {
     provider: Provider,
-    eth_api: Eth,
+    eth_api: BaseEthApi,
     storage: BaseProofsStorage<Storage>,
-    state_provider_factory: BaseStateProviderFactory<Eth, Storage>,
+    state_provider_factory: BaseStateProviderFactory<Storage>,
     evm_config: BaseEvmConfig,
     task_spawner: Runtime,
     semaphore: Semaphore,
 }
 
-impl<ApiNode: RpcNodeCore, P, Provider> DebugApiExtInner<BaseEthApi<ApiNode>, P, Provider>
+impl<P, Provider> DebugApiExtInner<P, Provider>
 where
     P: BaseProofsStore + Clone + 'static,
 {
     fn new(
         provider: Provider,
-        eth_api: BaseEthApi<ApiNode>,
+        eth_api: BaseEthApi,
         storage: BaseProofsStorage<P>,
         task_spawner: Runtime,
         evm_config: BaseEvmConfig,
@@ -133,7 +133,7 @@ where
     }
 }
 
-impl<ApiNode: RpcNodeCore, P, Provider> DebugApiExt<BaseEthApi<ApiNode>, P, Provider>
+impl<P, Provider> DebugApiExt<P, Provider>
 where
     P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt + HeaderProvider,
@@ -147,8 +147,7 @@ where
 }
 
 #[async_trait]
-impl<ApiNode: RpcNodeCore, P, Provider> DebugApiOverrideServer<BasePayloadAttributes>
-    for DebugApiExt<BaseEthApi<ApiNode>, P, Provider>
+impl<P, Provider> DebugApiOverrideServer<BasePayloadAttributes> for DebugApiExt<P, Provider>
 where
     P: BaseProofsStore + Clone + 'static,
     Provider: BlockReaderIdExt

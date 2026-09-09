@@ -25,6 +25,7 @@ use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_api::DebugApiServer;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, StateCacheDb};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
@@ -47,19 +48,19 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;
 
-use crate::{BaseEthApi, FromEthApiError, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError, FromEvmError};
 
 /// `debug` API implementation.
 ///
 /// This type provides the functionality for handling `debug` related requests.
-pub struct DebugApi<Eth: RpcNodeCore> {
-    inner: Arc<DebugApiInner<Eth>>,
+pub struct DebugApi {
+    inner: Arc<DebugApiInner>,
 }
 
-impl<ApiNode: RpcNodeCore> DebugApi<BaseEthApi<ApiNode>> {
+impl DebugApi {
     /// Create a new instance of the [`DebugApi`]
     pub fn new(
-        eth_api: BaseEthApi<ApiNode>,
+        eth_api: BaseEthApi,
         blocking_task_guard: BlockingTaskGuard,
         executor: &Runtime,
         mut stream: impl Stream<Item = ConsensusEngineEvent> + Send + Unpin + 'static,
@@ -86,19 +87,19 @@ impl<ApiNode: RpcNodeCore> DebugApi<BaseEthApi<ApiNode>> {
     }
 
     /// Access the underlying `BaseEthApi<ApiNode>` API.
-    pub fn eth_api(&self) -> &BaseEthApi<ApiNode> {
+    pub fn eth_api(&self) -> &BaseEthApi {
         &self.inner.eth_api
     }
 
     /// Access the underlying provider.
-    pub fn provider(&self) -> &ApiNode::Provider {
+    pub fn provider(&self) -> &BlockchainProvider {
         self.inner.eth_api.provider()
     }
 }
 
 // === impl DebugApi ===
 
-impl<ApiNode: RpcNodeCore> DebugApi<BaseEthApi<ApiNode>> {
+impl DebugApi {
     /// Acquires a permit to execute a tracing call.
     async fn acquire_trace_permit(&self) -> Result<OwnedSemaphorePermit, AcquireError> {
         self.inner.blocking_task_guard.clone().acquire_owned().await
@@ -168,7 +169,7 @@ impl<ApiNode: RpcNodeCore> DebugApi<BaseEthApi<ApiNode>> {
         rlp_block: Bytes,
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BaseEthApiError> {
-        let block: ProviderBlock<ApiNode::Provider> = Decodable::decode(&mut rlp_block.as_ref())
+        let block: ProviderBlock<BlockchainProvider> = Decodable::decode(&mut rlp_block.as_ref())
             .map_err(BlockError::RlpDecodeRawBlock)
             .map_err(BaseEthApiError::from_eth_err)?;
 
@@ -742,9 +743,7 @@ impl<ApiNode: RpcNodeCore> DebugApi<BaseEthApi<ApiNode>> {
 }
 
 #[async_trait]
-impl<ApiNode: RpcNodeCore> DebugApiServer<BaseTransactionRequest>
-    for DebugApi<BaseEthApi<ApiNode>>
-{
+impl DebugApiServer<BaseTransactionRequest> for DebugApi {
     /// Handler for `debug_getRawHeader`
     async fn raw_header(&self, block_id: BlockId) -> RpcResult<Bytes> {
         let header = match block_id {
@@ -1185,21 +1184,21 @@ impl<ApiNode: RpcNodeCore> DebugApiServer<BaseTransactionRequest>
     }
 }
 
-impl<Eth: RpcNodeCore> std::fmt::Debug for DebugApi<Eth> {
+impl std::fmt::Debug for DebugApi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DebugApi").finish_non_exhaustive()
     }
 }
 
-impl<Eth: RpcNodeCore> Clone for DebugApi<Eth> {
+impl Clone for DebugApi {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
-struct DebugApiInner<Eth: RpcNodeCore> {
+struct DebugApiInner {
     /// The implementation of `eth` API
-    eth_api: Eth,
+    eth_api: BaseEthApi,
     // restrict the number of concurrent calls to blocking calls
     blocking_task_guard: BlockingTaskGuard,
     /// Cache for bad blocks.

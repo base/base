@@ -1,5 +1,7 @@
 //! Base `eth_` endpoint implementation.
 
+use base_node_context::BaseNodePool;
+use reth_provider::providers::BlockchainProvider;
 mod proofs;
 
 pub use proofs::*;
@@ -7,7 +9,7 @@ mod transaction;
 
 use base_execution_evm::BaseEvmConfig;
 
-use crate::{BaseTimeCache, RpcNodeCore};
+use crate::BaseTimeCache;
 
 mod block;
 mod call;
@@ -26,7 +28,7 @@ use reth_tasks::{
     pool::{BlockingTaskGuard, BlockingTaskPool},
 };
 
-use crate::{BaseEthApiError, BaseEthApiInner, BaseRpcConverter, RpcNodeCoreExt, SequencerClient};
+use crate::{BaseEthApiError, BaseEthApiInner, BaseRpcConverter, SequencerClient};
 
 /// Base `Eth` API implementation.
 ///
@@ -34,21 +36,21 @@ use crate::{BaseEthApiError, BaseEthApiInner, BaseRpcConverter, RpcNodeCoreExt, 
 ///
 /// Owns the shared backend services and Base transaction forwarding, fee policy, and timestamp
 /// cache used by the RPC endpoints.
-pub struct BaseEthApi<N: RpcNodeCore> {
+pub struct BaseEthApi {
     /// Gateway to node's core components.
-    pub inner: Arc<BaseEthApiInner<N>>,
+    pub inner: Arc<BaseEthApiInner>,
 }
 
-impl<N: RpcNodeCore> Clone for BaseEthApi<N> {
+impl Clone for BaseEthApi {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Creates a new `BaseEthApi`.
     pub fn new(
-        mut eth_api: BaseEthApiInner<N>,
+        mut eth_api: BaseEthApiInner,
         sequencer_client: Option<SequencerClient>,
         min_suggested_priority_fee: U256,
         base_time: BaseTimeCache,
@@ -76,64 +78,50 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     }
 }
 
-impl<N> BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
+impl BaseEthApi {
     /// Returns the Base transaction and receipt response converter.
-    pub fn converter(&self) -> &BaseRpcConverter<N::Provider> {
+    pub fn converter(&self) -> &BaseRpcConverter<BlockchainProvider> {
         self.inner.converter()
     }
 }
 
-impl<N> RpcNodeCore for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
-    type Provider = N::Provider;
-    type Pool = N::Pool;
-
-    type Network = N::Network;
-
+impl BaseEthApi {
     #[inline]
-    fn pool(&self) -> &N::Pool {
+    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
         self.inner.pool()
     }
 
     #[inline]
-    fn evm_config(&self) -> &BaseEvmConfig {
+    pub fn evm_config(&self) -> &BaseEvmConfig {
         self.inner.evm_config()
     }
 
     #[inline]
-    fn network(&self) -> &N::Network {
+    pub fn network(&self) -> &reth_network::NetworkHandle {
         self.inner.network()
     }
 
     #[inline]
-    fn provider(&self) -> &N::Provider {
+    pub fn provider(&self) -> &BlockchainProvider {
         self.inner.provider()
     }
 }
 
-impl<N> RpcNodeCoreExt for BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
+impl BaseEthApi {
     #[inline]
-    fn cache(&self) -> &EthStateCache {
+    pub fn cache(&self) -> &EthStateCache {
         self.inner.cache()
     }
 }
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     #[inline]
     pub fn starting_block(&self) -> U256 {
         self.inner.starting_block()
     }
 }
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     #[inline]
     pub fn io_task_spawner(&self) -> &Runtime {
         self.inner.task_spawner()
@@ -155,9 +143,9 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     }
 }
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     #[inline]
-    pub fn gas_oracle(&self) -> &GasPriceOracle<N::Provider> {
+    pub fn gas_oracle(&self) -> &GasPriceOracle<BlockchainProvider> {
         self.inner.gas_oracle()
     }
 
@@ -175,21 +163,18 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     }
 }
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     #[inline]
     pub fn max_proof_window(&self) -> u64 {
         self.inner.eth_proof_window()
     }
 }
 
-impl<N: RpcNodeCore> fmt::Debug for BaseEthApi<N> {
+impl fmt::Debug for BaseEthApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseEthApi").finish_non_exhaustive()
     }
 }
-
-/// The Base eth API for a node provider, transaction pool, and network.
-pub type BaseNodeEthApi<N> = BaseEthApi<N>;
 
 /// Builds [`BaseEthApi`] for Base.
 #[derive(Debug)]
@@ -244,10 +229,7 @@ impl BaseEthApiBuilder {
 
 impl BaseEthApiBuilder {
     /// Constructs the Base eth API from the node components and RPC settings.
-    pub async fn build_eth_api(
-        self,
-        ctx: EthApiCtx<'_>,
-    ) -> eyre::Result<BaseNodeEthApi<base_node_context::BaseNodeContext>> {
+    pub async fn build_eth_api(self, ctx: EthApiCtx<'_>) -> eyre::Result<BaseEthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let base_time = BaseTimeCache::default();
 

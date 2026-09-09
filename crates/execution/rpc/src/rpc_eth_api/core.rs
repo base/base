@@ -23,7 +23,7 @@ use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use serde_json::Value;
 use tracing::trace;
 
-use crate::{BaseEthApi, RpcNodeCore};
+use crate::BaseEthApi;
 
 /// Eth rpc interface: <https://ethereum.github.io/execution-apis/api-documentation>
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
@@ -427,7 +427,7 @@ pub trait EthApi<
 }
 
 #[async_trait::async_trait]
-impl<ApiNode: RpcNodeCore>
+impl
     EthApiServer<
         BaseTransactionRequest,
         base_common_rpc_types::Transaction,
@@ -435,7 +435,7 @@ impl<ApiNode: RpcNodeCore>
         BaseTransactionReceipt,
         BaseHeaderResponse,
         BaseTxEnvelope,
-    > for BaseEthApi<ApiNode>
+    > for BaseEthApi
 {
     /// Handler for: `eth_protocolVersion`
     async fn protocol_version(&self) -> RpcResult<U64> {

@@ -22,7 +22,7 @@ use revm_inspectors::{
     transfer::{TransferInspector, TransferKind},
 };
 
-use crate::{BaseEthApi, EthApiServer, RpcNodeCore};
+use crate::{BaseEthApi, EthApiServer};
 
 const API_LEVEL: u64 = 8;
 
@@ -32,14 +32,14 @@ pub struct OtterscanApi<Eth> {
     eth: Eth,
 }
 
-impl<ApiNode: RpcNodeCore> OtterscanApi<BaseEthApi<ApiNode>> {
+impl OtterscanApi<BaseEthApi> {
     /// Creates a new instance of `Otterscan`.
-    pub const fn new(eth: BaseEthApi<ApiNode>) -> Self {
+    pub const fn new(eth: BaseEthApi) -> Self {
         Self { eth }
     }
 }
 
-impl<ApiNode: RpcNodeCore> OtterscanApi<BaseEthApi<ApiNode>> {
+impl OtterscanApi<BaseEthApi> {
     /// Constructs a `BlockDetails` from a block and its receipts.
     fn block_details(
         &self,
@@ -59,8 +59,8 @@ impl<ApiNode: RpcNodeCore> OtterscanApi<BaseEthApi<ApiNode>> {
 }
 
 #[async_trait]
-impl<ApiNode: RpcNodeCore> OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
-    for OtterscanApi<BaseEthApi<ApiNode>>
+impl OtterscanServer<base_common_rpc_types::Transaction, BaseHeaderResponse>
+    for OtterscanApi<BaseEthApi>
 {
     /// Handler for `ots_getHeaderByNumber` and `erigon_getHeaderByNumber`
     async fn get_header_by_number(

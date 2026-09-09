@@ -8,10 +8,10 @@ use reth_rpc_eth_types::{BaseEthApiError, EthApiError, error::FromEthApiError};
 use reth_storage_api::StateProviderFactory;
 use revm::database::State;
 
-use crate::{BaseEthApi, RpcNodeCore, RpcNodeCoreExt};
+use crate::BaseEthApi;
 
 /// Helper trait for `eth_blockAccessList` RPC method.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Retrieves the block access list for a block identified by its hash.
     pub fn get_block_access_list(
         &self,
@@ -41,7 +41,8 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                 let mut db = State::builder().with_database(state).with_bal_builder().build();
 
                 let block_txs = block.transactions_recovered();
-                let mut executor = RpcNodeCore::evm_config(&eth_api)
+                let mut executor = eth_api
+                    .evm_config()
                     .executor_for_block(&mut db, block.sealed_block())
                     .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;

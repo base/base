@@ -5,7 +5,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::BlockHeader;
 use base_common_rpc_types::EIP8130_PRE_ZENITH_RPC_ERROR;
 use base_execution_chainspec::ChainSpecProvider;
-use base_execution_rpc::{BaseEthApi, RpcNodeCore};
+use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{
     ErrorObjectOwned,
     error::{INTERNAL_ERROR_CODE, INVALID_PARAMS_CODE},
@@ -32,13 +32,7 @@ impl Eip8130ZenithGate {
     /// Errors with `INVALID_PARAMS` if Zenith is not active at `block_id`'s
     /// timestamp. Resolves `Pending` and `Latest` block ids to the head
     /// block's timestamp.
-    pub fn check<ApiNode: RpcNodeCore>(
-        eth_api: &BaseEthApi<ApiNode>,
-        block_id: BlockId,
-    ) -> Result<(), ErrorObjectOwned>
-    where
-        <BaseEthApi<ApiNode> as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
-    {
+    pub fn check(eth_api: &BaseEthApi, block_id: BlockId) -> Result<(), ErrorObjectOwned> {
         let provider = eth_api.provider();
         let timestamp = Self::resolve_timestamp(provider, block_id)?;
         if !provider.chain_spec().is_zenith_active_at_timestamp(timestamp) {

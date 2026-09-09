@@ -91,6 +91,27 @@ impl NetworkHandle {
         Self { inner: Arc::new(inner) }
     }
 
+    /// Creates a detached production handle for tests that do not run peer discovery.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn test(chain_id: u64) -> Self {
+        let secret_key = SecretKey::from_byte_array(&[1; 32]).expect("test secret key");
+        Self::new(
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Mutex::new(([127, 0, 0, 1], 0).into())),
+            mpsc::unbounded_channel().0,
+            secret_key,
+            reth_network_peers::pk2id(&secret_key.public_key(secp256k1::SECP256K1)),
+            PeersHandle::new(mpsc::unbounded_channel().0),
+            NetworkMode::Stake,
+            Arc::new(AtomicU64::new(chain_id)),
+            false,
+            None,
+            None,
+            EventSender::new(16),
+            None,
+        )
+    }
+
     /// Returns the [`PeerId`] used in the network.
     pub fn peer_id(&self) -> &PeerId {
         &self.inner.local_peer_id

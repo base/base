@@ -1,18 +1,11 @@
 //! Builder support for rpc components.
 
-use std::{
-    fmt,
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
+use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
-use base_execution_rpc::{
-    AdminApi, BaseEthApiBuilder, BaseNodeEthApi, DevSigner, EthApiCtx, RpcNodeCore,
-};
-use base_node_context::AddOnsContext;
+use base_execution_rpc::{AdminApi, BaseEthApi, BaseEthApiBuilder, DevSigner, EthApiCtx};
+use base_node_context::{AddOnsContext, BaseNodePool};
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
@@ -33,7 +26,7 @@ use reth_tracing::tracing::{debug, info};
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
 /// Handles for the Base node's public RPC services.
-pub type BaseNodeRpcHandle = RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>;
+pub type BaseNodeRpcHandle = RpcHandle;
 
 /// Contains the handles to the spawned RPC servers.
 ///
@@ -45,33 +38,25 @@ pub struct RethRpcServerHandles {
 }
 
 /// Contains hooks that are called during the rpc setup.
-pub struct RpcHooks<EthApi: RpcNodeCore> {
+pub struct RpcHooks {
     /// Hooks to run once RPC server is running.
     pub on_rpc_started:
-        Box<dyn FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
+        Box<dyn FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
     /// Hooks to run to configure RPC server API.
-    pub extend_rpc_modules: Box<dyn FnOnce(RpcContext<'_, EthApi>) -> eyre::Result<()> + Send>,
+    pub extend_rpc_modules: Box<dyn FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send>,
 }
 
-impl<EthApi> Default for RpcHooks<EthApi>
-where
-    EthApi: RpcNodeCore,
-{
+impl Default for RpcHooks {
     fn default() -> Self {
         Self { on_rpc_started: Box::new(|_, _| Ok(())), extend_rpc_modules: Box::new(|_| Ok(())) }
     }
 }
 
-impl<EthApi> RpcHooks<EthApi>
-where
-    EthApi: RpcNodeCore,
-{
+impl RpcHooks {
     /// Sets the hook that is run once the rpc server is started.
     pub fn set_on_rpc_started<F>(&mut self, hook: F) -> &mut Self
     where
-        F: FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
     {
         self.on_rpc_started = Box::new(hook);
         self
@@ -80,17 +65,14 @@ where
     /// Sets the hook that is run to configure the rpc modules.
     pub fn set_extend_rpc_modules<F>(&mut self, hook: F) -> &mut Self
     where
-        F: FnOnce(RpcContext<'_, EthApi>) -> eyre::Result<()> + Send + 'static,
+        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
     {
         self.extend_rpc_modules = Box::new(hook);
         self
     }
 }
 
-impl<EthApi> fmt::Debug for RpcHooks<EthApi>
-where
-    EthApi: RpcNodeCore,
-{
+impl fmt::Debug for RpcHooks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcHooks")
             .field("on_rpc_started", &"...")
@@ -99,50 +81,13 @@ where
     }
 }
 
-/// Helper wrapper type to encapsulate the [`RpcRegistryInner`] over components trait.
-#[derive(Debug, Clone)]
-#[expect(clippy::type_complexity)]
-pub struct RpcRegistry<EthApi: RpcNodeCore> {
-    pub(crate) registry: RpcRegistryInner<
-        BlockchainProvider,
-        base_node_context::BaseNodePool<BlockchainProvider>,
-        reth_network::NetworkHandle,
-        EthApi,
-    >,
-}
-
-impl<EthApi> Deref for RpcRegistry<EthApi>
-where
-    EthApi: RpcNodeCore,
-{
-    type Target = RpcRegistryInner<
-        BlockchainProvider,
-        base_node_context::BaseNodePool<BlockchainProvider>,
-        reth_network::NetworkHandle,
-        EthApi,
-    >;
-
-    fn deref(&self) -> &Self::Target {
-        &self.registry
-    }
-}
-
-impl<EthApi> DerefMut for RpcRegistry<EthApi>
-where
-    EthApi: RpcNodeCore,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.registry
-    }
-}
-
 /// Helper container for the parameters commonly passed to RPC module extension functions.
 #[expect(missing_debug_implementations)]
-pub struct RpcModuleContainer<'a, EthApi: RpcNodeCore> {
+pub struct RpcModuleContainer<'a> {
     /// Holds installed modules per transport type.
     pub modules: &'a mut TransportRpcModules,
     /// A Helper type the holds instances of the configured modules.
-    pub registry: &'a mut RpcRegistry<EthApi>,
+    pub registry: &'a mut RpcRegistryInner,
 }
 
 /// Helper container for [`RpcRegistryInner`], [`TransportRpcModules`] and
@@ -152,7 +97,7 @@ pub struct RpcModuleContainer<'a, EthApi: RpcNodeCore> {
 /// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`].
 #[expect(missing_debug_implementations)]
-pub struct RpcContext<'a, EthApi: RpcNodeCore> {
+pub struct RpcContext<'a> {
     /// The node components.
     pub(crate) node: base_node_context::BaseNodeContext,
 
@@ -162,17 +107,14 @@ pub struct RpcContext<'a, EthApi: RpcNodeCore> {
     /// A Helper type the holds instances of the configured modules.
     ///
     /// This provides easy access to rpc handlers, such as [`RpcRegistryInner::eth_api`].
-    pub registry: &'a mut RpcRegistry<EthApi>,
+    pub registry: &'a mut RpcRegistryInner,
     /// Holds installed modules per transport type.
     ///
     /// This can be used to merge additional modules into the configured HTTP and WebSocket transports. See [`TransportRpcModules::merge_configured`]
     pub modules: &'a mut TransportRpcModules,
 }
 
-impl<EthApi> RpcContext<'_, EthApi>
-where
-    EthApi: RpcNodeCore,
-{
+impl RpcContext<'_> {
     /// Returns the config of the node.
     pub const fn config(&self) -> &NodeConfig {
         self.config
@@ -186,7 +128,7 @@ where
     }
 
     /// Returns the transaction pool instance.
-    pub fn pool(&self) -> &base_node_context::BaseNodePool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
         self.node.pool()
     }
 
@@ -207,14 +149,14 @@ where
 }
 
 /// Handle to the launched RPC servers.
-pub struct RpcHandle<EthApi: RpcNodeCore> {
+pub struct RpcHandle {
     /// Handles to launched servers.
     pub rpc_server_handles: RethRpcServerHandles,
     /// Configured RPC modules.
-    pub rpc_registry: RpcRegistry<EthApi>,
+    pub rpc_registry: RpcRegistryInner,
 }
 
-impl<EthApi: RpcNodeCore> Clone for RpcHandle<EthApi> {
+impl Clone for RpcHandle {
     fn clone(&self) -> Self {
         Self {
             rpc_server_handles: self.rpc_server_handles.clone(),
@@ -223,18 +165,15 @@ impl<EthApi: RpcNodeCore> Clone for RpcHandle<EthApi> {
     }
 }
 
-impl<EthApi: RpcNodeCore> Deref for RpcHandle<EthApi> {
-    type Target = RpcRegistry<EthApi>;
+impl Deref for RpcHandle {
+    type Target = RpcRegistryInner;
 
     fn deref(&self) -> &Self::Target {
         &self.rpc_registry
     }
 }
 
-impl<EthApi: RpcNodeCore> Debug for RpcHandle<EthApi>
-where
-    RpcRegistry<EthApi>: Debug,
-{
+impl Debug for RpcHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcHandle")
             .field("rpc_server_handles", &self.rpc_server_handles)
@@ -243,37 +182,36 @@ where
     }
 }
 
-impl<EthApi: RpcNodeCore> RpcHandle<EthApi> {
+impl RpcHandle {
     /// Returns the RPC server handles.
     pub const fn rpc_server_handles(&self) -> &RethRpcServerHandles {
         &self.rpc_server_handles
     }
 
     /// Returns the `EthApi` instance of the rpc server.
-    pub const fn eth_api(&self) -> &EthApi {
-        self.rpc_registry.registry.eth_api()
+    pub const fn eth_api(&self) -> &BaseEthApi {
+        self.rpc_registry.eth_api()
     }
 
     /// Returns an instance of the [`AdminApi`] for the rpc server.
     pub fn admin_api(
         &self,
-    ) -> AdminApi<reth_network::NetworkHandle, base_node_context::BaseNodePool<BlockchainProvider>>
-    {
-        self.rpc_registry.registry.admin_api()
+    ) -> AdminApi<reth_network::NetworkHandle, BaseNodePool<BlockchainProvider>> {
+        self.rpc_registry.admin_api()
     }
 }
 
 /// Prepared public RPC modules and lifecycle hooks.
-pub struct RpcSetupContext<'a, EthApi: RpcNodeCore> {
+pub struct RpcSetupContext<'a> {
     pub node: base_node_context::BaseNodeContext,
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
-    pub registry: RpcRegistry<EthApi>,
+    pub registry: RpcRegistryInner,
     pub on_rpc_started:
-        Box<dyn FnOnce(RpcContext<'_, EthApi>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
+        Box<dyn FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send>,
 }
 
-impl<EthApi: RpcNodeCore> fmt::Debug for RpcSetupContext<'_, EthApi> {
+impl fmt::Debug for RpcSetupContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcSetupContext").field("modules", &self.modules).finish_non_exhaustive()
     }
@@ -291,7 +229,7 @@ impl<EthApi: RpcNodeCore> fmt::Debug for RpcSetupContext<'_, EthApi> {
 /// methods or even replace existing method handlers, see also [`TransportRpcModules`].
 pub struct RpcAddOns {
     /// Additional RPC add-ons.
-    pub hooks: RpcHooks<BaseNodeEthApi<base_node_context::BaseNodeContext>>,
+    pub hooks: RpcHooks,
     /// Builder for `EthApi`
     eth_api_builder: BaseEthApiBuilder,
 
@@ -325,12 +263,7 @@ impl RpcAddOns {
     /// Sets the hook that is run once the rpc server is started.
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
-                RethRpcServerHandles,
-            ) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_on_rpc_started(hook);
         self
@@ -339,11 +272,7 @@ impl RpcAddOns {
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
-            ) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
     {
         self.hooks.set_extend_rpc_modules(hook);
         self
@@ -362,11 +291,9 @@ impl RpcAddOns {
         self,
         ctx: AddOnsContext<'_>,
         ext: F,
-    ) -> eyre::Result<RpcHandle<BaseNodeEthApi<base_node_context::BaseNodeContext>>>
+    ) -> eyre::Result<RpcHandle>
     where
-        F: FnOnce(
-            RpcModuleContainer<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
-        ) -> eyre::Result<()>,
+        F: FnOnce(RpcModuleContainer<'_>) -> eyre::Result<()>,
     {
         let tokio_runtime = self.tokio_runtime.clone();
         let mut setup = self.setup_rpc_components(ctx, ext).await?;
@@ -390,11 +317,9 @@ impl RpcAddOns {
         self,
         ctx: AddOnsContext<'a>,
         ext: F,
-    ) -> eyre::Result<RpcSetupContext<'a, BaseNodeEthApi<base_node_context::BaseNodeContext>>>
+    ) -> eyre::Result<RpcSetupContext<'a>>
     where
-        F: FnOnce(
-            RpcModuleContainer<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
-        ) -> eyre::Result<()>,
+        F: FnOnce(RpcModuleContainer<'_>) -> eyre::Result<()>,
     {
         let Self { eth_api_builder, hooks, .. } = self;
 
@@ -424,18 +349,19 @@ impl RpcAddOns {
         let module_config = config.rpc.transport_rpc_module_config();
         debug!(target: "reth::cli", http=?module_config.http(), ws=?module_config.ws(), "Using RPC module config");
 
-        let mut registry = RpcModuleBuilder::default()
-            .with_provider(node.provider().clone())
-            .with_pool(node.pool().clone())
-            .with_network(node.network().clone())
-            .with_executor(node.task_executor().clone())
-            .with_evm_config(node.evm_config().clone())
-            .with_consensus(node.consensus().clone())
-            .into_registry(
-                module_config.config().cloned().unwrap_or_default(),
-                eth_api,
-                engine_events,
-            );
+        let mut registry = RpcModuleBuilder::new(
+            node.provider().clone(),
+            node.pool().clone(),
+            node.network().clone(),
+            node.task_executor().clone(),
+            node.evm_config().clone(),
+            node.consensus().clone(),
+        )
+        .into_registry(
+            module_config.config().cloned().unwrap_or_default(),
+            eth_api,
+            engine_events,
+        );
         let mut modules = registry.create_transport_rpc_modules(module_config);
 
         // in dev mode we generate 20 random dev-signer accounts
@@ -444,7 +370,6 @@ impl RpcAddOns {
             registry.eth_api().signers().write().extend(signers);
         }
 
-        let mut registry = RpcRegistry { registry };
         let ctx = RpcContext {
             node: node.clone(),
             config,

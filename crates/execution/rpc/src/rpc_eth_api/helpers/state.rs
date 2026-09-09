@@ -21,10 +21,10 @@ use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 use reth_storage_api::{BlockIdReader, BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_trie_common::MultiProofTargets;
 
-use crate::{BaseEthApi, FromEthApiError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError};
 
 /// Helper methods for `eth_` methods relating to state (accounts).
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Validates that the given block is within the configured proof window.
     ///
     /// Returns an error if the distance between the chain tip and the requested block exceeds
@@ -267,7 +267,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 /// Loads state from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` state RPC methods.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the state at the given block number
     pub fn state_at_hash(&self, block_hash: B256) -> Result<StateProviderBox, BaseEthApiError> {
         self.provider().history_by_block_hash(block_hash).map_err(BaseEthApiError::from_eth_err)
@@ -342,7 +342,8 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                 // we can assume that the blockid will be predominantly `Latest` (e.g. for
                 // `eth_call`) and if requested by number or hash we can quickly fetch just the
                 // header
-                let header = RpcNodeCore::provider(self)
+                let header = self
+                    .provider()
                     .sealed_header_by_id(at)
                     .map_err(BaseEthApiError::from_eth_err)?
                     .ok_or_else(|| EthApiError::HeaderNotFound(at))?;
@@ -496,48 +497,22 @@ mod tests {
         Address, StorageKey, StorageValue, U256,
         map::{AddressMap, B256Map},
     };
-    use base_execution_evm::BaseEvmConfig;
-    use reth_network_api::noop::NoopNetwork;
-    use reth_provider::{
-        ChainSpecProvider,
-        test_utils::{ExtendedAccount, MockEthProvider, NoopProvider},
-    };
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
-    use crate::RpcNodeCoreAdapter;
 
-    fn noop_eth_api()
-    -> BaseEthApi<RpcNodeCoreAdapter<NoopProvider, crate::test_utils::TestPool, NoopNetwork>> {
-        let provider = NoopProvider::default();
-        let pool = crate::test_utils::RpcTestUtils::pool();
-        let evm_config = BaseEvmConfig::default();
+    fn noop_eth_api() -> BaseEthApi {
+        let provider = MockEthProvider::default();
 
-        crate::test_utils::RpcTestUtils::api_builder(
-            provider,
-            pool,
-            NoopNetwork::default(),
-            evm_config,
-        )
-        .build()
+        crate::test_utils::RpcTestUtils::api_builder(provider).build()
     }
 
-    fn mock_eth_api(
-        accounts: AddressMap<ExtendedAccount>,
-    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
-    {
-        let pool = crate::test_utils::RpcTestUtils::pool();
+    fn mock_eth_api(accounts: AddressMap<ExtendedAccount>) -> BaseEthApi {
         let mock_provider = MockEthProvider::default();
 
-        let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());
         mock_provider.extend_accounts(accounts);
 
-        crate::test_utils::RpcTestUtils::api_builder(
-            mock_provider,
-            pool,
-            NoopNetwork::default(),
-            evm_config,
-        )
-        .build()
+        crate::test_utils::RpcTestUtils::api_builder(mock_provider).build()
     }
 
     #[tokio::test]

@@ -33,12 +33,12 @@ use reth_trie_common::ComputedTrieData;
 use revm::database::State;
 use tracing::debug;
 
-use crate::{BaseEthApi, FromEthApiError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError};
 
 /// Loads a pending block from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Configures the [`PendingBlockEnv`] for the pending block
     ///
     /// If no pending block is available, this will derive it from the `latest` block
@@ -156,7 +156,6 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     /// determined by the EVM environment and chain specification used during construction.
     pub fn build_block(&self, parent: &SealedHeader) -> Result<ExecutedBlock, BaseEthApiError>
     where
-        N::Pool: TransactionPool,
         EthApiError: From<ProviderError>,
     {
         let state_provider = self

@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use base_execution_evm::BaseEvmConfig;
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
+use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
 use reth_rpc_server_types::RpcModuleSelection;
 use reth_tokio_util::EventSender;
@@ -134,7 +134,7 @@ async fn test_eth_subscribe_server_survives_client_disconnect() {
 async fn test_eth_subscribe_not_available_over_http() {
     reth_tracing::init_test_tracing();
 
-    let builder = test_rpc_builder();
+    let builder = test_rpc_builder().await;
     let eth_api = builder.eth_api_builder().build();
     let modules = RpcModuleSelection::Standard;
     let server =
@@ -152,24 +152,37 @@ async fn test_eth_subscribe_not_available_over_http() {
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use base_execution_consensus::BaseBeaconConsensus;
     use base_execution_txpool::{TransactionOrigin, TransactionPool};
-    use reth_network_api::noop::NoopNetwork;
-    use reth_provider::test_utils::NoopProvider;
     use reth_rpc_builder::RpcModuleBuilder;
     use reth_tasks::Runtime;
 
     reth_tracing::init_test_tracing();
 
-    let pool: base_execution_rpc::test_utils::TestPool =
-        base_execution_rpc::test_utils::RpcTestUtils::pool();
-    let pool_clone = pool.clone();
-
-    let builder = RpcModuleBuilder::default()
-        .with_provider(NoopProvider::default())
-        .with_pool(pool)
-        .with_network(NoopNetwork::default())
-        .with_executor(Runtime::test())
-        .with_evm_config(BaseEvmConfig::default())
-        .with_consensus(BaseBeaconConsensus::noop());
+    let signed = base_execution_txpool::test_utils::TransactionBuilder::default()
+        .chain_id(8453)
+        .nonce(0)
+        .gas_limit(21_000)
+        .value(0)
+        .to(alloy_primitives::Address::repeat_byte(2))
+        .max_fee_per_gas(2_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000)
+        .into_eip1559();
+    let recovered = signed.try_into_recovered().unwrap();
+    let mock = reth_provider::test_utils::MockEthProvider::default();
+    mock.add_account(
+        recovered.signer(),
+        reth_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
+    );
+    let tx = base_execution_txpool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
+    let context = base_execution_rpc::test_utils::RpcTestUtils::context(mock);
+    let pool_clone = context.pool.clone();
+    let builder = RpcModuleBuilder::new(
+        context.provider,
+        context.pool,
+        context.network,
+        Runtime::test(),
+        context.evm_config,
+        std::sync::Arc::new(BaseBeaconConsensus::noop()),
+    );
 
     let eth_api = builder.eth_api_builder().build();
     let server = builder.build(
@@ -195,22 +208,6 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .await
         .unwrap();
 
-    // Insert a transaction into the pool
-    let signed = base_common_consensus::Signed::new_unhashed(
-        base_common_consensus::TxEip1559 {
-            gas_limit: 21_000,
-            max_fee_per_gas: 1_000_000_000,
-            max_priority_fee_per_gas: 1_000_000_000,
-            ..Default::default()
-        },
-        alloy_primitives::Signature::test_signature(),
-    );
-    let tx = base_execution_txpool::BasePooledTransaction::from_pooled(
-        base_common_consensus::transaction::Recovered::new_unchecked(
-            base_common_consensus::BasePooledTransaction::from(signed),
-            alloy_primitives::Address::ZERO,
-        ),
-    );
     let expected_hash = *tx.hash();
     pool_clone.add_transaction(TransactionOrigin::External, tx).await.unwrap();
 

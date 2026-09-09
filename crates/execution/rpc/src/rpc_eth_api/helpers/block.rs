@@ -7,7 +7,6 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_eth::{Block, BlockTransactions, Index};
 use base_common_consensus::{TxReceipt, transaction::TxHashRef};
 use base_common_rpc_types::{BaseBlockResponse, BaseTransactionReceipt};
-use base_execution_txpool::TransactionPool;
 use futures::Future;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,
@@ -16,7 +15,7 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::BaseEthApiError;
 use reth_storage_api::{BlockIdReader, BlockReader, ProviderHeader};
 
-use crate::{BaseEthApi, FromEthApiError, RpcNodeCore, RpcNodeCoreExt};
+use crate::{BaseEthApi, FromEthApiError};
 
 /// Result type of the fetched block receipts.
 pub type BlockReceiptsResult<E> = Result<Option<Vec<BaseTransactionReceipt>>, E>;
@@ -28,7 +27,7 @@ pub type BlockAndReceiptsResult = Result<
 
 /// Block related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the number transactions in the given block.
     ///
     /// Returns `None` if the block does not exist
@@ -103,10 +102,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     pub fn load_block_and_receipts(
         &self,
         block_id: BlockId,
-    ) -> impl Future<Output = BlockAndReceiptsResult> + Send
-    where
-        N::Pool: TransactionPool,
-    {
+    ) -> impl Future<Output = BlockAndReceiptsResult> + Send {
         async move {
             if block_id.is_pending() {
                 if self.pending_block_kind().is_none() {
@@ -205,7 +201,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 /// Loads a block from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` blocks RPC methods.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the block object for the given block id.
     #[expect(clippy::type_complexity)]
     pub fn recovered_block(

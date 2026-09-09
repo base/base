@@ -21,6 +21,7 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_api::TraceApiServer;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
@@ -36,7 +37,7 @@ use revm_inspectors::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 
-use crate::{BaseEthApi, FromEthApiError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError};
 
 /// Maximum number of `trace_filter` blocks replayed concurrently.
 const TRACE_FILTER_BLOCK_BUFFER_SIZE: usize = 4;
@@ -46,16 +47,16 @@ const TRACE_FILTER_FETCH_CHUNK_SIZE: usize = 16;
 /// `trace` API implementation.
 ///
 /// This type provides the functionality for handling `trace` related requests.
-pub struct TraceApi<Eth> {
-    inner: Arc<TraceApiInner<Eth>>,
+pub struct TraceApi {
+    inner: Arc<TraceApiInner>,
 }
 
 // === impl TraceApi ===
 
-impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
+impl TraceApi {
     /// Create a new instance of the [`TraceApi`]
     pub fn new(
-        eth_api: BaseEthApi<ApiNode>,
+        eth_api: BaseEthApi,
         blocking_task_guard: BlockingTaskGuard,
         eth_config: EthConfig,
     ) -> Self {
@@ -71,21 +72,21 @@ impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
     }
 
     /// Access the underlying `BaseEthApi<ApiNode>` API.
-    pub fn eth_api(&self) -> &BaseEthApi<ApiNode> {
+    pub fn eth_api(&self) -> &BaseEthApi {
         &self.inner.eth_api
     }
 }
 
-impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
+impl TraceApi {
     /// Access the underlying provider.
-    pub fn provider(&self) -> &ApiNode::Provider {
+    pub fn provider(&self) -> &BlockchainProvider {
         self.inner.eth_api.provider()
     }
 }
 
 // === impl TraceApi === //
 
-impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
+impl TraceApi {
     /// Executes the given call and returns a number of possible traces for it.
     pub async fn trace_call(
         &self,
@@ -272,7 +273,7 @@ impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
     }
 }
 
-impl<ApiNode: RpcNodeCore> TraceApi<BaseEthApi<ApiNode>> {
+impl TraceApi {
     /// Returns all transaction traces that match the given filter.
     ///
     /// This is similar to [`Self::trace_block`] but only returns traces for transactions that match
@@ -574,9 +575,7 @@ fn apply_trace_filter_pagination(
 }
 
 #[async_trait]
-impl<ApiNode: RpcNodeCore> TraceApiServer<BaseTransactionRequest>
-    for TraceApi<BaseEthApi<ApiNode>>
-{
+impl TraceApiServer<BaseTransactionRequest> for TraceApi {
     /// Executes the given call and returns a number of possible traces for it.
     ///
     /// Handler for `trace_call`
@@ -690,20 +689,20 @@ impl<ApiNode: RpcNodeCore> TraceApiServer<BaseTransactionRequest>
     }
 }
 
-impl<Eth> std::fmt::Debug for TraceApi<Eth> {
+impl std::fmt::Debug for TraceApi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TraceApi").finish_non_exhaustive()
     }
 }
-impl<Eth> Clone for TraceApi<Eth> {
+impl Clone for TraceApi {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
 }
 
-struct TraceApiInner<Eth> {
+struct TraceApiInner {
     /// Access to commonly used code of the `eth` namespace
-    eth_api: Eth,
+    eth_api: BaseEthApi,
     // restrict the number of concurrent calls to `trace_*`
     blocking_task_guard: BlockingTaskGuard,
     // eth config settings

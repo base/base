@@ -23,6 +23,7 @@ use base_execution_evm::{
 };
 use futures::Future;
 use reth_primitives_traits::Recovered;
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
     error::{AsEthApiError, FromEthApiError},
@@ -37,14 +38,14 @@ use revm::{
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 
-use crate::{BaseEthApi, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, FromEvmError};
 
 /// Result type for `eth_simulateV1` RPC method.
 pub type SimulatedBlocksResult<E> = Result<Vec<SimulatedBlock<BaseBlockResponse>>, E>;
 
 /// Execution related functions for the [`EthApiServer`](crate::EthApiServer) trait in
 /// the `eth_` namespace.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// `eth_simulateV1` executes an arbitrary number of transactions on top of the requested state.
     /// The transactions are packed into individual blocks. Overrides can be provided.
     ///
@@ -466,7 +467,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 }
 
 /// Executes code on state.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the max gas limit that the caller can afford given a transaction environment.
     pub fn caller_gas_allowance(
         &self,
@@ -641,7 +642,8 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
             self.spawn_with_state_at_block(parent_block, move |this, mut db| {
                 let block_txs = block.transactions_recovered();
 
-                let mut executor = RpcNodeCore::evm_config(&this)
+                let mut executor = this
+                    .evm_config()
                     .executor_for_block(&mut db, block.sealed_block())
                     .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;
@@ -657,7 +659,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
                         .map_err(BaseEthApiError::from_eth_err)?;
                 }
 
-                let tx_env = RpcNodeCore::evm_config(&this).tx_env(tx);
+                let tx_env = this.evm_config().tx_env(tx);
 
                 let res =
                     executor.evm_mut().transact(tx_env).map_err(BaseEthApiError::from_evm_err)?;
@@ -687,7 +689,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     where
         DB: Database<Error = EvmDatabaseError<ProviderError>> + DatabaseCommit,
         I: InspectorFor<DB>,
-        Txs: IntoIterator<Item = Recovered<&'a ProviderTx<N::Provider>>>,
+        Txs: IntoIterator<Item = Recovered<&'a ProviderTx<BlockchainProvider>>>,
     {
         for (index, tx) in transactions.into_iter().enumerate() {
             if index == target_tx_index {

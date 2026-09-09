@@ -7,7 +7,7 @@ mod filter;
 mod helpers;
 pub use helpers::*;
 mod node;
-pub use node::*;
+pub use node::BaseRpcContext;
 mod pubsub;
 #[cfg(feature = "client")]
 pub use core::EthApiClient;
@@ -25,7 +25,6 @@ pub use filter::{EthFilterApiServer, QueryLimits};
 #[cfg(feature = "client")]
 pub use helpers::EthConfigApiClient;
 pub use helpers::{BasePendingEnv, EthConfigApiServer};
-pub use node::{RpcNodeCore, RpcNodeCoreExt};
 pub use pubsub::EthPubSubApiServer;
 pub use reth_rpc_convert::*;
 pub use reth_rpc_eth_types::{

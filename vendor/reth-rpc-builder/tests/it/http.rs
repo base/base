@@ -3,8 +3,8 @@
 
 use std::collections::HashSet;
 
-use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::LenientBlockNumberOrTag};
-use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U64, U256, hex_literal::hex};
+use alloy_eips::{BlockId, BlockNumberOrTag, Encodable2718, eip1898::LenientBlockNumberOrTag};
+use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U64, U256};
 use alloy_rpc_types_eth::{
     Block, FeeHistory, Filter, Header, Index, Log, PendingTransactionFilterKind, SyncStatus,
     Transaction, TransactionReceipt, transaction::TransactionRequest,
@@ -160,7 +160,7 @@ async fn test_basic_admin_calls<C>(client: &C)
 where
     C: ClientT + SubscriptionClientT + Sync,
 {
-    let url = "enode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@10.3.58.6:30303?discport=30301";
+    let url = "enode://6f8a80d14311c39f35f516fa664deaaaa13e85b2f7493f37f6144d86991ec012937307647bd3b9a82abe2974e1407241d54947bbb39763a4cac9f77166ad92a0@127.0.0.1:9?discport=9";
     let node: NodeRecord = url.parse().unwrap();
 
     AdminApiClient::add_peer(client, node).await.unwrap();
@@ -184,9 +184,18 @@ where
     let call_request = TransactionRequest::default();
     let transaction_request = TransactionRequest::default();
     let bytes = Bytes::default();
-    let tx = Bytes::from(hex!(
-        "02f871018303579880850555633d1b82520894eee27662c2b8eba3cd936a23f039f3189633e4c887ad591c62bdaeb180c080a07ea72c68abfb8fca1bd964f0f99132ed9280261bdca3e549546c0205e800f7d0a05b4ef3039e9c9b9babc179a1878fb825b5aaf5aed2fa8744854150157b08d6f3"
-    ));
+    let tx = base_execution_txpool::test_utils::TransactionBuilder::default()
+        .signer(B256::repeat_byte(1))
+        .chain_id(8453)
+        .nonce(0)
+        .to(Address::repeat_byte(2))
+        .gas_limit(21_000)
+        .value(0)
+        .max_fee_per_gas(2_000_000_000)
+        .max_priority_fee_per_gas(1_000_000_000)
+        .into_eip1559()
+        .encoded_2718()
+        .into();
     let typed_data = serde_json::from_str(
         r#"{
         "types": {
@@ -449,7 +458,7 @@ where
         EthereumTxEnvelope<TxEip4844>,
     >::create_access_list(client, call_request.clone(), Some(block_number.into()), None)
     .await
-    .unwrap_err();
+    .unwrap();
     EthApiClient::<
         TransactionRequest,
         Transaction,
@@ -459,7 +468,7 @@ where
         EthereumTxEnvelope<TxEip4844>,
     >::estimate_gas(client, call_request.clone(), Some(block_number.into()), None, None)
     .await
-    .unwrap_err();
+    .unwrap();
     EthApiClient::<
         TransactionRequest,
         Transaction,
@@ -469,7 +478,7 @@ where
         EthereumTxEnvelope<TxEip4844>,
     >::call(client, call_request.clone(), Some(block_number.into()), None, None)
     .await
-    .unwrap_err();
+    .unwrap();
     EthApiClient::<
         TransactionRequest,
         Transaction,
@@ -529,7 +538,7 @@ where
         EthereumTxEnvelope<TxEip4844>,
     >::gas_price(client)
     .await
-    .unwrap_err();
+    .unwrap();
     EthApiClient::<
         TransactionRequest,
         Transaction,
@@ -539,7 +548,7 @@ where
         EthereumTxEnvelope<TxEip4844>,
     >::max_priority_fee_per_gas(client)
     .await
-    .unwrap_err();
+    .unwrap();
     EthApiClient::<
         TransactionRequest,
         Transaction,
@@ -623,7 +632,7 @@ async fn test_basic_debug_calls<C>(client: &C)
 where
     C: ClientT + SubscriptionClientT + Sync,
 {
-    let block_id = BlockId::Number(BlockNumberOrTag::default());
+    let block_id = BlockId::number(1);
 
     DebugApiClient::<TransactionRequest>::raw_header(client, block_id).await.unwrap_err();
     DebugApiClient::<TransactionRequest>::raw_block(client, block_id).await.unwrap_err();
@@ -684,7 +693,7 @@ async fn test_basic_trace_calls<C>(client: &C)
 where
     C: ClientT + SubscriptionClientT + Sync,
 {
-    let block_id = BlockId::Number(BlockNumberOrTag::default());
+    let block_id = BlockId::number(1);
     let trace_filter = TraceFilter {
         from_block: Default::default(),
         to_block: Default::default(),
@@ -703,13 +712,16 @@ where
     )
     .await
     .unwrap_err();
-    TraceApiClient::<TransactionRequest>::trace_call_many(
-        client,
-        vec![],
-        Some(BlockNumberOrTag::Latest.into()),
-    )
-    .await
-    .unwrap_err();
+    assert!(
+        TraceApiClient::<TransactionRequest>::trace_call_many(
+            client,
+            vec![],
+            Some(BlockNumberOrTag::Latest.into()),
+        )
+        .await
+        .unwrap()
+        .is_empty()
+    );
     TraceApiClient::<TransactionRequest>::replay_transaction(
         client,
         B256::default(),
@@ -748,7 +760,7 @@ where
     let address = Address::default();
     let sender = Address::default();
     let tx_hash = TxHash::default();
-    let block_number = 1;
+    let block_number = 0;
     let page_number = 1;
     let page_size = 10;
     let nonce = 1;
@@ -779,10 +791,10 @@ where
         LenientBlockNumberOrTag::new(BlockNumberOrTag::Number(block_number)),
     )
     .await
-    .unwrap_err();
+    .unwrap();
     OtterscanClient::<Transaction, Header>::get_block_details(client, Default::default())
         .await
-        .unwrap_err();
+        .unwrap();
 
     OtterscanClient::<Transaction, Header>::get_block_details_by_hash(client, block_hash)
         .await
@@ -795,7 +807,6 @@ where
         page_size,
     )
     .await
-    .err()
     .unwrap();
 
     assert!(is_unimplemented(
@@ -1147,7 +1158,7 @@ async fn test_eth_get_code_rpc_call() {
         "eth_getCode",
         rpc_params![
             "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
-            "0x2" // 2
+            "0x0" // genesis
         ],
     )
     .await;
@@ -1751,7 +1762,7 @@ async fn test_eth_get_balance_rpc_call() {
     let client = handle.http_client().unwrap();
 
     // Vec of block number items
-    let block_number = vec!["latest", "earliest", "pending", "0x2"];
+    let block_number = vec!["latest", "earliest", "pending", "0x0"];
 
     // Iterate over test cases
     for param in block_number {
@@ -1801,7 +1812,7 @@ async fn test_eth_get_storage_at_rpc_call() {
     let client = handle.http_client().unwrap();
 
     // Vec of block number items
-    let block_number = vec!["latest", "earliest", "pending", "0x2"];
+    let block_number = vec!["latest", "earliest", "pending", "0x0"];
 
     // Iterate over test cases
     for param in block_number {
@@ -1867,7 +1878,7 @@ async fn test_eth_get_transaction_count_rpc_call() {
     let client = handle.http_client().unwrap();
 
     // Vec of block number items
-    let block_number = vec!["latest", "earliest", "pending", "0x2"];
+    let block_number = vec!["latest", "earliest", "pending", "0x0"];
 
     // Iterate over test cases
     for param in block_number {

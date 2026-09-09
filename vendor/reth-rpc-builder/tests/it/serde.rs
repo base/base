@@ -27,5 +27,9 @@ async fn test_eth_balance_serde() {
 
     let params = RawRpcParams(RawValue::from_string(req.params.unwrap().to_string()).unwrap());
 
-    client.request::<U256, _>("eth_getBalance", params).await.unwrap();
+    let error = client
+        .request::<U256, _>("eth_getBalance", params)
+        .await
+        .expect_err("fixture has no block with this hash");
+    assert!(error.to_string().contains("block not found"), "{error}");
 }

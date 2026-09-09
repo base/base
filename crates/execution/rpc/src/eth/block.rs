@@ -4,9 +4,9 @@ use alloy_eips::BlockId;
 use base_common_rpc_types::{BaseBlockResponse, BaseHeaderResponse};
 use reth_primitives_traits::AlloyBlockHeader;
 
-use crate::{BaseEthApi, BaseEthApiError, RpcNodeCore};
+use crate::{BaseEthApi, BaseEthApiError};
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     pub async fn rpc_block_header(
         &self,
         block_id: BlockId,

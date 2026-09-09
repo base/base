@@ -10,12 +10,12 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::logs_utils;
 use tracing::error;
 
-use crate::{BaseEthApi, RpcNodeCore};
+use crate::BaseEthApi;
 
 /// Provides streams subscriptions for `eth_subscribe`.
 ///
 /// Override the default methods to inject additional data sources (e.g. flashblocks).
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns a stream that yields matching logs from canonical chain updates.
     pub fn log_stream(
         &self,

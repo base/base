@@ -7,23 +7,23 @@ use base_execution_trie::{
 use reth_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 use reth_rpc_eth_types::EthApiError;
 
-use crate::{BaseEthApi, RpcNodeCore};
+use crate::BaseEthApi;
 
 /// Creates a factory for state providers using external proofs storage.
 #[derive(Debug)]
-pub struct BaseStateProviderFactory<Eth, P> {
-    eth_api: Eth,
+pub struct BaseStateProviderFactory<P> {
+    eth_api: BaseEthApi,
     preimage_store: BaseProofsStorage<P>,
 }
 
-impl<ApiNode: RpcNodeCore, P> BaseStateProviderFactory<BaseEthApi<ApiNode>, P> {
+impl<P> BaseStateProviderFactory<P> {
     /// Creates a new state provider factory.
-    pub const fn new(eth_api: BaseEthApi<ApiNode>, preimage_store: BaseProofsStorage<P>) -> Self {
+    pub const fn new(eth_api: BaseEthApi, preimage_store: BaseProofsStorage<P>) -> Self {
         Self { eth_api, preimage_store }
     }
 }
 
-impl<'a, ApiNode: RpcNodeCore, P> BaseStateProviderFactory<BaseEthApi<ApiNode>, P>
+impl<'a, P> BaseStateProviderFactory<P>
 where
     P: BaseProofsStore + Clone + 'a,
 {

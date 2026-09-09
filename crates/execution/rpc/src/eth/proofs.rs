@@ -13,7 +13,9 @@ use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::{ErrorCode, ErrorObject};
 use reth_provider::StateProofProvider;
 
-use crate::{BaseEthApi, RpcNodeCore, metrics::EthApiExtMetrics, state::BaseStateProviderFactory};
+use crate::{
+    BaseEthApi, BaseEthApiError, metrics::EthApiExtMetrics, state::BaseStateProviderFactory,
+};
 
 /// Maximum number of storage keys accepted in a single `eth_getProof` request. Matches go-ethereum.
 pub const MAX_PROOF_KEYS: usize = 1024;
@@ -52,22 +54,22 @@ pub trait EthApiOverride {
 
 #[derive(Debug)]
 /// Overrides applied to the `eth_` namespace of the RPC API for historical proofs `ExEx`.
-pub struct EthApiExt<Eth, P> {
-    state_provider_factory: BaseStateProviderFactory<Eth, P>,
+pub struct EthApiExt<P> {
+    state_provider_factory: BaseStateProviderFactory<P>,
 }
 
-impl<ApiNode: RpcNodeCore, P> EthApiExt<BaseEthApi<ApiNode>, P>
+impl<P> EthApiExt<P>
 where
     P: BaseProofsStore + Clone + 'static,
 {
     /// Creates a new instance of the `EthApiExt`.
-    pub const fn new(eth_api: BaseEthApi<ApiNode>, preimage_store: BaseProofsStorage<P>) -> Self {
+    pub const fn new(eth_api: BaseEthApi, preimage_store: BaseProofsStorage<P>) -> Self {
         Self { state_provider_factory: BaseStateProviderFactory::new(eth_api, preimage_store) }
     }
 }
 
 #[async_trait]
-impl<ApiNode: RpcNodeCore, P> EthApiOverrideServer for EthApiExt<BaseEthApi<ApiNode>, P>
+impl<P> EthApiOverrideServer for EthApiExt<P>
 where
     P: BaseProofsStore + Clone + 'static,
 {
@@ -90,9 +92,9 @@ where
                 .state_provider_factory
                 .state_provider(block_number)
                 .await
-                .map_err(crate::BaseEthApiError::from)?
+                .map_err(BaseEthApiError::from)?
                 .proof(Default::default(), address, &storage_keys)
-                .map_err(crate::BaseEthApiError::from)?;
+                .map_err(BaseEthApiError::from)?;
 
             Ok(proof.into_eip1186_response(keys))
         }

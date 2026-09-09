@@ -59,6 +59,7 @@ base-observability-events = { workspace = true }
 http = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
+reth-db-common = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 reth-tasks = { workspace = true, features = ["rayon"] }
 serde_json = { workspace = true, features = ["alloc"] }
@@ -100,12 +101,14 @@ base-execution-txpool = { workspace = true, features = ["default"], optional = f
 revm = {workspace = true,features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"]}
 [dev-dependencies]
 reth-db-api = { workspace = true }
+reth-db-common = { workspace = true }
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 reth-tasks = { workspace = true, features = ["test-utils"] }
+reth-network = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-common-consensus = {workspace = true, features = ["serde"]}
 base-common-rpc-types = { workspace = true, features = ["reth"] }
@@ -126,5 +129,10 @@ metrics = [
     "base-observability-events/metrics",
     "base-execution-evm/metrics",
 ]
-test-utils = ["base-execution-evm/test-utils"]
+test-utils = [
+    "base-execution-evm/test-utils",
+    "reth-provider/test-utils",
+    "reth-network/test-utils",
+    "dep:reth-db-common",
+]
 js-tracer = ["revm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer"]

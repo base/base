@@ -1,9 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use base_execution_consensus::BaseBeaconConsensus;
-use base_execution_evm::BaseEvmConfig;
-use reth_network_api::noop::NoopNetwork;
-use reth_provider::test_utils::NoopProvider;
+use reth_primitives_traits::SignedTransaction;
 use reth_rpc_builder::{
     RpcModuleBuilder, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
 };
@@ -18,7 +16,7 @@ pub const fn test_address() -> SocketAddr {
 
 /// Launches a new server with http only with the given modules
 pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder();
+    let builder = test_rpc_builder().await;
     let eth_api = builder.eth_api_builder().build();
     let server =
         builder.build(TransportRpcModuleConfig::set_http(modules), eth_api, EventSender::new(1));
@@ -31,7 +29,7 @@ pub async fn launch_http(modules: impl Into<RpcModuleSelection>) -> RpcServerHan
 
 /// Launches a new server with ws only with the given modules
 pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder();
+    let builder = test_rpc_builder().await;
     let eth_api = builder.eth_api_builder().build();
     let server =
         builder.build(TransportRpcModuleConfig::set_ws(modules), eth_api, EventSender::new(1));
@@ -44,7 +42,7 @@ pub async fn launch_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandl
 
 /// Launches a new server with http and ws and with the given modules
 pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder();
+    let builder = test_rpc_builder().await;
     let eth_api = builder.eth_api_builder().build();
     let modules = modules.into();
     let server = builder.build(
@@ -64,7 +62,7 @@ pub async fn launch_http_ws(modules: impl Into<RpcModuleSelection>) -> RpcServer
 
 /// Launches a new server with http and ws and with the given modules on the same port.
 pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) -> RpcServerHandle {
-    let builder = test_rpc_builder();
+    let builder = test_rpc_builder().await;
     let modules = modules.into();
     let eth_api = builder.eth_api_builder().build();
     let server = builder.build(
@@ -83,13 +81,32 @@ pub async fn launch_http_ws_same_port(modules: impl Into<RpcModuleSelection>) ->
 }
 
 /// Returns an [`RpcModuleBuilder`] with testing components.
-pub fn test_rpc_builder()
--> RpcModuleBuilder<NoopProvider, base_execution_rpc::test_utils::TestPool, NoopNetwork> {
-    RpcModuleBuilder::default()
-        .with_provider(NoopProvider::default())
-        .with_pool(base_execution_rpc::test_utils::RpcTestUtils::pool())
-        .with_network(NoopNetwork::default())
-        .with_executor(Runtime::test())
-        .with_evm_config(BaseEvmConfig::default())
-        .with_consensus(BaseBeaconConsensus::noop())
+pub async fn test_rpc_builder() -> RpcModuleBuilder {
+    let mock = reth_provider::test_utils::MockEthProvider::default();
+    let transaction = base_execution_txpool::test_utils::TransactionBuilder::default()
+        .signer(alloy_primitives::B256::repeat_byte(1))
+        .into_eip1559();
+    let sender = transaction.try_into_recovered().unwrap().signer();
+    mock.add_account(
+        sender,
+        reth_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
+    );
+    let mut context = base_execution_rpc::test_utils::RpcTestUtils::context(mock);
+    let manager = reth_network::NetworkConfig::builder_with_rng_secret_key(Runtime::test())
+        .disable_discovery()
+        .listener_addr(test_address())
+        .build(context.provider.clone())
+        .manager()
+        .await
+        .expect("local fixture network");
+    context.network = manager.handle().clone();
+    tokio::spawn(manager);
+    RpcModuleBuilder::new(
+        context.provider,
+        context.pool,
+        context.network,
+        Runtime::test(),
+        context.evm_config,
+        std::sync::Arc::new(BaseBeaconConsensus::noop()),
+    )
 }

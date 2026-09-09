@@ -1,23 +1,23 @@
-use base_execution_rpc::{BaseEthApi, EthFilter, EthPubSub, RpcNodeCore};
+use base_execution_rpc::{BaseEthApi, EthFilter, EthPubSub};
 use reth_rpc_eth_types::EthConfig;
 use reth_tasks::Runtime;
 
 /// Handlers for core, filter and pubsub `eth` namespace APIs.
 #[derive(Debug, Clone)]
-pub struct EthHandlers<EthApi: RpcNodeCore> {
+pub struct EthHandlers {
     /// Main `eth_` request handler
-    pub api: EthApi,
+    pub api: BaseEthApi,
     /// Polling based filter handler available on all transports
-    pub filter: EthFilter<EthApi>,
+    pub filter: EthFilter,
     /// Handler for subscriptions only available for transports that support it (ws, ipc)
-    pub pubsub: EthPubSub<EthApi>,
+    pub pubsub: EthPubSub,
 }
 
-impl<ApiNode: RpcNodeCore> EthHandlers<BaseEthApi<ApiNode>> {
+impl EthHandlers {
     /// Returns a new instance with the additional handlers for the `eth` namespace.
     ///
     /// This will spawn all necessary tasks for the additional handlers.
-    pub fn bootstrap(config: EthConfig, executor: Runtime, eth_api: BaseEthApi<ApiNode>) -> Self {
+    pub fn bootstrap(config: EthConfig, executor: Runtime, eth_api: BaseEthApi) -> Self {
         let filter = EthFilter::new(eth_api.clone(), config.filter_config(), executor.clone());
 
         let pubsub = EthPubSub::new(eth_api.clone(), executor);

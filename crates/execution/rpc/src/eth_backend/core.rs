@@ -1,4 +1,4 @@
-//! Implementation of the [`jsonrpsee`] generated [`EthApiServer`](crate::BaseEthApi) trait
+//! Implementation of the [`jsonrpsee`] generated [`EthApiServer`](BaseEthApi) trait
 //! Handles RPC requests for the `eth_` namespace.
 
 use std::{sync::Arc, time::Duration};
@@ -11,6 +11,8 @@ use base_execution_evm::BaseEvmConfig;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };
+use base_node_context::BaseNodePool;
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind,
@@ -22,13 +24,13 @@ use reth_tasks::{
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 
-use crate::{BaseRpcConverter, BaseTimeCache, RpcNodeCore, SequencerClient, SignersForRpc};
+use crate::{BaseRpcContext, BaseRpcConverter, BaseTimeCache, SequencerClient, SignersForRpc};
 
 const DEFAULT_BROADCAST_CAPACITY: usize = 2000;
 
 /// Container type `BaseEthApi`
 #[expect(missing_debug_implementations)]
-pub struct BaseEthApiInner<N: RpcNodeCore> {
+pub struct BaseEthApiInner {
     /// Configured sequencer transaction forwarder.
     pub sequencer_client: Option<SequencerClient>,
     /// Minimum priority fee for Base gas suggestions.
@@ -36,13 +38,13 @@ pub struct BaseEthApiInner<N: RpcNodeCore> {
     /// Validated BaseTime timestamp cache.
     pub base_time: BaseTimeCache,
     /// The components of the node.
-    components: N,
+    components: BaseRpcContext,
     /// All configured Signers
-    signers: SignersForRpc<N::Provider>,
+    signers: SignersForRpc<BlockchainProvider>,
     /// The async cache frontend for eth related data
     eth_cache: EthStateCache,
     /// The async gas oracle frontend for gas price suggestions
-    gas_oracle: GasPriceOracle<N::Provider>,
+    gas_oracle: GasPriceOracle<BlockchainProvider>,
     /// Maximum gas limit for `eth_call` and call tracing RPC methods.
     gas_cap: u64,
     /// Maximum number of blocks for `eth_simulateV1`.
@@ -75,7 +77,7 @@ pub struct BaseEthApiInner<N: RpcNodeCore> {
     raw_tx_forwarder: Option<RpcClient>,
 
     /// Converter for RPC types.
-    converter: BaseRpcConverter<N::Provider>,
+    converter: BaseRpcConverter<BlockchainProvider>,
 
     /// Builder for pending block environment.
 
@@ -98,16 +100,13 @@ pub struct BaseEthApiInner<N: RpcNodeCore> {
     force_blob_sidecar_upcasting: bool,
 }
 
-impl<N> BaseEthApiInner<N>
-where
-    N: RpcNodeCore,
-{
+impl BaseEthApiInner {
     /// Creates a new, shareable instance using the default tokio task spawner.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        components: N,
+        components: BaseRpcContext,
         eth_cache: EthStateCache,
-        gas_oracle: GasPriceOracle<N::Provider>,
+        gas_oracle: GasPriceOracle<BlockchainProvider>,
         gas_cap: impl Into<GasCap>,
         max_simulate_blocks: u64,
         compute_state_root_for_eth_simulate: bool,
@@ -116,7 +115,7 @@ where
         fee_history_cache: FeeHistoryCache,
         task_spawner: Runtime,
         proof_permits: usize,
-        converter: BaseRpcConverter<N::Provider>,
+        converter: BaseRpcConverter<BlockchainProvider>,
 
         max_batch_size: usize,
         max_blocking_io_requests: usize,
@@ -130,7 +129,7 @@ where
         // get the block number of the latest block
         let starting_block = U256::from(
             components
-                .provider()
+                .provider
                 .header_by_number_or_tag(BlockNumberOrTag::Latest)
                 .ok()
                 .flatten()
@@ -142,7 +141,7 @@ where
 
         // Create tx pool insertion batcher
         let (processor, tx_batch_sender) =
-            BatchTxProcessor::new(components.pool().clone(), max_batch_size);
+            BatchTxProcessor::new(components.pool.clone(), max_batch_size);
         task_spawner.spawn_critical_task("tx-batcher", processor);
 
         Self {
@@ -178,19 +177,16 @@ where
     }
 }
 
-impl<N> BaseEthApiInner<N>
-where
-    N: RpcNodeCore,
-{
+impl BaseEthApiInner {
     /// Returns a handle to data on disk.
     #[inline]
-    pub fn provider(&self) -> &N::Provider {
-        self.components.provider()
+    pub fn provider(&self) -> &BlockchainProvider {
+        &self.components.provider
     }
 
     /// Returns a handle to the transaction response builder.
     #[inline]
-    pub const fn converter(&self) -> &BaseRpcConverter<N::Provider> {
+    pub const fn converter(&self) -> &BaseRpcConverter<BlockchainProvider> {
         &self.converter
     }
 
@@ -223,13 +219,13 @@ where
     /// Returns a handle to the EVM config.
     #[inline]
     pub fn evm_config(&self) -> &BaseEvmConfig {
-        self.components.evm_config()
+        &self.components.evm_config
     }
 
     /// Returns a handle to the transaction pool.
     #[inline]
-    pub fn pool(&self) -> &N::Pool {
-        self.components.pool()
+    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+        &self.components.pool
     }
 
     /// Returns the gas cap.
@@ -252,7 +248,7 @@ where
 
     /// Returns a handle to the gas oracle.
     #[inline]
-    pub const fn gas_oracle(&self) -> &GasPriceOracle<N::Provider> {
+    pub const fn gas_oracle(&self) -> &GasPriceOracle<BlockchainProvider> {
         &self.gas_oracle
     }
 
@@ -264,7 +260,7 @@ where
 
     /// Returns a handle to the signers.
     #[inline]
-    pub const fn signers(&self) -> &SignersForRpc<N::Provider> {
+    pub const fn signers(&self) -> &SignersForRpc<BlockchainProvider> {
         &self.signers
     }
 
@@ -276,8 +272,8 @@ where
 
     /// Returns the inner `Network`
     #[inline]
-    pub fn network(&self) -> &N::Network {
-        self.components.network()
+    pub fn network(&self) -> &reth_network::NetworkHandle {
+        &self.components.network
     }
 
     /// The maximum number of blocks into the past for generating state proofs.
@@ -375,51 +371,20 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, Signature, U64};
     use alloy_rpc_types::FeeHistory;
-    use alloy_rpc_types_eth::{Bundle, TransactionRequest};
-    use base_common_consensus::{
-        BaseBlock, BaseReceipt, BaseTxEnvelope, BaseTxEnvelope as TransactionSigned, Block,
-        BlockBody, Header,
-    };
+    use alloy_rpc_types_eth::{Bundle, StateContext, TransactionRequest};
+    use base_common_consensus::{BaseTxEnvelope as TransactionSigned, Block, BlockBody, Header};
     use base_execution_chainspec::ChainSpecProvider;
-    use base_execution_evm::BaseEvmConfig;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
-    use reth_chain_state::CanonStateSubscriptions;
-    use reth_network_api::noop::NoopNetwork;
-    use reth_provider::{
-        PruneCheckpointReader, StageCheckpointReader,
-        test_utils::{MockEthProvider, NoopProvider},
-    };
-    use reth_storage_api::{BalProvider, BlockReader, BlockReaderIdExt, StateProviderFactory};
+    use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators;
 
-    use crate::{BaseEthApi, EthApiServer, RpcNodeCoreAdapter};
+    use crate::{BaseEthApi, EthApiServer};
 
-    type FakeEthApi<P = MockEthProvider> =
-        BaseEthApi<RpcNodeCoreAdapter<P, crate::test_utils::TestPool, NoopNetwork>>;
+    type FakeEthApi = BaseEthApi;
 
-    fn build_test_eth_api<
-        P: BlockReaderIdExt<Block = BaseBlock, Receipt = BaseReceipt, Transaction = BaseTxEnvelope>
-            + BlockReader
-            + ChainSpecProvider
-            + StateProviderFactory
-            + CanonStateSubscriptions
-            + StageCheckpointReader
-            + PruneCheckpointReader
-            + BalProvider
-            + Unpin
-            + Clone
-            + 'static,
-    >(
-        provider: P,
-    ) -> FakeEthApi<P> {
-        crate::test_utils::RpcTestUtils::api_builder(
-            provider.clone(),
-            crate::test_utils::RpcTestUtils::pool(),
-            NoopNetwork::default(),
-            BaseEvmConfig::new(provider.chain_spec()),
-        )
-        .build()
+    fn build_test_eth_api(provider: MockEthProvider) -> FakeEthApi {
+        crate::test_utils::RpcTestUtils::api_builder(provider.clone()).build()
     }
 
     // Function to prepare the BaseEthApi with mock data
@@ -513,17 +478,18 @@ mod tests {
 
     /// Invalid block range
     #[tokio::test]
-    async fn test_fee_history_empty() {
-        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
-            &build_test_eth_api(NoopProvider::default()),
+    async fn test_fee_history_genesis() {
+        let response = <BaseEthApi as EthApiServer<_, _, _, _, _, _>>::fee_history(
+            &build_test_eth_api(MockEthProvider::default()),
             U64::from(1),
             BlockNumberOrTag::Latest,
             None,
         )
         .await;
-        assert!(response.is_err());
-        let error_object = response.unwrap_err();
-        assert_eq!(error_object.code(), INVALID_PARAMS_CODE);
+        let response = response.expect("genesis fee history");
+        assert_eq!(response.oldest_block, 0);
+        assert_eq!(response.base_fee_per_gas.len(), 2);
+        assert_eq!(response.gas_used_ratio, vec![0.0]);
     }
 
     #[tokio::test]
@@ -536,7 +502,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(newest_block + 1),
             newest_block.into(),
@@ -559,7 +525,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(1),
             (newest_block + 1000).into(),
@@ -573,23 +539,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_call_many_maps_provider_block_lookup_error_with_eth_api_conversion() {
+    async fn test_call_many_reports_missing_block_number() {
         let eth_api = build_test_eth_api(MockEthProvider::default());
         let bundles = vec![Bundle {
             transactions: vec![TransactionRequest::default().into()],
             block_override: None,
         }];
 
-        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(
-            &eth_api, bundles, None, None,
+        let response = <BaseEthApi as EthApiServer<_, _, _, _, _, _>>::call_many(
+            &eth_api,
+            bundles,
+            Some(StateContext {
+                block_number: Some(BlockNumberOrTag::Number(100).into()),
+                ..Default::default()
+            }),
+            None,
         )
         .await;
 
-        let err = response.expect_err("call_many should fail when latest block lookup errors");
+        let err =
+            response.expect_err("call_many should fail when requested block number is missing");
         let message = err.message().to_ascii_lowercase();
         assert!(
             message.contains("block not found"),
-            "best block lookup should map via EthApiError::from(ProviderError): {message}"
+            "missing block number should map to block-not-found: {message}"
         );
         assert!(
             !message.contains("best block does not exist"),
@@ -599,19 +572,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_many_keeps_header_not_found_when_block_hash_absent() {
-        let eth_api = build_test_eth_api(NoopProvider::default());
+        let eth_api = build_test_eth_api(MockEthProvider::default());
         let bundles = vec![Bundle {
             transactions: vec![TransactionRequest::default().into()],
             block_override: None,
         }];
 
-        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::call_many(
-            &eth_api, bundles, None, None,
+        let response = <BaseEthApi as EthApiServer<_, _, _, _, _, _>>::call_many(
+            &eth_api,
+            bundles,
+            Some(StateContext {
+                block_number: Some(B256::repeat_byte(42).into()),
+                ..Default::default()
+            }),
+            None,
         )
         .await;
 
         let err =
-            response.expect_err("call_many should fail when latest block hash is unavailable");
+            response.expect_err("call_many should fail when requested block hash is unavailable");
         let message = err.message().to_ascii_lowercase();
         assert!(
             message.contains("block not found"),
@@ -629,7 +608,7 @@ mod tests {
         let (eth_api, _, _) =
             prepare_eth_api(newest_block, oldest_block, block_count, MockEthProvider::default());
 
-        let response = <BaseEthApi<_> as EthApiServer<_, _, _, _, _, _>>::fee_history(
+        let response = <BaseEthApi as EthApiServer<_, _, _, _, _, _>>::fee_history(
             &eth_api,
             U64::from(0),
             newest_block.into(),

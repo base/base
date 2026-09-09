@@ -6,7 +6,6 @@ use alloy_rpc_types_engine::ForkchoiceState;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use base_common_consensus::BlockHeader;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
-use base_execution_rpc::BaseEthApi;
 use base_node_core::FullNode;
 use eyre::Ok;
 use futures_util::Future;
@@ -32,7 +31,7 @@ pub struct NodeTestContext {
     /// Context for testing network functionalities.
     pub network: NetworkTestContext<reth_network::NetworkHandle>,
     /// Context for testing RPC features.
-    pub rpc: RpcTestContext<BaseEthApi<base_node_context::BaseNodeContext>>,
+    pub rpc: RpcTestContext,
     /// Canonical state events.
     pub canonical_stream: CanonStateNotificationStream,
 }

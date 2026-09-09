@@ -129,12 +129,7 @@ impl NodeBuilderWithComponents {
     /// Sets the hook that is run once the rpc server is started.
     pub fn on_rpc_started<F>(self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, base_execution_rpc::BaseEthApi<BaseNodeContext>>,
-                RethRpcServerHandles,
-            ) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
     {
         self.map_add_ons(|mut add_ons| {
             add_ons.rpc_add_ons.hooks.set_on_rpc_started(hook);
@@ -145,11 +140,7 @@ impl NodeBuilderWithComponents {
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, base_execution_rpc::BaseEthApi<BaseNodeContext>>,
-            ) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
     {
         self.map_add_ons(|mut add_ons| {
             add_ons.rpc_add_ons.hooks.set_extend_rpc_modules(hook);

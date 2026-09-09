@@ -18,27 +18,27 @@ use reth_rpc_eth_types::{
 use reth_tasks::pool::BlockingTaskGuard;
 use revm::{DatabaseCommit, DatabaseRef};
 
-use crate::{BaseEthApi, EthCallBundleApiServer, FromEthApiError, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, EthCallBundleApiServer, FromEthApiError, FromEvmError};
 
 /// `Eth` bundle implementation.
-pub struct EthBundle<Eth> {
+pub struct EthBundle {
     /// All nested fields bundled together.
-    inner: Arc<EthBundleInner<Eth>>,
+    inner: Arc<EthBundleInner>,
 }
 
-impl<ApiNode: RpcNodeCore> EthBundle<BaseEthApi<ApiNode>> {
+impl EthBundle {
     /// Create a new `EthBundle` instance.
-    pub fn new(eth_api: BaseEthApi<ApiNode>, blocking_task_guard: BlockingTaskGuard) -> Self {
+    pub fn new(eth_api: BaseEthApi, blocking_task_guard: BlockingTaskGuard) -> Self {
         Self { inner: Arc::new(EthBundleInner { eth_api, blocking_task_guard }) }
     }
 
     /// Access the underlying `BaseEthApi<ApiNode>` API.
-    pub fn eth_api(&self) -> &BaseEthApi<ApiNode> {
+    pub fn eth_api(&self) -> &BaseEthApi {
         &self.inner.eth_api
     }
 }
 
-impl<ApiNode: RpcNodeCore> EthBundle<BaseEthApi<ApiNode>> {
+impl EthBundle {
     /// Simulates a bundle of transactions at the top of a given block number with the state of
     /// another (or the same) block. This can be used to simulate future blocks with the current
     /// state, or it can be used to simulate a past block. The sender is responsible for signing the
@@ -241,7 +241,7 @@ impl<ApiNode: RpcNodeCore> EthBundle<BaseEthApi<ApiNode>> {
 }
 
 #[async_trait::async_trait]
-impl<ApiNode: RpcNodeCore> EthCallBundleApiServer for EthBundle<BaseEthApi<ApiNode>> {
+impl EthCallBundleApiServer for EthBundle {
     async fn call_bundle(&self, request: EthCallBundle) -> RpcResult<EthCallBundleResponse> {
         Self::call_bundle(self, request).await.map_err(Into::into)
     }
@@ -249,21 +249,21 @@ impl<ApiNode: RpcNodeCore> EthCallBundleApiServer for EthBundle<BaseEthApi<ApiNo
 
 /// Container type for `EthBundle` internals
 #[derive(Debug)]
-struct EthBundleInner<Eth> {
+struct EthBundleInner {
     /// Access to commonly used code of the `eth` namespace
-    eth_api: Eth,
+    eth_api: BaseEthApi,
     // restrict the number of concurrent tracing calls.
     #[expect(dead_code)]
     blocking_task_guard: BlockingTaskGuard,
 }
 
-impl<Eth> std::fmt::Debug for EthBundle<Eth> {
+impl std::fmt::Debug for EthBundle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EthBundle").finish_non_exhaustive()
     }
 }
 
-impl<Eth> Clone for EthBundle<Eth> {
+impl Clone for EthBundle {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }

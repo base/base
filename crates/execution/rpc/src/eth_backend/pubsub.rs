@@ -27,28 +27,28 @@ use tokio_stream::{
 };
 use tracing::error;
 
-use crate::{BaseEthApi, EthPubSubApiServer, RpcNodeCore};
+use crate::{BaseEthApi, EthPubSubApiServer};
 
 /// `Eth` pubsub RPC implementation.
 ///
 /// This handles `eth_subscribe` RPC calls.
 #[derive(Clone)]
-pub struct EthPubSub<Eth> {
+pub struct EthPubSub {
     /// All nested fields bundled together.
-    inner: Arc<EthPubSubInner<Eth>>,
+    inner: Arc<EthPubSubInner>,
 }
 
 // === impl EthPubSub ===
 
-impl<ApiNode: RpcNodeCore> EthPubSub<BaseEthApi<ApiNode>> {
+impl EthPubSub {
     /// Creates a new, shareable instance.
-    pub fn new(eth_api: BaseEthApi<ApiNode>, subscription_task_spawner: Runtime) -> Self {
+    pub fn new(eth_api: BaseEthApi, subscription_task_spawner: Runtime) -> Self {
         let inner = EthPubSubInner { eth_api, subscription_task_spawner };
         Self { inner: Arc::new(inner) }
     }
 }
 
-impl<ApiNode: RpcNodeCore> EthPubSub<BaseEthApi<ApiNode>> {
+impl EthPubSub {
     /// Returns the current sync status for the `syncing` subscription
     pub fn sync_status(&self, is_syncing: bool) -> PubSubSyncStatus {
         self.inner.sync_status(is_syncing)
@@ -203,9 +203,7 @@ impl<ApiNode: RpcNodeCore> EthPubSub<BaseEthApi<ApiNode>> {
 }
 
 #[async_trait::async_trait]
-impl<ApiNode: RpcNodeCore> EthPubSubApiServer<base_common_rpc_types::Transaction>
-    for EthPubSub<BaseEthApi<ApiNode>>
-{
+impl EthPubSubApiServer<base_common_rpc_types::Transaction> for EthPubSub {
     /// Handler for `eth_subscribe`
     async fn subscribe(
         &self,
@@ -277,7 +275,7 @@ where
     }
 }
 
-impl<Eth> std::fmt::Debug for EthPubSub<Eth> {
+impl std::fmt::Debug for EthPubSub {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EthPubSub").finish_non_exhaustive()
     }
@@ -285,16 +283,16 @@ impl<Eth> std::fmt::Debug for EthPubSub<Eth> {
 
 /// Container type `EthPubSub`
 #[derive(Clone)]
-struct EthPubSubInner<EthApi> {
+struct EthPubSubInner {
     /// The `eth` API.
-    eth_api: EthApi,
+    eth_api: BaseEthApi,
     /// The type that's used to spawn subscription tasks.
     subscription_task_spawner: Runtime,
 }
 
 // == impl EthPubSubInner ===
 
-impl<ApiNode: RpcNodeCore> EthPubSubInner<BaseEthApi<ApiNode>> {
+impl EthPubSubInner {
     /// Returns the current sync status for the `syncing` subscription
     fn sync_status(&self, is_syncing: bool) -> PubSubSyncStatus {
         if is_syncing {
@@ -316,7 +314,7 @@ impl<ApiNode: RpcNodeCore> EthPubSubInner<BaseEthApi<ApiNode>> {
     }
 }
 
-impl<ApiNode: RpcNodeCore> EthPubSubInner<BaseEthApi<ApiNode>> {
+impl EthPubSubInner {
     /// Returns a stream that yields all transaction hashes emitted by the txpool.
     fn pending_transaction_hashes_stream(&self) -> impl Stream<Item = TxHash> {
         ReceiverStream::new(self.eth_api.pool().pending_transactions_listener())

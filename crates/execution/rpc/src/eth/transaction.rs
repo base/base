@@ -14,17 +14,18 @@ use base_observability_events::{
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{SignerRecoverable, WithEncoded};
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use reth_storage_api::{BlockReaderIdExt, ProviderTx, TransactionsProvider};
 use tracing::{debug, instrument, warn};
 
 use crate::{
-    BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, FromEthApiError, RpcNodeCore,
-    SequencerClient, SignersForRpc,
+    BaseEthApi, BaseEthApiError, BaseInvalidTransactionError, FromEthApiError, SequencerClient,
+    SignersForRpc,
 };
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
-    pub fn signers(&self) -> &SignersForRpc<N::Provider> {
+impl BaseEthApi {
+    pub fn signers(&self) -> &SignersForRpc<BlockchainProvider> {
         self.inner.signers()
     }
 
@@ -161,11 +162,11 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     }
 }
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     pub async fn transaction_by_hash(
         &self,
         hash: B256,
-    ) -> Result<Option<TransactionSource<ProviderTx<N::Provider>>>, BaseEthApiError> {
+    ) -> Result<Option<TransactionSource<ProviderTx<BlockchainProvider>>>, BaseEthApiError> {
         // 1. Try to find the transaction on disk (historical blocks)
         if let Some((tx, meta)) = self
             .spawn_blocking_io(move |this| {
@@ -198,21 +199,14 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     }
 }
 
-impl<N> BaseEthApi<N>
-where
-    N: RpcNodeCore,
-{
+impl BaseEthApi {
     /// Returns the [`SequencerClient`] if one is set.
     pub fn raw_tx_forwarder(&self) -> Option<SequencerClient> {
         self.inner.sequencer_client.clone()
     }
 }
 
-impl<N> BaseEthApi<N>
-where
-    N: RpcNodeCore,
-    N::Provider: BlockReaderIdExt + ChainSpecProvider,
-{
+impl BaseEthApi {
     fn is_zenith_active_at_latest(&self) -> Result<bool, BaseEthApiError> {
         let Some(header) = self.provider().latest_header()? else {
             return Ok(false);

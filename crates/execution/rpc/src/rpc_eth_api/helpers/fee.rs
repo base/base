@@ -13,11 +13,11 @@ use reth_rpc_eth_types::{
 use reth_storage_api::{BlockIdReader, BlockNumReader, BlockReaderIdExt, HeaderProvider};
 use tracing::debug;
 
-use crate::{BaseEthApi, FromEthApiError, RpcNodeCore, RpcNodeCoreExt};
+use crate::{BaseEthApi, FromEthApiError};
 
 /// Fee related functions for the [`EthApiServer`](crate::EthApiServer) trait in the
 /// `eth_` namespace.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Reports the fee history, for the given amount of blocks, up until the given newest block.
     ///
     /// If `reward_percentiles` are provided the [`FeeHistory`] will include the _approximated_
@@ -257,7 +257,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 /// Loads fee from database.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` fees RPC methods.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the gas price if it is set, otherwise fetches a suggested gas price for legacy
     /// transactions.
     pub fn legacy_gas_price(

@@ -1,6 +1,6 @@
-use crate::{BaseEthApi, RpcNodeCore};
+use crate::BaseEthApi;
 
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     #[inline]
     pub fn call_gas_limit(&self) -> u64 {
         self.inner.gas_cap()

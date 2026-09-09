@@ -8,14 +8,12 @@ use base_common_evm::BaseTransaction as BaseRevm;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_context::BlockEnv;
 use base_evm_handler::EvmFactory;
-use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
-use base_execution_rpc::{BaseEthApi, RpcNodeCore};
+use base_execution_rpc::BaseEthApi;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use reth_storage_api::BlockReaderIdExt;
 use tracing::debug;
 
 use crate::{ChannelNonceReader, Eip8130GasEstimator, Eip8130ZenithGate};
@@ -63,22 +61,21 @@ pub trait Eip8130EthApiOverride {
 
 /// Standalone EIP-8130 `eth_getTransactionCount` extension.
 #[derive(Debug)]
-pub struct Eip8130EthApiExt<Eth: RpcNodeCore> {
-    eth_api: Eth,
+pub struct Eip8130EthApiExt {
+    eth_api: BaseEthApi,
 }
 
-impl<ApiNode: RpcNodeCore> Eip8130EthApiExt<BaseEthApi<ApiNode>> {
+impl Eip8130EthApiExt {
     /// Creates a new standalone EIP-8130 `eth_getTransactionCount`
     /// extension over the supplied BaseEthApi<ApiNode> API.
-    pub const fn new(eth_api: BaseEthApi<ApiNode>) -> Self {
+    pub const fn new(eth_api: BaseEthApi) -> Self {
         Self { eth_api }
     }
 }
 
 #[async_trait]
-impl<ApiNode: RpcNodeCore> Eip8130EthApiOverrideServer for Eip8130EthApiExt<BaseEthApi<ApiNode>>
+impl Eip8130EthApiOverrideServer for Eip8130EthApiExt
 where
-    <BaseEthApi<ApiNode> as RpcNodeCore>::Provider: ChainSpecProvider + BlockReaderIdExt,
     TxEnvFor: From<BaseRevm>,
     EvmFactoryFor: EvmFactory<BlockEnv = BlockEnv>,
 {

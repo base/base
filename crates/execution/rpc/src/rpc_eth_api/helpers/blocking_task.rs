@@ -5,7 +5,7 @@ use futures::Future;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, oneshot};
 
-use crate::{BaseEthApi, RpcNodeCore};
+use crate::BaseEthApi;
 
 /// Helpers for spawning blocking operations.
 ///
@@ -18,7 +18,7 @@ use crate::{BaseEthApi, RpcNodeCore};
 /// This provides access to semaphores that permit how many of those are permitted concurrently.
 /// It's expected that tracing related tasks are configured with a lower threshold, because not only
 /// are they CPU heavy but they can also accumulate more memory for the traces.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Acquires a permit from the tracing task semaphore.
     ///
     /// This should be used for __CPU heavy__ operations like `debug_traceTransaction`,

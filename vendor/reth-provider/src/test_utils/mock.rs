@@ -22,7 +22,7 @@ use base_common_consensus::{
 use base_execution_chainspec::BaseChainSpec;
 use parking_lot::Mutex;
 use reth_chain_state::{CanonStateNotifications, CanonStateSubscriptions};
-use reth_db::transaction::DbTx;
+use reth_db::transaction::{DbTx, DbTxMut};
 use reth_db_api::{
     mock::TxMock,
     models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
@@ -48,11 +48,11 @@ use tokio::sync::broadcast;
 
 use crate::{
     AccountReader, BalProvider, BalStoreHandle, BlockHashReader, BlockIdReader, BlockNumReader,
-    BlockReader, BlockReaderIdExt, ChainSpecProvider, ChangeSetReader, HeaderProvider,
-    PruneCheckpointReader, RangeEnd, RangeResponse, RangeResult, ReceiptProviderIdExt,
-    StateProviderBox, StateProviderFactory, StateRangeProvider, StateRangeProviderFactory,
-    StateRangeView, StateReader, StateRootProvider, StorageRangeResult, TransactionVariant,
-    TransactionsProvider,
+    BlockReader, BlockReaderIdExt, ChainSpecProvider, ChangeSetReader, HashingWriter,
+    HeaderProvider, PruneCheckpointReader, RangeEnd, RangeResponse, RangeResult,
+    ReceiptProviderIdExt, StateProviderBox, StateProviderFactory, StateRangeProvider,
+    StateRangeProviderFactory, StateRangeView, StateReader, StateRootProvider, StorageRangeResult,
+    TransactionVariant, TransactionsProvider,
     traits::{BlockSource, ReceiptProvider},
 };
 
@@ -243,6 +243,40 @@ impl MockEthProvider {
     fn ensure_snap_state_reads_succeed(&self) -> ProviderResult<()> {
         if self.snap_state_reads_fail.load(Ordering::Relaxed) {
             return Err(ProviderError::BestBlockNotFound);
+        }
+        Ok(())
+    }
+
+    /// Writes account fixtures into a real provider for tests of concrete RPC handlers.
+    pub fn write_accounts_to(&self, provider: &crate::DatabaseProviderRW) -> ProviderResult<()> {
+        for (address, account) in self.accounts.lock().iter() {
+            provider.insert_account_for_hashing([(*address, Some(account.account))])?;
+            provider.insert_storage_for_hashing([(
+                *address,
+                account.storage.iter().map(|(key, value)| reth_primitives_traits::StorageEntry {
+                    key: *key,
+                    value: *value,
+                }),
+            )])?;
+            if let Some(bytecode) = &account.bytecode {
+                provider.tx_ref().put::<reth_db_api::tables::Bytecodes>(
+                    account.account.bytecode_hash.expect("bytecode hash"),
+                    bytecode.clone(),
+                )?;
+            }
+        }
+        if let Some(anchor) = self
+            .headers
+            .lock()
+            .values()
+            .map(|header| header.number)
+            .min()
+            .and_then(|number| number.checked_sub(1))
+        {
+            provider.tx_ref().put::<reth_db_api::tables::BlockBodyIndices>(
+                anchor,
+                StoredBlockBodyIndices::default(),
+            )?;
         }
         Ok(())
     }

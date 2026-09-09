@@ -18,6 +18,7 @@ use base_execution_txpool::{
 };
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_convert::TransactionConversionError;
 use reth_rpc_eth_types::{
     BaseEthApiError,
@@ -31,7 +32,7 @@ use reth_storage_api::{
 };
 
 use super::EthSigner;
-use crate::{BaseEthApi, FromEthApiError, IntoEthApiError, RpcNodeCore, RpcNodeCoreExt};
+use crate::{BaseEthApi, FromEthApiError, IntoEthApiError};
 
 /// Transaction related functions for the [`EthApiServer`](crate::EthApiServer) trait in
 /// the `eth_` namespace.
@@ -55,7 +56,7 @@ use crate::{BaseEthApi, FromEthApiError, IntoEthApiError, RpcNodeCore, RpcNodeCo
 /// See also <https://github.com/paradigmxyz/reth/issues/6240>
 ///
 /// This implementation follows the behaviour of Geth and disables the basefee check for tracing.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns a list of addresses owned by provider.
     pub fn accounts(&self) -> Vec<Address> {
         self.signers().read().iter().flat_map(|s| s.accounts()).collect()
@@ -113,7 +114,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     pub fn transactions_by_block(
         &self,
         block: B256,
-    ) -> impl Future<Output = Result<Option<Vec<ProviderTx<N::Provider>>>, BaseEthApiError>> + Send
+    ) -> impl Future<Output = Result<Option<Vec<ProviderTx<BlockchainProvider>>>, BaseEthApiError>> + Send
     {
         async move {
             self.cache()
@@ -161,7 +162,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(TransactionSource<ProviderTx<N::Provider>>, B256)>,
+            Option<(TransactionSource<ProviderTx<BlockchainProvider>>, B256)>,
             BaseEthApiError,
         >,
     > + Send {
@@ -183,10 +184,10 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
     ) -> impl Future<
         Output = Result<
             Option<(
-                Recovered<ProviderTx<N::Provider>>,
+                Recovered<ProviderTx<BlockchainProvider>>,
                 TransactionMeta,
-                ProviderReceipt<N::Provider>,
-                Option<Arc<Vec<ProviderReceipt<N::Provider>>>>,
+                ProviderReceipt<BlockchainProvider>,
+                Option<Arc<Vec<ProviderReceipt<BlockchainProvider>>>>,
                 Option<Arc<RecoveredBlock>>,
             )>,
             BaseEthApiError,
@@ -290,8 +291,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         async move {
             // Check the pool first
             if include_pending
-                && let Some(tx) =
-                    RpcNodeCore::pool(self).get_transaction_by_sender_and_nonce(sender, nonce)
+                && let Some(tx) = self.pool().get_transaction_by_sender_and_nonce(sender, nonce)
             {
                 let transaction = tx.transaction.clone_into_consensus();
                 return Ok(Some(self.converter().fill_pending(transaction)?));
@@ -497,7 +497,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         &self,
         from: &Address,
         txn: BaseTransactionRequest,
-    ) -> impl Future<Output = Result<ProviderTx<N::Provider>, BaseEthApiError>> + Send {
+    ) -> impl Future<Output = Result<ProviderTx<BlockchainProvider>, BaseEthApiError>> + Send {
         async move {
             self.find_signer(from)?
                 .sign_transaction(txn, from)
@@ -559,7 +559,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         &self,
         account: &Address,
     ) -> Result<
-        Box<dyn EthSigner<ProviderTx<N::Provider>, BaseTransactionRequest> + 'static>,
+        Box<dyn EthSigner<ProviderTx<BlockchainProvider>, BaseTransactionRequest> + 'static>,
         BaseEthApiError,
     > {
         self.signers()
@@ -575,7 +575,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` transactions RPC
 /// methods.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the transaction by including its corresponding [`BlockId`].
     ///
     /// Note: this supports pending transactions
@@ -585,7 +585,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         transaction_hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(TransactionSource<ProviderTx<N::Provider>>, BlockId)>,
+            Option<(TransactionSource<ProviderTx<BlockchainProvider>>, BlockId)>,
             BaseEthApiError,
         >,
     > + Send {
@@ -606,7 +606,7 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
         hash: B256,
     ) -> impl Future<
         Output = Result<
-            Option<(TransactionSource<ProviderTx<N::Provider>>, Arc<RecoveredBlock>)>,
+            Option<(TransactionSource<ProviderTx<BlockchainProvider>>, Arc<RecoveredBlock>)>,
             BaseEthApiError,
         >,
     > + Send {
@@ -635,39 +635,35 @@ impl<N: RpcNodeCore> BaseEthApi<N> {
 mod tests {
     use std::time::Duration;
 
-    use alloy_primitives::{Address, Bytes, U256, hex, map::AddressMap};
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{Address, B256, Bytes, U256, map::AddressMap};
     use alloy_rpc_types_eth::request::TransactionRequest;
     use base_common_consensus::{Block, Header, Transaction};
     use base_execution_chainspec::BaseChainSpecBuilder;
-    use base_execution_evm::BaseEvmConfig;
-    use base_execution_txpool::{TransactionOrigin, TransactionPool};
-    use reth_network_api::noop::NoopNetwork;
-    use reth_provider::{
-        ChainSpecProvider,
-        test_utils::{ExtendedAccount, MockEthProvider},
+    use base_execution_txpool::{
+        TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,
     };
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
-    use crate::RpcNodeCoreAdapter;
 
-    fn mock_eth_api(
-        accounts: AddressMap<ExtendedAccount>,
-    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
-    {
+    fn mock_eth_api(accounts: AddressMap<ExtendedAccount>) -> BaseEthApi {
         mock_eth_api_with_sync_timeout(accounts, Duration::from_secs(30))
     }
 
     fn mock_eth_api_with_sync_timeout(
         accounts: AddressMap<ExtendedAccount>,
         send_raw_transaction_sync_timeout: Duration,
-    ) -> BaseEthApi<RpcNodeCoreAdapter<MockEthProvider, crate::test_utils::TestPool, NoopNetwork>>
-    {
+    ) -> BaseEthApi {
         let mock_provider = MockEthProvider::default()
             .with_chain_spec(BaseChainSpecBuilder::base_mainnet().ecotone_activated().build());
         mock_provider.extend_accounts(accounts);
-
-        let evm_config = BaseEvmConfig::new(mock_provider.chain_spec());
-        let pool = crate::test_utils::RpcTestUtils::pool();
+        let sender = base_execution_txpool::BasePooledTransaction::recover_raw_transaction(
+            &raw_transfer_tx(),
+        )
+        .unwrap()
+        .sender();
+        mock_provider.add_account(sender, ExtendedAccount::new(0, U256::MAX));
 
         let genesis_header = Header {
             number: 0,
@@ -683,21 +679,28 @@ mod tests {
         mock_provider.add_block(genesis_hash, Block::new(genesis_header, Default::default()));
         mock_provider.add_receipts(0, Vec::new());
 
-        crate::test_utils::RpcTestUtils::api_builder(
-            mock_provider,
-            pool,
-            NoopNetwork::default().with_chain_id(evm_config.chain_spec().chain_id()),
-            evm_config,
-        )
-        .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)
-        .build()
+        crate::test_utils::RpcTestUtils::api_builder(mock_provider)
+            .send_raw_transaction_sync_timeout(send_raw_transaction_sync_timeout)
+            .build()
+    }
+
+    fn raw_transfer_tx_with_nonce(nonce: u64) -> Bytes {
+        TransactionBuilder::default()
+            .signer(B256::repeat_byte(1))
+            .to(Address::repeat_byte(2))
+            .chain_id(8453)
+            .nonce(nonce)
+            .gas_limit(21_000)
+            .max_fee_per_gas(2_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .value(0)
+            .into_eip1559()
+            .encoded_2718()
+            .into()
     }
 
     fn raw_transfer_tx() -> Bytes {
-        // https://etherscan.io/tx/0xa694b71e6c128a2ed8e2e0f6770bddbe52e3bb8f10e8472f9a79ab81497a8b5d
-        Bytes::from(hex!(
-            "02f871018303579880850555633d1b82520894eee27662c2b8eba3cd936a23f039f3189633e4c887ad591c62bdaeb180c080a07ea72c68abfb8fca1bd964f0f99132ed9280261bdca3e549546c0205e800f7d0a05b4ef3039e9c9b9babc179a1878fb825b5aaf5aed2fa8744854150157b08d6f3"
-        ))
+        raw_transfer_tx_with_nonce(0)
     }
 
     #[tokio::test]
@@ -709,23 +712,20 @@ mod tests {
 
         let tx_1_result = eth_api.send_raw_transaction(tx_1).await.unwrap();
         assert_eq!(
-            pool.len(),
+            pool.pool_size().total,
             1,
             "expect 1 transaction in the pool, but pool size is {}",
-            pool.len()
+            pool.pool_size().total
         );
 
-        // https://etherscan.io/tx/0x48816c2f32c29d152b0d86ff706f39869e6c1f01dc2fe59a3c1f9ecf39384694
-        let tx_2 = Bytes::from(hex!(
-            "02f9043c018202b7843b9aca00850c807d37a08304d21d94ef1c6e67703c7bd7107eed8303fbe6ec2554bf6b881bc16d674ec80000b903c43593564c000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000063e2d99f00000000000000000000000000000000000000000000000000000000000000030b000800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001e0000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000001bc16d674ec80000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000065717fe021ea67801d1088cc80099004b05b64600000000000000000000000000000000000000000000000001bc16d674ec80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002bc02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000180000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009e95fd5965fd1f1a6f0d4600000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48000000000000000000000000428dca9537116148616a5a3e44035af17238fe9dc080a0c6ec1e41f5c0b9511c49b171ad4e04c6bb419c74d99fe9891d74126ec6e4e879a032069a753d7a2cfa158df95421724d24c0e9501593c09905abf3699b4a4405ce"
-        ));
+        let tx_2 = raw_transfer_tx_with_nonce(1);
 
         let tx_2_result = eth_api.send_raw_transaction(tx_2).await.unwrap();
         assert_eq!(
-            pool.len(),
+            pool.pool_size().total,
             2,
             "expect 2 transactions in the pool, but pool size is {}",
-            pool.len()
+            pool.pool_size().total
         );
 
         assert!(pool.get(&tx_1_result).is_some(), "tx1 not found in the pool");
@@ -745,7 +745,7 @@ mod tests {
             reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
-        assert_eq!(eth_api.pool().len(), 1);
+        assert_eq!(eth_api.pool().pool_size().total, 1);
     }
 
     #[tokio::test]
@@ -759,7 +759,7 @@ mod tests {
             reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
-        assert_eq!(eth_api.pool().len(), 1);
+        assert_eq!(eth_api.pool().pool_size().total, 1);
     }
 
     #[tokio::test]
@@ -773,7 +773,7 @@ mod tests {
             reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
-        assert_eq!(eth_api.pool().len(), 1);
+        assert_eq!(eth_api.pool().pool_size().total, 1);
     }
 
     #[tokio::test]
@@ -787,7 +787,7 @@ mod tests {
             reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
-        assert_eq!(eth_api.pool().len(), 1);
+        assert_eq!(eth_api.pool().pool_size().total, 1);
     }
 
     #[tokio::test]

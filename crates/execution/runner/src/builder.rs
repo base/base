@@ -10,16 +10,13 @@ use eyre::Result;
 use futures::future::BoxFuture;
 use reth_exex::ExExContext;
 
-use crate::types::{BaseNodeAddOns, BaseNodeComponents};
-
-/// Convenience alias for the Base Eth API type exposed by the reth RPC add-ons.
-type BaseEthApi = base_execution_rpc::BaseEthApi<BaseNodeComponents>;
+use crate::types::BaseNodeAddOns;
 
 /// Convenience alias for the full Base node handle produced after launch.
 type BaseFullNode = FullNode;
 
 /// Alias for the RPC context used by Base extensions.
-pub type BaseRpcContext<'a> = RpcContext<'a, BaseEthApi>;
+pub type BaseRpcContext<'a> = RpcContext<'a>;
 
 /// Hook type for extending RPC modules.
 type RpcModuleHook = Box<dyn FnOnce(&mut BaseRpcContext<'_>) -> Result<()> + Send + 'static>;

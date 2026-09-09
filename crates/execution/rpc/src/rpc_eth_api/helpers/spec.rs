@@ -12,12 +12,12 @@ use reth_storage_api::{
     BlockNumReader, PruneCheckpointReader, StageCheckpointReader, TransactionsProvider,
 };
 
-use crate::{BaseEthApi, EthSigner, RpcNodeCore};
+use crate::{BaseEthApi, EthSigner};
 
 /// `Eth` API trait.
 ///
 /// Defines core functionality of the `eth` API implementation.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Returns the current ethereum protocol version.
     pub fn protocol_version(
         &self,

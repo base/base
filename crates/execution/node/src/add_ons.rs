@@ -1,7 +1,7 @@
 use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
 use base_execution_rpc::{
     BaseDebugWitnessApi, BaseEthApiBuilder, BaseEthConfigApiServer, BaseEthConfigHandler,
-    BaseMinerExtApi, BaseNodeEthApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
+    BaseMinerExtApi, DebugExecutionWitnessApiServer, MinerApiExtServer,
 };
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
@@ -48,12 +48,7 @@ impl BaseAddOns {
     /// Sets the hook that is run once the rpc server is started.
     pub fn on_rpc_started<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
-                RethRpcServerHandles,
-            ) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>, RethRpcServerHandles) -> eyre::Result<()> + Send + 'static,
     {
         self.rpc_add_ons = self.rpc_add_ons.on_rpc_started(hook);
         self
@@ -62,11 +57,7 @@ impl BaseAddOns {
     /// Sets the hook that is run to configure the rpc modules.
     pub fn extend_rpc_modules<F>(mut self, hook: F) -> Self
     where
-        F: FnOnce(
-                RpcContext<'_, BaseNodeEthApi<base_node_context::BaseNodeContext>>,
-            ) -> eyre::Result<()>
-            + Send
-            + 'static,
+        F: FnOnce(RpcContext<'_>) -> eyre::Result<()> + Send + 'static,
     {
         self.rpc_add_ons = self.rpc_add_ons.extend_rpc_modules(hook);
         self

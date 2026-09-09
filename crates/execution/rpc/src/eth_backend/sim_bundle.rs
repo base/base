@@ -16,6 +16,7 @@ use base_execution_evm::Evm;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_api::MevSimApiServer;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
@@ -23,7 +24,7 @@ use reth_tasks::pool::BlockingTaskGuard;
 use revm::{DatabaseCommit, DatabaseRef};
 use tracing::trace;
 
-use crate::{BaseEthApi, FromEthApiError, FromEvmError, RpcNodeCore};
+use crate::{BaseEthApi, FromEthApiError, FromEvmError};
 
 /// Maximum bundle depth
 const MAX_NESTED_BUNDLE_DEPTH: usize = 5;
@@ -60,19 +61,19 @@ pub struct FlattenedBundleItem<T> {
 }
 
 /// `Eth` sim bundle implementation.
-pub struct EthSimBundle<Eth> {
+pub struct EthSimBundle {
     /// All nested fields bundled together.
-    inner: Arc<EthSimBundleInner<Eth>>,
+    inner: Arc<EthSimBundleInner>,
 }
 
-impl<Eth> EthSimBundle<Eth> {
+impl EthSimBundle {
     /// Create a new `EthSimBundle` instance.
-    pub fn new(eth_api: Eth, blocking_task_guard: BlockingTaskGuard) -> Self {
+    pub fn new(eth_api: BaseEthApi, blocking_task_guard: BlockingTaskGuard) -> Self {
         Self { inner: Arc::new(EthSimBundleInner { eth_api, blocking_task_guard }) }
     }
 
     /// Access the underlying `Eth` API.
-    pub fn eth_api(&self) -> &Eth {
+    pub fn eth_api(&self) -> &BaseEthApi {
         &self.inner.eth_api
     }
 
@@ -138,7 +139,7 @@ impl<Eth> EthSimBundle<Eth> {
     }
 }
 
-impl<ApiNode: RpcNodeCore> EthSimBundle<BaseEthApi<ApiNode>> {
+impl EthSimBundle {
     /// Flattens a potentially nested bundle into a list of individual transactions in a
     /// `FlattenedBundleItem` with their associated metadata. This handles recursive bundle
     /// processing up to `MAX_NESTED_BUNDLE_DEPTH` and `MAX_BUNDLE_BODY_SIZE`, preserving
@@ -146,7 +147,7 @@ impl<ApiNode: RpcNodeCore> EthSimBundle<BaseEthApi<ApiNode>> {
     fn parse_and_flatten_bundle(
         &self,
         request: &MevSendBundle,
-    ) -> Result<Vec<FlattenedBundleItem<ProviderTx<ApiNode::Provider>>>, EthApiError> {
+    ) -> Result<Vec<FlattenedBundleItem<ProviderTx<BlockchainProvider>>>, EthApiError> {
         let mut items = Vec::new();
 
         // Stack for processing bundles
@@ -465,7 +466,7 @@ impl<ApiNode: RpcNodeCore> EthSimBundle<BaseEthApi<ApiNode>> {
 }
 
 #[async_trait::async_trait]
-impl<ApiNode: RpcNodeCore> MevSimApiServer for EthSimBundle<BaseEthApi<ApiNode>> {
+impl MevSimApiServer for EthSimBundle {
     async fn sim_bundle(
         &self,
         request: MevSendBundle,
@@ -493,21 +494,21 @@ impl<ApiNode: RpcNodeCore> MevSimApiServer for EthSimBundle<BaseEthApi<ApiNode>>
 
 /// Container type for `EthSimBundle` internals
 #[derive(Debug)]
-struct EthSimBundleInner<Eth> {
+struct EthSimBundleInner {
     /// Access to commonly used code of the `eth` namespace
-    eth_api: Eth,
+    eth_api: BaseEthApi,
     // restrict the number of concurrent tracing calls.
     #[expect(dead_code)]
     blocking_task_guard: BlockingTaskGuard,
 }
 
-impl<Eth> std::fmt::Debug for EthSimBundle<Eth> {
+impl std::fmt::Debug for EthSimBundle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EthSimBundle").finish_non_exhaustive()
     }
 }
 
-impl<Eth> Clone for EthSimBundle<Eth> {
+impl Clone for EthSimBundle {
     fn clone(&self) -> Self {
         Self { inner: Arc::clone(&self.inner) }
     }
@@ -603,8 +604,7 @@ mod tests {
     #[test]
     fn test_build_bundle_logs_single_tx() {
         let bundle = create_test_bundle(vec![Bytes::from(vec![0x01, 0x02, 0x03])]);
-        let result =
-            EthSimBundle::<()>::build_bundle_logs(&bundle, &create_bundle_logs(&[1])).unwrap();
+        let result = EthSimBundle::build_bundle_logs(&bundle, &create_bundle_logs(&[1])).unwrap();
 
         assert_eq!(result.len(), 1);
         assert!(result[0].tx_logs.is_some());
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn test_build_bundle_logs_empty_bundle() {
         let bundle = create_test_bundle(vec![]);
-        let result = EthSimBundle::<()>::build_bundle_logs(&bundle, &[]).unwrap();
+        let result = EthSimBundle::build_bundle_logs(&bundle, &[]).unwrap();
 
         assert!(result.is_empty());
     }
@@ -627,8 +627,7 @@ mod tests {
         let inner_tx2 = Bytes::from(vec![0x07, 0x08, 0x09]);
         let bundle = create_nested_bundle(outer_tx, vec![inner_tx1, inner_tx2]);
         let result =
-            EthSimBundle::<()>::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 1, 2]))
-                .unwrap();
+            EthSimBundle::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 1, 2])).unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result[0].tx_logs.is_some());
@@ -651,7 +650,7 @@ mod tests {
         let duplicate_tx = Bytes::from(vec![0x01, 0x02, 0x03]);
         let bundle = create_test_bundle(vec![duplicate_tx.clone(), duplicate_tx]);
         let result =
-            EthSimBundle::<()>::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 2])).unwrap();
+            EthSimBundle::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 2])).unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].tx_logs.as_ref().unwrap().len(), 1);
@@ -663,7 +662,7 @@ mod tests {
         let duplicate_tx = Bytes::from(vec![0x01, 0x02, 0x03]);
         let bundle = create_nested_bundle(duplicate_tx.clone(), vec![duplicate_tx]);
         let result =
-            EthSimBundle::<()>::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 2])).unwrap();
+            EthSimBundle::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 2])).unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result[1].bundle_logs.is_some());
@@ -684,8 +683,7 @@ mod tests {
             BundleItem::Bundle { bundle: second_nested },
         ]);
         let result =
-            EthSimBundle::<()>::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 1, 2]))
-                .unwrap();
+            EthSimBundle::build_bundle_logs(&bundle, &create_bundle_logs(&[1, 1, 2])).unwrap();
 
         assert_eq!(result.len(), 2);
         assert!(result[0].tx_logs.is_none());
@@ -713,8 +711,7 @@ mod tests {
             BundleItem::Bundle { bundle: middle_bundle },
         ]);
         let result =
-            EthSimBundle::<()>::build_bundle_logs(&root_bundle, &create_bundle_logs(&[1, 2, 3]))
-                .unwrap();
+            EthSimBundle::build_bundle_logs(&root_bundle, &create_bundle_logs(&[1, 2, 3])).unwrap();
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].tx_logs.as_ref().unwrap().len(), 1);
@@ -732,8 +729,8 @@ mod tests {
     fn test_build_bundle_logs_mismatched_flat_logs() {
         let bundle = create_test_bundle(vec![Bytes::from(vec![0x01, 0x02, 0x03])]);
 
-        assert_unmatched_bundle(EthSimBundle::<()>::build_bundle_logs(&bundle, &[]));
-        assert_unmatched_bundle(EthSimBundle::<()>::build_bundle_logs(
+        assert_unmatched_bundle(EthSimBundle::build_bundle_logs(&bundle, &[]));
+        assert_unmatched_bundle(EthSimBundle::build_bundle_logs(
             &bundle,
             &create_bundle_logs(&[1, 2]),
         ));

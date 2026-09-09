@@ -26,10 +26,10 @@ use revm::{
 };
 use tracing::trace;
 
-use crate::{AsEthApiError, BaseEthApi, FromEthApiError, IntoEthApiError, RpcNodeCore};
+use crate::{AsEthApiError, BaseEthApi, FromEthApiError, IntoEthApiError};
 
 /// Gas execution estimates
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Estimates the gas usage of the `request` with the state.
     ///
     /// This will execute the [`RpcTxReq`] and find the best gas limit via binary search.

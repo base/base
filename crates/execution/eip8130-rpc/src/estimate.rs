@@ -8,7 +8,7 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_evm_context::{Block, BlockEnv, ExecutionResult};
 use base_evm_handler::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_evm::{EvmFactoryFor, TxEnvFor};
-use base_execution_rpc::{BaseEthApi, FromEthApiError, RpcNodeCore};
+use base_execution_rpc::{BaseEthApi, FromEthApiError};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_types::{
     BaseEthApiError,
@@ -60,8 +60,8 @@ impl Eip8130GasEstimator {
     ///   the simulation halts, matching standard `eth_estimateGas`.
     /// - Any error from environment resolution, state access, override
     ///   application, or simulation propagates as an `ErrorObjectOwned`.
-    pub async fn estimate<ApiNode: RpcNodeCore>(
-        eth_api: &BaseEthApi<ApiNode>,
+    pub async fn estimate(
+        eth_api: &BaseEthApi,
         request: BaseTransactionRequest,
         block_id: BlockId,
         overrides: EvmOverrides,

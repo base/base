@@ -7,6 +7,7 @@ use base_common_consensus::{TxReceipt, transaction::TransactionMeta};
 use base_common_rpc_types::BaseTransactionReceipt;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
+use reth_provider::providers::BlockchainProvider;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, error::FromEthApiError,
@@ -14,21 +15,21 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{ProviderReceipt, ProviderTx};
 
-use crate::{BaseEthApi, RpcNodeCore, RpcNodeCoreExt};
+use crate::BaseEthApi;
 
 /// Assembles transaction receipt data w.r.t to network.
 ///
 /// Behaviour shared by several `eth_` RPC methods, not exclusive to `eth_` receipts RPC methods.
-impl<N: RpcNodeCore> BaseEthApi<N> {
+impl BaseEthApi {
     /// Helper method for `eth_getBlockReceipts` and `eth_getTransactionReceipt`.
     ///
     /// If a value is `Some`, skips the corresponding cache lookup entirely.
     pub fn build_transaction_receipt(
         &self,
-        tx: Recovered<ProviderTx<N::Provider>>,
+        tx: Recovered<ProviderTx<BlockchainProvider>>,
         meta: TransactionMeta,
-        receipt: ProviderReceipt<N::Provider>,
-        all_receipts: Option<Arc<Vec<ProviderReceipt<N::Provider>>>>,
+        receipt: ProviderReceipt<BlockchainProvider>,
+        all_receipts: Option<Arc<Vec<ProviderReceipt<BlockchainProvider>>>>,
         block: Option<Arc<RecoveredBlock>>,
     ) -> impl Future<Output = Result<BaseTransactionReceipt, BaseEthApiError>> + Send {
         async move {
