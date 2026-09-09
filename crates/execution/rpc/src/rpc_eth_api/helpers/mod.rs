@@ -6,8 +6,6 @@ pub use block::*;
 mod blocking_task;
 mod call;
 pub use call::*;
-mod config;
-pub use config::*;
 mod estimate;
 pub use estimate::*;
 mod fee;

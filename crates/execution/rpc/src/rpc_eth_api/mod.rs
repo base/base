@@ -22,9 +22,7 @@ pub use ext::L2EthApiExtServer;
 #[cfg(feature = "client")]
 pub use filter::EthFilterApiClient;
 pub use filter::{EthFilterApiServer, QueryLimits};
-#[cfg(feature = "client")]
-pub use helpers::EthConfigApiClient;
-pub use helpers::{BasePendingEnv, EthConfigApiServer};
+pub use helpers::BasePendingEnv;
 pub use pubsub::EthPubSubApiServer;
 pub use reth_rpc_convert::*;
 pub use reth_rpc_eth_types::{
