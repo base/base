@@ -1,10 +1,10 @@
 use alloy_primitives::BlockNumber;
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneInterruptReason, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
     SegmentOutputCheckpoint,
 };
 use reth_provider::{BlockReader, PruneCheckpointReader, StaticFileProviderFactory};
-use reth_static_file_types::StaticFileSegment;
 use tracing::{debug, instrument};
 
 use crate::{
@@ -131,14 +131,14 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::BlockNumber;
+    use base_execution_state_types::{
+        DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
+    };
     use base_execution_state_types::{PruneMode, PruneProgress, PruneSegment};
     use reth_exex_types::FinishedExExHeight;
     use reth_provider::{
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
         StaticFileWriter, test_utils::create_test_provider_factory,
-    };
-    use reth_static_file_types::{
-        DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
     };
 
     use super::*;

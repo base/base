@@ -2,8 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use base_execution_state_types::StaticFileSegment;
 use reth_db_api::models::{AccountBeforeTx, StorageBeforeTx};
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::ProviderResult;
 
 use crate::{StaticFileWriter, providers::StaticFileProvider};

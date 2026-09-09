@@ -7,9 +7,9 @@ use base_execution_state_memory::DBErrorMarker;
 use base_execution_state_memory::EvmDatabaseError;
 use base_execution_state_memory::bal::BalError;
 use base_execution_state_types::PruneSegmentError;
+use base_execution_state_types::StaticFileSegment;
 use derive_more::Display;
 use reth_primitives_traits::{GotExpected, transaction::signed::RecoveryError};
-use reth_static_file_types::StaticFileSegment;
 
 use crate::{any::AnyError, db::DatabaseError};
 

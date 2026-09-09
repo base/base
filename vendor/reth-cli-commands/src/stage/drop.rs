@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::ChainSpecParser;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
+use base_execution_state_types::StaticFileSegment;
 use clap::Parser;
 use reth_db::{DatabaseError, mdbx::tx::Tx};
 use reth_db_api::{
@@ -23,7 +24,6 @@ use reth_provider::{
 };
 use reth_prune::PruneSegment;
 use reth_stages::StageId;
-use reth_static_file_types::StaticFileSegment;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};
 

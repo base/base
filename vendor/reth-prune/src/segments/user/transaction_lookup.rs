@@ -1,4 +1,5 @@
 use alloy_primitives::TxNumber;
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
 };
@@ -8,7 +9,6 @@ use reth_provider::{
     BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
     StaticFileProviderFactory, TransactionsProviderExt,
 };
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::StorageSettingsCache;
 use tracing::{debug, instrument, trace};
 

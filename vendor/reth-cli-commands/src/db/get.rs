@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, BlockHash, hex};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
+use base_execution_state_types::StaticFileSegment;
 use clap::Parser;
 use reth_db::{
     RawDupSort,
@@ -20,7 +21,6 @@ use reth_db_api::{
 use reth_db_common::DbTool;
 use reth_primitives_traits::ValueWithSubKey;
 use reth_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::StorageChangeSetReader;
 use tracing::error;
 

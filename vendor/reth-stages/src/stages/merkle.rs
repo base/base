@@ -474,6 +474,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;
+    use base_execution_state_types::StaticFileSegment;
     use reth_db_api::cursor::{DbCursorRO, DbDupCursorRO};
     use reth_primitives_traits::SealedBlock;
     use reth_provider::{
@@ -481,7 +482,6 @@ mod tests {
         providers::StaticFileWriter,
     };
     use reth_stages_api::StageUnitCheckpoint;
-    use reth_static_file_types::StaticFileSegment;
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_contract_account_range,
     };

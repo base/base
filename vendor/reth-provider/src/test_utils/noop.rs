@@ -19,7 +19,7 @@ impl StaticFileProviderFactory for NoopProvider {
     fn get_static_file_writer(
         &self,
         _block: alloy_primitives::BlockNumber,
-        _segment: reth_static_file_types::StaticFileSegment,
+        _segment: base_execution_state_types::StaticFileSegment,
     ) -> ProviderResult<StaticFileProviderRWRefMut<'_>> {
         Err(ProviderError::ReadOnlyStaticFileAccess)
     }

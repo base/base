@@ -9,9 +9,9 @@ use std::collections::HashSet;
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
 use base_execution_state_types::StageId;
+use base_execution_state_types::StaticFileSegment;
 use reth_db::models::{ShardedKey, storage_sharded_key::StorageShardedKey};
 use reth_db_api::tables;
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache, TransactionsProviderExt,
@@ -1129,9 +1129,9 @@ mod tests {
 
     #[test]
     fn test_check_consistency_accounts_history_sf_tip_equals_checkpoint_no_action() {
+        use base_execution_state_types::StaticFileSegment;
         use reth_db::models::AccountBeforeTx;
         use reth_db_api::models::ShardedKey;
-        use reth_static_file_types::StaticFileSegment;
 
         let temp_dir = TempDir::new().unwrap();
         let rocksdb = RocksDBBuilder::new(temp_dir.path()).with_default_tables().build().unwrap();
@@ -1443,9 +1443,9 @@ mod tests {
     ///    - The batching worked (no OOM, completed successfully)
     #[test]
     fn test_check_consistency_accounts_history_heals_via_changesets_large_range() {
+        use base_execution_state_types::StaticFileSegment;
         use reth_db::models::AccountBeforeTx;
         use reth_db_api::models::ShardedKey;
-        use reth_static_file_types::StaticFileSegment;
 
         let temp_dir = TempDir::new().unwrap();
         let rocksdb = RocksDBBuilder::new(temp_dir.path()).with_default_tables().build().unwrap();
@@ -1629,8 +1629,8 @@ mod tests {
     #[test]
     fn test_check_consistency_storages_history_sf_tip_equals_checkpoint_no_action() {
         use alloy_primitives::U256;
+        use base_execution_state_types::StaticFileSegment;
         use reth_db::models::StorageBeforeTx;
-        use reth_static_file_types::StaticFileSegment;
 
         let temp_dir = TempDir::new().unwrap();
         let rocksdb = RocksDBBuilder::new(temp_dir.path()).with_default_tables().build().unwrap();

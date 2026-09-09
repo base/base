@@ -12,6 +12,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
 use base_common_types_payload::ForkchoiceState;
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_chain_state::{
@@ -23,7 +24,6 @@ use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::{
     Account, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, StorageEntry,
 };
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
     StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
@@ -3163,8 +3163,8 @@ mod tests {
         provider_rw.insert_block(&anchor_block)?;
         let static_files = factory.static_file_provider();
         for segment in [
-            reth_static_file_types::StaticFileSegment::AccountChangeSets,
-            reth_static_file_types::StaticFileSegment::StorageChangeSets,
+            base_execution_state_types::StaticFileSegment::AccountChangeSets,
+            base_execution_state_types::StaticFileSegment::StorageChangeSets,
         ] {
             let mut writer = static_files.latest_writer(segment)?;
             writer.increment_block(1)?;

@@ -3,13 +3,13 @@ use std::path::Path;
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
 use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_execution_state_types::StaticFileSegment;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_provider::{
     BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
     providers::StaticFileProvider,
 };
 use reth_stages::{StageCheckpoint, StageId};
-use reth_static_file_types::StaticFileSegment;
 use tracing::info;
 
 /// Reads the header RLP from a file and returns the Header.

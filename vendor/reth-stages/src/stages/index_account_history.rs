@@ -209,10 +209,10 @@ mod tests {
         BlockNumberList::new(list.iter().copied()).unwrap()
     }
     mod rocksdb_tests {
+        use base_execution_state_types::StaticFileSegment;
         use reth_provider::{
             RocksDBProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
         };
-        use reth_static_file_types::StaticFileSegment;
         use reth_storage_api::StorageSettings;
 
         use super::*;

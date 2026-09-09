@@ -1,4 +1,5 @@
 use alloy_primitives::BlockNumber;
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
 };
@@ -7,7 +8,6 @@ use reth_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory,
     changeset_walker::StaticFileAccountChangesetWalker,
 };
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{ChangeSetReader, StorageSettingsCache};
 use rustc_hash::FxHashMap;
 use tracing::{instrument, trace};
@@ -282,7 +282,7 @@ mod tests {
 
         let static_file_provider = db.factory.static_file_provider();
         let highest_block = static_file_provider.get_highest_static_file_block(
-            reth_static_file_types::StaticFileSegment::AccountChangeSets,
+            base_execution_state_types::StaticFileSegment::AccountChangeSets,
         );
         if let Some(block) = highest_block {
             assert!(

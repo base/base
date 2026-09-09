@@ -184,7 +184,6 @@ members = [
   "vendor/reth-stages",
   "vendor/reth-stages-api",
   "vendor/reth-static-file",
-  "vendor/reth-static-file-types",
   "vendor/reth-storage-api",
   "vendor/reth-storage-errors",
   "vendor/reth-storage-overlay",
@@ -534,7 +533,6 @@ reth-rpc-server-types = { path = "vendor/reth-rpc-server-types", default-feature
 reth-zstd-compressors = { path = "vendor/reth-zstd-compressors", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
-reth-static-file-types = { path = "vendor/reth-static-file-types", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
 

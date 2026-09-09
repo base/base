@@ -16,6 +16,10 @@ use base_common_types_chain::{
 };
 use base_execution_state_types::PipelineTarget;
 use base_execution_state_types::PruneSegment;
+use base_execution_state_types::{
+    DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles, SegmentHeader, SegmentRangeInclusive,
+    StaticFileMap, StaticFileSegment, find_fixed_range,
+};
 use parking_lot::RwLock;
 use reth_chain_state::ExecutedBlock;
 use reth_db::{
@@ -35,10 +39,6 @@ use reth_db_api::{
 use reth_nippy_jar::{NippyJar, NippyJarChecker};
 use reth_primitives_traits::{
     AlloyBlockHeader as _, RecoveredBlock, SealedHeader, StorageEntry, dashmap::DashMap,
-};
-use reth_static_file_types::{
-    DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles, SegmentHeader, SegmentRangeInclusive,
-    StaticFileMap, StaticFileSegment, find_fixed_range,
 };
 use reth_storage_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, PruneCheckpointReader,
@@ -3001,8 +3001,8 @@ where
 mod tests {
     use std::collections::BTreeMap;
 
+    use base_execution_state_types::{SegmentRangeInclusive, StaticFileSegment};
     use reth_db::test_utils::create_test_static_files_dir;
-    use reth_static_file_types::{SegmentRangeInclusive, StaticFileSegment};
 
     use crate::{StaticFileProviderBuilder, providers::StaticFileProvider};
 

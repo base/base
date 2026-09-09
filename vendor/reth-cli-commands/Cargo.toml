@@ -45,7 +45,6 @@ reth-storage-api = { workspace = true }
 reth-node-metrics = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 arbitrary = { workspace = true, optional = true }
@@ -74,9 +73,9 @@ base-node-core = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = {features = ["std"], workspace = true}
 proptest-arbitrary-interop = { workspace = true, optional = true }
-reth-static-file-types = { workspace = true, features = ["clap"] }
 reth-network-peers = { workspace = true, features = ["secp256k1"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-types = {workspace = true, features = ["clap"]}
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }

@@ -1,10 +1,10 @@
 use alloy_primitives::BlockNumber;
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
 };
 use reth_db_api::transaction::DbTxMut;
 use reth_provider::{DBProvider, RocksDBProviderFactory, StaticFileProviderFactory};
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{StorageChangeSetReader, StorageSettingsCache};
 use rustc_hash::FxHashMap;
 use tracing::{instrument, trace};

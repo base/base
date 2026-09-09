@@ -51,6 +51,7 @@ mod tests {
     use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, SignableTransaction, TxLegacy};
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_db::mdbx::{RW, cursor::Cursor};
     use reth_db_api::{
@@ -72,7 +73,6 @@ mod tests {
     use reth_stages_api::{
         ExecInput, ExecutionStageThresholds, PipelineTarget, Stage, StageCheckpoint, StageId,
     };
-    use reth_static_file_types::StaticFileSegment;
     use reth_storage_api::StorageSettingsCache;
     use reth_testing_utils::generators::{self, BlockRangeParams};
 

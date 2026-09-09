@@ -2,9 +2,9 @@ use std::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_types::StaticFileSegment;
 use reth_db_api::{cursor::DbCursorRO, tables, transaction::DbTx};
 use reth_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
 
 use crate::segments::Segment;

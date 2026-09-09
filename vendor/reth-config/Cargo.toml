@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 reth-network-peers = { workspace = true }
 reth-network-types = { workspace = true }
-reth-static-file-types = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true}
 eyre = { workspace = true, features = ["default"] }

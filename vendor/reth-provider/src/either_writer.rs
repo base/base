@@ -9,6 +9,7 @@ use std::{
 
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
 use base_common_types_chain::BaseReceipt;
+use base_execution_state_types::StaticFileSegment;
 use rayon::slice::ParallelSliceMut;
 use reth_db::{
     cursor::{DbCursorRO, DbDupCursorRW},
@@ -24,7 +25,6 @@ use reth_db_api::{
     tables::BlockNumberList,
 };
 use reth_primitives_traits::StorageEntry;
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{ChangeSetReader, DBProvider, DbTxProvider};
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
 use strum::{Display, EnumIs};
@@ -835,8 +835,8 @@ impl EitherWriterDestination {}
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
+    use base_execution_state_types::StaticFileSegment;
     use reth_db::models::AccountBeforeTx;
-    use reth_static_file_types::StaticFileSegment;
     use reth_storage_api::DatabaseProviderROFactory;
     use reth_storage_api::{DatabaseProviderFactory, StorageSettings, StorageSettingsCache};
 

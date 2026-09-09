@@ -4,6 +4,7 @@ use std::{
 };
 
 use alloy_primitives::map::foldhash::fast::FixedState;
+use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 use clap::Parser;
 use itertools::Itertools;
 use reth_db::static_file::iter_static_files;
@@ -13,7 +14,6 @@ use reth_db_api::{
 };
 use reth_db_common::DbTool;
 use reth_provider::{DBProvider, StaticFileProviderFactory};
-use reth_static_file_types::{ChangesetOffset, StaticFileSegment};
 use tracing::{info, warn};
 
 use crate::db::get::{maybe_json_value_parser, table_key};

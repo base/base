@@ -15,12 +15,12 @@ use base_common_types_chain::{
 };
 use base_common_types_payload::ForkchoiceState;
 use base_execution_state_types::PrunerEvent;
+use base_execution_state_types::StaticFileProducerEvent;
 use futures::Stream;
 use reth_engine_primitives::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
 use reth_network_api::PeersInfo;
 use reth_primitives_traits::{format_gas, format_gas_throughput};
 use reth_stages::{EntitiesCheckpoint, ExecOutput, PipelineEvent, StageCheckpoint, StageId};
-use reth_static_file_types::StaticFileProducerEvent;
 use tokio::time::Interval;
 use tracing::{debug, info, warn};
 

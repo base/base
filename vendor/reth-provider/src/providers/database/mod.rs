@@ -17,6 +17,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment,
 };
@@ -26,7 +27,6 @@ use parking_lot::RwLock;
 use reth_db::{init_db, mdbx::DatabaseArguments};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables, transaction::DbTx};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,

@@ -1,3 +1,4 @@
+use base_execution_state_types::StaticFileSegment;
 use clap::{Parser, Subcommand};
 use reth_db::static_file::iter_static_files;
 use reth_db_api::{
@@ -8,7 +9,6 @@ use reth_db_api::{
 };
 use reth_db_common::DbTool;
 use reth_provider::StaticFileProviderFactory;
-use reth_static_file_types::StaticFileSegment;
 
 /// The arguments for the `reth db clear` command
 #[derive(Parser, Debug)]

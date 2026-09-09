@@ -12,7 +12,7 @@ pub mod segments;
 mod static_file_producer;
 
 // Re-export for convenience.
-pub use reth_static_file_types::*;
+pub use base_execution_state_types::*;
 pub use static_file_producer::{
     StaticFileProducer, StaticFileProducerInner, StaticFileProducerResult,
     StaticFileProducerWithResult,

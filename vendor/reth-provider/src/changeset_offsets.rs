@@ -10,7 +10,7 @@ use std::{
     path::Path,
 };
 
-use reth_static_file_types::ChangesetOffset;
+use base_execution_state_types::ChangesetOffset;
 
 /// Writer for appending changeset offsets to a sidecar file.
 #[derive(Debug)]

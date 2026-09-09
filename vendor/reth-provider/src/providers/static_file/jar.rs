@@ -6,13 +6,15 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
-use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta};
+use base_common_types_chain::{
+    BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
+};
+use base_execution_state_types::ChangesetOffset;
 use reth_db::static_file::{
     BlockHashMask, HeaderMask, HeaderWithHashMask, ReceiptMask, StaticFileCursor, TransactionMask,
     TransactionSenderMask,
 };
 use reth_primitives_traits::SealedHeader;
-use reth_static_file_types::ChangesetOffset;
 use reth_storage_api::range_size_hint;
 use reth_storage_errors::provider::{ProviderError, ProviderResult};
 

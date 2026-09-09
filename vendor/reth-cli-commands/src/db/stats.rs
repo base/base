@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use base_execution_state_types::SegmentRangeInclusive;
 use clap::Parser;
 use comfy_table::{Cell, Row, Table as ComfyTable};
 use eyre::WrapErr;
@@ -11,7 +12,6 @@ use reth_db_common::DbTool;
 use reth_fs_util as fs;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
-use reth_static_file_types::SegmentRangeInclusive;
 
 use crate::db::checksum::ChecksumViewer;
 

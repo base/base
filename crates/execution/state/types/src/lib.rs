@@ -135,3 +135,10 @@ pub use stages::{
     MerkleChangeSetsCheckpoint, MerkleCheckpoint, PipelineTarget, StageCheckpoint, StageId,
     StageUnitCheckpoint, StorageHashingCheckpoint, StorageRootMerkleCheckpoint,
 };
+
+mod static_files;
+pub use static_files::{
+    ChangesetOffset, Compression, DEFAULT_BLOCKS_PER_STATIC_FILE, HighestStaticFiles,
+    SegmentConfig, SegmentHeader, SegmentRangeInclusive, StaticFileMap, StaticFileProducerEvent,
+    StaticFileSegment, StaticFileTargets, blocks_per_file_for_prune_distance, find_fixed_range,
+};

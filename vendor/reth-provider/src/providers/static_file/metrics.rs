@@ -1,9 +1,9 @@
 use std::{collections::HashMap, time::Duration};
 
 use base_common_observability_metrics::Metrics;
+use base_execution_state_types::{StaticFileMap, StaticFileSegment};
 use itertools::Itertools;
 use metrics::{Counter, Gauge, Histogram};
-use reth_static_file_types::{StaticFileMap, StaticFileSegment};
 use strum::{EnumIter, IntoEnumIterator};
 
 /// Metrics for the static file provider.

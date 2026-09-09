@@ -18,6 +18,7 @@ use base_common_types_chain::{
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
@@ -42,7 +43,6 @@ use reth_primitives_traits::{
     Account, Block as _, BlockBody as _, Bytecode, FastInstant as Instant, RecoveredBlock,
     SealedHeader, StorageEntry,
 };
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_api::{
     BlockBodyIndicesProvider, MetadataProvider, StateProvider, StateReader, StateWriteConfig,
     StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,

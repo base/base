@@ -23,10 +23,9 @@ reth-stages = { workspace = true }
 reth-network-api = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-static-file-types = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-execution-state-types = {workspace = true}
 base-common-types-payload = { workspace = true }
-base-execution-state-types = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }

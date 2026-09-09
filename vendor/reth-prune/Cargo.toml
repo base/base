@@ -26,7 +26,6 @@ reth-provider = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = {workspace = true}
 reth-primitives-traits = { workspace = true }
-reth-static-file-types = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }

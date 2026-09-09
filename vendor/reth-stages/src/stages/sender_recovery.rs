@@ -3,6 +3,7 @@ use std::{fmt::Debug, ops::Range, sync::mpsc};
 use alloy_primitives::{Address, BlockNumber, TxNumber};
 use base_common_types_chain::BaseTxEnvelope;
 use base_execution_evm_blocks::ConsensusError;
+use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::SenderRecoveryConfig;
 use reth_db::static_file::TransactionMask;
@@ -22,7 +23,6 @@ use reth_stages_api::{
     BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError,
     StageId, UnwindInput, UnwindOutput,
 };
-use reth_static_file_types::StaticFileSegment;
 use thiserror::Error;
 use tracing::*;
 
@@ -461,6 +461,7 @@ mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseTxEnvelope as TransactionSigned;
+    use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode};
     use reth_db_api::{cursor::DbCursorRO, models::StorageSettings};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
@@ -469,7 +470,6 @@ mod tests {
         StaticFileProviderFactory, TransactionsProvider, providers::StaticFileWriter,
     };
     use reth_stages_api::StageUnitCheckpoint;
-    use reth_static_file_types::StaticFileSegment;
     use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use super::*;

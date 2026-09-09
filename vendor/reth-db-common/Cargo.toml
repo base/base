@@ -24,10 +24,9 @@ reth-provider = { workspace = true }
 reth-storage-errors = {workspace = true}
 boyer-moore-magiclen = { workspace = true }
 reth-primitives-traits = { workspace = true }
-reth-static-file-types = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-execution-state-types = { workspace = true }
+base-execution-state-types = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true, features = ["attributes"] }

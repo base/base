@@ -3,6 +3,7 @@ use std::task::{Context, Poll, ready};
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rlp::Decodable;
 use base_common_types_chain::BlockHeader;
+use base_execution_state_types::StaticFileSegment;
 use futures_util::StreamExt;
 use reth_config::config::EtlConfig;
 use reth_db_api::{
@@ -25,7 +26,6 @@ use reth_stages_api::{
     CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput, HeadersCheckpoint, Stage,
     StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
 };
-use reth_static_file_types::StaticFileSegment;
 use tokio::sync::watch;
 use tracing::*;
 

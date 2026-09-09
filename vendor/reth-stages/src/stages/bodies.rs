@@ -3,6 +3,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use base_execution_state_types::StaticFileSegment;
 use futures_util::TryStreamExt;
 use reth_db_api::{
     cursor::DbCursorRO,
@@ -18,7 +19,6 @@ use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::ProviderResult;
 use tracing::*;
 
@@ -482,6 +482,7 @@ mod tests {
         use base_common_types_chain::{
             BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
         };
+        use base_execution_state_types::StaticFileSegment;
         use futures_util::Stream;
         use reth_db::{static_file::HeaderWithHashMask, tables};
         use reth_db_api::{
@@ -502,7 +503,6 @@ mod tests {
             providers::StaticFileWriter,
         };
         use reth_stages_api::{ExecInput, ExecOutput, UnwindInput};
-        use reth_static_file_types::StaticFileSegment;
         use reth_testing_utils::generators::{self, BlockRangeParams};
 
         use crate::{

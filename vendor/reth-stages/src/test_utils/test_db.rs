@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, fmt::Debug, path::Path};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
 use base_common_types_chain::{BaseReceipt as Receipt, BaseTxEnvelope};
+use base_execution_state_types::StaticFileSegment;
 use reth_db::{
     DatabaseEnv,
     test_utils::{
@@ -27,7 +28,6 @@ use reth_provider::{
         RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut, StaticFileWriter,
     },
 };
-use reth_static_file_types::StaticFileSegment;
 use reth_storage_errors::provider::ProviderResult;
 use reth_testing_utils::generators::ChangeSet;
 use tempfile::TempDir;

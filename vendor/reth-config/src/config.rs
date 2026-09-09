@@ -6,9 +6,9 @@ use std::{
 
 use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::{MINIMUM_UNWIND_SAFE_DISTANCE, PruneModes};
+use base_execution_state_types::{StaticFileMap, StaticFileSegment};
 use reth_network_peers::TrustedPeer;
 use reth_network_types::{PeersConfig, SessionsConfig};
-use reth_static_file_types::{StaticFileMap, StaticFileSegment};
 
 #[cfg(feature = "serde")]
 const EXTENSION: &str = "toml";
