@@ -34,8 +34,8 @@ path = "src/lib.rs"
 [dependencies]
 either = { workspace = true }
 dashmap = { workspace = true }
-thiserror = { workspace = true }
 auto_impl = { workspace = true }
+thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
@@ -47,6 +47,8 @@ alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rpc-client = { workspace = true }
+base-common-network = { workspace = true }
+base-common-types-chain = { workspace = true }
 alloy-serde = { workspace = true, optional = true }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
@@ -58,6 +60,7 @@ alloy-node-bindings = { workspace = true, optional = true }
 alloy-transport-http = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
+base-common-types-rpc = {workspace = true, features = ["serde"]}
 futures-utils-wasm = { workspace = true, features = ["default"] }
 url = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "macros"] }
@@ -65,17 +68,15 @@ serde = { workspace = true, features = [
     "derive",
     "alloc",
 ] }
-base-common-network = { workspace = true }
-base-common-types-chain = { workspace = true }
-base-common-types-rpc = {workspace = true, features = ["serde"]}
+
 [dev-dependencies]
-reqwest = { workspace = true }
 ci_info = { workspace = true }
+reqwest = { workspace = true }
 alloy-rlp = { workspace = true }
 itertools = { workspace = true }
 alloy-signer = { workspace = true }
-reth-rpc-layer = { workspace = true }
 alloy-node-bindings = { workspace = true }
+base-common-network = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 http = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
@@ -83,16 +84,17 @@ http-body-util = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
 tokio-tungstenite_0_29_0 = { workspace = true, features = ["default"] }
-tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 alloy-transport-http = { workspace = true, features = [
     "reqwest",
 ] }
-base-common-network = { workspace = true }
-tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 base-common-types-chain = { workspace = true, features = [
     "kzg",
     "k256",
 ] }
+base-common-types-payload = {workspace = true, features = ["jwt-aws-lc-rs", "serde"]}
+tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }
+
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasmtimer = { workspace = true, features = ["default"] }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
@@ -116,7 +118,12 @@ hyper-tls = ["hyper", "alloy-transport-http/hyper-tls"]
 more-tuple-impls = ["alloy-sol-types/more-tuple-impls"]
 net-api = []
 pubsub = ["alloy-rpc-client/pubsub", "dep:alloy-pubsub"]
-reqwest = ["dep:reqwest", "dep:url", "dep:alloy-transport-http", "alloy-rpc-client/reqwest"]
+reqwest = [
+    "dep:reqwest",
+    "dep:url",
+    "dep:alloy-transport-http",
+    "alloy-rpc-client/reqwest",
+]
 reqwest-default-tls = ["alloy-transport-http?/reqwest-default-tls"]
 reqwest-native-tls = ["alloy-transport-http?/reqwest-native-tls"]
 reqwest-rustls-tls = ["alloy-transport-http?/reqwest-rustls-tls"]

@@ -6,15 +6,14 @@ use std::borrow::Cow;
 
 use alloy_eips::{eip2718::Encodable2718, eip7928::BlockAccessList};
 use alloy_json_rpc::{RpcError, RpcRecv, RpcSend};
-use base_common_types_rpc::{BlockResponse, ReceiptResponse};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, U64, U128,
     U256, hex,
 };
 use alloy_rpc_client::{ClientRef, NoParams, PollerBuilder, WeakClient};
 use alloy_transport::TransportResult;
-use base_common_types_chain::BlockHeader;
 use base_common_network::{Ethereum, Network};
+use base_common_types_chain::BlockHeader;
 #[cfg(feature = "pubsub")]
 use base_common_types_rpc::pubsub::{Params, SubscriptionKind};
 use base_common_types_rpc::{
@@ -24,6 +23,7 @@ use base_common_types_rpc::{
     erc4337::TransactionConditional,
     simulate::{SimulatePayload, SimulatedBlock},
 };
+use base_common_types_rpc::{BlockResponse, ReceiptResponse};
 use serde_json::value::RawValue;
 
 #[cfg(feature = "pubsub")]
@@ -1889,19 +1889,21 @@ mod tests {
     use alloy_transport::layers::{RetryBackoffLayer, RetryPolicy};
     #[cfg(feature = "hyper")]
     use alloy_transport_http::{
-        HyperResponse, HyperResponseFut, hyper,
+        Http, HyperClient, HyperResponse, HyperResponseFut, hyper,
         hyper::body::Bytes as HyperBytes,
         hyper_util::{
             client::legacy::{Client, Error},
             rt::TokioExecutor,
         },
     };
+    #[cfg(feature = "hyper")]
+    use base_common_types_payload::{Claims, JwtSecret};
     // For layer transport tests
-    use base_common_types_chain::transaction::SignerRecoverable;
-    use base_common_types_chain::{Transaction, TxEnvelope};
     use base_common_network::{
         Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };
+    use base_common_types_chain::transaction::SignerRecoverable;
+    use base_common_types_chain::{Transaction, TxEnvelope};
     use base_common_types_rpc::{Block, request::TransactionRequest};
     #[cfg(feature = "hyper")]
     use http_body_util::Full;
@@ -2038,16 +2040,22 @@ mod tests {
     #[cfg_attr(windows, ignore = "no reth on windows")]
     async fn test_auth_layer_transport() {
         crate::ext::test::async_ci_only(|| async move {
-            use alloy_node_bindings::Reth;
-            use alloy_transport_http::{Http, HyperClient};
-            use reth_rpc_layer::{AuthClientLayer, JwtSecret};
-
             let secret = JwtSecret::random();
 
             let reth =
                 Reth::new().arg("--rpc.jwtsecret").arg(hex::encode(secret.as_bytes())).spawn();
 
-            let layer_transport = HyperClient::new().layer(AuthClientLayer::new(secret));
+            let mut authorization =
+                format!("Bearer {}", secret.encode(&Claims::default()).unwrap())
+                    .parse::<http::HeaderValue>()
+                    .unwrap();
+            authorization.set_sensitive(true);
+            let layer_transport = HyperClient::new().layer(
+                tower_http::set_header::SetRequestHeaderLayer::overriding(
+                    http::header::AUTHORIZATION,
+                    authorization,
+                ),
+            );
 
             let http_hyper = Http::with_client(layer_transport, reth.endpoint_url());
 
