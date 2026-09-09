@@ -146,7 +146,7 @@ impl ProofTaskController {
             tokio::task::JoinError,
         >,
     ) {
-        match result {
+        tracing::Span::none().in_scope(|| match result {
             Ok(Ok(_)) | Ok(Err(ProofSubmitterError::Cancelled)) => {}
             Ok(Err(error)) => {
                 warn!(error = %error, "proof submission task failed");
@@ -155,7 +155,7 @@ impl ProofTaskController {
             Err(error) => {
                 warn!(error = %error, "proof submission task join failed");
             }
-        }
+        });
     }
 }
 
