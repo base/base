@@ -4419,7 +4419,6 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-eip8130-rpc",
  "base-node-runner",
- "base-protocol",
  "base-test-utils",
  "eyre",
  "serde_json",
