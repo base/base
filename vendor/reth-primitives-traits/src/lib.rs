@@ -136,9 +136,7 @@ pub use base_common_types_chain::{
     ReceiptWithBloom,
     transaction::{Recovered, TransactionMeta},
 };
-pub use transaction::{
-    SignerRecoverable, Transaction, execute::FillTxEnv, signed::SignedTransaction,
-};
+pub use transaction::{SignerRecoverable, Transaction, signed::SignedTransaction};
 
 pub mod block;
 pub use block::{

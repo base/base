@@ -10,7 +10,6 @@
 //! Use `recover_signer` for post-EIP-2 transactions or `recover_signer_unchecked`
 //! for historical transactions.
 
-pub mod execute;
 pub mod signature;
 pub mod signed;
 
