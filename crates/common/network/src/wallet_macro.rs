@@ -9,11 +9,5 @@ macro_rules! impl_into_wallet {
             }
         }
 
-        impl $(<$($generics)*>)? $crate::IntoWallet<$crate::AnyNetwork> for $signer {
-            type NetworkWallet = $crate::EthereumWallet;
-            fn into_wallet(self) -> Self::NetworkWallet {
-                $crate::EthereumWallet::from(self)
-            }
-        }
     };
 }

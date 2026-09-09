@@ -790,7 +790,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
 
 #[cfg(test)]
 mod tests {
-    use base_common_network::AnyNetwork;
+    use base_common_network::Ethereum;
 
     use super::*;
     use crate::Provider;
@@ -841,7 +841,7 @@ mod tests {
 
     #[tokio::test]
     async fn compile_with_network() {
-        let p = ProviderBuilder::new_with_network::<AnyNetwork>().connect_anvil();
+        let p = ProviderBuilder::new_with_network::<Ethereum>().connect_anvil();
         let num = p.get_block_number().await.unwrap();
         assert_eq!(num, 0);
     }
@@ -850,12 +850,12 @@ mod tests {
     #[test]
     fn network_replaces_fillers() {
         // Add an extra filler before swapping, it should be dropped.
-        let builder = ProviderBuilder::new().filler(GasFiller::default()).network::<AnyNetwork>();
+        let builder = ProviderBuilder::new().filler(GasFiller::default()).network::<Ethereum>();
 
         let _: ProviderBuilder<
             Identity,
-            JoinFill<Identity, <AnyNetwork as RecommendedFillers>::RecommendedFillers>,
-            AnyNetwork,
+            JoinFill<Identity, <Ethereum as RecommendedFillers>::RecommendedFillers>,
+            Ethereum,
         > = builder;
     }
 
@@ -884,8 +884,8 @@ mod tests {
 
     #[tokio::test]
     async fn network_swap_works_at_runtime() {
-        // Verify that `ProviderBuilder::new().network::<AnyNetwork>()` produces a working provider.
-        let p = ProviderBuilder::new().network::<AnyNetwork>().connect_anvil();
+        // Verify that `ProviderBuilder::new().network::<Ethereum>()` produces a working provider.
+        let p = ProviderBuilder::new().network::<Ethereum>().connect_anvil();
         let num = p.get_block_number().await.unwrap();
         assert_eq!(num, 0);
     }

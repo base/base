@@ -32,33 +32,17 @@ zeroize = { workspace = true, features = [
     "alloc",
 ], optional = true }
 auto_impl = { workspace = true }
-alloy-serde = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-sol-types = { workspace = true }
-alloy-rpc-types-any = { workspace = true }
 alloy-network-primitives = { workspace = true }
-derive_more = { workspace = true, features = ["from"] }
-serde_json = { workspace = true, features = ["alloc"] }
 futures-utils-wasm = { workspace = true, features = ["default"] }
-serde = { workspace = true, features = [
-    "derive",
-    "alloc",
-] }
-alloy-consensus-any = { workspace = true, features = [
-    "std",
-    "serde",
-] }
 base-common-consensus = {workspace = true, features = ["serde", "std"]}
 [dev-dependencies]
 alloy-node-bindings = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
-tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
-serde = { workspace = true, features = [
-    "derive",
-    "alloc",
-] }
 base-common-consensus = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 
 [features]
 mnemonic = ["dep:coins-bip32", "dep:coins-bip39", "zeroize"]

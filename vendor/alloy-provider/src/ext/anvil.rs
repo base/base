@@ -534,7 +534,7 @@ mod tests {
     use alloy_sol_types::{SolCall, sol};
     use alloy_transport::mock::Asserter;
     use base_common_consensus::{BlockHeader, SidecarBuilder, SimpleCoder};
-    use base_common_network::{AnyNetwork, TransactionBuilder, TransactionBuilder4844};
+    use base_common_network::{Ethereum, TransactionBuilder, TransactionBuilder4844};
 
     use super::*;
     use crate::{
@@ -1191,8 +1191,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_anvil_mine_detailed_with_any_network() {
-        let provider = ProviderBuilder::new().network::<AnyNetwork>().connect_anvil();
+    async fn test_anvil_mine_detailed_with_explicit_ethereum_network() {
+        let provider = ProviderBuilder::new().network::<Ethereum>().connect_anvil();
 
         let start_num = provider.get_block_number().await.unwrap();
 

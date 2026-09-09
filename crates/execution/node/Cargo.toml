@@ -77,11 +77,11 @@ base-upgrade-signal = { workspace = true, features = ["default"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 base-execution-trie = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
+base-common-rpc-types = { workspace = true, features = ["network"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, optional = false, features = ["alloc"]}
-alloy-provider = { workspace = true, features = ["reqwest", "debug-api"] }
 base-execution-rpc = { workspace = true, features = ["default", "client"] }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 base-execution-consensus = { workspace = true, features = ["default", "std"] }
@@ -110,12 +110,12 @@ base-execution-rpc = { workspace = true }
 base-common-genesis = { workspace = true }
 base-common-network = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
-base-common-rpc-types = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-protocol = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+base-common-rpc-types = { workspace = true, features = ["network"] }
 reth-db = { workspace = true, features = ["default", "test-utils"] }
 reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }

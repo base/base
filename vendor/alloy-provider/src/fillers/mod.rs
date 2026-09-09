@@ -56,7 +56,7 @@ use alloy_rpc_types_eth::{
 };
 use alloy_transport::{TransportError, TransportResult};
 use async_trait::async_trait;
-use base_common_network::{AnyNetwork, Ethereum, Network};
+use base_common_network::{Ethereum, Network};
 use futures_utils_wasm::impl_future;
 pub use join_fill::JoinFill;
 use serde_json::value::RawValue;
@@ -849,15 +849,6 @@ pub trait RecommendedFillers: Network {
 }
 
 impl RecommendedFillers for Ethereum {
-    type RecommendedFillers =
-        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>;
-
-    fn recommended_fillers() -> Self::RecommendedFillers {
-        Default::default()
-    }
-}
-
-impl RecommendedFillers for AnyNetwork {
     type RecommendedFillers =
         JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>;
 

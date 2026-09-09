@@ -1,7 +1,7 @@
 //! Built-in consensus debugging and local mining services.
 use std::sync::Arc;
 
-use alloy_provider::network::AnyNetwork;
+use base_common_rpc_types::Base;
 use base_execution_payload_types::BaseBuiltPayload;
 use reth_consensus_debug_client::{DebugConsensusClient, EtherscanBlockProvider, RpcBlockProvider};
 use reth_engine_local::LocalMiner;
@@ -21,22 +21,18 @@ impl BaseDebugServices {
         if let Some(url) = config.debug.rpc_consensus_url.clone() {
             info!(target: "reth::cli", url = %url, "Using RPC consensus client");
 
-            let block_provider = RpcBlockProvider::<AnyNetwork, _>::new(
-                url.as_str(),
-                move |block_response, extras| {
-                    let json = serde_json::to_value(block_response)
-                        .expect("Block serialization cannot fail");
-                    let rpc_block: alloy_rpc_types_eth::Block<
-                        base_common_consensus::BaseTxEnvelope,
-                    > = serde_json::from_value(json).expect("Block deserialization cannot fail");
-                    let primitive_block = rpc_block.into_consensus();
+            let block_provider =
+                RpcBlockProvider::<Base, _>::new(url.as_str(), move |block_response, extras| {
+                    let primitive_block = block_response
+                        .map_header(|header| header.into_inner())
+                        .map_transactions(|tx| tx.inner.inner.into_inner())
+                        .into_consensus();
                     BaseBuiltPayload::block_to_payload(
                         SealedBlock::new_unhashed(primitive_block),
                         extras.bal,
                     )
-                },
-            )
-            .await?;
+                })
+                .await?;
 
             let rpc_consensus_client = DebugConsensusClient::new(
                 handle.node.execution.driver.clone(),

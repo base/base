@@ -34,7 +34,6 @@ path = "src/lib.rs"
 [dependencies]
 alloy-serde = { workspace = true }
 alloy-primitives = { workspace = true, features = ["map"] }
-alloy-rpc-types-any = { workspace = true, optional = true }
 alloy-rpc-types-mev = { workspace = true, optional = true }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
@@ -57,7 +56,6 @@ workspace = true
 
 [features]
 admin = ["dep:alloy-rpc-types-admin"]
-any = ["dep:alloy-rpc-types-any"]
 arbitrary = [
     "alloy-rpc-types-eth?/arbitrary",
     "alloy-serde/arbitrary",

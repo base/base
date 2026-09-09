@@ -36,7 +36,6 @@ itertools = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-sol-types = { workspace = true }
-alloy-consensus-any = { workspace = true }
 alloy-network-primitives = { workspace = true }
 alloy-serde = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
@@ -87,7 +86,6 @@ arbitrary = [
     "alloy-primitives/arbitrary",
     "alloy-serde?/arbitrary",
     "alloy-eips/arbitrary",
-    "alloy-consensus-any/arbitrary",
     "alloy-sol-types/arbitrary",
 ]
 default = ["std", "serde"]
@@ -99,7 +97,6 @@ serde = [
     "alloy-primitives/serde",
     "base-common-consensus/serde",
     "alloy-eips/serde",
-    "alloy-consensus-any/serde",
     "rand_08/serde",
     "alloy-network-primitives/serde",
 ]
@@ -113,7 +110,6 @@ std = [
     "alloy-primitives/std",
     "base-common-consensus/std",
     "alloy-eips/std",
-    "alloy-consensus-any/std",
     "alloy-network-primitives/std",
     "alloy-serde?/std",
     "alloy-rlp/std",

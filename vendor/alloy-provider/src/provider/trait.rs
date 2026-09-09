@@ -1901,7 +1901,7 @@ mod tests {
     use base_common_consensus::transaction::SignerRecoverable;
     use base_common_consensus::{Transaction, TxEnvelope};
     use base_common_network::{
-        AnyNetwork, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
+        Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
     };
     #[cfg(feature = "hyper")]
     use http_body_util::Full;
@@ -2062,10 +2062,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_helper_fn_any_network() {
+    async fn test_builder_helper_fn_explicit_ethereum_network() {
         let anvil = Anvil::new().spawn();
         let provider =
-            builder::<AnyNetwork>().with_recommended_fillers().connect_http(anvil.endpoint_url());
+            builder::<Ethereum>().with_recommended_fillers().connect_http(anvil.endpoint_url());
         let num = provider.get_block_number().await.unwrap();
         assert_eq!(0, num);
     }
@@ -2611,23 +2611,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn any_network_wallet_filler() {
-        use alloy_serde::WithOtherFields;
+    async fn explicit_ethereum_network_wallet_filler() {
         let anvil = Anvil::new().spawn();
         let signer: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(signer);
 
         let provider = ProviderBuilder::new()
-            .network::<AnyNetwork>()
+            .network::<Ethereum>()
             .wallet(wallet)
             .connect_http(anvil.endpoint_url());
 
         let tx = TransactionRequest::default()
             .with_to(address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"))
             .value(U256::from(325235));
-
-        let tx = WithOtherFields::new(tx);
 
         let builder = provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
 

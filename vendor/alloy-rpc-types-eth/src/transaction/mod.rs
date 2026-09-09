@@ -1,6 +1,5 @@
 //! RPC types for transactions
 
-pub use alloy_consensus_any::AnyReceiptEnvelope;
 use alloy_eips::eip2718::Encodable2718;
 pub use alloy_eips::{
     eip2930::{AccessList, AccessListItem, AccessListResult},

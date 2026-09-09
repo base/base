@@ -129,21 +129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloy-consensus-any"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-serde",
- "arbitrary",
- "base-common-consensus",
- "bincode 2.0.1",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "alloy-contract"
 version = "0.0.0"
 dependencies = [
@@ -540,7 +525,6 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-admin",
- "alloy-rpc-types-any",
  "alloy-rpc-types-beacon",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
@@ -562,19 +546,6 @@ checksum = "8bfdc2a2cde178ad3a79594b4fabbc0f2f11be5a98a3363083e91575fc95335c"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "alloy-rpc-types-any"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus-any",
- "alloy-network-primitives",
- "alloy-primitives",
- "alloy-rpc-types-eth",
- "alloy-serde",
  "serde",
  "serde_json",
 ]
@@ -639,7 +610,6 @@ dependencies = [
 name = "alloy-rpc-types-eth"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus-any",
  "alloy-eips",
  "alloy-network-primitives",
  "alloy-primitives",
@@ -2989,15 +2959,12 @@ dependencies = [
 name = "base-common-network"
 version = "0.0.0"
 dependencies = [
- "alloy-consensus-any",
  "alloy-eips",
  "alloy-json-rpc",
  "alloy-network-primitives",
  "alloy-node-bindings",
  "alloy-primitives",
- "alloy-rpc-types-any",
  "alloy-rpc-types-eth",
- "alloy-serde",
  "alloy-signer",
  "alloy-sol-types",
  "async-trait",
@@ -3005,12 +2972,10 @@ dependencies = [
  "base-common-consensus",
  "coins-bip32",
  "coins-bip39",
- "derive_more",
  "futures-utils-wasm",
  "jsonrpsee",
  "k256",
  "rand 0.8.7",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
@@ -4219,7 +4184,6 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
- "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
