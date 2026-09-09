@@ -36,3 +36,6 @@ pub use derivation_status_poller::{DerivationStatusPoller, DerivationStatusProvi
 
 mod service;
 pub use service::{BatcherService, ReadyBatcher};
+
+mod admin_rpc;
+pub use admin_rpc::{AdminServer, BatcherAdminApiServer, BatcherAdminApiServerImpl};

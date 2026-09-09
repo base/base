@@ -13,31 +13,30 @@ workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+base-batcher-core = {workspace = true}
 base-tx-manager = { workspace = true }
-base-batcher-core = { workspace = true }
 base-common-network = {workspace = true}
-base-batcher-admin = { workspace = true }
 base-batcher-source = { workspace = true }
 base-balance-monitor = { workspace = true }
 metrics = { workspace = true, optional = true }
-tracing = { workspace = true, features = ["std"] }
+tracing = {workspace = true, features = ["std"]}
+eyre = {workspace = true, features = ["default"]}
 url = { workspace = true, features = ["default"] }
-eyre = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
 backon = { workspace = true, features = ["default"] }
+derive_more = {workspace = true, features = ["debug"]}
 futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
 base-protocol = { workspace = true, features = ["std"] }
-derive_more = { workspace = true, features = ["debug"] }
 tokio-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["serde", "std"] }
 base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
-jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "time"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
+jsonrpsee = {workspace = true, features = ["http-client", "macros", "server"]}
 
 [dev-dependencies]
 httpmock = { workspace = true, features = ["default"] }

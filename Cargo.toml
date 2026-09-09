@@ -30,7 +30,6 @@ members = [
   "bin/sidecrush",
   "bin/snapshotter",
   "bin/websocket-proxy",
-  "crates/batcher/admin",
   "crates/batcher/cli",
   "crates/batcher/core",
   "crates/batcher/encoding/channel",
@@ -404,7 +403,6 @@ base-prover-service-protocol = { path = "crates/proof/prover-service/protocol", 
 # Batcher
 base-batcher-cli = { path = "crates/batcher/cli", default-features = false }
 base-batcher-core = { path = "crates/batcher/core", default-features = false }
-base-batcher-admin = { path = "crates/batcher/admin", default-features = false }
 base-batcher-source = { path = "crates/batcher/source", default-features = false }
 base-batcher-encoding-channel = { path = "crates/batcher/encoding/channel", default-features = false }
 base-batcher-service-driver = { path = "crates/batcher/service/driver", default-features = false }
