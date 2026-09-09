@@ -160,8 +160,9 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for EthPrecompiles {
 
 #[cfg(test)]
 mod tests {
+    use crate::EvmMachine;
     use base_evm_context::{
-        Context, Evm, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
+        Context, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
     };
     use base_state::InMemoryDB;
 
@@ -290,7 +291,7 @@ mod tests {
 
         let spec = SpecId::default();
         let ctx = Context::mainnet().with_db(db);
-        let mut evm = Evm {
+        let mut evm = EvmMachine {
             ctx,
             inspector: (),
             instruction: EthInstructions::<_>::new_mainnet_with_spec(spec),

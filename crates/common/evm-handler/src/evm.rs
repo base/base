@@ -1,10 +1,12 @@
 use auto_impl::auto_impl;
-use base_evm_context::{ContextError, ContextTr, Evm, FrameStack};
+use base_evm_context::{ContextError, ContextTr, FrameStack};
+use base_evm_handler::EthInstructions;
+use base_evm_handler::EvmMachine;
 use revm_interpreter::{InterpreterResult, interpreter_action::FrameInit};
 
 use crate::{
     ContextTrDbError, EthFrame, FrameResult, ItemOrResult, PrecompileProvider,
-    instructions::InstructionProvider, item_or_result::FrameInitOrResult,
+    item_or_result::FrameInitOrResult,
 };
 
 /// Type alias for database error within a context
@@ -29,8 +31,7 @@ pub trait FrameTr {
 pub trait EvmTr {
     /// The context type that implements ContextTr to provide access to execution state
     type Context: ContextTr;
-    /// The instruction set type that implements InstructionProvider to define available operations
-    type Instructions: InstructionProvider;
+
     /// The type containing the available precompiled contracts
     type Precompiles: PrecompileProvider<Self::Context>;
     /// The type containing the frame
@@ -40,7 +41,12 @@ pub trait EvmTr {
     #[expect(clippy::type_complexity)]
     fn all(
         &self,
-    ) -> (&Self::Context, &Self::Instructions, &Self::Precompiles, &FrameStack<Self::Frame>);
+    ) -> (
+        &Self::Context,
+        &EthInstructions<Self::Context>,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+    );
 
     /// Returns a tuple of mutable references to the context, the frame and the instructions.
     #[expect(clippy::type_complexity)]
@@ -48,7 +54,7 @@ pub trait EvmTr {
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Instructions,
+        &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
         &mut FrameStack<Self::Frame>,
     );
@@ -76,7 +82,7 @@ pub trait EvmTr {
     /// Returns mutable references to both the context and instruction set.
     /// This enables atomic access to both components when needed.
     #[inline]
-    fn ctx_instructions(&mut self) -> (&mut Self::Context, &mut Self::Instructions) {
+    fn ctx_instructions(&mut self) -> (&mut Self::Context, &mut EthInstructions<Self::Context>) {
         let (ctx, instructions, _, _) = self.all_mut();
         (ctx, instructions)
     }
@@ -117,21 +123,25 @@ pub trait EvmTr {
     ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>>;
 }
 
-impl<CTX, INSP, I, P> EvmTr for Evm<CTX, INSP, I, P, EthFrame>
+impl<CTX, INSP, P> EvmTr for EvmMachine<CTX, INSP, P, EthFrame>
 where
     CTX: ContextTr,
-    I: InstructionProvider<Context = CTX>,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type Context = CTX;
-    type Instructions = I;
+
     type Precompiles = P;
     type Frame = EthFrame;
 
     #[inline]
     fn all(
         &self,
-    ) -> (&Self::Context, &Self::Instructions, &Self::Precompiles, &FrameStack<Self::Frame>) {
+    ) -> (
+        &Self::Context,
+        &EthInstructions<Self::Context>,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+    ) {
         let ctx = &self.ctx;
         let instructions = &self.instruction;
         let precompiles = &self.precompiles;
@@ -144,7 +154,7 @@ where
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Instructions,
+        &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
         &mut FrameStack<Self::Frame>,
     ) {

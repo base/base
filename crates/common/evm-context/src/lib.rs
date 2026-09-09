@@ -31,9 +31,6 @@ pub use context::*;
 mod context_impl;
 pub use context_impl::*;
 
-mod evm;
-pub use evm::*;
-
 mod host;
 pub use host::*;
 

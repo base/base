@@ -24,7 +24,6 @@ rustdoc-args = [
 either = { workspace = true }
 auto_impl = { workspace = true }
 revm-state = { workspace = true }
-derive-where = { workspace = true }
 revm-bytecode = { workspace = true }
 base-state = { workspace = true }
 revm-precompile = { workspace = true }
@@ -64,7 +63,6 @@ serde = [
     "base-state/serde",
     "base-state/serde",
     "revm-interpreter/serde",
-    "derive-where/serde",
     "either/serde",
 ]
 serde-json = ["serde", "tracer"]

@@ -1,7 +1,8 @@
-use base_evm_context::{ContextSetters, ContextTr, Evm, FrameStack, JournalTr};
+use base_evm_context::{ContextSetters, ContextTr, FrameStack, JournalTr};
+use base_evm_handler::EthInstructions;
+use base_evm_handler::EvmMachine;
 use base_evm_handler::{
-    EthFrame, EvmTr, EvmTrError, Handler, InstructionProvider, MainnetHandler, PrecompileProvider,
-    SystemCallTx,
+    EthFrame, EvmTr, EvmTrError, Handler, MainnetHandler, PrecompileProvider, SystemCallTx,
 };
 use base_state::DatabaseCommit;
 use revm_interpreter::InterpreterResult;
@@ -25,12 +26,11 @@ where
 {
 }
 
-// Implementing InspectEvm for Evm
-impl<CTX, INSP, INST, PRECOMPILES> InspectEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
+// Implementing InspectEvm for EvmMachine
+impl<CTX, INSP, PRECOMPILES> InspectEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
     CTX: ContextSetters + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt>,
     INSP: Inspector<CTX>,
-    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type Inspector = INSP;
@@ -45,25 +45,22 @@ where
     }
 }
 
-// Implementing InspectCommitEvm for Evm
-impl<CTX, INSP, INST, PRECOMPILES> InspectCommitEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
+// Implementing InspectCommitEvm for EvmMachine
+impl<CTX, INSP, PRECOMPILES> InspectCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
     CTX: ContextSetters
         + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt, Db: DatabaseCommit>,
     INSP: Inspector<CTX>,
-    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
 }
 
-// Implementing InspectSystemCallEvm for Evm
-impl<CTX, INSP, INST, PRECOMPILES> InspectSystemCallEvm
-    for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
+// Implementing InspectSystemCallEvm for EvmMachine
+impl<CTX, INSP, PRECOMPILES> InspectSystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
     CTX: ContextSetters
         + ContextTr<Journal: JournalTr<State = EvmState> + JournalExt, Tx: SystemCallTx>,
     INSP: Inspector<CTX>,
-    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     fn inspect_one_system_call_with_caller(
@@ -79,11 +76,10 @@ where
     }
 }
 
-// Implementing InspectorEvmTr for Evm
-impl<CTX, INSP, I, P> InspectorEvmTr for Evm<CTX, INSP, I, P, EthFrame>
+// Implementing InspectorEvmTr for EvmMachine
+impl<CTX, INSP, P> InspectorEvmTr for EvmMachine<CTX, INSP, P, EthFrame>
 where
     CTX: ContextTr<Journal: JournalExt> + ContextSetters,
-    I: InstructionProvider<Context = CTX>,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
     INSP: Inspector<CTX>,
 {
@@ -93,7 +89,7 @@ where
         &self,
     ) -> (
         &Self::Context,
-        &Self::Instructions,
+        &EthInstructions<Self::Context>,
         &Self::Precompiles,
         &FrameStack<Self::Frame>,
         &Self::Inspector,
@@ -109,7 +105,7 @@ where
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Instructions,
+        &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
         &mut FrameStack<Self::Frame>,
         &mut Self::Inspector,

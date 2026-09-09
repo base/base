@@ -1,7 +1,8 @@
+use base_evm_handler::EvmMachine;
 use std::vec::Vec;
 
 use base_evm_context::{
-    Block, ContextSetters, ContextTr, Database, EVMError, Evm, ExecResultAndState, ExecutionResult,
+    Block, ContextSetters, ContextTr, Database, EVMError, ExecResultAndState, ExecutionResult,
     HaltReason, InvalidTransaction, JournalTr, ResultAndState, ResultVecAndState, Transaction,
     TransactionIndexedError,
 };
@@ -9,9 +10,7 @@ use base_state::DatabaseCommit;
 use revm_interpreter::InterpreterResult;
 use revm_state::EvmState;
 
-use crate::{
-    Handler, MainnetHandler, PrecompileProvider, frame::EthFrame, instructions::InstructionProvider,
-};
+use crate::{Handler, MainnetHandler, PrecompileProvider, frame::EthFrame};
 
 /// Type alias for the result of transact_many_finalize to reduce type complexity.
 type TransactManyFinalizeResult<ExecutionResult, State, Error> =
@@ -178,10 +177,9 @@ pub trait ExecuteCommitEvm: ExecuteEvm {
     }
 }
 
-impl<CTX, INSP, INST, PRECOMPILES> ExecuteEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> ExecuteEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
     CTX: ContextTr<Journal: JournalTr<State = EvmState>> + ContextSetters,
-    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     type ExecutionResult = ExecutionResult<HaltReason>;
@@ -222,10 +220,9 @@ where
     }
 }
 
-impl<CTX, INSP, INST, PRECOMPILES> ExecuteCommitEvm for Evm<CTX, INSP, INST, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> ExecuteCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
 where
     CTX: ContextTr<Journal: JournalTr<State = EvmState>, Db: DatabaseCommit> + ContextSetters,
-    INST: InstructionProvider<Context = CTX>,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
 {
     #[inline]

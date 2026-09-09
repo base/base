@@ -1,22 +1,22 @@
-//! This module contains [`Evm`] struct.
+//! This module contains [`EvmMachine`] struct.
 use core::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
 
+use crate::EthInstructions;
 use base_evm_context::FrameStack;
 
 /// Main EVM structure that contains all data needed for execution.
-#[derive(Debug, Clone)]
-pub struct Evm<CTX, INSP, I, P, F> {
+#[derive(Debug)]
+pub struct EvmMachine<CTX, INSP, P, F> {
     /// [`base_evm_context::ContextTr`] of the EVM it is used to fetch data from database.
     pub ctx: CTX,
     /// Inspector of the EVM it is used to inspect the EVM.
     /// Its trait are defined in revm-inspector crate.
     pub inspector: INSP,
-    /// Instructions provider of the EVM it is used to execute instructions.
-    /// `InstructionProvider` trait is defined in base-evm-handler crate.
-    pub instruction: I,
+    /// Opcode implementations and fork-specific gas costs.
+    pub instruction: EthInstructions<CTX>,
     /// Precompile provider of the EVM it is used to execute precompiles.
     /// `PrecompileProvider` trait is defined in base-evm-handler crate.
     pub precompiles: P,
@@ -24,12 +24,12 @@ pub struct Evm<CTX, INSP, I, P, F> {
     pub frame_stack: FrameStack<F>,
 }
 
-impl<CTX, I, P, F: Default> Evm<CTX, (), I, P, F> {
+impl<CTX, P, F: Default> EvmMachine<CTX, (), P, F> {
     /// Create a new EVM instance with a given context, instruction set, and precompile provider.
     ///
     /// Inspector will be set to `()`.
-    pub fn new(ctx: CTX, instruction: I, precompiles: P) -> Self {
-        Evm {
+    pub fn new(ctx: CTX, instruction: EthInstructions<CTX>, precompiles: P) -> Self {
+        EvmMachine {
             ctx,
             inspector: (),
             instruction,
@@ -39,17 +39,28 @@ impl<CTX, I, P, F: Default> Evm<CTX, (), I, P, F> {
     }
 }
 
-impl<CTX, I, INSP, P, F: Default> Evm<CTX, INSP, I, P, F> {
+impl<CTX, INSP, P, F: Default> EvmMachine<CTX, INSP, P, F> {
     /// Create a new EVM instance with a given context, inspector, instruction set, and precompile provider.
-    pub fn new_with_inspector(ctx: CTX, inspector: INSP, instruction: I, precompiles: P) -> Self {
-        Evm { ctx, inspector, instruction, precompiles, frame_stack: FrameStack::new_prealloc(8) }
+    pub fn new_with_inspector(
+        ctx: CTX,
+        inspector: INSP,
+        instruction: EthInstructions<CTX>,
+        precompiles: P,
+    ) -> Self {
+        EvmMachine {
+            ctx,
+            inspector,
+            instruction,
+            precompiles,
+            frame_stack: FrameStack::new_prealloc(8),
+        }
     }
 }
 
-impl<CTX, INSP, I, P, F> Evm<CTX, INSP, I, P, F> {
-    /// Consumed self and returns new Evm type with given Inspector.
-    pub fn with_inspector<OINSP>(self, inspector: OINSP) -> Evm<CTX, OINSP, I, P, F> {
-        Evm {
+impl<CTX, INSP, P, F> EvmMachine<CTX, INSP, P, F> {
+    /// Consumed self and returns new EvmMachine type with given Inspector.
+    pub fn with_inspector<OINSP>(self, inspector: OINSP) -> EvmMachine<CTX, OINSP, P, F> {
+        EvmMachine {
             ctx: self.ctx,
             inspector,
 
@@ -59,9 +70,9 @@ impl<CTX, INSP, I, P, F> Evm<CTX, INSP, I, P, F> {
         }
     }
 
-    /// Consumes self and returns new Evm type with given Precompiles.
-    pub fn with_precompiles<OP>(self, precompiles: OP) -> Evm<CTX, INSP, I, OP, F> {
-        Evm {
+    /// Consumes self and returns new EvmMachine type with given Precompiles.
+    pub fn with_precompiles<OP>(self, precompiles: OP) -> EvmMachine<CTX, INSP, OP, F> {
+        EvmMachine {
             ctx: self.ctx,
             inspector: self.inspector,
             instruction: self.instruction,
@@ -76,7 +87,7 @@ impl<CTX, INSP, I, P, F> Evm<CTX, INSP, I, P, F> {
     }
 }
 
-impl<CTX, INSP, I, P, F> Deref for Evm<CTX, INSP, I, P, F> {
+impl<CTX, INSP, P, F> Deref for EvmMachine<CTX, INSP, P, F> {
     type Target = CTX;
 
     fn deref(&self) -> &Self::Target {
@@ -84,7 +95,7 @@ impl<CTX, INSP, I, P, F> Deref for Evm<CTX, INSP, I, P, F> {
     }
 }
 
-impl<CTX, INSP, I, P, F> DerefMut for Evm<CTX, INSP, I, P, F> {
+impl<CTX, INSP, P, F> DerefMut for EvmMachine<CTX, INSP, P, F> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.ctx
     }

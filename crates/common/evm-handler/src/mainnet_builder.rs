@@ -1,7 +1,8 @@
 use base_evm_context::{
-    Block, BlockEnv, Cfg, CfgEnv, Context, Database, Evm, FrameStack, Journal, JournalTr,
-    Transaction, TxEnv,
+    Block, BlockEnv, Cfg, CfgEnv, Context, Database, FrameStack, Journal, JournalTr, Transaction,
+    TxEnv,
 };
+use base_evm_handler::EvmMachine;
 use base_state::EmptyDB;
 
 use revm_primitives::hardfork::SpecId;
@@ -9,8 +10,7 @@ use revm_primitives::hardfork::SpecId;
 use crate::{EthPrecompiles, frame::EthFrame, instructions::EthInstructions};
 
 /// Type alias for a mainnet EVM instance with standard Ethereum components.
-pub type MainnetEvm<CTX, INSP = ()> =
-    Evm<CTX, INSP, EthInstructions<CTX>, EthPrecompiles, EthFrame>;
+pub type MainnetEvm<CTX, INSP = ()> = EvmMachine<CTX, INSP, EthPrecompiles, EthFrame>;
 
 /// Type alias for a mainnet context with standard Ethereum environment types.
 pub type MainnetContext<DB> = Context<BlockEnv, TxEnv, CfgEnv, DB, Journal<DB>, ()>;
@@ -40,7 +40,7 @@ where
 
     fn build_mainnet(self) -> MainnetEvm<Self::Context> {
         let spec = self.cfg.spec().into();
-        Evm {
+        EvmMachine {
             ctx: self,
             inspector: (),
             instruction: EthInstructions::new_mainnet_with_spec(spec),
@@ -54,7 +54,7 @@ where
         inspector: INSP,
     ) -> MainnetEvm<Self::Context, INSP> {
         let spec = self.cfg.spec().into();
-        Evm {
+        EvmMachine {
             ctx: self,
             inspector,
             instruction: EthInstructions::new_mainnet_with_spec(spec),

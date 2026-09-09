@@ -1,9 +1,10 @@
+use base_evm_handler::EvmMachine as RevmEvm;
 use core::ops::{Deref, DerefMut};
 
 use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
-    BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, Evm as RevmEvm,
-    ExecResultAndState, ExecutionResult, FrameStack, JournalTr, ResultAndState,
+    BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, ExecResultAndState,
+    ExecutionResult, FrameStack, JournalTr, ResultAndState,
 };
 use base_evm_handler::{
     Database as AlloyDatabase, EthFrame, EthInstructions, Evm, EvmEnv, EvmTr, FrameInitOrResult,
@@ -25,8 +26,7 @@ use crate::{
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
-type InnerEvm<DB, I, P> =
-    RevmEvm<BaseContext<DB>, I, EthInstructions<BaseContext<DB>>, P, EthFrame>;
+type InnerEvm<DB, I, P> = RevmEvm<BaseContext<DB>, I, P, EthFrame>;
 
 /// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
@@ -111,14 +111,19 @@ where
     P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Context = BaseContext<DB>;
-    type Instructions = EthInstructions<BaseContext<DB>>;
+
     type Precompiles = P;
     type Frame = EthFrame;
 
     #[inline]
     fn all(
         &self,
-    ) -> (&Self::Context, &Self::Instructions, &Self::Precompiles, &FrameStack<Self::Frame>) {
+    ) -> (
+        &Self::Context,
+        &EthInstructions<Self::Context>,
+        &Self::Precompiles,
+        &FrameStack<Self::Frame>,
+    ) {
         self.inner.all()
     }
 
@@ -127,7 +132,7 @@ where
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Instructions,
+        &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
         &mut FrameStack<Self::Frame>,
     ) {
@@ -169,7 +174,7 @@ where
         &self,
     ) -> (
         &Self::Context,
-        &Self::Instructions,
+        &EthInstructions<Self::Context>,
         &Self::Precompiles,
         &FrameStack<Self::Frame>,
         &Self::Inspector,
@@ -182,7 +187,7 @@ where
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Instructions,
+        &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
         &mut FrameStack<Self::Frame>,
         &mut Self::Inspector,

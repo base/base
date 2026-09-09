@@ -1,24 +1,10 @@
 use std::boxed::Box;
 
-use auto_impl::auto_impl;
 use revm_interpreter::{
     Host, Instruction,
     instructions::{GasTable, InstructionTable, gas_table_spec},
 };
 use revm_primitives::hardfork::SpecId;
-
-/// Stores instructions for EVM.
-#[auto_impl(&mut, Box)]
-pub trait InstructionProvider {
-    /// Context type.
-    type Context;
-
-    /// Returns the instruction table that is used by EvmTr to execute instructions.
-    fn instruction_table(&self) -> &InstructionTable<Self::Context>;
-
-    /// Returns the gas table for static gas costs.
-    fn gas_table(&self) -> &GasTable;
-}
 
 /// Ethereum instruction contains list of mainnet instructions that is used for Interpreter execution.
 #[derive(Debug)]
@@ -28,8 +14,9 @@ pub struct EthInstructions<HOST: ?Sized> {
     inner: Box<EthInstructionsInner<HOST>>,
 }
 
+/// Heap-allocated opcode and gas tables.
 #[derive(Debug)]
-struct EthInstructionsInner<HOST: ?Sized> {
+pub struct EthInstructionsInner<HOST: ?Sized> {
     /// Table containing instruction implementations indexed by opcode.
     instruction_table: InstructionTable<HOST>,
     /// Static gas cost table indexed by opcode.
@@ -53,13 +40,6 @@ impl<HOST> EthInstructions<HOST>
 where
     HOST: Host,
 {
-    /// Returns `EthInstructions` with mainnet spec.
-    #[deprecated(since = "0.2.0", note = "use new_mainnet_with_spec instead")]
-    pub fn new_mainnet() -> Self {
-        let spec = SpecId::default();
-        Self::new_mainnet_with_spec(spec)
-    }
-
     /// Returns `EthInstructions` with mainnet spec.
     pub fn new_mainnet_with_spec(spec: SpecId) -> Self {
         Self::new(revm_interpreter::instruction_table(), gas_table_spec(spec), spec)
@@ -109,22 +89,5 @@ where
     #[inline]
     pub fn gas_table_mut(&mut self) -> &mut GasTable {
         &mut self.inner.gas_table
-    }
-}
-
-impl<CTX> InstructionProvider for EthInstructions<CTX>
-where
-    CTX: Host,
-{
-    type Context = CTX;
-
-    #[inline]
-    fn instruction_table(&self) -> &InstructionTable<Self::Context> {
-        self.instruction_table()
-    }
-
-    #[inline]
-    fn gas_table(&self) -> &GasTable {
-        self.gas_table()
     }
 }

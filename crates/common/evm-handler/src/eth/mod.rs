@@ -1,5 +1,6 @@
 //! Ethereum EVM implementation.
 
+use base_evm_handler::EvmMachine as RevmEvm;
 use core::{
     fmt::Debug,
     ops::{Deref, DerefMut},
@@ -7,10 +8,10 @@ use core::{
 
 use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
-    BlockEnv, CfgEnv, DBErrorMarker, EVMError, Evm as RevmEvm, HaltReason, ResultAndState, TxEnv,
+    BlockEnv, CfgEnv, DBErrorMarker, EVMError, HaltReason, ResultAndState, TxEnv,
 };
 use base_evm_handler::{
-    EthFrame, EthInstructions, EthPrecompiles, NoOpInspector, PrecompileProvider,
+    EthFrame, EthPrecompiles, NoOpInspector, PrecompileProvider,
 };
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
@@ -120,7 +121,7 @@ impl<DB: Database, I> EthEvmBuilder<DB, I> {
 /// [`RevmEvm`] type.
 #[expect(missing_debug_implementations)]
 pub struct EthEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
-    inner: RevmEvm<EthEvmContext<DB>, I, EthInstructions<EthEvmContext<DB>>, PRECOMPILE, EthFrame>,
+    inner: RevmEvm<EthEvmContext<DB>, I, PRECOMPILE, EthFrame>,
     inspect: bool,
 }
 
@@ -130,23 +131,14 @@ impl<DB: Database, I, PRECOMPILE> EthEvm<DB, I, PRECOMPILE> {
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
     /// [`RevmEvm`] should be invoked on [`Evm::transact`].
     pub const fn new(
-        evm: RevmEvm<
-            EthEvmContext<DB>,
-            I,
-            EthInstructions<EthEvmContext<DB>>,
-            PRECOMPILE,
-            EthFrame,
-        >,
+        evm: RevmEvm<EthEvmContext<DB>, I, PRECOMPILE, EthFrame>,
         inspect: bool,
     ) -> Self {
         Self { inner: evm, inspect }
     }
 
     /// Consumes self and return the inner EVM instance.
-    pub fn into_inner(
-        self,
-    ) -> RevmEvm<EthEvmContext<DB>, I, EthInstructions<EthEvmContext<DB>>, PRECOMPILE, EthFrame>
-    {
+    pub fn into_inner(self) -> RevmEvm<EthEvmContext<DB>, I, PRECOMPILE, EthFrame> {
         self.inner
     }
 

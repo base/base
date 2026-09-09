@@ -1,7 +1,8 @@
 use base_evm_context::{ContextTr, FrameStack, JournalTr};
+use base_evm_handler::EthInstructions;
 use base_evm_handler::{
     ContextDbError, EthFrame, EvmTr, FrameInitOrResult, FrameInitResult, FrameResult, FrameTr,
-    InstructionProvider, ItemOrResult,
+    ItemOrResult,
 };
 use revm_interpreter::{CallOutcome, FrameInput, interpreter_action::FrameInit};
 
@@ -16,11 +17,7 @@ use crate::{
 ///
 /// It is used inside [`crate::InspectorHandler`] to extend evm with support for inspection.
 pub trait InspectorEvmTr:
-    EvmTr<
-        Frame: InspectorFrame,
-        Instructions: InstructionProvider<Context = Self::Context>,
-        Context: ContextTr<Journal: JournalExt>,
-    >
+    EvmTr<Frame: InspectorFrame, Context: ContextTr<Journal: JournalExt>>
 {
     /// The inspector type used for EVM execution inspection.
     type Inspector: Inspector<Self::Context, FrameInput, FrameResult>;
@@ -33,7 +30,7 @@ pub trait InspectorEvmTr:
         &self,
     ) -> (
         &Self::Context,
-        &Self::Instructions,
+        &EthInstructions<Self::Context>,
         &Self::Precompiles,
         &FrameStack<Self::Frame>,
         &Self::Inspector,
@@ -47,7 +44,7 @@ pub trait InspectorEvmTr:
         &mut self,
     ) -> (
         &mut Self::Context,
-        &mut Self::Instructions,
+        &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
         &mut FrameStack<Self::Frame>,
         &mut Self::Inspector,
@@ -80,7 +77,12 @@ pub trait InspectorEvmTr:
     /// Returns a tuple of mutable references to the context, the inspector, the frame and the instructions.
     fn ctx_inspector_frame_instructions(
         &mut self,
-    ) -> (&mut Self::Context, &mut Self::Inspector, &mut Self::Frame, &mut Self::Instructions) {
+    ) -> (
+        &mut Self::Context,
+        &mut Self::Inspector,
+        &mut Self::Frame,
+        &mut EthInstructions<Self::Context>,
+    ) {
         let (ctx, instructions, _, frame, inspector) = self.all_mut_inspector();
         (ctx, inspector, frame.get(), instructions)
     }

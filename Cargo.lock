@@ -3329,7 +3329,6 @@ dependencies = [
  "base-common-rpc-types",
  "base-evm-context",
  "base-state",
- "derive-where",
  "derive_more",
  "either",
  "revm-bytecode",

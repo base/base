@@ -94,7 +94,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
     fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<DB, (), P> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
-            base_evm_context::Evm {
+            base_evm_handler::EvmMachine {
                 ctx: self,
                 inspector: (),
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
@@ -112,7 +112,7 @@ impl<DB: Database> Builder for BaseContext<DB> {
     ) -> BaseEvm<DB, INSP, P> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
-            base_evm_context::Evm {
+            base_evm_handler::EvmMachine {
                 ctx: self,
                 inspector,
                 instruction: EthInstructions::new_mainnet_with_spec(spec.into()),
