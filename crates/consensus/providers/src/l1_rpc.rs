@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_rpc_client::RpcClient;
 use reqwest::Client;
 use url::Url;
@@ -37,7 +37,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_eips::BlockId;
-    use alloy_provider::Provider;
+    use base_common_client_ethereum::Provider;
     use base_common_types_rpc::Filter;
     use httpmock::prelude::*;
 

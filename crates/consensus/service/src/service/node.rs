@@ -9,7 +9,7 @@ use std::{
 use alloy_eips::BlockNumberOrTag;
 use alloy_genesis::ChainConfig as GenesisChainConfig;
 use alloy_primitives::Address;
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
 use base_consensus_derive::{Pipeline, SignalReceiver, StatefulAttributesBuilder};

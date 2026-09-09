@@ -7,7 +7,7 @@ use std::sync::Arc;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, Bytes, U256, address, bytes};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use alloy_signer::SignerSync;
 use base_common_chain_config::BaseChainSpec;
 use base_common_network::ReceiptResponse;

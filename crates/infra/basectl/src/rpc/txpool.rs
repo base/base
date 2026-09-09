@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use alloy_primitives::{Address, TxHash};
-use alloy_provider::{
+use base_common_client_ethereum::{
     Network, Provider, ProviderBuilder, ext::TxPoolApi, network::TransactionResponse,
 };
 use alloy_rpc_client::RpcClient;
@@ -484,7 +484,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_primitives::{Address, B256, address};
-    use alloy_provider::Network;
+    use base_common_client_ethereum::Network;
     use base_common_network::Base;
     use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom};
     use serde_json::json;

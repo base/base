@@ -46,7 +46,7 @@ use alloy_eips::{
     BlockNumberOrTag, Decodable2718, Encodable2718, eip7594::BlobTransactionSidecarEip7594,
 };
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use alloy_transport::TransportError;
 use backon::{ConstantBuilder, Retryable};
 use base_common_network::{
@@ -1834,7 +1834,7 @@ mod tests {
 
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
-    use alloy_provider::{ProviderBuilder, RootProvider};
+    use base_common_client_ethereum::{ProviderBuilder, RootProvider};
     use alloy_transport::mock::Asserter;
     use base_common_network::{EthereumWallet, PrivateKeySigner};
     use base_common_runtime_tasks::{

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, ProviderBuilder, layers::CallBatchLayer};
+use base_common_client_ethereum::{Provider, ProviderBuilder, layers::CallBatchLayer};
 use alloy_rpc_client::RpcClient;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;

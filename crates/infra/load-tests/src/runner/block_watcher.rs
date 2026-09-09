@@ -15,7 +15,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_rpc::{BlockId, BlockNumberOrTag};
 use base_common_network::{Base, ReceiptResponse};
 use futures::{StreamExt, stream};

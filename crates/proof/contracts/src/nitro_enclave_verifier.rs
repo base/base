@@ -6,7 +6,7 @@
 //! `NitroEnclaveVerifier` interactions happen through the `TEEProverRegistry`.
 
 use alloy_primitives::{Address, FixedBytes};
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::{SolError, sol};
 use async_trait::async_trait;
 

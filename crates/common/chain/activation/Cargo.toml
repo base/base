@@ -28,7 +28,7 @@ base-common-observability-metrics = { workspace = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["std"] }

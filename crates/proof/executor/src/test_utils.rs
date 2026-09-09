@@ -3,7 +3,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::{B256, Bytes, Sealable};
-use alloy_provider::{Provider, RootProvider, network::primitives::BlockTransactions};
+use base_common_client_ethereum::{Provider, RootProvider, network::primitives::BlockTransactions};
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};

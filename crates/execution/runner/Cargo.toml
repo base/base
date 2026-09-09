@@ -34,7 +34,7 @@ tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
 base-execution-payload-builder = { workspace = true, features = ["default"] }
-alloy-provider = { workspace = true, optional = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, optional = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {optional = true, features = ["std"], workspace = true}
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
@@ -68,7 +68,7 @@ test-utils = [
     "dep:alloy-eips",
     "dep:alloy-genesis",
     "dep:alloy-primitives",
-    "dep:alloy-provider",
+    "dep:base-common-client-ethereum",
     "dep:alloy-rpc-client",
     "dep:base-common-types-rpc",
     "dep:base-common-types-payload",

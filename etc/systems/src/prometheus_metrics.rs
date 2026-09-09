@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_network::Base;
 use eyre::{Result, WrapErr};
 use prometheus_scraper::{

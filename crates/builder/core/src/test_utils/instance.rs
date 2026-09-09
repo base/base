@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use alloy_provider::{Identity, ProviderBuilder, RootProvider};
+use base_common_client_ethereum::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
 use base_common_network::Base;

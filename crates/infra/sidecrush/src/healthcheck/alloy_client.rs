@@ -1,10 +1,10 @@
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
 use base_common_types_rpc::BlockId;
 
 use super::{EthClient, HeaderSummary};
 
-/// An [`EthClient`] backed by an [`alloy_provider::Provider`] HTTP transport.
+/// An [`EthClient`] backed by an [`base_common_client_ethereum::Provider`] HTTP transport.
 #[derive(Debug, Clone)]
 pub struct AlloyEthClient {
     provider: RootProvider,

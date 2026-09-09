@@ -46,7 +46,7 @@ pub const ARB_SYS_ADDRESS: Address = address!("0x0000000000000000000000000000000
 ///
 /// ```ignore (missing alloy-contract)
 /// use alloy_primitives::address;
-/// use alloy_provider::{MulticallBuilder, Provider, ProviderBuilder};
+/// use base_common_client_ethereum::{MulticallBuilder, Provider, ProviderBuilder};
 /// use alloy_sol_types::sol;
 ///
 /// sol! {
@@ -155,7 +155,7 @@ where
     ///
     /// ```ignore (missing alloy-contract)
     /// use alloy_primitives::address;
-    /// use alloy_provider::{MulticallBuilder, Provider, ProviderBuilder};
+    /// use base_common_client_ethereum::{MulticallBuilder, Provider, ProviderBuilder};
     /// use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -361,7 +361,7 @@ where
     ///
     /// ```ignore (missing alloy-contract)
     /// use alloy_primitives::address;
-    /// use alloy_provider::{MulticallBuilder, Provider, ProviderBuilder};
+    /// use base_common_client_ethereum::{MulticallBuilder, Provider, ProviderBuilder};
     /// use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -439,7 +439,7 @@ where
     ///
     /// ```ignore
     /// use alloy_primitives::address;
-    /// use alloy_provider::{MulticallBuilder, Provider, ProviderBuilder};
+    /// use base_common_client_ethereum::{MulticallBuilder, Provider, ProviderBuilder};
     /// use alloy_sol_types::sol;
     ///
     /// sol! {

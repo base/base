@@ -373,7 +373,7 @@ where
     /// ```rust
     /// # use base_common_types_chain::{TypedTransaction, SignableTransaction};
     /// # use alloy_primitives::{Address, U256};
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use base_common_types_rpc::TransactionRequest;
     /// # use base_common_network::{NetworkTransactionBuilder, TransactionBuilder};
     ///

@@ -166,7 +166,7 @@ mod tests {
     use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
     use alloy_primitives::keccak256;
-    use alloy_provider::network::eip2718::Decodable2718;
+    use base_common_client_ethereum::network::eip2718::Decodable2718;
     use alloy_rlp::{Decodable, Encodable};
     use base_common_types_chain::{ReceiptEnvelope, TxEnvelope};
 

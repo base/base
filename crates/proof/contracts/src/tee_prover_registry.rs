@@ -4,7 +4,7 @@
 //! and by the proposer to validate signers before on-chain submission.
 
 use alloy_primitives::{Address, Bytes};
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 

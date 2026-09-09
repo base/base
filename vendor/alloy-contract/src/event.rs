@@ -1,7 +1,7 @@
 use std::{fmt, marker::PhantomData};
 
 use alloy_primitives::{Address, B256, LogData};
-use alloy_provider::{FilterPollerBuilder, Network, Provider};
+use base_common_client_ethereum::{FilterPollerBuilder, Network, Provider};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
 use base_common_network::Ethereum;
@@ -533,7 +533,7 @@ mod tests {
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(pk);
-        let provider = alloy_provider::ProviderBuilder::new()
+        let provider = base_common_client_ethereum::ProviderBuilder::new()
             .wallet(wallet.clone())
             .connect_http(anvil.endpoint_url());
 
@@ -591,7 +591,7 @@ mod tests {
 
         #[cfg(feature = "pubsub")]
         {
-            let provider = alloy_provider::ProviderBuilder::new()
+            let provider = base_common_client_ethereum::ProviderBuilder::new()
                 .wallet(wallet)
                 .connect(&anvil.ws_endpoint())
                 .await
@@ -641,7 +641,7 @@ mod tests {
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(pk);
-        let provider = alloy_provider::ProviderBuilder::new()
+        let provider = base_common_client_ethereum::ProviderBuilder::new()
             .wallet(wallet.clone())
             .connect_http(anvil.endpoint_url());
 
@@ -697,7 +697,7 @@ mod tests {
 
         #[cfg(feature = "pubsub")]
         {
-            let provider = alloy_provider::ProviderBuilder::new()
+            let provider = base_common_client_ethereum::ProviderBuilder::new()
                 .wallet(wallet)
                 .connect(&anvil.ws_endpoint())
                 .await
@@ -744,14 +744,14 @@ mod tests {
     /// block ordering when events are spread across a range requiring multiple chunks.
     #[tokio::test]
     async fn chunked_query_collects_and_orders_logs() {
-        use alloy_provider::ext::AnvilApi;
+        use base_common_client_ethereum::ext::AnvilApi;
 
         let _ = tracing_subscriber::fmt::try_init();
 
         let anvil = alloy_node_bindings::Anvil::new().spawn();
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
-        let provider = alloy_provider::ProviderBuilder::new()
+        let provider = base_common_client_ethereum::ProviderBuilder::new()
             .wallet(EthereumWallet::from(pk))
             .connect_http(anvil.endpoint_url());
 

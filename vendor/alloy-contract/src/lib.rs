@@ -38,6 +38,6 @@ mod multicall;
 // NOTE: please avoid changing the API of this module due to its use in the `sol!` macro.
 #[doc(hidden)]
 pub mod private {
-    pub use alloy_provider::Provider;
+    pub use base_common_client_ethereum::Provider;
     pub use base_common_network::{Ethereum, Network};
 }

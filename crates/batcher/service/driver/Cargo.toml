@@ -33,7 +33,7 @@ base-common-types-chain = {workspace = true, features = ["std"]}
 alloy-primitives = {features = ["serde", "std"], workspace = true}
 base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }
-alloy-provider = { workspace = true, features = ["default", "pubsub", "ws"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "pubsub", "ws"] }
 derive_more = {workspace = true, features = ["debug", "display", "from_str"]}
 jsonrpsee = {workspace = true, features = ["http-client", "macros", "server"]}
 tokio = {workspace = true, features = ["default", "macros", "rt", "sync", "time"]}

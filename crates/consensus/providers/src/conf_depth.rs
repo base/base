@@ -100,7 +100,7 @@ mod tests {
         // We cannot issue real RPC calls in a unit test, so we only exercise the
         // conf-depth gating logic — not the inner provider's responses.
         let dummy_inner = AlloyChainProvider::new(
-            alloy_provider::RootProvider::new_http("http://localhost:1".parse().unwrap()),
+            base_common_client_ethereum::RootProvider::new_http("http://localhost:1".parse().unwrap()),
             1,
         );
         let l1_head = Arc::new(AtomicU64::new(head));
@@ -122,7 +122,7 @@ mod tests {
             })
             .await;
         let inner = AlloyChainProvider::new(
-            alloy_provider::RootProvider::new_http(server.url("/").parse().unwrap()),
+            base_common_client_ethereum::RootProvider::new_http(server.url("/").parse().unwrap()),
             1,
         );
         let mut provider = ConfDepthProvider::new(inner, Arc::new(AtomicU64::new(1)), 15);

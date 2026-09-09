@@ -3,7 +3,7 @@
 use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use alloy_provider::{Network, Provider};
+use base_common_client_ethereum::{Network, Provider};
 use async_trait::async_trait;
 use base_common_network::Base;
 use base_common_types_rpc::BlockNumberOrTag;

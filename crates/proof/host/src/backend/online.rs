@@ -203,7 +203,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_genesis::ChainConfig;
-    use alloy_provider::RootProvider;
+    use base_common_client_ethereum::RootProvider;
     use base_common_chain_config::RollupConfig;
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof::{Hint, HintType};

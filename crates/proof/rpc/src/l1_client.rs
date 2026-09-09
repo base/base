@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Http, reqwest::Client};
 use async_trait::async_trait;

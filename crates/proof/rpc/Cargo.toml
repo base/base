@@ -26,7 +26,7 @@ base-common-network = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "future"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-types-rpc = {workspace = true, features = ["default"]}

@@ -21,7 +21,7 @@ anyhow = { workspace = true, features = ["default"] }
 bollard = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }
 tokio = { workspace = true, features = ["default", "rt", "fs", "time"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
 [dev-dependencies]

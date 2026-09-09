@@ -2,7 +2,7 @@
 
 use std::{fmt, net::IpAddr, str::FromStr, time::Duration};
 
-use alloy_provider::{
+use base_common_client_ethereum::{
     Provider, ProviderBuilder,
     ext::{AdminApi, NetApi},
 };

@@ -1,4 +1,4 @@
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use async_trait::async_trait;
 use base_common_network::{Base, Ethereum};
 
@@ -11,7 +11,7 @@ pub struct MockL1Provider;
 
 #[async_trait]
 impl Provider<Ethereum> for MockL1Provider {
-    fn root(&self) -> &alloy_provider::RootProvider<Ethereum> {
+    fn root(&self) -> &base_common_client_ethereum::RootProvider<Ethereum> {
         unimplemented!("MockL1Provider does not support root()")
     }
 }
@@ -25,7 +25,7 @@ pub struct MockL2Provider;
 
 #[async_trait]
 impl Provider<Base> for MockL2Provider {
-    fn root(&self) -> &alloy_provider::RootProvider<Base> {
+    fn root(&self) -> &base_common_client_ethereum::RootProvider<Base> {
         unimplemented!("MockL2Provider does not support root()")
     }
 }

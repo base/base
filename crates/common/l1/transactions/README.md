@@ -143,7 +143,7 @@ base-common-l1-transactions = { git = "https://github.com/base/base" }
 use std::sync::Arc;
 
 use alloy_primitives::{bytes, Address, U256};
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use base_common_network::PrivateKeySigner;
 use base_common_l1_transactions::{
     BaseTxMetrics, SignerConfig, SimpleTxManager, TxCandidate, TxManagerConfig,

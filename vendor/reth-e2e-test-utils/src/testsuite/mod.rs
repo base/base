@@ -14,7 +14,7 @@ pub mod actions;
 pub mod setup;
 use std::sync::Arc;
 
-use alloy_provider::{Provider, ProviderBuilder};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use base_common_types_payload::{ForkchoiceState, PayloadAttributes};
 use base_execution_payload_builder::BaseExecutionHandle;
 use reth_engine_primitives::ConsensusEngineHandle;

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use alloy_provider::{Provider, ProviderBuilder};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use alloy_rpc_client::RpcClient;
 use alloy_sol_types::sol;
 use alloy_transport_http::Http;

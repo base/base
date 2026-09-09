@@ -4,7 +4,7 @@ use core::time::Duration;
 
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_sol_types::{SolCall, sol};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, utils::guess_local_url};

@@ -39,7 +39,7 @@ serde_json = { workspace = true, features = ["std"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
 base-consensus-disc = { workspace = true, features = ["metrics"] }
 base-consensus-node = { workspace = true, features = ["metrics"] }

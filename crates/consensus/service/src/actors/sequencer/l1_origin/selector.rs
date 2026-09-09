@@ -379,7 +379,7 @@ impl<P: L1OriginSelectorProvider> L1OriginSelector<P> {
 /// An error produced by the [`L1OriginSelector`].
 #[derive(Debug, thiserror::Error)]
 pub enum L1OriginSelectorError {
-    /// An error produced by the [`alloy_provider::RootProvider`].
+    /// An error produced by the [`base_common_client_ethereum::RootProvider`].
     #[error(transparent)]
     Provider(#[from] RpcError<TransportErrorKind>),
     /// Sequencer drift requires advancing, but no verified next L1 origin is ready yet.

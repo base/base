@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes, hex};
-use alloy_provider::{Provider, ProviderBuilder};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use alloy_sol_types::SolCall;
 use base_common_chain_config::UpgradeConfig;
 use base_common_chain_config::{BaseUpgrade, ChainConfig};

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use base_common_l1_transactions::{
     FeeCalculator, FeeOverride, NoopTxMetrics, PreparedTx, SignerConfig, SimpleTxManager,
     TxCandidate, TxManager, TxManagerConfig, TxManagerError,

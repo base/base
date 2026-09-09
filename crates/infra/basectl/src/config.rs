@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, path::PathBuf};
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, ProviderBuilder};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
 use base_common_chain_config::{ChainConfig, rollup_config};
 use base_common_chain_config::{RollupConfig, UpgradeConfig};

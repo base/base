@@ -4,7 +4,7 @@
 //! the Registry instead of accepting an independently configured address.
 
 use alloy_primitives::Address;
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::sol;
 use async_trait::async_trait;
 

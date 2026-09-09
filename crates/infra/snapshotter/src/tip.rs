@@ -3,7 +3,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_provider::{Provider, ProviderBuilder};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tracing::info;

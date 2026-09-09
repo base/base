@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::{KeepAliveSubscription, L1HeadPolling, PendingSubscription, SourceError};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use async_trait::async_trait;
 
 /// Polling source that fetches the latest L1 head block number from an L1 RPC endpoint.

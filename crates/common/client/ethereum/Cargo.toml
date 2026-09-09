@@ -1,5 +1,5 @@
 [package]
-name = "alloy-provider"
+name = "base-common-client-ethereum"
 description = "Interface with an Ethereum blockchain"
 version.workspace = true
 edition.workspace = true
@@ -28,7 +28,7 @@ rustdoc-args = [
 ]
 
 [lib]
-name = "alloy_provider"
+name = "base_common_client_ethereum"
 path = "src/lib.rs"
 
 [dependencies]

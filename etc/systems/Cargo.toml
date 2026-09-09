@@ -75,7 +75,7 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 prometheus-scraper = { version = "0.2.0", default-features = false }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
-alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-consensus-rpc = { workspace = true, features = ["default", "client"] }

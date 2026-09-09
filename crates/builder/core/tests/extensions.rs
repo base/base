@@ -1,7 +1,7 @@
 //! Verifies that sequencer RPC services are ready when node startup returns.
 
 use alloy_primitives::B256;
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use base_builder_core::{BuilderConfig, test_utils::LocalInstanceBuilder};
 use base_txpool_rpc::{Status, TransactionStatusResponse};
 

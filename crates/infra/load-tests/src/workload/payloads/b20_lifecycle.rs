@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::{PendingTransactionBuilder, Provider};
+use base_common_client_ethereum::{PendingTransactionBuilder, Provider};
 use base_common_types_rpc::TransactionRequest;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::{Ethereum, EthereumWallet, TransactionBuilder};

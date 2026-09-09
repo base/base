@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use alloy_rpc_client::PollerBuilder;
 use async_stream::stream;
 use base_common_types_rpc::Block;

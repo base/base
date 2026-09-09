@@ -12,7 +12,7 @@ use crate::{
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
 use crate::{HybridL1HeadSource, PollingBlockSource, SourceError};
-use alloy_provider::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
+use base_common_client_ethereum::{Provider, ProviderBuilder, ProviderLayer, RootProvider};
 use backon::Retryable;
 use base_batcher_encoding_channel::{BatchEncoder, BatcherMetrics};
 use base_common_l1_transactions::BalanceMonitorLayer;

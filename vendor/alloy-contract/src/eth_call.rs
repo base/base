@@ -27,7 +27,7 @@ mod private {
     impl Sealed for () {}
 }
 
-/// An [`alloy_provider::EthCall`] with an abi decoder.
+/// An [`base_common_client_ethereum::EthCall`] with an abi decoder.
 #[must_use = "EthCall must be awaited to execute the call"]
 #[derive(Clone, Debug)]
 pub struct EthCall<'coder, D, N>
@@ -35,7 +35,7 @@ where
     N: Network,
     D: CallDecoder,
 {
-    inner: alloy_provider::EthCall<N, Bytes>,
+    inner: base_common_client_ethereum::EthCall<N, Bytes>,
 
     decoder: &'coder D,
 }
@@ -46,7 +46,7 @@ where
     D: CallDecoder,
 {
     /// Create a new [`EthCall`].
-    pub const fn new(inner: alloy_provider::EthCall<N, Bytes>, decoder: &'coder D) -> Self {
+    pub const fn new(inner: base_common_client_ethereum::EthCall<N, Bytes>, decoder: &'coder D) -> Self {
         Self { inner, decoder }
     }
 }
@@ -56,7 +56,7 @@ where
     N: Network,
 {
     /// Create a new [`EthCall`].
-    pub const fn new_raw(inner: alloy_provider::EthCall<N, Bytes>) -> Self {
+    pub const fn new_raw(inner: base_common_client_ethereum::EthCall<N, Bytes>) -> Self {
         Self::new(inner, &RAW_CODER)
     }
 }
@@ -80,7 +80,7 @@ where
     /// so the two error cases can be handled separately.
     ///
     /// ```no_run
-    /// # async fn example<P: alloy_provider::Provider>(
+    /// # async fn example<P: base_common_client_ethereum::Provider>(
     /// #     provider: P,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_primitives::Address;
@@ -151,11 +151,11 @@ where
     }
 }
 
-impl<N> From<alloy_provider::EthCall<N, Bytes>> for EthCall<'static, (), N>
+impl<N> From<base_common_client_ethereum::EthCall<N, Bytes>> for EthCall<'static, (), N>
 where
     N: Network,
 {
-    fn from(inner: alloy_provider::EthCall<N, Bytes>) -> Self {
+    fn from(inner: base_common_client_ethereum::EthCall<N, Bytes>) -> Self {
         Self { inner, decoder: &RAW_CODER }
     }
 }
@@ -184,7 +184,7 @@ where
     N: Network,
     D: CallDecoder,
 {
-    inner: <alloy_provider::EthCall<N, Bytes> as IntoFuture>::IntoFuture,
+    inner: <base_common_client_ethereum::EthCall<N, Bytes> as IntoFuture>::IntoFuture,
     decoder: &'coder D,
 }
 

@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::{Address, B256};
-use alloy_provider::{EthGetBlock, ProviderCall};
+use base_common_client_ethereum::{EthGetBlock, ProviderCall};
 use alloy_transport::{TransportError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;

@@ -1,6 +1,6 @@
 use alloy_dyn_abi::Error as AbiError;
 use alloy_primitives::{Bytes, Selector};
-use alloy_provider::{MulticallError, PendingTransactionError};
+use base_common_client_ethereum::{MulticallError, PendingTransactionError};
 use alloy_sol_types::{SolError, SolInterface};
 use alloy_transport::{RpcError, TransportError, TransportErrorKind};
 use serde_json::value::RawValue;
@@ -87,7 +87,7 @@ impl Error {
     /// # Examples
     ///
     /// ```no_run
-    /// use alloy_provider::ProviderBuilder;
+    /// use base_common_client_ethereum::ProviderBuilder;
     /// use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -160,7 +160,7 @@ impl Error {
     /// # Examples
     ///
     /// ```no_run
-    /// use alloy_provider::ProviderBuilder;
+    /// use base_common_client_ethereum::ProviderBuilder;
     /// use alloy_sol_types::sol;
     /// use ThrowsError::SomeCustomError;
     /// sol! {

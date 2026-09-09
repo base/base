@@ -36,7 +36,7 @@ futures = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }

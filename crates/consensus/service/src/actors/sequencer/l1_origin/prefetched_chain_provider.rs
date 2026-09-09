@@ -103,7 +103,7 @@ impl From<PrefetchedChainProviderError> for PipelineErrorKind {
 
 #[cfg(test)]
 mod tests {
-    use alloy_provider::RootProvider;
+    use base_common_client_ethereum::RootProvider;
     use httpmock::prelude::*;
 
     use super::*;

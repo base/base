@@ -1,7 +1,7 @@
 //! Startup scan for recent L1 transactions from the batcher account.
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_rpc::BlockNumberOrTag;
 use tracing::{info, warn};
 
@@ -84,7 +84,7 @@ impl RecentTxSyncTarget {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use alloy_provider::RootProvider;
+    use base_common_client_ethereum::RootProvider;
     use httpmock::prelude::*;
 
     use super::RecentTxSyncTarget;

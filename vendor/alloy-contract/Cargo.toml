@@ -34,7 +34,7 @@ path = "src/lib.rs"
 [dependencies]
 thiserror = { workspace = true }
 alloy-json-abi = { workspace = true }
-alloy-provider = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 base-common-network = { workspace = true }
@@ -55,7 +55,7 @@ serde_json = { workspace = true, features = [
 alloy-node-bindings = { workspace = true }
 base-common-network = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
-alloy-provider = { workspace = true, features = ["anvil-node"] }
+base-common-client-ethereum = { workspace = true, features = ["anvil-node"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 
@@ -67,4 +67,4 @@ tokio = { workspace = true, features = ["default", "time"] }
 workspace = true
 
 [features]
-pubsub = ["alloy-provider/pubsub", "dep:alloy-pubsub"]
+pubsub = ["base-common-client-ethereum/pubsub", "dep:alloy-pubsub"]

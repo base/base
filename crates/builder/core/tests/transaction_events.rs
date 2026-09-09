@@ -4,7 +4,7 @@
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use base_builder_core::{
     BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH},

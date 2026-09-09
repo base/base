@@ -37,7 +37,7 @@ base-common-types-payload = {workspace = true, features = ["serde", "k256"]}
 tokio = { workspace = true, features = ["default", "full"], optional = true }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
-alloy-provider = { workspace = true, features = ["default", "reqwest"], optional = true }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"], optional = true }
 
 [features]
 std = [
@@ -60,7 +60,7 @@ std = [
 test-utils = [
     "base-common-chain-config/test-utils",
     "base-protocol/test-utils",
-    "dep:alloy-provider",
+    "dep:base-common-client-ethereum",
     "dep:alloy-rpc-client",
     "dep:alloy-transport",
     "dep:alloy-transport-http",

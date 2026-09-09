@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
@@ -337,7 +337,7 @@ impl TestHarness {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::U256;
-    use alloy_provider::Provider;
+    use base_common_client_ethereum::Provider;
     use base_testing_support::{Account, DEVNET_CHAIN_ID};
 
     use super::*;

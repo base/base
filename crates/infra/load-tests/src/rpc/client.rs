@@ -1,7 +1,7 @@
 use std::{fmt::Display, time::Duration};
 
 use alloy_primitives::{Address, Bytes, TxHash};
-use alloy_provider::{
+use base_common_client_ethereum::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };

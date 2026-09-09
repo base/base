@@ -19,7 +19,7 @@ use crate::{Provider, provider::SendableTx};
 /// # use base_common_network::{IntoWallet, EthereumWallet, Ethereum};
 /// # use base_common_types_rpc::TransactionRequest;
 /// # use base_common_network::PrivateKeySigner;
-/// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
+/// # use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;
 /// let provider = ProviderBuilder::new().wallet(pk).connect_http(url);

@@ -4,7 +4,7 @@ use std::{net::TcpListener, process::Command, time::Duration};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_signer::SignerSync;
 use base_common_chain_config::RollupConfig;
 use base_common_network::{Base, Ethereum, PrivateKeySigner, ReceiptResponse, TransactionBuilder};

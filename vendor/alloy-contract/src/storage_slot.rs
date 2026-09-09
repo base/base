@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportError;
 use base_common_network::{Network, TransactionBuilder};
@@ -18,7 +18,7 @@ use base_common_types_rpc::state::{AccountOverride, StateOverridesBuilder};
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// use alloy_contract::StorageSlotFinder;
 /// use alloy_primitives::{address, U256};
-/// use alloy_provider::ProviderBuilder;
+/// use base_common_client_ethereum::ProviderBuilder;
 ///
 /// let provider = ProviderBuilder::new().connect_anvil();
 /// let token = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
@@ -192,7 +192,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
-    use alloy_provider::{Provider, ProviderBuilder, ext::AnvilApi};
+    use base_common_client_ethereum::{Provider, ProviderBuilder, ext::AnvilApi};
     use alloy_sol_types::sol;
     use base_common_network::TransactionBuilder;
     use base_common_types_rpc::TransactionRequest;

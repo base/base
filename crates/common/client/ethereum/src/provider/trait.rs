@@ -107,7 +107,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Returns a type erased provider wrapped in Arc. See [`DynProvider`].
     ///
     /// ```no_run
-    /// use alloy_provider::{DynProvider, Provider, ProviderBuilder};
+    /// use base_common_client_ethereum::{DynProvider, Provider, ProviderBuilder};
     ///
     /// # async fn f() -> Result<(), Box<dyn std::error::Error>> {
     /// let provider: DynProvider =
@@ -175,7 +175,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_provider::Provider;
+    /// # use base_common_client_ethereum::Provider;
     /// # async fn example<P: Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
     /// # let tx = base_common_types_rpc::transaction::TransactionRequest::default();
     /// // Execute a call on the latest block, with no state overrides
@@ -390,7 +390,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use alloy_primitives::b256;
     ///
     /// #[tokio::main]
@@ -418,7 +418,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use alloy_eips::BlockNumberOrTag;
     ///
     /// #[tokio::main]
@@ -513,7 +513,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use alloy_eips::BlockId;
     ///
     /// #[tokio::main]
@@ -540,7 +540,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use alloy_primitives::b256;
     ///
     /// #[tokio::main]
@@ -572,7 +572,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use alloy_eips::BlockNumberOrTag;
     ///
     /// #[tokio::main]
@@ -617,7 +617,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Get the next 5 blocks:
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let poller = provider.watch_blocks().await?;
@@ -645,7 +645,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Get the next 5 full blocks:
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let poller = provider.watch_full_blocks().await?.full();
@@ -678,7 +678,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Get the next 5 headers:
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let poller = provider.watch_headers().await?;
@@ -707,7 +707,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Get the next 5 pending transaction hashes:
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let poller = provider.watch_pending_transactions().await?;
@@ -734,7 +734,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Get the next 5 USDC transfer logs:
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_primitives::{address, b256};
     /// use base_common_types_rpc::Filter;
     /// use futures::StreamExt;
@@ -788,7 +788,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use alloy_eips::BlockNumberOrTag;
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use alloy_rpc_client::RpcClient;
     /// # use alloy_transport::{
     /// #     layers::RetryBackoffLayer,
@@ -841,8 +841,8 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use alloy_eips::BlockNumberOrTag;
-    /// # use alloy_provider::{Provider, ProviderBuilder};
-    /// # use alloy_provider::CanonicalEvent;
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::CanonicalEvent;
     /// # use alloy_rpc_client::RpcClient;
     /// # use alloy_transport::{
     /// #     layers::RetryBackoffLayer,
@@ -902,7 +902,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use alloy_eips::BlockNumberOrTag;
     /// # use alloy_primitives::address;
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use base_common_types_rpc::Filter;
     /// # use futures::StreamExt;
     ///
@@ -942,7 +942,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # use alloy_eips::BlockNumberOrTag;
     /// # use alloy_primitives::address;
-    /// # use alloy_provider::{CanonicalEvent, Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{CanonicalEvent, Provider, ProviderBuilder};
     /// # use base_common_types_rpc::Filter;
     /// # use futures::StreamExt;
     ///
@@ -997,7 +997,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// Get the next 5 pending transaction bodies:
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let poller = provider.watch_full_pending_transactions().await?;
@@ -1298,7 +1298,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # use alloy_json_rpc::RpcError;
     /// # use base_common_types_rpc::ReceiptResponse;
-    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, encoded_tx: &[u8]) {
+    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, encoded_tx: &[u8]) {
     /// match provider.send_raw_transaction_sync(encoded_tx).await {
     ///     Ok(receipt) => {
     ///         println!("Transaction successful: {}", receipt.transaction_hash());
@@ -1363,7 +1363,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// See [`PendingTransactionBuilder`] for more examples.
     ///
     /// ```no_run
-    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
     /// let receipt = provider.send_transaction(tx)
     ///     .await?
     ///     .with_required_confirmations(2)
@@ -1429,7 +1429,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Example
     /// ```no_run
     /// # use base_common_types_rpc::ReceiptResponse;
-    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) -> Result<(), Box<dyn std::error::Error>> {
     /// let receipt = provider.send_transaction_sync(tx).await?;
     /// println!("Transaction hash: {}", receipt.transaction_hash());
     /// # Ok(())
@@ -1444,7 +1444,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// ```no_run
     /// # use alloy_json_rpc::RpcError;
     /// # use base_common_types_rpc::ReceiptResponse;
-    /// # async fn example<N: base_common_network::Network>(provider: impl alloy_provider::Provider<N>, tx: N::TransactionRequest) {
+    /// # async fn example<N: base_common_network::Network>(provider: impl base_common_client_ethereum::Provider<N>, tx: N::TransactionRequest) {
     /// match provider.send_transaction_sync(tx).await {
     ///     Ok(receipt) => {
     ///         println!("Transaction successful: {}", receipt.transaction_hash());
@@ -1532,7 +1532,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let sub = provider.subscribe_blocks().await?;
@@ -1560,7 +1560,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let sub = provider.subscribe_full_blocks().full().channel_size(10);
@@ -1591,7 +1591,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let sub = provider.subscribe_pending_transactions().await?;
@@ -1628,7 +1628,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let sub = provider.subscribe_full_pending_transactions().await?;
@@ -1665,7 +1665,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     /// use alloy_primitives::keccak256;
     /// use base_common_types_rpc::Filter;
@@ -1711,7 +1711,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use futures::StreamExt;
     ///
     /// let sub = provider.subscribe_to::<alloy_rpc_types_admin::PeerEvent>("admin_peerEvents").await?;
@@ -1772,7 +1772,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use base_common_types_rpc::BlockNumberOrTag;
     /// use alloy_rpc_client::NoParams;
     ///
@@ -1803,7 +1803,7 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example(provider: impl alloy_provider::Provider) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(provider: impl base_common_client_ethereum::Provider) -> Result<(), Box<dyn std::error::Error>> {
     /// use base_common_types_rpc::BlockNumberOrTag;
     ///
     /// // No parameters: `()`

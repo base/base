@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use async_trait::async_trait;
 use base_consensus_providers::LocalL2Provider;
 use base_execution_trie::ProofsProgress;

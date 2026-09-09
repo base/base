@@ -10,7 +10,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
 use base_common_types_rpc::ReceiptResponse;
 use alloy_primitives::{Address, Bytes, ChainId, Signature, TxKind, U256};
-use alloy_provider::{PendingTransactionBuilder, Provider};
+use base_common_client_ethereum::{PendingTransactionBuilder, Provider};
 use alloy_sol_types::SolCall;
 use alloy_transport::{BoxFuture, TransportResult};
 use base_common_types_chain::SignableTransaction;
@@ -69,7 +69,7 @@ impl<'a, N: Network> SendSyncFut<'a, N> {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example<P: alloy_provider::Provider>(
+    /// # async fn example<P: base_common_client_ethereum::Provider>(
     /// #     call: &alloy_contract::RawCallBuilder<P>,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use std::time::Duration;
@@ -133,7 +133,7 @@ impl<N: Network> Future for SendSyncFut<'_, N> {
 /// Using [`sol!`][sol]:
 ///
 /// ```no_run
-/// # async fn test<P: alloy_provider::Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn test<P: base_common_client_ethereum::Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
 /// use alloy_contract::SolCallBuilder;
 /// use alloy_primitives::{Address, U256};
 /// use alloy_sol_types::sol;
@@ -169,7 +169,7 @@ impl<N: Network> Future for SendSyncFut<'_, N> {
 /// Using [`ContractInstance`](crate::ContractInstance):
 ///
 /// ```no_run
-/// # async fn test<P: alloy_provider::Provider>(provider: P, dynamic_abi: alloy_json_abi::JsonAbi) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn test<P: base_common_client_ethereum::Provider>(provider: P, dynamic_abi: alloy_json_abi::JsonAbi) -> Result<(), Box<dyn std::error::Error>> {
 /// use alloy_primitives::{Address, Bytes, U256};
 /// use alloy_dyn_abi::DynSolValue;
 /// use alloy_contract::{CallBuilder, ContractInstance, DynCallBuilder, Interface, RawCallBuilder};
@@ -235,7 +235,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     ///
     /// ```no_run
     /// # use alloy_primitives::Address;
-    /// # use alloy_provider::ProviderBuilder;
+    /// # use base_common_client_ethereum::ProviderBuilder;
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -286,7 +286,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     ///
     /// ```no_run
     /// # use alloy_primitives::Address;
-    /// # use alloy_provider::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
     /// # use base_common_network::PrivateKeySigner;
     /// # use alloy_sol_types::sol;
     ///
@@ -420,7 +420,7 @@ impl<P: Provider<N>, N: Network> RawCallBuilder<P, N> {
     /// # stringify!(
     /// let provider = ...;
     /// # );
-    /// # let provider = alloy_provider::ProviderBuilder::new().connect_anvil();
+    /// # let provider = base_common_client_ethereum::ProviderBuilder::new().connect_anvil();
     /// let call_builder = MyContract::deploy_builder(&provider)
     ///     .with_sol_decoder::<MyContract::constructorReturnCall>();
     /// let result = call_builder.call().await?;
@@ -780,7 +780,7 @@ impl<P, D: CallDecoder, N: Network> std::fmt::Debug for CallBuilder<P, D, N> {
 mod tests {
     use alloy_node_bindings::Anvil;
     use alloy_primitives::{B256, address, b256, bytes, hex, utils::parse_units};
-    use alloy_provider::{Provider, ProviderBuilder, WalletProvider};
+    use base_common_client_ethereum::{Provider, ProviderBuilder, WalletProvider};
     use alloy_sol_types::sol;
     use base_common_types_chain::Transaction;
     use base_common_network::{EthereumWallet, PrivateKeySigner};

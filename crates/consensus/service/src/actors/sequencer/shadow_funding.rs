@@ -48,7 +48,7 @@ impl ShadowFunding {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, utils::parse_ether};
-    use alloy_provider::Provider;
+    use base_common_client_ethereum::Provider;
     use base_node_runner::test_utils::TestHarness;
 
     use super::ShadowFunding;

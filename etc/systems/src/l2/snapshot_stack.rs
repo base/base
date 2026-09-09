@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_hardforks::ForkCondition;
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_common_network::Base;

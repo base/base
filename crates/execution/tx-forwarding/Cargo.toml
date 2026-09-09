@@ -38,7 +38,7 @@ base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }

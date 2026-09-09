@@ -4,7 +4,7 @@
 //! [`UpgradeSignalConfig`] consumed by the in-process consensus nodes.
 
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, ProviderBuilder};
+use base_common_client_ethereum::{Provider, ProviderBuilder};
 use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
 use base_execution_cli::ExecutionUpgradeSignalConfig;

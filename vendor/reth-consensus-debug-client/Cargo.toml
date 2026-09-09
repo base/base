@@ -30,7 +30,7 @@ ringbuffer = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 reqwest = { workspace = true, features = ["rustls", "stream", "query"] }
-alloy-provider = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
+base-common-client-ethereum = { workspace = true, features = ["reqwest", "debug-api", "ws"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 
 [dependencies.reth-engine-primitives]

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use alloy_eips::BlockId;
-use alloy_provider::{
+use base_common_client_ethereum::{
     ConnectionConfig, Provider, ProviderBuilder, WebSocketConfig,
     network::{BlockResponse, Network, primitives::HeaderResponse},
 };

@@ -46,7 +46,7 @@ const DEFAULT_WAIT: Duration = Duration::from_millis(1);
 /// # Examples
 ///
 /// ```no_run
-/// use alloy_provider::{layers::CallBatchLayer, Provider, ProviderBuilder};
+/// use base_common_client_ethereum::{layers::CallBatchLayer, Provider, ProviderBuilder};
 /// use std::time::Duration;
 ///
 /// # async fn f(url: &str) -> Result<(), Box<dyn std::error::Error>> {

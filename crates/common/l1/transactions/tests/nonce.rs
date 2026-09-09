@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_node_bindings::Anvil;
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
 use base_common_l1_transactions::{NonceGuard, NonceManager, TxManagerError};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
 use base_common_types_rpc::TransactionRequest;

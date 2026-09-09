@@ -62,7 +62,7 @@ impl<N: Network> BlockLogs<N> {
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// # use alloy_eips::BlockNumberOrTag;
-/// # use alloy_provider::{Provider, ProviderBuilder};
+/// # use base_common_client_ethereum::{Provider, ProviderBuilder};
 /// # use base_common_types_rpc::Filter;
 /// # use futures::StreamExt;
 ///

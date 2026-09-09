@@ -3,7 +3,7 @@
 //! Used to create new dispute games and query existing ones.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
 

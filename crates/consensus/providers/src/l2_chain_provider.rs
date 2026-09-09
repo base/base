@@ -4,7 +4,7 @@ use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, Bytes};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
 use alloy_transport::{RpcError, TransportErrorKind};
 use alloy_transport_http::{
@@ -305,7 +305,7 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use alloy_provider::RootProvider;
+    use base_common_client_ethereum::RootProvider;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
     use serde_json::{Value, json};
 

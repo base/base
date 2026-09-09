@@ -24,7 +24,7 @@ reqwest = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
-alloy-provider = { workspace = true, features = ["default", "reqwest"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
 [[bench]]

@@ -40,7 +40,7 @@ alloy-genesis = { workspace = true, features = ["std"] }
 base-protocol = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 base-consensus-rpc = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }

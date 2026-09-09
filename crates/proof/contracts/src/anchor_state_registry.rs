@@ -4,7 +4,7 @@
 //! point when no pending dispute games exist.
 
 use alloy_primitives::{Address, B256, Bytes};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 

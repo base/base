@@ -24,7 +24,7 @@ use crate::{
 /// ```
 /// # use base_common_network::{Ethereum};
 /// # use base_common_types_rpc::TransactionRequest;
-/// # use alloy_provider::{ProviderBuilder, RootProvider, Provider};
+/// # use base_common_client_ethereum::{ProviderBuilder, RootProvider, Provider};
 /// # use base_common_network::PrivateKeySigner;
 /// # async fn test(url: url::Url) -> Result<(), Box<dyn std::error::Error>> {
 /// let pk: PrivateKeySigner = "0x...".parse()?;

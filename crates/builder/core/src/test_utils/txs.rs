@@ -3,7 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
-use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
+use base_common_client_ethereum::{PendingTransactionBuilder, Provider, RootProvider};
 use base_common_types_chain::{BaseTxEnvelope, BaseTypedTransaction, TxEip1559};
 use base_common_network::Base;
 use base_execution_txpool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};

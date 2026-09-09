@@ -65,7 +65,7 @@ base-consensus-rpc = { workspace = true, features = ["default", "client"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 base-common-types-payload = {workspace = true, features = ["std", "jwt", "serde"]}
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "time"] }
-alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
 
 [dev-dependencies]

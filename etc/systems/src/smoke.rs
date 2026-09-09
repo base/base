@@ -9,7 +9,7 @@ use std::{
 use std::{num::NonZeroU64, path::PathBuf};
 
 use alloy_primitives::B256;
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_rpc_client::RpcClient;
 #[cfg(feature = "upgrade-signal")]
 use base_common_chain_config::{

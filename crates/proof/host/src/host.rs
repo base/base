@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_provider::{Network, RootProvider};
+use base_common_client_ethereum::{Network, RootProvider};
 use base_common_chain_config::RollupConfig;
 use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};

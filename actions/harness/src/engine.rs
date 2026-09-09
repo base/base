@@ -8,7 +8,7 @@ use std::{
 use alloy_eips::{BlockId, eip1898::BlockNumberOrTag};
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
-use alloy_provider::{EthGetBlock, ProviderCall};
+use base_common_client_ethereum::{EthGetBlock, ProviderCall};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;

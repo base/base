@@ -5,7 +5,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_rpc_client::RpcClient;
 use alloy_transport_http::{Client, Http};

@@ -2,7 +2,7 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
-use alloy_provider::Network;
+use base_common_client_ethereum::Network;
 use anyhow::Result;
 use base_common_network::Base;
 use base_common_types_rpc::BlockNumberOrTag;

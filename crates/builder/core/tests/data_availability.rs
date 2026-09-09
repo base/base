@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use base_builder_core::test_utils::{
     BlockTransactionsExt, ChainDriverExt, TransactionBuilderExt, setup_test_instance,
 };

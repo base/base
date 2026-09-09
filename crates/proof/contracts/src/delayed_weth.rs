@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use async_trait::async_trait;
 
 use crate::ContractError;

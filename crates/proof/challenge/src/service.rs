@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use alloy_primitives::Address;
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
 use base_cli_utils::RuntimeManager;
 use base_common_l1_transactions::BalanceMonitorLayer;
 use base_common_l1_transactions::{BaseTxMetrics, SimpleTxManager};

@@ -15,7 +15,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use alloy_provider::{Provider, ProviderBuilder, fillers::RecommendedFillers};
+use base_common_client_ethereum::{Provider, ProviderBuilder, fillers::RecommendedFillers};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_network::IntoWallet;
 use base_execution_evm_blocks::BaseBeaconConsensus;

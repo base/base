@@ -18,4 +18,4 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-network = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-alloy-provider = { workspace = true, features = ["default"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }

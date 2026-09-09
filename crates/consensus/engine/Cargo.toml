@@ -37,7 +37,7 @@ base-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
-alloy-provider = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
 derive_more = { workspace = true, features = ["display", "deref", "from_str", "constructor"] }
 
 [dev-dependencies]

@@ -257,11 +257,11 @@ where
     /// so the two error cases can be handled separately.
     ///
     /// ```no_run
-    /// # async fn example<P: alloy_provider::Provider>(
+    /// # async fn example<P: base_common_client_ethereum::Provider>(
     /// #     provider: P,
     /// #     tx: base_common_types_rpc::TransactionRequest,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
-    /// use alloy_provider::Provider as _;
+    /// use base_common_client_ethereum::Provider as _;
     /// use std::time::Duration;
     ///
     /// let output = provider.call(tx).timeout(Duration::from_secs(10)).await??;

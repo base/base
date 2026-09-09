@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, Bytes, Signed, U160, U256, Uint, utils::format_ether};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
 use alloy_sol_types::{SolCall, sol};
 use base_common_network::{EthereumWallet, TransactionBuilder};

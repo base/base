@@ -1,10 +1,10 @@
 //! Multicall module to organize and implement required functionality for enabling multicall in
-//! alloy_provider plus related tests. This avoids cyclic deps between alloy_provider and
+//! base_common_client_ethereum plus related tests. This avoids cyclic deps between base_common_client_ethereum and
 //! alloy_contract.
 //!
 //! This module is not public API.
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_provider::{MulticallItem, Provider};
+use base_common_client_ethereum::{MulticallItem, Provider};
 use alloy_sol_types::SolCall;
 use base_common_network::{Network, TransactionBuilder};
 
@@ -30,7 +30,7 @@ impl<P: Provider<N>, C: SolCall, N: Network> MulticallItem for SolCallBuilder<P,
 mod tests {
     use DummyThatFails::DummyThatFailsInstance;
     use alloy_primitives::{U256, address, b256};
-    use alloy_provider::{CallItem, Failure, MulticallBuilder, Provider, ProviderBuilder};
+    use base_common_client_ethereum::{CallItem, Failure, MulticallBuilder, Provider, ProviderBuilder};
     use alloy_sol_types::sol;
 
     use super::*;
@@ -59,8 +59,8 @@ mod tests {
     }
 
     async fn deploy_dummy(
-        provider: impl alloy_provider::Provider,
-    ) -> DummyThatFailsInstance<impl alloy_provider::Provider> {
+        provider: impl base_common_client_ethereum::Provider,
+    ) -> DummyThatFailsInstance<impl base_common_client_ethereum::Provider> {
         DummyThatFails::deploy(provider).await.unwrap()
     }
 

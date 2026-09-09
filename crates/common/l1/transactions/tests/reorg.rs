@@ -10,7 +10,7 @@ mod common;
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{B256, U256};
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_l1_transactions::{NoopTxMetrics, SendState, SimpleTxManager, TxManagerConfig};
 use base_common_network::{EthereumWallet, PrivateKeySigner};
 use common::{mine_block, publish_simple_tx, setup_with_config};

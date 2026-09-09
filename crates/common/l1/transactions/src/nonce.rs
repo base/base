@@ -3,7 +3,7 @@
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use base_common_runtime_tasks::{AsyncRuntime as Runtime, RuntimeTimeout, TokioRuntime};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{debug, trace, warn};
@@ -398,7 +398,7 @@ mod tests {
     };
 
     use alloy_node_bindings::Anvil;
-    use alloy_provider::RootProvider;
+    use base_common_client_ethereum::RootProvider;
 
     use super::*;
 

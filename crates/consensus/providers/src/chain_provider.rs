@@ -4,7 +4,7 @@ use std::{boxed::Box, num::NonZeroUsize, vec::Vec};
 
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
-use alloy_provider::{Provider, RootProvider};
+use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_transport::{RpcError, TransportErrorKind};
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt, TxEnvelope};

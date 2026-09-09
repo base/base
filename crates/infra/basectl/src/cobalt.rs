@@ -7,7 +7,7 @@ use std::{
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256, keccak256};
-use alloy_provider::{
+use base_common_client_ethereum::{
     Network, Provider, ProviderBuilder,
     network::{ReceiptResponse, TransactionResponse},
 };

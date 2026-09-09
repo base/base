@@ -10,7 +10,7 @@
 //! applied. This allows callers to conditionally apply the layer without
 //! introducing type divergence.
 //!
-//! [`ProviderBuilder::layer`]: alloy_provider::ProviderBuilder::layer
+//! [`ProviderBuilder::layer`]: base_common_client_ethereum::ProviderBuilder::layer
 
 use std::{
     sync::atomic::{AtomicBool, Ordering},
@@ -18,7 +18,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, U256};
-use alloy_provider::{Provider, ProviderLayer};
+use base_common_client_ethereum::{Provider, ProviderLayer};
 use base_common_network::Network;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -135,7 +135,7 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::{Address, U256};
-    use alloy_provider::ProviderBuilder;
+    use base_common_client_ethereum::ProviderBuilder;
     use tokio_util::sync::CancellationToken;
 
     use super::BalanceMonitorLayer;

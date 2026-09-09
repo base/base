@@ -19,7 +19,7 @@ use std::{
 };
 
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
-use alloy_provider::{Identity, ProviderBuilder};
+use base_common_client_ethereum::{Identity, ProviderBuilder};
 use async_trait::async_trait;
 use base_builder_core::{
     BuilderConfig,

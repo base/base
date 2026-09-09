@@ -10,7 +10,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, b256};
-use alloy_provider::Provider;
+use base_common_client_ethereum::Provider;
 use backon::Retryable;
 use base_common_chain_config::RollupConfig;
 use base_common_network::PrivateKeySigner;

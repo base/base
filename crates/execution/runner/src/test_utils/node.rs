@@ -2,7 +2,7 @@
 
 use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
-use alloy_provider::RootProvider;
+use base_common_client_ethereum::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
 use base_common_network::Base;
