@@ -1,6 +1,0 @@
-{
-  "git": {
-    "sha1": "ae40cc4c51224aff4547da492c137dce12ccbcd8"
-  },
-  "path_in_vcs": "crates/sol-macro-input"
-}

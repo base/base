@@ -300,7 +300,7 @@ alloy-json-abi = { path = "vendor/alloy-json-abi", default-features = false }
 alloy-transport = { path = "vendor/alloy-transport", default-features = false }
 alloy-rpc-types = { path = "vendor/alloy-rpc-types", default-features = false }
 alloy-hardforks = { path = "vendor/alloy-hardforks", default-features = false }
-alloy-sol-macro = { path = "vendor/alloy-sol-macro", default-features = false }
+alloy-sol-macro = { version = "=1.6.1", default-features = false }
 alloy-sol-types = { path = "vendor/alloy-sol-types", default-features = false }
 alloy-tx-macros = { version = "=2.4.1", default-features = false }
 alloy-rpc-client = { path = "vendor/alloy-rpc-client", default-features = false }
@@ -316,13 +316,13 @@ alloy-rpc-types-debug = { version = "=2.4.1", default-features = false }
 alloy-rpc-types-admin = { path = "vendor/alloy-rpc-types-admin", default-features = false }
 alloy-rpc-types-anvil = { path = "vendor/alloy-rpc-types-anvil", default-features = false }
 alloy-rpc-types-trace = { path = "vendor/alloy-rpc-types-trace", default-features = false }
-alloy-sol-macro-input = { path = "vendor/alloy-sol-macro-input", default-features = false }
+alloy-sol-macro-input = { version = "=1.6.1", default-features = false }
 alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
 alloy-rpc-types-beacon = { path = "vendor/alloy-rpc-types-beacon", default-features = false }
 alloy-rpc-types-txpool = { path = "vendor/alloy-rpc-types-txpool", default-features = false }
 alloy-rpc-types-engine = { path = "vendor/alloy-rpc-types-engine", default-features = false }
 alloy-network-primitives = { path = "vendor/alloy-network-primitives", default-features = false }
-alloy-sol-macro-expander = { path = "vendor/alloy-sol-macro-expander", default-features = false }
+alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
 alloy-hardforks-legacy = { path = "vendor/alloy-hardforks-legacy", default-features = false, package = "alloy-hardforks-legacy" }
 
 # reth

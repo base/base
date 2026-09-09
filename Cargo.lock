@@ -148,7 +148,7 @@ name = "alloy-contract"
 version = "0.0.0"
 dependencies = [
  "alloy-dyn-abi",
- "alloy-json-abi",
+ "alloy-json-abi 0.0.0",
  "alloy-network-primitives",
  "alloy-node-bindings",
  "alloy-primitives",
@@ -173,7 +173,7 @@ dependencies = [
 name = "alloy-dyn-abi"
 version = "0.0.0"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 0.0.0",
  "alloy-primitives",
  "alloy-sol-type-parser",
  "alloy-sol-types",
@@ -324,6 +324,18 @@ dependencies = [
  "criterion 0.7.0",
  "ethabi",
  "pretty_assertions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "alloy-json-abi"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cee30dd4c2f4b23f434fdf675e7bf9681b86768141277266c6f548ef25cba0a"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-type-parser",
  "serde",
  "serde_json",
 ]
@@ -741,7 +753,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro"
-version = "0.0.0"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5655c38d5f84955bf727b2eeb62fddd91ebb98fd1d7ae6eb77f73ea88f9b9cf"
 dependencies = [
  "alloy-sol-macro-expander",
  "alloy-sol-macro-input",
@@ -753,9 +767,11 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro-expander"
-version = "0.0.0"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6277c780e07b76951e09a59788dde230d1582612324177d11a43a61e21a6bb83"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 1.6.1",
  "alloy-sol-macro-input",
  "const-hex",
  "heck",
@@ -770,9 +786,11 @@ dependencies = [
 
 [[package]]
 name = "alloy-sol-macro-input"
-version = "0.0.0"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9762b2ad3e5a0c09886de54fe549ab0056681df843cb082e2df7e1c0eb270d30"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 1.6.1",
  "const-hex",
  "dunce",
  "heck",
@@ -798,7 +816,7 @@ dependencies = [
 name = "alloy-sol-types"
 version = "0.0.0"
 dependencies = [
- "alloy-json-abi",
+ "alloy-json-abi 0.0.0",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-macro",
