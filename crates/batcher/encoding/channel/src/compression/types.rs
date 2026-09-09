@@ -1,20 +1,14 @@
 //! Compression algorithm and error types.
 
-use alloc::vec::Vec;
 use core::fmt;
+use std::vec::Vec;
 
-#[cfg(feature = "std")]
-use crate::brotli::BrotliCompressor;
+use crate::BrotliCompressor;
 
 /// A channel compression failure.
 #[derive(Debug, thiserror::Error)]
 pub enum CompressionError {
-    /// Brotli compression is unavailable without the standard library.
-    #[cfg(not(feature = "std"))]
-    #[error("brotli compression is not supported without the standard library")]
-    BrotliUnavailable,
     /// Brotli compression failed.
-    #[cfg(feature = "std")]
     #[error("brotli compression failed: {0}")]
     Brotli(#[from] std::io::Error),
 }
@@ -82,18 +76,12 @@ impl BrotliLevel {
 
     /// Compresses one complete Brotli derivation channel.
     pub fn compress_channel(self, input: &[u8]) -> Result<Vec<u8>, CompressionError> {
-        #[cfg(feature = "std")]
         {
             let compressed = BrotliCompressor::compress(input, self)?;
             let mut channel = Vec::with_capacity(compressed.len() + 1);
             channel.push(Self::CHANNEL_VERSION);
             channel.extend_from_slice(&compressed);
             Ok(channel)
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            let _ = (input, self);
-            Err(CompressionError::BrotliUnavailable)
         }
     }
 }
@@ -106,14 +94,11 @@ impl fmt::Display for BrotliLevel {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "std")]
     use base_common_chain_config::RollupConfig;
-    #[cfg(feature = "std")]
     use base_protocol::Brotli;
 
     use super::*;
 
-    #[cfg(feature = "std")]
     #[test]
     fn brotli_channel_has_version_prefix() {
         let channel = BrotliLevel::Brotli10.compress_channel(b"batch channel data").unwrap();
@@ -121,7 +106,6 @@ mod tests {
         assert_eq!(channel.first(), Some(&BrotliLevel::CHANNEL_VERSION));
     }
 
-    #[cfg(feature = "std")]
     #[test]
     fn brotli_channel_roundtrips_at_quality_bounds() {
         let input = b"batch channel data";

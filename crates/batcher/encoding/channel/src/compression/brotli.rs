@@ -1,6 +1,6 @@
 //! Contains brotli compression utilities.
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 use brotli::enc::{BrotliCompress, BrotliEncoderParams};
 
@@ -16,7 +16,7 @@ impl BrotliCompressor {
     ///
     /// `level` is the Brotli encoder quality.
     pub fn compress(mut input: &[u8], level: BrotliLevel) -> std::io::Result<Vec<u8>> {
-        let mut output = alloc::vec![];
+        let mut output = std::vec![];
         BrotliCompress(
             &mut input,
             &mut output,

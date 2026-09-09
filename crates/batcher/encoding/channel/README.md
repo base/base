@@ -73,3 +73,5 @@ submissions remain pending and cannot be leased again.
 
 `FrameEncoder::to_calldata` is `[DERIVATION_VERSION_0] ++ frame.encode()`.
 Blob payloads use `base_blobs::BlobEncoder::encode_packed`.
+
+Channel compression is implemented locally with Brotli. The encoder owns both complete-channel and incremental compression.

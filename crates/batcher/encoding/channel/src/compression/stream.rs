@@ -1,7 +1,7 @@
 //! Incremental derivation-channel compression.
 
-use alloc::{boxed::Box, vec::Vec};
 use std::io::Write;
+use std::{boxed::Box, vec::Vec};
 
 use brotli::{CompressorWriter, enc::BrotliEncoderMaxCompressedSize};
 

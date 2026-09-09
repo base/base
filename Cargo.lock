@@ -2356,8 +2356,8 @@ dependencies = [
  "base-common-chain-config",
  "base-common-observability-metrics",
  "base-common-types-chain",
- "base-comp",
  "base-protocol",
+ "brotli",
  "clap",
  "derive_more",
  "metrics",
@@ -2949,18 +2949,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "similar-asserts",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "base-comp"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-chain-config",
- "base-protocol",
- "brotli",
- "derive_more",
  "thiserror 2.0.19",
 ]
 
