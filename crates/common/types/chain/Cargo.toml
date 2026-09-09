@@ -39,6 +39,7 @@ serde_with = { workspace = true, optional = true, features = ["default", "macros
 alloy-eips = { workspace = true, features = ["serde", "kzg-sidecar"],optional = false}
 parity-scale-codec = { workspace = true, features = ["default", "bytes"], optional = true }
 once_cell = { workspace = true, features = [
+    "critical-section",
     "race",
     "alloc",
 ] }
@@ -47,6 +48,7 @@ k256 = { workspace = true, features = [
     "ecdsa",
 ], optional = true }
 derive_more = { workspace = true, features = [
+    "as_ref",
     "from",
     "deref",
     "deref_mut",
@@ -108,6 +110,7 @@ std = [
 k256 = ["alloy-primitives/k256", "dep:k256", "alloy-eips/k256"]
 kzg = ["alloy-eips/kzg", "std", "dep:c-kzg"]
 arbitrary = [
+    "k256",
     "alloy-eips/arbitrary",
     "alloy-primitives/arbitrary",
     "alloy-primitives/rand",

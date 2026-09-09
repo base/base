@@ -3,14 +3,12 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::{Deref, DerefMut};
 
+use crate::{BlockResponse, BlockTransactions, HeaderResponse, TransactionResponse};
 pub use alloy_eips::{
     BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, ForkBlock, RpcBlockHash,
     calc_blob_gasprice, calc_excess_blob_gas,
 };
 use alloy_eips::{Encodable2718, eip4895::Withdrawals, eip7840::BlobParams};
-use crate::{
-    BlockResponse, BlockTransactions, HeaderResponse, TransactionResponse,
-};
 use alloy_primitives::{Address, B64, B256, BlockHash, Bloom, Bytes, Sealable, U256};
 use alloy_rlp::Encodable;
 use base_common_types_chain::{BlockBody, BlockHeader, Sealed, TxEnvelope, error::ValueError};
@@ -832,6 +830,12 @@ pub struct BadBlock<B = Block> {
     pub hash: BlockHash,
     /// RLP encoded block header.
     pub rlp: Bytes,
+}
+
+impl From<Header<base_common_types_chain::Header>> for base_common_types_chain::SealedHeader {
+    fn from(value: Header<base_common_types_chain::Header>) -> Self {
+        Self::new(value.inner, value.hash)
+    }
 }
 
 #[cfg(test)]

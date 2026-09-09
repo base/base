@@ -1,7 +1,6 @@
 //! Block headers, sealed headers, and header mutation helpers.
 
-mod sealed;
-pub use sealed::{Header, SealedHeader};
+pub use base_common_types_chain::{Header, SealedHeader};
 
 mod header_mut;
 pub use header_mut::HeaderMut;

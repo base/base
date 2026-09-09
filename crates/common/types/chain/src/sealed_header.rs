@@ -1,16 +1,16 @@
 use core::mem;
 
+use crate::{BlockHeader, Header, InMemorySize, Sealed};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{BlockHash, keccak256};
 use alloy_rlp::{Decodable, Encodable};
-pub use base_common_types_chain::Header;
-use base_common_types_chain::{BlockHeader, Sealed};
 use bytes::BufMut;
 use derive_more::{AsRef, Deref};
 
-#[cfg(any(test, feature = "test-utils"))]
-use crate::test_utils::TestHeader;
-use crate::{InMemorySize, sync::OnceLock};
+#[cfg(not(feature = "std"))]
+use once_cell::sync::OnceCell as OnceLock;
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 
 /// Seals the header with the block hash.
 ///
@@ -21,7 +21,7 @@ use crate::{InMemorySize, sync::OnceLock};
 /// [`SealedHeader::hash`] computes the hash if it has not been computed yet.
 #[derive(Debug, Clone, AsRef, Deref)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "reth-codec", base_common_types_chain::add_arbitrary_tests(rlp))]
+#[crate::add_arbitrary_tests(crate, rlp)]
 pub struct SealedHeader {
     /// Block hash
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -213,59 +213,31 @@ impl SealedHeader {
     /// Updates the parent block hash.
     #[inline]
     pub fn set_parent_hash(&mut self, hash: BlockHash) {
-        self.header.set_parent_hash(hash);
+        self.header.parent_hash = hash;
     }
 
     /// Updates the block number.
     #[inline]
     pub fn set_block_number(&mut self, number: alloy_primitives::BlockNumber) {
-        self.header.set_block_number(number);
+        self.header.number = number;
     }
 
     /// Updates the block timestamp.
     #[inline]
     pub fn set_timestamp(&mut self, timestamp: u64) {
-        self.header.set_timestamp(timestamp);
+        self.header.timestamp = timestamp;
     }
 
     /// Updates the block state root.
     #[inline]
     pub fn set_state_root(&mut self, state_root: alloy_primitives::B256) {
-        self.header.set_state_root(state_root);
+        self.header.state_root = state_root;
     }
 
     /// Updates the block difficulty.
     #[inline]
     pub fn set_difficulty(&mut self, difficulty: alloy_primitives::U256) {
-        self.header.set_difficulty(difficulty);
-    }
-}
-
-#[cfg(feature = "rpc-compat")]
-mod rpc_compat {
-    use super::*;
-
-    impl SealedHeader {
-        /// Converts this header into `base_common_types_rpc::Header`.
-        ///
-        /// Note: This does not set the total difficulty or size of the block.
-        #[inline]
-        pub fn into_rpc_header(self) -> base_common_types_rpc::Header<Header> {
-            base_common_types_rpc::Header::from_sealed(self.into())
-        }
-
-        /// Converts an `base_common_types_rpc::Header` into a `SealedHeader`.
-        #[inline]
-        pub fn from_rpc_header(header: base_common_types_rpc::Header<Header>) -> Self {
-            Self::new(header.inner, header.hash)
-        }
-    }
-
-    impl From<base_common_types_rpc::Header<Header>> for SealedHeader {
-        #[inline]
-        fn from(value: base_common_types_rpc::Header<Header>) -> Self {
-            Self::from_rpc_header(value)
-        }
+        self.header.difficulty = difficulty;
     }
 }
 

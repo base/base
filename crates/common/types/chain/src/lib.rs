@@ -180,3 +180,6 @@ pub mod test_utils;
 #[doc(hidden)]
 #[path = "compact_private.rs"]
 pub mod __private;
+
+mod sealed_header;
+pub use sealed_header::SealedHeader;
