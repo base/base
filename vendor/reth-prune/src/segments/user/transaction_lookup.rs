@@ -6,7 +6,7 @@ use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
 };
 use reth_primitives_traits::SignedTransaction;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
     StaticFileProviderFactory, TransactionsProviderExt,
 };
@@ -207,7 +207,7 @@ mod tests {
     use assert_matches::assert_matches;
     use base_execution_state_database::tables;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
-    use reth_provider::{DBProvider, DatabaseProviderFactory};
+    use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams};
 
@@ -217,7 +217,7 @@ mod tests {
     fn prune_rocksdb() {
         use base_execution_state_api::StorageSettingsCache;
         use base_execution_state_database::models::StorageSettings;
-        use reth_provider::RocksDBProviderFactory;
+        use base_execution_state_provider::RocksDBProviderFactory;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();
@@ -317,7 +317,7 @@ mod tests {
     fn prune_rocksdb_zero_deleted_checkpoint() {
         use base_execution_state_api::StorageSettingsCache;
         use base_execution_state_database::models::StorageSettings;
-        use reth_provider::RocksDBProviderFactory;
+        use base_execution_state_provider::RocksDBProviderFactory;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

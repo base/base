@@ -13,7 +13,7 @@ use reth_network::{
     test_utils::{PeerConfig, TestPool, Testnet},
 };
 use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
-use reth_provider::test_utils::MockEthProvider;
+use base_execution_state_provider::test_utils::MockEthProvider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unsupported_satellite_does_not_disable_native_snap_requests() {

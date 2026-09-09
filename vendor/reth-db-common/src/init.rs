@@ -19,7 +19,7 @@ use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_config::config::EtlConfig;
 use reth_etl::Collector;
 use reth_primitives_traits::{GotExpected, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,
     OriginalValuesKnown, ProviderError, ProviderFactory, ProviderResult, RevertsInit,
@@ -39,7 +39,7 @@ type DbStateRoot<'a, TX, A> = StateRootComputer<
 
 use std::io::BufRead;
 
-pub use reth_provider::init::{
+pub use base_execution_state_provider::init::{
     insert_account_history, insert_genesis_account_history, insert_genesis_history,
     insert_genesis_storage_history, insert_history, insert_storage_history,
 };
@@ -667,7 +667,7 @@ where
 }
 
 fn prepare_account_changeset_writer(
-    writer: &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
+    writer: &mut base_execution_state_provider::providers::StaticFileProviderRWRefMut<'_>,
     block: u64,
 ) -> ProviderResult<()> {
     let next_block = writer.next_block_number();
@@ -694,7 +694,7 @@ fn prepare_account_changeset_writer(
 }
 
 fn prepare_storage_changeset_writer(
-    writer: &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
+    writer: &mut base_execution_state_provider::providers::StaticFileProviderRWRefMut<'_>,
     block: u64,
 ) -> ProviderResult<()> {
     let next_block = writer.next_block_number();
@@ -733,7 +733,7 @@ fn snapshot_state_tables_empty<TX: base_execution_state_database::DbTx>(
 }
 
 fn reset_pre_snapshot_changeset_segment(
-    static_file_provider: &reth_provider::providers::StaticFileProvider,
+    static_file_provider: &base_execution_state_provider::providers::StaticFileProvider,
     segment: StaticFileSegment,
     block: u64,
 ) -> ProviderResult<()> {
@@ -778,10 +778,10 @@ where
 fn write_account_to_db_v2<TX>(
     tx: &TX,
     changeset_writers: (
-        &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
-        &mut reth_provider::providers::StaticFileProviderRWRefMut<'_>,
+        &mut base_execution_state_provider::providers::StaticFileProviderRWRefMut<'_>,
+        &mut base_execution_state_provider::providers::StaticFileProviderRWRefMut<'_>,
     ),
-    history_batch: &mut reth_provider::providers::RocksDBBatch<'_>,
+    history_batch: &mut base_execution_state_provider::providers::RocksDBBatch<'_>,
     address: &Address,
     genesis_account: &GenesisAccount,
     history_list: &IntegerList,
@@ -1026,7 +1026,7 @@ mod tests {
         Database, DbCursorRO, DbTx, Table, TableRow, models::BlockNumberAddress,
         models::IntegerList, models::ShardedKey, models::storage_sharded_key::StorageShardedKey,
     };
-    use reth_provider::{
+    use base_execution_state_provider::{
         ProviderFactory, RocksDBProviderFactory,
         test_utils::create_test_provider_factory_with_chain_spec,
     };
@@ -1101,14 +1101,14 @@ mod tests {
         let address_with_balance = Address::with_last_byte(1);
         let address_with_storage = Address::with_last_byte(2);
         assert_eq!(
-            reth_provider::ChangeSetReader::account_block_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, block).unwrap(),
             vec![
                 AccountBeforeTx { address: address_with_balance, info: None },
                 AccountBeforeTx { address: address_with_storage, info: None }
             ]
         );
         assert_eq!(
-            reth_provider::StorageChangeSetReader::storage_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, block).unwrap(),
             vec![(
                 BlockNumberAddress((block, address_with_storage)),
                 StorageEntry { key: storage_key, value: U256::ZERO }
@@ -1181,12 +1181,12 @@ mod tests {
         let provider = factory.provider().unwrap();
         let address = Address::with_last_byte(2);
         assert!(
-            reth_provider::ChangeSetReader::account_block_changeset(&provider, 5)
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, 5)
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            reth_provider::StorageChangeSetReader::storage_changeset(&provider, 5)
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, 5)
                 .unwrap()
                 .is_empty()
         );
@@ -1198,22 +1198,22 @@ mod tests {
         assert_eq!(account_file_start, 500_000);
         assert_eq!(storage_file_start, 500_000);
         assert!(
-            reth_provider::ChangeSetReader::account_block_changeset(&provider, account_file_start)
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, account_file_start)
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            reth_provider::StorageChangeSetReader::storage_changeset(&provider, storage_file_start)
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, storage_file_start)
                 .unwrap()
                 .is_empty()
         );
 
         assert_eq!(
-            reth_provider::ChangeSetReader::account_block_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, block).unwrap(),
             vec![AccountBeforeTx { address, info: None }]
         );
         assert_eq!(
-            reth_provider::StorageChangeSetReader::storage_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, block).unwrap(),
             vec![(
                 BlockNumberAddress((block, address)),
                 StorageEntry { key: storage_key, value: U256::ZERO }
@@ -1380,7 +1380,7 @@ mod tests {
             let _settings = factory.cached_storage_settings();
             let rocksdb = factory.rocksdb_provider();
 
-            let collect_rocksdb = |rocksdb: &reth_provider::providers::RocksDBProvider| {
+            let collect_rocksdb = |rocksdb: &base_execution_state_provider::providers::RocksDBProvider| {
                 (
                     rocksdb
                         .iter::<tables::AccountsHistory>()

@@ -686,7 +686,7 @@ mod tests {
         BaseOrdering, BaseTransactionPool, BaseTransactionValidator,
         EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
     };
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
 
     use super::*;
     use crate::{BasePayloadBuilder, BasicPayloadJobGeneratorConfig};

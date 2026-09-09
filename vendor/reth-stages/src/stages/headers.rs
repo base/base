@@ -15,7 +15,7 @@ use reth_network_p2p::headers::{
     error::HeadersDownloaderError,
 };
 use reth_primitives_traits::SealedHeader;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockHashReader, DBProvider, HeaderSyncGapProvider, StaticFileProviderFactory,
     providers::StaticFileWriter,
 };
@@ -384,7 +384,7 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
-    use reth_provider::{DatabaseProviderFactory, ProviderFactory, StaticFileProviderFactory};
+    use base_execution_state_provider::{DatabaseProviderFactory, ProviderFactory, StaticFileProviderFactory};
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, random_header, random_header_range};
     use test_runner::HeadersTestRunner;
@@ -400,7 +400,7 @@ mod tests {
             ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder,
         };
         use reth_network_p2p::test_utils::{TestHeaderDownloader, TestHeadersClient};
-        use reth_provider::{BlockNumReader, HeaderProvider};
+        use base_execution_state_provider::{BlockNumReader, HeaderProvider};
         use tokio::sync::watch;
 
         use super::*;

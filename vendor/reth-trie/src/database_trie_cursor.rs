@@ -328,7 +328,7 @@ where
 mod tests {
     use alloy_primitives::hex_literal::hex;
     use base_execution_state_database::{DbCursorRW, DbTxMut};
-    use reth_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
 
     use super::*;
 

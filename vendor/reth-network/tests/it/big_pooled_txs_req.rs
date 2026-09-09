@@ -10,7 +10,7 @@ use reth_network::{
 use reth_network_api::{NetworkInfo, Peers};
 use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
 use reth_primitives_traits::SignedTransaction;
-use reth_provider::test_utils::MockEthProvider;
+use base_execution_state_provider::test_utils::MockEthProvider;
 use tokio::sync::oneshot;
 // peer0: `GetPooledTransactions` requester
 // peer1: `GetPooledTransactions` responder

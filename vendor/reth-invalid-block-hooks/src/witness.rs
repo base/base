@@ -13,7 +13,7 @@ use base_execution_rpc::DebugApiClient;
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};
-use reth_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
+use base_execution_state_provider::{BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory};
 use base_common_observability_tracing::tracing::warn;
 use reth_trie::{HashedStorage, updates::TrieUpdates};
 use serde::Serialize;
@@ -410,7 +410,7 @@ mod tests {
         bytecode::Bytecode,
         database::{AccountRevert, BundleAccount, BundleState},
     };
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{self, BlockParams, random_eoa_accounts};
     use tempfile::TempDir;
 
@@ -826,7 +826,7 @@ mod tests {
         // Create mock BlockExecutionOutput
         let output = BlockExecutionOutput {
             state: bundle_state,
-            result: reth_provider::BlockExecutionResult {
+            result: base_execution_state_provider::BlockExecutionResult {
                 receipts: vec![],
                 requests: Requests::default(),
                 gas_used: 0,

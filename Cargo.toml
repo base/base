@@ -150,7 +150,7 @@ members = [
   "vendor/reth-node-metrics",
   "vendor/reth-payload-util",
   "vendor/reth-primitives-traits",
-  "vendor/reth-provider",
+  "crates/execution/state/provider",
   "vendor/reth-prune",
   "vendor/reth-rpc-builder",
   "vendor/reth-rpc-convert",
@@ -446,7 +446,7 @@ base-common-observability-tracing = { path = "crates/common/observability/tracin
 reth-network = { path = "vendor/reth-network", default-features = false }
 base-common-io-files = { path = "crates/common/io/files", default-features = false }
 reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
-reth-provider = { path = "vendor/reth-provider", default-features = false }
+base-execution-state-provider = { path = "crates/execution/state/provider", default-features = false }
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }

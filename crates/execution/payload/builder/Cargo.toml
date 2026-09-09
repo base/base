@@ -53,7 +53,7 @@ base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace
 [dev-dependencies]
 metrics-exporter-prometheus = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-common-observability-events = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "test-utils"] }

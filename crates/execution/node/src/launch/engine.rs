@@ -16,7 +16,7 @@ use reth_network::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
 use reth_network_api::BlockDownloaderProvider;
 use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::Head};
 use reth_node_events::node;
-use reth_provider::{BlockNumReader, StorageSettingsCache};
+use base_execution_state_provider::{BlockNumReader, StorageSettingsCache};
 use reth_storage_overlay::OverlayManager;
 use base_common_runtime_tasks::EventSender;
 use base_common_observability_tracing::tracing::{debug, error, info};

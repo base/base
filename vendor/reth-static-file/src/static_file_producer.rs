@@ -14,7 +14,7 @@ use base_execution_state_types::{HighestStaticFiles, StaticFileTargets};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileWriter,
 };
@@ -91,7 +91,7 @@ where
             Provider: StaticFileProviderFactory
                           + StageCheckpointReader
                           + BlockReader
-                          + reth_provider::ChangeSetReader,
+                          + base_execution_state_provider::ChangeSetReader,
         >,
 {
     /// Listen for events on the `static_file_producer`.
@@ -102,7 +102,7 @@ where
     /// Run the `static_file_producer`.
     ///
     /// For each [Some] target in [`StaticFileTargets`], initializes a corresponding [Segment] and
-    /// runs it with the provided block range using [`reth_provider::providers::StaticFileProvider`]
+    /// runs it with the provided block range using [`base_execution_state_provider::providers::StaticFileProvider`]
     /// and a read-only database transaction from [`DatabaseProviderFactory`]. All segments are run
     /// in parallel.
     ///
@@ -179,7 +179,7 @@ where
 
     /// Returns a static file targets at the provided finalized block numbers per segment.
     /// The target is determined by the check against highest `static_files` using
-    /// [`reth_provider::providers::StaticFileProvider::get_highest_static_files`].
+    /// [`base_execution_state_provider::providers::StaticFileProvider::get_highest_static_files`].
     pub fn get_static_file_targets(
         &self,
         finalized_block_numbers: HighestStaticFiles,
@@ -232,7 +232,7 @@ mod tests {
     use assert_matches::assert_matches;
     use base_execution_state_types::PruneModes;
     use base_execution_state_types::{HighestStaticFiles, StaticFileSegment};
-    use reth_provider::{
+    use base_execution_state_provider::{
         ProviderError, ProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
     };
     use reth_stages::test_utils::{StorageKind, TestStageDB};

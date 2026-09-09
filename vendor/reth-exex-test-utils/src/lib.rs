@@ -33,7 +33,7 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal
 use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
 use reth_node_core::node_config::NodeConfig;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, ProviderFactory,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };

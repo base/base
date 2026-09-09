@@ -9,7 +9,7 @@ use base_execution_evm_blocks::{BaseEvmConfig, BaseNextBlockEnvAttributes, Block
 use base_execution_evm_runtime::database::State;
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::Block as BlockT;
-use reth_provider::{HeaderProvider, StateProviderFactory};
+use base_execution_state_provider::{HeaderProvider, StateProviderFactory};
 
 use crate::types::{MeterBlockResponse, MeterBlockTransactions};
 

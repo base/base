@@ -10,7 +10,7 @@ use base_execution_state_database::{
 };
 use boyer_moore_magiclen::BMByte;
 use eyre::Result;
-use reth_provider::{ChainSpecProvider, DBProvider, ProviderFactory};
+use base_execution_state_provider::{ChainSpecProvider, DBProvider, ProviderFactory};
 use tracing::info;
 
 /// Wrapper over DB that implements many useful DB queries.

@@ -9,7 +9,7 @@ use base_execution_evm_blocks::extract_l1_info_from_tx;
 use base_execution_evm_runtime::L1BlockInfo;
 use base_execution_payload_types::{Bundle, MeterBundleResponse, ParsedBundle};
 use jsonrpsee::core::{RpcResult, async_trait};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
 use tracing::{debug, error, info};

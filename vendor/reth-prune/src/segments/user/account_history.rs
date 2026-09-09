@@ -5,7 +5,7 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory,
     changeset_walker::StaticFileAccountChangesetWalker,
 };
@@ -183,7 +183,7 @@ mod tests {
     use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_database::{BlockNumberList, models::StorageSettings, tables};
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
-    use reth_provider::{DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
+    use base_execution_state_provider::{DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn prune_rocksdb_path() {
         use base_execution_state_database::models::ShardedKey;
-        use reth_provider::{RocksDBProviderFactory, StaticFileProviderFactory};
+        use base_execution_state_provider::{RocksDBProviderFactory, StaticFileProviderFactory};
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn dense_block_advances_rocksdb_checkpoint() {
         use base_execution_state_database::models::ShardedKey;
-        use reth_provider::RocksDBProviderFactory;
+        use base_execution_state_provider::RocksDBProviderFactory;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

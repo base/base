@@ -6,7 +6,7 @@ mod tests {
     use base_common_types_chain::Transaction;
     use base_common_types_rpc::TransactionRequest;
     use base_execution_evm_runtime::database::CacheDB;
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_rpc_eth_types::simulate::resolve_transaction;
 
     use crate::BaseRpcConverter;

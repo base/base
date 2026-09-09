@@ -12,7 +12,7 @@ use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
 use reth_primitives_traits::Block;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
     StageCheckpointReader,
 };

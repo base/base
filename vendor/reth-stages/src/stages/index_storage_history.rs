@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use base_execution_state_database::{DbTxMut, Tables, tables};
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::{EtlConfig, IndexHistoryConfig};
-use reth_provider::{
+use base_execution_state_provider::{
     DBProvider, EitherWriter, HistoryWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StorageChangeSetReader,
     StorageSettingsCache,
@@ -147,7 +147,7 @@ where
             provider.with_rocksdb_batch_auto_commit(|rocksdb_batch| {
                 let mut writer = EitherWriter::new_storages_history(provider, rocksdb_batch)?;
                 load_storage_history_append(collector, &mut writer)
-                    .map_err(|e| reth_provider::ProviderError::other(Box::new(e)))?;
+                    .map_err(|e| base_execution_state_provider::ProviderError::other(Box::new(e)))?;
                 Ok(((), writer.into_raw_rocksdb_batch()))
             })?;
         } else {
@@ -193,7 +193,7 @@ mod tests {
         BlockNumberList, models::ShardedKey, models::StoredBlockBodyIndices,
         models::storage_sharded_key::StorageShardedKey,
     };
-    use reth_provider::DatabaseProviderFactory;
+    use base_execution_state_provider::DatabaseProviderFactory;
 
     use super::*;
     use crate::test_utils::TestStageDB;
@@ -213,7 +213,7 @@ mod tests {
         use base_execution_state_api::StorageSettings;
         use base_execution_state_database::models::StorageBeforeTx;
         use base_execution_state_types::StaticFileSegment;
-        use reth_provider::{RocksDBProviderFactory, providers::StaticFileWriter};
+        use base_execution_state_provider::{RocksDBProviderFactory, providers::StaticFileWriter};
 
         use super::*;
 

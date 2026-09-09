@@ -12,7 +12,7 @@ use reth_network::{
 };
 use reth_network_api::Peers;
 use reth_network_p2p::bodies::client::BodiesClient;
-use reth_provider::test_utils::MockEthProvider;
+use base_execution_state_provider::test_utils::MockEthProvider;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unsupported_protocols_are_not_announced_and_eth_requests_work_both_directions() {

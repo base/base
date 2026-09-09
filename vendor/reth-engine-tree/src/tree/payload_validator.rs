@@ -136,7 +136,7 @@ use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
     SealedHeader, SignerRecoverable,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BlockExecutionOutput, BlockReader, ChangeSetReader, DatabaseProviderFactory,
     DatabaseProviderROFactory, ProviderError, PruneCheckpointReader, StageCheckpointReader,
     StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,

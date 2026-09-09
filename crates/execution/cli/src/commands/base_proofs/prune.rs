@@ -139,7 +139,7 @@ impl<C: ChainSpecParser> PruneCommand<C> {
     ) -> eyre::Result<()>
     where
         S: BaseProofsStore + 'static,
-        H: reth_provider::BlockHashReader,
+        H: base_execution_state_provider::BlockHashReader,
     {
         let earliest_block = storage.get_earliest_block_number()?;
         let latest_block = storage.get_latest_block_number()?;

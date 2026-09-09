@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use reth_provider::ProviderError;
+use base_execution_state_provider::ProviderError;
 use strum::Display;
 use thiserror::Error;
 

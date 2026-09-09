@@ -1,5 +1,5 @@
 [package]
-name = "reth-provider"
+name = "base-execution-state-provider"
 description = "Reth storage provider."
 version.workspace = true
 edition.workspace = true

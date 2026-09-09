@@ -6,7 +6,7 @@ use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use derive_more::Constructor;
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
-use reth_provider::{
+use base_execution_state_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,
 };

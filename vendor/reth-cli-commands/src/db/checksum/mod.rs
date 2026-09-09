@@ -12,7 +12,7 @@ use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 use clap::Parser;
 use itertools::Itertools;
 use reth_db_common::DbTool;
-use reth_provider::{DBProvider, StaticFileProviderFactory};
+use base_execution_state_provider::{DBProvider, StaticFileProviderFactory};
 use tracing::{info, warn};
 
 use crate::db::get::{maybe_json_value_parser, table_key};

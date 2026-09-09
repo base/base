@@ -34,7 +34,7 @@ use reth_primitives_traits::{
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, HashedPostStateProvider, HeaderProvider,
     OriginalValuesKnown, StateWriter, StoragePath,
     test_utils::create_test_provider_factory_with_chain_spec,
@@ -49,7 +49,7 @@ use reth_testing_utils::generators::{self, generate_key};
 use reth_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
-type TestProviderFactory = reth_provider::ProviderFactory;
+type TestProviderFactory = base_execution_state_provider::ProviderFactory;
 
 const TEST_SELFDESTRUCT_BENEFICIARY: Address = Address::new([0x77; 20]);
 const TEST_CREATE2_SALT: B256 = B256::with_last_byte(0x42);

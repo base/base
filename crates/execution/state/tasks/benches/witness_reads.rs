@@ -20,7 +20,7 @@ use base_execution_state_tasks::{
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
-use reth_provider::{AccountReader, NoopProvider, StateReadProvider};
+use base_execution_state_provider::{AccountReader, NoopProvider, StateReadProvider};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;

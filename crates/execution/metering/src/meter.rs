@@ -390,7 +390,7 @@ fn is_dead_provider_account(account: &Account) -> bool {
 
 fn lookup_value_recipient_is_dead<SP>(state_provider: &SP, address: &Address) -> EyreResult<bool>
 where
-    SP: reth_provider::StateProvider,
+    SP: base_execution_state_provider::StateProvider,
 {
     Ok(state_provider.basic_account(address)?.as_ref().is_none_or(is_dead_provider_account))
 }
@@ -648,7 +648,7 @@ pub struct MeterBundleInput<SP> {
 /// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(input: MeterBundleInput<SP>) -> EyreResult<MeterBundleOutput>
 where
-    SP: reth_provider::StateProvider,
+    SP: base_execution_state_provider::StateProvider,
 {
     let MeterBundleInput {
         state_provider,
@@ -883,7 +883,7 @@ mod tests {
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
     };
     use eyre::Context;
-    use reth_provider::StateProviderFactory;
+    use base_execution_state_provider::StateProviderFactory;
 
     use super::*;
 

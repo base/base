@@ -13,7 +13,7 @@ macro_rules! stage_test_suite {
 
                 // Run stage execution
                 let result = runner.execute(input).await;
-                reth_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
+                base_execution_state_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
 
                 // Check that the result is returned and the stage does not panic.
                 // The return result with empty db is stage-specific.
@@ -46,7 +46,7 @@ macro_rules! stage_test_suite {
 
                 // Assert the successful result
                 let result = rx.await.unwrap();
-                reth_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
+                base_execution_state_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
 
                 assert_matches::assert_matches!(
                     result,
@@ -76,7 +76,7 @@ macro_rules! stage_test_suite {
 
                 // Run stage unwind
                 let rx = runner.unwind(input).await;
-                reth_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
+                base_execution_state_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
 
                 assert_matches::assert_matches!(
                     rx,
@@ -110,7 +110,7 @@ macro_rules! stage_test_suite {
 
                 // Assert the successful execution result
                 let result = rx.await.unwrap();
-                reth_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
+                base_execution_state_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
 
                 assert_matches::assert_matches!(
                     result,
@@ -179,7 +179,7 @@ macro_rules! stage_test_suite_ext {
 
                 // Assert the successful result
                 let result = rx.await.unwrap();
-                reth_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
+                base_execution_state_provider::StaticFileProviderFactory::static_file_provider(&runner.db().factory).commit().unwrap();
 
                 assert_matches::assert_matches!(
                     result,

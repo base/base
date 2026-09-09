@@ -29,7 +29,7 @@ use reth_node_metrics::{
     version::VersionInfo,
 };
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     providers::BlockchainProvider,
 };

@@ -36,7 +36,7 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
 base-execution-txpool = { workspace = true, features = ["default"] }

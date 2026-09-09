@@ -239,7 +239,7 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
-    use reth_provider::{
+    use base_execution_state_provider::{
         BlockWriter, ProviderFactory,
         test_utils::{MockNodeDatabase, create_test_provider_factory},
     };

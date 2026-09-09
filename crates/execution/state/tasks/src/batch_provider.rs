@@ -18,7 +18,7 @@ use base_execution_state_types::{
     updates::TrieUpdates,
 };
 use derive_more::Constructor;
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
 };

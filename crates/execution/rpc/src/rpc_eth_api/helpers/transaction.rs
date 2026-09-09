@@ -20,7 +20,7 @@ use base_execution_txpool::{
 };
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_convert::TransactionConversionError;
 use reth_rpc_eth_types::{
     BaseEthApiError,
@@ -643,7 +643,7 @@ mod tests {
     use base_execution_txpool::{
         TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,
     };
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
 

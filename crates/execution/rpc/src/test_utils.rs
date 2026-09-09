@@ -14,7 +14,7 @@ use base_node_context::BaseNodePool;
 use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
 use reth_network::NetworkHandle;
 use reth_primitives_traits::RecoveredBlock;
-use reth_provider::{
+use base_execution_state_provider::{
     ChainSpecProvider, StaticFileProviderFactory,
     providers::BlockchainProvider,
     test_utils::{MockEthProvider, create_test_provider_factory_with_chain_spec},

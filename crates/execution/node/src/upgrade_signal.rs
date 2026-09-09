@@ -14,7 +14,7 @@ use base_execution_network_discovery::NetworkStackId;
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_network::NetworkHandle;
 use reth_network_p2p::sync::NetworkSyncUpdater;
-use reth_provider::{BlockNumReader, HeaderProvider};
+use base_execution_state_provider::{BlockNumReader, HeaderProvider};
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;

@@ -29,7 +29,7 @@
 //!
 //! This ensures correct initialization order without runtime checks.
 
-use reth_provider::DatabaseProviderROFactory;
+use base_execution_state_provider::DatabaseProviderROFactory;
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
 use alloy_chains::Chain;
@@ -74,7 +74,7 @@ use reth_node_metrics::{
     storage::StorageSettingsInfo,
     version::VersionInfo,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
     InMemoryBalStore, MetadataProvider, ProviderError, ProviderFactory, ProviderResult,
     RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
@@ -1012,7 +1012,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     /// Otherwise returns an empty stream.
     pub fn consensus_layer_events(&self) -> impl Stream<Item = NodeEvent> + 'static
     where
-        BlockchainProvider: reth_provider::CanonChainTracker,
+        BlockchainProvider: base_execution_state_provider::CanonChainTracker,
     {
         if self.node_config().debug.tip.is_none() && !self.is_dev() {
             Either::Left(
@@ -1238,7 +1238,7 @@ fn get_partial_trie_unwind_marker(
 const PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY: &str = "partial_state_trie_unwind";
 
 fn write_partial_trie_unwind_marker(
-    provider: &reth_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
+    provider: &base_execution_state_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
     marker: PartialStateTrieUnwindMarker,
 ) -> ProviderResult<()> {
     provider.write_metadata(
@@ -1248,7 +1248,7 @@ fn write_partial_trie_unwind_marker(
 }
 
 fn delete_partial_trie_unwind_marker(
-    provider: &reth_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
+    provider: &base_execution_state_provider::DatabaseProvider<impl base_execution_state_database::DbTxMut>,
 ) -> ProviderResult<()> {
     provider.delete_metadata(PARTIAL_STATE_TRIE_UNWIND_METADATA_KEY)
 }
@@ -1258,7 +1258,7 @@ mod tests {
     use base_execution_state_database::models::PartialStateTrieUnwindMarker;
     use reth_config::Config;
     use reth_node_core::args::PruningArgs;
-    use reth_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
+    use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
     use reth_stages::{FinishCheckpoint, StageCheckpoint, StageId};
 
     use super::{LaunchContext, NodeConfig, get_partial_trie_unwind_marker};

@@ -29,7 +29,7 @@ use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
     provider::BaseProofsStateProviderRef,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, NoopProvider, StateProofProvider, StateReadProvider, StateRootProvider,
     StorageRootProvider,
 };

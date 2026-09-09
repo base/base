@@ -15,7 +15,7 @@ use reth_node_core::{
     node_config::NodeConfig,
     primitives::Head,
 };
-use reth_provider::{ChainSpecProvider, providers::BlockchainProvider};
+use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 

@@ -62,7 +62,7 @@ mod tests {
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
-    use reth_provider::{
+    use base_execution_state_provider::{
         AccountExtReader, BlockBodyIndicesProvider, BlockWriter, DatabaseProviderFactory,
         ProviderFactory, ProviderResult, PruneCheckpointWriter, ReceiptProvider,
         StaticFileProviderFactory, StorageReader,
@@ -298,7 +298,7 @@ mod tests {
                     .enumerate()
                     .map(|(number, tx)| (number as u64, tx.recover_signer().unwrap())),
             )?;
-            let mut changesets = reth_provider::test_utils::TestChangesets::default();
+            let mut changesets = base_execution_state_provider::test_utils::TestChangesets::default();
             changesets.accounts.insert(tip, Vec::new());
             changesets.write_to(&db.factory.static_file_provider())?;
         }

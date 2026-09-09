@@ -14,7 +14,7 @@ use base_execution_payload_builder::PayloadBuilderHandle;
 use futures::Stream;
 use reth_engine_primitives::BeaconEngineMessage;
 use reth_network_p2p::BlockClient;
-use reth_provider::{ProviderFactory, providers::BlockchainProvider};
+use base_execution_state_provider::{ProviderFactory, providers::BlockchainProvider};
 use reth_prune::PrunerWithFactory;
 use reth_stages_api::{MetricEventsSender, Pipeline};
 use reth_storage_overlay::OverlayManager;

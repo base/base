@@ -1399,7 +1399,7 @@ mod tests {
     use base_common_types_chain::Transaction;
     use base_execution_evm_runtime::primitives::eip3860::MAX_INITCODE_SIZE;
     use reth_primitives_traits::SignedTransaction;
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
     use crate::{

@@ -9,7 +9,7 @@ use base_execution_evm_runtime::Evm;
 use base_execution_evm_runtime::database::State;
 use base_execution_state_memory::CachedReads;
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
@@ -320,7 +320,7 @@ mod tests {
     use base_common_types_chain::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_stages_api::{StageCheckpoint, StageId};
 
     use super::{super::Transaction as PoolTransaction, *};

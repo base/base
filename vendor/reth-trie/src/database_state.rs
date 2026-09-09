@@ -360,7 +360,7 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StateRootError;
     use base_execution_state_types::StorageEntry;
-    use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
+    use base_execution_state_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
 
     use super::*;
     use crate::{HashedPostState, HashedPostStateSorted, HashedStorage, StateRoot};
@@ -449,7 +449,7 @@ mod tests {
         let slot2 = B256::from(U256::from(22));
 
         // Account changesets: only first occurrence per address should be kept.
-        let mut changesets = reth_provider::test_utils::TestChangesets::default();
+        let mut changesets = base_execution_state_provider::test_utils::TestChangesets::default();
         changesets.accounts.entry(1).or_default().push(AccountBeforeTx {
             address: address1,
             info: Some(Account { nonce: 1, ..Default::default() }),
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn from_reverts_with_hashed_state() {
         use base_execution_state_database::{models::StorageBeforeTx, models::StorageSettings};
-        use reth_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
+        use base_execution_state_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
 
         let factory = create_test_provider_factory();
 

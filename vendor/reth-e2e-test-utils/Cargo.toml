@@ -23,7 +23,7 @@ alloy-genesis = {workspace = true}
 alloy-signer = { workspace = true }
 futures-util = { workspace = true }
 reth-network = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-network-api = { workspace = true }

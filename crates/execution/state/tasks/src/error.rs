@@ -7,7 +7,7 @@ use base_common_types_chain::DecompressError;
 use base_execution_evm_runtime::BlockExecutionError;
 use base_execution_state_database::DatabaseError;
 use base_execution_state_types::Nibbles;
-use reth_provider::ProviderError;
+use base_execution_state_provider::ProviderError;
 use thiserror::Error;
 
 /// Error type for storage operations

@@ -13,7 +13,7 @@ workspace = true
 [dependencies]
 async-trait = { workspace = true }
 reth-network = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }

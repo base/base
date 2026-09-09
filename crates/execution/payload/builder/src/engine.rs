@@ -275,7 +275,7 @@ mod tests {
     use base_execution_evm_blocks::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use reth_primitives_traits::WithEncoded;
-    use reth_provider::{NoopProvider, test_utils::ExtendedAccount, test_utils::MockEthProvider};
+    use base_execution_state_provider::{NoopProvider, test_utils::ExtendedAccount, test_utils::MockEthProvider};
 
     use super::*;
 

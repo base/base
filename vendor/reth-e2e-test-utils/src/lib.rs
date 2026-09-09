@@ -7,7 +7,7 @@ use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use base_node_context::BaseNodeContext;
 use node::NodeTestContext;
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use wallet::Wallet;
 
 /// Wrapper type to create test nodes

@@ -499,7 +499,7 @@ mod tests {
         Address, StorageKey, StorageValue, U256,
         map::{AddressMap, B256Map},
     };
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
 

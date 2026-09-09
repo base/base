@@ -22,7 +22,7 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
-use reth_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
+use base_execution_state_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
 use reth_stages::StageId;
 use reth_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,
@@ -222,7 +222,7 @@ fn verify_and_repair(tool: &DbTool) -> eyre::Result<()> {
 }
 
 fn do_verify_and_repair<A: TrieTableAdapter>(
-    provider_rw: &mut reth_provider::DatabaseProviderRW,
+    provider_rw: &mut base_execution_state_provider::DatabaseProviderRW,
     block_number: u64,
 ) -> eyre::Result<usize> {
     // Create cursors for making modifications with
@@ -333,7 +333,7 @@ fn do_verify_and_repair<A: TrieTableAdapter>(
 }
 
 fn verify_repaired_state_root<A: TrieTableAdapter>(
-    provider_rw: &reth_provider::DatabaseProviderRW,
+    provider_rw: &base_execution_state_provider::DatabaseProviderRW,
     block_number: u64,
 ) -> eyre::Result<()> {
     type DbStateRoot<'a, TX, A> = reth_trie::StateRoot<

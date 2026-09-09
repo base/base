@@ -15,7 +15,7 @@ use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, Transact
 use futures::StreamExt;
 use reth_chain_state::CanonStateSubscriptions;
 use reth_primitives_traits::{SignerRecoverable, WithEncoded};
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use tracing::{debug, instrument, warn};
 

@@ -20,7 +20,7 @@ use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
 use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
 use reth_primitives_traits::format_gas_throughput;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockHashReader, BlockReader, DBProvider, EitherWriter, ExecutionOutcome,
     HashedPostStateProvider, HeaderProvider, LatestStateProviderRef, OriginalValuesKnown,
     ProviderError, StateWriteConfig, StateWriter, StaticFileProviderFactory, StatsReader,
@@ -746,7 +746,7 @@ mod tests {
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
     use reth_primitives_traits::{Block as _, SealedBlock};
-    use reth_provider::{
+    use base_execution_state_provider::{
         AccountReader, BlockWriter, DatabaseProviderFactory, HashingWriter, ReceiptProvider,
         StaticFileProviderFactory,
         test_utils::{create_test_provider_factory, create_test_provider_factory_with_chain_spec},
@@ -987,7 +987,7 @@ mod tests {
             receipts_writer.increment_block(0).unwrap();
             receipts_writer.commit().unwrap();
         }
-        reth_provider::test_utils::TestChangesets::default()
+        base_execution_state_provider::test_utils::TestChangesets::default()
             .write_to(&factory.static_file_provider())
             .unwrap();
         provider.commit().unwrap();
@@ -1141,7 +1141,7 @@ mod tests {
             receipts_writer.increment_block(0).unwrap();
             receipts_writer.commit().unwrap();
         }
-        reth_provider::test_utils::TestChangesets::default()
+        base_execution_state_provider::test_utils::TestChangesets::default()
             .write_to(&factory.static_file_provider())
             .unwrap();
         provider.commit().unwrap();

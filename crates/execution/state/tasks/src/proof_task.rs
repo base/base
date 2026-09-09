@@ -47,7 +47,7 @@ use base_common_runtime_tasks::Runtime;
 use base_execution_state_types::{DatabaseError, StateProofError};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use reth_primitives_traits::{FastInstant as Instant, dashmap::DashMap};
-use reth_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
+use base_execution_state_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
 use reth_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
     hashed_cursor::{
@@ -1226,7 +1226,7 @@ mod tests {
     use std::sync::Arc;
 
     use base_common_chain_config::BaseChainSpec;
-    use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
+    use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 
     use super::*;
 

@@ -11,7 +11,7 @@ use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutput,
     SegmentOutputCheckpoint,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
 };
 pub use set::SegmentSet;
@@ -239,7 +239,7 @@ impl PruneInput {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_provider::{
+    use base_execution_state_provider::{
         BlockWriter,
         providers::BlockchainProvider,
         test_utils::{MockEthProvider, create_test_provider_factory},

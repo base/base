@@ -180,7 +180,7 @@ mod tests {
         updates::{StorageTrieUpdates, TrieUpdates},
     };
     use reth_exex_types::ExExNotification;
-    use reth_provider::Chain;
+    use base_execution_state_provider::Chain;
     use reth_testing_utils::generators::{self};
 
     use super::Storage;

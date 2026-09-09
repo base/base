@@ -32,7 +32,7 @@
 //! use base_common_types_chain::BlockHeader;
 //! use futures::StreamExt;
 //! use reth_exex::ExExContext;
-//! use reth_provider::CanonStateNotification;
+//! use base_execution_state_provider::CanonStateNotification;
 //!
 //! async fn my_indexer(
 //!     mut ctx: ExExContext,
@@ -78,7 +78,7 @@
 //!
 //! [`Future`]: std::future::Future
 //! [`ExExContext`]: crate::ExExContext
-//! [`CanonStateNotification`]: reth_provider::CanonStateNotification
+//! [`CanonStateNotification`]: base_execution_state_provider::CanonStateNotification
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",

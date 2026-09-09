@@ -25,7 +25,7 @@ use base_execution_state_api::{BlockNumReader, BlockReader};
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
 };

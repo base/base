@@ -20,7 +20,7 @@ use base_execution_state_types::ProviderResult;
 use fixed_cache::{AnyRef, CacheConfig, Stats, StatsHandler};
 use metrics::{Counter, Gauge, Histogram};
 use parking_lot::Once;
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateRootProvider, StorageRootProvider,
 };
@@ -1407,7 +1407,7 @@ mod tests {
         state::AccountInfo,
     };
     use base_execution_state_api::StateReadProvider;
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
 

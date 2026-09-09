@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use reth_db_common::DbTool;
-use reth_provider::MetadataProvider;
+use base_execution_state_provider::MetadataProvider;
 
 use crate::common::AccessRights;
 

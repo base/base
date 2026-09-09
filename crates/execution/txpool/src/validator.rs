@@ -2178,7 +2178,7 @@ mod tests {
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use base_testing_support::{Account, build_test_genesis_zenith};
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
 

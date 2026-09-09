@@ -18,7 +18,7 @@ auto_impl = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 derive_more = { workspace = true }
-reth-provider = {workspace = true}
+base-execution-state-provider = {workspace = true}
 static_assertions = { workspace = true }
 base-execution-state-api = {workspace = true}
 base-execution-evm-runtime = {workspace = true}
@@ -66,7 +66,7 @@ rand_08 = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 serial_test = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
-reth-provider = {features = ["test-utils"], workspace = true}
+base-execution-state-provider = {features = ["test-utils"], workspace = true}
 secp256k1 = { workspace = true, features = ["default", "rand", "std"] }
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
@@ -100,7 +100,7 @@ default = ["metrics"]
 trie-debug = ["dep:rand", "dep:reth-trie-sparse", "reth-trie-sparse?/trie-debug"]
 test-utils = [
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "reth-trie/test-utils",
     "base-common-runtime-tasks/test-utils",
     "reth-trie-sparse?/test-utils",

@@ -20,7 +20,7 @@ use itertools::Itertools;
 use metrics::Gauge;
 use reth_chain_state::ForkChoiceStream;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::HeaderProvider;
+use base_execution_state_provider::HeaderProvider;
 use base_common_observability_tracing::tracing::{debug, warn};
 use tokio::sync::{
     mpsc::{self, UnboundedReceiver, UnboundedSender, error::SendError},
@@ -678,7 +678,7 @@ mod tests {
     use rand::Rng;
     use reth_db_common::init::init_genesis;
     use reth_primitives_traits::RecoveredBlock;
-    use reth_provider::{
+    use base_execution_state_provider::{
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
         providers::BlockchainProvider, test_utils::create_test_provider_factory,
     };

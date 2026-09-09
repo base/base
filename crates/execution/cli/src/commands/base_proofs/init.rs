@@ -13,7 +13,7 @@ use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::version::version_metadata;
-use reth_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
+use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use tracing::info;
 
 /// Initializes the proofs storage with the current state of the chain.

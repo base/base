@@ -21,7 +21,7 @@ reth-trie = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 reth-cli-util = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-rpc-layer = { workspace = true }
@@ -165,7 +165,7 @@ test-utils = [
     "base-execution-state-tasks/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-txpool/test-utils",
     "reth-trie/test-utils",

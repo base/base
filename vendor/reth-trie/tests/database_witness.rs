@@ -10,7 +10,7 @@ use base_execution_state_database::DbTxMut;
 use base_execution_state_database::{DbCursorRW, tables};
 use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
-use reth_provider::{HashingWriter, test_utils::create_test_provider_factory};
+use base_execution_state_provider::{HashingWriter, test_utils::create_test_provider_factory};
 use reth_trie::{
     DatabaseHashedCursorFactory, DatabaseProof, DatabaseStateRoot, DatabaseStorageRoot,
     DatabaseTrieCursorFactory, ExecutionWitnessMode, HashedPostState, HashedStorage, LeafNode,

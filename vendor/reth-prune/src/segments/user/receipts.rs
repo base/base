@@ -2,7 +2,7 @@ use base_execution_state_database::DbTxMut;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, DBProvider, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
     StorageSettingsCache, TransactionsProvider,
 };

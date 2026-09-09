@@ -18,7 +18,7 @@ use reth_network_p2p::{
     headers::downloader::{HeaderDownloader, SyncTarget},
 };
 use reth_node_events::node::NodeEvent;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
     StageCheckpointReader,
 };

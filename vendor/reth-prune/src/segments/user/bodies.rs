@@ -4,7 +4,7 @@ use base_execution_state_types::{
     PruneInterruptReason, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
     SegmentOutputCheckpoint,
 };
-use reth_provider::{BlockReader, PruneCheckpointReader, StaticFileProviderFactory};
+use base_execution_state_provider::{BlockReader, PruneCheckpointReader, StaticFileProviderFactory};
 use tracing::{debug, instrument};
 
 use crate::{
@@ -136,7 +136,7 @@ mod tests {
     };
     use base_execution_state_types::{PruneMode, PruneProgress, PruneSegment};
     use reth_exex_types::FinishedExExHeight;
-    use reth_provider::{
+    use base_execution_state_provider::{
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
         StaticFileWriter, test_utils::create_test_provider_factory,
     };

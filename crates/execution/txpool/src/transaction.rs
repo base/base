@@ -483,7 +483,7 @@ mod tests {
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use reth_primitives_traits::InMemorySize;
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
 
     use crate::{
         BasePooledTransaction, BaseTransactionValidator, ConfigSlot, InvalidationKey,

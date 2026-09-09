@@ -32,7 +32,7 @@ use reth_engine_primitives::{
     ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
 };
 use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader,
     ChangeSetReader, DatabaseProviderFactory, LatestStateProvider, ProviderError,
     PruneCheckpointReader, SaveBlocksInput, StageCheckpointReader, StateProviderBox,

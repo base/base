@@ -15,7 +15,7 @@ use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use reth_node_core::args::DatadirArgs;
-use reth_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
+use base_execution_state_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
 use tokio::sync::Mutex;
 
 /// Tests that a Base node can initialize with a custom genesis block number.

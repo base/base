@@ -5,7 +5,7 @@ use base_common_types_chain::{BlockHeader, Compact, constants::KECCAK_EMPTY};
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_database::{DbTx, DbTxMut, tables};
 use reth_primitives_traits::{GotExpected, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     HeaderProvider, ProviderError, StageCheckpointReader, StatsReader, TrieWriter,
 };
 use reth_stages_api::{
@@ -146,7 +146,7 @@ impl MerkleStage {
     /// Saves the hashing progress
     pub fn save_execution_checkpoint<TX: DbTx + DbTxMut + 'static>(
         &self,
-        provider: &reth_provider::DatabaseProvider<TX>,
+        provider: &base_execution_state_provider::DatabaseProvider<TX>,
         checkpoint: Option<MerkleCheckpoint>,
     ) -> Result<(), StageError> {
         let mut buf = vec![];
@@ -162,7 +162,7 @@ impl MerkleStage {
     }
 }
 
-impl<TX: DbTx + DbTxMut + 'static> Stage<reth_provider::DatabaseProvider<TX>> for MerkleStage {
+impl<TX: DbTx + DbTxMut + 'static> Stage<base_execution_state_provider::DatabaseProvider<TX>> for MerkleStage {
     /// Return the id of the stage
     fn id(&self) -> StageId {
         match self {
@@ -176,7 +176,7 @@ impl<TX: DbTx + DbTxMut + 'static> Stage<reth_provider::DatabaseProvider<TX>> fo
     /// Execute the stage.
     fn execute(
         &mut self,
-        provider: &reth_provider::DatabaseProvider<TX>,
+        provider: &base_execution_state_provider::DatabaseProvider<TX>,
         input: ExecInput,
     ) -> Result<ExecOutput, StageError> {
         let (threshold, incremental_threshold) = match self {
@@ -367,7 +367,7 @@ impl<TX: DbTx + DbTxMut + 'static> Stage<reth_provider::DatabaseProvider<TX>> fo
     /// Unwind the stage.
     fn unwind(
         &mut self,
-        provider: &reth_provider::DatabaseProvider<TX>,
+        provider: &base_execution_state_provider::DatabaseProvider<TX>,
         input: UnwindInput,
     ) -> Result<UnwindOutput, StageError> {
         let tx = provider.tx_ref();
@@ -467,14 +467,14 @@ fn validate_state_root(
 
 #[cfg(test)]
 mod tests {
-    use reth_provider::DBProvider;
+    use base_execution_state_provider::DBProvider;
     use std::collections::BTreeMap;
 
     use assert_matches::assert_matches;
     use base_execution_state_database::{DbCursorRO, DbDupCursorRO};
     use base_execution_state_types::StaticFileSegment;
     use reth_primitives_traits::SealedBlock;
-    use reth_provider::{
+    use base_execution_state_provider::{
         DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,
         providers::StaticFileWriter,
     };

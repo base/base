@@ -34,7 +34,7 @@ use base_execution_state_api::{BlockIdReader, ProviderTx};
 use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_primitives_traits::Recovered;
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
     simulate::{self, EthSimulateError},

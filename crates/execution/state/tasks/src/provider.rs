@@ -13,7 +13,7 @@ use base_execution_state_types::{
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
 };
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
 };
@@ -265,7 +265,7 @@ impl<'a, Storage: BaseProofsStore> BytecodeReader for BaseProofsStateProviderRef
 
 #[cfg(all(test, not(feature = "metrics")))]
 mod tests {
-    use reth_provider::NoopProvider;
+    use base_execution_state_provider::NoopProvider;
 
     use super::*;
     use crate::InMemoryProofsStorage;

@@ -18,7 +18,7 @@ workspace = true
 serde = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-trie = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -38,6 +38,6 @@ base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true }
 reth-testing-utils = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {workspace = true, features = ["serde"]}
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }

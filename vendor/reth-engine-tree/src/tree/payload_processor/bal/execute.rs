@@ -36,7 +36,7 @@ use base_execution_evm_runtime::{
     state::bal::Bal as RevmBal,
 };
 use crossbeam_channel::{Receiver, Sender};
-use reth_provider::BlockExecutionOutput;
+use base_execution_state_provider::BlockExecutionOutput;
 
 use super::{BalExecutionError, ordered_outputs::ordered_worker_outputs, worker};
 use crate::tree::payload_processor::receipt_root_task::IndexedReceipt;
@@ -1131,7 +1131,7 @@ mod tests {
         let block = empty_base_bal_block(B256::ZERO);
 
         let failing_make_db = || -> Result<CacheDB<EmptyDB>, BalExecutionError> {
-            Err(reth_provider::ProviderError::BestBlockNotFound.into())
+            Err(base_execution_state_provider::ProviderError::BestBlockNotFound.into())
         };
 
         let result = run_execute_block(

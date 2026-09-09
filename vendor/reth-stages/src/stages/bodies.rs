@@ -8,7 +8,7 @@ use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::TryStreamExt;
 use reth_network_p2p::bodies::{downloader::BodyDownloader, response::BlockResponse};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, BlockWriter, DBProvider, ProviderError, StaticFileProviderFactory, StatsReader,
     providers::StaticFileWriter,
 };
@@ -251,7 +251,7 @@ where
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use reth_provider::StaticFileProviderFactory;
+    use base_execution_state_provider::StaticFileProviderFactory;
     use reth_stages_api::StageUnitCheckpoint;
     use test_utils::*;
 
@@ -492,7 +492,7 @@ mod tests {
             error::DownloadResult,
         };
         use reth_primitives_traits::{SealedBlock, SealedHeader};
-        use reth_provider::{
+        use base_execution_state_provider::{
             HeaderProvider, ProviderFactory, StaticFileProviderFactory, TransactionsProvider,
             providers::StaticFileWriter,
         };

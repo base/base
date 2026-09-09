@@ -64,7 +64,7 @@ base-execution-evm-runtime = {features = ["call-util", "overrides"], workspace =
 [dev-dependencies]
 base-execution-state-types = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-execution-state-api = { workspace = true, features = ["std"] }
 base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
 

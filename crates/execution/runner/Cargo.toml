@@ -12,7 +12,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
@@ -76,7 +76,7 @@ test-utils = [
     "dep:tracing-subscriber",
     "base-execution-state-database/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-common-runtime-tasks?/test-utils",
     "dep:reth-primitives-traits",
     "dep:base-execution-payload-types",

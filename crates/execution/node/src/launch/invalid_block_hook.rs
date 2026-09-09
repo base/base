@@ -37,8 +37,8 @@ impl InvalidBlockHookBuilder {
         chain_id: u64,
     ) -> eyre::Result<Box<dyn InvalidBlockHook>>
     where
-        P: reth_provider::StateProviderFactory
-            + reth_provider::ChainSpecProvider
+        P: base_execution_state_provider::StateProviderFactory
+            + base_execution_state_provider::ChainSpecProvider
             + Clone
             + Send
             + Sync

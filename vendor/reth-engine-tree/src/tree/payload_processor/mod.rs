@@ -26,7 +26,7 @@ use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
     StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };

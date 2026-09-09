@@ -12,7 +12,7 @@ use base_execution_state_database::{
     test_utils::tempdir_path,
 };
 use base_testing_support::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
-use reth_provider::{
+use base_execution_state_provider::{
     ProviderFactory,
     providers::{RocksDBBuilder, StaticFileProvider},
 };

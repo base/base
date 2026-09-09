@@ -8,7 +8,7 @@ use base_execution_state_types::StageId;
 use base_execution_state_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
 use reth_exex_types::FinishedExExHeight;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     DBProvider, DatabaseProviderFactory, PruneCheckpointReader, PruneCheckpointWriter,
     StageCheckpointReader,
 };
@@ -383,7 +383,7 @@ fn is_stage_finished<Provider: StageCheckpointReader>(
 #[cfg(test)]
 mod tests {
     use reth_exex_types::FinishedExExHeight;
-    use reth_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
 
     use crate::Pruner;
 

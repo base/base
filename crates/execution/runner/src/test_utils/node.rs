@@ -21,7 +21,7 @@ use reth_node_core::{
 use crate::test_utils::engine::EngineApi;
 
 /// Convenience alias for the local blockchain provider type.
-pub type LocalNodeProvider = reth_provider::providers::BlockchainProvider;
+pub type LocalNodeProvider = base_execution_state_provider::providers::BlockchainProvider;
 
 /// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
@@ -178,7 +178,7 @@ mod tests {
         args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
         dirs::{DataDirPath, MaybePlatformPath},
     };
-    use reth_provider::{DatabaseProviderROFactory, HeaderProvider};
+    use base_execution_state_provider::{DatabaseProviderROFactory, HeaderProvider};
 
     use super::LocalNode;
     use crate::test_utils::engine::EngineApi;

@@ -6,7 +6,7 @@ use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExEx, ShadowRetentio
 use base_shadow_indexer_db::ShadowWrite;
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingService};
 use base_txpool_tracing::{TxpoolConfig, tracex_subscription};
-use reth_provider::CanonStateSubscriptions;
+use base_execution_state_provider::CanonStateSubscriptions;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;

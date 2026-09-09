@@ -38,7 +38,7 @@ use base_execution_txpool::NoopTransactionPool;
 use base_testing_support::build_test_genesis;
 use reth_db_common::init::init_genesis;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,

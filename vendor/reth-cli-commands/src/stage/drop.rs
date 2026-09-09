@@ -16,7 +16,7 @@ use reth_db_common::{
     },
 };
 use reth_node_core::args::StageEnum;
-use reth_provider::{
+use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory, StaticFileWriter,
 };
 use reth_prune::PruneSegment;

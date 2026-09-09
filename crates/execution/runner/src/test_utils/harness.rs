@@ -18,7 +18,7 @@ use base_consensus_batch_types::BaseTimeUpdateTx;
 use base_testing_support::build_test_genesis;
 use eyre::{Result, eyre};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider, StateProviderFactory,
 };
 use tokio::time::sleep;

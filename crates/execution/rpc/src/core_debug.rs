@@ -40,7 +40,7 @@ use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, StateCacheDb};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use serde::{Deserialize, Serialize};
@@ -1269,7 +1269,7 @@ mod tests {
     };
     use base_execution_state_database::{DbTxMut, tables};
     use base_execution_state_types::StorageEntry;
-    use reth_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
 
     use super::*;
 

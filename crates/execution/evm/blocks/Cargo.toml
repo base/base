@@ -48,7 +48,7 @@ alloy-hardforks = {workspace = true}
 reth-db-common = { workspace = true }
 base-consensus-batch-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = {features = ["std"], workspace = true}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 base-common-types-chain = {features = ["arbitrary", "reth", "serde"], workspace = true}

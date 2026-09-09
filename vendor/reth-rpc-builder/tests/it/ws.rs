@@ -163,10 +163,10 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         .max_priority_fee_per_gas(1_000_000_000)
         .into_eip1559();
     let recovered = signed.try_into_recovered().unwrap();
-    let mock = reth_provider::test_utils::MockEthProvider::default();
+    let mock = base_execution_state_provider::test_utils::MockEthProvider::default();
     mock.add_account(
         recovered.signer(),
-        reth_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
+        base_execution_state_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
     );
     let tx = base_execution_txpool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
     let context = base_execution_rpc::test_utils::RpcTestUtils::context(mock);

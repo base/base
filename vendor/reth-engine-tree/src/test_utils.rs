@@ -6,7 +6,7 @@ use base_common_types_chain::BaseBlockBody as BlockBody;
 use base_execution_state_types::PruneModes;
 use reth_network_p2p::test_utils::TestFullBlockClient;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
+use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use reth_stages::{ExecOutput, StageError, test_utils::TestStages};
 use reth_stages_api::Pipeline;
 use reth_static_file::StaticFileProducer;
@@ -39,7 +39,7 @@ impl TestPipelineBuilder {
     )]
     pub fn with_executor_results(
         self,
-        executor_results: Vec<reth_provider::ExecutionOutcome>,
+        executor_results: Vec<base_execution_state_provider::ExecutionOutcome>,
     ) -> Self {
         let _ = executor_results;
         self

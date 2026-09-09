@@ -12,7 +12,7 @@ use base_common_runtime_tasks::spawn_os_thread;
 use base_execution_state_types::ProviderError;
 use crossbeam_channel::Sender as CrossbeamSender;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
 };
@@ -407,7 +407,7 @@ mod tests {
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
     use reth_db_common::init::init_genesis;
     use reth_exex_types::FinishedExExHeight;
-    use reth_provider::{
+    use base_execution_state_provider::{
         AccountReader, BalConfig, BalNotificationStream, BalStore, BalStoreHandle,
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,
         StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -599,7 +599,7 @@ mod tests {
     #[test]
     fn test_save_blocks_then_prune_preserves_new_history() {
         use base_execution_state_database::{BlockNumberList, models::ShardedKey, tables};
-        use reth_provider::RocksDBProviderFactory;
+        use base_execution_state_provider::RocksDBProviderFactory;
 
         base_common_observability_tracing::init_test_tracing();
 
@@ -642,7 +642,7 @@ mod tests {
         base_common_observability_tracing::init_test_tracing();
 
         let provider_factory = create_test_provider_factory();
-        provider_factory.set_storage_settings_cache(reth_provider::StorageSettings::v2());
+        provider_factory.set_storage_settings_cache(base_execution_state_provider::StorageSettings::v2());
 
         // Share MDBX's environment while keeping independent read-only transactions and
         // secondary RocksDB/static-file views. This tests provider synchronization without
@@ -661,7 +661,7 @@ mod tests {
         )
         .unwrap()
         .with_read_only_sync(true);
-        secondary.set_storage_settings_cache(reth_provider::StorageSettings::v2());
+        secondary.set_storage_settings_cache(base_execution_state_provider::StorageSettings::v2());
 
         // --- Phase 1: Write blocks 1 and 2 via the primary ---
         let genesis_hash = init_genesis(&provider_factory).unwrap();

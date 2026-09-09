@@ -22,7 +22,7 @@ use base_execution_state_tasks::{
 use base_execution_state_types::Chain;
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
 };
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};

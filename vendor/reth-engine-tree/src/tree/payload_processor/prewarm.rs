@@ -30,7 +30,7 @@ use base_execution_state_types::MultiProofTargetsV2;
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory,
     PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
     TryIntoHistoricalStateProvider,
@@ -555,7 +555,7 @@ pub struct PrewarmContext<P> {
 
 /// Per-thread EVM state initialised by [`PrewarmContext::evm_for_ctx`] and stored in
 /// [`WorkerPool`] workers via [`Worker::get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init).
-type PrewarmEvmState = Option<EvmFor<reth_provider::StateProviderBox>>;
+type PrewarmEvmState = Option<EvmFor<base_execution_state_provider::StateProviderBox>>;
 
 impl<P> PrewarmContext<P>
 where

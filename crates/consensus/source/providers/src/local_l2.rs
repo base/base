@@ -9,7 +9,7 @@ use base_consensus_derive_pipeline::{L2ChainProvider, PipelineError, PipelineErr
 use base_execution_state_api::ProviderError;
 use base_execution_state_types::HashedStorage;
 use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
-use reth_provider::{BlockReaderIdExt, StateProviderFactory, providers::BlockchainProvider};
+use base_execution_state_provider::{BlockReaderIdExt, StateProviderFactory, providers::BlockchainProvider};
 
 /// Direct access to the execution node's canonical and in-memory L2 state.
 #[derive(Debug, Clone)]
@@ -126,7 +126,7 @@ impl L2ChainProvider for LocalL2Provider {
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockNumberOrTag;
-    use reth_provider::{
+    use base_execution_state_provider::{
         CanonChainTracker, HeaderProvider, test_utils::create_test_provider_factory,
     };
 

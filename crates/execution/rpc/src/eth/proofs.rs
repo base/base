@@ -11,7 +11,7 @@ use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use jsonrpsee_types::error::{ErrorCode, ErrorObject};
-use reth_provider::StateProofProvider;
+use base_execution_state_provider::StateProofProvider;
 
 use crate::{
     BaseEthApi, BaseEthApiError, metrics::EthApiExtMetrics, state::BaseStateProviderFactory,

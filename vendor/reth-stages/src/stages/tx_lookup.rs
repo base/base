@@ -4,7 +4,7 @@ use base_execution_state_types::ProviderError;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::{EtlConfig, TransactionLookupConfig};
 use reth_etl::Collector;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
     TransactionsProvider, TransactionsProviderExt,
@@ -280,7 +280,7 @@ mod tests {
     use assert_matches::assert_matches;
     use base_execution_state_database::{DbCursorRO, DbTx};
     use reth_primitives_traits::SealedBlock;
-    use reth_provider::{
+    use base_execution_state_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,
     };
     use reth_stages_api::StageUnitCheckpoint;
@@ -598,7 +598,7 @@ mod tests {
 
     mod rocksdb_tests {
         use base_execution_state_api::StorageSettings;
-        use reth_provider::RocksDBProviderFactory;
+        use base_execution_state_provider::RocksDBProviderFactory;
 
         use super::*;
 

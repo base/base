@@ -24,7 +24,7 @@ thiserror = { workspace = true }
 reth-prune = { workspace = true }
 reth-config = { workspace = true }
 futures-util = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -62,7 +62,7 @@ base-execution-network-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
@@ -76,7 +76,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", 
 test-utils = [
     "reth-network-p2p/test-utils",
     "base-execution-state-database/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "reth-stages-api/test-utils",
     "dep:reth-testing-utils",
     "dep:tempfile",

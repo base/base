@@ -9,7 +9,7 @@ use base_execution_state_database::models::StorageSettings;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_primitives_traits::RecoveredBlock;
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BlockHashReader, BlockWriter, DBProvider, DatabaseProviderFactory,
     ExecutionOutcome, ProviderFactory, StorageSettingsCache,
     test_utils::create_test_provider_factory,

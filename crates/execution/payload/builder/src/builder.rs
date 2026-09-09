@@ -1382,7 +1382,7 @@ mod tests {
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{SealedHeader, SignedTransaction, WithEncoded};
-    use reth_provider::NoopProvider;
+    use base_execution_state_provider::NoopProvider;
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

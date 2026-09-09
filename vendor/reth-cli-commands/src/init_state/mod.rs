@@ -9,7 +9,7 @@ use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use clap::Parser;
 use reth_db_common::init::init_from_state_dump;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
     StaticFileWriter,
 };

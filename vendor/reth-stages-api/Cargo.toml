@@ -22,7 +22,7 @@ alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 reth-prune = { workspace = true }
 futures-util = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-static-file = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
@@ -42,7 +42,7 @@ reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["sync", "rt-multi-thread"] }
 base-execution-state-database = {workspace = true, features = ["test-utils"]}
 
@@ -52,7 +52,7 @@ test-utils = [
     "base-execution-state-database/test-utils",
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-common-types-chain/test-utils",

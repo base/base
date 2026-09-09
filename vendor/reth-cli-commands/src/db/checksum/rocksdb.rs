@@ -7,7 +7,7 @@ use base_execution_state_database::tables;
 use clap::ValueEnum;
 use reth_db_common::DbTool;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::RocksDBProviderFactory;
+use base_execution_state_provider::RocksDBProviderFactory;
 use tracing::info;
 
 use super::{PROGRESS_LOG_INTERVAL, checksum_hasher};
@@ -78,7 +78,7 @@ pub fn checksum_rocksdb(
 
 /// Computes checksum for a specific RocksDB table by iterating over rows.
 fn checksum_rocksdb_table<T: Table>(
-    rocksdb: &reth_provider::providers::RocksDBProvider,
+    rocksdb: &base_execution_state_provider::providers::RocksDBProvider,
     limit: usize,
 ) -> eyre::Result<(u64, usize)> {
     let iter = rocksdb.raw_iter::<T>()?;

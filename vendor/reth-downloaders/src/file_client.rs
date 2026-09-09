@@ -719,7 +719,7 @@ mod tests {
         bodies::downloader::BodyDownloader,
         headers::downloader::{HeaderDownloader, SyncTarget},
     };
-    use reth_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
     use tokio::{
         fs::File,
         io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},

@@ -36,7 +36,7 @@ base-common-client-ethereum = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }

@@ -4,7 +4,7 @@ use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment,
     ReceiptsLogPruneConfig, SegmentOutput,
 };
-use reth_provider::{BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider};
+use base_execution_state_provider::{BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider};
 use tracing::{instrument, trace};
 
 use crate::{
@@ -233,7 +233,7 @@ mod tests {
     use base_execution_state_database::{DbCursorRO, DbTx, tables};
     use base_execution_state_types::{PruneMode, PruneSegment, ReceiptsLogPruneConfig};
     use reth_primitives_traits::InMemorySize;
-    use reth_provider::{BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
+    use base_execution_state_provider::{BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams, random_eoa_account, random_log};
 

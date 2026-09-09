@@ -15,7 +15,7 @@ use reth_network::{
     },
 };
 use reth_network_api::{PeerKind, PeersInfo, events::PeerEvent};
-use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use tokio::join;
 
 #[tokio::test(flavor = "multi_thread")]

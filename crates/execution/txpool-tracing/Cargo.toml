@@ -13,7 +13,7 @@ workspace = true
 
 [dependencies]
 serde_json = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 alloy-primitives = { workspace = true }
 base-execution-txpool = { workspace = true }
 metrics = { workspace = true, optional = true }

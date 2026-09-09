@@ -13,7 +13,7 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
-use reth_provider::RocksDBProviderFactory;
+use base_execution_state_provider::RocksDBProviderFactory;
 use reth_prune::PrunerBuilder;
 use reth_static_file::StaticFileProducer;
 use tracing::info;

@@ -14,7 +14,7 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::ValueWithSubKey;
 use clap::Parser;
 use reth_db_common::DbTool;
-use reth_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
+use base_execution_state_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
 use tracing::error;
 
 /// The arguments for the `reth db get` command
@@ -338,7 +338,7 @@ fn parse_address(key: &str) -> eyre::Result<Address> {
 ///
 /// Accepts a plain address and uses seek to find the relevant shard.
 fn get_rocksdb_account_history(
-    rocksdb: &reth_provider::providers::RocksDBProvider,
+    rocksdb: &base_execution_state_provider::providers::RocksDBProvider,
     key: &str,
     block: Option<u64>,
     all_shards: bool,
@@ -405,7 +405,7 @@ fn get_rocksdb_account_history(
 ///
 /// Accepts a plain address + optional `--storage-key` and uses seek.
 fn get_rocksdb_storage_history(
-    rocksdb: &reth_provider::providers::RocksDBProvider,
+    rocksdb: &base_execution_state_provider::providers::RocksDBProvider,
     key: &str,
     storage_key: Option<&str>,
     block: Option<u64>,
@@ -473,7 +473,7 @@ fn get_rocksdb_storage_history(
 
 /// Gets a value from a specific RocksDB table by exact key and prints it.
 fn get_rocksdb_table<T: Table>(
-    rocksdb: &reth_provider::providers::RocksDBProvider,
+    rocksdb: &base_execution_state_provider::providers::RocksDBProvider,
     key_str: &str,
     raw: bool,
 ) -> eyre::Result<()> {

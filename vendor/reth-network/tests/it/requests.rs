@@ -24,7 +24,7 @@ use reth_network_p2p::{
     error::RequestError,
     headers::client::{HeadersClient, HeadersRequest},
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
     ProviderResult, RawBal, test_utils::MockEthProvider,
 };

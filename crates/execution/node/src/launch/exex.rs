@@ -9,7 +9,7 @@ use reth_exex::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
-use reth_provider::CanonStateSubscriptions;
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_common_observability_tracing::tracing::{debug, info};
 use tracing::Instrument;
 

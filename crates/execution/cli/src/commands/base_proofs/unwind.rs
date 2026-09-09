@@ -11,7 +11,7 @@ use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use reth_node_core::{primitives::AlloyBlockHeader as _, version::version_metadata};
-use reth_provider::{BlockReader, TransactionVariant};
+use base_execution_state_provider::{BlockReader, TransactionVariant};
 use tracing::{info, warn};
 
 /// Unwinds the proofs storage to a specific block number.

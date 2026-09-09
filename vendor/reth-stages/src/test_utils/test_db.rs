@@ -16,7 +16,7 @@ use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     DatabaseProviderFactory, EitherWriter, HistoryWriter, ProviderError, ProviderFactory,
     RocksBatchArg, StaticFileProviderFactory, StatsReader,
     providers::{

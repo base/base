@@ -607,7 +607,7 @@ mod tests {
     use alloy_primitives::{B256, map::B256Map};
     use assert_matches::assert_matches;
     use base_execution_evm_blocks::BaseBeaconConsensus;
-    use reth_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
     use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
 
     use super::*;

@@ -4343,7 +4343,8 @@ mod tests {
     #[cfg(feature = "partial-persistence")]
     #[test]
     fn remove_block_and_execution_above_returns_persistence_frontiers() {
-        let factory = create_test_provider_factory();
+        let overlays = OverlayManager::default();
+        let factory = create_test_provider_factory().with_overlay_manager(overlays.clone());
         let mut test_block_builder = TestBlockBuilder::eth().with_state();
 
         let genesis = test_block_builder.get_executed_blocks(0..1).next().unwrap();
@@ -4354,6 +4355,10 @@ mod tests {
         provider_rw.commit().unwrap();
 
         let provider_rw = factory.provider_rw().unwrap();
+        // Partially persisted blocks must retain the suffix that masks unwritten trie updates.
+        for block in &blocks[2..] {
+            overlays.insert_block(block.clone());
+        }
         let input = SaveBlocksInput::new(blocks, 0, 0, 4, 2);
         provider_rw.save_blocks(&input).unwrap();
         provider_rw.commit().unwrap();

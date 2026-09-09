@@ -30,7 +30,7 @@ use reth_chain_state::CanonStateSubscriptions;
 use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
-use reth_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
+use base_execution_state_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{
@@ -226,7 +226,7 @@ impl BaseNode {
     /// # Open a `ProviderFactory` in read-only mode from a datadir
     ///
     /// See also: [`ProviderFactoryBuilder`] and
-    /// [`ReadOnlyConfig`](reth_provider::providers::ReadOnlyConfig).
+    /// [`ReadOnlyConfig`](base_execution_state_provider::providers::ReadOnlyConfig).
     ///
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpec;
@@ -245,7 +245,7 @@ impl BaseNode {
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpecBuilder;
     /// use base_node_core::BaseNode;
-    /// use reth_provider::providers::ReadOnlyConfig;
+    /// use base_execution_state_provider::providers::ReadOnlyConfig;
     ///
     /// fn demo(runtime: base_common_runtime_tasks::Runtime) {
     ///     let factory = BaseNode::provider_factory_builder()

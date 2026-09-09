@@ -8,7 +8,7 @@ use alloy_primitives::{B256, U256};
 use base_execution_evm_precompiles::NonceManagerStorage;
 use base_execution_evm_runtime::database::BundleState;
 use futures::StreamExt;
-use reth_provider::CanonStateNotification;
+use base_execution_state_provider::CanonStateNotification;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, warn};
 

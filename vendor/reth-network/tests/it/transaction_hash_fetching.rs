@@ -4,7 +4,7 @@ use reth_network::{
     test_utils::Testnet,
     transactions::{TransactionPropagationMode::Max, TransactionsManagerConfig},
 };
-use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use base_common_observability_tracing::init_test_tracing;
 use tokio::time::Duration;
 

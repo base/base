@@ -5,7 +5,7 @@ use alloy_rlp::Decodable;
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_state_types::StaticFileSegment;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
     providers::StaticFileProvider,
 };
@@ -36,7 +36,7 @@ pub fn setup_without_evm<
     TX: base_execution_state_database::DbTx + base_execution_state_database::DbTxMut + 'static,
     F,
 >(
-    provider_rw: &reth_provider::DatabaseProvider<TX>,
+    provider_rw: &base_execution_state_provider::DatabaseProvider<TX>,
     header: SealedHeader,
     header_factory: F,
 ) -> ProviderResult<()>
@@ -193,7 +193,7 @@ mod tests {
     use alloy_primitives::{address, b256};
     use base_common_types_chain::Header;
     use reth_db_common::init::init_genesis;
-    use reth_provider::{DatabaseProviderFactory, test_utils::create_test_provider_factory};
+    use base_execution_state_provider::{DatabaseProviderFactory, test_utils::create_test_provider_factory};
     use tempfile::NamedTempFile;
 
     use super::*;

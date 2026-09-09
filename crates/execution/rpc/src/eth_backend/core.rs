@@ -17,7 +17,7 @@ use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };
 use base_node_context::BaseNodePool;
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind,
@@ -376,7 +376,7 @@ mod tests {
     use base_common_types_rpc::{Bundle, StateContext, TransactionRequest};
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators;
 
     use crate::{BaseEthApi, EthApiServer};

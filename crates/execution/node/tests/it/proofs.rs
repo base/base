@@ -11,7 +11,7 @@ use base_node_core::{
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_provider::test_utils::create_test_provider_factory_with_chain_spec;
+use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Result<()> {

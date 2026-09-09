@@ -4,7 +4,7 @@ use base_execution_state_api::{PruneCheckpointReader, PruneCheckpointWriter};
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use reth_db_common::DbTool;
-use reth_provider::{DBProvider, DatabaseProviderFactory};
+use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
 
 use crate::common::AccessRights;
 

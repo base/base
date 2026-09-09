@@ -21,7 +21,7 @@ use eyre::Result;
 use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;
 use reth_e2e_test_utils::{E2ETestSetupBuilder, transaction::TransactionTestContext, wallet};
-use reth_provider::RocksDBProviderFactory;
+use base_execution_state_provider::RocksDBProviderFactory;
 
 const ROCKSDB_POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const ROCKSDB_POLL_INTERVAL: Duration = Duration::from_millis(50);

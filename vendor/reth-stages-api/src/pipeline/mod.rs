@@ -12,7 +12,7 @@ use base_common_runtime_tasks::{EventSender, EventStream};
 pub use event::*;
 use futures_util::Future;
 use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
 };
@@ -627,7 +627,7 @@ mod tests {
     use assert_matches::assert_matches;
     use base_execution_evm_blocks::ConsensusError;
     use base_execution_state_types::ProviderError;
-    use reth_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
     use reth_prune::PruneModes;
     use reth_testing_utils::generators::{self, random_block_with_parent};
     use tokio_stream::StreamExt;

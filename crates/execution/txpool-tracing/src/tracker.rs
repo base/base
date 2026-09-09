@@ -12,7 +12,7 @@ use base_common_observability_events::{
 };
 use chrono::Local;
 use lru::LruCache;
-use reth_provider::{CanonStateNotification, Chain};
+use base_execution_state_provider::{CanonStateNotification, Chain};
 use base_common_observability_tracing::tracing::{debug, info};
 use serde_json::{Map, Value, json};
 

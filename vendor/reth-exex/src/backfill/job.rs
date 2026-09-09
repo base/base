@@ -12,7 +12,7 @@ use base_execution_evm_blocks::{
 };
 use base_execution_state_types::PruneModes;
 use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
 };
@@ -228,7 +228,7 @@ mod tests {
     use base_execution_evm_blocks::BaseEvmConfig;
     use reth_db_common::init::init_genesis;
     use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-    use reth_provider::{
+    use base_execution_state_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,
     };
     use reth_testing_utils::generators;

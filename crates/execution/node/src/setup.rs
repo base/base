@@ -16,7 +16,7 @@ use reth_exex::ExExManagerHandle;
 use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
 };
-use reth_provider::ProviderFactory;
+use base_execution_state_provider::ProviderFactory;
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use reth_static_file::StaticFileProducer;
 use base_common_observability_tracing::tracing::debug;

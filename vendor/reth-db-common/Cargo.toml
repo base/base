@@ -18,7 +18,7 @@ reth-trie = { workspace = true }
 thiserror = { workspace = true }
 reth-config = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 base-common-io-files = { workspace = true }
 boyer-moore-magiclen = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -35,7 +35,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 
 [lints]

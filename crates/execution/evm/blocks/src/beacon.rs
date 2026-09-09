@@ -406,7 +406,7 @@ mod tests {
         HoloceneExtraData, JovianExtraData, Receipt, TxEip7702, TxReceipt,
     };
     use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
-    use reth_provider::BlockExecutionResult;
+    use base_execution_state_provider::BlockExecutionResult;
 
     use crate::{BaseBeaconConsensus, ConsensusError};
 

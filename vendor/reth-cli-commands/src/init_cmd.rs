@@ -6,7 +6,7 @@ use crate::ChainSpecParser;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::BlockHeader;
 use clap::Parser;
-use reth_provider::BlockHashReader;
+use base_execution_state_provider::BlockHashReader;
 use tracing::info;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};

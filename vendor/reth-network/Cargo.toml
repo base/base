@@ -74,7 +74,7 @@ base-common-chain-config = { workspace = true }
 base-execution-state-types = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 reth-network = { workspace = true, features = ["test-utils"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
@@ -119,7 +119,7 @@ test-utils = [
     "reth-network/test-utils",
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-common-runtime-tasks/test-utils",
     "base-execution-state-types/test-utils",
     "reth-trie/test-utils",

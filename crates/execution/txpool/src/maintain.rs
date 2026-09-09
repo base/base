@@ -741,7 +741,7 @@ mod tests {
     use base_common_io_files as fs;
     use base_common_runtime_tasks::Runtime;
     use base_execution_evm_blocks::BaseEvmConfig;
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
     use crate::{

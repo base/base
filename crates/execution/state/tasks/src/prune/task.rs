@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use base_common_runtime_tasks::shutdown::GracefulShutdown;
-use reth_provider::BlockHashReader;
+use base_execution_state_provider::BlockHashReader;
 use tokio::{
     time,
     time::{Duration, MissedTickBehavior},

@@ -1,7 +1,7 @@
 use std::cmp;
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
-use reth_provider::BlockHashReader;
+use base_execution_state_provider::BlockHashReader;
 use tokio::time::Instant;
 use tracing::{error, info, trace};
 

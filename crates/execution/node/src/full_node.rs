@@ -16,7 +16,7 @@ use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
 };
-use reth_provider::{ChainSpecProvider, providers::BlockchainProvider};
+use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use reth_rpc_builder::RpcServerHandle;
 
 use crate::EngineShutdown;

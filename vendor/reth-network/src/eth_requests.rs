@@ -846,7 +846,7 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use test_case::test_case;
     use tokio::sync::mpsc;
 

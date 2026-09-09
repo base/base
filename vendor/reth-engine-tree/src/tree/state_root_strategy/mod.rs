@@ -79,7 +79,7 @@ use reth_chain_state::{ExecutedBlock, PreservedSparseTrie};
 use reth_primitives_traits::{
     AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
     HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
     StateRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -1309,7 +1309,7 @@ mod tests {
     use rand::Rng;
     use reth_chain_state::test_utils::TestBlockBuilder;
     use reth_db_common::init::init_genesis;
-    use reth_provider::{
+    use base_execution_state_provider::{
         HashingWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,
     };

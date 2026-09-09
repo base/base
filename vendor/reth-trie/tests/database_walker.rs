@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use base_execution_state_database::{DbCursorRW, DbTxMut, tables};
-use reth_provider::test_utils::create_test_provider_factory;
+use base_execution_state_provider::test_utils::create_test_provider_factory;
 use reth_trie::{
     BranchNodeCompact, DatabaseTrieCursorFactory, Nibbles, PackedStorageTrieEntry,
     prefix_set::PrefixSetMut,

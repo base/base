@@ -22,7 +22,7 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
     StateProviderFactory,
 };

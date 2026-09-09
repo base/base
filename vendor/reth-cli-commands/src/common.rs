@@ -16,7 +16,7 @@ use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
     StorageSettings,
     providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},

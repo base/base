@@ -13,7 +13,7 @@ use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as By
 use base_execution_state_types::ProviderResult;
 use metrics::{Gauge, Histogram};
 use reth_primitives_traits::FastInstant as Instant;
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateRootProvider, StorageRootProvider,
 };

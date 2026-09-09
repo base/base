@@ -21,7 +21,7 @@ use clap::Parser;
 use eyre::WrapErr;
 use reth_cli_util::cancellation::CancellationToken;
 use reth_primitives_traits::{GotExpected, format_gas_throughput};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderROFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,
 };

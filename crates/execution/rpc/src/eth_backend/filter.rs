@@ -31,7 +31,7 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_primitives_traits::SealedHeader;
-use reth_provider::providers::BlockchainProvider;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     EthApiError, EthFilterConfig, EthStateCache, EthSubscriptionIdProvider,
     logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
@@ -1280,7 +1280,7 @@ mod tests {
     use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{BaseBlock, BaseReceipt};
     use rand::Rng;
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators;
 
     use super::*;

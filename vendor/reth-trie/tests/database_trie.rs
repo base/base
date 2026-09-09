@@ -13,7 +13,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 use proptest::{prelude::ProptestConfig, proptest};
 use proptest_arbitrary_interop::arb;
-use reth_provider::{
+use base_execution_state_provider::{
     DatabaseProviderRW, StorageTrieWriter, TrieWriter, test_utils::create_test_provider_factory,
 };
 use reth_trie::{

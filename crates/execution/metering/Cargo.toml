@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 jsonrpsee = { workspace = true }
 derive_more = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-runtime = {workspace = true}

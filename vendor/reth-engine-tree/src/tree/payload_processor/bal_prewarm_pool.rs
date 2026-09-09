@@ -8,7 +8,7 @@ use std::{
 
 use alloy_primitives::{Address, StorageKey};
 use base_execution_state_tasks::{CachedStateProvider, ExecutionCache, TxPoolPrewarmCacheSnapshot};
-use reth_provider::{
+use base_execution_state_provider::{
     AccountReader, BytecodeReader, ProviderResult, StateProviderBox, StateReadProvider,
 };
 use tokio::sync::oneshot;

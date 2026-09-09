@@ -8,7 +8,7 @@ use base_execution_state_api::BlockNumReader;
 use base_execution_state_database::{Database, DbDupCursorRO, DbTx, tables};
 use clap::Parser;
 use reth_db_common::DbTool;
-use reth_provider::StaticFileProviderFactory;
+use base_execution_state_provider::StaticFileProviderFactory;
 use tracing::info;
 
 /// Log progress every 30 seconds

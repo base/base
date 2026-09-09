@@ -1743,7 +1743,7 @@ mod tests {
     use base_testing_support::build_test_genesis_zenith;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
     use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};

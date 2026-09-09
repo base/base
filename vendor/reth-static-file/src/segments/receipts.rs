@@ -5,7 +5,7 @@ use base_common_types_chain::BaseReceipt;
 use base_execution_state_database::{DbCursorRO, DbTx, tables};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{ProviderError, ProviderResult};
-use reth_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
+use base_execution_state_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
 
 use crate::segments::Segment;
 

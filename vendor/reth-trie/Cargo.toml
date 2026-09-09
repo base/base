@@ -47,7 +47,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 triehash = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default", "serde"] }
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
@@ -84,7 +84,7 @@ test-utils = [
     "base-execution-state-types/test-utils",
     "reth-trie-sparse/test-utils",
     "base-execution-state-database/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-execution-state-memory/test-utils",
 ]
 serde-bincode-compat = ["base-common-types-chain/serde-bincode-compat", "base-execution-state-types/serde-bincode-compat"]

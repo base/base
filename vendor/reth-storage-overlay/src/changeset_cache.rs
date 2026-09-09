@@ -625,7 +625,7 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
-    use reth_provider::{
+    use base_execution_state_provider::{
         StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
         test_utils::create_test_provider_factory,
     };
@@ -858,7 +858,7 @@ mod tests {
             )
             .unwrap();
 
-        let mut changesets = reth_provider::test_utils::TestChangesets::default();
+        let mut changesets = base_execution_state_provider::test_utils::TestChangesets::default();
         changesets.accounts.entry(1).or_default().push(AccountBeforeTx { address, info: None });
         changesets
             .accounts

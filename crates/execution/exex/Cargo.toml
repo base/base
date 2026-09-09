@@ -16,7 +16,7 @@ tracing = { workspace = true }
 reth-exex = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 base-common-types-chain = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
@@ -46,7 +46,7 @@ test-utils = [
     "base-node-core/test-utils",
     "base-execution-state-database/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "reth-trie/test-utils",
 ]
 metrics = ["base-execution-state-tasks/metrics", "reth-trie/metrics"]

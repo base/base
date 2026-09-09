@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{BlockNumber, TxNumber};
-use reth_provider::{BlockReader, ProviderError, StaticFileProviderFactory, StaticFileSegment};
+use base_execution_state_provider::{BlockReader, ProviderError, StaticFileProviderFactory, StaticFileSegment};
 use tracing::instrument;
 
 use crate::{StageCheckpoint, StageId, error::StageError};
@@ -238,7 +238,7 @@ pub struct UnwindOutput {
 ///
 /// Stages are executed as part of a pipeline where they are executed serially.
 ///
-/// Stages receive [`DBProvider`](reth_provider::DBProvider).
+/// Stages receive [`DBProvider`](base_execution_state_provider::DBProvider).
 #[auto_impl::auto_impl(Box)]
 pub trait Stage<Provider>: Send {
     /// Get the ID of the stage.
@@ -332,7 +332,7 @@ mod tests {
         test_utils::create_test_static_files_dir,
     };
     use base_execution_state_types::StageCheckpoint;
-    use reth_provider::{
+    use base_execution_state_provider::{
         ProviderFactory, StaticFileProviderBuilder, StaticFileProviderFactory, StaticFileSegment,
         providers::RocksDBProvider,
     };

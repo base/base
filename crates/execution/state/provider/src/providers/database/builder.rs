@@ -30,7 +30,7 @@ impl ProviderFactoryBuilder {
     ///
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpec;
-    /// use reth_provider::providers::{ProviderFactoryBuilder};
+    /// use base_execution_state_provider::providers::{ProviderFactoryBuilder};
     ///
     /// fn demo(
     ///     runtime: base_common_runtime_tasks::Runtime,
@@ -47,7 +47,7 @@ impl ProviderFactoryBuilder {
     ///
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpec;
-    /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
+    /// use base_execution_state_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
     /// fn demo(
     ///     runtime: base_common_runtime_tasks::Runtime,
@@ -71,7 +71,7 @@ impl ProviderFactoryBuilder {
     ///
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpec;
-    /// use reth_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
+    /// use base_execution_state_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
     /// fn demo(
     ///     runtime: base_common_runtime_tasks::Runtime,

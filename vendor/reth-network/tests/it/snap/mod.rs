@@ -38,7 +38,7 @@ use reth_network::{
 };
 use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
 use reth_primitives_traits::Block as _;
-use reth_provider::{
+use base_execution_state_provider::{
     BalProvider, BalStoreHandle, BlockReader, BlockWriter, ChainSpecProvider, HashingWriter,
     HeaderProvider, InMemoryBalStore, ProviderFactory, RawBal, StateProviderFactory,
     StateRangeProviderFactory, StateRootProvider, StorageRootProvider,

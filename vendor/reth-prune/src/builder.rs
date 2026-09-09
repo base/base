@@ -5,7 +5,7 @@ use base_execution_state_database::DbTxMut;
 use base_execution_state_types::PruneModes;
 use reth_config::PruneConfig;
 use reth_exex_types::FinishedExExHeight;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
     PruneCheckpointWriter, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileProvider,

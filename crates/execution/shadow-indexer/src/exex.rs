@@ -263,7 +263,7 @@ mod tests {
     use reth_chain_state::ForkChoiceStream;
     use reth_db_common::init::init_genesis;
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
-    use reth_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};
+    use base_execution_state_provider::{providers::BlockchainProvider, test_utils::create_test_provider_factory};
     use tokio::{
         sync::{mpsc, watch},
         time::timeout,

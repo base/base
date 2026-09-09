@@ -7,7 +7,7 @@ use alloy_primitives::BlockNumber;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 pub use receipts::Receipts;
-use reth_provider::StaticFileProviderFactory;
+use base_execution_state_provider::StaticFileProviderFactory;
 
 /// A segment represents moving some portion of the data to static files.
 pub trait Segment<Provider: StaticFileProviderFactory>: Send + Sync {
@@ -15,7 +15,7 @@ pub trait Segment<Provider: StaticFileProviderFactory>: Send + Sync {
     fn segment(&self) -> StaticFileSegment;
 
     /// Move data to static files for the provided block range.
-    /// [`StaticFileProvider`](reth_provider::providers::StaticFileProvider) will handle
+    /// [`StaticFileProvider`](base_execution_state_provider::providers::StaticFileProvider) will handle
     /// the management of and writing to files.
     fn copy_to_static_files(
         &self,

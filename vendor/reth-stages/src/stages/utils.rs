@@ -12,7 +12,7 @@ use base_execution_state_database::{
 use base_execution_state_types::StaticFileSegment;
 use reth_config::config::EtlConfig;
 use reth_etl::Collector;
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
     ProviderResult, RocksDBProviderFactory, ShardedHistoryTable, StaticFileProviderFactory,
     prepare_history_shard_writes_parallel_vec, providers::StaticFileProvider, to_range,

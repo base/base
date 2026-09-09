@@ -20,7 +20,7 @@ derive_more = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-transport = {workspace = true}
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-rpc-layer = { workspace = true }
 serde = {workspace = true, features = ["std"]}
 base-common-chain-config = { workspace = true }
@@ -56,7 +56,7 @@ reth-db-common = { workspace = true }
 base-common-types-rpc = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 httpmock = { workspace = true, features = ["default"] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 tokio = {workspace = true, features = ["default", "macros", "test-util"]}
 
 [features]

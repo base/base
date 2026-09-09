@@ -608,7 +608,7 @@ mod tests {
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
     use reth_chain_state::{ExecutedBlock, test_utils::TestBlockBuilder};
     #[cfg(feature = "partial-persistence")]
-    use reth_provider::{
+    use base_execution_state_provider::{
         BlockWriter, ProviderFactory,
         test_utils::{MockNodeDatabase, create_test_provider_factory},
     };

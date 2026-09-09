@@ -29,7 +29,7 @@ use reth_primitives_traits::{
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use reth_provider::{
+use base_execution_state_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, HeaderProvider, OriginalValuesKnown,
     StageCheckpointReader, StateWriter, StaticFileProviderFactory,
     test_utils::create_test_provider_factory_with_chain_spec,
@@ -67,7 +67,7 @@ fn create_file_client_from_blocks(blocks: Vec<SealedBlock>) -> Arc<FileClient> {
 ///
 /// Verifies account and storage changesets can be read from static files.
 fn assert_changesets_queryable(
-    provider_factory: &reth_provider::ProviderFactory,
+    provider_factory: &base_execution_state_provider::ProviderFactory,
     block_range: std::ops::RangeInclusive<u64>,
 ) -> eyre::Result<()> {
     // Verify storage changesets
@@ -101,7 +101,7 @@ fn build_downloaders_from_file_client(
     genesis: reth_primitives_traits::SealedHeader,
     stages_config: StageConfig,
     consensus: Arc<BaseBeaconConsensus>,
-    provider_factory: reth_provider::ProviderFactory,
+    provider_factory: base_execution_state_provider::ProviderFactory,
 ) -> (impl HeaderDownloader, impl BodyDownloader<Block = Block>, base_common_runtime_tasks::Runtime)
 {
     let tip = file_client.tip().expect("file client should have tip");
@@ -126,7 +126,7 @@ fn build_downloaders_from_file_client(
 
 /// Builds a pipeline with `DefaultStages`.
 fn build_pipeline<H, B>(
-    provider_factory: reth_provider::ProviderFactory,
+    provider_factory: base_execution_state_provider::ProviderFactory,
     header_downloader: H,
     body_downloader: B,
     max_block: u64,

@@ -1,6 +1,6 @@
 use base_execution_state_types::DatabaseError;
 use base_execution_state_types::PruneSegmentError;
-use reth_provider::ProviderError;
+use base_execution_state_provider::ProviderError;
 use thiserror::Error;
 
 /// Errors that can occur during pruning.

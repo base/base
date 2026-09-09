@@ -21,7 +21,7 @@ metrics = { workspace = true }
 thiserror = { workspace = true }
 rustc-hash = { workspace = true }
 reth-config = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}

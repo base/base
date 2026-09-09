@@ -9,7 +9,7 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::SenderRecoveryConfig;
 use reth_primitives_traits::{FastInstant as Instant, GotExpected, SignedTransaction};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, HeaderProvider, ProviderError, PruneCheckpointReader,
     PruneCheckpointWriter, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
     TransactionsProvider,
@@ -460,7 +460,7 @@ mod tests {
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
-    use reth_provider::{
+    use base_execution_state_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, PruneCheckpointWriter,
         StaticFileProviderFactory, TransactionsProvider, providers::StaticFileWriter,
     };

@@ -24,7 +24,7 @@ alloy-chains = { workspace = true }
 reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 base-txpool-rpc = { workspace = true }
@@ -104,7 +104,7 @@ rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }
-reth-provider = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
@@ -152,7 +152,7 @@ test-utils = [
     "reth-network/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",

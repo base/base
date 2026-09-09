@@ -54,7 +54,7 @@ impl BasePayloadServiceConfig {
     pub async fn start(
         self,
         ctx: &BuilderContext,
-        pool: base_node_context::BaseNodePool<reth_provider::providers::BlockchainProvider>,
+        pool: base_node_context::BaseNodePool<base_execution_state_provider::providers::BlockchainProvider>,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle> {
         let payload_builder =

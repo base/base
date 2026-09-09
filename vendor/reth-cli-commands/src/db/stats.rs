@@ -11,7 +11,7 @@ use human_bytes::human_bytes;
 use itertools::Itertools;
 use reth_db_common::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
-use reth_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
+use base_execution_state_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
 
 use crate::db::checksum::ChecksumViewer;
 

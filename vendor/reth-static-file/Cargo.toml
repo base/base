@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }

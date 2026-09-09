@@ -87,7 +87,7 @@ mod tests {
         BaseBlock, BaseTxEnvelope, BlockBody, Header, Sealable, TxDeposit,
     };
     use base_consensus_batch_types::BaseTimeUpdateTx;
-    use reth_provider::test_utils::MockEthProvider;
+    use base_execution_state_provider::test_utils::MockEthProvider;
 
     use super::BaseTimeCache;
 

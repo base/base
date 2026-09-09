@@ -21,7 +21,7 @@ reth-trie = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
-reth-provider = { workspace = true }
+base-execution-state-provider = { workspace = true }
 reth-stages-api = { workspace = true }
 reth-chain-state = { workspace = true }
 base-execution-state-api = { workspace = true }
@@ -93,7 +93,7 @@ test-utils = [
     "reth-network-p2p/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
-    "reth-provider/test-utils",
+    "base-execution-state-provider/test-utils",
     "base-execution-state-types/test-utils",
     "reth-stages-api/test-utils",
     "reth-stages/test-utils",

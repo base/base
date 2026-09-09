@@ -19,7 +19,7 @@ use base_execution_state_tasks::{
 use derive_more::Constructor;
 use reth_db_common::init::init_genesis;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
-use reth_provider::{
+use base_execution_state_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,
     ProviderFactory, StateRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,

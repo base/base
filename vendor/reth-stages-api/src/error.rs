@@ -5,7 +5,7 @@ use base_execution_evm_runtime::BlockExecutionError;
 use base_execution_state_types::DatabaseError;
 use base_execution_state_types::StaticFileSegment;
 use reth_network_p2p::error::DownloadError;
-use reth_provider::ProviderError;
+use base_execution_state_provider::ProviderError;
 use reth_prune::{PruneSegment, PruneSegmentError, PrunerError, UnwindTargetPrunedError};
 use thiserror::Error;
 use tokio::sync::broadcast::error::SendError;

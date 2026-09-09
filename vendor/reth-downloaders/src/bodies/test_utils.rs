@@ -6,7 +6,7 @@ use alloy_primitives::map::B256Map;
 use base_common_types_chain::{BaseBlockBody as BlockBody, BlockHeader};
 use reth_network_p2p::bodies::response::BlockResponse;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
-use reth_provider::{
+use base_execution_state_provider::{
     ProviderFactory, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
 };
 
