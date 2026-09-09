@@ -15,13 +15,14 @@ workspace = true
 tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-alloy-contract = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 url = { workspace = true, features = ["default"] }
+base-common-client-contracts = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 rstest = { workspace = true, features = ["default"] }

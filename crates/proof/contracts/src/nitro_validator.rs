@@ -4,13 +4,14 @@
 //! the Registry instead of accepting an independently configured address.
 
 use alloy_primitives::Address;
-use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::sol;
 use async_trait::async_trait;
+use base_common_client_ethereum::RootProvider;
 
 use crate::ContractError;
 
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     /// `NitroValidator` discovery interface.
     #[sol(rpc)]
     interface INitroValidator {

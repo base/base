@@ -1,8 +1,8 @@
 use alloy_dyn_abi::Error as AbiError;
 use alloy_primitives::{Bytes, Selector};
-use base_common_client_ethereum::{MulticallError, PendingTransactionError};
 use alloy_sol_types::{SolError, SolInterface};
 use alloy_transport::{RpcError, TransportError, TransportErrorKind};
+use base_common_client_ethereum::{MulticallError, PendingTransactionError};
 use serde_json::value::RawValue;
 use thiserror::Error;
 
@@ -91,6 +91,7 @@ impl Error {
     /// use alloy_sol_types::sol;
     ///
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///     #[derive(Debug, PartialEq, Eq)]
     ///     #[sol(rpc, bytecode = "694207")]
     ///     contract ThrowsError {
@@ -132,6 +133,7 @@ impl Error {
     ///
     /// ```ignore
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///    library ErrorLib {
     ///       error SomeError(uint256 code);
     ///    }
@@ -164,6 +166,7 @@ impl Error {
     /// use alloy_sol_types::sol;
     /// use ThrowsError::SomeCustomError;
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///     #[derive(Debug, PartialEq, Eq)]
     ///     #[sol(rpc, bytecode = "694207")]
     ///     contract ThrowsError {

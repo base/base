@@ -1,6 +1,6 @@
 //! Multicall module to organize and implement required functionality for enabling multicall in
 //! base_common_client_ethereum plus related tests. This avoids cyclic deps between base_common_client_ethereum and
-//! alloy_contract.
+//! base_common_client_contracts.
 //!
 //! This module is not public API.
 use alloy_primitives::{Address, Bytes, U256};
@@ -38,6 +38,7 @@ mod tests {
     use super::*;
 
     sol! {
+        #![sol(alloy_contract = base_common_client_contracts)]
         #[derive(Debug, PartialEq)]
         #[sol(rpc)]
         interface ERC20 {
@@ -48,6 +49,7 @@ mod tests {
     }
 
     sol! {
+        #![sol(alloy_contract = base_common_client_contracts)]
         // solc 0.8.25; solc DummyThatFails.sol --optimize --bin
         #[sol(rpc, bytecode = "6080604052348015600e575f80fd5b5060a780601a5f395ff3fe6080604052348015600e575f80fd5b50600436106030575f3560e01c80630b93381b146034578063a9cc4718146036575b5f80fd5b005b603460405162461bcd60e51b815260040160689060208082526004908201526319985a5b60e21b604082015260600190565b60405180910390fdfea2646970667358221220c90ee107375422bb3516f4f13cdd754387c374edb5d9815fb6aa5ca111a77cb264736f6c63430008190033")]
         #[derive(Debug)]
@@ -220,6 +222,7 @@ mod tests {
     }
 
     sol! {
+        #![sol(alloy_contract = base_common_client_contracts)]
         // solc 0.8.25; solc PayableCounter.sol --optimize --bin
         #[sol(rpc, bytecode = "6080604052348015600e575f80fd5b5061012c8061001c5f395ff3fe6080604052600436106025575f3560e01c806361bc221a146029578063d09de08a14604d575b5f80fd5b3480156033575f80fd5b50603b5f5481565b60405190815260200160405180910390f35b60536055565b005b5f341160bc5760405162461bcd60e51b815260206004820152602c60248201527f50617961626c65436f756e7465723a2076616c7565206d75737420626520677260448201526b06561746572207468616e20360a41b606482015260840160405180910390fd5b60015f8082825460cb919060d2565b9091555050565b8082018082111560f057634e487b7160e01b5f52601160045260245ffd5b9291505056fea264697066735822122064d656316647d3dc48d7ef0466bd10bc87694802a673183058725926a5190a5564736f6c63430008190033")]
         #[derive(Debug)]

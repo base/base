@@ -4,13 +4,14 @@
 //! and by the proposer to validate signers before on-chain submission.
 
 use alloy_primitives::{Address, Bytes};
-use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
+use base_common_client_ethereum::RootProvider;
 
 use crate::ContractError;
 
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     /// `TEEProverRegistry` contract interface.
     #[sol(rpc)]
     interface ITEEProverRegistry {

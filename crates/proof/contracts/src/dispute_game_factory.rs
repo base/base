@@ -3,13 +3,14 @@
 //! Used to create new dispute games and query existing ones.
 
 use alloy_primitives::{Address, B256, Bytes, U256};
-use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
+use base_common_client_ethereum::RootProvider;
 
 use crate::ContractError;
 
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     /// `DisputeGameFactory` contract interface.
     #[sol(rpc)]
     interface IDisputeGameFactory {

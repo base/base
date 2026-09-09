@@ -11,7 +11,7 @@ pub enum ContractError {
         /// Human-readable label for the failed call (e.g. "`BLOCK_INTERVAL` failed").
         context: String,
         /// The underlying Alloy contract error.
-        source: Box<alloy_contract::Error>,
+        source: Box<base_common_client_contracts::Error>,
     },
 
     /// A provider request failed before a contract call was constructed.
@@ -30,7 +30,7 @@ pub enum ContractError {
 
 impl ContractError {
     /// Creates an error for a failed contract call.
-    pub fn call(context: impl Into<String>, source: alloy_contract::Error) -> Self {
+    pub fn call(context: impl Into<String>, source: base_common_client_contracts::Error) -> Self {
         Self::Call { context: context.into(), source: Box::new(source) }
     }
 
@@ -57,9 +57,9 @@ impl ContractError {
 
         matches!(
             source.as_ref(),
-            alloy_contract::Error::UnknownFunction(_)
-                | alloy_contract::Error::UnknownSelector(_)
-                | alloy_contract::Error::ZeroData(_, _)
+            base_common_client_contracts::Error::UnknownFunction(_)
+                | base_common_client_contracts::Error::UnknownSelector(_)
+                | base_common_client_contracts::Error::ZeroData(_, _)
         ) || source.as_revert_data().is_some_and(|data| data.is_empty())
     }
 
@@ -75,9 +75,9 @@ impl ContractError {
 
 #[cfg(test)]
 mod tests {
-    use alloy_contract::Error as AlloyContractError;
     use alloy_sol_types::Error as SolTypesError;
     use alloy_transport::TransportErrorKind;
+    use base_common_client_contracts::Error as AlloyContractError;
 
     use super::ContractError;
 

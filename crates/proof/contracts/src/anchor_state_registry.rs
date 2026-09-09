@@ -4,13 +4,14 @@
 //! point when no pending dispute games exist.
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
+use base_common_client_ethereum::{Provider, RootProvider};
 
 use crate::ContractError;
 
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     /// `AnchorStateRegistry` contract interface.
     #[sol(rpc)]
     interface IAnchorStateRegistry {

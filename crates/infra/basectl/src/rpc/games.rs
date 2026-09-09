@@ -7,8 +7,8 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use base_common_client_ethereum::{Provider, RootProvider};
 use alloy_transport::{TransportError, TransportErrorKind};
+use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Transaction as _;
 pub use base_proof_contracts::GameStatus;
 use base_proof_contracts::{
@@ -483,8 +483,10 @@ impl GamesClient {
         let source = match source {
             ContractError::Call { context, source } => {
                 let source = match *source {
-                    alloy_contract::Error::TransportError(error) => {
-                        alloy_contract::Error::TransportError(sanitize_transport(error))
+                    base_common_client_contracts::Error::TransportError(error) => {
+                        base_common_client_contracts::Error::TransportError(sanitize_transport(
+                            error,
+                        ))
                     }
                     other => other,
                 };
@@ -504,10 +506,10 @@ mod tests {
     use std::{collections::HashMap, error::Error as _, sync::Mutex};
 
     use alloy_primitives::{Address, B256, Bytes, U256};
-    use base_common_client_ethereum::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_sol_types::SolValue;
     use alloy_transport::{TransportErrorKind, mock::Asserter};
+    use base_common_client_ethereum::RootProvider;
     use base_proof_contracts::{AggregateVerifierContractClient, DisputeGameFactoryContractClient};
     use url::Url;
 

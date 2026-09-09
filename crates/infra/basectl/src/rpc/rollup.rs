@@ -273,6 +273,7 @@ pub async fn run_validator_poller(
 // =============================================================================
 
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     #[sol(rpc)]
     interface IAnchorStateRegistry {
         function getAnchorRoot() external view returns (bytes32 root, uint256 l2SequenceNumber);

@@ -8,12 +8,13 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
-use base_common_client_ethereum::RootProvider;
 use async_trait::async_trait;
+use base_common_client_ethereum::RootProvider;
 
 use crate::ContractError;
 
 alloy_sol_types::sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     /// `DelayedWETH` contract interface (read-only subset).
     #[sol(rpc)]
     interface IDelayedWETH {

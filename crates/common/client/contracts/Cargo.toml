@@ -1,5 +1,5 @@
 [package]
-name = "alloy-contract"
+name = "base-common-client-contracts"
 description = "Interact with on-chain contracts"
 version.workspace = true
 edition.workspace = true
@@ -28,7 +28,7 @@ rustdoc-args = [
 ]
 
 [lib]
-name = "alloy_contract"
+name = "base_common_client_contracts"
 path = "src/lib.rs"
 
 [dependencies]
@@ -54,7 +54,7 @@ serde_json = { workspace = true, features = [
 alloy-node-bindings = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
-base-common-client-ethereum = {workspace = true, features = ["anvil-node"]}
+base-common-client-ethereum = {workspace = true, features = ["anvil-node", "ws"]}
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]

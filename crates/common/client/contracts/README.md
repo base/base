@@ -1,4 +1,4 @@
-# alloy-contract
+# base-common-client-contracts
 
 Interact with on-chain contracts.
 
@@ -14,13 +14,14 @@ that returns a `CallBuilder` for that function. See its documentation for more d
 
 ```rust,no_run
 # async fn test() -> Result<(), Box<dyn std::error::Error>> {
-use alloy_contract::SolCallBuilder;
+use base_common_client_contracts::SolCallBuilder;
 use alloy_primitives::{Address, U256};
 use base_common_client_ethereum::ProviderBuilder;
 use base_common_client_ethereum::PrivateKeySigner;
 use alloy_sol_types::sol;
 
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     #[sol(rpc)] // <-- Important! Generates the necessary `MyContract` struct and function methods.
     contract MyContract {
         #[derive(Debug)]

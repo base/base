@@ -70,7 +70,7 @@ impl<'a, N: Network> SendSyncFut<'a, N> {
     ///
     /// ```no_run
     /// # async fn example<P: base_common_client_ethereum::Provider>(
-    /// #     call: &alloy_contract::RawCallBuilder<P>,
+    /// #     call: &base_common_client_contracts::RawCallBuilder<P>,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use std::time::Duration;
     ///
@@ -134,11 +134,12 @@ impl<N: Network> Future for SendSyncFut<'_, N> {
 ///
 /// ```no_run
 /// # async fn test<P: base_common_client_ethereum::Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
-/// use alloy_contract::SolCallBuilder;
+/// use base_common_client_contracts::SolCallBuilder;
 /// use alloy_primitives::{Address, U256};
 /// use alloy_sol_types::sol;
 ///
 /// sol! {
+///     #![sol(alloy_contract = base_common_client_contracts)]
 ///     #[sol(rpc)] // <-- Important!
 ///     contract MyContract {
 ///         function doStuff(uint a, bool b) public returns(address c, bytes32 d);
@@ -172,7 +173,7 @@ impl<N: Network> Future for SendSyncFut<'_, N> {
 /// # async fn test<P: base_common_client_ethereum::Provider>(provider: P, dynamic_abi: alloy_json_abi::JsonAbi) -> Result<(), Box<dyn std::error::Error>> {
 /// use alloy_primitives::{Address, Bytes, U256};
 /// use alloy_dyn_abi::DynSolValue;
-/// use alloy_contract::{CallBuilder, ContractInstance, DynCallBuilder, Interface, RawCallBuilder};
+/// use base_common_client_contracts::{CallBuilder, ContractInstance, DynCallBuilder, Interface, RawCallBuilder};
 ///
 /// # stringify!(
 /// let dynamic_abi: JsonAbi = ...;
@@ -239,6 +240,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///     #[sol(rpc)]
     ///     interface Counter {
     ///         function increment() external;
@@ -291,6 +293,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///     #[sol(rpc)]
     ///     interface Counter {
     ///         function increment() external;
@@ -392,6 +395,7 @@ impl<P: Provider<N>, N: Network> RawCallBuilder<P, N> {
     /// ```no_run
     /// # use alloy_sol_types::sol;
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///     // NOTE: This contract is not meant to be deployed on-chain, but rather
     ///     // used in a static call with its creation code as the call data.
     ///     #[sol(rpc, bytecode = "34601457602a60e052600161010052604060e0f35b5f80fdfe")]
@@ -792,6 +796,7 @@ mod tests {
     #[test]
     fn empty_constructor() {
         sol! {
+            #![sol(alloy_contract = base_common_client_contracts)]
             #[sol(rpc, bytecode = "6942")]
             contract EmptyConstructor {
                 constructor();
@@ -813,6 +818,7 @@ mod tests {
     }
 
     sol! {
+        #![sol(alloy_contract = base_common_client_contracts)]
         // Solc: 0.8.24+commit.e11b9ed9.Linux.g++
         // Command: solc a.sol --bin --via-ir --optimize --optimize-runs 1
         #[sol(rpc, bytecode = "60803461006357601f61014838819003918201601f19168301916001600160401b038311848410176100675780849260209460405283398101031261006357518015158091036100635760ff80195f54169116175f5560405160cc908161007c8239f35b5f80fd5b634e487b7160e01b5f52604160045260245ffdfe60808060405260043610156011575f80fd5b5f3560e01c9081638bf1799f14607a575063b09a261614602f575f80fd5b346076576040366003190112607657602435801515810360765715606f57604060015b81516004356001600160a01b0316815260ff919091166020820152f35b60405f6052565b5f80fd5b346076575f36600319011260765760209060ff5f541615158152f3fea264697066735822122043709781c9bdc30c530978abf5db25a4b4ccfebf989baafd2ba404519a7f7e8264736f6c63430008180033")]
@@ -830,6 +836,7 @@ mod tests {
     }
 
     sol! {
+        #![sol(alloy_contract = base_common_client_contracts)]
         // Solc: 0.8.24+commit.e11b9ed9.Linux.g++
         // Command: solc counter.sol --bin --via-ir --optimize --optimize-runs 1
         #[sol(rpc, bytecode = "608080604052346100155760d4908161001a8239f35b5f80fdfe60808060405260043610156011575f80fd5b5f3560e01c90816361bc221a14607e575063d09de08a14602f575f80fd5b34607a575f366003190112607a575f546001600160801b038082166001018181116066576001600160801b03199092169116175f55005b634e487b7160e01b5f52601160045260245ffd5b5f80fd5b34607a575f366003190112607a575f546001600160801b03168152602090f3fea26469706673582212208b360e442c4bb2a4bbdec007ee24588c7a88e0aa52ac39efac748e5e23eff69064736f6c63430008180033")]
@@ -1070,6 +1077,7 @@ mod tests {
     }
 
     sol! {
+        #![sol(alloy_contract = base_common_client_contracts)]
         #[sol(rpc, bytecode = "6080604052348015600e575f80fd5b506101448061001c5f395ff3fe60806040526004361061001d575f3560e01c8063785d04f514610021575b5f80fd5b61003461002f3660046100d5565b610036565b005b5f816001600160a01b0316836040515f6040518083038185875af1925050503d805f811461007f576040519150601f19603f3d011682016040523d82523d5f602084013e610084565b606091505b50509050806100d05760405162461bcd60e51b81526020600482015260146024820152734661696c656420746f2073656e64206d6f6e657960601b604482015260640160405180910390fd5b505050565b5f80604083850312156100e6575f80fd5b8235915060208301356001600160a01b0381168114610103575f80fd5b80915050925092905056fea2646970667358221220188e65dcedbc4bd68fdebc795292d5a9bf643385f138383969a28f796ff8858664736f6c63430008190033")]
         contract SendMoney {
             function send(uint256 amount, address target) external payable {
@@ -1131,6 +1139,7 @@ mod tests {
     #[tokio::test]
     async fn decode_eth_call_ret_bytes() {
         sol! {
+            #![sol(alloy_contract = base_common_client_contracts)]
             #[derive(Debug, PartialEq)]
             #[sol(rpc, bytecode = "0x6080604052348015600e575f5ffd5b506101578061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610029575f3560e01c80630d1d2c641461002d575b5f5ffd5b61003561004b565b6040516100429190610108565b60405180910390f35b61005361007b565b6040518060400160405280602a67ffffffffffffffff16815260200160011515815250905090565b60405180604001604052805f67ffffffffffffffff1681526020015f151581525090565b5f67ffffffffffffffff82169050919050565b6100bb8161009f565b82525050565b5f8115159050919050565b6100d5816100c1565b82525050565b604082015f8201516100ef5f8501826100b2565b50602082015161010260208501826100cc565b50505050565b5f60408201905061011b5f8301846100db565b9291505056fea264697066735822122039acc87c027f3bddf6806ff9914411d4245bdc708bca36a07138a37b1b98573464736f6c634300081c0033")]
             contract RetStruct {

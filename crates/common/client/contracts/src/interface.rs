@@ -58,7 +58,7 @@ impl Interface {
     /// # Examples
     ///
     /// ```
-    /// use alloy_contract::Interface;
+    /// use base_common_client_contracts::Interface;
     /// use alloy_dyn_abi::DynSolValue;
     /// use alloy_json_abi::JsonAbi;
     /// use alloy_primitives::U256;

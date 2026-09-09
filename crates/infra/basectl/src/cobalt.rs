@@ -28,6 +28,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use url::Url;
 
 alloy_sol_types::sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     function timestampMillisPart() external view returns (uint16);
     function timestampMs() external view returns (uint64);
 }

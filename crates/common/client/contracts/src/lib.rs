@@ -7,7 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(test)]
-extern crate self as alloy_contract;
+extern crate self as base_common_client_contracts;
 
 mod eth_call;
 pub use eth_call::{CallDecoder, EthCall};

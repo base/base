@@ -6,15 +6,16 @@
 //! `NitroEnclaveVerifier` interactions happen through the `TEEProverRegistry`.
 
 use alloy_primitives::{Address, FixedBytes};
-use base_common_client_ethereum::RootProvider;
 use alloy_sol_types::{SolError, sol};
 use async_trait::async_trait;
+use base_common_client_ethereum::RootProvider;
 
 use crate::ContractError;
 
 // Interface mirrored from the canonical contract source:
 // https://github.com/base/contracts/blob/main/src/L1/proofs/tee/NitroEnclaveVerifier.sol
 sol! {
+    #![sol(alloy_contract = base_common_client_contracts)]
     /// `NitroEnclaveVerifier` contract interface (revocation subset).
     #[sol(rpc)]
     interface INitroEnclaveVerifier {

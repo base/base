@@ -91,6 +91,7 @@ where
     /// use std::time::Duration;
     ///
     /// sol! {
+    ///     #![sol(alloy_contract = base_common_client_contracts)]
     ///     #[sol(rpc)]
     ///     contract Token {
     ///         function balanceOf(address owner) external view returns (uint256);

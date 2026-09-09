@@ -16,7 +16,7 @@ use base_common_types_rpc::state::{AccountOverride, StateOverridesBuilder};
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use alloy_contract::StorageSlotFinder;
+/// use base_common_client_contracts::StorageSlotFinder;
 /// use alloy_primitives::{address, U256};
 /// use base_common_client_ethereum::ProviderBuilder;
 ///
@@ -84,6 +84,7 @@ where
     /// * `user` - The address of the user whose balance slot we're finding
     pub fn balance_of(provider: P, token_address: Address, user: Address) -> Self {
         sol! {
+            #![sol(alloy_contract = base_common_client_contracts)]
             contract IERC20 {
                 function balanceOf(address target) external view returns (uint256);
             }
@@ -214,6 +215,7 @@ mod tests {
             .unwrap();
 
         sol! {
+            #![sol(alloy_contract = base_common_client_contracts)]
             function balanceOf(address owner) view returns (uint256);
         }
 

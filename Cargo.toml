@@ -118,7 +118,7 @@ members = [
   "crates/common/chain/activation",
   "etc/systems",
   "etc/tools/witness-diff",
-  "vendor/alloy-contract",
+  "crates/common/client/contracts",
   "vendor/alloy-node-bindings",
   "crates/common/client/ethereum",
   "vendor/discv5-reth",
@@ -450,7 +450,7 @@ alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
 alloy-rpc-types-admin = { version = "=2.4.1", default-features = false }
 alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
 base-common-client-ethereum = { path = "crates/common/client/ethereum", default-features = false }
-alloy-contract = { path = "vendor/alloy-contract", default-features = false }
+base-common-client-contracts = { path = "crates/common/client/contracts", default-features = false }
 alloy-node-bindings = { path = "vendor/alloy-node-bindings", default-features = false }
 alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }
 
