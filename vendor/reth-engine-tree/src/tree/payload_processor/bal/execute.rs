@@ -52,7 +52,7 @@ pub fn execute_block<'a, Tx, Err, DB, MakeDb>(
     ctx: ExecutionCtxFor,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
-    receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
+    receipt_tx: Sender<IndexedReceipt>,
 ) -> Result<(BlockExecutionOutput, Vec<Address>, BlockAccessList), BalExecutionError>
 where
     Tx: ExecutableTxFor + Send + 'a,
@@ -90,7 +90,7 @@ fn execute_block_inner<'scope, Tx, Err, DB, MakeDb>(
     ctx: ExecutionCtxFor,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
-    receipt_tx: Sender<IndexedReceipt<BaseReceipt>>,
+    receipt_tx: Sender<IndexedReceipt>,
     worker_count: usize,
 ) -> Result<(BlockExecutionOutput, Vec<Address>, BlockAccessList), BalExecutionError>
 where

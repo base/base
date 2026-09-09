@@ -8,9 +8,9 @@
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{B256, Bloom, map::HashMap};
-use crossbeam_channel::Receiver;
-use reth_primitives_traits::Receipt;
+use base_common_types_chain::{BaseReceipt, TxReceipt};
 use base_execution_state_types::ordered_root::OrderedTrieRootEncodedBuilder;
+use crossbeam_channel::Receiver;
 use tokio::sync::oneshot;
 use tracing::debug_span;
 
@@ -18,17 +18,17 @@ const RECEIPT_ENCODE_BUF_INITIAL_CAPACITY: usize = 512;
 
 /// Receipt with index, ready to be sent to the background task for encoding and trie building.
 #[derive(Debug, Clone)]
-pub struct IndexedReceipt<R> {
+pub struct IndexedReceipt {
     /// The transaction index within the block.
     pub index: usize,
     /// The receipt.
-    pub receipt: R,
+    pub receipt: BaseReceipt,
 }
 
-impl<R> IndexedReceipt<R> {
+impl IndexedReceipt {
     /// Creates a new indexed receipt.
     #[inline]
-    pub const fn new(index: usize, receipt: R) -> Self {
+    pub const fn new(index: usize, receipt: BaseReceipt) -> Self {
         Self { index, receipt }
     }
 }
@@ -38,17 +38,17 @@ impl<R> IndexedReceipt<R> {
 /// This struct holds the channels needed to receive receipts and send the result.
 /// Use [`Self::run`] to execute the computation (typically in a spawned blocking task).
 #[derive(Debug)]
-pub struct ReceiptRootTaskHandle<R> {
+pub struct ReceiptRootTaskHandle {
     /// Receiver for indexed receipts.
-    receipt_rx: Receiver<IndexedReceipt<R>>,
+    receipt_rx: Receiver<IndexedReceipt>,
     /// Sender for the computed result.
     result_tx: oneshot::Sender<(B256, Bloom)>,
 }
 
-impl<R: Receipt> ReceiptRootTaskHandle<R> {
+impl ReceiptRootTaskHandle {
     /// Creates a new handle from the receipt receiver and result sender channels.
     pub const fn new(
-        receipt_rx: Receiver<IndexedReceipt<R>>,
+        receipt_rx: Receiver<IndexedReceipt>,
         result_tx: oneshot::Sender<(B256, Bloom)>,
     ) -> Self {
         Self { receipt_rx, result_tx }
@@ -83,7 +83,7 @@ impl<R: Receipt> ReceiptRootTaskHandle<R> {
         let mut next = 0usize;
         let mut pending = HashMap::new();
 
-        let mut push = |receipt: R| {
+        let mut push = |receipt: BaseReceipt| {
             let receipt_with_bloom = receipt.with_bloom_ref();
 
             encode_buf.clear();
@@ -141,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_receipt_root_task_empty() {
-        let (_tx, rx) = bounded::<IndexedReceipt<BaseReceipt>>(1);
+        let (_tx, rx) = bounded::<IndexedReceipt>(1);
         let (result_tx, result_rx) = oneshot::channel();
         drop(_tx);
 
@@ -302,5 +302,36 @@ mod tests {
         let (root, _bloom) = result_rx.await.unwrap();
 
         assert_eq!(root, expected_root);
+    }
+    #[tokio::test]
+    async fn incomplete_receipts_do_not_publish_a_root() {
+        let (tx, rx) = bounded(1);
+        let (result_tx, result_rx) = oneshot::channel();
+        tx.send(IndexedReceipt::new(
+            0,
+            BaseReceipt::Legacy(base_common_types_chain::Receipt::default()),
+        ))
+        .unwrap();
+        drop(tx);
+
+        ReceiptRootTaskHandle::new(rx, result_tx).run(2);
+
+        assert!(result_rx.await.is_err());
+    }
+
+    #[tokio::test]
+    async fn gapped_receipts_do_not_publish_a_root_without_expected_count() {
+        let (tx, rx) = bounded(1);
+        let (result_tx, result_rx) = oneshot::channel();
+        tx.send(IndexedReceipt::new(
+            1,
+            BaseReceipt::Legacy(base_common_types_chain::Receipt::default()),
+        ))
+        .unwrap();
+        drop(tx);
+
+        ReceiptRootTaskHandle::new(rx, result_tx).run(None);
+
+        assert!(result_rx.await.is_err());
     }
 }

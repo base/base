@@ -176,7 +176,7 @@ const MAX_EXPECTED_GAS_LIMIT_MULTIPLIER: u64 = 2;
 /// Worker name for deferred trie data preparation.
 const DEFERRED_TRIE_WORKER_NAME: &str = "deferred-trie";
 
-type ReceiptRootSender = crossbeam_channel::Sender<IndexedReceipt<BaseReceipt>>;
+type ReceiptRootSender = crossbeam_channel::Sender<IndexedReceipt>;
 type ReceiptRootReceiver = tokio::sync::oneshot::Receiver<(B256, alloy_primitives::Bloom)>;
 
 /// Context providing access to tree state during validation.
@@ -1124,7 +1124,7 @@ where
         mut executor: E,
         transaction_count: usize,
         transactions: impl Iterator<Item = Result<Tx, Err>>,
-        receipt_tx: &crossbeam_channel::Sender<IndexedReceipt<BaseReceipt>>,
+        receipt_tx: &crossbeam_channel::Sender<IndexedReceipt>,
         executed_tx_index: &AtomicUsize,
         has_bal: bool,
     ) -> Result<(E, Vec<Address>), BlockExecutionError>
