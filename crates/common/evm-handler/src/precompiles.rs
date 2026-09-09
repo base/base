@@ -15,12 +15,12 @@ use alloy_primitives::{
 use base_common_consensus::transaction::Either;
 use base_evm_context::ContextTr;
 use base_evm_handler::{
-    EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
-};
-use revm::{
     Context,
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileFn, PrecompileId, PrecompileResult, Precompiles},
+};
+use base_evm_handler::{
+    EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
 };
 
 use crate::{Database, EvmInternals};
@@ -768,7 +768,7 @@ pub trait Precompile {
     /// out-of-gas), distinguished by [`PrecompileOutput::status`]. `Err(PrecompileError)` is
     /// reserved for fatal errors that abort EVM execution.
     ///
-    /// [`PrecompileOutput::status`]: revm::precompile::PrecompileOutput::status
+    /// [`PrecompileOutput::status`]: base_evm_handler::precompile::PrecompileOutput::status
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult;
 
     /// Returns whether this precompile's results should be cached.
@@ -840,7 +840,7 @@ where
     }
 }
 
-impl Precompile for revm::precompile::Precompile {
+impl Precompile for base_evm_handler::precompile::Precompile {
     fn precompile_id(&self) -> &PrecompileId {
         self.id()
     }
@@ -988,7 +988,7 @@ impl core::error::Error for MovePrecompileError {}
 mod tests {
     use alloy_primitives::{Bytes, address};
     use base_evm_context::BlockEnv;
-    use revm::{
+    use base_evm_handler::{
         database::EmptyDB,
         precompile::{PrecompileId, PrecompileOutput},
         primitives::hardfork::SpecId,
@@ -1145,11 +1145,11 @@ mod tests {
         assert!(either_right.supports_caching(), "Either::Right with cacheable should return true");
 
         // Identity precompile should not support caching
-        let identity = revm::precompile::identity::FUN;
+        let identity = base_evm_handler::precompile::identity::FUN;
         assert!(!identity.supports_caching(), "identity precompile should not support caching");
 
         // Other builtin precompiles should support caching
-        let sha256 = revm::precompile::hash::SHA256;
+        let sha256 = base_evm_handler::precompile::hash::SHA256;
         assert!(sha256.supports_caching(), "sha256 precompile should support caching");
     }
 

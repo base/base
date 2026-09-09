@@ -3,7 +3,7 @@
 use alloc::vec;
 
 use base_evm_context::TxEnvBuilder;
-use revm::primitives::{B256, Bytes};
+use base_evm_handler::primitives::{B256, Bytes};
 
 use super::{
     core::BaseTransaction,

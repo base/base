@@ -10,11 +10,11 @@ use base_evm_context::{
 };
 use base_evm_handler as post_execution;
 use base_evm_handler::{
-    EthFrame, EvmTr, FrameResult, Handler, Inspector, InspectorHandler, MainnetHandler,
-    calculate_caller_fee, handle_reservoir_remaining_gas, reimburse_caller,
+    EvmTr, FrameResult, Handler, Inspector, InspectorHandler, MainnetHandler, calculate_caller_fee,
+    handle_reservoir_remaining_gas, reimburse_caller,
     validate_account_nonce_and_code_with_components,
 };
-use revm::{interpreter::GasTracker, primitives::U256};
+use base_evm_handler::{interpreter::GasTracker, primitives::U256};
 
 use crate::{
     BaseContext, BaseEvm, BaseHaltReason, L1BlockInfo,
@@ -24,8 +24,7 @@ use crate::{
 /// Base handler extends the [`Handler`] with Base-specific logic.
 pub struct BaseHandler<DB: Database, I, P> {
     /// Shared Ethereum execution rules used by Base.
-    pub mainnet:
-        MainnetHandler<BaseEvm<DB, I, P>, EVMError<DB::Error, BaseTransactionError>, EthFrame>,
+    pub mainnet: MainnetHandler<BaseEvm<DB, I, P>, EVMError<DB::Error, BaseTransactionError>>,
 }
 
 impl<DB: Database, I, P> core::fmt::Debug for BaseHandler<DB, I, P> {
@@ -57,7 +56,7 @@ impl<DB: Database, I, P> Handler for BaseHandler<DB, I, P>
 where
     P: base_evm_handler::PrecompileProvider<
             BaseContext<DB>,
-            Output = revm::interpreter::InterpreterResult,
+            Output = base_evm_handler::interpreter::InterpreterResult,
         >,
 {
     type Evm = BaseEvm<DB, I, P>;
@@ -373,7 +372,7 @@ where
     I: Inspector<BaseContext<DB>>,
     P: base_evm_handler::PrecompileProvider<
             BaseContext<DB>,
-            Output = revm::interpreter::InterpreterResult,
+            Output = base_evm_handler::interpreter::InterpreterResult,
         >,
 {
 }
@@ -385,7 +384,7 @@ mod tests {
     use base_common_consensus::Predeploys;
     use base_evm_context::{BlockEnv, CfgEnv, Context, TxEnv};
     use base_evm_handler::{Handler, NoOpInspector};
-    use revm::{
+    use base_evm_handler::{
         InspectEvm,
         bytecode::Bytecode,
         database::EmptyDB,

@@ -634,9 +634,9 @@ pub(crate) struct BlockBufferMetrics {
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip7685::Requests;
+    use base_evm_handler::database::BundleState;
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
     use reth_execution_types::BlockExecutionResult;
-    use revm::database::BundleState;
 
     use super::*;
 

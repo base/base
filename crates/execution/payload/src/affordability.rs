@@ -2,9 +2,9 @@
 
 use alloy_primitives::{Address, U256};
 use base_common_consensus::{CoinbaseTip, Transaction};
+use base_evm_handler::Database;
 use base_execution_eip8130::FeeCheck;
 use base_execution_txpool::BasePooledTransaction;
-use revm::Database;
 
 /// Whether a statically decoded coinbase tip can be paid with worst-case gas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,10 +80,10 @@ impl CoinbaseTipAffordability {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
-    use revm::{
+    use base_evm_handler::{
         Database,
-        database::InMemoryDB,
         database::DBErrorMarker,
+        database::InMemoryDB,
         state::{AccountInfo, Bytecode},
     };
 

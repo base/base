@@ -16,7 +16,7 @@ use crate::{
 /// Should create an executable transaction environment using [`TransactionRequest`].
 pub trait TryIntoTxEnv<
     T,
-    Spec = revm::primitives::hardfork::SpecId,
+    Spec = base_evm_handler::primitives::hardfork::SpecId,
     BlockEnv = base_evm_context::BlockEnv,
 >
 {

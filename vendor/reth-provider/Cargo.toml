@@ -16,7 +16,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 strum = { workspace = true }
 rayon = { workspace = true }
 metrics = { workspace = true }
@@ -29,6 +28,7 @@ reth-fs-util = { workspace = true }
 reth-metrics = { workspace = true }
 alloy-genesis = { workspace = true }
 reth-tokio-util = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-chain-state = { workspace = true }
 reth-stages-types = { workspace = true }

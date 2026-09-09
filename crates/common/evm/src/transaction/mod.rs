@@ -18,7 +18,7 @@ pub use error::{BaseTransactionError, BuildError};
 #[cfg(test)]
 mod tests {
     use alloy_sol_types::{SolCall, sol};
-    use revm::{
+    use base_evm_handler::{
         Context, ExecuteEvm,
         bytecode::Bytecode,
         database::{BenchmarkDB, EEADDRESS, FFADDRESS},

@@ -12,6 +12,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 use base_common_rpc_types::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_evm_context::{EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError};
 use base_evm_handler::{BlockExecutionError, BlockValidationError, CallError, StateOverrideError};
+use base_evm_handler::{database::EvmDatabaseError, state::bal::BalError};
 use base_execution_txpool::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
@@ -22,7 +23,6 @@ use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
 use reth_storage_errors::provider::ProviderError;
-use revm::{database::EvmDatabaseError, state::bal::BalError};
 use revm_inspectors::tracing::{DebugInspectorError, MuxError};
 use tokio::sync::oneshot::error::RecvError;
 

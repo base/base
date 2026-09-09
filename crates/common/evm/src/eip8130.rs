@@ -58,13 +58,7 @@ use base_evm_handler::{
     Database as AlloyDatabase, EvmInternals, EvmTr, FrameResult, Handler, InspectorEvmTr,
     InspectorHandler, PrecompileProvider,
 };
-use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
-    DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
-    TransactionAuthorizer,
-};
-use base_precompile_storage::{JournalStorageProvider, StorageCtx};
-use revm::{
+use base_evm_handler::{
     Inspector,
     interpreter::{
         CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
@@ -73,6 +67,12 @@ use revm::{
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::Bytecode,
 };
+use base_execution_eip8130::{
+    AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
+    DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
+    TransactionAuthorizer,
+};
+use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 
 use crate::{
     BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, Eip8130PhaseStatuses,
@@ -1728,14 +1728,14 @@ mod tests {
     };
     use base_common_precompiles::INonceManager;
     use base_evm_context::{BlockEnv, CfgEnv, Context};
+    use base_evm_handler::{
+        Database, bytecode::Bytecode, database::DBErrorMarker, database::InMemoryDB,
+        state::AccountInfo,
+    };
     use base_evm_handler::{Evm, FromTxWithEncoded, NoOpInspector, PrecompilesMap};
     use base_execution_eip8130::{AccountChangeApplier, DelegationApplied};
     use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
     use k256::ecdsa::SigningKey;
-    use revm::{
-        Database, bytecode::Bytecode, database::InMemoryDB, database::DBErrorMarker,
-        state::AccountInfo,
-    };
 
     use super::*;
     use crate::{
@@ -2776,7 +2776,10 @@ mod tests {
         let warm_outcome =
             evm.transact_raw(into_base_tx(&warm_signed)).expect("tx should be included");
         assert!(matches!(warm_outcome.result, ExecutionResult::Success { .. }));
-        revm::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), warm_outcome.state);
+        base_evm_handler::DatabaseCommit::commit(
+            evm.ctx_mut().journal_mut().db_mut(),
+            warm_outcome.state,
+        );
 
         // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
         // (both committed above), so tx 2 is a second-use transaction:
@@ -2983,7 +2986,7 @@ mod tests {
             });
         }
         let state = evm.ctx_mut().journal_mut().finalize();
-        revm::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), state);
+        base_evm_handler::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), state);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use revm::{
+use base_evm_handler::{
     precompile,
     precompile::{
         Precompile, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult,
@@ -96,7 +96,7 @@ pub fn run_jovian_pairing(input: &[u8], gas_limit: u64, reservoir: u64) -> Preco
 
 #[cfg(test)]
 mod tests {
-    use revm::{precompile::Precompile, primitives::Bytes};
+    use base_evm_handler::{precompile::Precompile, primitives::Bytes};
     use rstest::rstest;
 
     use crate::{

@@ -162,11 +162,11 @@ impl PolicyAccounting for PolicyRegistryStorage<'_> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, U256, address, keccak256, uint};
+    use base_evm_handler::state::Bytecode;
     use base_precompile_storage::{
         BasePrecompileError, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
         StorageKey,
     };
-    use revm::state::Bytecode;
 
     use crate::{
         IPolicyRegistry::PolicyType,

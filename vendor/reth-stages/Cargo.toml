@@ -16,7 +16,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = {workspace = true}
 rayon = { workspace = true }
 reth-db = { workspace = true }
 reth-etl = { workspace = true }
@@ -31,6 +30,7 @@ futures-util = { workspace = true }
 reth-provider = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-stages-api = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-storage-errors = { workspace = true }

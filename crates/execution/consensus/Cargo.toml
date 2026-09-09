@@ -12,13 +12,13 @@ exclude = [".github/"]
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-trie = { workspace = true }
 alloy-eips = { workspace = true }
 base-protocol = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-storage-errors = { workspace = true }
 reth-primitives-traits = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -59,7 +59,7 @@ std = [
     "reth-storage-api/std",
     "reth-storage-errors/std",
     "reth-trie-common/std",
-    "revm/std",
+    "base-evm-handler/std",
     "thiserror/std",
     "tracing/std",
     "alloy-eip7928/std",

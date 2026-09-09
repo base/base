@@ -11,14 +11,7 @@ use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use base_common_consensus::{BaseBlock, BaseReceipt, BlockHeader};
-use futures::{Stream, StreamExt, stream::FuturesOrdered};
-use reth_chain_state::CanonStateNotification;
-use reth_execution_types::Chain;
-use reth_primitives_traits::{InMemorySize, RecoveredBlock};
-use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
-use reth_storage_errors::provider::{ProviderError, ProviderResult};
-use reth_tasks::Runtime;
-use revm::{
+use base_evm_handler::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
     state::bal::{
@@ -26,6 +19,13 @@ use revm::{
         BalWrites as RevmBalWrites, StorageBal as RevmStorageBal,
     },
 };
+use futures::{Stream, StreamExt, stream::FuturesOrdered};
+use reth_chain_state::CanonStateNotification;
+use reth_execution_types::Chain;
+use reth_primitives_traits::{InMemorySize, RecoveredBlock};
+use reth_storage_api::{BalProvider, BlockReader, TransactionVariant};
+use reth_storage_errors::provider::{ProviderError, ProviderResult};
+use reth_tasks::Runtime;
 use schnellru::{ByLength, Limiter, LruMap};
 use tokio::sync::{
     Semaphore,

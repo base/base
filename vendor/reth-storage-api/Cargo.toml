@@ -16,10 +16,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 auto_impl = { workspace = true }
 alloy-eips = { workspace = true }
 reth-db-models = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-stages-types = { workspace = true }
@@ -50,7 +50,7 @@ std = [
     "base-common-rpc-types-engine/std",
     "reth-primitives-traits/std",
     "reth-stages-types/std",
-    "revm/std",
+    "base-evm-handler/std",
     "reth-execution-types/std",
     "reth-prune-types/std",
     "reth-storage-errors/std",
@@ -74,7 +74,7 @@ serde = [
     "reth-prune-types/serde",
     "reth-stages-types/serde",
     "reth-trie-common/serde",
-    "revm/serde",
+    "base-evm-handler/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "base-common-consensus/serde",

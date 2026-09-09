@@ -1,7 +1,7 @@
 //! Utilities for dealing with eth_call and adjacent RPC endpoints.
 
 use alloy_primitives::U256;
-use revm::Database;
+use base_evm_handler::Database;
 
 /// Insufficient funds error
 #[derive(Debug, thiserror::Error)]

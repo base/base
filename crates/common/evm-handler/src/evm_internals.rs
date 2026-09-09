@@ -8,7 +8,7 @@ use base_evm_context::{
     Cfg, ContextTr, DBErrorMarker, InvalidTransaction, JournalCheckpoint, JournalLoadError,
     JournalTr, JournaledAccountTr, TransferError,
 };
-use revm::{
+use base_evm_handler::{
     interpreter::{SStoreResult, StateLoad},
     primitives::{StorageKey, StorageValue},
     state::{Account, AccountInfo, Bytecode},
@@ -380,7 +380,7 @@ trait EvmInternalsTr: Database<Error = ErasedError> {
 #[derive(Debug)]
 struct EvmInternalsImpl<'a, T>(&'a mut T);
 
-impl<T> revm::Database for EvmInternalsImpl<'_, T>
+impl<T> base_evm_handler::Database for EvmInternalsImpl<'_, T>
 where
     T: JournalTr<Database: Database>,
 {

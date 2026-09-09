@@ -11,7 +11,6 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-revm = {workspace = true}
 serde = { workspace = true }
 ark-ff = { workspace = true }
 tracing = { workspace = true }
@@ -25,9 +24,10 @@ base-protocol = { workspace = true }
 alloy-genesis = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
+
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }

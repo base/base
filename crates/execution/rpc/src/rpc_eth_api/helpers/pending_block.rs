@@ -12,6 +12,7 @@ use alloy_primitives::{B256, U256};
 use base_common_consensus::{BlockHeader, Transaction};
 use base_common_rpc_types::BlockNumberOrTag;
 use base_evm_context::{Block, Cfg as _};
+use base_evm_handler::database::State;
 use base_evm_handler::{BlockExecutionError, BlockValidationError};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
@@ -30,7 +31,6 @@ use reth_rpc_eth_types::{
 use reth_storage_api::{BlockReader, BlockReaderIdExt, StateProviderFactory, noop::NoopProvider};
 use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::ComputedTrieData;
-use revm::database::State;
 use tracing::debug;
 
 use crate::BaseEthApi;

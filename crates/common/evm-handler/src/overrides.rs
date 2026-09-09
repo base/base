@@ -11,7 +11,7 @@ use base_common_rpc_types::{
     state::{AccountOverride, StateOverride},
 };
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv};
-use revm::{
+use base_evm_handler::{
     Database, DatabaseCommit,
     bytecode::BytecodeDecodeError,
     database::{CacheDB, State},
@@ -157,7 +157,7 @@ where
     }
 
     // Create a new account marked as touched
-    let mut acc = revm::state::Account::from(info);
+    let mut acc = base_evm_handler::state::Account::from(info);
     acc.status = AccountStatus::Touched;
 
     let storage_diff = match (account_override.state, account_override.state_diff) {
@@ -212,7 +212,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, bytes};
-    use revm::database::EmptyDB;
+    use base_evm_handler::database::EmptyDB;
 
     use super::*;
 
@@ -373,7 +373,7 @@ mod tests {
         use alloy_primitives::{Bytes, TxKind};
         use base_evm_context::{Context, ContextTr, JournalTr, TxEnv};
         use base_evm_handler::Inspector;
-        use revm::{
+        use base_evm_handler::{
             ExecuteEvm, InspectEvm, MainBuilder,
             database::EmptyDB,
             interpreter::{CreateInputs, CreateOutcome},
@@ -461,7 +461,8 @@ mod tests {
                 AccountInfo {
                     code_hash: keccak256(&deployer_code),
                     code: Some(
-                        revm::state::Bytecode::new_raw_checked(deployer_code.clone()).unwrap(),
+                        base_evm_handler::state::Bytecode::new_raw_checked(deployer_code.clone())
+                            .unwrap(),
                     ),
                     nonce: 1,
                     ..Default::default()
@@ -647,7 +648,7 @@ mod tests {
         use alloy_primitives::{Bytes, TxKind};
         use base_evm_context::{CfgEnv, ContextTr, JournalTr, TxEnv};
         use base_evm_handler::Inspector;
-        use revm::{
+        use base_evm_handler::{
             database::EmptyDB,
             interpreter::{CreateInputs, CreateOutcome},
             primitives::hardfork::SpecId,
@@ -686,7 +687,8 @@ mod tests {
                 AccountInfo {
                     code_hash: keccak256(&deployer_code),
                     code: Some(
-                        revm::state::Bytecode::new_raw_checked(deployer_code.clone()).unwrap(),
+                        base_evm_handler::state::Bytecode::new_raw_checked(deployer_code.clone())
+                            .unwrap(),
                     ),
                     nonce: 1,
                     ..Default::default()
@@ -774,7 +776,7 @@ mod tests {
         use alloy_primitives::{Bytes, TxKind};
         use base_evm_context::{Context, ContextTr, JournalTr, TxEnv};
         use base_evm_handler::Inspector;
-        use revm::{
+        use base_evm_handler::{
             ExecuteEvm, InspectEvm, MainBuilder,
             database::EmptyDB,
             interpreter::{CreateInputs, CreateOutcome},
@@ -900,7 +902,8 @@ mod tests {
                 AccountInfo {
                     code_hash: keccak256(&deployer_code),
                     code: Some(
-                        revm::state::Bytecode::new_raw_checked(deployer_code.clone()).unwrap(),
+                        base_evm_handler::state::Bytecode::new_raw_checked(deployer_code.clone())
+                            .unwrap(),
                     ),
                     nonce: 1,
                     ..Default::default()
@@ -913,7 +916,9 @@ mod tests {
                 impl_addr,
                 AccountInfo {
                     code_hash: keccak256(&impl_bytecode),
-                    code: Some(revm::state::Bytecode::new_raw_checked(impl_bytecode).unwrap()),
+                    code: Some(
+                        base_evm_handler::state::Bytecode::new_raw_checked(impl_bytecode).unwrap(),
+                    ),
                     nonce: 1,
                     ..Default::default()
                 },

@@ -15,10 +15,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-trie-common = {workspace = true}
+base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
 base-common-consensus = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -38,7 +38,7 @@ std = [
     "thiserror/std",
     "reth-prune-types/std",
     "reth-static-file-types/std",
-    "revm/std",
+    "base-evm-handler/std",
     "base-common-consensus/std",
     "reth-trie-common/std",
 ]

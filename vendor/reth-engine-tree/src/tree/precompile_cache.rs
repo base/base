@@ -6,10 +6,10 @@ use alloy_primitives::{
     Address, Bytes,
     map::{DefaultHashBuilder, FbBuildHasher},
 };
+use base_evm_handler::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 use base_execution_evm::{DynPrecompile, Precompile, PrecompileInput};
 use moka::policy::EvictionPolicy;
 use reth_primitives_traits::dashmap::DashMap;
-use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 use tracing::error;
 
 /// Default max cache size for [`PrecompileCache`]
@@ -256,12 +256,12 @@ impl CachedPrecompileMetrics {
 #[cfg(test)]
 mod tests {
     use base_evm_context::TxEnv;
-    use base_execution_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
-    use revm::{
+    use base_evm_handler::{
         database::EmptyDB,
         precompile::{PrecompileOutput, PrecompileStatus},
         primitives::hardfork::SpecId,
     };
+    use base_execution_evm::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
 
     use super::*;
 

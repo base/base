@@ -13,6 +13,7 @@ use alloy_primitives::{
     Address, B256, StorageKey, StorageValue,
     map::{DefaultHashBuilder, FbBuildHasher},
 };
+use base_evm_handler::database::BundleState;
 use fixed_cache::{AnyRef, CacheConfig, Stats, StatsHandler};
 use metrics::{Counter, Gauge, Histogram};
 use parking_lot::Once;
@@ -27,7 +28,6 @@ use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
-use revm::database::BundleState;
 use tracing::{debug_span, instrument, trace, warn};
 
 use crate::TxPoolPrewarmCacheSnapshot;
@@ -1055,7 +1055,7 @@ impl<S: BlockHashReader> BlockHashReader for CachedStateProvider<S> {
 impl<S: HashedPostStateProvider> HashedPostStateProvider for CachedStateProvider<S> {
     fn hashed_post_state(
         &self,
-        bundle_state: &revm::database::BundleState,
+        bundle_state: &base_evm_handler::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
         self.state_provider.hashed_post_state(bundle_state)
     }
@@ -1402,12 +1402,12 @@ impl SavedCache {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, map::HashMap};
-    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_storage_api::StateReadProvider;
-    use revm::{
+    use base_evm_handler::{
         database::{AccountStatus, BundleAccount},
         state::AccountInfo,
     };
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_storage_api::StateReadProvider;
 
     use super::*;
 

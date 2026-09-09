@@ -14,6 +14,7 @@ use base_common_rpc_types::{
     TransactionOpcodeGas,
     state::{EvmOverrides, StateOverride},
 };
+use base_evm_handler::DatabaseCommit;
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
@@ -23,7 +24,6 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockNumReader, BlockReader};
 use reth_tasks::pool::BlockingTaskGuard;
-use revm::DatabaseCommit;
 use revm_inspectors::{
     opcode::OpcodeGasInspector,
     storage::StorageInspector,

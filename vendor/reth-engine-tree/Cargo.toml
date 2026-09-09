@@ -15,7 +15,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 rayon = { workspace = true }
 reth-db = { workspace = true }
 metrics = { workspace = true }
@@ -23,14 +22,15 @@ thiserror = { workspace = true }
 reth-trie = { workspace = true }
 alloy-eips = { workspace = true }
 reth-prune = { workspace = true }
-reth-provider = { workspace = true }
 base-state = { workspace = true }
+reth-provider = { workspace = true }
 reth-stages-api = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-trie-common = { workspace = true }
 reth-chain-state = { workspace = true }
-base-evm-handler = { workspace = true }
+
 reth-storage-errors = {workspace = true}
 reth-execution-types = { workspace = true }
 reth-execution-cache = { workspace = true }

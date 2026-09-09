@@ -14,15 +14,15 @@ use base_common_precompiles::{
 };
 use base_evm_context::GasParams;
 use base_evm_handler::TxResult as _;
-use base_execution_chainspec::BaseChainSpec;
-use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
-use eyre::{Result as EyreResult, eyre};
-use reth_primitives_traits::{Account, SealedHeader};
-use revm::{
+use base_evm_handler::{
     database::State,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::EvmState,
 };
+use base_execution_chainspec::BaseChainSpec;
+use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _};
+use eyre::{Result as EyreResult, eyre};
+use reth_primitives_traits::{Account, SealedHeader};
 use revm_bytecode::opcode::OpCode;
 
 use crate::{inspector::MeteringInspector, transaction::validate_tx};
@@ -868,6 +868,7 @@ mod tests {
     use base_common_precompiles::{
         ActivationFeature, IActivationRegistry, IB20, IB20Factory, IB20Stablecoin, IPolicyRegistry,
     };
+    use base_evm_handler::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_txpool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
@@ -876,7 +877,6 @@ mod tests {
     };
     use eyre::Context;
     use reth_provider::StateProviderFactory;
-    use revm::state::{Account as RevmAccount, EvmStorageSlot, TransactionId};
 
     use super::*;
 

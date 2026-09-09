@@ -2,7 +2,7 @@
 use base_common_consensus::Predeploys;
 use base_common_genesis::BaseUpgrade;
 use base_common_l1_fees::L1FeeParams;
-use revm::{
+use base_evm_handler::{
     database::Database,
     interpreter::Gas,
     primitives::{U256, uint},
@@ -344,7 +344,7 @@ impl L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use revm::primitives::{bytes, hex};
+    use base_evm_handler::primitives::{bytes, hex};
 
     use super::*;
 

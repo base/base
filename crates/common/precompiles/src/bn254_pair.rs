@@ -1,4 +1,4 @@
-use revm::precompile::{
+use base_evm_handler::precompile::{
     Precompile, PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, bn254,
     call_eth_precompile,
 };
@@ -57,7 +57,7 @@ pub fn run_pair_jovian(input: &[u8], gas_limit: u64, reservoir: u64) -> Precompi
 
 #[cfg(test)]
 mod tests {
-    use revm::{precompile::bn254, primitives::hex};
+    use base_evm_handler::{precompile::bn254, primitives::hex};
 
     use crate::{JOVIAN_MAX_INPUT_SIZE, run_pair_granite, run_pair_jovian};
 

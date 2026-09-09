@@ -266,7 +266,6 @@ base-upgrade-signal = { path = "crates/utilities/upgrade-signal", default-featur
 base-balance-monitor = { path = "crates/utilities/balance-monitor", default-features = false }
 
 # revm
-revm = { path = "vendor/revm", default-features = false }
 revm-state = { path = "vendor/revm-state", default-features = false }
 base-evm-context = { path = "crates/common/evm-context", default-features = false }
 base-evm-handler = { path = "crates/common/evm-handler", default-features = false }

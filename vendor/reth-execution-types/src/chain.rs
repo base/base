@@ -681,7 +681,7 @@ pub(super) mod serde_bincode_compat {
 mod tests {
     use alloy_primitives::{Address, B256, map::HashMap};
     use base_common_consensus::BaseReceipt;
-    use revm::{database::BundleState, state::AccountInfo};
+    use base_evm_handler::{database::BundleState, state::AccountInfo};
 
     use super::*;
 

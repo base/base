@@ -25,14 +25,14 @@ use alloy_primitives::Address;
 use base_common_consensus::BaseReceipt;
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult};
+use base_evm_handler::{
+    database::{BundleRetention, State},
+    state::bal::Bal as RevmBal,
+};
 use base_execution_evm::{BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor};
 use crossbeam_channel::{Receiver, Sender};
 use reth_provider::BlockExecutionOutput;
 use reth_tasks::Runtime;
-use revm::{
-    database::{State, BundleRetention},
-    state::bal::Bal as RevmBal,
-};
 
 use super::{BalExecutionError, ordered_outputs::ordered_worker_outputs, worker};
 use crate::tree::payload_processor::receipt_root_task::IndexedReceipt;
@@ -303,13 +303,13 @@ mod tests {
         SystemAddresses, TxDeposit,
     };
     use base_common_evm::L1BlockInfo;
-    use base_execution_chainspec::BaseChainSpecBuilder;
-    use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
-    use reth_tasks::Runtime;
-    use revm::{
+    use base_evm_handler::{
         database::{BundleState, CacheDB, EmptyDB},
         state::{AccountInfo, Bytecode},
     };
+    use base_execution_chainspec::BaseChainSpecBuilder;
+    use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
+    use reth_tasks::Runtime;
 
     use super::*;
 
@@ -428,7 +428,7 @@ mod tests {
     /// This intentionally mirrors what `execute_block` does internally,
     /// but without any hash check — the output is the BAL itself, not a pass/fail signal.
     fn reference_bal_for_empty_block(evm_config: &BaseEvmConfig) -> BlockAccessList {
-        use revm::database::State as RevmState;
+        use base_evm_handler::database::State as RevmState;
 
         let db = system_contracts_db();
         let mut state =
@@ -563,7 +563,7 @@ mod tests {
     where
         Tx: ExecutableTxFor,
     {
-        use revm::database::State as RevmState;
+        use base_evm_handler::database::State as RevmState;
 
         let mut state = RevmState::builder()
             .with_database(&mut db)
@@ -728,7 +728,7 @@ mod tests {
         block: &SealedBlock,
         txs: &[Recovered<BaseTxEnvelope>],
     ) -> (ShadowOutput, BlockAccessList) {
-        use revm::database::State as RevmState;
+        use base_evm_handler::database::State as RevmState;
 
         let mut state = RevmState::builder()
             .with_database(canonical_db)
@@ -1194,7 +1194,7 @@ mod tests {
         use base_evm_context::{
             ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
-        use revm::state::EvmState;
+        use base_evm_handler::state::EvmState;
 
         let block_gas_limit = 1_000_000u64;
         let first_tx_gas = 600_000u64;
@@ -1235,7 +1235,7 @@ mod tests {
         use base_evm_context::{
             ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
-        use revm::{primitives::eip7825::TX_GAS_LIMIT_CAP, state::EvmState};
+        use base_evm_handler::{primitives::eip7825::TX_GAS_LIMIT_CAP, state::EvmState};
 
         let block_gas_limit = 30_000_000u64;
         let oversized = TX_GAS_LIMIT_CAP + 1_000_000; // 17_777_216 — above the cap

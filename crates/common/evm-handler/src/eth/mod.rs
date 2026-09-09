@@ -10,13 +10,13 @@ use alloy_primitives::{Address, Bytes};
 use base_evm_context::{
     BlockEnv, CfgEnv, DBErrorMarker, EVMError, HaltReason, ResultAndState, TxEnv,
 };
-use base_evm_handler::{EthFrame, EthPrecompiles, NoOpInspector, PrecompileProvider};
-use revm::{
+use base_evm_handler::{
     Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
     interpreter::InterpreterResult,
     precompile::{PrecompileSpecId, Precompiles},
     primitives::hardfork::SpecId,
 };
+use base_evm_handler::{EthPrecompiles, NoOpInspector, PrecompileProvider};
 
 use crate::{Database, Evm, env::EvmEnv, evm_api::EvmFactory, precompiles::PrecompilesMap};
 
@@ -117,7 +117,7 @@ impl<DB: Database, I> EthEvmBuilder<DB, I> {
 /// [`RevmEvm`] type.
 #[expect(missing_debug_implementations)]
 pub struct EthEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
-    inner: RevmEvm<EthEvmContext<DB>, I, PRECOMPILE, EthFrame>,
+    inner: RevmEvm<EthEvmContext<DB>, I, PRECOMPILE>,
     inspect: bool,
 }
 
@@ -126,15 +126,12 @@ impl<DB: Database, I, PRECOMPILE> EthEvm<DB, I, PRECOMPILE> {
     ///
     /// The `inspect` argument determines whether the configured [`Inspector`] of the given
     /// [`RevmEvm`] should be invoked on [`Evm::transact`].
-    pub const fn new(
-        evm: RevmEvm<EthEvmContext<DB>, I, PRECOMPILE, EthFrame>,
-        inspect: bool,
-    ) -> Self {
+    pub const fn new(evm: RevmEvm<EthEvmContext<DB>, I, PRECOMPILE>, inspect: bool) -> Self {
         Self { inner: evm, inspect }
     }
 
     /// Consumes self and return the inner EVM instance.
-    pub fn into_inner(self) -> RevmEvm<EthEvmContext<DB>, I, PRECOMPILE, EthFrame> {
+    pub fn into_inner(self) -> RevmEvm<EthEvmContext<DB>, I, PRECOMPILE> {
         self.inner
     }
 
@@ -265,7 +262,7 @@ mod tests {
     use alloc::boxed::Box;
 
     use alloy_primitives::address;
-    use revm::{database::EmptyDB, primitives::hardfork::SpecId};
+    use base_evm_handler::{database::EmptyDB, primitives::hardfork::SpecId};
 
     use super::*;
 

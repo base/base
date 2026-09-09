@@ -2,12 +2,12 @@ use alloc::vec::Vec;
 
 use alloy_primitives::BlockNumber;
 use base_common_consensus::{BaseReceipt, transaction::Either};
+use base_evm_handler::database::{
+    BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
+};
 use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie_common::HashedPostStateSorted;
-use revm::database::{
-    BundleState, OriginalValuesKnown, PlainStateReverts, StateChangeset,
-};
 
 /// A helper type used as input to [`StateWriter`] for writing execution outcome for one or many
 /// blocks.

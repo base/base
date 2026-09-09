@@ -21,6 +21,7 @@ use base_common_evm::{BaseSpecId, L1BlockInfo};
 use base_common_genesis::DaFootprintGasScalarUpdate;
 use base_common_precompiles::NonceManagerStorage;
 use base_evm_context::JournalCheckpoint;
+use base_evm_handler::state::{AccountInfo, Bytecode};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::{
     AccountConfigurationStorage, AccountState, ApplyError, AuthorizeError, FeeCheck, IntrinsicGas,
@@ -42,7 +43,6 @@ use reth_primitives_traits::{
 use reth_storage_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
 };
-use revm::state::{AccountInfo, Bytecode};
 
 use crate::{
     BasePooledTransaction, ConfigSlot, DataAvailabilitySized, InvalidationKey, LimitClass,

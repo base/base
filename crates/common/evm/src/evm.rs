@@ -7,14 +7,15 @@ use base_evm_context::{
     ExecutionResult, FrameStack, JournalTr, ResultAndState,
 };
 use base_evm_handler::{
-    Database as AlloyDatabase, EthFrame, EthInstructions, Evm, EvmEnv, EvmTr, FrameInitOrResult,
-    FrameTr, Handler, InspectorEvmTr, InspectorHandler, ItemOrResult, PrecompileProvider,
-    PrecompilesMap, SystemCallTx,
-};
-use revm::{
     Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
-    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm, interpreter::InterpreterResult,
+    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
+    interpreter::{InterpreterResult, interpreter_action::FrameInit},
     state::EvmState,
+};
+use base_evm_handler::{
+    Database as AlloyDatabase, EthFrame, EthInstructions, Evm, EvmEnv, EvmTr, FrameInitOrResult,
+    FrameResult, Handler, InspectorEvmTr, InspectorHandler, ItemOrResult, PrecompileProvider,
+    PrecompilesMap, SystemCallTx,
 };
 
 #[cfg(feature = "std")]
@@ -26,7 +27,7 @@ use crate::{
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
-type InnerEvm<DB, I, P> = RevmEvm<BaseContext<DB>, I, P, EthFrame>;
+type InnerEvm<DB, I, P> = RevmEvm<BaseContext<DB>, I, P>;
 
 /// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
@@ -37,7 +38,7 @@ type InnerEvm<DB, I, P> = RevmEvm<BaseContext<DB>, I, P, EthFrame>;
 /// The `inspect` flag controls whether [`Inspector`] callbacks are invoked during
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
 /// enabling zero-cost tracing toggling at runtime without type changes.
-#[allow(missing_debug_implementations)] // revm::Context does not implement Debug
+#[allow(missing_debug_implementations)] // base_evm_handler::Context does not implement Debug
 pub struct BaseEvm<DB: RevmDatabase, I, P = PrecompilesMap> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
     /// [`EthFrame`], and generic precompile set [`P`].
@@ -113,17 +114,12 @@ where
     type Context = BaseContext<DB>;
 
     type Precompiles = P;
-    type Frame = EthFrame;
 
     #[inline]
     fn all(
         &self,
-    ) -> (
-        &Self::Context,
-        &EthInstructions<Self::Context>,
-        &Self::Precompiles,
-        &FrameStack<Self::Frame>,
-    ) {
+    ) -> (&Self::Context, &EthInstructions<Self::Context>, &Self::Precompiles, &FrameStack<EthFrame>)
+    {
         self.inner.all()
     }
 
@@ -134,29 +130,26 @@ where
         &mut Self::Context,
         &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
-        &mut FrameStack<Self::Frame>,
+        &mut FrameStack<EthFrame>,
     ) {
         self.inner.all_mut()
     }
 
     fn frame_init(
         &mut self,
-        frame_input: <Self::Frame as FrameTr>::FrameInit,
-    ) -> Result<
-        ItemOrResult<&mut Self::Frame, <Self::Frame as FrameTr>::FrameResult>,
-        ContextError<DB::Error>,
-    > {
+        frame_input: FrameInit,
+    ) -> Result<ItemOrResult<&mut EthFrame, FrameResult>, ContextError<DB::Error>> {
         self.inner.frame_init(frame_input)
     }
 
-    fn frame_run(&mut self) -> Result<FrameInitOrResult<Self::Frame>, ContextError<DB::Error>> {
+    fn frame_run(&mut self) -> Result<FrameInitOrResult, ContextError<DB::Error>> {
         self.inner.frame_run()
     }
 
     fn frame_return_result(
         &mut self,
-        result: <Self::Frame as FrameTr>::FrameResult,
-    ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextError<DB::Error>> {
+        result: FrameResult,
+    ) -> Result<Option<FrameResult>, ContextError<DB::Error>> {
         self.inner.frame_return_result(result)
     }
 }
@@ -176,7 +169,7 @@ where
         &Self::Context,
         &EthInstructions<Self::Context>,
         &Self::Precompiles,
-        &FrameStack<Self::Frame>,
+        &FrameStack<EthFrame>,
         &Self::Inspector,
     ) {
         self.inner.all_inspector()
@@ -189,7 +182,7 @@ where
         &mut Self::Context,
         &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
-        &mut FrameStack<Self::Frame>,
+        &mut FrameStack<EthFrame>,
         &mut Self::Inspector,
     ) {
         self.inner.all_mut_inspector()
@@ -422,7 +415,8 @@ where
     }
 
     fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
-        let revm::Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
+        let base_evm_handler::Context { block: block_env, cfg: cfg_env, journaled_state, .. } =
+            self.inner.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -455,8 +449,8 @@ mod tests {
         JOVIAN_PAIRING_MAX_INPUT_SIZE,
     };
     use base_evm_context::CfgEnv;
+    use base_evm_handler::database::EmptyDB;
     use base_evm_handler::{EvmFactory, EvmInternals, Precompile, PrecompileInput};
-    use revm::database::EmptyDB;
     use rstest::rstest;
 
     use super::*;

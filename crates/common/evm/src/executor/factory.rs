@@ -2,8 +2,8 @@
 
 use base_common_chains::{ChainUpgrades, Upgrades};
 use base_common_consensus::{BaseReceipt, BaseTxEnvelope, OpTxType};
+use base_evm_handler::Inspector;
 use base_evm_handler::{BlockExecutorFactory, EvmFactory, StateDB};
-use revm::Inspector;
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseEvmFactory, BaseTransaction, BaseTxResult,

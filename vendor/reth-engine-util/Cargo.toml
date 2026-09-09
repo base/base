@@ -15,14 +15,14 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-base-execution-payload-builder = { workspace = true }
-revm = {workspace = true}
 tokio = { workspace = true }
 serde = { workspace = true }
 itertools = { workspace = true }
 pin-project = { workspace = true }
 reth-fs-util = { workspace = true }
-base-evm-handler = {workspace = true}
+base-evm-handler = { workspace = true }
+base-execution-payload-builder = { workspace = true }
+
 reth-storage-api = { workspace = true }
 base-execution-evm = { workspace = true }
 reth-primitives-traits = { workspace = true }

@@ -10,9 +10,7 @@ use revm_interpreter::{
 use revm_primitives::{TxKind, U256};
 
 use crate::{
-    EvmTr, FrameResult, ItemOrResult,
-    evm::FrameTr,
-    execution,
+    EvmTr, FrameResult, ItemOrResult, execution,
     frame::handle_reservoir_remaining_gas,
     post_execution::{self, build_result_gas},
     pre_execution::{self, PreExecutionOutput, apply_eip7702_auth_list},
@@ -71,7 +69,7 @@ impl<
 /// To finalize the execution and obtain changed state, call [`JournalTr::finalize`] function.
 pub trait Handler {
     /// The EVM type containing Context, Instruction, and Precompiles implementations.
-    type Evm: EvmTr<Context: ContextTr, Frame: FrameTr<FrameInit = FrameInit, FrameResult = FrameResult>>;
+    type Evm: EvmTr<Context: ContextTr>;
     /// The error type returned by this handler.
     type Error: EvmTrError<Self::Evm>;
     /// The halt reason type included in the output
@@ -489,7 +487,7 @@ pub trait Handler {
     fn last_frame_result(
         &mut self,
         evm: &mut Self::Evm,
-        frame_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        frame_result: &mut FrameResult,
         parent_gas: &mut GasTracker,
     ) -> Result<(), Self::Error> {
         let instruction_result = frame_result.instruction_result();
@@ -539,7 +537,7 @@ pub trait Handler {
     fn run_exec_loop(
         &mut self,
         evm: &mut Self::Evm,
-        first_frame_input: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameInit,
+        first_frame_input: FrameInit,
     ) -> Result<FrameResult, Self::Error> {
         let res = evm.frame_init(first_frame_input)?;
 
@@ -578,7 +576,7 @@ pub trait Handler {
     fn eip7623_check_gas_floor(
         &self,
         _evm: &mut Self::Evm,
-        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        exec_result: &mut FrameResult,
         init_and_floor_gas: InitialAndFloorGas,
     ) {
         post_execution::eip7623_check_gas_floor(exec_result.gas_mut(), init_and_floor_gas)
@@ -589,7 +587,7 @@ pub trait Handler {
     fn refund(
         &self,
         evm: &mut Self::Evm,
-        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        exec_result: &mut FrameResult,
         eip7702_refund: i64,
     ) -> Result<(), Self::Error> {
         post_execution::refund(evm.ctx().cfg().gas_params(), exec_result.gas_mut(), eip7702_refund);
@@ -602,7 +600,7 @@ pub trait Handler {
     fn reimburse_caller(
         &self,
         evm: &mut Self::Evm,
-        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        exec_result: &mut FrameResult,
     ) -> Result<(), Self::Error> {
         post_execution::reimburse_caller(evm.ctx(), exec_result.gas(), U256::ZERO)
             .map_err(From::from)
@@ -613,7 +611,7 @@ pub trait Handler {
     fn reward_beneficiary(
         &self,
         evm: &mut Self::Evm,
-        exec_result: &mut <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        exec_result: &mut FrameResult,
     ) -> Result<(), Self::Error> {
         post_execution::reward_beneficiary(evm.ctx(), exec_result.gas()).map_err(From::from)
     }
@@ -626,7 +624,7 @@ pub trait Handler {
     fn execution_result(
         &mut self,
         evm: &mut Self::Evm,
-        result: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
+        result: FrameResult,
         result_gas: ResultGas,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         take_error::<Self::Error, _>(evm.ctx().error())?;

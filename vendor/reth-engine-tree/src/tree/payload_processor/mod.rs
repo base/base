@@ -11,6 +11,7 @@ use std::{
 
 use alloy_eips::eip1898::BlockWithParent;
 use alloy_primitives::B256;
+use base_evm_handler::database::BundleState;
 use base_execution_evm::{
     BaseEvmConfig, ConvertTx, ExecutableTxFor, ExecutableTxIterator, ExecutableTxParts,
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
@@ -29,7 +30,6 @@ use reth_provider::{
     StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use reth_tasks::Runtime;
-use revm::database::BundleState;
 use tracing::{Span, debug, instrument, trace, warn};
 
 use super::precompile_cache::PrecompileCacheMap;
@@ -611,10 +611,10 @@ mod tests {
     use alloy_eips::eip1898::{BlockNumHash, BlockWithParent};
     use alloy_primitives::{Address, B256, U256};
     use base_common_consensus::constants::KECCAK_EMPTY;
+    use base_evm_handler::{database::BundleState, state::AccountInfo};
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::BaseEvmConfig;
     use reth_execution_cache::CachedStatus;
-    use revm::{database::BundleState, state::AccountInfo};
 
     use crate::tree::{
         ExecutionCache, PayloadExecutionCache, SavedCache, TreeConfig,

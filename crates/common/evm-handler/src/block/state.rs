@@ -1,7 +1,7 @@
 //! State database abstraction.
 
-use revm::{
-    DatabaseCommit, database::State, database::BalDatabase, state::bal::BlockAccessIndex,
+use base_evm_handler::{
+    DatabaseCommit, database::BalDatabase, database::State, state::bal::BlockAccessIndex,
 };
 
 use crate::Database;
@@ -58,7 +58,7 @@ impl<T> StateDB for T where T: Database + DatabaseCommit {}
 
 #[cfg(test)]
 mod tests {
-    use revm::{database::CacheDB, database::EmptyDB};
+    use base_evm_handler::{database::CacheDB, database::EmptyDB};
 
     use super::*;
 

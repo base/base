@@ -15,6 +15,7 @@ use base_common_consensus::{
 use base_common_evm::L1BlockInfo;
 use base_common_rpc_types_engine::{BasePayloadAttributes, PayloadId};
 use base_evm_context::{Block, BlockEnv};
+use base_evm_handler::database::State;
 use base_evm_handler::{CommitChanges, Evm as AlloyEvm, TxResult};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_eip8130::IntrinsicGas;
@@ -38,7 +39,6 @@ use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use reth_storage_api::{BlockReader, StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_trie_common::ExecutionWitnessMode;
-use revm::database::State;
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -1367,6 +1367,7 @@ mod tests {
     };
     use base_common_evm::BaseTime;
     use base_common_rpc_types_engine::PayloadId;
+    use base_evm_handler::{database::State, state::EvmState};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::{
         BaseEvmConfig, BlockBuilder, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
@@ -1381,7 +1382,6 @@ mod tests {
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
     use reth_provider::noop::NoopProvider;
     use reth_trie_common::{HashedPostState, updates::TrieUpdates};
-    use revm::{database::State, state::EvmState};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

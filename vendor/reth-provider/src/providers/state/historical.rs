@@ -625,7 +625,7 @@ where
 {
     fn hashed_post_state(
         &self,
-        bundle_state: &revm::database::BundleState,
+        bundle_state: &base_evm_handler::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
         let mut hashed_state = HashedPostState::from_bundle_state(bundle_state.state());
         if !bundle_state
@@ -1307,10 +1307,10 @@ mod tests {
         use std::collections::HashMap;
 
         use alloy_primitives::keccak256;
+        use base_evm_handler::database::BundleState;
         use reth_db_api::models::StorageSettings;
         use reth_execution_types::ExecutionOutcome;
         use reth_testing_utils::generators::{self, BlockRangeParams};
-        use revm::database::BundleState;
 
         use crate::BlockWriter;
 
@@ -1318,9 +1318,9 @@ mod tests {
         factory.set_storage_settings_cache(StorageSettings::v2());
 
         let slot = U256::from_be_bytes(*STORAGE);
-        let account: revm::state::AccountInfo =
+        let account: base_evm_handler::state::AccountInfo =
             Account { nonce: 1, balance: U256::from(1000), bytecode_hash: None }.into();
-        let higher_account: revm::state::AccountInfo =
+        let higher_account: base_evm_handler::state::AccountInfo =
             Account { nonce: 1, balance: U256::from(2000), bytecode_hash: None }.into();
 
         let mut rng = generators::rng();
@@ -1335,7 +1335,8 @@ mod tests {
         let mut higher_storage = HashMap::default();
         higher_storage.insert(slot, (U256::ZERO, U256::from(1000)));
 
-        type Revert = Vec<(Address, Option<Option<revm::state::AccountInfo>>, Vec<(U256, U256)>)>;
+        type Revert =
+            Vec<(Address, Option<Option<base_evm_handler::state::AccountInfo>>, Vec<(U256, U256)>)>;
         let mut reverts: Vec<Revert> = vec![Vec::new(); 16];
 
         reverts[3] = vec![(ADDRESS, Some(Some(account.clone())), vec![(slot, U256::ZERO)])];
@@ -1450,14 +1451,14 @@ mod tests {
     #[test]
     fn destroyed_storage_zeros_use_historical_state() {
         use alloy_primitives::{keccak256, map::HashMap};
+        use base_evm_handler::{
+            database::{AccountStatus, BundleAccount, BundleState},
+            state::AccountInfo,
+        };
         use reth_execution_types::ExecutionOutcome;
         use reth_stages_types::{StageCheckpoint, StageId};
         use reth_storage_api::HashedPostStateProvider;
         use reth_testing_utils::generators::{self, BlockRangeParams};
-        use revm::{
-            database::{AccountStatus, BundleAccount, BundleState},
-            state::AccountInfo,
-        };
 
         use crate::BlockWriter;
 
@@ -1517,8 +1518,8 @@ mod tests {
 
     #[test]
     fn newly_created_destroyed_account_skips_historical_overlay() {
+        use base_evm_handler::database::{AccountStatus, BundleAccount, BundleState};
         use reth_storage_api::HashedPostStateProvider;
-        use revm::database::{AccountStatus, BundleAccount, BundleState};
 
         let factory = create_test_provider_factory();
         let db = factory.provider().unwrap();

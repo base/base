@@ -13,16 +13,7 @@ use crate::{
 pub type ContextDbError<CTX> = ContextError<ContextTrDbError<CTX>>;
 
 /// Type alias for frame init result
-pub type FrameInitResult<'a, F> = ItemOrResult<&'a mut F, <F as FrameTr>::FrameResult>;
-
-/// Trait for defining a frame type used in EVM execution.
-#[auto_impl(&mut, Box)]
-pub trait FrameTr {
-    /// The result type returned when a frame completes execution.
-    type FrameResult: From<FrameResult>;
-    /// The initialization type used to create a new frame.
-    type FrameInit: From<FrameInit>;
-}
+pub type FrameInitResult<'a> = ItemOrResult<&'a mut EthFrame, FrameResult>;
 
 /// A trait that integrates context, instruction set, and precompiles to create an EVM struct.
 ///
@@ -34,19 +25,12 @@ pub trait EvmTr {
 
     /// The type containing the available precompiled contracts
     type Precompiles: PrecompileProvider<Self::Context>;
-    /// The type containing the frame
-    type Frame: FrameTr;
 
     /// Returns a tuple of references to the context, the frame and the instructions.
     #[expect(clippy::type_complexity)]
     fn all(
         &self,
-    ) -> (
-        &Self::Context,
-        &EthInstructions<Self::Context>,
-        &Self::Precompiles,
-        &FrameStack<Self::Frame>,
-    );
+    ) -> (&Self::Context, &EthInstructions<Self::Context>, &Self::Precompiles, &FrameStack<EthFrame>);
 
     /// Returns a tuple of mutable references to the context, the frame and the instructions.
     #[expect(clippy::type_complexity)]
@@ -56,7 +40,7 @@ pub trait EvmTr {
         &mut Self::Context,
         &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
-        &mut FrameStack<Self::Frame>,
+        &mut FrameStack<EthFrame>,
     );
 
     /// Returns a mutable reference to the execution context
@@ -97,7 +81,7 @@ pub trait EvmTr {
 
     /// Returns a mutable reference to the frame stack.
     #[inline]
-    fn frame_stack(&mut self) -> &mut FrameStack<Self::Frame> {
+    fn frame_stack(&mut self) -> &mut FrameStack<EthFrame> {
         let (_, _, _, frame_stack) = self.all_mut();
         frame_stack
     }
@@ -105,25 +89,23 @@ pub trait EvmTr {
     /// Initializes the frame for the given frame input. Frame is pushed to the frame stack.
     fn frame_init(
         &mut self,
-        frame_input: <Self::Frame as FrameTr>::FrameInit,
-    ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<Self::Context>>;
+        frame_input: FrameInit,
+    ) -> Result<FrameInitResult<'_>, ContextDbError<Self::Context>>;
 
     /// Run the frame from the top of the stack. Returns the frame init or result.
     ///
     /// If frame has returned result it would mark it as finished.
-    fn frame_run(
-        &mut self,
-    ) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<Self::Context>>;
+    fn frame_run(&mut self) -> Result<FrameInitOrResult, ContextDbError<Self::Context>>;
 
     /// Returns the result of the frame to the caller. Frame is popped from the frame stack.
     /// Consumes the frame result or returns it if there is more frames to run.
     fn frame_return_result(
         &mut self,
-        result: <Self::Frame as FrameTr>::FrameResult,
-    ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>>;
+        result: FrameResult,
+    ) -> Result<Option<FrameResult>, ContextDbError<Self::Context>>;
 }
 
-impl<CTX, INSP, P> EvmTr for EvmMachine<CTX, INSP, P, EthFrame>
+impl<CTX, INSP, P> EvmTr for EvmMachine<CTX, INSP, P>
 where
     CTX: ContextTr,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -131,17 +113,12 @@ where
     type Context = CTX;
 
     type Precompiles = P;
-    type Frame = EthFrame;
 
     #[inline]
     fn all(
         &self,
-    ) -> (
-        &Self::Context,
-        &EthInstructions<Self::Context>,
-        &Self::Precompiles,
-        &FrameStack<Self::Frame>,
-    ) {
+    ) -> (&Self::Context, &EthInstructions<Self::Context>, &Self::Precompiles, &FrameStack<EthFrame>)
+    {
         let ctx = &self.ctx;
         let instructions = &self.instruction;
         let precompiles = &self.precompiles;
@@ -156,7 +133,7 @@ where
         &mut Self::Context,
         &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
-        &mut FrameStack<Self::Frame>,
+        &mut FrameStack<EthFrame>,
     ) {
         let ctx = &mut self.ctx;
         let instructions = &mut self.instruction;
@@ -169,15 +146,15 @@ where
     #[inline]
     fn frame_init(
         &mut self,
-        frame_input: <Self::Frame as FrameTr>::FrameInit,
-    ) -> Result<FrameInitResult<'_, Self::Frame>, ContextDbError<CTX>> {
+        frame_input: FrameInit,
+    ) -> Result<FrameInitResult<'_>, ContextDbError<CTX>> {
         let is_first_init = self.frame_stack.index().is_none();
         let new_frame =
             if is_first_init { self.frame_stack.start_init() } else { self.frame_stack.get_next() };
 
         let ctx = &mut self.ctx;
         let precompiles = &mut self.precompiles;
-        let res = Self::Frame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
+        let res = EthFrame::init_with_context(new_frame, ctx, precompiles, frame_input)?;
 
         Ok(res.map_item(|token| {
             if is_first_init {
@@ -191,7 +168,7 @@ where
 
     /// Run the frame from the top of the stack. Returns the frame init or result.
     #[inline]
-    fn frame_run(&mut self) -> Result<FrameInitOrResult<Self::Frame>, ContextDbError<CTX>> {
+    fn frame_run(&mut self) -> Result<FrameInitOrResult, ContextDbError<CTX>> {
         let frame = self.frame_stack.get();
         let context = &mut self.ctx;
         let instructions = &mut self.instruction;
@@ -213,8 +190,8 @@ where
     #[inline]
     fn frame_return_result(
         &mut self,
-        result: <Self::Frame as FrameTr>::FrameResult,
-    ) -> Result<Option<<Self::Frame as FrameTr>::FrameResult>, ContextDbError<Self::Context>> {
+        result: FrameResult,
+    ) -> Result<Option<FrameResult>, ContextDbError<Self::Context>> {
         if self.frame_stack.get().is_finished() {
             self.frame_stack.pop();
         }

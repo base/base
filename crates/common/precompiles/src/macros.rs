@@ -8,7 +8,7 @@
 macro_rules! base_precompile {
     ($id:expr, storage_features: $storage_features:expr, |$ctx:ident, $calldata:ident| $impl:expr $(,)?) => {{
         ::base_evm_handler::DynPrecompile::new_stateful(
-            ::revm::precompile::PrecompileId::Custom($id.into()),
+            ::base_evm_handler::precompile::PrecompileId::Custom($id.into()),
             move |input| {
                 if !input.is_direct_call() {
                     return ::base_precompile_storage::IntoEnginePrecompileResult::into_revm(

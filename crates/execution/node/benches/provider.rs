@@ -4,6 +4,7 @@ use std::{cell::Cell, hint::black_box, time::Duration};
 
 use alloy_primitives::{Address, B256, U256, map::HashMap};
 use base_common_consensus::{BaseBlock as Block, Header};
+use base_evm_handler::{database::BundleState, state::AccountInfo};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reth_db_api::models::StorageSettings;
 use reth_db_common::init::init_genesis_with_settings;
@@ -14,7 +15,6 @@ use reth_provider::{
     test_utils::create_test_provider_factory,
 };
 use reth_trie::HashedPostState;
-use revm::{database::BundleState, state::AccountInfo};
 
 const HISTORY_BLOCKS: u64 = 128;
 const ACCOUNT_COUNT: usize = 256;

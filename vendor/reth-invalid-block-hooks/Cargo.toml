@@ -15,11 +15,11 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 serde = { workspace = true }
 reth-trie = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-provider = { workspace = true }
+base-evm-handler = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 base-common-consensus = { workspace = true }
 reth-engine-primitives = { workspace = true }

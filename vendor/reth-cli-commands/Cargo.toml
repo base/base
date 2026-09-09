@@ -15,7 +15,6 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = {workspace = true}
 url = { workspace = true }
 lz4 = { workspace = true }
 serde = { workspace = true }
@@ -41,6 +40,7 @@ reth-db-common = { workspace = true }
 reth-node-core = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-prune-types = { workspace = true }
 reth-storage-api = { workspace = true }
 reth-node-events = { workspace = true }

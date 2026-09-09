@@ -3,7 +3,7 @@ use alloc::string::ToString;
 use alloy_primitives::map::HashMap;
 use base_common_rpc_types::OpcodeGas;
 use base_evm_context::{ContextTr, JournalTr};
-use revm::{
+use base_evm_handler::{
     Inspector,
     bytecode::{opcode, opcode::OpCode},
     interpreter::{
@@ -138,7 +138,7 @@ where
 /// value.
 ///
 /// Primarily needed to handle a special case of RJUMPV opcode.
-pub fn immediate_size(bytecode: &revm::interpreter::interpreter::ExtBytecode) -> u8 {
+pub fn immediate_size(bytecode: &base_evm_handler::interpreter::interpreter::ExtBytecode) -> u8 {
     let opcode = bytecode.read_u8();
     let Some(opcode) = OpCode::new(opcode) else { return 0 };
     opcode.info().immediate_size()
@@ -146,7 +146,7 @@ pub fn immediate_size(bytecode: &revm::interpreter::interpreter::ExtBytecode) ->
 
 #[cfg(test)]
 mod tests {
-    use revm::{
+    use base_evm_handler::{
         Context, MainContext,
         bytecode::Bytecode,
         database::CacheDB,

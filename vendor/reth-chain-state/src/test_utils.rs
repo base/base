@@ -13,6 +13,7 @@ use base_common_consensus::{
     TxReceipt,
 };
 use base_common_network::PrivateKeySigner;
+use base_evm_handler::{database::BundleState, state::AccountInfo};
 use base_execution_chainspec::BaseChainSpec;
 use rand::Rng;
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome};
@@ -21,7 +22,6 @@ use reth_primitives_traits::{
     proofs::{calculate_receipt_root, calculate_transaction_root, calculate_withdrawals_root},
 };
 use reth_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
-use revm::{database::BundleState, state::AccountInfo};
 use tokio::sync::broadcast::{self, Sender};
 
 use crate::{

@@ -3,13 +3,14 @@
 //! This benchmark seeds a `RocksDB` proofs-history store with deterministic
 //! account and storage data, then repeatedly performs the DB-bound reads that
 //! `debug_executionWitness` drives through the shared database interface and
-//! `revm::database::State` while EVM execution records touched state.
+//! `base_evm_handler::database::State` while EVM execution records touched state.
 
 use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
+use base_evm_handler::{Database, database::State};
 use base_execution_evm::ExecutionWitnessRecord;
 use base_execution_trie::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
@@ -20,7 +21,6 @@ use rand_08::{RngCore, SeedableRng, rngs::StdRng};
 use reth_primitives_traits::Account;
 use reth_provider::{AccountReader, StateReadProvider, noop::NoopProvider};
 use reth_trie_common::ExecutionWitnessMode;
-use revm::{Database, database::State};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;
@@ -168,7 +168,7 @@ fn read_accounts_and_storage_with_state<DB>(
     fixture: &WitnessReadFixture,
 ) -> usize
 where
-    State<DB>: revm::Database,
+    State<DB>: base_evm_handler::Database,
 {
     let mut reads = 0;
 

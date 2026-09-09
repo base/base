@@ -7,7 +7,7 @@ use base_common_rpc_types::{
 };
 use base_evm_context::{ContextTr, HaltReasonTr, ResultAndState};
 use base_evm_handler::FrameResult;
-use revm::{
+use base_evm_handler::{
     DatabaseRef, Inspector,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter},
 };

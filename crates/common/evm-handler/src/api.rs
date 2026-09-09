@@ -10,7 +10,7 @@ use base_state::DatabaseCommit;
 use revm_interpreter::InterpreterResult;
 use revm_state::EvmState;
 
-use crate::{Handler, MainnetHandler, PrecompileProvider, frame::EthFrame};
+use crate::{Handler, MainnetHandler, PrecompileProvider};
 
 /// Type alias for the result of transact_many_finalize to reduce type complexity.
 type TransactManyFinalizeResult<ExecutionResult, State, Error> =
@@ -177,7 +177,7 @@ pub trait ExecuteCommitEvm: ExecuteEvm {
     }
 }
 
-impl<CTX, INSP, PRECOMPILES> ExecuteEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> ExecuteEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextTr + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -220,7 +220,7 @@ where
     }
 }
 
-impl<CTX, INSP, PRECOMPILES> ExecuteCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> ExecuteCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextTr<Db: DatabaseCommit> + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,

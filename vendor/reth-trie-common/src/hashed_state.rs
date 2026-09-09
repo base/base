@@ -5,13 +5,13 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{B256Map, HashMap, HashSet, hash_map},
 };
+use base_evm_handler::database::BundleAccount;
 use itertools::Itertools;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{FromParallelIterator, IntoParallelIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
 pub use rayon::*;
 use reth_primitives_traits::Account;
-use revm::database::BundleAccount;
 
 use crate::{
     MultiProofTargets, Nibbles,
@@ -987,8 +987,8 @@ impl Iterator for ChunkedHashedPostState {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Bytes;
-    use revm::{
-        database::{AccountStatus, StorageWithOriginalValues, StorageSlot},
+    use base_evm_handler::{
+        database::{AccountStatus, StorageSlot, StorageWithOriginalValues},
         state::{AccountInfo, Bytecode},
     };
 

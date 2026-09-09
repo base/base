@@ -7,7 +7,7 @@
 //! signature recovery.
 
 use alloy_primitives::{Address, U256};
-use revm::Database;
+use base_evm_handler::Database;
 
 /// A storage slot read during EIP-8130 authorization and its expected value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +91,7 @@ impl WatchManifest {
     /// otherwise-valid transaction. A successfully read absent payer is treated
     /// as an account with zero balance.
     ///
-    /// `revm::Database` requires mutable access for reads. These reads may warm
+    /// `base_evm_handler::Database` requires mutable access for reads. These reads may warm
     /// the EVM cache or add storage proofs in witness mode, but do not modify
     /// execution state.
     pub fn revalidate<DB: Database>(&self, db: &mut DB, now: u64) -> Result<(), ManifestStale> {
@@ -170,10 +170,10 @@ impl ManifestStale {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use revm::{
+    use base_evm_handler::{
         Database,
-        database::InMemoryDB,
         database::DBErrorMarker,
+        database::InMemoryDB,
         state::{AccountInfo, Bytecode},
     };
 

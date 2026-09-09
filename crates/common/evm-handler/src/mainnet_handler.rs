@@ -1,30 +1,26 @@
 use base_evm_context::{ContextTr, HaltReason};
-use revm_interpreter::interpreter_action::FrameInit;
 
 use super::{EvmTrError, Handler};
-use crate::{EvmTr, FrameResult, evm::FrameTr};
+use crate::EvmTr;
 
 /// Mainnet handler that implements the default [`Handler`] trait for the Evm.
 #[derive(Debug, Clone)]
-pub struct MainnetHandler<CTX, ERROR, FRAME> {
+pub struct MainnetHandler<CTX, ERROR> {
     /// Phantom data to hold the generic type parameters.
-    pub _phantom: core::marker::PhantomData<(CTX, ERROR, FRAME)>,
+    pub _phantom: core::marker::PhantomData<(CTX, ERROR)>,
 }
 
-impl<EVM, ERROR, FRAME> Handler for MainnetHandler<EVM, ERROR, FRAME>
+impl<EVM, ERROR> Handler for MainnetHandler<EVM, ERROR>
 where
-    EVM: EvmTr<Context: ContextTr, Frame = FRAME>,
+    EVM: EvmTr<Context: ContextTr>,
     ERROR: EvmTrError<EVM>,
-    // TODO `FrameResult` should be a generic trait.
-    // TODO `FrameInit` should be a generic.
-    FRAME: FrameTr<FrameResult = FrameResult, FrameInit = FrameInit>,
 {
     type Evm = EVM;
     type Error = ERROR;
     type HaltReason = HaltReason;
 }
 
-impl<CTX, ERROR, FRAME> Default for MainnetHandler<CTX, ERROR, FRAME> {
+impl<CTX, ERROR> Default for MainnetHandler<CTX, ERROR> {
     fn default() -> Self {
         Self { _phantom: core::marker::PhantomData }
     }

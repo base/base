@@ -14,6 +14,7 @@ use base_common_consensus::{BaseBlock, BlockHeader};
 use base_common_rpc_types_engine::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
+use base_evm_handler::interpreter::debug_unreachable;
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm::BaseEvmConfig;
 use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
@@ -41,7 +42,6 @@ use reth_storage_errors::provider::ProviderResult;
 use reth_storage_overlay::OverlayManager;
 use reth_tasks::{spawn_os_thread, utils::increase_thread_priority};
 use reth_trie::ComputedTrieData;
-use revm::interpreter::debug_unreachable;
 use state::TreeState;
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -435,7 +435,12 @@ where
         + TryIntoHistoricalStateProvider
         + 'static,
     P: ChangeSetReader,
-    reth_storage_overlay::OverlayStateProviderFactory<P>: reth_storage_api::DatabaseProviderROFactory<Provider: reth_trie::trie_cursor::TrieCursorFactory + reth_trie::hashed_cursor::HashedCursorFactory> + Clone + 'static,
+    reth_storage_overlay::OverlayStateProviderFactory<P>:
+        reth_storage_api::DatabaseProviderROFactory<
+                Provider: reth_trie::trie_cursor::TrieCursorFactory
+                              + reth_trie::hashed_cursor::HashedCursorFactory,
+            > + Clone
+            + 'static,
 {
     /// Creates a new [`EngineApiTreeHandler`].
     #[expect(clippy::too_many_arguments)]
@@ -3042,7 +3047,11 @@ where
         &mut self,
         block_id: BlockWithParent,
         input: Input,
-        execute: impl FnOnce(&mut BasicEngineValidator<P>, Input, TreeCtx<'_>) -> Result<ValidationOutput, Err>,
+        execute: impl FnOnce(
+            &mut BasicEngineValidator<P>,
+            Input,
+            TreeCtx<'_>,
+        ) -> Result<ValidationOutput, Err>,
         convert_to_block: impl FnOnce(&mut Self, Input) -> Result<SealedBlock, Err>,
     ) -> Result<InsertPayloadOk, Err>
     where

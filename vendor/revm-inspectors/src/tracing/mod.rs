@@ -3,7 +3,7 @@ use core::{borrow::Borrow, mem};
 
 use base_evm_context::{ContextTr, JournalTr, LocalContextTr};
 use base_evm_handler::JournalExt;
-use revm::{
+use base_evm_handler::{
     Inspector, JournalEntry,
     bytecode::{opcode, opcode::OpCode},
     interpreter::{

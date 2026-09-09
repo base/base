@@ -22,27 +22,28 @@ rustdoc-args = [
 
 [dependencies]
 either = { workspace = true }
+tracing = { workspace = true }
 auto_impl = { workspace = true }
+thiserror = { workspace = true }
 revm-state = { workspace = true }
-revm-bytecode = { workspace = true }
 base-state = { workspace = true }
+alloy-eips = { workspace = true }
+revm-bytecode = { workspace = true }
 revm-precompile = { workspace = true }
 revm-primitives = { workspace = true }
+alloy-hardforks = { workspace = true }
 base-evm-context = { workspace = true }
 revm-interpreter = { workspace = true }
-serde = { workspace = true, features = ["derive", "rc"], optional = true }
+alloy-primitives = { workspace = true }
 serde_json = { workspace = true, features = [
     "alloc",
     "preserve_order",
 ], optional = true }
-tracing = { workspace = true }
-thiserror = { workspace = true }
-alloy-eips = { workspace = true }
-alloy-hardforks = { workspace = true }
-alloy-primitives = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 base-common-rpc-types = { workspace = true, optional = true }
 base-common-consensus = {workspace = true, features = ["k256"]}
+serde = { workspace = true, features = ["derive", "rc"], optional = true }
+
 [dev-dependencies]
 alloy-signer = { workspace = true }
 base-common-network = { workspace = true }
@@ -61,7 +62,6 @@ serde = [
     "base-evm-context/serde",
     "revm-bytecode/serde",
     "base-state/serde",
-    "base-state/serde",
     "revm-interpreter/serde",
     "either/serde",
 ]
@@ -70,7 +70,6 @@ std = [
     "serde?/std",
     "revm-bytecode/std",
     "base-evm-context/std",
-    "base-state/std",
     "base-state/std",
     "revm-interpreter/std",
     "revm-precompile/std",
@@ -93,4 +92,34 @@ call-util = ["overrides"]
 gmp = ["revm-precompile/gmp"]
 overrides = ["dep:base-common-rpc-types"]
 rpc = ["dep:base-common-rpc-types"]
-secp256k1 = ["std", "base-common-consensus/secp256k1"]
+secp256k1 = ["revm-precompile/secp256k1"]
+alloydb = ["base-state/alloydb"]
+arbitrary = ["revm-primitives/arbitrary"]
+asyncdb = ["base-state/asyncdb"]
+blst = ["revm-precompile/blst"]
+bn = ["revm-precompile/bn"]
+c-kzg = ["revm-precompile/c-kzg"]
+dev = [
+    "memory_limit",
+    "optional_balance_check",
+    "optional_block_gas_limit",
+    "optional_eip3541",
+    "optional_eip3607",
+    "optional_eip7623",
+    "optional_no_base_fee",
+]
+hashbrown = ["revm-interpreter/hashbrown", "revm-precompile/hashbrown"]
+map-foldhash = ["revm-primitives/map-foldhash"]
+memory_limit = ["base-evm-context/memory_limit", "revm-interpreter/memory_limit"]
+optional_balance_check = ["base-evm-context/optional_balance_check"]
+optional_block_gas_limit = ["base-evm-context/optional_block_gas_limit"]
+optional_eip3541 = ["base-evm-context/optional_eip3541"]
+optional_eip3607 = ["base-evm-context/optional_eip3607"]
+optional_eip7623 = ["base-evm-context/optional_eip7623"]
+optional_fee_charge = ["base-evm-context/optional_fee_charge"]
+optional_no_base_fee = ["base-evm-context/optional_no_base_fee"]
+optional_priority_fee_check = ["base-evm-context/optional_priority_fee_check"]
+p256-aws-lc-rs = ["revm-precompile/p256-aws-lc-rs"]
+parse = ["revm-bytecode/parse"]
+portable = ["revm-precompile/portable"]
+sha3-keccak = ["revm-primitives/sha3-keccak"]

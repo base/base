@@ -10,7 +10,7 @@ pub type BaseError<DB> = EVMError<<DB as Database>::Error, BaseTransactionError>
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use revm::{
+    use base_evm_handler::{
         ExecuteEvm, SystemCallEvm,
         database::{InMemoryDB, State},
     };

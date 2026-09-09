@@ -9,6 +9,7 @@ use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_consensus::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
+use base_evm_handler::database::PlainStorageRevert;
 use base_execution_chainspec::BaseChainSpec;
 use reth_chain_state::{BlockState, CanonicalInMemoryState};
 use reth_db_api::models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices};
@@ -24,7 +25,6 @@ use reth_storage_api::{
     TryIntoHistoricalStateProvider,
 };
 use reth_storage_errors::provider::ProviderResult;
-use revm::database::PlainStorageRevert;
 
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{
@@ -1471,6 +1471,7 @@ mod tests {
 
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
+    use base_evm_handler::database::BundleState;
     use itertools::Itertools;
     use rand::Rng;
     use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
@@ -1481,7 +1482,6 @@ mod tests {
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
-    use revm::database::BundleState;
 
     use crate::{
         BlockWriter, providers::blockchain_provider::BlockchainProvider,

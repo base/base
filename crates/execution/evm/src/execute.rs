@@ -13,16 +13,16 @@ pub use base_evm_handler::{
 use base_evm_handler::{
     CommitChanges, Evm, EvmEnv, EvmFactory, ExecutableTxParts, RecoveredTx, ToTxEnv,
 };
+use base_evm_handler::{
+    database::{BundleRetention, BundleState, State},
+    state::bal::Bal,
+};
 use reth_execution_types::BlockExecutionResult;
 pub use reth_execution_types::{BlockExecutionOutput, ExecutionOutcome};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_storage_api::StateProvider;
 pub use reth_storage_errors::provider::ProviderError;
 use reth_trie_common::{HashedPostState, updates::TrieUpdates};
-use revm::{
-    database::{BundleState, State, BundleRetention},
-    state::bal::Bal,
-};
 
 use crate::{Database, OnStateHook, TxEnvFor};
 
@@ -643,7 +643,7 @@ mod tests {
     use core::marker::PhantomData;
 
     use base_common_consensus::BaseReceipt;
-    use revm::database::{CacheDB, EmptyDB};
+    use base_evm_handler::database::{CacheDB, EmptyDB};
 
     use super::*;
 

@@ -1,4 +1,5 @@
-use crate::evm::FrameTr;
+use crate::FrameResult;
+use revm_interpreter::interpreter_action::FrameInit;
 
 /// Represents either an item or a result.
 #[derive(Clone, Debug)]
@@ -48,5 +49,4 @@ impl<ITEM, RES> ItemOrResult<ITEM, RES> {
 }
 
 /// Type alias for frame initialization or result.
-pub type FrameInitOrResult<FRAME> =
-    ItemOrResult<<FRAME as FrameTr>::FrameInit, <FRAME as FrameTr>::FrameResult>;
+pub type FrameInitOrResult = ItemOrResult<FrameInit, FrameResult>;

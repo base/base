@@ -11,10 +11,10 @@ use base_common_consensus::{
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_evm_context::BlockEnv;
+use base_evm_handler::database::BundleState;
 use base_evm_handler::{BlockExecutionResult, EvmFactory};
 use base_proof_mpt::{TrieHinter, ordered_trie_with_encoder};
 use base_protocol::OutputRoot;
-use revm::database::BundleState;
 
 use super::StatelessL2Builder;
 use crate::{

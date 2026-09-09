@@ -16,6 +16,7 @@ use base_common_consensus::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, TxReceipt,
     transaction::{SignerRecoverable, TransactionMeta},
 };
+use base_evm_handler::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -53,7 +54,6 @@ use reth_trie::{
     ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
-use revm::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
 
@@ -3521,6 +3521,7 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
     use base_common_consensus::Header;
+    use base_evm_handler::{database::BundleState, state::AccountInfo};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use reth_chain_state::ExecutedBlock;
     #[cfg(feature = "partial-persistence")]
@@ -3533,7 +3534,6 @@ mod tests {
     use reth_trie::{
         HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
     };
-    use revm::{database::BundleState, state::AccountInfo};
 
     use super::*;
     use crate::{
@@ -4435,8 +4435,8 @@ mod tests {
 
     #[test]
     fn test_write_state_and_historical_read_hashed() {
+        use base_evm_handler::{database::BundleState, state::AccountInfo};
         use reth_trie::HashedPostState;
-        use revm::{database::BundleState, state::AccountInfo};
 
         let factory = create_test_provider_factory();
         factory.set_storage_settings_cache(StorageSettings::v2());

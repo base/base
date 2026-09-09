@@ -41,7 +41,7 @@ impl TxContext {
 mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_evm_handler::PrecompilesMap;
-    use revm::precompile::Precompiles;
+    use base_evm_handler::precompile::Precompiles;
 
     use crate::{TxContext, TxContextStorage};
 

@@ -3,8 +3,8 @@ use std::io::{self, Write};
 
 use alloy_primitives::{Address, B256, U256, address, hex, map::HashMap};
 use anstyle::{AnsiColor, Color, Style};
+use base_evm_handler::interpreter::InstructionResult;
 use colorchoice::ColorChoice;
-use revm::interpreter::InstructionResult;
 
 use super::{
     CallTraceArena,

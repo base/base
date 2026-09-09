@@ -15,7 +15,7 @@ use base_common_rpc_types::{
     CreateOutput, CreationMethod, GethDefaultTracingOptions, SelfdestructAction, StructLog,
     TraceOutput, TransactionTrace,
 };
-use revm::{
+use base_evm_handler::{
     bytecode::{opcode, opcode::OpCode},
     interpreter::{CallScheme, CreateScheme, InstructionResult},
 };
@@ -791,7 +791,7 @@ pub enum StorageChangeReason {
 /// Represents a storage change during execution.
 ///
 /// This maps to evm internals:
-/// [JournalEntry::StorageChanged](revm::JournalEntry::StorageChanged)
+/// [JournalEntry::StorageChanged](base_evm_handler::JournalEntry::StorageChanged)
 ///
 /// It is used to track both storage change and warm load of a storage slot. For warm load in regard
 /// to EIP-2929 AccessList had_value will be None.
@@ -810,7 +810,7 @@ pub struct StorageChange {
 
 /// Represents the memory captured during execution
 ///
-/// This is a wrapper around the [SharedMemory](revm::interpreter::SharedMemory) context memory.
+/// This is a wrapper around the [SharedMemory](base_evm_handler::interpreter::SharedMemory) context memory.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RecordedMemory(pub(crate) Bytes);
@@ -882,6 +882,7 @@ mod opcode_serde {
         D: Deserializer<'de>,
     {
         let op = u8::deserialize(deserializer)?;
-        Ok(OpCode::new(op).unwrap_or_else(|| OpCode::new(revm::bytecode::opcode::INVALID).unwrap()))
+        Ok(OpCode::new(op)
+            .unwrap_or_else(|| OpCode::new(base_evm_handler::bytecode::opcode::INVALID).unwrap()))
     }
 }

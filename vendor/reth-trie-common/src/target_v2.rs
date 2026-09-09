@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{B256, keccak256, map::B256Map};
-use revm::state::EvmState;
+use base_evm_handler::state::EvmState;
 
 use crate::Nibbles;
 

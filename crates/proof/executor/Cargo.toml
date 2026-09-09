@@ -14,7 +14,6 @@ workspace = true
 normal = ["getrandom"]
 
 [dependencies]
-revm = { workspace = true }
 tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
@@ -23,8 +22,9 @@ alloy-trie = { workspace = true }
 base-protocol = { workspace = true }
 base-proof-mpt = { workspace = true }
 base-common-evm = { workspace = true }
-base-evm-context = { workspace = true }
 base-evm-handler = { workspace = true }
+base-evm-context = { workspace = true }
+
 base-common-genesis = { workspace = true }
 serde_json = { workspace = true, optional = true }
 alloy-transport = { workspace = true, optional = true }
@@ -57,7 +57,7 @@ std = [
     "base-proof-mpt/std",
     "base-protocol/std",
     "getrandom_0_2_17/std",
-    "revm/std",
+    "base-evm-handler/std",
     "serde?/std",
     "serde_json?/std",
     "thiserror/std",

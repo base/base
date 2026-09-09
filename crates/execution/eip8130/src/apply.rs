@@ -31,8 +31,8 @@ use base_common_consensus::{
     AccountChangeChannel, ChangeType, CreateEntry, Eip8130Constants, Eip8130Contracts,
     InitialActor, SignedChange,
 };
+use base_evm_handler::state::Bytecode;
 use base_precompile_storage::{BasePrecompileError, StorageCtx};
-use revm::state::Bytecode;
 
 use crate::{AccountConfigurationEvents, AccountConfigurationStorage, AccountState, ActorConfig};
 
@@ -1081,8 +1081,8 @@ impl AccountChangeApplier {
 mod tests {
     use alloy_primitives::{LogData, address, b256};
     use alloy_sol_types::SolEvent;
+    use base_evm_handler::state::Bytecode;
     use base_precompile_storage::{HashMapStorageProvider, PrecompileStorageProvider, StorageCtx};
-    use revm::state::Bytecode;
 
     use super::*;
     use crate::{AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied};

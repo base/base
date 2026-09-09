@@ -89,7 +89,7 @@ base-execution-evm = { workspace = true, features = ["default", "std", "rpc"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt-multi-thread"] }
-revm = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
+base-evm-handler = { workspace = true, features = ["secp256k1", "blst", "c-kzg", "memory_limit", "p256-aws-lc-rs"] }
 
 [dev-dependencies]
 reth-trie = { workspace = true }
@@ -143,7 +143,7 @@ required-features = ["test-utils"]
 
 [features]
 default = ["reth-codec"]
-asm-keccak = ["alloy-primitives/asm-keccak", "reth-node-core/asm-keccak", "revm/asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "reth-node-core/asm-keccak", "base-evm-handler/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global", "reth-node-core/keccak-cache-global"]
 js-tracer = ["reth-rpc-eth-types/js-tracer", "base-execution-rpc/js-tracer"]
 test-utils = [

@@ -25,9 +25,7 @@ use base_state::DatabaseCommit;
 use revm_interpreter::InterpreterResult;
 use revm_primitives::{Address, Bytes, TxKind, address, eip8037};
 
-use crate::{
-    ExecuteCommitEvm, ExecuteEvm, Handler, MainnetHandler, PrecompileProvider, frame::EthFrame,
-};
+use crate::{ExecuteCommitEvm, ExecuteEvm, Handler, MainnetHandler, PrecompileProvider};
 
 /// The system address used for system calls.
 pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
@@ -227,7 +225,7 @@ pub trait SystemCallCommitEvm: SystemCallEvm + ExecuteCommitEvm {
     }
 }
 
-impl<CTX, INSP, PRECOMPILES> SystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> SystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextTr<Tx: SystemCallTx> + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -245,7 +243,7 @@ where
     }
 }
 
-impl<CTX, INSP, PRECOMPILES> SystemCallCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> SystemCallCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextTr<Db: DatabaseCommit, Tx: SystemCallTx> + ContextSetters,
     PRECOMPILES: PrecompileProvider<CTX, Output = InterpreterResult>,

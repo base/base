@@ -4,8 +4,8 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{HashMap, HashSet},
 };
+use base_evm_handler::{Database, state::EvmState};
 use base_execution_txpool::{PredicateContext, ValidityPredicate};
-use revm::{Database, state::EvmState};
 
 /// Location that currently blocks a parked validity predicate.
 ///
@@ -217,11 +217,11 @@ pub struct StateChangeEffects {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, map::HashSet};
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
-    use revm::{
+    use base_evm_handler::{
         database::InMemoryDB,
         state::{Account, EvmState, EvmStorageSlot},
     };
+    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
 
     use super::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
 

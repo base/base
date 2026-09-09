@@ -1,7 +1,7 @@
 //! Accelerated precompile runner for the host program.
 
 use alloy_primitives::{Address, Bytes};
-use revm::{precompile, precompile::Precompile};
+use base_evm_handler::{precompile, precompile::Precompile};
 
 use crate::{HostError, Result};
 

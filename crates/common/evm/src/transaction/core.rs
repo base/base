@@ -5,8 +5,8 @@ use alloc::vec;
 use alloy_eips::Encodable2718;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_evm_context::{Transaction, TxEnv};
+use base_evm_handler::primitives::{Address, B256, Bytes, TxKind, U256};
 use base_evm_handler::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, SystemCallTx};
-use revm::primitives::{Address, B256, Bytes, TxKind, U256};
 
 use crate::{
     BaseTransactionBuilder, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
@@ -366,7 +366,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use base_common_consensus::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
     use base_evm_context::Transaction;
-    use revm::primitives::{Address, B256, Bytes};
+    use base_evm_handler::primitives::{Address, B256, Bytes};
 
     use super::*;
 
@@ -386,7 +386,7 @@ mod tests {
         // The tx_type is derived from the transaction structure, not set manually
         // Verify common fields access
         assert_eq!(base_tx.gas_limit(), 10);
-        assert_eq!(base_tx.kind(), revm::primitives::TxKind::Call(Address::ZERO));
+        assert_eq!(base_tx.kind(), base_evm_handler::primitives::TxKind::Call(Address::ZERO));
         // Verify gas related calculations - deposit transactions use gas_price for effective gas price
         assert_eq!(base_tx.effective_gas_price(90), 100);
         assert_eq!(base_tx.max_fee_per_gas(), 100);

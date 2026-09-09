@@ -4,6 +4,7 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
 use base_common_consensus::BlockHeader;
+use base_evm_handler::database::BundleState;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
@@ -14,7 +15,6 @@ use reth_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     TrieInput, updates::TrieUpdates,
 };
-use revm::database::BundleState;
 
 use super::ExecutedBlock;
 
@@ -309,8 +309,8 @@ reth_storage_api::macros::delegate_provider_impls!(MemoryOverlayStateProvider);
 #[cfg(test)]
 mod tests {
 
+    use base_evm_handler::database::{AccountStatus, BundleAccount};
     use reth_storage_api::noop::NoopProvider;
-    use revm::database::{AccountStatus, BundleAccount};
 
     use super::*;
 

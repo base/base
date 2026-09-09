@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use alloy_primitives::{Address, B256, LogData, U256};
 use base_evm_context::{GasParams, JournalCheckpoint};
-use revm::{
+use base_evm_handler::{
     interpreter::gas::{KECCAK256, KECCAK256WORD},
     state::{AccountInfo, Bytecode},
 };

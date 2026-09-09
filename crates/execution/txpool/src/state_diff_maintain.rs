@@ -6,9 +6,9 @@
 
 use alloy_primitives::{B256, U256};
 use base_common_precompiles::NonceManagerStorage;
+use base_evm_handler::database::BundleState;
 use futures::StreamExt;
 use reth_provider::CanonStateNotification;
-use revm::database::BundleState;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{debug, warn};
 
@@ -166,7 +166,7 @@ impl AccountStateDiff {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use revm::{
+    use base_evm_handler::{
         database::{BundleAccount, StorageSlot},
         primitives::HashMap,
         state::AccountInfo,
@@ -187,7 +187,7 @@ mod tests {
             info: present,
             original_info: original,
             storage: Default::default(),
-            status: revm::database::AccountStatus::Changed,
+            status: base_evm_handler::database::AccountStatus::Changed,
         };
         for (key, slot) in slots {
             account.storage.insert(key, slot);

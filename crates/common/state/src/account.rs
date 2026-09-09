@@ -111,7 +111,7 @@ base_common_consensus::impl_compression_for_compact!(Account);
 
 /// Bytecode for an account.
 ///
-/// A wrapper around [`revm::primitives::Bytecode`][RevmBytecode] with encoding/decoding support.
+/// A wrapper around [`base_evm_handler::primitives::Bytecode`][RevmBytecode] with encoding/decoding support.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deref)]
 pub struct Bytecode(pub RevmBytecode);

@@ -11,15 +11,15 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
-revm = {workspace = true}
 tracing = { workspace = true }
 thiserror = { workspace = true }
 base-proof = { workspace = true }
 base-protocol = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
+
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
 base-proof-preimage = { workspace = true }

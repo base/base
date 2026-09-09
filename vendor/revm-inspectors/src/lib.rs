@@ -1,4 +1,4 @@
-//! revm [Inspector](revm::Inspector) implementations, such as call tracers
+//! revm [Inspector](base_evm_handler::Inspector) implementations, such as call tracers
 //!
 //! ## Feature Flags
 //!

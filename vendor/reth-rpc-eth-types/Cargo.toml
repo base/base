@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 lru = { workspace = true }
-revm = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
 thiserror = { workspace = true }
@@ -64,6 +63,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 reth-primitives-traits = { workspace = true, features = ["rpc-compat"] }
 base-common-consensus = { workspace = true, features = ["reth", "serde"] }
 base-evm-handler = { workspace = true, features = ["overrides", "call-util"] }
+
 [dev-dependencies]
 reth-db-models = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }

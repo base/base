@@ -6,9 +6,9 @@ use base_common_evm::BaseSpecId;
 use base_common_rpc_types_engine::ExecutionData;
 use base_evm_context::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_evm_handler::EvmEnv;
+use base_evm_handler::primitives::hardfork::SpecId;
 use base_execution_chainspec::BaseChainSpec;
 use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
-use revm::primitives::hardfork::SpecId;
 
 use crate::BaseNextBlockEnvAttributes;
 

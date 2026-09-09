@@ -353,6 +353,7 @@ impl DatabaseHashedPostState for HashedPostStateSorted {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
+    use base_evm_handler::{database::BundleState, state::AccountInfo};
     use reth_db_api::{
         models::{AccountBeforeTx, BlockNumberAddress},
         tables,
@@ -362,7 +363,6 @@ mod tests {
     use reth_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
     use reth_storage_api::StorageSettingsCache;
     use reth_storage_errors::StateRootError;
-    use revm::{database::BundleState, state::AccountInfo};
 
     use super::*;
     use crate::{HashedPostState, HashedPostStateSorted, HashedStorage, StateRoot};

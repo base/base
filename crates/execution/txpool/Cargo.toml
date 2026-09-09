@@ -12,7 +12,6 @@ description = "Base Transaction Pool"
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 imbl = { workspace = true }
 bitflags = { workspace = true }
 smallvec = { workspace = true }
@@ -30,6 +29,7 @@ reth-provider = { workspace = true }
 base-common-flz = { workspace = true }
 base-common-evm = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 reth-chain-state = { workspace = true }
 base-common-genesis = { workspace = true }
@@ -108,7 +108,7 @@ serde = [
     "reth-primitives-traits/serde",
     "reth-chain-state/serde",
     "reth-storage-api/serde",
-    "revm/serde",
+    "base-evm-handler/serde",
 ]
 test-utils = [
     "rand",
@@ -132,5 +132,5 @@ arbitrary = [
     "bitflags/arbitrary",
     "reth-primitives-traits/arbitrary",
     "smallvec/arbitrary",
-    "revm/arbitrary",
+    "base-evm-handler/arbitrary",
 ]

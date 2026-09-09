@@ -30,11 +30,11 @@ path = "benches/js_tracer.rs"
 harness = false
 
 [dependencies]
-revm = { workspace = true }
 thiserror = { workspace = true }
 colorchoice = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-evm-handler = { workspace = true }
+
 base-evm-context = { workspace = true }
 base-common-rpc-types = {workspace = true}
 boa_gc = { workspace = true, optional = true }
@@ -58,13 +58,13 @@ js-tracer = [
 ]
 serde = [
     "dep:serde",
-    "revm/serde",
+    "base-evm-handler/serde",
 ]
 std = [
     "alloy-primitives/std",
     "anstyle/std",
     "serde/std",
     "serde_json/std",
-    "revm/std",
+    "base-evm-handler/std",
     "thiserror/std",
 ]

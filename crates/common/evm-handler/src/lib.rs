@@ -6,7 +6,6 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 extern crate self as base_evm_handler;
-pub extern crate self as revm;
 
 pub use base_evm_context::{Context, Journal, JournalEntry};
 pub use base_state as database;
@@ -35,7 +34,7 @@ mod machine;
 pub use machine::EvmMachine;
 
 mod evm;
-pub use evm::{ContextDbError, EvmTr, FrameInitResult, FrameTr};
+pub use evm::{ContextDbError, EvmTr, FrameInitResult};
 
 mod execution;
 pub use execution::*;

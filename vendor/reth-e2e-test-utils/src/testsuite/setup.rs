@@ -5,12 +5,12 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use base_common_rpc_types_engine::{ForkchoiceState, PayloadAttributes};
+use base_evm_handler::state::EvmState;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::{Result, eyre};
 use reth_engine_primitives::TreeConfig;
 use reth_node_core::primitives::RecoveredBlock;
-use revm::state::EvmState;
 use tokio::{
     sync::mpsc,
     time::{Duration, sleep},

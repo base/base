@@ -7,6 +7,10 @@ use alloy_primitives::{
     keccak256,
     map::{B256Map, HashMap},
 };
+use base_evm_handler::{
+    database::BundleState,
+    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
+};
 use derive_more::Constructor;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
@@ -25,10 +29,6 @@ use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
-};
-use revm::{
-    database::BundleState,
-    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 
 use crate::{

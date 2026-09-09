@@ -12,6 +12,7 @@ use std::{
 use alloy_primitives::{Address, B256, U256};
 use base_cli_utils::ChainSpecParser;
 use base_common_consensus::{BlockHeader, TxReceipt};
+use base_evm_handler::database::{AccountInfoRevert, BundleState, RevertToSlot};
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_evm::Executor;
 use clap::Parser;
@@ -24,9 +25,6 @@ use reth_provider::{
 };
 use reth_stages::stages::calculate_gas_used_from_headers;
 use reth_storage_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
-use revm::database::{
-    BundleState, AccountInfoRevert, RevertToSlot,
-};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
 

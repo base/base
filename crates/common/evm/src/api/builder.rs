@@ -1,8 +1,8 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
 use alloy_primitives::Address;
 use base_evm_context::FrameStack;
+use base_evm_handler::Database;
 use base_evm_handler::{EthFrame, EthInstructions, PrecompilesMap};
-use revm::Database;
 
 use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
 
@@ -26,7 +26,7 @@ pub trait Builder: Sized {
     }
 
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
-    /// so [`Inspector`][revm::Inspector] callbacks are never invoked via
+    /// so [`Inspector`][base_evm_handler::Inspector] callbacks are never invoked via
     /// [`base_evm_handler::Evm::transact`].
     fn build_base(self) -> BaseEvm<Self::Db, (), PrecompilesMap> {
         self.build_base_with_activation_admin_address(None)
@@ -34,7 +34,7 @@ pub trait Builder: Sized {
 
     /// Builds a [`BaseEvm`] with a `()` inspector and an activation registry admin address.
     ///
-    /// The inspect flag is `false`, so [`Inspector`][revm::Inspector] callbacks are never invoked
+    /// The inspect flag is `false`, so [`Inspector`][base_evm_handler::Inspector] callbacks are never invoked
     /// via [`base_evm_handler::Evm::transact`].
     fn build_base_with_activation_admin_address(
         self,
@@ -46,12 +46,12 @@ pub trait Builder: Sized {
 
     /// Builds a [`BaseEvm`] with a `()` inspector and caller-supplied precompiles.
     ///
-    /// The inspect flag is `false`, so [`Inspector`][revm::Inspector] callbacks are never invoked
+    /// The inspect flag is `false`, so [`Inspector`][base_evm_handler::Inspector] callbacks are never invoked
     /// via [`base_evm_handler::Evm::transact`].
     fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<Self::Db, (), P>;
 
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
-    /// so [`Inspector`][revm::Inspector] callbacks are invoked on every
+    /// so [`Inspector`][base_evm_handler::Inspector] callbacks are invoked on every
     /// [`base_evm_handler::Evm::transact`] call.
     fn build_with_inspector<INSP>(
         self,
@@ -62,7 +62,7 @@ pub trait Builder: Sized {
 
     /// Builds a [`BaseEvm`] with the given inspector and activation registry admin address.
     ///
-    /// The inspect flag is `true`, so [`Inspector`][revm::Inspector] callbacks are invoked on every
+    /// The inspect flag is `true`, so [`Inspector`][base_evm_handler::Inspector] callbacks are invoked on every
     /// [`base_evm_handler::Evm::transact`] call.
     fn build_with_inspector_and_activation_admin_address<INSP>(
         self,
@@ -75,7 +75,7 @@ pub trait Builder: Sized {
 
     /// Builds a [`BaseEvm`] with the given inspector and caller-supplied precompiles.
     ///
-    /// The inspect flag is `true`, so [`Inspector`][revm::Inspector] callbacks are invoked on every
+    /// The inspect flag is `true`, so [`Inspector`][base_evm_handler::Inspector] callbacks are invoked on every
     /// [`base_evm_handler::Evm::transact`] call.
     fn build_with_inspector_and_precompiles<INSP, P>(
         self,
@@ -135,13 +135,13 @@ mod tests {
         IActivationRegistry, PolicyRegistryStorage,
     };
     use base_evm_context::{CfgEnv, TxEnv};
-    use base_evm_handler::{EvmTr, NoOpInspector};
-    use revm::{
+    use base_evm_handler::{
         Context, DatabaseRef, ExecuteEvm,
         bytecode::Bytecode,
         primitives::{Bytes, StorageKey, StorageValue, TxKind},
         state::AccountInfo,
     };
+    use base_evm_handler::{EvmTr, NoOpInspector};
 
     use super::*;
     use crate::{BaseTransaction, BaseUpgrade, BerylPrecompileMetricsObserver, DefaultBase};

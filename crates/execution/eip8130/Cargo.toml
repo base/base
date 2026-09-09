@@ -15,9 +15,9 @@ workspace = true
 
 [dependencies]
 sha2 = { workspace = true }
-revm = { workspace = true }
 thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-handler = { workspace = true }
 alloy-primitives = { workspace = true }
 base-precompile-macros = { workspace = true }
 base-precompile-storage = { workspace = true }

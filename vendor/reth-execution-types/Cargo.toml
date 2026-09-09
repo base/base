@@ -15,10 +15,10 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 alloy-eips = { workspace = true }
-reth-trie-common = { workspace = true }
 base-evm-handler = { workspace = true }
+reth-trie-common = { workspace = true }
+
 reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -40,7 +40,7 @@ default = ["std"]
 serde = [
     "dep:serde",
     "rand/serde",
-    "revm/serde",
+    "base-evm-handler/serde",
     "alloy-eips/serde",
     "alloy-primitives/serde",
     "reth-primitives-traits/serde",
@@ -58,7 +58,7 @@ serde-bincode-compat = [
 std = [
     "alloy-eips/std",
     "alloy-primitives/std",
-    "revm/std",
+    "base-evm-handler/std",
     "serde?/std",
     "reth-primitives-traits/std",
     "base-common-consensus/std",

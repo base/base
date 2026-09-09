@@ -1346,7 +1346,7 @@ pub fn ensure_intrinsic_gas(
     transaction: &crate::BasePooledTransaction,
     fork_tracker: &ForkTracker,
 ) -> Result<(), InvalidPoolTransactionError> {
-    use revm::primitives::hardfork::SpecId;
+    use base_evm_handler::primitives::hardfork::SpecId;
     let spec_id = if fork_tracker.is_amsterdam_activated() {
         SpecId::AMSTERDAM
     } else if fork_tracker.is_prague_activated() {
@@ -1367,7 +1367,7 @@ pub fn ensure_intrinsic_gas(
         }
     });
 
-    let gas = revm::interpreter::gas::calculate_initial_tx_gas(
+    let gas = base_evm_handler::interpreter::gas::calculate_initial_tx_gas(
         spec_id,
         transaction.input(),
         transaction.is_create(),
@@ -1396,9 +1396,9 @@ mod tests {
     };
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
     use base_common_consensus::Transaction;
+    use base_evm_handler::primitives::eip3860::MAX_INITCODE_SIZE;
     use reth_primitives_traits::SignedTransaction;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use revm::primitives::eip3860::MAX_INITCODE_SIZE;
 
     use super::*;
     use crate::{

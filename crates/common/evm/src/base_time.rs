@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_chains::Upgrades;
 use base_common_consensus::Predeploys;
-use revm::{
+use base_evm_handler::{
     DatabaseCommit,
     database::Database,
     primitives::{HashMap, U256, uint},
@@ -131,10 +131,11 @@ impl BaseTime {
         implementation_info.code_hash = code.hash_slow();
         implementation_info.code = Some(code);
 
-        let mut implementation_account: revm::state::Account = implementation_info.into();
+        let mut implementation_account: base_evm_handler::state::Account =
+            implementation_info.into();
         implementation_account.mark_touch();
 
-        let mut proxy_account: revm::state::Account = proxy_info.into();
+        let mut proxy_account: base_evm_handler::state::Account = proxy_info.into();
         proxy_account.storage.insert(
             Self::IMPLEMENTATION_SLOT,
             EvmStorageSlot::new_changed(
@@ -185,7 +186,7 @@ mod tests {
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{address, keccak256};
     use base_common_genesis::BaseUpgrade;
-    use revm::{database::InMemoryDB, state::AccountInfo};
+    use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
 
     use super::*;
 

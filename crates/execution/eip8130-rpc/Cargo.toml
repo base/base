@@ -14,15 +14,15 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
 reth-provider = { workspace = true }
 base-common-evm = { workspace = true }
 jsonrpsee-types = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
+
 reth-rpc-eth-types = { workspace = true }
 base-execution-rpc = { workspace = true }
 base-common-consensus = { workspace = true }

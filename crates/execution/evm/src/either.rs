@@ -53,7 +53,7 @@ where
         state: F,
     ) -> Result<BlockExecutionOutput, Self::Error>
     where
-        F: FnMut(&revm::database::State<DB>),
+        F: FnMut(&base_evm_handler::database::State<DB>),
     {
         match self {
             Self::Left(a) => a.execute_with_state_closure(block, state),
@@ -61,7 +61,7 @@ where
         }
     }
 
-    fn into_state(self) -> revm::database::State<DB> {
+    fn into_state(self) -> base_evm_handler::database::State<DB> {
         match self {
             Self::Left(a) => a.into_state(),
             Self::Right(b) => b.into_state(),

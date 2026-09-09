@@ -1299,6 +1299,9 @@ fn write_trie_debug_recorders(block_number: u64, recorders: &[(Option<B256>, Tri
 mod tests {
     use alloy_primitives::{Address, U256, map::HashMap};
     use base_common_consensus::constants::KECCAK_EMPTY;
+    use base_evm_handler::state::{
+        AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId,
+    };
     use base_execution_chainspec::BaseChainSpec;
     use base_execution_evm::OnStateHook;
     use rand::Rng;
@@ -1312,7 +1315,6 @@ mod tests {
     use reth_storage_overlay::{OverlayManager, OverlayStateProviderFactory};
     use reth_testing_utils::generators;
     use reth_trie::test_utils::state_root;
-    use revm::state::{AccountInfo, AccountStatus, EvmState, EvmStorageSlot, TransactionId};
 
     use super::*;
 
@@ -1393,7 +1395,7 @@ mod tests {
                     }
                 }
 
-                let mut account = revm::state::Account::default();
+                let mut account = base_evm_handler::state::Account::default();
                 account.info = AccountInfo {
                     balance: U256::from(rng.random::<u64>()),
                     nonce: rng.random::<u64>(),

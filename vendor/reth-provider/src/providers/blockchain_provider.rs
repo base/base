@@ -1008,6 +1008,7 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
     use base_common_consensus::{BaseReceipt, constants::EMPTY_ROOT_HASH};
+    use base_evm_handler::database::{BundleState, OriginalValuesKnown};
     use base_execution_chainspec::BaseChainSpec;
     use itertools::Itertools;
     use rand::Rng;
@@ -1035,7 +1036,6 @@ mod tests {
         self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };
     use reth_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
-    use revm::database::{BundleState, OriginalValuesKnown};
 
     use super::SNAPSHOT_STATE_RETENTION;
     use crate::{

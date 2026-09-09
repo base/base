@@ -736,6 +736,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256, address, hex_literal::hex, keccak256};
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
+    use base_evm_handler::database::{AccountStatus, BundleAccount};
     use base_execution_chainspec::BaseChainSpecBuilder;
     use base_execution_consensus::BaseBeaconConsensus;
     use reth_db_api::{
@@ -752,7 +753,6 @@ mod tests {
     use reth_prune_types::{PruneMode, ReceiptsLogPruneConfig};
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators;
-    use revm::database::{AccountStatus, BundleAccount};
 
     use super::*;
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;

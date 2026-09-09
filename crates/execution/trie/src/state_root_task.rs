@@ -11,10 +11,10 @@ use std::{fmt, sync::Arc};
 
 use alloy_primitives::{B256, keccak256, map::B256Map};
 use base_evm_handler::OnStateHook;
+use base_evm_handler::state::EvmState;
 use reth_trie::{
     HashedPostState, HashedStorage, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates,
 };
-use revm::state::EvmState;
 use tracing::trace;
 
 use crate::state_root_error::StateRootTaskError;
@@ -534,7 +534,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, U256};
-    use revm::state::{Account, EvmStorageSlot, TransactionId};
+    use base_evm_handler::state::{Account, EvmStorageSlot, TransactionId};
 
     use super::*;
 

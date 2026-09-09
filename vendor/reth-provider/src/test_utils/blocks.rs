@@ -9,10 +9,10 @@ use alloy_primitives::{
 use base_common_consensus::{
     BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header, TxLegacy,
 };
+use base_evm_handler::{database::BundleState, state::AccountInfo};
 use reth_db_api::{database::Database, models::StoredBlockBodyIndices, tables};
 use reth_primitives_traits::{Account, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_trie::root::{state_root_unhashed, storage_root_unhashed};
-use revm::{database::BundleState, state::AccountInfo};
 
 use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};
 

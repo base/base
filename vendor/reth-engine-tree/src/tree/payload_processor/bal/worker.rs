@@ -4,11 +4,11 @@ use alloy_eip7928::BlockAccessIndex;
 use alloy_primitives::Address;
 use base_common_consensus::Transaction;
 use base_evm_handler::{BlockExecutionError, BlockExecutor, BlockExecutorFactory, Evm};
+use base_evm_handler::{database::State, state::bal::Bal as RevmBal};
 use base_execution_evm::{
     BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
 };
 use crossbeam_channel::{Receiver, Sender};
-use revm::{database::State, state::bal::Bal as RevmBal};
 
 use super::BalExecutionError;
 

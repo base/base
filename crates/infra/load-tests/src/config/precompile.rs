@@ -1,4 +1,4 @@
-use revm::precompile::PrecompileId;
+use base_evm_handler::precompile::PrecompileId;
 use serde::{Deserialize, Serialize};
 
 /// Typed precompile target for load test configuration.

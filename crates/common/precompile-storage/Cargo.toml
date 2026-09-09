@@ -13,13 +13,13 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
+
 base-precompile-macros = { workspace = true }
 derive_more = { workspace = true, features = ["from", "try_into"] }
 [dev-dependencies]
@@ -37,7 +37,7 @@ std = [
     "alloy-primitives/std",
     "alloy-sol-types/std",
     "derive_more/std",
-    "revm/std",
+    "base-evm-handler/std",
     "thiserror/std",
     "tracing/std",
 ]

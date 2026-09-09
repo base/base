@@ -12,7 +12,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 tower = { workspace = true }
 either = { workspace = true }
 dashmap = { workspace = true }
@@ -35,9 +34,10 @@ alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
+base-evm-handler = { workspace = true }
 alloy-primitives = { workspace = true }
 reth-chain-state = { workspace = true }
-base-evm-handler = { workspace = true }
+
 reth-payload-util = { workspace = true }
 reth-cli-commands = { workspace = true }
 base-node-context = { workspace = true }

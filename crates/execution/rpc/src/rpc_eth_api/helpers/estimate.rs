@@ -5,6 +5,10 @@ use base_common_network::TransactionBuilder;
 use base_common_rpc_types::{BaseTransactionRequest, BlockId, state::EvmOverrides};
 use base_evm_context::{Block, Cfg, ExecutionResult, Transaction};
 use base_evm_handler::{apply_block_overrides, apply_state_overrides};
+use base_evm_handler::{
+    database::{EvmDatabaseError, State},
+    primitives::KECCAK_EMPTY,
+};
 use base_execution_evm::{
     BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
 };
@@ -13,10 +17,6 @@ use reth_rpc_eth_types::{BaseEthApiError, EthApiError, RpcInvalidTransactionErro
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use reth_storage_api::StateProvider;
 use reth_storage_errors::provider::ProviderError;
-use revm::{
-    database::{EvmDatabaseError, State},
-    primitives::KECCAK_EMPTY,
-};
 use tracing::trace;
 
 use crate::BaseEthApi;

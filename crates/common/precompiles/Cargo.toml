@@ -13,11 +13,11 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
+
 base-common-genesis = { workspace = true }
 base-precompile-macros = { workspace = true }
 base-precompile-storage = { workspace = true }
@@ -65,20 +65,20 @@ std = [
     "base-common-chains/std",
     "base-common-genesis/std",
     "base-precompile-storage/std",
-    "revm/std",
+    "base-evm-handler/std",
 ]
-bn = [ "revm/bn" ]
-blst = [ "revm/blst" ]
-c-kzg = [ "revm/c-kzg" ]
-portable = [ "revm/portable" ]
-secp256k1 = [ "revm/secp256k1" ]
-memory_limit = [ "revm/memory_limit" ]
-optional_no_base_fee = [ "revm/optional_no_base_fee" ]
-optional_eip3541 = [ "revm/optional_eip3541" ]
-optional_eip3607 = [ "revm/optional_eip3607" ]
-optional_fee_charge = [ "revm/optional_fee_charge" ]
-optional_balance_check = [ "revm/optional_balance_check" ]
-optional_block_gas_limit = [ "revm/optional_block_gas_limit" ]
+bn = [ "base-evm-handler/bn" ]
+blst = [ "base-evm-handler/blst" ]
+c-kzg = [ "base-evm-handler/c-kzg" ]
+portable = [ "base-evm-handler/portable" ]
+secp256k1 = [ "base-evm-handler/secp256k1" ]
+memory_limit = [ "base-evm-handler/memory_limit" ]
+optional_no_base_fee = [ "base-evm-handler/optional_no_base_fee" ]
+optional_eip3541 = [ "base-evm-handler/optional_eip3541" ]
+optional_eip3607 = [ "base-evm-handler/optional_eip3607" ]
+optional_fee_charge = [ "base-evm-handler/optional_fee_charge" ]
+optional_balance_check = [ "base-evm-handler/optional_balance_check" ]
+optional_block_gas_limit = [ "base-evm-handler/optional_block_gas_limit" ]
 test-utils = [
     "base-common-chains/test-utils",
     "base-common-genesis/test-utils",

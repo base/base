@@ -12,7 +12,6 @@ description = "Core library for Base network load testing and benchmarking"
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
@@ -25,6 +24,7 @@ alloy-signer = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-tx-manager = { workspace = true }
+base-evm-handler = { workspace = true }
 alloy-primitives = { workspace = true }
 tracing-indicatif = { workspace = true }
 base-common-precompiles = { workspace = true }

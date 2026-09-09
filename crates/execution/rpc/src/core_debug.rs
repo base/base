@@ -16,6 +16,10 @@ use base_common_rpc_types::{
     GethTraceResult as TraceResult, Index, StateContext, state::EvmOverrides,
 };
 use base_evm_handler::{BlockEnvironment, Evm};
+use base_evm_handler::{
+    Database, DatabaseCommit,
+    database::{BundleRetention, State},
+};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
 use base_execution_txpool::TransactionPool;
@@ -36,10 +40,6 @@ use reth_tasks::{Runtime, pool::BlockingTaskGuard};
 use reth_trie_common::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, root::storage_root_unsorted,
     updates::TrieUpdates,
-};
-use revm::{
-    Database, DatabaseCommit,
-    database::{State, BundleRetention},
 };
 use revm_inspectors::tracing::{DebugInspector, TransactionContext};
 use serde::{Deserialize, Serialize};
@@ -1261,13 +1261,13 @@ impl Default for BadBlockStore {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, keccak256};
-    use reth_db_api::{tables, transaction::DbTxMut};
-    use reth_primitives_traits::StorageEntry;
-    use reth_provider::test_utils::create_test_provider_factory;
-    use revm::{
+    use base_evm_handler::{
         database::{AccountStatus, BundleAccount, BundleState, StorageSlot},
         state::AccountInfo as RevmAccountInfo,
     };
+    use reth_db_api::{tables, transaction::DbTxMut};
+    use reth_primitives_traits::StorageEntry;
+    use reth_provider::test_utils::create_test_provider_factory;
 
     use super::*;
 

@@ -3,7 +3,7 @@ use alloc::{vec, vec::Vec};
 use alloy_primitives::{Address, B256, Log, LogData, U256, address, b256};
 use alloy_sol_types::SolValue;
 use base_evm_context::{ContextTr, JournalTr};
-use revm::{
+use base_evm_handler::{
     Database, Inspector,
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme},
 };

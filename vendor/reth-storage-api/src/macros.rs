@@ -62,7 +62,7 @@ macro_rules! delegate_provider_impls {
                 fn witness(&self, input: reth_trie::TrieInput, target: reth_trie::HashedPostState, mode: reth_trie::ExecutionWitnessMode) -> reth_storage_api::errors::provider::ProviderResult<Vec<alloy_primitives::Bytes>>;
             }
             HashedPostStateProvider $(where [$($generics)*])? {
-                fn hashed_post_state(&self, bundle_state: &revm::database::BundleState) -> reth_storage_api::errors::provider::ProviderResult<reth_trie::HashedPostState>;
+                fn hashed_post_state(&self, bundle_state: &base_evm_handler::database::BundleState) -> reth_storage_api::errors::provider::ProviderResult<reth_trie::HashedPostState>;
             }
         );
         $crate::impl_state_database!([$($($generics)*)?] $target where []);
@@ -78,14 +78,14 @@ pub use delegate_provider_impls;
 #[macro_export]
 macro_rules! impl_state_database {
     ([$($generics:tt)*] $target:ty where [$($bounds:tt)*]) => {
-        impl<$($generics)*> revm::DatabaseRef for $target where $($bounds)* {
+        impl<$($generics)*> base_evm_handler::DatabaseRef for $target where $($bounds)* {
             type Error = $crate::errors::provider::ProviderError;
 
-            fn basic_ref(&self, address: alloy_primitives::Address) -> Result<Option<revm::state::AccountInfo>, Self::Error> {
+            fn basic_ref(&self, address: alloy_primitives::Address) -> Result<Option<base_evm_handler::state::AccountInfo>, Self::Error> {
                 Ok($crate::AccountReader::basic_account(self, &address)?.map(Into::into))
             }
 
-            fn code_by_hash_ref(&self, hash: alloy_primitives::B256) -> Result<revm::bytecode::Bytecode, Self::Error> {
+            fn code_by_hash_ref(&self, hash: alloy_primitives::B256) -> Result<base_evm_handler::bytecode::Bytecode, Self::Error> {
                 Ok($crate::BytecodeReader::bytecode_by_hash(self, &hash)?.unwrap_or_default().0)
             }
 
@@ -106,23 +106,23 @@ macro_rules! impl_state_database {
 #[macro_export]
 macro_rules! impl_read_only_database {
     ([$($generics:tt)*] $target:ty where [$($bounds:tt)*]) => {
-        impl<$($generics)*> revm::Database for $target where $($bounds)* {
-            type Error = <Self as revm::DatabaseRef>::Error;
+        impl<$($generics)*> base_evm_handler::Database for $target where $($bounds)* {
+            type Error = <Self as base_evm_handler::DatabaseRef>::Error;
 
-            fn basic(&mut self, address: alloy_primitives::Address) -> Result<Option<revm::state::AccountInfo>, Self::Error> {
-                revm::DatabaseRef::basic_ref(self, address)
+            fn basic(&mut self, address: alloy_primitives::Address) -> Result<Option<base_evm_handler::state::AccountInfo>, Self::Error> {
+                base_evm_handler::DatabaseRef::basic_ref(self, address)
             }
 
-            fn code_by_hash(&mut self, hash: alloy_primitives::B256) -> Result<revm::bytecode::Bytecode, Self::Error> {
-                revm::DatabaseRef::code_by_hash_ref(self, hash)
+            fn code_by_hash(&mut self, hash: alloy_primitives::B256) -> Result<base_evm_handler::bytecode::Bytecode, Self::Error> {
+                base_evm_handler::DatabaseRef::code_by_hash_ref(self, hash)
             }
 
             fn storage(&mut self, address: alloy_primitives::Address, key: alloy_primitives::U256) -> Result<alloy_primitives::U256, Self::Error> {
-                revm::DatabaseRef::storage_ref(self, address, key)
+                base_evm_handler::DatabaseRef::storage_ref(self, address, key)
             }
 
             fn block_hash(&mut self, number: u64) -> Result<alloy_primitives::B256, Self::Error> {
-                revm::DatabaseRef::block_hash_ref(self, number)
+                base_evm_handler::DatabaseRef::block_hash_ref(self, number)
             }
         }
     };
@@ -131,10 +131,10 @@ macro_rules! impl_read_only_database {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256};
+    use base_evm_handler::Database;
     use mockall::predicate::eq;
     use reth_primitives_traits::{Account, Bytecode};
     use reth_storage_errors::provider::{ProviderError, ProviderResult};
-    use revm::Database;
 
     use crate::{AccountReader, BlockHashReader, BytecodeReader, StateReadProvider};
 
@@ -174,7 +174,7 @@ mod tests {
         reads.expect_block_hash().with(eq(10)).once().returning(|_| Ok(None));
         let mut db = reads;
         assert_eq!(db.basic(address).unwrap(), Some(account.into()));
-        assert_eq!(db.code_by_hash(hash).unwrap(), revm::bytecode::Bytecode::default());
+        assert_eq!(db.code_by_hash(hash).unwrap(), base_evm_handler::bytecode::Bytecode::default());
         assert_eq!(Database::storage(&mut db, address, slot).unwrap(), U256::ZERO);
         assert_eq!(Database::block_hash(&mut db, 10).unwrap(), B256::ZERO);
     }

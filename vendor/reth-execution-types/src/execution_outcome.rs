@@ -6,12 +6,12 @@ use alloy_primitives::{
     map::{AddressMap, B256Map, HashMap},
 };
 use base_common_consensus::{BaseReceipt, TxReceipt};
-use reth_primitives_traits::{Account, Bytecode, StorageEntry};
-use reth_trie_common::HashedPostState;
-use revm::{
+use base_evm_handler::{
     database::{BundleAccount, BundleState},
     state::AccountInfo,
 };
+use reth_primitives_traits::{Account, Bytecode, StorageEntry};
+use reth_trie_common::HashedPostState;
 
 use crate::{BlockExecutionOutput, BlockExecutionResult};
 
@@ -416,7 +416,7 @@ pub(super) mod serde_bincode_compat {
     use alloy_primitives::{BlockNumber, Bytes};
     use alloy_rlp::Decodable;
     use base_common_consensus::BaseReceipt;
-    use revm::database::BundleState;
+    use base_evm_handler::database::BundleState;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 

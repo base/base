@@ -12,16 +12,16 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 jsonrpsee = { workspace = true }
 derive_more = { workspace = true }
 base-bundles = { workspace = true }
 revm-bytecode = { workspace = true }
 reth-provider = { workspace = true }
 base-common-evm = { workspace = true }
+base-evm-handler = { workspace = true }
 base-evm-context = { workspace = true }
 alloy-primitives = { workspace = true }
-base-evm-handler = { workspace = true }
+
 reth-primitives-traits = { workspace = true }
 base-common-precompiles = { workspace = true }
 serde = { workspace = true, features = ["std"] }
@@ -33,11 +33,11 @@ base-common-consensus = { workspace = true, features = ["std"]}
 base-execution-evm = { workspace = true, features = ["default"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 [dev-dependencies]
-revm = { workspace = true }
 serde_json = { workspace = true }
 revm-bytecode = { workspace = true }
 reth-db-common = { workspace = true }
 alloy-sol-types = { workspace = true }
+base-evm-handler = { workspace = true }
 base-common-network = { workspace = true }
 url = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }

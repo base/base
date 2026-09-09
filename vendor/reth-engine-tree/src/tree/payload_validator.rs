@@ -114,6 +114,7 @@ use base_common_consensus::{
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
 };
+use base_evm_handler::database::{BundleAccount, BundleRetention, State};
 use base_evm_handler::{BlockExecutionError, Evm};
 use base_execution_consensus::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm::{
@@ -146,7 +147,6 @@ use reth_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
-use revm::database::{BundleAccount, State, BundleRetention};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 
 pub use crate::tree::types::ValidationOutcome;
@@ -1132,7 +1132,7 @@ where
         E: BlockExecutor<Receipt = BaseReceipt, Evm: base_evm_handler::Evm<DB = &'a mut State<DB>>>,
         Tx: base_evm_handler::ExecutableTx<E> + base_evm_handler::RecoveredTx<InnerTx>,
         InnerTx: TxHashRef,
-        DB: revm::Database + 'a,
+        DB: base_evm_handler::Database + 'a,
         Err: core::error::Error + Send + Sync + 'static,
     {
         let mut senders = Vec::with_capacity(transaction_count);

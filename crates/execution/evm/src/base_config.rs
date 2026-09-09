@@ -16,6 +16,10 @@ use base_common_rpc_types_engine::ExecutionData;
 use base_evm_handler::{
     BlockExecutionError, BlockExecutorFactory, BlockExecutorFor, Database, EvmFactory, IntoTxEnv,
 };
+use base_evm_handler::{
+    database::State,
+    primitives::{Address, B256, Bytes as RevmBytes},
+};
 use base_execution_chainspec::BaseChainSpec;
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
@@ -24,10 +28,6 @@ use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
 use reth_storage_errors as _;
 #[cfg(feature = "std")]
 use reth_storage_errors::any::AnyError;
-use revm::{
-    database::State,
-    primitives::{Address, B256, Bytes as RevmBytes},
-};
 
 #[cfg(feature = "std")]
 use crate::ExecutableTxIterator;
@@ -396,17 +396,17 @@ mod tests {
     use base_common_genesis::BaseUpgrade;
     use base_evm_context::{BlockEnv, CfgEnv};
     use base_evm_handler::NoOpInspector;
-    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use reth_execution_types::{
-        AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
-    };
-    use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
-    use revm::{
+    use base_evm_handler::{
         database::EmptyDBTyped,
         database::{BundleState, CacheDB},
         primitives::Log,
         state::AccountInfo,
     };
+    use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
+    use reth_execution_types::{
+        AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
+    };
+    use reth_primitives_traits::{Account, RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
 
     use super::BaseEvmConfig;
     use crate::{EvmEnv, execute::ProviderError};

@@ -13,9 +13,7 @@ use base_evm_context::{
     Transaction,
 };
 use base_evm_handler::JournalExt;
-pub use boa_engine::vm::RuntimeLimits;
-use boa_engine::{Context, JsError, JsObject, JsResult, JsValue, Source, js_string};
-use revm::{
+use base_evm_handler::{
     DatabaseRef, Inspector,
     bytecode::OpCode,
     database::WrapDatabaseRef,
@@ -24,6 +22,8 @@ use revm::{
         Interpreter, InterpreterAction, InterpreterResult, Stack,
     },
 };
+pub use boa_engine::vm::RuntimeLimits;
+use boa_engine::{Context, JsError, JsObject, JsResult, JsValue, Source, js_string};
 
 use crate::tracing::{
     CallInputExt, TransactionContext,
@@ -759,7 +759,7 @@ mod tests {
     use alloy_primitives::{Address, bytes, hex};
     use base_evm_context::TxEnv;
     use base_evm_handler::InspectorEvmTr;
-    use revm::{
+    use base_evm_handler::{
         InspectEvm, MainBuilder, MainContext,
         database::CacheDB,
         database::EmptyDB,
@@ -822,7 +822,7 @@ mod tests {
 
         let insp = JsInspector::new(code.to_string(), serde_json::Value::Null).unwrap();
 
-        let mut evm = revm::Context::mainnet()
+        let mut evm = base_evm_handler::Context::mainnet()
             .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
             .with_db(db)
             .build_mainnet_with_inspector(insp);

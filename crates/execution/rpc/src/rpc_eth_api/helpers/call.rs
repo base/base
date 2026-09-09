@@ -15,6 +15,10 @@ use base_common_rpc_types::{
     state::{EvmOverrides, StateOverride},
 };
 use base_evm_context::{Block, Cfg, ResultAndState, Transaction};
+use base_evm_handler::{
+    Database, DatabaseCommit,
+    database::{EvmDatabaseError, State},
+};
 use base_evm_handler::{OverrideBlockHashes, apply_block_overrides, apply_state_overrides};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::{
@@ -30,10 +34,6 @@ use reth_rpc_eth_types::{
 };
 use reth_storage_api::{BlockIdReader, ProviderTx};
 use reth_storage_errors::provider::ProviderError;
-use revm::{
-    Database, DatabaseCommit,
-    database::{EvmDatabaseError, State},
-};
 use revm_inspectors::{access_list::AccessListInspector, transfer::TransferInspector};
 use tracing::{trace, warn};
 

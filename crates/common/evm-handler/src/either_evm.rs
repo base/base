@@ -66,7 +66,7 @@ where
         tx: impl crate::IntoTxEnv<Self::Tx>,
     ) -> Result<base_evm_context::ExecutionResult<Self::HaltReason>, Self::Error>
     where
-        Self::DB: revm::DatabaseCommit,
+        Self::DB: base_evm_handler::DatabaseCommit,
     {
         either::for_both!(self, evm => evm.transact_commit(tx))
     }

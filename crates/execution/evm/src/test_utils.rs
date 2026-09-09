@@ -1,6 +1,6 @@
 //! Helpers for testing.
 
-use revm::database::State;
+use base_evm_handler::database::State;
 
 use crate::execute::BasicBlockExecutor;
 

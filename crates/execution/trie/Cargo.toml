@@ -12,7 +12,6 @@ description = "Trie node storage for serving proofs in FP window fast"
 workspace = true
 
 [dependencies]
-revm = {workspace = true}
 serde = { workspace = true }
 thiserror = { workspace = true }
 auto_impl = { workspace = true }
@@ -20,7 +19,8 @@ alloy-eips = { workspace = true }
 derive_more = { workspace = true }
 base-metrics = { workspace = true }
 reth-provider = { workspace = true }
-base-evm-handler = {workspace = true}
+base-evm-handler = { workspace = true }
+
 reth-storage-api = { workspace = true }
 static_assertions = { workspace = true }
 reth-storage-errors = {workspace = true}

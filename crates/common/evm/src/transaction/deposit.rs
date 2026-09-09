@@ -1,6 +1,6 @@
 //! Contains Deposit transaction parts.
 pub use base_common_consensus::DEPOSIT_TX_TYPE_ID as DEPOSIT_TRANSACTION_TYPE;
-use revm::primitives::B256;
+use base_evm_handler::primitives::B256;
 
 /// Deposit transaction parts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl DepositTransactionParts {
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
-    use revm::primitives::b256;
+    use base_evm_handler::primitives::b256;
 
     use super::*;
 

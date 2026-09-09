@@ -7,13 +7,13 @@ use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_trie::{Nibbles, TrieAccount};
 use base_common_consensus::{EMPTY_ROOT_HASH, Header, Sealed};
-use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
-use revm::{
+use base_evm_handler::{
     Database,
     database::{BundleState, StorageSlot},
     primitives::{BLOCK_HASH_HISTORY, HashMap},
     state::{AccountInfo, Bytecode},
 };
+use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
 
 use crate::errors::{TrieDBError, TrieDBResult};
 
@@ -30,7 +30,7 @@ pub use traits::{NoopTrieDBProvider, TrieDBProvider};
 /// The [`TrieDB`] is intended to be wrapped by a [`State`], which is then used by [`revm`] to
 /// capture state transitions during block execution.
 ///
-/// [`State`]: revm::database::State
+/// [`State`]: base_evm_handler::database::State
 #[derive(Debug, Clone)]
 pub struct TrieDB<F, H>
 where
@@ -361,8 +361,8 @@ where
 mod tests {
     use alloy_primitives::{U256, b256};
     use base_common_consensus::Sealable;
+    use base_evm_handler::database::{AccountStatus, BundleAccount, StorageSlot as RvmStorageSlot};
     use base_proof_mpt::NoopTrieHinter;
-    use revm::database::{AccountStatus, BundleAccount, StorageSlot as RvmStorageSlot};
 
     use super::*;
 
@@ -423,7 +423,7 @@ mod tests {
     }
 
     fn bundle_with_account(address: Address, account: BundleAccount) -> BundleState {
-        let mut state = revm::primitives::HashMap::default();
+        let mut state = base_evm_handler::primitives::HashMap::default();
         state.insert(address, account);
         BundleState { state, ..Default::default() }
     }
@@ -498,7 +498,7 @@ mod tests {
         insert_account(&mut db, address);
 
         // Re-create the account with one new storage slot.
-        let mut storage = revm::primitives::HashMap::default();
+        let mut storage = base_evm_handler::primitives::HashMap::default();
         let slot_key = U256::from(1u64);
         storage.insert(slot_key, RvmStorageSlot::new_changed(U256::ZERO, U256::from(42u64)));
         let new_info =
@@ -555,7 +555,7 @@ mod tests {
         let address = Address::repeat_byte(0x08);
         insert_account(&mut db, address);
 
-        let mut storage = revm::primitives::HashMap::default();
+        let mut storage = base_evm_handler::primitives::HashMap::default();
         storage.insert(U256::from(1u64), RvmStorageSlot::new_changed(U256::from(5u64), U256::ZERO));
         let new_info =
             AccountInfo { balance: U256::from(1_000_000_000_000_000_000u64), ..Default::default() };

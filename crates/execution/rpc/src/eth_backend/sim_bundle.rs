@@ -12,6 +12,7 @@ use base_common_rpc_types::{
 };
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::{BlockEnvironment, apply_block_overrides};
+use base_evm_handler::{DatabaseCommit, DatabaseRef};
 use base_execution_evm::Evm;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
@@ -20,7 +21,6 @@ use reth_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use reth_storage_api::ProviderTx;
 use reth_tasks::pool::BlockingTaskGuard;
-use revm::{DatabaseCommit, DatabaseRef};
 use tracing::trace;
 
 use crate::BaseEthApi;

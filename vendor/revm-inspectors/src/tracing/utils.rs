@@ -7,7 +7,7 @@ use alloc::{
 
 use alloy_primitives::{Bytes, hex};
 use alloy_sol_types::{ContractError, GenericRevertReason};
-use revm::{
+use base_evm_handler::{
     DatabaseRef,
     interpreter::InstructionResult,
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
@@ -103,7 +103,7 @@ pub(crate) fn gas_used(spec: SpecId, spent: u64, refunded: u64) -> u64 {
 #[inline]
 pub(crate) fn load_account_code<DB: DatabaseRef>(
     db: DB,
-    db_acc: &revm::state::AccountInfo,
+    db_acc: &base_evm_handler::state::AccountInfo,
 ) -> Option<Bytes> {
     db_acc.code.as_ref().map(|code| code.original_bytes()).or_else(|| {
         if db_acc.code_hash == KECCAK_EMPTY {

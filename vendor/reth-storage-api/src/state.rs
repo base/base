@@ -4,11 +4,11 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, U256};
 use auto_impl::auto_impl;
 use base_common_consensus::constants::KECCAK_EMPTY;
+use base_evm_handler::database::BundleState;
 use reth_execution_types::ExecutionOutcome;
 use reth_primitives_traits::Bytecode;
 use reth_storage_errors::provider::ProviderResult;
 use reth_trie_common::HashedPostState;
-use revm::database::BundleState;
 
 use super::{
     AccountReader, BlockHashReader, BlockIdReader, StateProofProvider, StateRootProvider,
@@ -53,7 +53,7 @@ pub trait StateReadProvider:
     BlockHashReader
     + AccountReader
     + BytecodeReader
-    + revm::DatabaseRef<Error = reth_storage_errors::provider::ProviderError>
+    + base_evm_handler::DatabaseRef<Error = reth_storage_errors::provider::ProviderError>
 {
     /// Get storage of given account.
     fn storage(

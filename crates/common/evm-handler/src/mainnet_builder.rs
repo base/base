@@ -4,10 +4,10 @@ use base_state::EmptyDB;
 
 use revm_primitives::hardfork::SpecId;
 
-use crate::{EthPrecompiles, frame::EthFrame, instructions::EthInstructions};
+use crate::{EthPrecompiles, instructions::EthInstructions};
 
 /// Type alias for a mainnet EVM instance with standard Ethereum components.
-pub type MainnetEvm<CTX, INSP = ()> = EvmMachine<CTX, INSP, EthPrecompiles, EthFrame>;
+pub type MainnetEvm<CTX, INSP = ()> = EvmMachine<CTX, INSP, EthPrecompiles>;
 
 /// Type alias for a mainnet context with standard Ethereum environment types.
 pub type MainnetContext<DB> = Context<TxEnv, CfgEnv, DB, ()>;

@@ -10,16 +10,16 @@ use base_common_rpc_types::{
     state::StateOverride,
 };
 use base_evm_context::{Block, ExecutionResult};
+use base_evm_handler::{
+    Database,
+    primitives::{Address, Bytes, TxKind, U256},
+};
 use base_evm_handler::{PrecompilesMap, TxResult};
 use base_execution_evm::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm, HaltReasonFor};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 use reth_storage_api::{StateProvider, noop::NoopProvider};
-use revm::{
-    Database,
-    primitives::{Address, Bytes, TxKind, U256},
-};
 
 use crate::{EthApiError, error::ToRpcError};
 
@@ -594,8 +594,8 @@ mod tests {
         state::{AccountOverride, StateOverride},
     };
     use base_evm_handler::PrecompilesMap;
+    use base_evm_handler::precompile::Precompiles;
     use reth_primitives_traits::SealedHeader;
-    use revm::precompile::Precompiles;
 
     use super::{
         EthSimulateError, INTERNAL_ERROR_CODE, apply_precompile_overrides, sanitize_chain,

@@ -21,7 +21,7 @@
 //! only the reads a predicate check actually performs are counted.
 
 use alloy_primitives::{Address, B256, U256, map::HashSet};
-use revm::{
+use base_evm_handler::{
     Database,
     state::{AccountInfo, Bytecode},
 };
@@ -132,11 +132,11 @@ impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
-    use revm::{
+    use base_evm_handler::{
         database::{InMemoryDB, State},
         state::AccountInfo,
     };
+    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
 
     use super::{PredicateLoadTracker, PredicateReadRecorder};
     use crate::ValidityPredicateKey;

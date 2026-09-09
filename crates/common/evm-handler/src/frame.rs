@@ -18,7 +18,7 @@ use revm_primitives::{
 use revm_state::Bytecode;
 
 use crate::{
-    CallFrame, CreateFrame, FrameData, FrameResult, ItemOrResult, evm::FrameTr,
+    CallFrame, CreateFrame, FrameData, FrameResult, ItemOrResult,
     item_or_result::FrameInitOrResult, precompile_provider::PrecompileProvider,
 };
 
@@ -38,11 +38,6 @@ pub struct EthFrame {
     /// Whether the frame has been finished its execution.
     /// Frame is considered finished if it has been called and returned a result.
     pub is_finished: bool,
-}
-
-impl FrameTr for EthFrame {
-    type FrameResult = FrameResult;
-    type FrameInit = FrameInit;
 }
 
 impl Default for EthFrame {
@@ -374,7 +369,7 @@ impl EthFrame {
         &mut self,
         context: &mut CTX,
         next_action: InterpreterAction,
-    ) -> Result<FrameInitOrResult<Self>, ERROR> {
+    ) -> Result<FrameInitOrResult, ERROR> {
         // Run interpreter
 
         let mut interpreter_result = match next_action {

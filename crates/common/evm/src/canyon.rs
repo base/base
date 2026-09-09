@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_chains::Upgrades;
 use base_evm_handler::Database;
-use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
+use base_evm_handler::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// The address of the create2 deployer
 const CREATE_2_DEPLOYER_ADDR: Address = address!("0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
@@ -40,7 +40,7 @@ where
         acc_info.code = Some(Bytecode::new_raw(Bytes::from_static(&CREATE_2_DEPLOYER_BYTECODE)));
 
         // Convert the cache account back into a revm account and mark it as touched.
-        let mut revm_acc: revm::state::Account = acc_info.into();
+        let mut revm_acc: base_evm_handler::state::Account = acc_info.into();
         revm_acc.mark_touch();
 
         // Commit the create2 deployer account to the database.

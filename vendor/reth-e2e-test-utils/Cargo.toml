@@ -16,7 +16,6 @@ workspace = true
 
 [dependencies]
 url = { workspace = true }
-revm = { workspace = true }
 tokio = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
@@ -30,6 +29,7 @@ reth-provider = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-tokio-util = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-network-api = { workspace = true }
 reth-rpc-builder = { workspace = true }
 reth-stages-types = { workspace = true }

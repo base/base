@@ -6,7 +6,7 @@
 
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, LogData, U256, keccak256};
 use base_evm_context::JournalCheckpoint;
-use revm::{
+use base_evm_handler::{
     interpreter::gas::{KECCAK256, KECCAK256WORD},
     state::{AccountInfo, Bytecode},
 };

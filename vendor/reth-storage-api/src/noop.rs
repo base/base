@@ -526,7 +526,7 @@ impl StateProofProvider for NoopProvider {
 impl HashedPostStateProvider for NoopProvider {
     fn hashed_post_state(
         &self,
-        _bundle_state: &revm::database::BundleState,
+        _bundle_state: &base_evm_handler::database::BundleState,
     ) -> ProviderResult<HashedPostState> {
         Ok(HashedPostState::default())
     }

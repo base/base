@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes};
 use base_common_chains::Upgrades;
 use base_common_precompiles::NonceManagerStorage;
 use base_evm_handler::Database;
-use revm::{DatabaseCommit, primitives::HashMap, state::Bytecode};
+use base_evm_handler::{DatabaseCommit, primitives::HashMap, state::Bytecode};
 
 /// Single-byte code stub planted on otherwise code-less EIP-8130 system accounts.
 ///
@@ -68,7 +68,7 @@ where
         acc_info.code_hash = stub_hash;
         acc_info.code = Some(stub.clone());
 
-        let mut revm_acc: revm::state::Account = acc_info.into();
+        let mut revm_acc: base_evm_handler::state::Account = acc_info.into();
         revm_acc.mark_touch();
         updates.insert(address, revm_acc);
     }
@@ -83,7 +83,7 @@ where
 #[cfg(test)]
 mod tests {
     use base_common_genesis::{BaseUpgrade, RollupConfig};
-    use revm::{database::InMemoryDB, state::AccountInfo};
+    use base_evm_handler::{database::InMemoryDB, state::AccountInfo};
 
     use super::*;
 

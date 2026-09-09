@@ -9,14 +9,14 @@ use alloy_primitives::{Address, Bytes, U256};
 use base_common_rpc_types::AccountState;
 use base_evm_context::{ContextTr, TransactTo, TxEnv};
 use base_evm_handler::InspectorEvmTr;
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use revm::{
+use base_evm_handler::{
     InspectEvm, MainBuilder, MainContext,
     database::CacheDB,
     database::EmptyDB,
     primitives::hardfork::SpecId,
     state::{AccountInfo, Bytecode},
 };
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use revm_inspectors::tracing::js::JsInspector;
 use serde::Deserialize;
 
@@ -200,7 +200,10 @@ fn build_db_from_prestate(prestate: &BTreeMap<Address, AccountState>) -> CacheDB
     for (address, state) in prestate {
         let balance = state.balance.unwrap_or_default();
         let nonce = state.nonce.unwrap_or_default();
-        let code = state.code.as_ref().map(|code| revm::bytecode::Bytecode::new_raw(code.clone()));
+        let code = state
+            .code
+            .as_ref()
+            .map(|code| base_evm_handler::bytecode::Bytecode::new_raw(code.clone()));
 
         db.insert_account_info(
             *address,
@@ -271,7 +274,7 @@ fn run_trace(script: &str, contract: &Bytes, helper_contract: Option<&Bytes>) ->
     }
 
     let inspector = JsInspector::new(script.to_owned(), serde_json::Value::Null).unwrap();
-    let mut evm = revm::Context::mainnet()
+    let mut evm = base_evm_handler::Context::mainnet()
         .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
         .with_db(db)
         .build_mainnet_with_inspector(inspector);
@@ -294,7 +297,7 @@ fn run_trace(script: &str, contract: &Bytes, helper_contract: Option<&Bytes>) ->
 
 fn run_mainnet_aa_trace(script: &str, db: CacheDB<EmptyDB>) -> serde_json::Value {
     let inspector = JsInspector::new(script.to_owned(), serde_json::Value::Null).unwrap();
-    let mut evm = revm::Context::mainnet()
+    let mut evm = base_evm_handler::Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| cfg.spec = spec_id_from_block(MAINNET_AA_BLOCK_NUMBER))
         .modify_block_chained(|block| {

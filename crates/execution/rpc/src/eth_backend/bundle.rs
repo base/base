@@ -8,6 +8,7 @@ use base_common_consensus::{Transaction as _, transaction::TxHashRef};
 use base_common_rpc_types::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_evm_context::{Block, ResultAndState};
 use base_evm_handler::BlockEnvironment;
+use base_evm_handler::{DatabaseCommit, DatabaseRef};
 use base_execution_chainspec::ChainSpecProvider;
 use base_execution_evm::Evm;
 use base_execution_txpool::PoolPooledTx;
@@ -16,7 +17,6 @@ use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
 };
 use reth_tasks::pool::BlockingTaskGuard;
-use revm::{DatabaseCommit, DatabaseRef};
 
 use crate::{BaseEthApi, EthCallBundleApiServer};
 

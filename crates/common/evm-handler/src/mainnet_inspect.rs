@@ -14,11 +14,10 @@ use crate::{
 };
 
 // Implementing InspectorHandler for MainnetHandler.
-impl<EVM, ERROR> InspectorHandler for MainnetHandler<EVM, ERROR, EthFrame>
+impl<EVM, ERROR> InspectorHandler for MainnetHandler<EVM, ERROR>
 where
     EVM: InspectorEvmTr<
             Context: ContextTr,
-            Frame = EthFrame,
             Inspector: Inspector<<<Self as Handler>::Evm as EvmTr>::Context>,
         >,
     ERROR: EvmTrError<EVM>,
@@ -26,7 +25,7 @@ where
 }
 
 // Implementing InspectEvm for EvmMachine
-impl<CTX, INSP, PRECOMPILES> InspectEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> InspectEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextSetters + ContextTr,
     INSP: Inspector<CTX>,
@@ -45,7 +44,7 @@ where
 }
 
 // Implementing InspectCommitEvm for EvmMachine
-impl<CTX, INSP, PRECOMPILES> InspectCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> InspectCommitEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextSetters + ContextTr<Db: DatabaseCommit>,
     INSP: Inspector<CTX>,
@@ -54,7 +53,7 @@ where
 }
 
 // Implementing InspectSystemCallEvm for EvmMachine
-impl<CTX, INSP, PRECOMPILES> InspectSystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES, EthFrame>
+impl<CTX, INSP, PRECOMPILES> InspectSystemCallEvm for EvmMachine<CTX, INSP, PRECOMPILES>
 where
     CTX: ContextSetters + ContextTr<Tx: SystemCallTx>,
     INSP: Inspector<CTX>,
@@ -74,7 +73,7 @@ where
 }
 
 // Implementing InspectorEvmTr for EvmMachine
-impl<CTX, INSP, P> InspectorEvmTr for EvmMachine<CTX, INSP, P, EthFrame>
+impl<CTX, INSP, P> InspectorEvmTr for EvmMachine<CTX, INSP, P>
 where
     CTX: ContextTr + ContextSetters,
     P: PrecompileProvider<CTX, Output = InterpreterResult>,
@@ -88,7 +87,7 @@ where
         &Self::Context,
         &EthInstructions<Self::Context>,
         &Self::Precompiles,
-        &FrameStack<Self::Frame>,
+        &FrameStack<EthFrame>,
         &Self::Inspector,
     ) {
         let ctx = &self.ctx;
@@ -104,7 +103,7 @@ where
         &mut Self::Context,
         &mut EthInstructions<Self::Context>,
         &mut Self::Precompiles,
-        &mut FrameStack<Self::Frame>,
+        &mut FrameStack<EthFrame>,
         &mut Self::Inspector,
     ) {
         let ctx = &mut self.ctx;

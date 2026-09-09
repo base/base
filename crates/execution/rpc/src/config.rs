@@ -12,6 +12,7 @@ use alloy_primitives::Address;
 use base_common_chains::Upgrades;
 use base_common_consensus::BlockHeader;
 use base_evm_handler::Precompile;
+use base_evm_handler::database::EmptyDB;
 use base_execution_chainspec::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm::{BaseEvmConfig, Evm, PrecompilesMap};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
@@ -19,7 +20,6 @@ use reth_primitives_traits::header::HeaderMut;
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::BlockReaderIdExt;
 use reth_storage_errors::provider::ProviderError;
-use revm::database::EmptyDB;
 
 /// RPC endpoint support for [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910)
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]

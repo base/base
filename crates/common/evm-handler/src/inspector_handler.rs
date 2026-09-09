@@ -1,11 +1,12 @@
 use base_evm_context::{ContextTr, ExecutionResult, JournalCheckpoint, JournalEntry, JournalTr};
 use base_evm_handler::{
-    EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
+    EvmTr, FrameResult, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
 };
 use revm_interpreter::{
     FrameInput, GasTracker, Host, InitialAndFloorGas, InstructionResult, Interpreter,
     InterpreterAction,
     instructions::{GasTable, InstructionTable},
+    interpreter_action::FrameInit,
 };
 use revm_primitives::hints_util::cold_path;
 
@@ -116,7 +117,7 @@ where
     fn inspect_run_exec_loop(
         &mut self,
         evm: &mut Self::Evm,
-        first_frame_input: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameInit,
+        first_frame_input: FrameInit,
     ) -> Result<FrameResult, Self::Error> {
         let res = evm.inspect_frame_init(first_frame_input)?;
 

@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, B256, U256, keccak256};
+use base_evm_handler::database::BundleAccount;
 use reth_primitives_traits::Account;
 use reth_storage_errors::db::DatabaseError;
 use reth_trie_common::HashedPostState;
-use revm::database::BundleAccount;
 
 /// Implementation of hashed state cursor traits for the post state.
 mod post_state;
@@ -114,7 +114,7 @@ pub fn zero_destroyed_account_storage<'a>(
 
 #[cfg(test)]
 mod tests {
-    use revm::database::AccountStatus;
+    use base_evm_handler::database::AccountStatus;
 
     use super::*;
 

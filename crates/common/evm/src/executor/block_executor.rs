@@ -15,9 +15,9 @@ use base_evm_handler::{
     EthTxResult, Evm, ExecutableTx, GasOutput, RecoveredTx, StateDB, SystemCaller,
     post_block_balance_increments,
 };
+use base_evm_handler::{DatabaseCommit, database::DatabaseCommitExt};
 #[cfg(feature = "std")]
 use base_execution_eip8130::IntrinsicGas;
-use revm::{DatabaseCommit, database::DatabaseCommitExt};
 
 use crate::{
     BaseBlockExecutionCtx, BaseBlockExecutionError, BaseTime, BaseTransaction, BaseTxResult,
@@ -360,7 +360,7 @@ mod tests {
     use base_evm_handler::{
         BlockExecutorFactory, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap, ToTxEnv,
     };
-    use revm::{
+    use base_evm_handler::{
         Context,
         database::{CacheDB, EmptyDB, InMemoryDB},
         primitives::HashMap,
@@ -379,8 +379,9 @@ mod tests {
             base_common_chains::ChainConfig::mainnet().upgrades.clone(),
             BaseEvmFactory::default(),
         );
-        let mut db =
-            revm::database::State::builder().with_database(CacheDB::<EmptyDB>::default()).build();
+        let mut db = base_evm_handler::database::State::builder()
+            .with_database(CacheDB::<EmptyDB>::default())
+            .build();
         let evm = executor_factory.evm_factory().create_evm(&mut db, EvmEnv::default());
         let mut executor = executor_factory.create_executor(evm, BaseBlockExecutionCtx::default());
         let tx = Recovered::new_unchecked(
@@ -398,7 +399,9 @@ mod tests {
         let _ = executor.execute_transaction(&tx_with_encoded);
     }
 
-    fn prepare_jovian_db(da_footprint_gas_scalar: u16) -> revm::database::State<InMemoryDB> {
+    fn prepare_jovian_db(
+        da_footprint_gas_scalar: u16,
+    ) -> base_evm_handler::database::State<InMemoryDB> {
         const L1_BASE_FEE: U256 = uint!(1_U256);
         const L1_BLOB_BASE_FEE: U256 = uint!(2_U256);
         const L1_BASE_FEE_SCALAR: u64 = 3;
@@ -420,7 +423,9 @@ mod tests {
         operator_fee_and_da_footprint[18] = da_footprint_gas_scalar_bytes[0];
         let operator_fee_and_da_footprint_u256 = U256::from_be_bytes(operator_fee_and_da_footprint);
 
-        let mut db = revm::database::State::builder().with_database(InMemoryDB::default()).build();
+        let mut db = base_evm_handler::database::State::builder()
+            .with_database(InMemoryDB::default())
+            .build();
 
         db.insert_account_with_storage(
             Predeploys::L1_BLOCK_INFO,
@@ -442,12 +447,16 @@ mod tests {
     }
 
     fn build_executor<'a>(
-        db: &'a mut revm::database::State<InMemoryDB>,
+        db: &'a mut base_evm_handler::database::State<InMemoryDB>,
         base_chain_upgrades: &'a ChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
     ) -> BaseBlockExecutor<
-        BaseEvm<&'a mut revm::database::State<InMemoryDB>, NoOpInspector, PrecompilesMap>,
+        BaseEvm<
+            &'a mut base_evm_handler::database::State<InMemoryDB>,
+            NoOpInspector,
+            PrecompilesMap,
+        >,
         &'a ChainUpgrades,
     > {
         let ctx = Context::base()
@@ -713,7 +722,8 @@ mod tests {
             base_common_chains::ChainConfig::mainnet().upgrades.clone(),
             BaseEvmFactory::default(),
         );
-        let mut db = revm::database::State::builder().with_database(EmptyDB::default()).build();
+        let mut db =
+            base_evm_handler::database::State::builder().with_database(EmptyDB::default()).build();
         let evm = factory.evm_factory().create_evm(
             &mut db,
             EvmEnv {

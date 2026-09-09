@@ -11,19 +11,19 @@ use core::cell::RefCell;
 
 use alloy_primitives::{Address, B256, Bytes, U256};
 use base_evm_context::DBErrorMarker;
-use boa_engine::{
-    Context, JsArgs, JsError, JsNativeError, JsObject, JsResult, JsValue, js_string,
-    native_function::NativeFunction,
-    object::{FunctionObjectBuilder, builtins::JsUint8Array},
-};
-use boa_gc::{Finalize, Trace, empty_trace};
-use revm::{
+use base_evm_handler::{
     Database, DatabaseRef,
     bytecode::opcode::{OpCode, PUSH0, PUSH32},
     interpreter::{SharedMemory, Stack},
     primitives::KECCAK_EMPTY,
     state::{AccountInfo, Bytecode, EvmState},
 };
+use boa_engine::{
+    Context, JsArgs, JsError, JsNativeError, JsObject, JsResult, JsValue, js_string,
+    native_function::NativeFunction,
+    object::{FunctionObjectBuilder, builtins::JsUint8Array},
+};
+use boa_gc::{Finalize, Trace, empty_trace};
 
 use crate::tracing::{
     TransactionContext,
@@ -1435,8 +1435,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use base_evm_handler::{database::CacheDB, database::EmptyDB};
     use boa_engine::Source;
-    use revm::{database::CacheDB, database::EmptyDB};
 
     use super::*;
     use crate::tracing::js::builtins::{json_stringify, register_builtins, to_serde_value};

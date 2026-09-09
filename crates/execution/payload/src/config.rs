@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use revm::state::EvmState;
+use base_evm_handler::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
@@ -414,7 +414,7 @@ mod tests {
 
     use alloy_primitives::TxHash;
     use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
-    use revm::state::EvmState;
+    use base_evm_handler::state::EvmState;
 
     use super::*;
     use crate::{ResourceMeteringDimension, ResourceMeteringOperation};

@@ -127,7 +127,7 @@ mod tests {
     /// `Eip8130GasSchedule` primitive tripwire).
     #[test]
     fn gas_matches_evm_reference() {
-        assert_eq!(super::OUTPUT_WORD_GAS, revm::interpreter::gas::COPY);
+        assert_eq!(super::OUTPUT_WORD_GAS, base_evm_handler::interpreter::gas::COPY);
     }
 
     #[test]

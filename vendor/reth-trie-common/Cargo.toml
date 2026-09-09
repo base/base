@@ -16,8 +16,8 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-revm = { workspace = true }
 thiserror = { workspace = true }
+base-evm-handler = { workspace = true }
 reth-primitives-traits = { workspace = true }
 bytes = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
@@ -73,7 +73,7 @@ std = [
     "serde?/std",
     "serde_with?/std",
     "serde_json/std",
-    "revm/std",
+    "base-evm-handler/std",
     "base-common-consensus/std",
     "alloy-eips/std",
     "thiserror/std",
@@ -90,7 +90,7 @@ serde = [
     "base-common-rpc-types?/serde",
     "reth-primitives-traits/serde",
     "base-common-consensus/serde",
-    "revm/serde",
+    "base-evm-handler/serde",
     "alloy-eips/serde",
 ]
 reth-codec = ["dep:bytes", "dep:arrayvec"]
@@ -121,6 +121,6 @@ arbitrary = [
     "base-common-consensus/arbitrary",
     "base-common-rpc-types?/arbitrary",
     "alloy-eips/arbitrary",
-    "revm/arbitrary",
+    "base-evm-handler/arbitrary",
 ]
 rayon = ["dep:rayon"]

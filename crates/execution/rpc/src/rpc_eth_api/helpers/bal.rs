@@ -3,10 +3,10 @@ use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use base_common_consensus::BlockHeader;
 use base_common_rpc_types::BlockId;
+use base_evm_handler::database::State;
 use base_execution_evm::{BlockExecutor, Evm};
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError};
 use reth_storage_api::StateProviderFactory;
-use revm::database::State;
 
 use crate::BaseEthApi;
 

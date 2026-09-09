@@ -3,6 +3,10 @@
 use std::fmt::Debug;
 
 use alloy_primitives::keccak256;
+use base_evm_handler::{
+    database::BundleState,
+    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
+};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reth_primitives_traits::{Account, Bytecode};
 use reth_provider::{
@@ -18,10 +22,6 @@ use reth_trie::{
 use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
     MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
-};
-use revm::{
-    database::BundleState,
-    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
 };
 
 use crate::{

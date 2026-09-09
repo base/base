@@ -10,7 +10,7 @@ use alloc::string::ToString;
 use alloy_primitives::{Address, B256, Log, LogData, U256};
 use base_evm_context::{GasParams, JournalCheckpoint};
 use base_evm_handler::PrecompileInput;
-use revm::{
+use base_evm_handler::{
     interpreter::gas::{Gas, KECCAK256, KECCAK256WORD, LOG},
     primitives::keccak256,
     state::{AccountInfo, Bytecode},
@@ -382,7 +382,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, U256};
     use base_evm_context::GasParams;
     use base_evm_handler::{EthEvmContext, EvmInternals, PrecompileInput};
-    use revm::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
+    use base_evm_handler::{database::EmptyDB, primitives::hardfork::SpecId, state::Bytecode};
 
     use crate::{
         BytesLikeHandler, Handler, StorageCtx,

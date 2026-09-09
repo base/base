@@ -1,7 +1,7 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
 use base_common_genesis::BaseUpgrade;
 use base_evm_context::CfgEnv;
-use revm::{Context, MainContext, database::EmptyDB};
+use base_evm_handler::{Context, MainContext, database::EmptyDB};
 
 use crate::{BaseSpecId, BaseTransaction, L1BlockInfo};
 
@@ -26,7 +26,7 @@ impl DefaultBase for BaseContext<EmptyDB> {
 #[cfg(test)]
 mod tests {
     use base_evm_handler::NoOpInspector;
-    use revm::{ExecuteEvm, InspectEvm};
+    use base_evm_handler::{ExecuteEvm, InspectEvm};
 
     use super::*;
     use crate::Builder;

@@ -4,7 +4,7 @@
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use revm::{
+    use base_evm_handler::{
         precompile::{bn254, modexp, secp256r1},
         primitives::eip7823,
     };
