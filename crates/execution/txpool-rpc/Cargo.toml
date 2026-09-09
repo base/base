@@ -15,13 +15,15 @@ workspace = true
 serde = { workspace = true }
 tracing = { workspace = true }
 jsonrpsee = { workspace = true }
+async-trait = { workspace = true }
+base-metrics = { workspace = true }
 alloy-primitives = { workspace = true }
-base-node-runner = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-consensus = { workspace = true }
-reth-rpc-server-types = { workspace = true }
+metrics = { workspace = true, optional = true }
 base-execution-chainspec = { workspace = true }
 base-observability-events = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
 reth-storage-api = { workspace = true, features = ["default"] }
 base-common-chains = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
@@ -39,3 +41,6 @@ base-common-consensus = { workspace = true, features = ["reth"] }
 base-execution-chainspec = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 base-observability-events = { workspace = true, features = ["test-utils"] }
+
+[features]
+metrics = ["base-metrics/metrics", "dep:metrics"]

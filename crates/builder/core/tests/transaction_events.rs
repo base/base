@@ -6,7 +6,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
-    BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH},
 };
 use base_common_network::TransactionResponse;
@@ -16,9 +16,8 @@ use base_execution_txpool::{
 use base_observability_events::{TransactionEventCapture, TransactionEventType};
 
 fn validity_instance() -> LocalInstanceBuilder {
-    LocalInstanceBuilder::new(BuilderConfig::for_tests()).install_ext::<BuilderApiExtension>(
-        BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES),
-    )
+    LocalInstanceBuilder::new(BuilderConfig::for_tests())
+        .with_builder_rpc(BuilderApiConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES))
 }
 
 #[tokio::test]

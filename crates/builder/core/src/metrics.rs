@@ -3,9 +3,6 @@
 base_metrics::define_metrics! {
     base_builder,
     struct = BuilderMetrics,
-    #[describe("Shadow validity injection decisions")]
-    #[label(outcome)]
-    shadow_validity_injection_total: counter,
     #[describe("Time between unmetered payload inclusion and metering data arrival (milliseconds)")]
     metering_late_arrival_latency_ms: histogram,
     #[describe("Metering responses that arrived after unmetered payload inclusion")]

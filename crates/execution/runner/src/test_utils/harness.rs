@@ -49,6 +49,7 @@ pub struct PreparedBlock {
 /// Builder for configuring and launching a test harness.
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
+    rpc: base_node_core::BaseRpcServices,
     extensions: Vec<Box<dyn BaseNodeExtension>>,
     chain_spec: Option<Arc<BaseChainSpec>>,
 }
@@ -73,6 +74,24 @@ impl TestHarnessBuilder {
         self
     }
 
+    /// Configures sequencer transaction ingress.
+    pub fn with_builder_rpc(mut self, config: base_txpool_rpc::BuilderApiConfig) -> Self {
+        self.rpc.builder = Some(config);
+        self
+    }
+
+    /// Enables experimental validity transaction ingress.
+    pub fn with_validity(mut self, max_predicates: usize) -> Self {
+        self.rpc.validity = Some(max_predicates);
+        self
+    }
+
+    /// Configures bundle metering.
+    pub fn with_metering(mut self) -> Self {
+        self.rpc.metering = Some(base_metering::MeteringConfig::enabled());
+        self
+    }
+
     /// Set a custom chain spec for the test harness.
     ///
     /// If not provided, the default genesis is built programmatically.
@@ -90,7 +109,7 @@ impl TestHarnessBuilder {
             Arc::new(BaseChainSpec::from_genesis(genesis))
         });
 
-        let node = LocalNode::new(self.extensions, chain_spec).await?;
+        let node = LocalNode::new(self.extensions, self.rpc, chain_spec).await?;
         let engine = node.engine_api();
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;

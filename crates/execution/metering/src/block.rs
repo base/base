@@ -190,7 +190,7 @@ mod tests {
             .to(to)
             .value(1_000)
             .gas_limit(21_000)
-            .max_fee_per_gas(10)
+            .max_fee_per_gas(1_000_000_000)
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 
@@ -237,7 +237,7 @@ mod tests {
             .to(to_1)
             .value(1_000)
             .gas_limit(21_000)
-            .max_fee_per_gas(10)
+            .max_fee_per_gas(1_000_000_000)
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 
@@ -254,7 +254,7 @@ mod tests {
             .to(to_2)
             .value(2_000)
             .gas_limit(21_000)
-            .max_fee_per_gas(15)
+            .max_fee_per_gas(1_000_000_005)
             .max_priority_fee_per_gas(2)
             .into_eip1559();
 
@@ -314,7 +314,7 @@ mod tests {
             .to(Address::random())
             .value(1_000)
             .gas_limit(21_000)
-            .max_fee_per_gas(10)
+            .max_fee_per_gas(1_000_000_000)
             .max_priority_fee_per_gas(1)
             .into_eip1559();
 

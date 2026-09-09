@@ -7,11 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod ext;
-pub use ext::{BaseApiExtServer, MeteringStoreExt};
-
-mod extension;
-pub use extension::MeteringStoreExtension;
+pub use base_metering::{BaseApiExtServer, MeteringStoreExt};
 
 mod store;
 pub use store::{

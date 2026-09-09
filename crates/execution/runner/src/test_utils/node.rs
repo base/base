@@ -60,6 +60,7 @@ impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec.
     pub async fn new(
         extensions: Vec<Box<dyn BaseNodeExtension>>,
+        rpc: base_node_core::BaseRpcServices,
         chain_spec: Arc<BaseChainSpec>,
     ) -> Result<Self> {
         let exec = Runtime::test();
@@ -90,11 +91,13 @@ impl LocalNode {
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
+        let mut add_ons = base_node.add_ons_builder().build();
+        add_ons.rpc_add_ons.services = rpc;
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(exec.clone())
             .with_components(base_node.components().into_builder())
-            .with_add_ons(base_node.add_ons_builder().build())
+            .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
 
         let NodeHandle { node: node_handle, node_exit_future } = extensions

@@ -9,11 +9,9 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
-use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use eyre::{Context, Result, eyre};
 use reth_db::{ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments};
@@ -215,11 +213,16 @@ impl InProcessClient {
             Self::create_test_database(&db_path)?
         };
 
+        let mut add_ons = base_node.add_ons_builder().build();
+        add_ons.rpc_add_ons.services.sequencer = Some(config.builder_rpc_url.clone());
+        add_ons.rpc_add_ons.services.validity = config
+            .enable_experimental_validity_transactions
+            .then_some(base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES);
         let builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_components(base_node.components().into_builder())
-            .with_add_ons(base_node.add_ons_builder().build())
+            .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
 
         let mut extensions = Self::build_extensions(&config)?;
@@ -351,9 +354,6 @@ impl InProcessClient {
         // TxPool extension (tracing disabled for client)
 
         // TxPool RPC extension (management + status APIs)
-        let txpool_rpc_config =
-            TxPoolRpcConfig { sequencer_rpc: Some(config.builder_rpc_url.clone()) };
-        extensions.push(Box::new(TxPoolRpcExtension::from_config(txpool_rpc_config)));
 
         // TxPool tracing extension (tracing disabled for client)
         let txpool_config = TxpoolConfig {
@@ -365,14 +365,6 @@ impl InProcessClient {
 
         // TxForwarding extension (optional - forwards txs to builder RPC)
         if let Some(ref tx_fwd_config) = config.tx_forwarding_config {
-            if config.enable_experimental_validity_transactions
-                && tx_fwd_config.enabled
-                && !tx_fwd_config.builder_urls.is_empty()
-            {
-                extensions.push(Box::new(SendRawTransactionValidityExtension::from_config(
-                    DEFAULT_MAX_VALIDITY_PREDICATES,
-                )));
-            }
             extensions.push(Box::new(TxForwardingExtension::from_config(tx_fwd_config.clone())));
         }
 

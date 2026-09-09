@@ -4,8 +4,8 @@ use core::time::Duration;
 use std::path::PathBuf;
 
 use base_builder_core::{
-    BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    ShadowValidityConfig, SharedMeteringProvider,
+    BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig,
+    SharedMeteringProvider,
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
@@ -249,13 +249,13 @@ impl Args {
     /// # Errors
     ///
     /// Returns an error when shadow injection is enabled without validity transaction support.
-    pub fn builder_api_config(&self) -> eyre::Result<BuilderApiExtensionConfig> {
+    pub fn builder_api_config(&self) -> eyre::Result<BuilderApiConfig> {
         let shadow_validity = if self.shadow_validity_injection_enabled {
             ShadowValidityConfig::enabled(self.shadow_validity_injection_sample_rate_bps)?
         } else {
             ShadowValidityConfig::disabled()
         };
-        Ok(BuilderApiExtensionConfig::new(
+        Ok(BuilderApiConfig::new(
             self.enable_experimental_validity_transactions,
             self.experimental_validity_max_predicates,
         )

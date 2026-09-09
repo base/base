@@ -2,8 +2,7 @@
 use std::sync::Arc;
 
 use base_builder_cli::Args as BuilderArgs;
-use base_builder_core::{BlockServiceBuilder, BuilderApiExtension};
-use base_builder_metering::MeteringStoreExtension;
+use base_builder_core::BlockServiceBuilder;
 use base_cli_utils::CliRunner;
 use base_consensus_cli::{
     CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
@@ -16,7 +15,6 @@ use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
@@ -66,7 +64,6 @@ impl SequencerCommand {
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         let rollup_args = builder.rollup_args.clone();
-        let sequencer_rpc = rollup_args.sequencer.clone();
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config()?;
@@ -104,13 +101,10 @@ impl SequencerCommand {
                 .with_gas_limit_config(gas_limit_config)
                 .with_manifest_precheck_enabled(manifest_precheck_enabled)
                 .with_service_builder(BlockServiceBuilder::build(builder_config));
-            runner.install_ext::<MeteringStoreExtension>(metering_provider);
-            runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
-            runner.install_ext::<BuilderApiExtension>(builder_api_config);
+            runner.rpc.metering_store = Some(metering_provider);
+            runner.rpc.builder = Some(builder_api_config);
             if builder_api_config.accept_experimental_validity_transactions {
-                runner.install_ext::<SendRawTransactionValidityExtension>(
-                    builder_api_config.max_validity_predicates,
-                );
+                runner.rpc.validity = Some(builder_api_config.max_validity_predicates);
             }
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,

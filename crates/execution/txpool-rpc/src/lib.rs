@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod rpc;
+pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 pub use rpc::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, SendRawTransactionValidityOptions, Status,
@@ -15,8 +16,12 @@ pub use rpc::{
     VALIDITY_TX_PRE_ZENITH_RPC_ERROR,
 };
 
-mod extension;
-pub use extension::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
+mod builder_config;
+pub use builder_config::BuilderApiConfig;
+mod shadow_validity;
+pub use shadow_validity::{
+    InjectionOutcome, MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityBuilderApi,
+    ShadowValidityConfig, ShadowValidityConfigError,
 };
+mod metrics;
+pub use metrics::ValidityMetrics;

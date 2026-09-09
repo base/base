@@ -12,11 +12,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-tracing = { workspace = true }
-jsonrpsee = { workspace = true }
 base-bundles = { workspace = true }
+base-metering = { workspace = true }
 alloy-primitives = { workspace = true }
-base-node-runner = { workspace = true }
 moka = { workspace = true, features = ["default", "sync"] }
 base-builder-core = { workspace = true, features = ["default"] }
-[dev-dependencies]

@@ -229,6 +229,8 @@ impl fmt::Debug for RpcSetupContext<'_> {
 /// just before the servers are launched. This can be used to extend the node with custom RPC
 /// methods or even replace existing method handlers, see also [`TransportRpcModules`].
 pub struct RpcAddOns {
+    /// Runtime settings for Base RPC services.
+    pub services: crate::BaseRpcServices,
     /// Additional RPC add-ons.
     pub hooks: RpcHooks,
     /// Builder for `EthApi`
@@ -250,7 +252,12 @@ impl Debug for RpcAddOns {
 impl RpcAddOns {
     /// Creates a new instance of the RPC add-ons.
     pub fn new(eth_api_builder: BaseEthApiBuilder) -> Self {
-        Self { hooks: RpcHooks::default(), eth_api_builder, tokio_runtime: None }
+        Self {
+            services: Default::default(),
+            hooks: RpcHooks::default(),
+            eth_api_builder,
+            tokio_runtime: None,
+        }
     }
 
     /// Sets the tokio runtime for the RPC servers.
@@ -322,7 +329,7 @@ impl RpcAddOns {
     where
         F: FnOnce(RpcModuleContainer<'_>) -> eyre::Result<()>,
     {
-        let Self { eth_api_builder, hooks, .. } = self;
+        let Self { eth_api_builder, hooks, services, .. } = self;
 
         let AddOnsContext { node, config, beacon_engine_handle, engine_events } = ctx;
 
@@ -372,13 +379,14 @@ impl RpcAddOns {
             registry.eth_api().signers().write().extend(signers);
         }
 
-        let ctx = RpcContext {
+        let mut ctx = RpcContext {
             node: node.clone(),
             config,
             registry: &mut registry,
             modules: &mut modules,
         };
 
+        services.register(&mut ctx)?;
         let RpcHooks { on_rpc_started, extend_rpc_modules } = hooks;
 
         ext(RpcModuleContainer { modules: ctx.modules, registry: ctx.registry })?;

@@ -10,8 +10,8 @@
 mod block;
 pub use block::meter_block;
 
-mod extension;
-pub use extension::{MeteringConfig, MeteringExtension};
+mod config;
+pub use config::MeteringConfig;
 
 mod inspector;
 
@@ -29,3 +29,6 @@ pub use types::{MeterBlockResponse, MeterBlockTransactions};
 
 mod transaction;
 pub use transaction::{TxValidationError, validate_tx};
+
+mod store_rpc;
+pub use store_rpc::{BaseApiExtServer, MeteringStoreExt};

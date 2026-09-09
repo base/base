@@ -320,17 +320,13 @@ mod tests {
     use base_test_utils::Account;
 
     use super::*;
-    use crate::{MeteringConfig, MeteringExtension};
 
     fn create_bundle(txs: Vec<Bytes>) -> Bundle {
         Bundle { txs }
     }
 
     async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
-        let harness = TestHarness::builder()
-            .with_ext::<MeteringExtension>(MeteringConfig::enabled())
-            .build()
-            .await?;
+        let harness = TestHarness::builder().with_metering().build().await?;
         let client = harness.rpc_client()?;
         Ok((harness, client))
     }

@@ -1,14 +1,12 @@
-//! Builder API RPC extension for registering the `base_insertValidatedTransaction` endpoint.
+//! Sequencer transaction ingress settings.
 
-use base_execution_txpool::BuilderApiServer;
-pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
-use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 
-use crate::{ShadowValidityBuilderApi, ShadowValidityConfig, ShadowValidityConfigError};
+use crate::{ShadowValidityConfig, ShadowValidityConfigError};
 
 /// Builder RPC configuration for experimental validity-bearing transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BuilderApiExtensionConfig {
+pub struct BuilderApiConfig {
     /// Whether the builder accepts non-empty experimental validity metadata.
     pub accept_experimental_validity_transactions: bool,
     /// Maximum number of validity predicates accepted per transaction.
@@ -17,7 +15,7 @@ pub struct BuilderApiExtensionConfig {
     pub shadow_validity: ShadowValidityConfig,
 }
 
-impl BuilderApiExtensionConfig {
+impl BuilderApiConfig {
     /// Creates a builder RPC configuration.
     pub const fn new(
         accept_experimental_validity_transactions: bool,
@@ -47,36 +45,8 @@ impl BuilderApiExtensionConfig {
     }
 }
 
-impl Default for BuilderApiExtensionConfig {
+impl Default for BuilderApiConfig {
     fn default() -> Self {
         Self::new(false, DEFAULT_MAX_VALIDITY_PREDICATES)
-    }
-}
-
-/// Extension that registers the Builder API RPC module (`base_insertValidatedTransaction`).
-///
-/// Its configuration controls validity metadata acceptance, predicate limits, and shadow-only
-/// validity injection. Ordinary validated transactions remain available in all modes.
-#[derive(Debug, Default)]
-pub struct BuilderApiExtension {
-    config: BuilderApiExtensionConfig,
-}
-
-impl BaseNodeExtension for BuilderApiExtension {
-    fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
-        let config = self.config;
-        builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = ShadowValidityBuilderApi::new(ctx.pool().clone(), config);
-            ctx.modules.merge_configured(api.into_rpc())?;
-            Ok(())
-        })
-    }
-}
-
-impl FromExtensionConfig for BuilderApiExtension {
-    type Config = BuilderApiExtensionConfig;
-
-    fn from_config(config: Self::Config) -> Self {
-        Self { config }
     }
 }

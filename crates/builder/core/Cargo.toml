@@ -31,6 +31,7 @@ reth-rpc-layer = { workspace = true }
 alloy-contract = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
+base-txpool-rpc = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-flz = { workspace = true }
 alloy-transport = { workspace = true }
@@ -137,6 +138,7 @@ base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 [features]
 default = [ "jemalloc", "metrics" ]
 metrics = [
+    "base-txpool-rpc/metrics",
     "base-common-evm/metrics",
     "base-execution-payload-builder/metrics",
     "base-metrics/metrics",

@@ -4,7 +4,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
-use base_builder_core::{BuilderApiExtension, BuilderApiExtensionConfig};
+use base_builder_core::BuilderApiConfig;
 use base_common_consensus::{
     BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
 };
@@ -16,15 +16,15 @@ use base_execution_txpool::{
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityOptions};
+use base_txpool_rpc::SendRawTransactionValidityOptions;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
-    let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(config).build().await?;
+    let config = BuilderApiConfig::new(accept_validity, max_validity_predicates);
+    let harness = TestHarness::builder().with_builder_rpc(config).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }
@@ -52,10 +52,10 @@ async fn setup_with_validity_ingress(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
-    let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
+    let config = BuilderApiConfig::new(accept_validity, max_validity_predicates);
+    let mut builder = TestHarness::builder().with_builder_rpc(config);
     if accept_validity {
-        builder = builder.with_ext::<SendRawTransactionValidityExtension>(max_validity_predicates);
+        builder = builder.with_validity(max_validity_predicates);
     }
     let harness = builder.build().await?;
     let client = harness.rpc_client()?;

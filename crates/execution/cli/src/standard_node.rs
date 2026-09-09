@@ -4,13 +4,12 @@ use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
 use base_builder_metering::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
-    MeteringStoreExtension,
 };
 use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
-use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
+use base_metering::{MeteredOpcodes, MeteringConfig};
 use base_node_core::RollupArgs;
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode};
 use base_observability_events::{
@@ -26,10 +25,7 @@ use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
     TxForwardingExtension,
 };
-use base_txpool_rpc::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
-    TxPoolRpcExtension,
-};
+use base_txpool_rpc::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use tracing::warn;
@@ -564,7 +560,7 @@ impl StandardBaseRethNode {
                 DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
                 Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
             ));
-            runner.install_ext::<MeteringStoreExtension>(Arc::clone(&store));
+            runner.rpc.metering_store = Some(Arc::clone(&store));
             store
         } else {
             Arc::new(NoopMeteringProvider)
@@ -594,9 +590,6 @@ impl StandardBaseRethNode {
             tracing::warn!(error = %err, "transaction event journal disabled");
         }
 
-        runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig {
-            sequencer_rpc: args.rpc.rollup_args.sequencer.clone(),
-        });
         runner.install_ext::<TxPoolExtension>(TxpoolConfig {
             tracing_enabled: args.rpc.enable_transaction_tracing
                 || args.rpc.enable_transaction_event_journal
@@ -629,13 +622,11 @@ impl StandardBaseRethNode {
         } else {
             MeteringConfig::disabled()
         };
-        runner.install_ext::<MeteringExtension>(metering_config);
+        runner.rpc.metering = Some(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
-            runner.install_ext::<SendRawTransactionValidityExtension>(
-                args.rpc.experimental_validity_max_predicates,
-            );
+            runner.rpc.validity = Some(args.rpc.experimental_validity_max_predicates);
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
         runner.install_ext::<ProofsHistoryExtension>(rollup_args.clone());

@@ -18,10 +18,12 @@ tracing = { workspace = true, features = ["std"] }
 reth-tasks = { workspace = true, optional = true }
 eyre = { workspace = true, features = ["default"] }
 reth-network = { workspace = true, optional = true }
+base-metering = { workspace = true, optional = true }
 base-protocol = { workspace = true, optional = true }
 reth-db = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 reth-node-core = { workspace = true, optional = true }
+base-txpool-rpc = { workspace = true, optional = true }
 base-common-evm = { workspace = true, optional = true }
 base-test-utils = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
@@ -57,6 +59,8 @@ harness = false
 
 [features]
 test-utils = [
+    "dep:base-txpool-rpc",
+    "dep:base-metering",
     "dep:base-common-chains",
     "dep:base-common-consensus",
     "dep:base-common-evm",

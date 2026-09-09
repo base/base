@@ -86,3 +86,6 @@ pub use reth_node_core::{
     cli::config::{PayloadBuilderConfig, RethNetworkConfig, RethTransactionPoolConfig},
     node_config::NodeConfig,
 };
+
+mod rpc_services;
+pub use rpc_services::BaseRpcServices;

@@ -7,7 +7,7 @@ use base_execution_txpool::{
 };
 use jsonrpsee::core::RpcResult;
 
-use crate::{BuilderApiExtensionConfig, BuilderMetrics};
+use crate::{BuilderApiConfig, ValidityMetrics};
 
 /// Number of basis points representing a 100% sampling rate.
 pub const MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS: u16 = 10_000;
@@ -115,7 +115,7 @@ pub struct ShadowValidityBuilderApi<P> {
 
 impl<P> ShadowValidityBuilderApi<P> {
     /// Creates a builder API using validated configuration.
-    pub const fn new(pool: P, config: BuilderApiExtensionConfig) -> Self {
+    pub const fn new(pool: P, config: BuilderApiConfig) -> Self {
         Self {
             inner: BuilderApiImpl::with_extensions(
                 pool,
@@ -138,14 +138,14 @@ where
     ) -> RpcResult<()> {
         let outcome = self.config.inject(&mut tx);
         if self.config.is_enabled() {
-            BuilderMetrics::shadow_validity_injection_total(outcome.label()).increment(1);
+            ValidityMetrics::shadow_validity_injection_total(outcome.label()).increment(1);
         }
         self.inner.insert_validated_transaction(tx).await
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InjectionOutcome {
+pub enum InjectionOutcome {
     Disabled,
     ExistingValidity,
     UnsupportedType,
@@ -154,7 +154,7 @@ enum InjectionOutcome {
 }
 
 impl InjectionOutcome {
-    const fn label(self) -> &'static str {
+    pub const fn label(self) -> &'static str {
         match self {
             Self::Disabled => "disabled",
             Self::ExistingValidity => "existing_validity",
@@ -226,7 +226,7 @@ mod tests {
         assert!(ShadowValidityConfig::enabled(0).is_err());
         assert!(ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS + 1).is_err());
         let shadow = ShadowValidityConfig::enabled(1).unwrap();
-        assert!(BuilderApiExtensionConfig::new(false, 1).with_shadow_validity(shadow).is_err());
-        assert!(BuilderApiExtensionConfig::new(true, 1).with_shadow_validity(shadow).is_ok());
+        assert!(BuilderApiConfig::new(false, 1).with_shadow_validity(shadow).is_err());
+        assert!(BuilderApiConfig::new(true, 1).with_shadow_validity(shadow).is_ok());
     }
 }

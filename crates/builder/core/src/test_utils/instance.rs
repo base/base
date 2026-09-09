@@ -14,11 +14,9 @@ use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use async_trait::async_trait;
 use base_common_rpc_types::Base;
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{AllTransactionsEvents, BasePooledTransaction, TransactionPool};
+use base_execution_txpool::{BasePooledTransaction, TransactionPool};
 use base_node_core::{NodeBuilder, NodeConfig, RollupArgs};
-use base_node_runner::{
-    BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks, test_utils::init_silenced_tracing,
-};
+use base_node_runner::{BaseNode, test_utils::init_silenced_tracing};
 use futures::FutureExt;
 use nanoid::nanoid;
 use reth_node_core::{
@@ -26,7 +24,6 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
-use tokio::sync::oneshot;
 
 use crate::{
     BlockServiceBuilder, BuilderConfig, SharedMeteringProvider,
@@ -109,7 +106,7 @@ where
 ///
 /// ```ignore
 /// let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-///     .install_ext::<MyExtension>(my_config)
+///     .with_builder_rpc(BuilderApiConfig::default())
 ///     .build()
 ///     .await?;
 /// ```
@@ -117,15 +114,21 @@ where
 pub struct LocalInstanceBuilder {
     builder_config: BuilderConfig,
     node_config: NodeConfig,
-    #[debug("{}", extensions.len())]
-    extensions: Vec<Box<dyn BaseNodeExtension>>,
+    rpc: base_node_core::BaseRpcServices,
 }
 
 impl LocalInstanceBuilder {
     /// Creates a new builder with the given builder configuration, the default node configuration,
-    /// and no extensions.
+    /// and the built-in sequencer RPC handlers.
     pub fn new(builder_config: BuilderConfig) -> Self {
-        Self { builder_config, node_config: default_node_config(), extensions: Vec::new() }
+        Self {
+            builder_config,
+            node_config: default_node_config(),
+            rpc: base_node_core::BaseRpcServices {
+                builder: Some(Default::default()),
+                ..Default::default()
+            },
+        }
     }
 }
 
@@ -137,18 +140,9 @@ impl LocalInstanceBuilder {
         self
     }
 
-    /// Installs a node extension built from the given config, mirroring
-    /// [`BaseNodeRunner::install_ext`](base_node_runner::BaseNodeRunner::install_ext).
-    #[must_use]
-    pub fn install_ext<T: FromExtensionConfig + 'static>(mut self, config: T::Config) -> Self {
-        self.extensions.push(Box::new(T::from_config(config)));
-        self
-    }
-
-    /// Installs an already-constructed node extension.
-    #[must_use]
-    pub fn with_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
-        self.extensions.push(extension);
+    /// Sets the sequencer ingress limits used by the production RPC handler.
+    pub fn with_builder_rpc(mut self, config: crate::BuilderApiConfig) -> Self {
+        self.rpc.builder = Some(config);
         self
     }
 
@@ -157,8 +151,7 @@ impl LocalInstanceBuilder {
     /// This method does not prefund any accounts, so before sending any transactions make sure that
     /// sender accounts are funded.
     pub async fn build(self) -> eyre::Result<LocalInstance> {
-        Box::pin(LocalInstance::launch(self.builder_config, self.node_config, self.extensions))
-            .await
+        Box::pin(LocalInstance::launch(self.builder_config, self.node_config, self.rpc)).await
     }
 }
 
@@ -187,13 +180,11 @@ impl LocalInstance {
 
     /// Core launch routine shared by all constructors.
     ///
-    /// Builds the node through the runner's payload-service seam and applies caller-supplied
-    /// [extensions](BaseNodeExtension) via the same [`NodeHooks`] pipeline used in production,
-    /// plus an internal hook that captures the running node's transaction pool for tests.
+    /// Starts the production payload service and RPC handlers, then captures the pool handles.
     async fn launch(
         builder_config: BuilderConfig,
         node_config: NodeConfig,
-        extensions: Vec<Box<dyn BaseNodeExtension>>,
+        rpc: base_node_core::BaseRpcServices,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
@@ -210,46 +201,26 @@ impl LocalInstance {
         let service_builder = BlockServiceBuilder::build(builder_config.clone());
         let components = base_node.components().payload(service_builder);
 
-        let (txpool_ready_tx, txpool_ready_rx) = oneshot::channel::<AllTransactionsEvents>();
-        let (pool_handle_tx, pool_handle_rx) =
-            oneshot::channel::<Arc<dyn ExternalTransactionPool>>();
-
-        // The node types fix the database to the concrete `DatabaseEnv`, so the test database must
-        // be a bare `DatabaseEnv` (not a `TempDatabase`) for the extension hook types to line up.
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
 
+        let mut add_ons = base_node.add_ons_builder().build();
+        add_ons.rpc_add_ons.services = rpc;
         let builder = NodeBuilder::<_>::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
             .with_components(components.into_builder())
-            .with_add_ons(base_node.add_ons_builder().build())
+            .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
 
-        // Apply caller-supplied extensions through the production hook pipeline, then append an
-        // internal node-started hook that captures the running node's transaction pool.
-        let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
-        let hooks = hooks.add_node_started_hook(move |full_node| {
-            if txpool_ready_tx.send(full_node.pool.all_transactions_event_listener()).is_err() {
-                tracing::warn!("txpool ready receiver dropped before node-started hook fired");
-            }
-            let pool_handle: Arc<dyn ExternalTransactionPool> =
-                Arc::new(PoolHandle { pool: full_node.pool });
-            if pool_handle_tx.send(pool_handle).is_err() {
-                tracing::warn!("pool handle receiver dropped before node-started hook fired");
-            }
-            Ok(())
-        });
-
-        let node_handle = hooks.apply_to(builder).launch().await?;
+        let node_handle = builder.launch().await?;
+        let pool_monitor = node_handle.node.pool.all_transactions_event_listener();
+        let pool_handle: Arc<dyn ExternalTransactionPool> =
+            Arc::new(PoolHandle { pool: node_handle.node.pool.clone() });
         let execution = node_handle.node.execution.clone();
         let http_url =
             node_handle.node.rpc_server_handle().http_url().expect("test HTTP RPC enabled");
         let exit_future = node_handle.node_exit_future;
         let node_handle: Box<dyn Any + Send> = Box::new(node_handle.node);
-
-        // Wait for the node-started hook to publish the pool handles.
-        let pool_monitor = txpool_ready_rx.await.expect("Failed to receive txpool ready signal");
-        let pool_handle = pool_handle_rx.await.expect("Failed to receive pool handle");
 
         Ok(Self {
             execution,

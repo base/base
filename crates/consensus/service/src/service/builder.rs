@@ -302,7 +302,9 @@ mod tests {
             verifier_l1_confs: 0,
             da_batcher_sender_override: None,
         };
-        let node = LocalNode::new(vec![], Arc::new(BaseChainSpec::sepolia())).await.unwrap();
+        let node = LocalNode::new(vec![], Default::default(), Arc::new(BaseChainSpec::sepolia()))
+            .await
+            .unwrap();
         let engine_config = EngineConfig {
             client: LocalEngineClient {
                 l1: L1RpcProvider::new_http_with_timeout(

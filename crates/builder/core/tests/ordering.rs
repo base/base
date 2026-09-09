@@ -4,7 +4,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
 use base_builder_core::{
-    BuilderApiExtension, BuilderApiExtensionConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
+    BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
     MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityConfig,
     test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH, setup_test_instance},
 };
@@ -89,10 +89,7 @@ async fn fee_priority_ordering() -> eyre::Result<()> {
 #[tokio::test]
 async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre::Result<()> {
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-        .install_ext::<BuilderApiExtension>(BuilderApiExtensionConfig::new(
-            true,
-            DEFAULT_MAX_VALIDITY_PREDICATES,
-        ))
+        .with_builder_rpc(BuilderApiConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES))
         .build()
         .await?;
     let driver = instance.driver().await?;
@@ -178,10 +175,7 @@ async fn predicates_delay_priority_without_blocking_nonce_descendants() -> eyre:
 async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<()> {
     let instance =
         LocalInstanceBuilder::new(BuilderConfig::for_tests().with_predicate_eval_hard_cutoff_ms(0))
-            .install_ext::<BuilderApiExtension>(BuilderApiExtensionConfig::new(
-                true,
-                DEFAULT_MAX_VALIDITY_PREDICATES,
-            ))
+            .with_builder_rpc(BuilderApiConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES))
             .build()
             .await?;
     let driver = instance.driver().await?;
@@ -271,10 +265,10 @@ async fn predicate_eval_hard_cutoff_defers_without_evaluating() -> eyre::Result<
 async fn shadow_validity_injection_preserves_forwarded_transaction() -> eyre::Result<()> {
     let shadow =
         ShadowValidityConfig::enabled(MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS).expect("valid rate");
-    let api_config = BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
+    let api_config = BuilderApiConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES)
         .with_shadow_validity(shadow)?;
     let instance = LocalInstanceBuilder::new(BuilderConfig::for_tests())
-        .install_ext::<BuilderApiExtension>(api_config)
+        .with_builder_rpc(api_config)
         .build()
         .await?;
     let driver = instance.driver().await?;

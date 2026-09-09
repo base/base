@@ -9,10 +9,9 @@ use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use base_builder_core::{BlockServiceBuilder, BuilderConfig, test_utils::get_available_port};
 use base_execution_chainspec::BaseChainSpec;
-use base_execution_txpool::{BuilderApiImpl, BuilderApiServer, DEFAULT_MAX_VALIDITY_PREDICATES};
+use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_core::{NodeBuilder, NodeConfig, NodeHandle, RollupArgs};
-use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool_rpc::SendRawTransactionValidityExtension;
+use base_node_runner::{BaseNode, BaseNodeExtension, NodeHooks};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -144,7 +143,7 @@ impl InProcessBuilder {
         let base_node = BaseNode::new(rollup_args.clone());
 
         let base_node = base_node.with_da_config(da_config).with_gas_limit_config(gas_limit_config);
-        let addons = base_node.add_ons_builder().build();
+        let mut addons = base_node.add_ons_builder().build();
 
         let mut node_config = create_node_config(chain_spec, &data_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
@@ -159,31 +158,16 @@ impl InProcessBuilder {
 
         let accept_validity_transactions = config.enable_experimental_validity_transactions;
         let extra_extensions = config.extra_extensions;
-        let mut hooks = NodeHooks::new();
-        if accept_validity_transactions {
-            hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                DEFAULT_MAX_VALIDITY_PREDICATES,
-            ))
-            .apply(hooks);
-        }
-        // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
-        // registered before it, and `NodeHooks::apply_to` claims that slot for every extension
-        // RPC module. Registering the builder API here instead keeps both in one closure.
-        let hooks = hooks.add_rpc_module(move |ctx| {
-            let api =
-                BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
-                    ctx.pool().clone(),
-                    accept_validity_transactions,
-                    DEFAULT_MAX_VALIDITY_PREDICATES,
-                );
-            ctx.modules.merge_configured(api.into_rpc())?;
-            Ok(())
-        });
-
+        addons.rpc_add_ons.services.builder = Some(base_builder_core::BuilderApiConfig::new(
+            accept_validity_transactions,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+        ));
+        addons.rpc_add_ons.services.validity =
+            accept_validity_transactions.then_some(DEFAULT_MAX_VALIDITY_PREDICATES);
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone());
-
+        let hooks = NodeHooks::new();
         let launched = extra_extensions
             .into_iter()
             .fold(hooks, |hooks, ext| ext.apply(hooks))

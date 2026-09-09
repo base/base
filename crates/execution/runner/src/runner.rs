@@ -25,6 +25,8 @@ pub struct LaunchedBaseNode {
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 pub struct BaseNodeRunner {
+    /// Runtime inputs for the built-in Base RPC handlers.
+    pub rpc: base_node_core::BaseRpcServices,
     /// Rollup-specific arguments forwarded to the Base node implementation.
     rollup_args: RollupArgs,
     /// Registered builder extensions.
@@ -50,6 +52,7 @@ impl BaseNodeRunner {
     /// Creates a new launcher using the provided rollup arguments.
     pub fn new(rollup_args: RollupArgs) -> Self {
         Self {
+            rpc: Default::default(),
             rollup_args,
             extensions: Vec::new(),
             service_builder: None,
@@ -149,6 +152,7 @@ impl BaseNodeRunner {
 
         let Self {
             rollup_args,
+            mut rpc,
             extensions,
             service_builder,
             da_config,
@@ -158,7 +162,7 @@ impl BaseNodeRunner {
             rejection_cache,
             started_callbacks,
         } = self;
-        let mut base_node = BaseNode::new(rollup_args);
+        let mut base_node = BaseNode::new(rollup_args.clone());
         if let Some(da_config) = da_config {
             base_node = base_node.with_da_config(da_config);
         }
@@ -192,9 +196,12 @@ impl BaseNodeRunner {
             None => components,
         };
 
+        rpc.sequencer = rollup_args.sequencer.clone();
+        let mut add_ons = base_node.add_ons_builder().build();
+        add_ons.rpc_add_ons.services = rpc;
         let builder = builder
             .with_components(components.into_builder())
-            .with_add_ons(base_node.add_ons_builder().build())
+            .with_add_ons(add_ons)
             .on_component_initialized(move |_ctx| Ok(()));
 
         let hooks = extensions.into_iter().fold(NodeHooks::new(), |hooks, ext| ext.apply(hooks));
