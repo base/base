@@ -4,7 +4,7 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
-use base_consensus_peers::{PeerMonitoring, PeerScoreLevel};
+use base_consensus_network_service::{PeerMonitoring, PeerScoreLevel};
 use libp2p::{
     Multiaddr, StreamProtocol, SwarmBuilder, gossipsub::Config, identity::Keypair,
     noise::Config as NoiseConfig, tcp::Config as TcpConfig, yamux::Config as YamuxConfig,

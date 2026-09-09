@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 use anyhow::{Context, Result, anyhow};
-use base_consensus_peers::BootNode;
+use base_consensus_network_service::BootNode;
 use serde::Serialize;
 use url::Url;
 

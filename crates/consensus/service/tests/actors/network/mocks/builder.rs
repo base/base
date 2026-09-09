@@ -10,7 +10,7 @@ use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineClientResult, NetworkActor, NetworkBuilder, NetworkEngineClient, NodeActor,
 };
-use base_consensus_peers::BootNode;
+use base_consensus_network_service::BootNode;
 use base_consensus_source_providers::BlockSigner;
 use discv5::{ConfigBuilder, Enr, ListenConfig};
 use libp2p::{Multiaddr, identity::Keypair, multiaddr::Protocol};

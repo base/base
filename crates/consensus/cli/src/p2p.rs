@@ -22,7 +22,7 @@ use base_consensus_gossip::{
     DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig,
 };
 use base_consensus_node::NetworkConfig;
-use base_consensus_peers::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_network_service::{BootNode, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_source_providers::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;
@@ -764,7 +764,7 @@ impl P2PArgs {
     pub fn keypair(&self) -> Result<Keypair> {
         // Attempt the parse the private key if specified.
         if let Some(mut private_key) = self.private_key {
-            let keypair = base_consensus_peers::SecretKeyLoader::parse(&mut private_key.0)
+            let keypair = base_consensus_network_service::SecretKeyLoader::parse(&mut private_key.0)
                 .map_err(|e| eyre::eyre!(e))?;
             info!(
                 target: "p2p::config",
@@ -778,7 +778,7 @@ impl P2PArgs {
             eyre::bail!("Neither a raw private key nor a private key file path was provided.");
         };
 
-        base_consensus_peers::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
+        base_consensus_network_service::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
     }
 
     fn bootnode_strings(&self) -> Result<Vec<String>> {
@@ -809,7 +809,7 @@ mod tests {
 
     use alloy_primitives::{Address, b256};
     use base_common_chain_config::RollupConfig;
-    use base_consensus_peers::NodeRecord;
+    use base_consensus_network_service::NodeRecord;
     use base_consensus_source_providers::L1_RPC_TIMEOUT;
     use clap::Parser;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};

@@ -25,7 +25,7 @@ use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
     UpgradeSignalBuilderConfig,
 };
-use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
+use base_consensus_network_service::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
 use base_consensus_source_providers::BlockSigner;
 use eyre::{Result, WrapErr};

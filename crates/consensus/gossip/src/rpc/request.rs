@@ -4,7 +4,7 @@ use std::{net::IpAddr, num::TryFromIntError, sync::Arc};
 
 use alloy_primitives::map::{HashMap, HashSet};
 use base_consensus_disc::Discv5Handler;
-use base_consensus_peers::BaseEnr;
+use base_consensus_network_service::BaseEnr;
 use discv5::{
     enr::{NodeId, k256::ecdsa},
     multiaddr::Protocol,

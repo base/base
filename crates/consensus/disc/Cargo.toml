@@ -15,13 +15,13 @@ workspace = true
 [dependencies]
 libp2p = { workspace = true }
 derive_more = { workspace = true }
-base-consensus-peers = { workspace = true }
 metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 alloy-rlp = { workspace = true, features = ["std"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 thiserror = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
+base-consensus-network-service = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 rand = { workspace = true, features = ["default", "thread_rng"] }
 backon = { workspace = true, features = ["default", "std", "tokio", "tokio-sleep"] }

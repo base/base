@@ -10,7 +10,7 @@ use alloy_primitives::B256;
 use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chain_config::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
-use base_consensus_peers::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
+use base_consensus_network_service::{BootNode, BootNodes, BootStoreFile, SecretKeyLoader};
 use clap::Args;
 use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;
@@ -393,7 +393,7 @@ mod tests {
     use std::{net::Ipv4Addr, path::PathBuf};
 
     use alloy_primitives::b256;
-    use base_consensus_peers::EnrValidation;
+    use base_consensus_network_service::EnrValidation;
     use clap::Parser;
 
     use super::*;

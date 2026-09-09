@@ -1,6 +1,6 @@
-# `base-consensus-peers`
+# `base-consensus-network-service`
 
-<a href="https://crates.io/crates/base-consensus-peers"><img src="https://img.shields.io/crates/v/base-consensus-peers.svg?label=base-consensus-peers&labelColor=2a2f35" alt="base-consensus-peers"></a>
+<a href="https://crates.io/crates/base-consensus-network-service"><img src="https://img.shields.io/crates/v/base-consensus-network-service.svg?label=base-consensus-network-service&labelColor=2a2f35" alt="base-consensus-network-service"></a>
 
 ## Overview
 
@@ -49,7 +49,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-consensus-peers = { workspace = true }
+base-consensus-network-service = { workspace = true }
 ```
 
 ## License

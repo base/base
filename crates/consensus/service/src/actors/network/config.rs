@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig};
-use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_network_service::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_source_providers::BlockSigner;
 use libp2p::{Multiaddr, identity::Keypair};
 use tokio::time::Duration;

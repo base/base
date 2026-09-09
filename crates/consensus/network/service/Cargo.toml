@@ -1,5 +1,5 @@
 [package]
-name = "base-consensus-peers"
+name = "base-consensus-network-service"
 version.workspace = true
 description = "Network peers library for Base"
 
@@ -42,4 +42,4 @@ alloy-primitives = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = []
-arbitrary = [ "alloy-primitives/arbitrary", "dep:arbitrary" ]
+arbitrary = ["alloy-primitives/arbitrary", "dep:arbitrary"]

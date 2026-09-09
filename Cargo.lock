@@ -2906,8 +2906,8 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
+ "base-consensus-network-service",
  "base-consensus-node",
- "base-consensus-peers",
  "base-consensus-rpc",
  "base-consensus-source-providers",
  "base-protocol",
@@ -2965,7 +2965,7 @@ dependencies = [
  "base-cli-utils",
  "base-common-chain-config",
  "base-common-observability-metrics",
- "base-consensus-peers",
+ "base-consensus-network-service",
  "derive_more",
  "discv5",
  "libp2p",
@@ -3029,7 +3029,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-consensus-disc",
- "base-consensus-peers",
+ "base-consensus-network-service",
  "base-protocol",
  "derive_more",
  "discv5",
@@ -3051,6 +3051,31 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "base-consensus-network-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "arbitrary",
+ "arbtest",
+ "base-common-chain-config",
+ "derive_more",
+ "dirs",
+ "discv5",
+ "libp2p",
+ "libp2p-identity",
+ "multihash",
+ "rstest",
+ "secp256k1 0.30.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tracing",
+ "unsigned-varint 0.8.0",
+ "url",
 ]
 
 [[package]]
@@ -3082,7 +3107,7 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
- "base-consensus-peers",
+ "base-consensus-network-service",
  "base-consensus-rpc",
  "base-consensus-safedb",
  "base-consensus-source-providers",
@@ -3120,31 +3145,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "base-consensus-peers"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "arbitrary",
- "arbtest",
- "base-common-chain-config",
- "derive_more",
- "dirs",
- "discv5",
- "libp2p",
- "libp2p-identity",
- "multihash",
- "rstest",
- "secp256k1 0.30.0",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tracing",
- "unsigned-varint 0.8.0",
  "url",
 ]
 
@@ -5103,8 +5103,8 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-engine",
  "base-consensus-gossip",
+ "base-consensus-network-service",
  "base-consensus-node",
- "base-consensus-peers",
  "base-consensus-rpc",
  "base-consensus-source-providers",
  "base-execution-cli",
@@ -5421,7 +5421,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-consensus-gossip",
- "base-consensus-peers",
+ "base-consensus-network-service",
  "base-consensus-rpc",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",

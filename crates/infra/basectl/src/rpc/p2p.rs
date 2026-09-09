@@ -12,7 +12,7 @@ use base_common_client_ethereum::{
     ext::{AdminApi, NetApi},
 };
 use base_consensus_gossip::{Direction, PeerInfo, PeerStats};
-use base_consensus_peers::{BootNode, NodeRecord};
+use base_consensus_network_service::{BootNode, NodeRecord};
 use base_consensus_rpc::BaseP2PApiClient;
 use jsonrpsee::{
     core::client::Error as JsonRpcClientError,

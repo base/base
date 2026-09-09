@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
 use base_consensus_disc::{Discv5Builder, LocalNode};
 use base_consensus_gossip::{ConnectionLimitsConfig, GaterConfig, GossipDriverBuilder};
-use base_consensus_peers::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
+use base_consensus_network_service::{BootNodes, BootStoreFile, PeerMonitoring, PeerScoreLevel};
 use base_consensus_source_providers::BlockSigner;
 use discv5::Config as Discv5Config;
 use libp2p::{Multiaddr, identity::Keypair};

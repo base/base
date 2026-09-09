@@ -120,7 +120,7 @@ service crate. Let's walk through each one from the bottom up.
 
 ### Peers: the foundation
 
-The [`base-consensus-peers`](https://github.com/base/base/tree/main/crates/consensus/peers) crate
+The [`base-consensus-network-service`](https://github.com/base/base/tree/main/crates/consensus/network/service) crate
 provides the fundamental types for identifying and managing peers on the consensus network.
 
 The most important concept here is the ENR, which stands for Ethereum Node Record (defined in
@@ -145,7 +145,7 @@ different chains (say, Base Mainnet vs Base Sepolia) can tell each other apart d
 The textual representation of an ENR is a base64-encoded string
 prefixed with `enr:`, which you will see in configuration files and bootnode lists.
 
-The [`BaseEnr`](https://github.com/base/base/blob/main/crates/consensus/peers/src/enr.rs) struct
+The [`BaseEnr`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/enr.rs) struct
 handles this encoding:
 
 ```rust
@@ -169,13 +169,13 @@ impl BaseEnr {
 ```
 
 When a node discovers another node's ENR, it validates it using
-[`EnrValidation`](https://github.com/base/base/blob/main/crates/consensus/peers/src/enr.rs). The
+[`EnrValidation`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/enr.rs). The
 validation checks that the `opstack` key is present, that it decodes correctly, and that the chain
 ID matches. If a node on Base Mainnet (chain ID 8453) encounters an ENR with a different chain ID,
 it simply ignores it.
 
 The peers crate also provides a
-[`BootStore`](https://github.com/base/base/blob/main/crates/consensus/peers/src/store.rs), which is
+[`BootStore`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/store.rs), which is
 a simple JSON file that persists discovered ENRs to disk. This way, when a node restarts, it doesn't
 have to start discovery from scratch. The boot store caps out at 2048 entries and prunes the oldest
 ones when full.
@@ -751,10 +751,10 @@ networks are completely separate and serve different purposes.
 **Consensus layer peers and ENR management:**
 
 -
-  [`crates/consensus/peers/src/enr.rs`](https://github.com/base/base/blob/main/crates/consensus/peers/src/enr.rs)
+  [`crates/consensus/network/service/src/enr.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/enr.rs)
   — BaseEnr encoding and validation
 -
-  [`crates/consensus/peers/src/store.rs`](https://github.com/base/base/blob/main/crates/consensus/peers/src/store.rs)
+  [`crates/consensus/network/service/src/store.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/store.rs)
   — BootStore persistence
 
 **Consensus layer discovery:**

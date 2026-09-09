@@ -1,7 +1,7 @@
 //! Discovery Module.
 
 use backon::{ExponentialBuilder, RetryableWithContext};
-use base_consensus_peers::{
+use base_consensus_network_service::{
     BootNode, BootNodes, BootStore, BootStoreFile, EnrValidation, PeerUtils,
 };
 use derive_more::Debug;
