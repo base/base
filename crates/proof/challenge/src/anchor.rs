@@ -116,6 +116,14 @@ impl AnchorUpdater {
         // Resolved from the anchor block, which is where the next game's range starts:
         // the verifier switches to a shorter cadence at the Denim activation block, so a
         // pair cached at startup silently stops matching any game past the boundary.
+        //
+        // Known limitation: this reads the factory's *current* implementation, but the
+        // successor game may already exist and have been created with an older pair. Across a
+        // `setImplementation` that changes the pair the keyed lookup never matches and the
+        // anchor stalls at "next anchor game not found", which a restart no longer clears.
+        // Denim itself does not trigger it (the pair is a function of the starting block,
+        // not of which implementation is current). Fix by scanning the factory from the
+        // anchor index when the keyed lookup misses, if it ever bites.
         let (block_interval, intermediate_block_interval) = match resolve_intervals(
             self.factory_client.as_ref(),
             verifier_client,

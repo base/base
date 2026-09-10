@@ -380,10 +380,10 @@ impl AggregateVerifierClient for MockAggregateVerifier {
 
     async fn read_intervals_for_starting_block(
         &self,
-        impl_address: Address,
+        verifier_address: Address,
         starting_block: u64,
     ) -> Result<(u64, u64), ContractError> {
-        self.intermediate_block_interval_reads.lock().unwrap().push(impl_address);
+        self.intermediate_block_interval_reads.lock().unwrap().push(verifier_address);
         if starting_block < self.fast_activation_block {
             Ok(self.intervals)
         } else {

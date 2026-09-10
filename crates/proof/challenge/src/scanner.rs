@@ -386,8 +386,13 @@ impl GameScanner {
             self.verifier_client.l1_head(factory.proxy),
         )?;
 
-        // Read through the game proxy so implementation upgrades cannot change
-        // how an already-created game's checkpoints are interpreted.
+        // Read through the game proxy so implementation upgrades cannot change how an
+        // already-created game's checkpoints are interpreted: a game is a CWIA clone, so
+        // it delegates to the implementation baked in at creation, not to whatever the
+        // factory points at now. Games created before the Denim-aware implementation land
+        // on `read_intervals_for_starting_block`'s missing-method fallback to
+        // `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`; if that fallback is ever
+        // tightened, every in-flight pre-upgrade game starts hitting the warn path below.
         let (_, intermediate_block_interval) = self
             .verifier_client
             .read_intervals_for_starting_block(factory.proxy, starting_block_number)
@@ -608,10 +613,9 @@ mod tests {
         assert_eq!(candidates[3].info.l2_block_number, 400);
         // Existing games resolve through their own proxies, not the factory's current
         // implementation.
-        assert_eq!(
-            verifier.intermediate_block_interval_reads.lock().unwrap().as_slice(),
-            &[addr(0), addr(1), addr(3), addr(4)],
-        );
+        let mut reads = verifier.intermediate_block_interval_reads.lock().unwrap().clone();
+        reads.sort();
+        assert_eq!(reads, [addr(0), addr(1), addr(3), addr(4)]);
     }
 
     /// Dual-proof games (TEE + ZK, no challenge) are now candidates.

@@ -108,7 +108,9 @@ impl ChallengerService {
                 .await?;
         info!(
             anchor_block,
-            block_interval, intermediate_block_interval, "Validated proposal interval resolver"
+            block_interval,
+            intermediate_block_interval,
+            "resolved proposal intervals at anchor block"
         );
 
         let factory_client: Arc<dyn DisputeGameFactoryClient> = Arc::new(factory_client);

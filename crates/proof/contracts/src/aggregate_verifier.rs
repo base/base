@@ -26,11 +26,12 @@ use crate::{
 /// at startup.
 ///
 /// The implementation address is read from the factory on every call so a governance
-/// `setImplementation` is picked up without a restart. The implementation — not the game
-/// proxy — is queried on purpose: callers also resolve intervals for games that do not
-/// exist yet, and games created before the Denim-aware implementation was deployed run
-/// bytecode that has no `intervalsForStartingBlock`. For pre-Denim starting blocks the
-/// Denim-aware implementation returns the same pair the old one had.
+/// `setImplementation` is picked up without a restart. The implementation — not a game
+/// proxy — is queried because callers resolve intervals for games that do not exist yet
+/// (the anchor's successor, the proposer's next proposal). For an existing game, call
+/// `read_intervals_for_starting_block` on its proxy instead so the pair it was created
+/// with is used even after an implementation upgrade; legacy proxies without
+/// `intervalsForStartingBlock` fall back to their fixed interval getters.
 pub async fn resolve_intervals(
     factory_client: &dyn DisputeGameFactoryClient,
     verifier_client: &dyn AggregateVerifierClient,
@@ -276,17 +277,23 @@ pub trait AggregateVerifierClient: Send + Sync {
         impl_address: Address,
     ) -> Result<u64, ContractError>;
 
-    /// Reads the `(block_interval, intermediate_block_interval)` pair the
-    /// `AggregateVerifier` implementation applies to a game whose range starts
-    /// at `starting_block`.
+    /// Reads the `(block_interval, intermediate_block_interval)` pair that
+    /// `verifier_address` applies to a game whose range starts at `starting_block`.
     ///
     /// Denim switches the verifier to a shorter cadence at a fixed L2 block, so
     /// the pair is a function of the game's starting block. Callers must resolve
     /// it per game rather than reading `BLOCK_INTERVAL` once at startup.
-    /// Legacy implementations fall back to their fixed interval getters.
+    ///
+    /// `verifier_address` is either the factory's current implementation (for a game
+    /// that does not exist yet) or an existing game's proxy. A game proxy is a CWIA
+    /// clone, not an upgradeable proxy: it delegates to the implementation baked into
+    /// its bytecode at creation, so reading through it returns the pair the game was
+    /// created with regardless of any later `setImplementation`. Verifiers deployed
+    /// before `intervalsForStartingBlock` existed fall back to their fixed interval
+    /// getters.
     async fn read_intervals_for_starting_block(
         &self,
-        impl_address: Address,
+        verifier_address: Address,
         starting_block: u64,
     ) -> Result<(u64, u64), ContractError>;
 
@@ -514,11 +521,11 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
 
     async fn read_intervals_for_starting_block(
         &self,
-        impl_address: Address,
+        verifier_address: Address,
         starting_block: u64,
     ) -> Result<(u64, u64), ContractError> {
         let contract =
-            IAggregateVerifier::IAggregateVerifierInstance::new(impl_address, &self.provider);
+            IAggregateVerifier::IAggregateVerifierInstance::new(verifier_address, &self.provider);
         let result = match contract_call!(
             contract.intervalsForStartingBlock(U256::from(starting_block)).call(),
             "intervalsForStartingBlock failed"
@@ -526,8 +533,8 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             Ok(result) => result,
             Err(error) if error.is_missing_method() => {
                 let (block_interval, intermediate_block_interval) = futures::try_join!(
-                    self.read_block_interval(impl_address),
-                    self.read_intermediate_block_interval(impl_address),
+                    self.read_block_interval(verifier_address),
+                    self.read_intermediate_block_interval(verifier_address),
                 )?;
                 if !block_interval.is_multiple_of(intermediate_block_interval) {
                     return Err(ContractError::validation(format!(
