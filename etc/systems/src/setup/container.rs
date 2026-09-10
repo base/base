@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use eyre::{Result, WrapErr, ensure};
@@ -26,19 +26,6 @@ const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const SETUP_DOCKERFILE_PATH: &str = "etc/docker/Dockerfile.devnet";
 const SETUP_TIMEOUT_SECS: u64 = 300;
-/// Seconds of lead time given to the generated beacon genesis.
-///
-/// `op-deployer` stamps `MIN_GENESIS_TIME` when generation starts, and the template sets
-/// `GENESIS_DELAY: 0`. Deploying the L2 contracts and booting Reth and Lighthouse all happen
-/// after that stamp, so a genesis anchored at "now" is already far in the past by the time the
-/// validator starts. At the one-second slot duration these tests use, every elapsed second is a
-/// missed slot, and the beacon node never reports itself synced, so it never proposes and L1
-/// stalls at block 0 forever. Anchoring genesis ahead of generation keeps the validator's first
-/// slot in the future. Lighthouse simply waits for a future genesis, so overshooting only costs
-/// startup latency while undershooting deadlocks the chain. Every second of overshoot is paid by
-/// each test, so this stays only slightly above the observed generation and boot cost; the whole
-/// suite shares a one hour CI budget.
-const GENESIS_LEAD_SECS: u64 = 120;
 
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
@@ -323,15 +310,6 @@ impl SetupContainer {
         self
     }
 
-    /// Returns the beacon genesis timestamp, anchored ahead of genesis generation.
-    pub fn genesis_timestamp() -> Result<u64> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .wrap_err("System clock is before the Unix epoch")?
-            .as_secs();
-        Ok(now.saturating_add(GENESIS_LEAD_SECS))
-    }
-
     /// Generates both chains before starting L1, with deployed contracts in genesis.
     pub fn generate_genesis(&self) -> Result<(L1GenesisOutput, L2DeploymentOutput)> {
         SetupImage::ensure_built()?;
@@ -350,7 +328,6 @@ impl SetupContainer {
             .with_env_var("CHAIN_ID", self.chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
             .with_env_var("SLOT_DURATION", self.slot_duration.to_string())
-            .with_env_var("BASE_DEVNET_TIMESTAMP", Self::genesis_timestamp()?.to_string())
             // Upgrade-signal tests deploy their own configurable mock after L1 starts.
             .with_env_var("UPGRADE_SIGNAL_PREINSTALL", "false")
             .with_env_var("DEPLOYER_ADDR", format!("{:#x}", DEPLOYER.address))

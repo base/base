@@ -145,19 +145,44 @@ pub struct MockProtocolVersionsClient {
 }
 
 impl MockProtocolVersionsClient {
+    /// Maximum time to wait for the devnet L1 to start producing blocks.
+    pub const L1_BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(90);
+
     /// Maximum time to wait for one upgrade signal L1 transaction to be mined.
     pub const L1_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(90);
 
+    /// Poll interval while waiting for the devnet L1 to start producing blocks.
+    const L1_BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+    /// Waits until the devnet L1 has produced at least one block after genesis.
+    ///
+    /// Lighthouse reports its HTTP API as ready well before the validator proposes its first
+    /// slot, and Reth accepts transactions into its pool the whole time. A transaction sent in
+    /// that window never gets a receipt, so every upgrade signal write waits for block
+    /// production first rather than blocking forever on an unmined transaction.
+    pub async fn wait_for_l1_block_production(l1_rpc_url: &Url) -> Result<()> {
+        let provider = Self::wallet_provider(l1_rpc_url)?;
+        tokio::time::timeout(Self::L1_BLOCK_PRODUCTION_TIMEOUT, async {
+            loop {
+                if provider.get_block_number().await.is_ok_and(|number| number > 0) {
+                    return;
+                }
+                tokio::time::sleep(Self::L1_BLOCK_POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .wrap_err("L1 did not produce a block before the upgrade signal deadline")
+    }
+
     /// Deploys the mock contract to L1 and seeds it with the rollup config baseline overlaid
     /// with the options' explicit schedule entries.
-    ///
-    /// The caller must have already waited for L1 block production, or these transactions sit
-    /// unmined forever.
     pub async fn deploy(
         l1_rpc_url: Url,
         options: &UpgradeSignalStackOptions,
         rollup_config: &RollupConfig,
     ) -> Result<Self> {
+        Self::wait_for_l1_block_production(&l1_rpc_url).await?;
+
         let provider = Self::wallet_provider(&l1_rpc_url)?;
         let contract = tokio::time::timeout(
             Self::L1_TRANSACTION_TIMEOUT,
