@@ -50,6 +50,7 @@ pub struct TransactionStatusResponse {
 
 /// Options for `base_sendRawTransactionValidity` accompanying the raw transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct SendRawTransactionValidityOptions {
     /// Experimental predicates transported to builders alongside the transaction.
     pub validity: Vec<ValidityPredicate>,
@@ -443,6 +444,37 @@ mod tests {
         assert!(options_value.get("tx").is_none());
         assert_eq!(options_value["validity"][0]["type"], "storage");
         assert_eq!(options_value["validity"][0]["params"]["slot"], "0x1");
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_options_reject_unknown_fields() {
+        // An unknown top-level field must be rejected before any transaction
+        // processing, so an attacker cannot pad the request body with
+        // irrelevant data that still consumes the request-body budget.
+        let json = r#"{"validity":[],"unexpected":"padding"}"#;
+
+        let error = serde_json::from_str::<SendRawTransactionValidityOptions>(json)
+            .expect_err("unknown fields must be rejected");
+        assert!(
+            error.to_string().contains("unexpected"),
+            "error should name the unknown field: {error}"
+        );
+    }
+
+    #[test]
+    fn send_raw_transaction_validity_options_accept_known_fields() {
+        let json = r#"{"validity":[{"type":"balance","params":{"address":"0x1111111111111111111111111111111111111111","op":">=","value":"0x1"}}]}"#;
+
+        let options: SendRawTransactionValidityOptions =
+            serde_json::from_str(json).expect("known fields must deserialize");
+        assert_eq!(
+            options.validity,
+            vec![ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                value: U256::from(1),
+            }]
+        );
     }
 
     #[test]
