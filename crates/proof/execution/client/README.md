@@ -1,4 +1,4 @@
-# `base-proof-executor`
+# `base-proof-execution-client`
 
 A `no_std` implementation of a stateless block executor for the Base rollup, backed by [`base-proof-witness-mpt`](../mpt)'s `TrieDB`.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-executor = { workspace = true }
+base-proof-execution-client = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_executor::{StatelessL2Builder, TrieDB};
+use base_proof_execution_client::{StatelessL2Builder, TrieDB};
 
 let builder = StatelessL2Builder::new(trie_db, chain_spec);
 let outcome = builder.execute(attributes)?;

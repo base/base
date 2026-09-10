@@ -9,7 +9,7 @@ use base_proof::{
     BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
     OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
 };
-use base_proof_executor::TrieDBProvider;
+use base_proof_execution_client::TrieDBProvider;
 use base_proof_witness_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
 
 use crate::{FaultProofDriver, FaultProofProgramError};

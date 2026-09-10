@@ -1,4 +1,4 @@
-//! Error types for the `base-proof-executor` crate.
+//! Error types for the `base-proof-execution-client` crate.
 //!
 //! This module provides comprehensive error handling for the stateless L2 block
 //! execution engine, covering validation errors, execution failures, and

@@ -1,5 +1,5 @@
 [package]
-name = "base-proof-executor"
+name = "base-proof-execution-client"
 description = "A no_std stateless block builder for Base"
 edition.workspace = true
 license.workspace = true
@@ -71,4 +71,5 @@ test-utils = [
     "dep:tempfile",
     "dep:tokio",
     "std",
+    "base-common-chain-config/serde",
 ]

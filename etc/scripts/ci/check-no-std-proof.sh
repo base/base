@@ -13,7 +13,7 @@ set -eo pipefail
 #
 # getrandom_backend=custom silences the "target not supported" error from
 # getrandom 0.3+. getrandom 0.2 (pulled in by k256 via alloy-consensus/k256)
-# is handled by enabling features = ["custom"] in base-proof-executor's
+# is handled by enabling features = ["custom"] in base-proof-execution-client's
 # Cargo.toml, which propagates via Cargo feature unification.
 
 RUSTFLAGS="${RUSTFLAGS} --cfg getrandom_backend=\"custom\""
@@ -23,7 +23,7 @@ proof_packages=(
   base-proof
   base-proof-client
   base-proof-driver
-  base-proof-executor
+  base-proof-execution-client
   base-proof-witness-mpt
   base-proof-witness-preimage
   base-proof-types-protocol

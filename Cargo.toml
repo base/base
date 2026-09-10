@@ -75,7 +75,7 @@ members = [
   "crates/proof/client",
   "crates/proof/contracts",
   "crates/proof/driver",
-  "crates/proof/executor",
+  "crates/proof/execution/client",
   "crates/proof/host",
   "crates/proof/witness/mpt",
   "crates/proof/witness/preimage",
@@ -322,7 +322,7 @@ base-proof-worker = { path = "crates/proof/worker", default-features = false }
 base-proof-client = { path = "crates/proof/client", default-features = false }
 base-proof-driver = { path = "crates/proof/driver", default-features = false }
 base-challenger = { path = "crates/proof/challenge", default-features = false }
-base-proof-executor = { path = "crates/proof/executor", default-features = false }
+base-proof-execution-client = { path = "crates/proof/execution/client", default-features = false }
 base-proof-witness-preimage = { path = "crates/proof/witness/preimage", default-features = false }
 base-proof-contracts = { path = "crates/proof/contracts", default-features = false }
 base-proof-submission = { path = "crates/proof/submission", default-features = false }

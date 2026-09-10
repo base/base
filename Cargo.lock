@@ -4702,7 +4702,7 @@ dependencies = [
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof-driver",
- "base-proof-executor",
+ "base-proof-execution-client",
  "base-proof-witness-mpt",
  "base-proof-witness-preimage",
  "c-kzg",
@@ -4731,7 +4731,7 @@ dependencies = [
  "base-execution-evm-runtime",
  "base-proof",
  "base-proof-driver",
- "base-proof-executor",
+ "base-proof-execution-client",
  "base-proof-witness-preimage",
  "rstest",
  "spin 0.10.1",
@@ -4771,14 +4771,14 @@ dependencies = [
  "base-consensus-batch-types",
  "base-consensus-derive-pipeline",
  "base-execution-evm-runtime",
- "base-proof-executor",
+ "base-proof-execution-client",
  "spin 0.10.1",
  "thiserror 2.0.19",
  "tracing",
 ]
 
 [[package]]
-name = "base-proof-executor"
+name = "base-proof-execution-client"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",

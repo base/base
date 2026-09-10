@@ -16,7 +16,7 @@ alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-executor = { workspace = true }
+base-proof-execution-client = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-types-payload = { workspace = true }
@@ -33,7 +33,7 @@ std = [
     "alloy-rlp/std",
     "base-common-chain-config/std",
     "base-common-types-payload/std",
-    "base-proof-executor/std",
+    "base-proof-execution-client/std",
     "base-consensus-batch-types/std",
     "spin/std",
     "thiserror/std",

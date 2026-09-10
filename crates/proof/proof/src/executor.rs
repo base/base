@@ -12,7 +12,7 @@ use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
 use base_proof_driver::Executor;
-use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
+use base_proof_execution_client::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
 use base_proof_witness_mpt::TrieHinter;
 
 /// An executor wrapper type.
@@ -64,7 +64,7 @@ where
         + Clone
         + 'static,
 {
-    type Error = base_proof_executor::ExecutorError;
+    type Error = base_proof_execution_client::ExecutorError;
 
     fn is_deposit_only_retryable(error: &Self::Error) -> bool {
         error.is_deposit_only_retryable()
@@ -96,7 +96,7 @@ where
         attributes: BasePayloadAttributes,
     ) -> Result<BlockBuildingOutcome, Self::Error> {
         self.inner.as_mut().map_or_else(
-            || Err(base_proof_executor::ExecutorError::MissingExecutor),
+            || Err(base_proof_execution_client::ExecutorError::MissingExecutor),
             |e| e.build_block(attributes),
         )
     }
@@ -104,7 +104,7 @@ where
     /// Computes the output root.
     fn compute_output_root(&mut self) -> Result<B256, Self::Error> {
         self.inner.as_mut().map_or_else(
-            || Err(base_proof_executor::ExecutorError::MissingExecutor),
+            || Err(base_proof_execution_client::ExecutorError::MissingExecutor),
             |e| e.compute_output_root(),
         )
     }

@@ -16,7 +16,7 @@ thiserror = { workspace = true }
 base-proof = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-driver = { workspace = true }
-base-proof-executor = { workspace = true }
+base-proof-execution-client = { workspace = true }
 base-proof-witness-preimage = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
@@ -37,7 +37,7 @@ std = [
     "alloy-primitives/std",
     "base-common-chain-config/std",
     "base-proof-driver/std",
-    "base-proof-executor/std",
+    "base-proof-execution-client/std",
     "base-proof-witness-preimage/std",
     "base-proof/std",
     "base-consensus-batch-types/std",
