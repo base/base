@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
+use base_execution_state_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
 use base_shadow_indexer_db::{PgConnectionParams, ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};

@@ -36,7 +36,7 @@ reth-node-metrics = { workspace = true }
 base-tx-forwarding = { workspace = true }
 reth-node-ethstats = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-shadow-indexer = { workspace = true }
+base-execution-state-indexer = { workspace = true }
 base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }

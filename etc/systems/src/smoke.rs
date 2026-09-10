@@ -322,8 +322,8 @@ pub struct SystemTestStackBuilder {
     shadow_start_block: Option<u64>,
     tmpfs_datadirs: bool,
     l1_fault_injection: bool,
-    builder_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
-    client_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
+    builder_shadow_indexer: Option<base_execution_state_indexer::ShadowIndexerConfig>,
+    client_shadow_indexer: Option<base_execution_state_indexer::ShadowIndexerConfig>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
@@ -487,7 +487,7 @@ impl SystemTestStackBuilder {
     /// wiring without forking this crate.
     pub fn with_builder_shadow_indexer(
         mut self,
-        config: base_shadow_indexer::ShadowIndexerConfig,
+        config: base_execution_state_indexer::ShadowIndexerConfig,
     ) -> Self {
         self.builder_shadow_indexer = Some(config);
         self

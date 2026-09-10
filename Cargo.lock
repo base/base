@@ -3207,13 +3207,13 @@ dependencies = [
  "base-execution-network-types",
  "base-execution-payload-builder",
  "base-execution-state-database",
+ "base-execution-state-indexer",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-types",
  "base-metering",
  "base-node-core",
  "base-reth-cli",
- "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-tx-forwarding",
  "base-txpool-rpc",
@@ -3873,6 +3873,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-state-indexer"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "anyhow",
+ "async-trait",
+ "base-common-observability-metrics",
+ "base-common-runtime-tasks",
+ "base-common-types-chain",
+ "base-execution-evm-blocks",
+ "base-execution-state-database",
+ "base-execution-state-maintenance",
+ "base-execution-state-provider",
+ "base-execution-state-types",
+ "base-node-context",
+ "base-shadow-indexer-db",
+ "chrono",
+ "eyre",
+ "futures",
+ "metrics",
+ "mockall",
+ "reth-exex",
+ "reth-network-api",
+ "reth-primitives-traits",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-execution-state-maintenance"
 version = "0.0.0"
 dependencies = [
@@ -4329,6 +4360,7 @@ dependencies = [
  "base-execution-payload-types",
  "base-execution-rpc",
  "base-execution-state-database",
+ "base-execution-state-indexer",
  "base-execution-state-maintenance",
  "base-execution-state-provider",
  "base-execution-state-tasks",
@@ -4338,7 +4370,6 @@ dependencies = [
  "base-metering",
  "base-node-context",
  "base-node-core",
- "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-tx-forwarding",
  "base-txpool-rpc",
@@ -5016,37 +5047,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-shadow-indexer"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "anyhow",
- "async-trait",
- "base-common-observability-metrics",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-execution-evm-blocks",
- "base-execution-state-database",
- "base-execution-state-maintenance",
- "base-execution-state-provider",
- "base-execution-state-types",
- "base-node-context",
- "base-shadow-indexer-db",
- "chrono",
- "eyre",
- "futures",
- "metrics",
- "mockall",
- "reth-exex",
- "reth-network-api",
- "reth-primitives-traits",
- "tempfile",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-shadow-indexer-db"
 version = "0.0.0"
 dependencies = [
@@ -5196,6 +5196,7 @@ dependencies = [
  "base-execution-cli",
  "base-execution-evm-precompiles",
  "base-execution-state-database",
+ "base-execution-state-indexer",
  "base-execution-txpool",
  "base-load-tests",
  "base-node-core",
@@ -5203,7 +5204,6 @@ dependencies = [
  "base-prover-service",
  "base-prover-service-db",
  "base-prover-service-protocol",
- "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-testing-support",
  "base-tx-forwarding",

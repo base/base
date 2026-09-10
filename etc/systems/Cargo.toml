@@ -62,7 +62,7 @@ base-execution-cli = { workspace = true, features = ["default"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-prover-service = { workspace = true, features = ["default"] }
-base-shadow-indexer = { workspace = true, features = ["default"] }
+base-execution-state-indexer = { workspace = true, features = ["default"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }

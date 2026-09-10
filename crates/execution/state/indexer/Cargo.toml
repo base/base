@@ -1,5 +1,5 @@
 [package]
-name = "base-shadow-indexer"
+name = "base-execution-state-indexer"
 description = "Shadow indexer ExEx for capturing executed blocks"
 version.workspace = true
 edition.workspace = true

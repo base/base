@@ -15,7 +15,7 @@ use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
-use base_shadow_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
+use base_execution_state_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
 use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };

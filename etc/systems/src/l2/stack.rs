@@ -91,9 +91,9 @@ pub struct L2StackConfig {
     /// Shadow sequencer configuration. When [`None`], no shadow sequencers are started.
     pub shadow_sequencers: Option<ShadowSequencersConfig>,
     /// Additional node extensions installed on the builder, after its built-in RPC wiring.
-    pub builder_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
+    pub builder_shadow_indexer: Option<base_execution_state_indexer::ShadowIndexerConfig>,
     /// Additional node extensions installed on the client, after its built-in extensions.
-    pub client_shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
+    pub client_shadow_indexer: Option<base_execution_state_indexer::ShadowIndexerConfig>,
 }
 
 /// Configuration for the shadow sequencers running alongside the active sequencer.

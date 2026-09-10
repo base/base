@@ -70,7 +70,7 @@ pub struct InProcessClientConfig {
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] — such as a custom RPC
     /// method — onto the standard in-process client wiring without forking this crate.
-    pub shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
+    pub shadow_indexer: Option<base_execution_state_indexer::ShadowIndexerConfig>,
 }
 
 /// In-process Base client node that syncs from a builder.

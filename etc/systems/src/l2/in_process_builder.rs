@@ -52,7 +52,7 @@ pub struct InProcessBuilderConfig {
     ///
     /// Lets downstream consumers layer their own [`BaseNodeExtension`] onto the standard
     /// in-process builder wiring without forking this crate.
-    pub shadow_indexer: Option<base_shadow_indexer::ShadowIndexerConfig>,
+    pub shadow_indexer: Option<base_execution_state_indexer::ShadowIndexerConfig>,
     /// Interval used by the payload builder.
     pub block_time: Duration,
     /// Optional canonical block persistence threshold.

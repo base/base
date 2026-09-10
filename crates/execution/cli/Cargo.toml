@@ -44,7 +44,7 @@ tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
-base-shadow-indexer = { workspace = true, features = ["default"] }
+base-execution-state-indexer = { workspace = true, features = ["default"] }
 base-txpool-tracing = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
