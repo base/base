@@ -4,7 +4,7 @@ use base_common_client_ethereum::eip2718::Decodable2718;
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844Variant};
 use base_execution_rpc_handlers::BaseEthApiError;
 use base_execution_rpc_handlers::DebugApiServer;
-use reth_rpc_builder::RpcRegistryInner;
+use base_execution_rpc_server::RpcRegistryInner;
 
 #[expect(missing_debug_implementations)]
 pub struct RpcTestContext {

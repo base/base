@@ -2,9 +2,8 @@
 
 use std::io;
 
-use reth_rpc_builder::{
-    RpcServerConfig, TransportRpcModuleConfig,
-    error::{RpcError, ServerKind, WsHttpSamePortError},
+use base_execution_rpc_server::{
+    RpcError, RpcServerConfig, ServerKind, TransportRpcModuleConfig, WsHttpSamePortError,
 };
 
 use crate::utils::{

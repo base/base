@@ -9,6 +9,7 @@ use base_common_types_rpc::{
     BaseTransactionRequest, Block, FeeHistory, Filter, Index, Log, PendingTransactionFilterKind,
     SyncStatus, TraceFilter, Transaction, TransactionReceipt,
 };
+use base_execution_network_types::NodeRecord;
 use base_execution_rpc_handlers::{
     AdminApiClient, DebugApiClient, NetApiClient, OtterscanClient, TraceApiClient, Web3ApiClient,
 };
@@ -22,7 +23,6 @@ use jsonrpsee::{
     rpc_params,
     types::error::ErrorCode,
 };
-use base_execution_network_types::NodeRecord;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 

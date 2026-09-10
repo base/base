@@ -28,7 +28,6 @@ reth-engine-tree = { workspace = true }
 reth-engine-util = { workspace = true }
 reth-network-api = { workspace = true }
 reth-node-events = { workspace = true }
-reth-rpc-builder = { workspace = true }
 base-node-context = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
@@ -40,6 +39,7 @@ base-common-types-rpc = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 base-common-client-ethereum = {workspace = true}
+base-execution-rpc-server = { workspace = true }
 base-execution-payload-types = {workspace = true}
 base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }

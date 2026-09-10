@@ -3770,6 +3770,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-rpc-server"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "base-common-chain-config",
+ "base-common-client-ethereum",
+ "base-common-observability-metrics",
+ "base-common-observability-tracing",
+ "base-common-runtime-tasks",
+ "base-common-types-chain",
+ "base-common-types-payload",
+ "base-common-types-rpc",
+ "base-execution-evm-blocks",
+ "base-execution-network-types",
+ "base-execution-payload-builder",
+ "base-execution-rpc-handlers",
+ "base-execution-state-provider",
+ "base-execution-txpool",
+ "clap",
+ "dyn-clone",
+ "http 1.4.2",
+ "jsonrpsee",
+ "metrics",
+ "pin-project",
+ "reqwest",
+ "reth-engine-primitives",
+ "reth-network",
+ "reth-node-core",
+ "reth-primitives-traits",
+ "reth-rpc-layer",
+ "reth-rpc-server-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "base-execution-state-api"
 version = "0.0.0"
 dependencies = [
@@ -4328,6 +4371,7 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-payload-types",
  "base-execution-rpc-handlers",
+ "base-execution-rpc-server",
  "base-execution-state-database",
  "base-execution-state-indexer",
  "base-execution-state-maintenance",
@@ -4369,7 +4413,6 @@ dependencies = [
  "reth-node-metrics",
  "reth-payload-util",
  "reth-primitives-traits",
- "reth-rpc-builder",
  "reth-stages",
  "rstest",
  "secp256k1 0.30.0",
@@ -13829,6 +13872,7 @@ dependencies = [
  "base-execution-payload-builder",
  "base-execution-payload-types",
  "base-execution-rpc-handlers",
+ "base-execution-rpc-server",
  "base-execution-state-database",
  "base-execution-state-provider",
  "base-execution-state-types",
@@ -13843,7 +13887,6 @@ dependencies = [
  "reth-network-api",
  "reth-node-core",
  "reth-primitives-traits",
- "reth-rpc-builder",
  "reth-rpc-server-types",
  "serde_json",
  "tempfile",
@@ -14351,49 +14394,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "reth-rpc-builder"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-chain-config",
- "base-common-client-ethereum",
- "base-common-observability-metrics",
- "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-common-types-rpc",
- "base-execution-evm-blocks",
- "base-execution-network-types",
- "base-execution-payload-builder",
- "base-execution-rpc-handlers",
- "base-execution-state-provider",
- "base-execution-txpool",
- "clap",
- "dyn-clone",
- "http 1.4.2",
- "jsonrpsee",
- "metrics",
- "pin-project",
- "reqwest",
- "reth-engine-primitives",
- "reth-network",
- "reth-node-core",
- "reth-primitives-traits",
- "reth-rpc-layer",
- "reth-rpc-server-types",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tower",
- "tower-http",
- "tracing",
 ]
 
 [[package]]

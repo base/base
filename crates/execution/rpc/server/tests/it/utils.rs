@@ -3,10 +3,10 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::BaseBeaconConsensus;
-use reth_primitives_traits::SignedTransaction;
-use reth_rpc_builder::{
+use base_execution_rpc_server::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
 };
+use reth_primitives_traits::SignedTransaction;
 
 /// Localhost with port 0 so a free port is used.
 pub const fn test_address() -> SocketAddr {
@@ -74,7 +74,10 @@ pub async fn test_rpc_registry() -> RpcRegistryInner {
     let sender = transaction.try_into_recovered().unwrap().signer();
     mock.add_account(
         sender,
-        base_execution_state_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
+        base_execution_state_provider::test_utils::ExtendedAccount::new(
+            0,
+            alloy_primitives::U256::MAX,
+        ),
     );
     let mut context = base_execution_rpc_handlers::test_utils::RpcTestUtils::context(mock);
     let manager = reth_network::NetworkConfig::builder_with_rng_secret_key(Runtime::test())
@@ -86,7 +89,8 @@ pub async fn test_rpc_registry() -> RpcRegistryInner {
         .expect("local fixture network");
     context.network = manager.handle().clone();
     tokio::spawn(manager);
-    let eth_api = base_execution_rpc_handlers::EthApiBuilder::new_with_components(context.clone()).build();
+    let eth_api =
+        base_execution_rpc_handlers::EthApiBuilder::new_with_components(context.clone()).build();
     RpcRegistryInner::new(
         context.provider,
         context.pool,

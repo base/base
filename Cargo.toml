@@ -146,7 +146,7 @@ members = [
   "vendor/reth-payload-util",
   "vendor/reth-primitives-traits",
   "crates/execution/state/provider",
-  "vendor/reth-rpc-builder",
+  "crates/execution/rpc/server",
   "vendor/reth-rpc-layer",
   "vendor/reth-rpc-server-types",
   "vendor/reth-stages",
@@ -441,7 +441,7 @@ reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false 
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 reth-network-api = { path = "vendor/reth-network-api", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
-reth-rpc-builder = { path = "vendor/reth-rpc-builder", default-features = false }
+base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }
 reth-downloaders = { path = "vendor/reth-downloaders", default-features = false }
 reth-engine-util = { path = "vendor/reth-engine-util", default-features = false }
 reth-engine-tree = { path = "vendor/reth-engine-tree", default-features = false }

@@ -11,6 +11,9 @@ use base_execution_rpc_handlers::{
 };
 use base_execution_rpc_handlers::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_rpc_handlers::{EthStateCache, cache::cache_new_blocks_task};
+use base_execution_rpc_server::{
+    RpcConfig, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
+};
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::providers::BlockchainProvider;
@@ -21,9 +24,6 @@ pub use jsonrpsee::{
 use reth_engine_primitives::TreeConfig;
 pub use reth_engine_tree::tree::BasicEngineValidator;
 use reth_node_core::node_config::NodeConfig;
-use reth_rpc_builder::{
-    RpcConfig, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
-};
 use {base_execution_txpool::BaseTransactionPool, base_node_context::AddOnsContext};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};

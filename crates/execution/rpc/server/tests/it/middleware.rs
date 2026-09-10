@@ -7,12 +7,12 @@ use std::{
 };
 
 use base_execution_rpc_handlers::EthApiClient;
+use base_execution_rpc_server::{RpcServerConfig, TransportRpcModuleConfig};
 use jsonrpsee::{
     core::middleware::{Batch, Notification},
     server::middleware::rpc::RpcServiceT,
     types::Request,
 };
-use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
 use tower::Layer;
 
 use crate::utils::{test_address, test_rpc_registry};

@@ -4,15 +4,15 @@
 use std::time::Duration;
 
 use base_common_runtime_tasks::EventSender;
+use base_execution_rpc_server::{RpcServerConfig, TransportRpcModuleConfig};
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
 use reth_primitives_traits::SignedTransaction;
-use reth_rpc_builder::{RpcServerConfig, TransportRpcModuleConfig};
 use serde_json::Value;
 
 use crate::utils::{launch_ws, test_rpc_registry};
 
 /// Helper to launch a WS server with the Eth module.
-async fn launch_ws_eth() -> reth_rpc_builder::RpcServerHandle {
+async fn launch_ws_eth() -> base_execution_rpc_server::RpcServerHandle {
     launch_ws().await
 }
 
@@ -148,8 +148,8 @@ async fn test_eth_subscribe_not_available_over_http() {
 async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use base_common_runtime_tasks::Runtime;
     use base_execution_evm_blocks::BaseBeaconConsensus;
+    use base_execution_rpc_server::RpcRegistryInner;
     use base_execution_txpool::{TransactionOrigin, TransactionPool};
-    use reth_rpc_builder::RpcRegistryInner;
 
     base_common_observability_tracing::init_test_tracing();
 
@@ -166,12 +166,16 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
     let mock = base_execution_state_provider::test_utils::MockEthProvider::default();
     mock.add_account(
         recovered.signer(),
-        base_execution_state_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
+        base_execution_state_provider::test_utils::ExtendedAccount::new(
+            0,
+            alloy_primitives::U256::MAX,
+        ),
     );
     let tx = base_execution_txpool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
     let context = base_execution_rpc_handlers::test_utils::RpcTestUtils::context(mock);
     let pool_clone = context.pool.clone();
-    let eth_api = base_execution_rpc_handlers::EthApiBuilder::new_with_components(context.clone()).build();
+    let eth_api =
+        base_execution_rpc_handlers::EthApiBuilder::new_with_components(context.clone()).build();
     let mut registry = RpcRegistryInner::new(
         context.provider,
         context.pool,

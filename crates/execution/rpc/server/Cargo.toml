@@ -1,5 +1,5 @@
 [package]
-name = "reth-rpc-builder"
+name = "base-execution-rpc-server"
 description = "Helpers for configuring RPC"
 version.workspace = true
 edition.workspace = true

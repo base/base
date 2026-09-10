@@ -1,12 +1,3 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 use std::{
     collections::HashMap,
     fmt::Debug,
@@ -15,9 +6,16 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    CorsDomainError, EthHandlers, cors,
+    error::{RpcError, ServerKind},
+};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_client_ethereum::IntoWallet;
 use base_common_client_ethereum::{Provider, ProviderBuilder, fillers::RecommendedFillers};
+use base_common_runtime_tasks::EventSender;
+use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
+use base_common_types_rpc as constants;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc_handlers::{
@@ -25,21 +23,15 @@ use base_execution_rpc_handlers::{
     EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi, RPCApi, RethApi,
     TraceApi, TxPoolApi, Web3Api,
 };
-use base_execution_txpool::BaseTransactionPool;
-pub use cors::CorsDomainError;
-use error::{RpcError, ServerKind};
-use http::{HeaderMap, header::AUTHORIZATION};
-// re-export for convenience
-use base_common_runtime_tasks::EventSender;
-use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
-use base_common_types_rpc as constants;
 use base_execution_rpc_handlers::{
     AdminApiServer, DebugApiServer, MevSimApiServer, MinerApiServer, NetApiServer, OtterscanServer,
     RethApiServer, RpcApiServer, TraceApiServer, TxPoolApiServer, Web3ApiServer,
 };
 use base_execution_rpc_handlers::{EthConfig, EthSubscriptionIdProvider};
 use base_execution_state_provider::providers::BlockchainProvider;
-pub use jsonrpsee::server::ServerBuilder;
+use base_execution_txpool::BaseTransactionPool;
+use http::{HeaderMap, header::AUTHORIZATION};
+use jsonrpsee::server::ServerBuilder;
 use jsonrpsee::{
     Methods, RpcModule,
     core::RegisterMethodError,
@@ -49,41 +41,16 @@ use jsonrpsee::{
 };
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
-pub use reth_rpc_server_types::RethRpcModule;
+use reth_rpc_server_types::RethRpcModule;
 use serde::{Deserialize, Serialize};
-pub use tower::layer::util::{Identity, Stack};
+use tower::layer::util::Identity;
 use tower_http::cors::CorsLayer;
 
 use crate::{error::WsHttpSamePortError, metrics::RpcRequestMetrics};
 
-/// Auth server utilities.
-
-/// RPC server utilities.
-mod config;
-pub use config::RpcConfig;
-
-/// Utils for installing Rpc middleware
-pub mod middleware;
-
-/// Cors utilities.
-mod cors;
-
-/// Rpc error utilities.
-pub mod error;
-
-/// Eth utils
-pub mod eth;
-pub use eth::EthHandlers;
-
-// Rpc server metrics
-mod metrics;
 use base_execution_rpc_handlers::EthSimBundle;
-pub use metrics::{MeteredBatchRequestsFuture, MeteredRequestFuture, RpcRequestMetricsService};
 
 use crate::middleware::RethRpcMiddleware;
-
-// Rpc rate limiter
-pub mod rate_limiter;
 
 /// Bundles settings for modules
 #[derive(Debug, Default, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -820,7 +787,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
 /// Configure a http transport only
 ///
 /// ```
-/// use reth_rpc_builder::{RethRpcModule, TransportRpcModuleConfig};
+/// use base_execution_rpc_server::{RethRpcModule, TransportRpcModuleConfig};
 /// let config =
 ///     TransportRpcModuleConfig::default().with_http();
 /// ```

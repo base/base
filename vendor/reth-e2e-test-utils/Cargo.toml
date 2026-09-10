@@ -26,7 +26,6 @@ reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-network-api = { workspace = true }
-reth-rpc-builder = { workspace = true }
 base-node-context = { workspace = true }
 base-common-types-rpc = { workspace = true }
 reth-rpc-server-types = { workspace = true }
@@ -34,6 +33,7 @@ reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
+base-execution-rpc-server = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-types = { workspace = true }
 base-execution-network-types = { workspace = true }
@@ -45,9 +45,9 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
+base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-execution-state-database = {workspace = true, features = ["test-utils"]}
