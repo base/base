@@ -12,115 +12,147 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-url = { workspace = true }
-tower = { workspace = true }
+tower = {workspace = true}
+nanoid = { workspace = true}
+libp2p = { workspace = true }
 dashmap = { workspace = true }
-jsonrpsee = {workspace = true}
 async-trait = {workspace = true}
 thiserror = { workspace = true }
 alloy-signer = {workspace = true}
 futures-util = { workspace = true }
 alloy-hardforks = {workspace = true}
 alloy-transport = { workspace = true }
+base-testing-support = { workspace = true}
+reth-primitives-traits = { workspace = true}
+base-common-client-rollup = {workspace = true}
 base-execution-rpc-server = {workspace = true}
-nanoid = { workspace = true, optional = true }
 rlimit = { workspace = true, optional = true }
+base-common-runtime-tasks = { workspace = true}
+base-common-l1-transactions = {workspace = true}
 base-execution-state-memory = {workspace = true}
-eyre = {workspace = true, features = ["default"]}
-base-common-l1-transactions = { workspace = true }
+base-testing-load-service = { workspace = true }
+url = {features = ["default"], workspace = true}
+eyre = {features = ["default"], workspace = true}
+k256 = {features = ["default"], workspace = true}
+rand = {features = ["default"], workspace = true}
+base-batcher-encoding-channel = {workspace = true}
+base-execution-engine-driver = { workspace = true}
 base-execution-engine-types = { workspace = true }
+hex = { workspace = true, features = ["default"] }
+base-consensus-network-service = {workspace = true}
 base-execution-network-types = { workspace = true }
-k256 = { workspace = true, features = ["default"] }
-rand = { workspace = true, features = ["default"] }
-base-batcher-encoding-channel = { workspace = true }
-base-consensus-network-service = { workspace = true }
-chrono = { workspace = true, features = ["default"] }
+chrono = {features = ["default"], workspace = true}
+alloy-eips = {workspace = true,  features = ["std"]}
+base-consensus-source-providers = {workspace = true}
+base-execution-network-service = {workspace = true }
+base-execution-evm-precompiles = { workspace = true }
+tempfile = {features = ["default"], workspace = true}
 futures = { workspace = true, features = ["default"] }
-testcontainers = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["default"] }
+alloy-genesis = {workspace = true,  features = ["std"]}
 alloy-rlp = {features = ["core-net"], workspace = true}
 base-execution-state-maintenance = { workspace = true }
-tempfile = { workspace = true, features = ["default"] }
-tokio-util = { workspace = true, features = ["default"] }
+tokio-util = {features = ["default"], workspace = true}
+alloy-sol-types = { workspace = true, features = ["std"] }
+axum = { workspace = true, features = ["http1", "tokio"] }
 miniz_oxide = { workspace = true, features = ["default"] }
-base-testing-support = {optional = false, workspace = true}
+serde = { workspace = true, features = ["derive", "std"] }
+base-node-config = { features = ["otlp"], workspace = true}
 tokio-stream = { workspace = true, features = ["default"] }
-serde_json = {workspace = true, features = ["alloc", "std"]}
-reth-primitives-traits = {optional = false, workspace = true}
+serde_json = {features = ["alloc", "std"], workspace = true}
+alloy-rpc-client = {workspace = true,  features = ["default"]}
 derive_more = {features = ["debug", "full"], workspace = true}
-tracing = {workspace = true, features = ["attributes", "std"]}
-base-common-runtime-tasks = {optional = false, workspace = true}
-base-execution-engine-driver = {optional = false, workspace = true}
+tracing = {features = ["attributes", "std"], workspace = true}
+base-execution-cli = { workspace = true, features = ["default"] }
+alloy-primitives = { features = ["map-foldhash"], workspace = true}
 tar = { workspace = true, optional = true, features = ["default"] }
+base-execution-evm-runtime = {features = ["std"], workspace = true }
+clap = { workspace = true, features = ["default", "derive", "env"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
-alloy-eips = {workspace = true, optional = false, features = ["std"]}
-base-execution-network-service = {workspace = true, optional = false}
+jsonrpsee = {features = ["http-client", "server"], workspace = true}
+prometheus-scraper = { version = "0.2.0", default-features = false }
+base-proof-service-server = {workspace = true, features = ["default"]}
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 base-execution-state-types = {features = ["default"], workspace = true}
-alloy-genesis = {workspace = true, optional = false, features = ["std"]}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
-base-consensus-driver-service = {workspace = true, features = ["default"]}
-base-batcher-service-driver = {workspace = true, features = ["test-utils"]}
-base-node-config = {features = ["otlp"], workspace = true, optional = false}
-base-node-service = {workspace = true, features = ["default", "test-utils"]}
+base-execution-txpool-pool = {workspace = true,  features = ["default"]}
+base-consensus-driver-service = {features = ["default"], workspace = true}
+base-execution-payload-types = {workspace = true,  features = ["default"]}
+base-batcher-service-driver = {features = ["test-utils"], workspace = true}
+base-common-chain-activation = { workspace = true, features = ["default"] }
+base-common-types-payload = {workspace = true,  features = ["serde", "std"]}
+base-node-service = {features = ["default", "test-utils"], workspace = true}
+base-common-chain-config = {workspace = true,  features = ["default", "std"]}
+base-consensus-batch-types = {workspace = true,  features = ["serde", "std"]}
 base-execution-state-provider = {features = ["test-utils"], workspace = true}
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
-alloy-rpc-client = {features = ["default"], optional = false, workspace = true}
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-consensus-derive-pipeline = { workspace = true, features = ["test-utils"] }
-alloy-primitives = {workspace = true, optional = false, features = ["map-foldhash"]}
-base-consensus-batch-types = {features = ["std"], optional = false, workspace = true}
-base-execution-evm-runtime = {features = ["std"], workspace = true, optional = false}
-base-execution-state-database = {workspace = true, features = ["default", "test-utils"]}
-base-execution-txpool-pool = {workspace = true, optional = false, features = ["default"]}
-tokio = {workspace = true, optional = false, features = ["default", "rt", "sync", "time"]}
-base-execution-payload-types = {workspace = true, optional = false, features = ["default"]}
-base-common-types-payload = {workspace = true, optional = false, features = ["serde", "std"]}
-base-common-chain-config = {workspace = true, optional = false, features = ["default", "std"]}
-base-common-types-rpc = {workspace = true, optional = false, features = ["default", "serde", "std"]}
-base-execution-rpc-handlers = {workspace = true, optional = false, features = ["client", "default"]}
-tracing-subscriber = {features = ["default", "env-filter", "json"], optional = false, workspace = true}
-base-common-types-chain = {workspace = true, optional = false, features = ["kzg", "reth", "serde", "std"]}
-base-execution-payload-builder = {workspace = true, optional = false, features = ["default", "test-utils"]}
-base-common-client-ethereum = {workspace = true, features = ["debug-api", "default", "jwt-client", "mnemonic", "reqwest"]}
+base-common-types-rpc = {workspace = true,  features = ["default", "serde", "std"]}
+base-execution-rpc-handlers = {workspace = true,  features = ["client", "default"]}
+testcontainers = { features = ["blocking", "host-port-exposure"], workspace = true}
+base-execution-state-indexer = { workspace = true, features = ["default", "service"] }
+base-execution-state-database = {features = ["default", "test-utils"], workspace = true}
+base-proof-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
+base-common-types-chain = {workspace = true,  features = ["kzg", "reth", "serde", "std"]}
+base-execution-payload-builder = {workspace = true,  features = ["default", "test-utils"]}
+tracing-subscriber = {workspace = true,  features = ["default", "env-filter", "fmt", "json"]}
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
+tokio = {workspace = true,  features = ["default", "full", "macros", "rt", "rt-multi-thread", "sync", "time"]}
+base-common-client-ethereum = {features = ["debug-api", "default", "jwt-client", "mnemonic", "reqwest"], workspace = true}
 
 [dev-dependencies]
 nanoid = { workspace = true }
 rlimit = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
+alloy-json-rpc = { workspace = true }
 base-testing-support = {workspace = true}
+reth-primitives-traits = { workspace = true }
+base-common-types-chain = { workspace = true }
+base-common-client-rollup = { workspace = true }
+base-common-types-payload = { workspace = true }
+base-execution-rpc-handlers = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 base-execution-engine-driver = {workspace = true}
 base-execution-state-tasks = { workspace = true }
-base-execution-rpc-handlers = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 base-execution-evm-precompiles = {workspace = true}
+base-execution-state-indexer = { workspace = true }
 ctor = { workspace = true, features = ["default"] }
 time = { workspace = true, features = ["default"] }
 base-batcher-encoding-channel = { workspace = true }
+futures = {features = ["default"], workspace = true}
 hyper = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+base-consensus-derive-pipeline = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-futures = { workspace = true, features = ["default"] }
 base-common-observability-events = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 hyper-util = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 http-body-util = { workspace = true, features = ["default"] }
-tokio-tungstenite = {workspace = true, features = ["default"]}
+tokio-tungstenite = {features = ["default"], workspace = true}
 tokio = { workspace = true, features = ["default", "rt", "macros"] }
 base-testing-devnet = { workspace = true, features = ["test-utils"] }
 base-execution-state-types = { workspace = true, features = ["default"] }
 base-node-service = { workspace = true, features = ["default", "test-utils"] }
+base-consensus-driver-service = { workspace = true, features = ["test-utils"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 criterion = {features = ["async_tokio", "default", "html_reports"], workspace = true}
 base-common-client-ethereum = { workspace = true, features = ["default", "txpool-api"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 [[bench]]
 name = "fcu_unsafe"
 harness = false
 
-[features]
-test-utils = ["base-node-service/test-utils", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "nanoid", "base-execution-payload-builder/test-utils", "base-execution-txpool-pool/test-utils", "rlimit", "testcontainers"]
-default = ["test-utils"]
+[[test]]
+name = "system_upgrade_signal"
+path = "tests/system_upgrade_signal.rs"
+required-features = ["upgrade-signal"]
 
-[target."cfg(unix)".dependencies]
-tikv-jemallocator = { workspace = true, optional = true, features = ["default"] }
+[features]
+test-utils = ["base-node-service/test-utils", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "base-execution-payload-builder/test-utils", "base-execution-txpool-pool/test-utils", "rlimit"]
+default = ["test-utils"]
+upgrade-signal = ["base-testing-support/contracts"]

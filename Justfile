@@ -89,13 +89,13 @@ install-nextest:
 
 # Runs tests across workspace with all features enabled (excludes system tests)
 test: install-nextest build::contracts
-    cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
+    cargo nextest run --workspace --all-features --exclude base-testing-devnet --no-fail-fast
 
 # Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts
     #!/usr/bin/env bash
     set -euo pipefail
-    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-testing-devnet --cargo-args)"
     pkg_args=()
     while IFS= read -r line; do
         [ -n "$line" ] && pkg_args+=("$line")
@@ -109,13 +109,13 @@ test-affected base="main": install-nextest build::contracts
 
 # Runs tests with ci profile for minimal disk usage
 test-ci: install-nextest build::contracts
-    cargo nextest run -P ci --locked --workspace --all-features --exclude base-system-tests --cargo-profile ci
+    cargo nextest run -P ci --locked --workspace --all-features --exclude base-testing-devnet --cargo-profile ci
 
 # Runs tests only for affected crates with ci profile (for PRs)
 test-affected-ci base="main": install-nextest build::contracts
     #!/usr/bin/env bash
     set -euo pipefail
-    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-system-tests --cargo-args)"
+    pkg_args_output="$(python3 etc/scripts/local/affected-crates.py {{ base }} --exclude base-testing-devnet --cargo-args)"
     pkg_args=()
     while IFS= read -r line; do
         [ -n "$line" ] && pkg_args+=("$line")

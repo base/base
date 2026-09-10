@@ -41,8 +41,8 @@ is exercised:
 |---|---|---|---|
 | Unit tests | milliseconds | A single function or type in isolation | Colocated `#[cfg(test)] mod tests` blocks |
 | Action tests | milliseconds | Real protocol logic (batching, derivation) with in-memory actors | `crates/testing/devnet` (`base-testing-devnet`) |
-| System tests | minutes | The full L1 + L2 stack via Docker/testcontainers | `etc/systems` (`base-system-tests`) |
-| Fuzz tests | hours (nightly) | Randomized transaction streams for sync-parity regressions | `base-system-tests`, nightly only |
+| System tests | minutes | The full L1 + L2 stack via Docker/testcontainers | `crates/testing/devnet` (`base-testing-devnet`) |
+| Fuzz tests | hours (nightly) | Randomized transaction streams for sync-parity regressions | `base-testing-devnet`, nightly only |
 
 Each tier is described below.
 
@@ -57,14 +57,14 @@ suite with:
 just test
 ```
 
-This runs `cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast`
+This runs `cargo nextest run --workspace --all-features --exclude base-testing-devnet --no-fail-fast`
 after building test contracts. To scope to only the crates affected by your branch:
 
 ```sh
 just test-affected
 ```
 
-`base-system-tests` is excluded here — Docker-backed integration tests and the crate's colocated
+`base-testing-devnet` is excluded here — Docker-backed integration tests and the crate's colocated
 unit tests both run under [System Tests](#system-tests) below.
 
 
@@ -103,8 +103,8 @@ processes. This is the slowest and most thorough tier. Run them locally with:
 just devnet tests
 ```
 
-which runs `cargo nextest run -p base-system-tests` after building test contracts. See
-[`etc/systems/README.md`](../../etc/systems/README.md) for the crate itself.
+which runs `cargo nextest run -p base-testing-devnet` after building test contracts. See
+[`crates/testing/devnet/README.md`](../../crates/testing/devnet/README.md) for the crate itself.
 
 System tests require Docker and are **not** run on every pull request (see
 [CI Pipeline](#ci-pipeline) below) because of their cost. They run as the required
@@ -117,7 +117,7 @@ A nightly workflow fuzzes sync-parity behavior with randomized transaction strea
 4 parallel jobs, each with a fresh random seed (logged so a failure can be replayed):
 
 ```sh
-cargo nextest run -P ci -p base-system-tests --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
+cargo nextest run -P ci -p base-testing-devnet --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
 ```
 
 This does not run on pull requests or the merge queue — only on a daily schedule (07:00 UTC) or via
@@ -193,7 +193,7 @@ status check.
 | `just test` | Unit tests, full workspace |
 | `just test-affected` | Unit tests, affected crates only |
 | `just actions test` | Action tests (`base-testing-devnet`) |
-| `just devnet tests` | System tests (`base-system-tests`, requires Docker) |
+| `just devnet tests` | System tests (`base-testing-devnet`, requires Docker) |
 | `just check` | Lists all `check::*` static-check recipes |
 | `just lychee` | Link check |
 | `just zepter` | Feature-flag validation |

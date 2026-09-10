@@ -1,0 +1,22 @@
+[package]
+name = "base-bin-devnet"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-devnet"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre = { workspace = true, features = ["default"] }
+clap = { workspace = true, features = ["default", "derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+base-testing-devnet = { workspace = true, features = ["test-utils", "upgrade-signal"] }

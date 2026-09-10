@@ -33,7 +33,7 @@ test -f "$CLIENT_DATADIR/db/mdbx.dat"
 Build and run the snapshot harness from this repository:
 
 ```sh
-cargo build --release -p base-system-tests --bin base-bench
+cargo build --release -p base-testing-devnet --bin base-bench
 
 export BASE_BENCH_CLIENT_VERSION="base/$(git rev-parse --short HEAD)"
 

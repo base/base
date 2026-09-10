@@ -14,6 +14,8 @@ categories = ["cryptography::cryptocurrencies"]
 resolver = "2"
 exclude = ["actions/fixtures"]
 members = [
+  "bin/benchmark",
+  "bin/devnet",
   "bin/audit-archiver",
   "bin/base",
   "bin/base-telemetry",
@@ -93,7 +95,6 @@ members = [
   "crates/common/http/proxy",
   "crates/common/l1/transactions",
   "crates/common/chain/activation",
-  "etc/systems",
   "crates/testing/tools/witness-diff",
   "crates/common/client/contracts",
   "crates/common/process/nodes",

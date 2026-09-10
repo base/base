@@ -17,13 +17,13 @@ retries = 1
 # Action tests use a full EVM stack; the slowest tests can take 30-45 s.
 # Flag anything that runs longer than 90 s as slow and kill it after 2 periods.
 [[profile.ci.overrides]]
-filter = 'package(base-testing-devnet)'
+filter = 'package(base-testing-devnet) & !binary(/^system_/)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
 # Nextest profiles do not inherit default-profile overrides. Without this, CI
 # starts every Docker-backed system test at once and the runner gets OOM-killed.
 [[profile.ci.overrides]]
-filter = 'package(base-system-tests)'
+filter = 'package(base-testing-devnet) & binary(/^system_/)'
 test-group = 'system-tests'
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 3 }
@@ -43,16 +43,15 @@ test-group = 'builder-integration'
 retries = 1
 
 # First matching override wins per setting. Must sit above
-# package(base-system-tests) or that 6-minute kill still applies.
-# The test waits up to 15 minutes for local SP1 execute, plus stack setup.
-# Debug-profile SP1 execute does not finish in that window; run with --release.
+# the system-test override or its 6-minute limit still applies.
+# This proving scenario needs a larger allowance for proof generation and stack setup.
 [[profile.default.overrides]]
-filter = 'binary(eip8130)'
+filter = 'binary(system_eip8130)'
 retries = 0
 slow-timeout = { period = "5m", terminate-after = 5 }
 
 [[profile.default.overrides]]
-filter = 'package(base-system-tests)'
+filter = 'package(base-testing-devnet) & binary(/^system_/)'
 test-group = 'system-tests'
 retries = 1
 slow-timeout = { period = "120s", terminate-after = 3 }

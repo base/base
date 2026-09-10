@@ -75,7 +75,7 @@ jobs:
       - name: Run fuzz sync-parity test
         # FUZZ_SEED is exported by the "Pick fuzz seed" step above.
         run: |
-          cargo nextest run -P ci --locked -p base-system-tests \
+          cargo nextest run -P ci --locked -p base-testing-devnet \
             --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
       - name: Upload run log on failure
         if: failure()
