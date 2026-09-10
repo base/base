@@ -610,7 +610,7 @@ where
 #[cfg(test)]
 mod test {
     use alloy_primitives::{U256, address};
-    use base_common_process::{Geth, Reth, utils::run_with_tempdir};
+    use base_common_client_ethereum::{Geth, Reth, run_with_tempdir};
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;

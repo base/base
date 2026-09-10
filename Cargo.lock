@@ -2319,6 +2319,8 @@ dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
  "alloy-eips",
+ "alloy-genesis",
+ "alloy-hardforks 0.2.13",
  "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-primitives",
@@ -2337,7 +2339,6 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "base-common-client-ethereum",
- "base-common-process",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -2354,6 +2355,7 @@ dependencies = [
  "itertools 0.14.0",
  "jsonrpsee",
  "k256",
+ "libc",
  "lru 0.18.2",
  "parking_lot",
  "pin-project",
@@ -2441,7 +2443,6 @@ dependencies = [
  "backon",
  "base-common-client-ethereum",
  "base-common-observability-metrics",
- "base-common-process",
  "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-rpc",
@@ -2539,25 +2540,6 @@ dependencies = [
  "tracing-opentelemetry 0.33.0",
  "tracing-samply",
  "tracing-subscriber",
- "url",
-]
-
-[[package]]
-name = "base-common-process"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis",
- "alloy-hardforks 0.2.13",
- "alloy-primitives",
- "ci_info",
- "k256",
- "libc",
- "rand 0.8.7",
- "serde_json",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
  "url",
 ]
 

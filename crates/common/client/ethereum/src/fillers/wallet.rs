@@ -126,7 +126,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address, b256};
-    use base_common_process::Anvil;
+    use base_common_client_ethereum::Anvil;
     use base_common_types_rpc::TransactionRequest;
 
     use crate::{PrivateKeySigner, Provider, ProviderBuilder, WalletProvider};

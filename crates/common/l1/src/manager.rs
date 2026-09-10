@@ -1834,9 +1834,8 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use alloy_transport::mock::Asserter;
     use base_common_client_ethereum::{
-        EthereumWallet, PrivateKeySigner, ProviderBuilder, RootProvider,
+        Anvil, EthereumWallet, PrivateKeySigner, ProviderBuilder, RootProvider,
     };
-    use base_common_process::Anvil;
     use base_common_runtime::{
         Clock,
         deterministic::{Config, Runner},
@@ -1850,7 +1849,8 @@ mod tests {
         TxManagerError,
     };
 
-    async fn setup() -> (SimpleTxManager<RootProvider>, base_common_process::AnvilInstance) {
+    async fn setup() -> (SimpleTxManager<RootProvider>, base_common_client_ethereum::AnvilInstance)
+    {
         let anvil = Anvil::new().spawn();
         let url = anvil.endpoint_url();
         let provider = RootProvider::new_http(url);

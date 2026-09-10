@@ -15,7 +15,7 @@ use k256::ecdsa::SigningKey;
 use tempfile::tempdir;
 use url::Url;
 
-use crate::{
+use crate::node_bindings::{
     NODE_DIAL_LOOP_TIMEOUT, NODE_STARTUP_TIMEOUT, NodeError,
     utils::{GracefulShutdown, extract_endpoint, extract_value, unused_port},
 };
@@ -193,9 +193,9 @@ impl Drop for GethInstance {
 /// # Example
 ///
 /// ```no_run
-/// use base_common_process::Geth;
+/// use crate::node_bindings::Geth;
 ///
-/// # fn main() -> Result<(), base_common_process::NodeError> {
+/// # fn main() -> Result<(), crate::node_bindings::NodeError> {
 /// let geth = Geth::new().block_time(1).try_spawn()?;
 /// println!("Geth is listening at {}", geth.endpoint());
 ///
@@ -233,7 +233,7 @@ impl Geth {
     /// # Example
     ///
     /// ```
-    /// use base_common_process::Geth;
+    /// use crate::node_bindings::Geth;
     /// # fn a() {
     /// let geth = Geth::at("../go-ethereum/build/bin/geth").spawn();
     ///

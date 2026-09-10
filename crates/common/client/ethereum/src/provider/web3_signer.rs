@@ -72,7 +72,7 @@ impl<P: Provider<N> + Clone, N: Network> Web3Signer<P, N> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, U256};
-    use base_common_process::{Reth, utils::run_with_tempdir};
+    use base_common_client_ethereum::{Reth, run_with_tempdir};
     use base_common_types_chain::{TxEnvelope, transaction::SignerRecoverable};
 
     use super::*;

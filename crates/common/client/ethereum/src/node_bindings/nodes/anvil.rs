@@ -15,7 +15,7 @@ use alloy_primitives::{Address, ChainId, hex};
 use k256::{SecretKey as K256SecretKey, ecdsa::SigningKey};
 use url::Url;
 
-use crate::{NODE_STARTUP_TIMEOUT, NodeError, utils::GracefulShutdown};
+use crate::node_bindings::{NODE_STARTUP_TIMEOUT, NodeError, utils::GracefulShutdown};
 
 /// anvil's default ipc path
 pub const DEFAULT_IPC_ENDPOINT: &str =
@@ -128,9 +128,9 @@ impl Drop for AnvilInstance {
 /// # Example
 ///
 /// ```no_run
-/// use base_common_process::Anvil;
+/// use crate::node_bindings::Anvil;
 ///
-/// # fn main() -> Result<(), base_common_process::NodeError> {
+/// # fn main() -> Result<(), crate::node_bindings::NodeError> {
 /// let anvil = Anvil::new()
 ///     .mnemonic("abstract vacuum mammal awkward pudding scene penalty purchase dinner depart evoke puzzle")
 ///     .try_spawn()?;
@@ -169,7 +169,7 @@ impl Anvil {
     /// # Example
     ///
     /// ```
-    /// # use base_common_process::Anvil;
+    /// # use crate::node_bindings::Anvil;
     /// fn a() {
     ///  let anvil = Anvil::default().spawn();
     ///
@@ -187,8 +187,8 @@ impl Anvil {
     /// Paths are passed directly to [`Command`], so shell expansions such as `~` are not performed.
     ///
     /// ```no_run
-    /// # use base_common_process::Anvil;
-    /// # fn main() -> Result<(), base_common_process::NodeError> {
+    /// # use crate::node_bindings::Anvil;
+    /// # fn main() -> Result<(), crate::node_bindings::NodeError> {
     /// let anvil = Anvil::at("/path/to/anvil").try_spawn()?;
     ///
     /// println!("Anvil running at `{}`", anvil.endpoint());

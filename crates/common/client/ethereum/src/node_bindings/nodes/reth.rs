@@ -13,7 +13,7 @@ use alloy_genesis::Genesis;
 use rand_08::Rng;
 use url::Url;
 
-use crate::{
+use crate::node_bindings::{
     NODE_STARTUP_TIMEOUT, NodeError,
     utils::{GracefulShutdown, extract_endpoint},
 };
@@ -145,9 +145,9 @@ impl Drop for RethInstance {
 /// # Example
 ///
 /// ```no_run
-/// use base_common_process::Reth;
+/// use crate::node_bindings::Reth;
 ///
-/// # fn main() -> Result<(), base_common_process::NodeError> {
+/// # fn main() -> Result<(), crate::node_bindings::NodeError> {
 /// let reth = Reth::new().dev().block_time("12s").try_spawn()?;
 /// println!("Reth is listening at {}", reth.endpoint());
 ///
@@ -216,8 +216,8 @@ impl Reth {
     /// # Example
     ///
     /// ```no_run
-    /// use base_common_process::Reth;
-    /// # fn main() -> Result<(), base_common_process::NodeError> {
+    /// use crate::node_bindings::Reth;
+    /// # fn main() -> Result<(), crate::node_bindings::NodeError> {
     /// let reth = Reth::at("/path/to/reth").dev().try_spawn()?;
     ///
     /// println!("Reth running at `{}`", reth.endpoint());

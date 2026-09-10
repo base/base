@@ -1,13 +1,4 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/alloy.jpg",
-    html_favicon_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/favicon.ico"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-#[macro_use]
-extern crate tracing;
+//! Ethereum execution-layer client bindings.
 
 use alloy_primitives::U256;
 
@@ -21,7 +12,8 @@ pub use nodes::{
 mod node;
 pub use node::*;
 
-pub mod utils;
+mod utils;
+pub use utils::{run_with_tempdir, run_with_tempdir_sync};
 
 /// 1 Ether = 1e18 Wei == 0x0de0b6b3a7640000 Wei
 pub const WEI_IN_ETHER: U256 = U256::from_limbs([0x0de0b6b3a7640000, 0x0, 0x0, 0x0]);

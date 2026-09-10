@@ -165,7 +165,7 @@ where
 mod test {
     use alloy_eips::{BlockNumberOrTag, Encodable2718};
     use alloy_primitives::{U256, address};
-    use base_common_process::{Reth, utils::run_with_tempdir};
+    use base_common_client_ethereum::{Reth, run_with_tempdir};
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;

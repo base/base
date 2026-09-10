@@ -37,11 +37,11 @@ serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-json-rpc = { workspace = true }
-base-common-process = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-runtime = { workspace = true, features = ["test-utils"] }
+base-common-client-ethereum = { workspace = true, features = ["node-bindings"]}
 tokio = { features = ["default", "macros", "net", "rt", "rt-multi-thread"], workspace = true }
 
 [features]

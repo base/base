@@ -237,7 +237,7 @@ impl<N: Network> NewBlocks<N> {
 mod tests {
     use std::{future::Future, time::Duration};
 
-    use base_common_process::Anvil;
+    use base_common_client_ethereum::Anvil;
 
     use super::*;
     use crate::{Provider, ProviderBuilder, ext::AnvilApi};

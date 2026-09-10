@@ -52,28 +52,30 @@ alloy-serde = { workspace = true, optional = true }
 coins-bip32 = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 alloy-pubsub = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true}
 futures = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["std"] }
 lru_0_18_2 = { workspace = true, features = ["default"] }
 alloy-transport-ws = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, features = ["map"] }
-base-common-process = { workspace = true, optional = true }
 futures-util = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing = { workspace = true, features = ["default", "std"] }
 alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
+alloy-hardforks-legacy = { workspace = true, optional = true}
 alloy-eips = { workspace = true, features = ["serde", "std"] }
 futures-utils-wasm = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc", "raw_value"] }
 http = { workspace = true, optional = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 tokio = { workspace = true, features = ["default", "sync", "macros"] }
+tempfile = { workspace = true, features = ["default"], optional = true}
 base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
+serde_json = { workspace = true, features = ["alloc", "raw_value", "std"] }
 base-common-types-chain = { workspace = true, features = ["serde", "std"] }
 coins-bip39 = { workspace = true, features = ["english"], optional = true }
+alloy-primitives = { workspace = true, features = ["map", "std", "k256", "serde"] }
 zeroize = { workspace = true, features = ["zeroize_derive", "alloc"], optional = true }
 base-common-types-payload = { workspace = true, optional = true, features = ["jwt-aws-lc-rs", "serde"] }
 
@@ -83,7 +85,6 @@ reqwest = { workspace = true }
 alloy-rlp = { workspace = true }
 itertools = { workspace = true }
 alloy-signer = { workspace = true }
-base-common-process = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 http = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
@@ -98,9 +99,9 @@ alloy-transport-http = { workspace = true, features = ["reqwest"] }
 tokio-tungstenite_0_29_0 = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["k256", "kzg", "std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
-base-common-client-ethereum = { workspace = true, features = ["anvil-node", "ws"] }
 base-common-types-payload = { workspace = true, features = ["jwt-aws-lc-rs", "serde"] }
 tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }
+base-common-client-ethereum = {workspace = true, features = ["node-bindings", "anvil-node", "ws"]}
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasmtimer = { workspace = true, features = ["default"] }
@@ -110,13 +111,16 @@ tokio = { workspace = true, features = ["default", "time"] }
 reqwest = { workspace = true, optional = true }
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 parking_lot = { workspace = true, features = ["default"] }
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true, features = ["default"], optional = true}
 [lints]
 workspace = true
 
 [features]
 admin-api = ["dep:alloy-rpc-types-admin"]
 anvil-api = ["dep:alloy-serde"]
-anvil-node = ["anvil-api", "reqwest", "dep:base-common-process"]
+anvil-node = ["anvil-api", "reqwest", "node-bindings"]
 debug-api = ["dep:alloy-rpc-types-debug"]
 default = ["reqwest", "reqwest-rustls-tls"]
 net-api = []
@@ -136,3 +140,4 @@ k256 = [
     "base-common-types-rpc/k256",
 ]
 jwt-client = ["dep:tower", "dep:http", "dep:base-common-types-payload"]
+node-bindings = ["dep:alloy-genesis", "dep:alloy-hardforks-legacy", "dep:tempfile", "dep:libc"]

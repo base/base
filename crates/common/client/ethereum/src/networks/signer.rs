@@ -178,7 +178,7 @@ impl TxSigner<Signature> for RemoteSigner {
 mod tests {
     use alloy_primitives::U256;
     use alloy_signer::SignerSync;
-    use base_common_process::Anvil;
+    use base_common_client_ethereum::Anvil;
     use base_common_types_chain::{TxEip1559, TxLegacy};
 
     use super::*;

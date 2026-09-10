@@ -611,7 +611,7 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
 type JoinedEthereumWalletFiller<F> = JoinFill<F, WalletFiller<crate::EthereumWallet>>;
 
 #[cfg(any(test, feature = "anvil-node"))]
-type AnvilProviderResult<T> = Result<T, base_common_process::NodeError>;
+type AnvilProviderResult<T> = Result<T, base_common_client_ethereum::NodeError>;
 
 #[cfg(any(test, feature = "anvil-node"))]
 impl<L, F, N: Network> ProviderBuilder<L, F, N> {
@@ -664,7 +664,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
     #[cfg_attr(docsrs, doc(cfg(feature = "anvil-node")))]
     pub fn connect_anvil_with_config(
         self,
-        f: impl FnOnce(base_common_process::Anvil) -> base_common_process::Anvil,
+        f: impl FnOnce(base_common_client_ethereum::Anvil) -> base_common_client_ethereum::Anvil,
     ) -> F::Provider
     where
         F: TxFiller<N> + ProviderLayer<L::Provider, N>,
@@ -691,7 +691,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
     #[deprecated(since = "0.12.6", note = "use `connect_anvil_with_config` instead")]
     pub fn on_anvil_with_config(
         self,
-        f: impl FnOnce(base_common_process::Anvil) -> base_common_process::Anvil,
+        f: impl FnOnce(base_common_client_ethereum::Anvil) -> base_common_client_ethereum::Anvil,
     ) -> F::Provider
     where
         L: ProviderLayer<crate::layers::AnvilProvider<RootProvider<N>, N>, N>,
@@ -714,7 +714,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
     #[cfg_attr(docsrs, doc(cfg(feature = "anvil-node")))]
     pub fn connect_anvil_with_wallet_and_config(
         self,
-        f: impl FnOnce(base_common_process::Anvil) -> base_common_process::Anvil,
+        f: impl FnOnce(base_common_client_ethereum::Anvil) -> base_common_client_ethereum::Anvil,
     ) -> AnvilProviderResult<
         <JoinedEthereumWalletFiller<F> as ProviderLayer<L::Provider, N>>::Provider,
     >
@@ -729,7 +729,8 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
         let anvil_layer = crate::layers::AnvilLayer::from(f(Default::default()));
         let url = anvil_layer.endpoint_url();
 
-        let wallet = anvil_layer.wallet().ok_or(base_common_process::NodeError::NoKeysAvailable)?;
+        let wallet =
+            anvil_layer.wallet().ok_or(base_common_client_ethereum::NodeError::NoKeysAvailable)?;
 
         let rpc_client = ClientBuilder::default().http(url);
 
@@ -746,7 +747,7 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
     #[deprecated(since = "0.12.6", note = "use `connect_anvil_with_wallet_and_config` instead")]
     pub fn on_anvil_with_wallet_and_config(
         self,
-        f: impl FnOnce(base_common_process::Anvil) -> base_common_process::Anvil,
+        f: impl FnOnce(base_common_client_ethereum::Anvil) -> base_common_client_ethereum::Anvil,
     ) -> AnvilProviderResult<
         <JoinedEthereumWalletFiller<F> as ProviderLayer<L::Provider, N>>::Provider,
     >
@@ -761,7 +762,8 @@ impl<L, F, N: Network> ProviderBuilder<L, F, N> {
         let anvil_layer = crate::layers::AnvilLayer::from(f(Default::default()));
         let url = anvil_layer.endpoint_url();
 
-        let wallet = anvil_layer.wallet().ok_or(base_common_process::NodeError::NoKeysAvailable)?;
+        let wallet =
+            anvil_layer.wallet().ok_or(base_common_client_ethereum::NodeError::NoKeysAvailable)?;
 
         let rpc_client = ClientBuilder::default().http(url);
 

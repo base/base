@@ -397,8 +397,7 @@ mod tests {
         task::Poll,
     };
 
-    use base_common_client_ethereum::RootProvider;
-    use base_common_process::Anvil;
+    use base_common_client_ethereum::{Anvil, RootProvider};
 
     use super::*;
 

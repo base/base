@@ -73,7 +73,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_common_process::{Geth, utils::run_with_tempdir};
+    use base_common_client_ethereum::{Geth, run_with_tempdir};
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

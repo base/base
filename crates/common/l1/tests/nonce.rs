@@ -4,16 +4,15 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
 use base_common_client_ethereum::{
-    EthereumWallet, PrivateKeySigner, Provider, ProviderBuilder, RootProvider,
+    Anvil, EthereumWallet, PrivateKeySigner, Provider, ProviderBuilder, RootProvider,
 };
 use base_common_l1::{NonceGuard, NonceManager, TxManagerError};
-use base_common_process::Anvil;
 use base_common_types_rpc::TransactionRequest;
 use rayon::prelude::*;
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
-fn setup() -> (NonceManager<RootProvider>, base_common_process::AnvilInstance) {
+fn setup() -> (NonceManager<RootProvider>, base_common_client_ethereum::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);

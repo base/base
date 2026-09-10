@@ -599,7 +599,7 @@ impl SharedCache {
 mod tests {
     use alloy_primitives::{Bytes, FixedBytes, b256, bytes, hex, utils::Unit};
     use alloy_transport::mock::Asserter;
-    use base_common_process::{Anvil, utils::run_with_tempdir};
+    use base_common_client_ethereum::{Anvil, run_with_tempdir};
     use base_common_types_rpc::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
 
     use super::*;

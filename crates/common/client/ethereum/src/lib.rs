@@ -51,5 +51,10 @@ pub use auth_client::{AuthClientLayer, AuthClientService};
 mod contracts;
 pub use contracts::{EthCall as ContractEthCall, Result, *};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "anvil-node"))]
 extern crate self as base_common_client_ethereum;
+
+#[cfg(any(test, feature = "node-bindings"))]
+mod node_bindings;
+#[cfg(any(test, feature = "node-bindings"))]
+pub use node_bindings::*;

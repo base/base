@@ -527,7 +527,7 @@ mod tests {
     async fn event_filters() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let anvil = base_common_process::Anvil::new().spawn();
+        let anvil = base_common_client_ethereum::Anvil::new().spawn();
 
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
@@ -635,7 +635,7 @@ mod tests {
     async fn event_builder_filters() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let anvil = base_common_process::Anvil::new().spawn();
+        let anvil = base_common_client_ethereum::Anvil::new().spawn();
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(pk);
@@ -745,7 +745,7 @@ mod tests {
 
         let _ = tracing_subscriber::fmt::try_init();
 
-        let anvil = base_common_process::Anvil::new().spawn();
+        let anvil = base_common_client_ethereum::Anvil::new().spawn();
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let provider = crate::ProviderBuilder::new()

@@ -9,10 +9,9 @@ use std::sync::Arc;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256};
 use async_trait::async_trait;
 use base_common_client_ethereum::{
-    EthereumWallet, PrivateKeySigner, Provider, RootProvider, TxSigner,
+    Anvil, EthereumWallet, PrivateKeySigner, Provider, RootProvider, TxSigner,
 };
 use base_common_l1::{NoopTxMetrics, SendState, SimpleTxManager, TxCandidate, TxManagerConfig};
-use base_common_process::Anvil;
 use base_common_types_chain::SignableTransaction;
 
 pub const TEST_RECIPIENT: Address = Address::with_last_byte(0x42);
@@ -20,7 +19,7 @@ pub const SAFE_ABORT_DEPTH: u64 = 3;
 
 /// Spawns an Anvil instance and returns the provider, default wallet, and
 /// instance handle.
-pub fn setup_anvil() -> (RootProvider, EthereumWallet, base_common_process::AnvilInstance) {
+pub fn setup_anvil() -> (RootProvider, EthereumWallet, base_common_client_ethereum::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let provider = RootProvider::new_http(anvil.endpoint_url());
     let signer: PrivateKeySigner = anvil.keys()[0].clone().into();
@@ -31,7 +30,7 @@ pub fn setup_anvil() -> (RootProvider, EthereumWallet, base_common_process::Anvi
 /// Creates a [`SimpleTxManager`] backed by a fresh Anvil instance.
 pub async fn setup_with_config(
     config: TxManagerConfig,
-) -> (SimpleTxManager<RootProvider>, base_common_process::AnvilInstance) {
+) -> (SimpleTxManager<RootProvider>, base_common_client_ethereum::AnvilInstance) {
     let (provider, wallet, anvil) = setup_anvil();
     let manager = SimpleTxManager::from_wallet(
         provider,
@@ -98,7 +97,7 @@ impl TxSigner<Signature> for FailingSigner {
 /// Creates a [`SimpleTxManager`] whose wallet always fails to sign.
 pub async fn setup_with_failing_signer(
     config: TxManagerConfig,
-) -> (SimpleTxManager<RootProvider>, base_common_process::AnvilInstance) {
+) -> (SimpleTxManager<RootProvider>, base_common_client_ethereum::AnvilInstance) {
     let (provider, _, anvil) = setup_anvil();
     let wallet = EthereumWallet::from(FailingSigner { address: anvil.addresses()[0] });
     let manager = SimpleTxManager::from_wallet(
