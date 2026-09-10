@@ -1,5 +1,9 @@
 use std::task::{Context, Poll, ready};
 
+use crate::{
+    CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput, HeadersCheckpoint, Stage,
+    StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
+};
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rlp::Decodable;
 use base_common_types_chain::BlockHeader;
@@ -15,10 +19,6 @@ use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::StreamExt;
 use reth_primitives_traits::SealedHeader;
-use reth_stages_api::{
-    CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput, HeadersCheckpoint, Stage,
-    StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
-};
 use tokio::sync::watch;
 use tracing::*;
 use {
@@ -384,12 +384,12 @@ where
 mod tests {
     use std::sync::Arc;
 
+    use crate::StageUnitCheckpoint;
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
     use base_execution_state_provider::{
         DatabaseProviderFactory, ProviderFactory, StaticFileProviderFactory,
     };
-    use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, random_header, random_header_range};
     use test_runner::HeadersTestRunner;
 

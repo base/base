@@ -1,5 +1,9 @@
 use std::{fmt::Debug, ops::Range, sync::mpsc};
 
+use crate::{
+    BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError,
+    StageId, UnwindInput, UnwindOutput,
+};
 use alloy_primitives::{Address, BlockNumber, TxNumber};
 use base_common_types_chain::BaseTxEnvelope;
 use base_execution_evm_blocks::ConsensusError;
@@ -13,10 +17,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_config::config::SenderRecoveryConfig;
-use reth_stages_api::{
-    BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError,
-    StageId, UnwindInput, UnwindOutput,
-};
 use thiserror::Error;
 use tracing::*;
 use {
@@ -456,6 +456,7 @@ struct FailedSenderRecoveryError {
 
 #[cfg(test)]
 mod tests {
+    use crate::StageUnitCheckpoint;
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseTxEnvelope as TransactionSigned;
@@ -466,7 +467,6 @@ mod tests {
     };
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode};
-    use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
     use {reth_primitives_traits::SealedBlock, reth_primitives_traits::SignerRecoverable};
 

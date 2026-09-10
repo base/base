@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::StageError;
 use alloy_primitives::{B256, keccak256, map::HashSet};
 use base_execution_evm_runtime::database::RevertToSlot;
 use base_execution_state_database::mdbx::{
@@ -10,7 +11,6 @@ use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
 use base_execution_state_provider::{DBProvider, ExecutionOutcome};
 use eyre::Context;
 use rayon::slice::ParallelSliceMut;
-use reth_stages_api::StageError;
 use tracing::trace;
 
 /// Separate MDBX environment for storing `keccak256(slot) → slot` preimage mappings.

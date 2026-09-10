@@ -44,6 +44,9 @@ mod tests {
     use base_execution_state_api::DatabaseProviderROFactory;
     use std::{io::Write, sync::Arc};
 
+    use crate::{
+        ExecInput, ExecutionStageThresholds, PipelineTarget, Stage, StageCheckpoint, StageId,
+    };
     use alloy_primitives::{
         B256, BlockNumber, Signature, U256, address, hex_literal::hex, keccak256,
     };
@@ -69,9 +72,6 @@ mod tests {
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
     use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
-    use reth_stages_api::{
-        ExecInput, ExecutionStageThresholds, PipelineTarget, Stage, StageCheckpoint, StageId,
-    };
     use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;

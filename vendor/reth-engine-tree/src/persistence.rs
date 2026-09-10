@@ -15,8 +15,8 @@ use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
 };
 use base_execution_state_types::ProviderError;
+use base_execution_sync_pipeline::{MetricEvent, MetricEventsSender};
 use crossbeam_channel::Sender as CrossbeamSender;
-use reth_stages_api::{MetricEvent, MetricEventsSender};
 use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};

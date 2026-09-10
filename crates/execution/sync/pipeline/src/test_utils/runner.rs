@@ -1,9 +1,7 @@
+use crate::{ExecInput, ExecOutput, Stage, StageError, StageExt, UnwindInput, UnwindOutput};
 use base_execution_state_database::{Database, DatabaseEnv, test_utils::TempDatabase};
 use base_execution_state_provider::{DatabaseProvider, ProviderError};
 use base_execution_state_types::DatabaseError;
-use reth_stages_api::{
-    ExecInput, ExecOutput, Stage, StageError, StageExt, UnwindInput, UnwindOutput,
-};
 use tokio::sync::oneshot;
 
 use super::TestStageDB;

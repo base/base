@@ -9,7 +9,7 @@ macro_rules! stage_test_suite {
                 let runner = $runner::default();
 
                 // Execute the stage with empty database
-                let input = reth_stages_api::ExecInput::default();
+                let input = crate::ExecInput::default();
 
                 // Run stage execution
                 let result = runner.execute(input).await;
@@ -34,7 +34,7 @@ macro_rules! stage_test_suite {
 
                 // Set up the runner
                 let mut runner = $runner::default();
-                let input = reth_stages_api::ExecInput {
+                let input = crate::ExecInput {
                     target: Some(target),
                     checkpoint: Some(crate::StageCheckpoint::new(current_checkpoint)),
                 };
@@ -67,10 +67,10 @@ macro_rules! stage_test_suite {
             async fn [< unwind_no_new_entries_ $name>] () {
                 // Set up the runner
                 let mut runner = $runner::default();
-                let input = reth_stages_api::UnwindInput::default();
+                let input = crate::UnwindInput::default();
 
                 // Seed the database
-                runner.seed_execution(reth_stages_api::ExecInput::default()).expect("failed to seed");
+                runner.seed_execution(crate::ExecInput::default()).expect("failed to seed");
 
                 runner.before_unwind(input).expect("failed to execute before_unwind hook");
 
@@ -98,7 +98,7 @@ macro_rules! stage_test_suite {
 
                 // Set up the runner
                 let mut runner = $runner::default();
-                let execute_input = reth_stages_api::ExecInput {
+                let execute_input = crate::ExecInput {
                     target: Some(target),
                     checkpoint: Some(crate::StageCheckpoint::new(current_checkpoint)),
                 };
@@ -125,7 +125,7 @@ macro_rules! stage_test_suite {
 
 
                 // Run stage unwind
-                let unwind_input = reth_stages_api::UnwindInput {
+                let unwind_input = crate::UnwindInput {
                     unwind_to: current_checkpoint,
                     checkpoint: crate::StageCheckpoint::new(target),
                     bad_block: None,
@@ -165,7 +165,7 @@ macro_rules! stage_test_suite_ext {
 
                 // Set up the runner
                 let mut runner = $runner::default();
-                let input = reth_stages_api::ExecInput {
+                let input = crate::ExecInput {
                     target: Some(current_checkpoint),
                     checkpoint: Some(crate::StageCheckpoint::new(current_checkpoint)),
                 };

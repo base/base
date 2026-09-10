@@ -1,4 +1,4 @@
-use reth_stages_api::{
+use crate::{
     ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
 };
 

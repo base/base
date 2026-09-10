@@ -1,15 +1,15 @@
 use std::fmt::Debug;
 
+use crate::{
+    BlockRangeOutput, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
+    UnwindInput, UnwindOutput,
+};
 use base_execution_state_database::{DbTxMut, Tables, tables};
 use base_execution_state_provider::{
     DBProvider, EitherWriter, HistoryWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StorageSettingsCache,
 };
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_stages_api::{
-    BlockRangeOutput, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
-    UnwindInput, UnwindOutput,
-};
 use tracing::info;
 use {base_execution_state_types::EtlConfig, reth_config::config::IndexHistoryConfig};
 

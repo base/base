@@ -36,13 +36,13 @@
 //! ```
 use std::sync::Arc;
 
+use crate::Stage;
 use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::HeaderSyncGapProvider;
 use base_execution_state_types::{PruneMode, PruneModes};
 use reth_config::config::StageConfig;
-use reth_stages_api::Stage;
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,

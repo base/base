@@ -6,7 +6,9 @@ use std::{
 };
 
 use alloy_primitives::{BlockNumber, TxNumber};
-use base_execution_state_provider::{BlockReader, ProviderError, StaticFileProviderFactory, StaticFileSegment};
+use base_execution_state_provider::{
+    BlockReader, ProviderError, StaticFileProviderFactory, StaticFileSegment,
+};
 use tracing::instrument;
 
 use crate::{StageCheckpoint, StageId, error::StageError};
@@ -331,11 +333,11 @@ mod tests {
         test_utils::create_test_rocksdb_dir, test_utils::create_test_rw_db,
         test_utils::create_test_static_files_dir,
     };
-    use base_execution_state_types::StageCheckpoint;
     use base_execution_state_provider::{
         ProviderFactory, StaticFileProviderBuilder, StaticFileProviderFactory, StaticFileSegment,
         providers::RocksDBProvider,
     };
+    use base_execution_state_types::StageCheckpoint;
     use reth_testing_utils::{BaseTestData, generators};
 
     use crate::ExecInput;

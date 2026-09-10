@@ -1,5 +1,9 @@
 use std::fmt::Debug;
 
+use crate::{
+    BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, MerkleCheckpoint, Stage,
+    StageCheckpoint, StageError, StageId, StorageRootMerkleCheckpoint, UnwindInput, UnwindOutput,
+};
 use alloy_primitives::{B256, BlockNumber};
 use base_common_types_chain::{BlockHeader, Compact, constants::KECCAK_EMPTY};
 use base_execution_evm_blocks::ConsensusError;
@@ -11,10 +15,6 @@ use base_execution_state_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot, StateRootProgress, StoredSubNode,
 };
 use reth_primitives_traits::{GotExpected, SealedHeader};
-use reth_stages_api::{
-    BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, MerkleCheckpoint, Stage,
-    StageCheckpoint, StageError, StageId, StorageRootMerkleCheckpoint, UnwindInput, UnwindOutput,
-};
 
 type DbStateRoot<'a, TX, A> = StateRoot<
     base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
@@ -472,6 +472,7 @@ mod tests {
     use base_execution_state_provider::DBProvider;
     use std::collections::BTreeMap;
 
+    use crate::StageUnitCheckpoint;
     use assert_matches::assert_matches;
     use base_execution_state_database::{DbCursorRO, DbDupCursorRO};
     use base_execution_state_provider::{
@@ -481,7 +482,6 @@ mod tests {
     use base_execution_state_trie::test_utils::{state_root, state_root_prehashed};
     use base_execution_state_types::StaticFileSegment;
     use reth_primitives_traits::SealedBlock;
-    use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_contract_account_range,
     };

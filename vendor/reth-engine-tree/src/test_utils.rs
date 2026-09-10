@@ -7,9 +7,9 @@ use base_execution_network_service::test_utils::TestFullBlockClient;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use base_execution_state_types::PruneModes;
+use base_execution_sync_pipeline::Pipeline;
 use base_execution_sync_pipeline::{ExecOutput, StageError, test_utils::TestStages};
 use reth_primitives_traits::SealedHeader;
-use reth_stages_api::Pipeline;
 use tokio::sync::watch;
 
 /// Test pipeline builder.

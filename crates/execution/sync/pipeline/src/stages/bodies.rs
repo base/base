@@ -3,6 +3,10 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use crate::{
+    EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
+    UnwindInput, UnwindOutput,
+};
 use base_execution_state_database::{DbCursorRO, DbTx, DbTxMut, tables};
 use base_execution_state_provider::{
     BlockReader, BlockWriter, DBProvider, ProviderError, StaticFileProviderFactory, StatsReader,
@@ -11,10 +15,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::TryStreamExt;
-use reth_stages_api::{
-    EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
-    UnwindInput, UnwindOutput,
-};
 use tracing::*;
 use {
     base_execution_network_service::BlockResponse, base_execution_network_service::BodyDownloader,
@@ -252,9 +252,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::StageUnitCheckpoint;
     use assert_matches::assert_matches;
     use base_execution_state_provider::StaticFileProviderFactory;
-    use reth_stages_api::StageUnitCheckpoint;
     use test_utils::*;
 
     use super::*;
@@ -476,6 +476,7 @@ mod tests {
             task::{Context, Poll},
         };
 
+        use crate::{ExecInput, ExecOutput, UnwindInput};
         use alloy_primitives::{B256, BlockNumber, TxNumber, map::B256Map};
         use base_common_types_chain::{BaseBlockBody as BlockBody, BlockHeader, Header};
         use base_execution_state_database::{
@@ -489,7 +490,6 @@ mod tests {
         use base_execution_state_types::StaticFileSegment;
         use futures_util::Stream;
         use reth_primitives_traits::{SealedBlock, SealedHeader};
-        use reth_stages_api::{ExecInput, ExecOutput, UnwindInput};
         use reth_testing_utils::generators::{self, BlockRangeParams};
         use {
             base_execution_network_service::BlockResponse,

@@ -146,7 +146,6 @@ members = [
   "crates/execution/state/provider",
   "crates/execution/rpc/server",
   "crates/execution/sync/pipeline",
-  "vendor/reth-stages-api",
   "crates/execution/state/api",
   "vendor/reth-testing-utils",
   "crates/common/observability/tracing",
@@ -431,7 +430,6 @@ base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", defa
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
-reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }

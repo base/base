@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::{
     collections::VecDeque,
     sync::{
@@ -23,6 +21,7 @@ pub struct TestStage {
 }
 
 impl TestStage {
+    /// Creates a stage with empty execution and unwind response queues.
     pub fn new(id: StageId) -> Self {
         Self {
             id,
@@ -33,11 +32,13 @@ impl TestStage {
         }
     }
 
+    /// Replaces the scripted execution responses.
     pub fn with_exec(mut self, exec_outputs: VecDeque<Result<ExecOutput, StageError>>) -> Self {
         self.exec_outputs = exec_outputs;
         self
     }
 
+    /// Replaces the scripted unwind responses.
     pub fn with_unwind(
         mut self,
         unwind_outputs: VecDeque<Result<UnwindOutput, StageError>>,
@@ -46,22 +47,26 @@ impl TestStage {
         self
     }
 
+    /// Appends an execution response.
     pub fn add_exec(mut self, output: Result<ExecOutput, StageError>) -> Self {
         self.exec_outputs.push_back(output);
         self
     }
 
+    /// Appends an unwind response.
     pub fn add_unwind(mut self, output: Result<UnwindOutput, StageError>) -> Self {
         self.unwind_outputs.push_back(output);
         self
     }
 
+    /// Returns a shared counter for committed execution callbacks.
     pub fn with_post_execute_commit_counter(mut self) -> (Self, Arc<AtomicUsize>) {
         let counter = Arc::new(AtomicUsize::new(0));
         self.post_execute_commit_counter = counter.clone();
         (self, counter)
     }
 
+    /// Returns a shared counter for committed unwind callbacks.
     pub fn with_post_unwind_commit_counter(mut self) -> (Self, Arc<AtomicUsize>) {
         let counter = Arc::new(AtomicUsize::new(0));
         self.post_unwind_commit_counter = counter.clone();

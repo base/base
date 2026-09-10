@@ -1,6 +1,7 @@
 //! Utils for `stages`.
 use std::{collections::HashMap, mem, ops::RangeBounds};
 
+use crate::StageError;
 use alloy_primitives::{Address, B256, BlockNumber, TxNumber, map::AddressMap};
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader};
 use base_execution_state_database::{
@@ -18,7 +19,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
-use reth_stages_api::StageError;
 use tracing::info;
 
 /// Number of blocks before pushing indices from cache to [`Collector`]

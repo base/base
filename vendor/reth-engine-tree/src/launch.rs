@@ -14,9 +14,9 @@ use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_state_maintenance::PrunerWithFactory;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{ProviderFactory, providers::BlockchainProvider};
+use base_execution_sync_pipeline::{MetricEventsSender, Pipeline};
 use futures::Stream;
 use reth_engine_primitives::BeaconEngineMessage;
-use reth_stages_api::{MetricEventsSender, Pipeline};
 
 use crate::{
     backfill::PipelineSync,

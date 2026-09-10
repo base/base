@@ -1,3 +1,7 @@
+use crate::{
+    EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
+    UnwindInput, UnwindOutput,
+};
 use alloy_primitives::{TxHash, TxNumber};
 use base_execution_state_database::{DbTxMut, Decode, Decompress, Tables, tables};
 use base_execution_state_maintenance::Collector;
@@ -8,10 +12,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::ProviderError;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_stages_api::{
-    EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
-    UnwindInput, UnwindOutput,
-};
 use tracing::*;
 use {base_execution_state_types::EtlConfig, reth_config::config::TransactionLookupConfig};
 
@@ -276,6 +276,7 @@ where
 mod tests {
     use std::ops::Sub;
 
+    use crate::StageUnitCheckpoint;
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_execution_state_database::{DbCursorRO, DbTx};
@@ -283,7 +284,6 @@ mod tests {
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,
     };
     use reth_primitives_traits::SealedBlock;
-    use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use super::*;

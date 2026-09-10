@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use reth_stages_api::{ExecOutput, StageError, UnwindOutput, test_utils::TestStage};
+use crate::{ExecOutput, StageError, UnwindOutput, test_utils::TestStage};
 
 use super::TEST_STAGE_ID;
 use crate::{StageSet, StageSetBuilder};

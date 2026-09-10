@@ -1,6 +1,6 @@
 //! Fixtures and runners for synchronization stage tests.
 
-use reth_stages_api::StageId;
+use crate::StageId;
 
 #[cfg(test)]
 mod macros;
@@ -22,3 +22,6 @@ pub use set::TestStages;
 
 /// The test stage id
 pub const TEST_STAGE_ID: StageId = StageId::Other("TestStage");
+
+mod stage;
+pub use stage::TestStage;

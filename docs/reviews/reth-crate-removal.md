@@ -170,7 +170,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-rpc-server](../../crates/execution/rpc/server/Cargo.toml) | Retain shared infrastructure |
 | [reth-rpc-traits](../../vendor/reth-rpc-traits/Cargo.toml) | Consolidate; retain required code |
 | [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
-| [reth-stages-api](../../vendor/reth-stages-api/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |

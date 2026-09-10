@@ -319,9 +319,9 @@ mod tests {
     use alloy_primitives::{Address, Signature, TxKind, U256};
     use base_common_types_chain::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
     use base_execution_state_provider::test_utils::MockEthProvider;
+    use base_execution_sync_pipeline::{StageCheckpoint, StageId};
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
-    use reth_stages_api::{StageCheckpoint, StageId};
 
     use super::{super::Transaction as PoolTransaction, *};
     use crate::tree::StateProviderBuilder;

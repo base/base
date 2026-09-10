@@ -9,7 +9,7 @@ use futures::Stream;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
 
 use crate::engine::EngineHandler;
-use reth_stages_api::{ControlFlow, PipelineTarget};
+use base_execution_sync_pipeline::{ControlFlow, PipelineTarget};
 use tracing::*;
 
 use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};

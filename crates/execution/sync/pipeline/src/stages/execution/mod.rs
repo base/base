@@ -7,6 +7,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{
+    BlockErrorKind, CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput,
+    ExecutionCheckpoint, ExecutionStageThresholds, Stage, StageCheckpoint, StageError, StageId,
+    UnwindInput, UnwindOutput,
+};
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
@@ -27,11 +32,6 @@ use base_execution_state_types::StaticFileSegment;
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
 use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
-use reth_stages_api::{
-    BlockErrorKind, CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput,
-    ExecutionCheckpoint, ExecutionStageThresholds, Stage, StageCheckpoint, StageError, StageId,
-    UnwindInput, UnwindOutput,
-};
 use tracing::*;
 
 use super::missing_static_data_error;
@@ -734,6 +734,7 @@ pub fn calculate_gas_used_from_headers(
 mod tests {
     use std::collections::BTreeMap;
 
+    use crate::StageUnitCheckpoint;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, B256, U256, address, hex_literal::hex, keccak256};
     use alloy_rlp::Decodable;
@@ -751,7 +752,6 @@ mod tests {
     };
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
-    use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators;
     use {reth_primitives_traits::Block as _, reth_primitives_traits::SealedBlock};
 

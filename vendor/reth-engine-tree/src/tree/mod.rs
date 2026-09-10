@@ -30,13 +30,13 @@ use base_execution_state_provider::{
 };
 use base_execution_state_trie::ComputedTrieData;
 use base_execution_state_types::ProviderResult;
+use base_execution_sync_pipeline::ControlFlow;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
 use reth_engine_primitives::{
     BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
     ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
 };
-use reth_stages_api::ControlFlow;
 use state::TreeState;
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},

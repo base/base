@@ -1,3 +1,6 @@
+use crate::{
+    ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
+};
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 use base_execution_state_database::DbTxMut;
 use base_execution_state_maintenance::{
@@ -6,9 +9,6 @@ use base_execution_state_maintenance::{
 use base_execution_state_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderFactory,
-};
-use reth_stages_api::{
-    ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
 };
 use tracing::info;
 
