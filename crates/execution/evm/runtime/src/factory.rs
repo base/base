@@ -82,12 +82,7 @@ impl BaseEvmFactory {
 
 impl BaseEvmFactory {
     /// Creates a transaction tracer with the supplied database and inspector.
-    pub fn create_tracer<DB, I>(
-        &self,
-        db: DB,
-        input: EvmEnv,
-        inspector: I,
-    ) -> TxTracer<BaseEvm<DB, I>>
+    pub fn create_tracer<DB, I>(&self, db: DB, input: EvmEnv, inspector: I) -> TxTracer<DB, I>
     where
         DB: Database + DatabaseCommit,
         I: Inspector<BaseContext<DB>> + Clone,

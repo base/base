@@ -207,7 +207,8 @@ impl BaseEthApi {
                 TracingCtx<
                     '_,
                     Recovered<&ProviderTx<BlockchainProvider>>,
-                    base_execution_evm_runtime::BaseEvm<&mut StateCacheDb, TracingInspector>,
+                    &mut StateCacheDb,
+                    TracingInspector,
                 >,
             ) -> Result<R, BaseEthApiError>
             + Send
@@ -244,11 +245,7 @@ impl BaseEthApi {
     where
         F: Fn(
                 TransactionInfo,
-                TracingCtx<
-                    '_,
-                    Recovered<&ProviderTx<BlockchainProvider>>,
-                    base_execution_evm_runtime::BaseEvm<&mut StateCacheDb, Insp>,
-                >,
+                TracingCtx<'_, Recovered<&ProviderTx<BlockchainProvider>>, &mut StateCacheDb, Insp>,
             ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,
@@ -343,7 +340,8 @@ impl BaseEthApi {
                 TracingCtx<
                     '_,
                     Recovered<&ProviderTx<BlockchainProvider>>,
-                    base_execution_evm_runtime::BaseEvm<&mut StateCacheDb, TracingInspector>,
+                    &mut StateCacheDb,
+                    TracingInspector,
                 >,
             ) -> Result<R, BaseEthApiError>
             + Send
@@ -377,11 +375,7 @@ impl BaseEthApi {
     where
         F: Fn(
                 TransactionInfo,
-                TracingCtx<
-                    '_,
-                    Recovered<&ProviderTx<BlockchainProvider>>,
-                    base_execution_evm_runtime::BaseEvm<&mut StateCacheDb, Insp>,
-                >,
+                TracingCtx<'_, Recovered<&ProviderTx<BlockchainProvider>>, &mut StateCacheDb, Insp>,
             ) -> Result<R, BaseEthApiError>
             + Send
             + 'static,

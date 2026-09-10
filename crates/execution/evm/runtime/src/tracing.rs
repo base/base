@@ -3,58 +3,66 @@
 use core::{fmt::Debug, iter::Peekable};
 
 use base_execution_evm_runtime::{
-    DatabaseCommit, Evm, EvmState, ExecutionResult, IntoTxEnv, ResultAndState,
+    BaseContext, BaseError, BaseEvm, BaseHaltReason, BaseTransaction, Database, DatabaseCommit,
+    Evm, EvmState, ExecutionResult, Inspector, IntoTxEnv, ResultAndState,
 };
 
 /// A helper type for tracing transactions.
-#[derive(Debug, Clone)]
-pub struct TxTracer<E: Evm> {
-    evm: E,
-    fused_inspector: E::Inspector,
+pub struct TxTracer<DB: Database, I> {
+    evm: BaseEvm<DB, I>,
+    fused_inspector: I,
+}
+
+impl<DB: Database, I: Debug> Debug for TxTracer<DB, I> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TxTracer")
+            .field("fused_inspector", &self.fused_inspector)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Container type for context exposed in [`TxTracer`].
 #[derive(Debug)]
-pub struct TracingCtx<'a, T, E: Evm> {
+pub struct TracingCtx<'a, T, DB: Database, I> {
     /// The transaction that was just executed.
     pub tx: T,
     /// Result of transaction execution.
-    pub result: ExecutionResult<E::HaltReason>,
+    pub result: ExecutionResult<BaseHaltReason>,
     /// State changes after transaction.
     pub state: &'a EvmState,
     /// Inspector state after transaction.
-    pub inspector: &'a mut E::Inspector,
+    pub inspector: &'a mut I,
     /// Database used when executing the transaction, _before_ committing the state changes.
-    pub db: &'a mut E::DB,
+    pub db: &'a mut DB,
     /// Fused inspector.
-    fused_inspector: &'a E::Inspector,
+    fused_inspector: &'a I,
     /// Whether the inspector was fused.
     was_fused: &'a mut bool,
 }
 
-impl<'a, T, E: Evm<Inspector: Clone>> TracingCtx<'a, T, E> {
+impl<'a, T, DB: Database, I: Clone> TracingCtx<'a, T, DB, I> {
     /// Fuses the inspector and returns the current inspector state.
-    pub fn take_inspector(&mut self) -> E::Inspector {
+    pub fn take_inspector(&mut self) -> I {
         *self.was_fused = true;
         core::mem::replace(self.inspector, self.fused_inspector.clone())
     }
 }
 
-impl<E: Evm<Inspector: Clone, DB: DatabaseCommit>> TxTracer<E> {
+impl<DB: Database + DatabaseCommit, I: Inspector<BaseContext<DB>> + Clone> TxTracer<DB, I> {
     /// Creates a new [`TxTracer`] instance.
-    pub fn new(mut evm: E) -> Self {
+    pub fn new(mut evm: BaseEvm<DB, I>) -> Self {
         Self { fused_inspector: evm.inspector_mut().clone(), evm }
     }
 
-    fn fuse_inspector(&mut self) -> E::Inspector {
+    fn fuse_inspector(&mut self) -> I {
         core::mem::replace(self.evm.inspector_mut(), self.fused_inspector.clone())
     }
 
     /// Executes a transaction, and returns its outcome along with the inspector state.
     pub fn trace(
         &mut self,
-        tx: impl IntoTxEnv<E::Tx>,
-    ) -> Result<TraceOutput<E::HaltReason, E::Inspector>, E::Error> {
+        tx: impl IntoTxEnv<BaseTransaction>,
+    ) -> Result<TraceOutput<BaseHaltReason, I>, BaseError<DB>> {
         let result = self.evm.transact_commit(tx);
         let inspector = self.fuse_inspector();
         Ok(TraceOutput { result: result?, inspector })
@@ -67,11 +75,17 @@ impl<E: Evm<Inspector: Clone, DB: DatabaseCommit>> TxTracer<E> {
         &mut self,
         txs: Txs,
         mut f: F,
-    ) -> TracerIter<'_, E, Txs::IntoIter, impl FnMut(TracingCtx<'_, T, E>) -> Result<O, E::Error>>
+    ) -> TracerIter<
+        '_,
+        DB,
+        I,
+        Txs::IntoIter,
+        impl FnMut(TracingCtx<'_, T, DB, I>) -> Result<O, BaseError<DB>>,
+    >
     where
-        T: IntoTxEnv<E::Tx> + Clone,
+        T: IntoTxEnv<BaseTransaction> + Clone,
         Txs: IntoIterator<Item = T>,
-        F: FnMut(TracingCtx<'_, Txs::Item, E>) -> O,
+        F: FnMut(TracingCtx<'_, Txs::Item, DB, I>) -> O,
     {
         self.try_trace_many(txs, move |ctx| Ok(f(ctx)))
     }
@@ -81,12 +95,12 @@ impl<E: Evm<Inspector: Clone, DB: DatabaseCommit>> TxTracer<E> {
         &mut self,
         txs: Txs,
         hook: F,
-    ) -> TracerIter<'_, E, Txs::IntoIter, F>
+    ) -> TracerIter<'_, DB, I, Txs::IntoIter, F>
     where
-        T: IntoTxEnv<E::Tx> + Clone,
+        T: IntoTxEnv<BaseTransaction> + Clone,
         Txs: IntoIterator<Item = T>,
-        F: FnMut(TracingCtx<'_, T, E>) -> Result<O, Err>,
-        Err: From<E::Error>,
+        F: FnMut(TracingCtx<'_, T, DB, I>) -> Result<O, Err>,
+        Err: From<BaseError<DB>>,
     {
         TracerIter {
             inner: self,
@@ -109,16 +123,16 @@ pub struct TraceOutput<H, I> {
 
 /// Iterator used by tracer.
 #[derive(derive_more::Debug)]
-#[debug(bound(E::Inspector: Debug))]
-pub struct TracerIter<'a, E: Evm, Txs: Iterator, F> {
-    inner: &'a mut TxTracer<E>,
+#[debug(bound(I: Debug))]
+pub struct TracerIter<'a, DB: Database, I, Txs: Iterator, F> {
+    inner: &'a mut TxTracer<DB, I>,
     txs: Peekable<Txs>,
     hook: F,
     skip_last_commit: bool,
     fuse: bool,
 }
 
-impl<E: Evm, Txs: Iterator, F> TracerIter<'_, E, Txs, F> {
+impl<DB: Database, I, Txs: Iterator, F> TracerIter<'_, DB, I, Txs, F> {
     /// Flips the `skip_last_commit` flag thus making sure all transaction are committed.
     ///
     /// We are skipping last commit by default as it's expected that when tracing users are mostly
@@ -135,13 +149,14 @@ impl<E: Evm, Txs: Iterator, F> TracerIter<'_, E, Txs, F> {
     }
 }
 
-impl<E, T, Txs, F, O, Err> Iterator for TracerIter<'_, E, Txs, F>
+impl<DB, I, T, Txs, F, O, Err> Iterator for TracerIter<'_, DB, I, Txs, F>
 where
-    E: Evm<DB: DatabaseCommit, Inspector: Clone>,
-    T: IntoTxEnv<E::Tx> + Clone,
+    DB: Database + DatabaseCommit,
+    I: Inspector<BaseContext<DB>> + Clone,
+    T: IntoTxEnv<BaseTransaction> + Clone,
     Txs: Iterator<Item = T>,
-    Err: From<E::Error>,
-    F: FnMut(TracingCtx<'_, T, E>) -> Result<O, Err>,
+    Err: From<BaseError<DB>>,
+    F: FnMut(TracingCtx<'_, T, DB, I>) -> Result<O, Err>,
 {
     type Item = Result<O, Err>;
 
