@@ -15,7 +15,7 @@ name = "websocket_proxy"
 workspace = true
 
 [dependencies]
-base-trusted-proxy = { workspace = true }
+base-common-http-proxy = { workspace = true }
 metrics = { workspace = true, optional = true }
 brotli = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }

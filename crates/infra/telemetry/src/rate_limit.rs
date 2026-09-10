@@ -17,7 +17,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use base_trusted_proxy::TrustedProxyConfig;
+use base_common_http_proxy::TrustedProxyConfig;
 use governor::{
     DefaultKeyedRateLimiter, Quota, RateLimiter,
     clock::{Clock, DefaultClock},

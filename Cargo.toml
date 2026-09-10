@@ -93,7 +93,7 @@ members = [
   "crates/utilities/reth-cli",
   "crates/common/runtime/tasks",
   "crates/testing/support",
-  "crates/utilities/trusted-proxy",
+  "crates/common/http/proxy",
   "crates/common/l1/transactions",
   "crates/common/chain/activation",
   "etc/systems",
@@ -337,7 +337,7 @@ base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
 base-testing-support = { path = "crates/testing/support", default-features = false }
 base-common-l1-transactions = { path = "crates/common/l1/transactions", default-features = false }
 base-common-client-rollup = { path = "crates/common/client/rollup", default-features = false }
-base-trusted-proxy = { path = "crates/utilities/trusted-proxy", default-features = false }
+base-common-http-proxy = { path = "crates/common/http/proxy", default-features = false }
 base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
 
 # revm

@@ -10,7 +10,7 @@ use std::{
 use anyhow::Context;
 use axum::{Router, middleware};
 use base_common_observability_health::HealthServer;
-use base_trusted_proxy::TrustedProxyConfig;
+use base_common_http_proxy::TrustedProxyConfig;
 use clap::{Args, builder::RangedU64ValueParser};
 use ipnet::IpNet;
 use tokio::{net::TcpListener, sync::Semaphore};
@@ -125,7 +125,7 @@ mod tests {
     };
 
     use axum::{Router, http::StatusCode};
-    use base_trusted_proxy::TrustedProxyConfig;
+    use base_common_http_proxy::TrustedProxyConfig;
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{

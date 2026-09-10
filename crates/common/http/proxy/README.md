@@ -1,4 +1,4 @@
-# `base-trusted-proxy`
+# `base-common-http-proxy`
 
 Client IP resolution through trusted forwarding proxies.
 

@@ -14,7 +14,7 @@ workspace = true
 discv5 = { workspace = true }
 async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
-base-trusted-proxy = { workspace = true }
+base-common-http-proxy = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }

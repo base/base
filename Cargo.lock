@@ -2613,6 +2613,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-http-proxy"
+version = "0.0.0"
+dependencies = [
+ "http 1.4.2",
+ "ipnet",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "base-common-io-files"
 version = "0.0.0"
 dependencies = [
@@ -5360,10 +5370,10 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base-common-http-proxy",
  "base-common-observability-health",
  "base-execution-network-types",
  "base-execution-network-wire",
- "base-trusted-proxy",
  "clap",
  "discv5",
  "futures",
@@ -5398,16 +5408,6 @@ dependencies = [
  "base-execution-evm-runtime",
  "eyre",
  "serde_json",
-]
-
-[[package]]
-name = "base-trusted-proxy"
-version = "0.0.0"
-dependencies = [
- "http 1.4.2",
- "ipnet",
- "thiserror 2.0.19",
- "tracing",
 ]
 
 [[package]]
@@ -17511,8 +17511,8 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "backoff",
+ "base-common-http-proxy",
  "base-common-observability-metrics",
- "base-trusted-proxy",
  "brotli",
  "futures",
  "http 1.4.2",

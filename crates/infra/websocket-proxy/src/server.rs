@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{any, get},
 };
-pub use base_trusted_proxy::TrustedProxyConfig;
+pub use base_common_http_proxy::TrustedProxyConfig;
 use http::HeaderMap;
 use serde::Deserialize;
 use serde_json::json;
