@@ -8,7 +8,7 @@ use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount};
 use base_common_types_chain::Header;
 use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError, TrieProvider};
-use base_proof_preimage::errors::PreimageOracleError;
+use base_proof_witness_preimage::errors::PreimageOracleError;
 
 use crate::errors::OracleProviderError;
 

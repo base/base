@@ -28,7 +28,7 @@ alloy-eips = { workspace = true, features = ["serde"] }
 parking_lot = { workspace = true, features = ["default"] }
 base-proof-client = { workspace = true, features = ["std"] }
 bincode = { workspace = true, features = ["default", "serde"] }
-base-proof-preimage = { workspace = true, features = ["serde"] }
+base-proof-witness-preimage = { workspace = true, features = ["serde"] }
 base-proof-primitives = { workspace = true, features = ["serde"] }
 aws-nitro-enclaves-nsm-api = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa", "arithmetic"] }

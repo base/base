@@ -2,7 +2,7 @@
 //! separate [`KeyValueStore`]s depending on [`PreimageKeyType`].
 
 use alloy_primitives::B256;
-use base_proof_preimage::PreimageKeyType;
+use base_proof_witness_preimage::PreimageKeyType;
 
 use super::KeyValueStore;
 use crate::Result;

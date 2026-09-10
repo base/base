@@ -16,7 +16,7 @@ alloy-eips = { workspace = true }
 async-trait = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-preimage = { workspace = true }
+base-proof-witness-preimage = { workspace = true }
 base-common-chain-config = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -33,7 +33,7 @@ std = [
 	"alloy-eips/std",
 	"alloy-primitives/std",
 	"base-common-chain-config/std",
-	"base-proof-preimage/std",
+	"base-proof-witness-preimage/std",
 	"serde?/std",
 	"thiserror/std",
 ]
@@ -42,7 +42,7 @@ serde = [
 	"alloy-eips/serde",
 	"alloy-primitives/serde",
 	"base-common-chain-config/serde",
-	"base-proof-preimage/serde",
+	"base-proof-witness-preimage/serde",
 	"dep:serde",
 ]
 rpc-server = [

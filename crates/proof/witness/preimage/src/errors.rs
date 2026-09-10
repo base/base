@@ -1,4 +1,4 @@
-//! Errors for the `base-proof-preimage` crate.
+//! Errors for the `base-proof-witness-preimage` crate.
 
 use alloc::string::String;
 

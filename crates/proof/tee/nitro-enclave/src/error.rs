@@ -1,6 +1,6 @@
 //! Error types for enclave server operations.
 
-use base_proof_preimage::PreimageKey;
+use base_proof_witness_preimage::PreimageKey;
 use thiserror::Error;
 
 /// Errors that can occur during NSM operations.

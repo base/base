@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_proof_preimage::{
+use base_proof_witness_preimage::{
     HintReaderServer, PreimageOracleServer, PreimageServerBackend, errors::PreimageOracleError,
 };
 use tokio::spawn;

@@ -1,4 +1,4 @@
-# `base-proof-preimage`
+# `base-proof-witness-preimage`
 
 High-level `no_std`-compatible API over the [Preimage Oracle][preimage-abi-spec].
 
@@ -16,11 +16,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-preimage = { workspace = true }
+base-proof-witness-preimage = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_preimage::{PreimageOracleClient, HintWriterClient};
+use base_proof_witness_preimage::{PreimageOracleClient, HintWriterClient};
 
 // In a no_std FPVM client:
 let data = oracle.get(preimage_key)?;

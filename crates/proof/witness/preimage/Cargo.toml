@@ -1,5 +1,5 @@
 [package]
-name = "base-proof-preimage"
+name = "base-proof-witness-preimage"
 description = "Bindings and types for interacting with the PreimageOracle ABI"
 version.workspace = true
 edition.workspace = true

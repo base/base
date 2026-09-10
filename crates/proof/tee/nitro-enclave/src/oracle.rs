@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt, sync::Arc};
 
 use alloy_primitives::keccak256;
 use async_trait::async_trait;
-use base_proof_preimage::{
+use base_proof_witness_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient,
     WitnessOracle,
     errors::{PreimageOracleError, PreimageOracleResult, WitnessOracleResult},
@@ -152,7 +152,7 @@ impl WitnessOracle for Oracle {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::keccak256;
-    use base_proof_preimage::PreimageKeyType;
+    use base_proof_witness_preimage::PreimageKeyType;
     use sha2::Digest;
 
     use super::*;

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use base_proof_preimage::PreimageKey;
+use base_proof_witness_preimage::PreimageKey;
 use base_proof_primitives::ProofResult;
 use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame};
 use tokio_vsock::{VsockAddr, VsockStream};

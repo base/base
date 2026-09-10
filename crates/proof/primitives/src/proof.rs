@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256};
-use base_proof_preimage::PreimageKey;
+use base_proof_witness_preimage::PreimageKey;
 
 use crate::Proposal;
 

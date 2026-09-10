@@ -8,7 +8,7 @@ use base_execution_evm_runtime::BaseEvmFactory;
 use base_common_client_rollup::OptimismRollupProviderExt;
 use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
-use base_proof_preimage::{
+use base_proof_witness_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
     WitnessOracle,
 };
@@ -168,13 +168,13 @@ impl Host {
         recording: RecordingOracle<P, H, W>,
     ) -> std::result::Result<(), FaultProofProgramError>
     where
-        P: base_proof_preimage::PreimageOracleClient
+        P: base_proof_witness_preimage::PreimageOracleClient
             + Send
             + Sync
             + Clone
             + std::fmt::Debug
             + 'static,
-        H: base_proof_preimage::HintWriterClient + Send + Sync + Clone + std::fmt::Debug + 'static,
+        H: base_proof_witness_preimage::HintWriterClient + Send + Sync + Clone + std::fmt::Debug + 'static,
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
         let _timer = base_common_observability_metrics::timed!(Metrics::replay_duration_seconds());

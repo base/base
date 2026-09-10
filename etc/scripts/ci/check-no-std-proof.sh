@@ -25,7 +25,7 @@ proof_packages=(
   base-proof-driver
   base-proof-executor
   base-proof-mpt
-  base-proof-preimage
+  base-proof-witness-preimage
   base-proof-primitives
 )
 

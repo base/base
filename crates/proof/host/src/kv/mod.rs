@@ -6,7 +6,7 @@ use alloy_primitives::{B256, keccak256};
 use alloy_rlp::EMPTY_STRING_CODE;
 use base_common_types_chain::EMPTY_ROOT_HASH;
 use base_proof_mpt::ordered_trie_with_encoder;
-use base_proof_preimage::{PreimageKey, PreimageKeyType};
+use base_proof_witness_preimage::{PreimageKey, PreimageKeyType};
 use tokio::sync::RwLock;
 
 use crate::Result;

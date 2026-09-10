@@ -12,7 +12,7 @@ use base_consensus_derive_pipeline::L2ChainProvider;
 use base_proof_driver::PipelineCursor;
 use base_proof_executor::TrieDBProvider;
 use base_proof_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
-use base_proof_preimage::{CommsClient, PreimageKey, PreimageKeyType};
+use base_proof_witness_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use spin::RwLock;
 

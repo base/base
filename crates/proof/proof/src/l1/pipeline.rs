@@ -15,7 +15,7 @@ use base_consensus_derive_pipeline::{
 };
 use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_executor::TrieDBProvider;
-use base_proof_preimage::{CommsClient, FlushableCache};
+use base_proof_witness_preimage::{CommsClient, FlushableCache};
 use base_consensus_batch_types::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 use spin::RwLock;
 

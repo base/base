@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base_proof_preimage::{
+use base_proof_witness_preimage::{
     FlushableCache, HintWriterClient, PreimageKey, PreimageOracleClient, WitnessOracle,
     errors::PreimageOracleResult,
 };
@@ -91,7 +91,7 @@ where
 mod tests {
     use std::{collections::HashMap, sync::Mutex};
 
-    use base_proof_preimage::{PreimageKeyType, WitnessOracleResult, errors::PreimageOracleError};
+    use base_proof_witness_preimage::{PreimageKeyType, WitnessOracleResult, errors::PreimageOracleError};
 
     use super::*;
 

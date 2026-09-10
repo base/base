@@ -25,7 +25,7 @@ base-proof-mpt = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
-base-proof-preimage = { workspace = true }
+base-proof-witness-preimage = { workspace = true }
 c-kzg = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
@@ -64,7 +64,7 @@ std = [
     "base-proof-driver/std",
     "base-proof-executor/std",
     "base-proof-mpt/std",
-    "base-proof-preimage/std",
+    "base-proof-witness-preimage/std",
     "base-consensus-batch-types/std",
     "c-kzg?/std",
     "dep:c-kzg",

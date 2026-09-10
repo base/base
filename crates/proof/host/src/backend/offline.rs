@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base_proof_preimage::{
+use base_proof_witness_preimage::{
     HintRouter, PreimageFetcher, PreimageKey,
     errors::{PreimageOracleError, PreimageOracleResult},
 };

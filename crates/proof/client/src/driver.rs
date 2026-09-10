@@ -11,7 +11,7 @@ use base_proof::{
     OraclePipeline,
 };
 use base_proof_driver::Driver;
-use base_proof_preimage::{HintWriterClient, PreimageOracleClient};
+use base_proof_witness_preimage::{HintWriterClient, PreimageOracleClient};
 use spin::RwLock;
 
 use crate::{Epilogue, FaultProofProgramError};

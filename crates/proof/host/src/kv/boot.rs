@@ -4,7 +4,7 @@ use base_proof::{
     L2_CHAIN_ID_KEY, L2_CLAIM_BLOCK_NUMBER_KEY, L2_CLAIM_KEY, L2_OUTPUT_ROOT_KEY,
     L2_ROLLUP_CONFIG_KEY, L2_SCHEDULE_BLOCK_NUMBER_KEY, PROPOSER_KEY,
 };
-use base_proof_preimage::PreimageKey;
+use base_proof_witness_preimage::PreimageKey;
 
 use crate::{HostConfig, KeyValueStore, Result};
 

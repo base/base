@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use core::fmt::Debug;
 
-use base_proof_preimage::WitnessOracle;
+use base_proof_witness_preimage::WitnessOracle;
 
 use crate::ProofResult;
 

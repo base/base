@@ -19,7 +19,7 @@ use base_common_types_payload::BasePayloadAttributes;
 use base_common_types_rpc::Block;
 use base_consensus_source_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
-use base_proof_preimage::{PreimageKey, PreimageKeyType};
+use base_proof_witness_preimage::{PreimageKey, PreimageKeyType};
 use base_consensus_batch_types::{BlockInfo, OutputRoot};
 use futures::FutureExt;
 use tokio::sync::Semaphore;

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, U256, uint};
 use base_common_chain_config::{BaseUpgrade, RollupConfig};
-use base_proof_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
+use base_proof_witness_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
 use serde::{Deserialize, Serialize};
 
 use crate::{ScheduleId, errors::OracleProviderError};
@@ -495,7 +495,7 @@ mod tests {
     use async_trait::async_trait;
     use base_common_chain_config::ChainConfig as BaseChainConfig;
     use base_common_chain_config::{BaseUpgradeConfig, UpgradeConfig};
-    use base_proof_preimage::{
+    use base_proof_witness_preimage::{
         PreimageKey, PreimageOracleClient,
         errors::{PreimageOracleError, PreimageOracleResult},
     };

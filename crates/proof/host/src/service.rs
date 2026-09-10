@@ -109,7 +109,7 @@ pub enum ProverError<B: ProverBackend> {
 mod tests {
     use std::{collections::HashMap, sync::RwLock};
 
-    use base_proof_preimage::{PreimageKey, WitnessOracle};
+    use base_proof_witness_preimage::{PreimageKey, WitnessOracle};
 
     use super::*;
 
@@ -126,16 +126,16 @@ mod tests {
             &self,
             key: PreimageKey,
             value: &[u8],
-        ) -> base_proof_preimage::WitnessOracleResult<()> {
+        ) -> base_proof_witness_preimage::WitnessOracleResult<()> {
             self.preimages.write().unwrap().insert(key, value.to_vec());
             Ok(())
         }
 
-        fn finalize(&self) -> base_proof_preimage::WitnessOracleResult<()> {
+        fn finalize(&self) -> base_proof_witness_preimage::WitnessOracleResult<()> {
             Ok(())
         }
 
-        fn preimage_count(&self) -> base_proof_preimage::WitnessOracleResult<usize> {
+        fn preimage_count(&self) -> base_proof_witness_preimage::WitnessOracleResult<usize> {
             Ok(self.preimages.read().unwrap().len())
         }
     }

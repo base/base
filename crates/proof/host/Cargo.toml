@@ -34,7 +34,7 @@ futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
 base-common-types-rpc = { workspace = true, features = []}
 base-proof-client = { workspace = true, features = ["std"] }
-base-proof-preimage = { workspace = true, features = ["std"] }
+base-proof-witness-preimage = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
 base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }

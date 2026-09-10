@@ -4704,7 +4704,7 @@ dependencies = [
  "base-proof-driver",
  "base-proof-executor",
  "base-proof-mpt",
- "base-proof-preimage",
+ "base-proof-witness-preimage",
  "c-kzg",
  "lru 0.16.4",
  "rand 0.9.5",
@@ -4732,7 +4732,7 @@ dependencies = [
  "base-proof",
  "base-proof-driver",
  "base-proof-executor",
- "base-proof-preimage",
+ "base-proof-witness-preimage",
  "rstest",
  "spin 0.10.1",
  "thiserror 2.0.19",
@@ -4832,8 +4832,8 @@ dependencies = [
  "base-proof",
  "base-proof-client",
  "base-proof-mpt",
- "base-proof-preimage",
  "base-proof-primitives",
+ "base-proof-witness-preimage",
  "futures",
  "metrics",
  "proptest",
@@ -4867,20 +4867,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-preimage"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "async-channel",
- "async-trait",
- "rkyv",
- "serde",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-proof-primitives"
 version = "0.0.0"
 dependencies = [
@@ -4889,7 +4875,7 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-common-chain-config",
- "base-proof-preimage",
+ "base-proof-witness-preimage",
  "hex",
  "jsonrpsee",
  "rstest",
@@ -4952,8 +4938,8 @@ dependencies = [
  "base-execution-evm-runtime",
  "base-proof",
  "base-proof-client",
- "base-proof-preimage",
  "base-proof-primitives",
+ "base-proof-witness-preimage",
  "bincode 2.0.1",
  "eyre",
  "hex",
@@ -4981,9 +4967,9 @@ dependencies = [
  "base-common-observability-health",
  "base-proof-contracts",
  "base-proof-host",
- "base-proof-preimage",
  "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
+ "base-proof-witness-preimage",
  "base-proof-worker",
  "base-prover-service-client",
  "base-prover-service-protocol",
@@ -5074,6 +5060,20 @@ dependencies = [
  "serde",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "base-proof-witness-preimage"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-channel",
+ "async-trait",
+ "rkyv",
+ "serde",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

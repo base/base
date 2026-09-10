@@ -10,7 +10,7 @@ use base_proof::{
     OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
 };
 use base_proof_executor::TrieDBProvider;
-use base_proof_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
+use base_proof_witness_preimage::{CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient};
 
 use crate::{FaultProofDriver, FaultProofProgramError};
 

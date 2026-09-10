@@ -21,7 +21,7 @@ alloy-signer = { workspace = true }
 base-proof-host = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-worker = { workspace = true }
-base-proof-preimage = { workspace = true }
+base-proof-witness-preimage = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-prover-service-client = { workspace = true }
 url = { workspace = true, features = ["default"] }

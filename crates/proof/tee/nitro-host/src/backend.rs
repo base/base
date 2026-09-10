@@ -47,7 +47,7 @@ impl ProverBackend for NitroBackend {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_preimage::{PreimageKey, PreimageKeyType, WitnessOracle};
+    use base_proof_witness_preimage::{PreimageKey, PreimageKeyType, WitnessOracle};
     use base_proof_tee_nitro_enclave::Server;
 
     use super::*;
