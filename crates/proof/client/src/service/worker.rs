@@ -11,7 +11,9 @@ use base_proof_service_protocol::{
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
-use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
+use crate::service::{
+    ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError,
+};
 
 /// Abstraction over prover worker JSON-RPC methods.
 ///
@@ -296,7 +298,7 @@ mod tests {
         ProverWorkerClient, ProverWorkerProvider, WorkerSubmitProofRequest,
         WorkerSubmitProofResponse,
     };
-    use crate::ProverServiceClientError;
+    use crate::service::ProverServiceClientError;
 
     #[derive(Debug)]
     enum ScriptedOutcome {

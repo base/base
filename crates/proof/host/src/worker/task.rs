@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_proof_service_client::ProverWorkerProvider;
+use base_proof_client::ProverWorkerProvider;
 use base_proof_service_protocol::{WorkerSubmitProofRequest, WorkerSubmitProofResponse};
 use tokio::{
     sync::{Mutex, OwnedSemaphorePermit, Semaphore},

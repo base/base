@@ -3,9 +3,8 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_client::RollupProvider;
+use base_proof_client::{ProofRequesterProvider, RollupProvider};
 use base_proof_l1::ProofSubmissionError;
-use base_proof_service_client::ProofRequesterProvider;
 use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus,
     TeeProofResult,

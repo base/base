@@ -13,7 +13,7 @@ use backon::Retryable;
 use base_common_runtime::{
     DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig,
 };
-use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
+use base_proof_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };

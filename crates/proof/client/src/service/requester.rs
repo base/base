@@ -11,7 +11,9 @@ use base_proof_service_protocol::{
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
-use crate::{ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError};
+use crate::service::{
+    ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientError,
+};
 
 /// Abstraction over proof requester JSON-RPC methods.
 ///
@@ -292,7 +294,7 @@ mod tests {
     };
 
     use super::{ProofRequesterClient, ProofRequesterProvider};
-    use crate::ProverServiceClientError;
+    use crate::service::ProverServiceClientError;
 
     /// Outcome script for a single requester call when the test wants to drive
     /// retry behavior. The server returns the head of the queue per call.

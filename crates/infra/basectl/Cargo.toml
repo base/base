@@ -13,10 +13,10 @@ serde_yaml = { workspace = true }
 base-proof-l1 = { workspace = true }
 base-common-l1 = { workspace = true }
 alloy-transport = { workspace = true }
+base-proof-client = { workspace = true }
 base-consensus-network = { workspace = true }
 base-common-client-rollup = { workspace = true }
 serde = { workspace = true, features = ["std"] }
-base-proof-service-client = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }

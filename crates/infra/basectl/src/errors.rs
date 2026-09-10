@@ -7,8 +7,8 @@ use alloy_transport::TransportError;
 use alloy_transport_http::reqwest;
 use base_common_client_ethereum::LocalSignerError;
 use base_common_l1::TxManagerError;
+use base_proof_client::{ProverServiceClientBuildError, ProverServiceClientError};
 use base_proof_l1::{ContractError, ProofSubmissionError};
-use base_proof_service_client::{ProverServiceClientBuildError, ProverServiceClientError};
 use jsonrpsee::core::client::Error as JsonRpcClientError;
 use thiserror::Error;
 

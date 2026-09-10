@@ -1,5 +1,4 @@
-#![doc = include_str!("../README.md")]
-
+//! Role-specific JSON-RPC clients for the Base prover service.
 mod config;
 pub use config::{
     ProverServiceClientBuildError, ProverServiceClientConfig, ProverServiceClientConfigError,

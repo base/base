@@ -26,7 +26,6 @@ base-proof-client = { workspace = true }
 base-common-runtime = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-client-rollup = { workspace = true }
-base-proof-service-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }

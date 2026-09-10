@@ -13,7 +13,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_service_client::ProofRequesterProvider;
+use base_proof_client::ProofRequesterProvider;
 use base_proof_service_protocol::{GetProofRequest, ProofStatus, SnarkPlonkProofRequest};
 use tracing::warn;
 

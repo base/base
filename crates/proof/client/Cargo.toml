@@ -25,12 +25,18 @@ base-common-runtime = { workspace = true }
 base-common-client-rollup = { workspace = true }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
 moka = { workspace = true, features = ["default", "future"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["serde"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
+base-proof-service-protocol = { workspace = true, features = ["default", "rpc-client"] }
 
 [dev-dependencies]
+chrono = { workspace = true, features = ["default"] }
+rstest = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["server"] }
+base-proof-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "test-util"] }

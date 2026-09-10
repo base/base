@@ -7,9 +7,8 @@ use std::{sync::Arc, time::Duration};
 
 use base_common_l1::TxManager;
 use base_common_runtime::TokioRuntime;
-use base_proof_client::{L1Provider, L2Provider};
+use base_proof_client::{L1Provider, L2Provider, ProofRequesterProvider};
 use base_proof_l1::AggregateVerifierClient;
-use base_proof_service_client::ProofRequesterProvider;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};

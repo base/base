@@ -13,9 +13,8 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use base_common_l1::{TxManager, TxManagerError};
-use base_proof_client::{L1Provider, L2Provider};
+use base_proof_client::{L1Provider, L2Provider, ProofRequesterProvider};
 use base_proof_l1::{AggregateVerifierClient, GameStatus, KnownRevert};
-use base_proof_service_client::ProofRequesterProvider;
 use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 use base_proof_types::ProofRequest as TeeProofRequest;
 use tracing::{debug, info, warn};

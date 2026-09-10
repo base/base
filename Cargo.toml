@@ -72,7 +72,6 @@ members = [
   "crates/proof/types",
   "crates/proof/service/proposer",
   "crates/proof/service/server",
-  "crates/proof/service/client",
   "crates/proof/service/protocol",
   "crates/proof/client",
   "crates/proof/tee/nitro-enclave",
@@ -284,7 +283,6 @@ base-proof-witness-mpt = { path = "crates/proof/witness/mpt", default-features =
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar", default-features = false }
 base-proof-service-server = { path = "crates/proof/service/server", default-features = false }
 base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host", default-features = false }
-base-proof-service-client = { path = "crates/proof/service/client", default-features = false }
 base-proof-service-proposer = { path = "crates/proof/service/proposer", default-features = false }
 base-proof-witness-preimage = { path = "crates/proof/witness/preimage", default-features = false }
 base-proof-service-protocol = { path = "crates/proof/service/protocol", default-features = false }

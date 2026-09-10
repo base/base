@@ -13,12 +13,12 @@ use base_common_observability_health::HealthServer;
 use base_common_runtime::TokioRuntime;
 use base_proof_client::{
     L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider,
+    ProofRequesterClient, ProverServiceClientConfig,
 };
 use base_proof_l1::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};

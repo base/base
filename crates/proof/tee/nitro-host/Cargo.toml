@@ -20,7 +20,7 @@ alloy-signer = { workspace = true }
 base-proof-l1 = { workspace = true }
 base-proof-host = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-service-client = { workspace = true }
+base-proof-client = { workspace = true }
 base-proof-witness-preimage = { workspace = true }
 url = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-enclave = { workspace = true }

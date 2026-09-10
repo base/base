@@ -12,13 +12,13 @@ use alloy_primitives::Address;
 use base_common_chain_config::rollup_config;
 use base_common_cli::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_client::{ProverServiceClientConfig, ProverWorkerClient};
+#[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
 };
-#[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 #[cfg(target_os = "linux")]

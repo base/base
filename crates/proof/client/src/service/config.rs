@@ -120,8 +120,8 @@ impl ProverServiceClientConfig {
         self.max_wait
     }
 
-    /// Return the retry configuration applied by [`crate::ProofRequesterClient`] and
-    /// idempotent [`crate::ProverWorkerClient`] JSON-RPC methods.
+    /// Return the retry configuration applied by [`crate::service::ProofRequesterClient`] and
+    /// idempotent [`crate::service::ProverWorkerClient`] JSON-RPC methods.
     pub const fn retry_config(&self) -> RetryConfig {
         self.retry
     }
@@ -144,8 +144,8 @@ impl ProverServiceClientConfig {
         self
     }
 
-    /// Set the retry configuration applied by [`crate::ProofRequesterClient`] and
-    /// idempotent [`crate::ProverWorkerClient`] JSON-RPC methods.
+    /// Set the retry configuration applied by [`crate::service::ProofRequesterClient`] and
+    /// idempotent [`crate::service::ProverWorkerClient`] JSON-RPC methods.
     pub const fn with_retry_config(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
         self

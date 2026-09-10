@@ -6,9 +6,9 @@
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_common_chain_config as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_proof_host as _;
+use base_proof_client as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_proof_service_client as _;
+use base_proof_host as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_tee_nitro_host as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]

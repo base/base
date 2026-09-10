@@ -2,8 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use base_proof_client::ProverWorkerProvider;
 use base_proof_host::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
-use base_proof_service_client::ProverWorkerProvider;
 use base_proof_service_protocol::TeeKind;
 use tokio_util::sync::CancellationToken;
 

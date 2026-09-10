@@ -12,14 +12,14 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_rollup::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
 use base_common_types_rpc::{EIP1186AccountProofResponse, Header};
 use base_proof_client::{
-    BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
+    BaseBlock, BaseHeader, L1Provider, L2Provider, ProofRequesterProvider,
+    ProverServiceClientError, RollupProvider, RpcError, RpcResult,
 };
 use base_proof_l1::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,

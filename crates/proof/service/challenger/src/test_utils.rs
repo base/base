@@ -17,13 +17,15 @@ use base_common_types_chain::{
     Eip658Value, Header as ConsensusHeader, Predeploys, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
 use base_common_types_rpc::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
-use base_proof_client::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
+use base_proof_client::{
+    BaseHeader, L1Provider, L2Provider, ProofRequesterProvider, ProverServiceClientError, RpcError,
+    RpcResult,
+};
 use base_proof_l1::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_proof_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
     ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,

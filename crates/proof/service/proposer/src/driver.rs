@@ -244,7 +244,7 @@ mod tests {
             });
         let factory: Arc<dyn base_proof_l1::DisputeGameFactoryClient> =
             Arc::new(MockDisputeGameFactory::default());
-        let proof_requester: Arc<dyn base_proof_service_client::ProofRequesterProvider> =
+        let proof_requester: Arc<dyn base_proof_client::ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
         let verifier: Arc<dyn base_proof_l1::AggregateVerifierClient> =
             Arc::new(MockAggregateVerifier::default());

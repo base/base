@@ -3,6 +3,7 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
+use base_proof_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_host::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
     ProofTaskController, WorkerHeartbeat,
@@ -14,7 +15,6 @@ pub use base_proof_host::{
     MIN_WORKER_HEARTBEAT_INTERVAL as MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
     WorkerHeartbeatConfig as ProofGeneratorHeartbeatConfig,
 };
-use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
 use base_proof_types::ProofRequest as NitroProofRequest;
 use chrono::{DateTime, Utc};
@@ -355,8 +355,8 @@ mod tests {
     use alloy_genesis::ChainConfig;
     use async_trait::async_trait;
     use base_common_chain_config::RollupConfig;
+    use base_proof_client::ProverServiceClientError;
     use base_proof_host::{ProofSubmitter, ProverConfig};
-    use base_proof_service_client::ProverServiceClientError;
     use base_proof_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
