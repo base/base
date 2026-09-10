@@ -17,16 +17,15 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-base-cli-utils = { workspace = true }
 base-node-core = { workspace = true }
 base-batcher-cli = { workspace = true }
 base-builder-cli = { workspace = true }
 reth-cli-commands = { workspace = true }
+base-common-cli-support = { workspace = true}
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 base-consensus-driver-service = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
-base-common-cli-support = { workspace = true, optional = true }
 base-consensus-source-providers = { workspace = true }
 alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
@@ -45,9 +44,4 @@ base-common-chain-config = { workspace = true }
 figment = { workspace = true, features = ["test"] }
 
 [features]
-jemalloc-prof = [
-    "base-builder-core/jemalloc-prof",
-    "base-execution-cli/jemalloc-symbols",
-    "dep:base-common-cli-support",
-    "base-common-cli-support/jemalloc-prof",
-]
+jemalloc-prof = ["base-builder-core/jemalloc-prof", "base-execution-cli/jemalloc-symbols", "base-common-cli-support/jemalloc-prof"]

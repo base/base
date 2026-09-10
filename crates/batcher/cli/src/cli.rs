@@ -8,7 +8,7 @@ use std::{
 use alloy_primitives::Address;
 use base_batcher_service_driver::ThrottleConfig;
 use base_batcher_service_driver::{BatcherConfig, BatcherService};
-use base_cli_utils::RuntimeManager;
+use base_common_cli_support::RuntimeManager;
 use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
 use base_common_runtime_tasks::TokioRuntime;
 use clap::Parser;

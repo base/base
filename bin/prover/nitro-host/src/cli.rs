@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use base_cli_utils::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chain_config::rollup_config;
+use base_common_cli_support::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host::ProverConfig;
 #[cfg(feature = "local")]
@@ -42,8 +42,8 @@ use tracing::warn;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use uuid::Uuid;
 
-base_cli_utils::define_log_args!("BASE_PROVER_NITRO_HOST");
-base_cli_utils::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
+base_common_cli_support::define_log_args!("BASE_PROVER_NITRO_HOST");
+base_common_cli_support::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
 
 /// Nitro TEE prover host binary.
 #[derive(Parser)]
@@ -214,8 +214,8 @@ impl Cli {
     pub(crate) fn run(self) -> eyre::Result<()> {
         let Self { command, logging, metrics } = self;
         LogConfig::from(logging).init_tracing_subscriber()?;
-        base_cli_utils::MetricsConfig::from(metrics).init_with(|| {
-            base_cli_utils::register_version_metrics!();
+        base_common_cli_support::MetricsConfig::from(metrics).init_with(|| {
+            base_common_cli_support::register_version_metrics!();
         })?;
 
         RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_shutdown(

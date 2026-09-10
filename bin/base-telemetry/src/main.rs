@@ -1,12 +1,12 @@
 //! Base telemetry service binary entry point.
 
 use anyhow::Result;
-use base_cli_utils::{LogConfig, RuntimeManager};
+use base_common_cli_support::{LogConfig, RuntimeManager};
 use base_telemetry_service::{BaseTelemetryServer, ServerConfig};
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
 
-base_cli_utils::define_log_args!("BASE_TELEMETRY");
+base_common_cli_support::define_log_args!("BASE_TELEMETRY");
 
 /// CLI entry point for the Base telemetry service.
 #[derive(Parser, Debug, Clone)]

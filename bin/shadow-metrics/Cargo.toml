@@ -17,8 +17,8 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 dotenvy = { workspace = true }
-base-cli-utils = { workspace = true }
 base-shadow-metrics = { workspace = true }
+base-common-cli-support = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }

@@ -1462,7 +1462,7 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "axum",
- "base-cli-utils",
+ "base-common-cli-support",
  "clap",
  "dotenvy",
  "jsonrpsee",
@@ -2123,7 +2123,6 @@ dependencies = [
  "base-batcher-cli",
  "base-builder-cli",
  "base-builder-core",
- "base-cli-utils",
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-cli-support",
@@ -2200,7 +2199,7 @@ dependencies = [
  "alloy-primitives",
  "base-batcher-encoding-channel",
  "base-batcher-service-driver",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-l1-transactions",
  "base-common-runtime-tasks",
@@ -2299,7 +2298,6 @@ dependencies = [
  "alloy-transport-http",
  "async-trait",
  "base-builder-core",
- "base-cli-utils",
  "base-common-chain-config",
  "base-common-cli-support",
  "base-common-client-contracts",
@@ -2395,7 +2393,7 @@ dependencies = [
  "alloy-trie",
  "async-trait",
  "base-challenger",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-l1-transactions",
  "base-common-observability-health",
@@ -2432,38 +2430,9 @@ name = "base-challenger-bin"
 version = "0.0.0"
 dependencies = [
  "base-challenger",
- "base-cli-utils",
+ "base-common-cli-support",
  "clap",
  "eyre",
-]
-
-[[package]]
-name = "base-cli-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-genesis",
- "backtrace",
- "base-common-observability-metrics",
- "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "clap",
- "dirs-next",
- "eyre",
- "libc",
- "metrics",
- "metrics-exporter-prometheus",
- "metrics-process",
- "opentelemetry 0.32.0",
- "opentelemetry_sdk",
- "reth-node-core",
- "rstest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2529,21 +2498,40 @@ name = "base-common-cli-support"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
+ "alloy-genesis",
  "alloy-primitives",
+ "backtrace",
  "base-common-io-files",
+ "base-common-observability-metrics",
  "base-common-observability-tracing",
+ "base-common-runtime-tasks",
  "cfg-if",
+ "clap",
+ "dirs-next",
  "eyre",
  "libc",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "metrics-process",
+ "opentelemetry 0.32.0",
+ "opentelemetry_sdk",
  "rand 0.8.7",
  "rand 0.9.5",
+ "rstest",
  "secp256k1 0.30.0",
  "serde",
+ "serde_json",
  "snmalloc-rs",
  "thiserror 2.0.19",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "tracy-client",
+ "url",
 ]
 
 [[package]]
@@ -2956,9 +2944,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-signer",
  "backon",
- "base-cli-utils",
  "base-common-chain-activation",
  "base-common-chain-config",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-runtime-tasks",
  "base-consensus-batch-types",
@@ -3185,7 +3173,6 @@ dependencies = [
  "alloy-primitives",
  "axum",
  "backon",
- "base-cli-utils",
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-cli-support",
@@ -4452,7 +4439,7 @@ name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-types-rpc",
  "base-load-tests",
@@ -4475,7 +4462,7 @@ dependencies = [
  "alloy-signer",
  "alloy-sol-types",
  "async-trait",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-l1-transactions",
  "base-common-types-chain",
@@ -5020,7 +5007,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-l1-transactions",
  "base-common-observability-health",
@@ -5055,7 +5042,7 @@ name = "base-proof-tee-registrar-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-l1-transactions",
  "base-proof-tee-registrar",
@@ -5090,8 +5077,8 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "async-trait",
- "base-cli-utils",
  "base-common-chain-config",
+ "base-common-cli-support",
  "base-common-client-ethereum",
  "base-common-client-rollup",
  "base-common-l1-transactions",
@@ -5127,7 +5114,7 @@ dependencies = [
 name = "base-proposer-bin"
 version = "0.0.0"
 dependencies = [
- "base-cli-utils",
+ "base-common-cli-support",
  "base-proposer",
  "clap",
  "eyre",
@@ -5148,8 +5135,8 @@ name = "base-prover-nitro-host"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-cli-utils",
  "base-common-chain-config",
+ "base-common-cli-support",
  "base-proof-host",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
@@ -5187,7 +5174,7 @@ dependencies = [
 name = "base-prover-service-bin"
 version = "0.0.0"
 dependencies = [
- "base-cli-utils",
+ "base-common-cli-support",
  "base-prover-service",
  "base-prover-service-db",
  "base-prover-service-protocol",
@@ -5289,7 +5276,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "axum",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-shadow-metrics",
  "clap",
  "dotenvy",
@@ -5443,7 +5430,7 @@ name = "base-telemetry-bin"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-telemetry-service",
  "clap",
  "dotenvy",
@@ -13901,7 +13888,6 @@ dependencies = [
  "alloy-rlp",
  "arbitrary",
  "backon",
- "base-cli-utils",
  "base-common-chain-config",
  "base-common-cli-support",
  "base-common-io-files",
@@ -17766,7 +17752,7 @@ name = "websocket-proxy-bin"
 version = "0.0.0"
 dependencies = [
  "axum",
- "base-cli-utils",
+ "base-common-cli-support",
  "base-common-observability-metrics",
  "brotli",
  "clap",

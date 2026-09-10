@@ -6,14 +6,14 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use base_cli_utils::CliStyles;
+use base_common_cli_support::CliStyles;
 use clap::Parser;
 use url::Url;
 
-base_cli_utils::define_cli_env!("BASE_CHALLENGER");
-base_cli_utils::define_log_args!("BASE_CHALLENGER");
-base_cli_utils::define_metrics_args!("BASE_CHALLENGER", 7300);
-base_cli_utils::define_health_args!("BASE_CHALLENGER", 8080);
+base_common_cli_support::define_cli_env!("BASE_CHALLENGER");
+base_common_cli_support::define_log_args!("BASE_CHALLENGER");
+base_common_cli_support::define_metrics_args!("BASE_CHALLENGER", 7300);
+base_common_cli_support::define_health_args!("BASE_CHALLENGER", 8080);
 base_common_l1_transactions::define_signer_cli!("BASE_CHALLENGER");
 base_common_l1_transactions::define_tx_manager_cli!("BASE_CHALLENGER");
 

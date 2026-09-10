@@ -19,9 +19,7 @@ dirs-next = { workspace = true }
 jsonrpsee = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-base-common-cli-support = { workspace = true }
 alloy-json-rpc = { workspace = true }
-base-cli-utils = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
@@ -29,6 +27,7 @@ alloy-primitives = { workspace = true }
 base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-payload-util = { workspace = true }
+base-common-cli-support = {workspace = true}
 reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
 nanoid = { workspace = true, optional = true }
@@ -127,16 +126,7 @@ base-common-client-ethereum = { workspace = true, features = ["default", "txpool
 
 [features]
 default = ["jemalloc", "metrics"]
-metrics = [
-    "base-execution-rpc-handlers/metrics",
-    "base-execution-evm-runtime/metrics",
-    "base-execution-payload-builder/metrics",
-    "base-common-observability-metrics/metrics",
-    "base-common-observability-events/metrics",
-    "dep:metrics",
-    "base-execution-evm-blocks/metrics",
-    "base-execution-state-trie/metrics",
-]
+metrics = ["base-execution-rpc-handlers/metrics", "base-execution-evm-runtime/metrics", "base-execution-payload-builder/metrics", "base-common-observability-metrics/metrics", "base-common-observability-events/metrics", "dep:metrics", "base-execution-evm-blocks/metrics", "base-execution-state-trie/metrics"]
 jemalloc = ["dep:tikv-jemallocator", "base-common-cli-support/jemalloc"]
 jemalloc-prof = ["jemalloc", "base-common-cli-support/jemalloc-prof", "tikv-jemallocator?/profiling"]
 min-error-logs = ["tracing/release_max_level_error"]
@@ -144,29 +134,4 @@ min-warn-logs = ["tracing/release_max_level_warn"]
 min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
-test-utils = [
-    "base-execution-payload-types/test-utils",
-    "base-common-chain-config/test-utils",
-    "base-execution-evm-precompiles/test-utils",
-    "base-execution-rpc-handlers/client",
-    "base-node-core/test-utils",
-    "base-node-runner/test-utils",
-    "base-common-observability-events/test-utils",
-    "ctor",
-    "http-body-util",
-    "hyper",
-    "hyper-util",
-    "nanoid",
-    "base-execution-state-provider/test-utils",
-    "base-execution-state-database/test-utils",
-    "base-execution-evm-blocks/test-utils",
-    "base-execution-state-tasks/test-utils",
-    "base-execution-payload-builder/test-utils",
-    "reth-primitives-traits/test-utils",
-    "base-common-runtime-tasks/test-utils",
-    "base-execution-txpool/test-utils",
-    "base-execution-state-trie/test-utils",
-    "rlimit",
-    "testcontainers",
-    "dep:base-execution-engine-driver",
-]
+test-utils = ["base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-evm-precompiles/test-utils", "base-execution-rpc-handlers/client", "base-node-core/test-utils", "base-node-runner/test-utils", "base-common-observability-events/test-utils", "ctor", "http-body-util", "hyper", "hyper-util", "nanoid", "base-execution-state-provider/test-utils", "base-execution-state-database/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-tasks/test-utils", "base-execution-payload-builder/test-utils", "reth-primitives-traits/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool/test-utils", "base-execution-state-trie/test-utils", "rlimit", "testcontainers", "dep:base-execution-engine-driver"]

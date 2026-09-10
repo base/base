@@ -18,12 +18,12 @@ alloy-rlp = { workspace = true }
 humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-primitives = { workspace = true }
 base-proof-submission = { workspace = true }
+base-common-cli-support = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-l1-transactions = {workspace = true}
@@ -54,10 +54,4 @@ tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
 metrics = ["base-common-observability-metrics/metrics", "base-common-l1-transactions/metrics", "dep:metrics"]
-test-utils = [
-    "base-common-types-rpc",
-    "async-trait",
-    "base-consensus-batch-types/test-utils",
-    "base-common-runtime-tasks/test-utils",
-    "serde_json",
-]
+test-utils = ["base-common-types-rpc", "async-trait", "base-consensus-batch-types/test-utils", "base-common-runtime-tasks/test-utils", "serde_json"]

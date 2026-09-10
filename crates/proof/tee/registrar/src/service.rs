@@ -11,8 +11,8 @@ use std::{
 };
 
 use alloy_primitives::Address;
+use base_common_cli_support::RuntimeManager;
 use base_common_client_ethereum::{Provider, ProviderBuilder};
-use base_cli_utils::RuntimeManager;
 use base_common_l1_transactions::BalanceMonitorLayer;
 use base_common_l1_transactions::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use base_common_observability_health::HealthServer;
@@ -64,9 +64,9 @@ pub struct RegistrarConfig {
     /// Health server bind address.
     pub health_addr: SocketAddr,
     /// Logging configuration.
-    pub log_config: base_cli_utils::LogConfig,
+    pub log_config: base_common_cli_support::LogConfig,
     /// Metrics configuration.
-    pub metrics_config: base_cli_utils::MetricsConfig,
+    pub metrics_config: base_common_cli_support::MetricsConfig,
 }
 
 impl fmt::Debug for RegistrarConfig {
@@ -116,7 +116,7 @@ impl RegistrarConfig {
 
         self.metrics_config
             .init_with(|| {
-                base_cli_utils::register_version_metrics!();
+                base_common_cli_support::register_version_metrics!();
                 RegistrarMetrics::up().set(1.0);
             })
             .map_err(|e| {
@@ -289,8 +289,8 @@ mod tests {
             tx_retry_delay: Duration::from_secs(1),
             crl_nitro_verifier_address: None,
             health_addr: "127.0.0.1:0".parse().unwrap(),
-            log_config: base_cli_utils::LogConfig::default(),
-            metrics_config: base_cli_utils::MetricsConfig::default(),
+            log_config: base_common_cli_support::LogConfig::default(),
+            metrics_config: base_common_cli_support::MetricsConfig::default(),
         };
 
         let debug = format!("{config:?}");

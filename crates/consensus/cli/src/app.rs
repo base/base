@@ -1,4 +1,4 @@
 //! Shared consensus logging and metrics arguments.
 
-base_cli_utils::define_log_args!("BASE_NODE");
-base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
+base_common_cli_support::define_log_args!("BASE_NODE");
+base_common_cli_support::define_metrics_args!("BASE_NODE", 9090);

@@ -2,9 +2,9 @@
 use std::sync::Arc;
 
 use crate::ChainSpecParser;
-use base_cli_utils::CliContext;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_cli_support::CancellationToken;
+use base_common_cli_support::CliContext;
 use base_execution_state_maintenance::PrunerBuilder;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::RocksDBProviderFactory;

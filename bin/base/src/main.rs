@@ -16,5 +16,5 @@ static ALLOC: base_common_cli_support::Allocator = base_common_cli_support::new_
 static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 fn main() {
-    base_cli_utils::run_cli_main!(cli::BaseCli);
+    base_common_cli_support::run_cli_main!(cli::BaseCli);
 }

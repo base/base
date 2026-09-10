@@ -1,4 +1,4 @@
-# `base-cli-utils`
+# `base-common-cli-support`
 
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -17,7 +17,7 @@ CLI utilities for Base binaries.
 
 ```toml
 [dependencies]
-base-cli-utils = { git = "https://github.com/base/base" }
+base-common-cli-support = { git = "https://github.com/base/base" }
 ```
 
 ### Example
@@ -26,10 +26,10 @@ base-cli-utils = { git = "https://github.com/base/base" }
 use base_execution_cli::Cli;
 
 fn main() {
-    let cli = base_cli_utils::parse_cli!(Cli<ChainSpecParser, Args>);
+    let cli = base_common_cli_support::parse_cli!(Cli<ChainSpecParser, Args>);
 
     cli.run(|builder, args| async move {
-        base_cli_utils::register_version_metrics!();
+        base_common_cli_support::register_version_metrics!();
         // ...
     });
 }

@@ -18,13 +18,13 @@ humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
-base-cli-utils = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-client-rollup = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }
+base-common-cli-support = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-common-client-rollup = { workspace = true }
 base-common-l1-transactions = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-prover-service-client = { workspace = true }

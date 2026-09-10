@@ -16,10 +16,10 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 aws-sdk-ec2 = { workspace = true }
 alloy-signer = { workspace = true }
-base-cli-utils = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }
+base-common-cli-support = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-l1-transactions = {workspace = true}
 hex = { workspace = true, features = ["default"] }
@@ -33,10 +33,10 @@ base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 x509-parser = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
-base-common-client-ethereum = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 base-common-observability-health = { workspace = true, features = ["axum-server"] }

@@ -109,14 +109,14 @@ impl LogConfig {
         self.init_tracing_subscriber_with_filter_and_extra_layer(filter, None)
     }
 
-    /// Initialize the tracing subscriber with [`reth_node_core::args::TraceArgs`] OTLP export.
+    /// Initialize the tracing subscriber with [`base_common_cli_support::TraceArgs`] OTLP export.
     ///
     /// Registers the W3C `TraceContextPropagator`, builds an optional OTLP span layer from
     /// `trace_args`, and initializes the subscriber with the given noise-suppression directives.
     /// This is the preferred entry point for binaries that want OTLP support.
     pub fn init_with_trace_args(
         &self,
-        trace_args: &reth_node_core::args::TraceArgs,
+        trace_args: &crate::TraceArgs,
         directives: &[&str],
     ) -> eyre::Result<()> {
         opentelemetry::global::set_text_map_propagator(

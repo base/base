@@ -17,8 +17,8 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-base-cli-utils = { workspace = true }
 base-prover-service-db = { workspace = true }
+base-common-cli-support = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 serde = { workspace = true, features = ["derive", "std"] }

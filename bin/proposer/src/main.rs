@@ -7,5 +7,5 @@ mod cli;
 
 #[tokio::main]
 async fn main() {
-    base_cli_utils::run_cli_main!(async cli::Cli);
+    base_common_cli_support::run_cli_main!(async cli::Cli);
 }

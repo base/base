@@ -2,10 +2,10 @@
 
 use std::sync::OnceLock;
 
+use base_common_observability_tracing::OtlpProtocol;
+use base_common_observability_tracing::{Layers, tracing_subscriber::EnvFilter};
 use clap::{Parser, builder::Resettable};
 use eyre::WrapErr;
-use base_common_observability_tracing::{Layers, tracing_subscriber::EnvFilter};
-use base_common_observability_tracing::OtlpProtocol;
 use url::Url;
 
 static TRACE_DEFAULTS: OnceLock<DefaultTraceValues> = OnceLock::new();

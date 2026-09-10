@@ -18,8 +18,8 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 humantime = { workspace = true }
-base-cli-utils = { workspace = true }
 alloy-primitives = { workspace = true }
+base-common-cli-support = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 base-common-l1-transactions = { workspace = true }
 url = { workspace = true, features = ["default"] }

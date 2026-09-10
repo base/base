@@ -172,7 +172,7 @@ impl AdminHandle {
     ///
     /// Returns an error immediately so callers know the level was not changed.
     /// No command is ever sent to the driver. A future chunk implements this
-    /// by modifying `base-cli-utils` to expose a reload handle.
+    /// by modifying `base-common-cli-support` to expose a reload handle.
     pub fn set_log_level(&self, _level: String) -> AdminResult<()> {
         Err(AdminError::NotSupported("set_log_level"))
     }

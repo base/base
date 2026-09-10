@@ -16,7 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-cli-utils = { workspace = true }
+base-common-cli-support = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-challenger = { workspace = true, features = ["metrics"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }

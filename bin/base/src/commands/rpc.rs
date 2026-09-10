@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use base_cli_utils::CliRunner;
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::CliRunner;
 use base_consensus_cli::{
     CliMetrics, ConsensusFollowNodeArgs, ConsensusNodeArgs, ConsensusNodeConfigArgs,
     ConsensusNodeOverrides, ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,

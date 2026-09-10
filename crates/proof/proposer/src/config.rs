@@ -3,7 +3,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
-use base_cli_utils::{LogConfig, MetricsConfig};
+use base_common_cli_support::{LogConfig, MetricsConfig};
 use base_common_runtime_tasks::RetryConfig;
 use eyre::{Result, WrapErr};
 use url::Url;

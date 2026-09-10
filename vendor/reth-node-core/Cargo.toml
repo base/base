@@ -23,10 +23,10 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
-base-common-cli-support = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-types-rpc = {workspace = true}
 base-execution-txpool = { workspace = true }
+base-common-cli-support = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
@@ -64,8 +64,8 @@ proptest = { workspace = true, features = ["default"] }
 jemalloc = ["base-common-cli-support/jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global"]
-otlp = ["base-common-observability-tracing/otlp"]
-otlp-logs = ["base-common-observability-tracing/otlp-logs"]
+otlp = ["base-common-observability-tracing/otlp", "base-common-cli-support/otlp"]
+otlp-logs = ["base-common-observability-tracing/otlp-logs", "base-common-cli-support/otlp-logs"]
 tracy = ["base-common-observability-tracing/tracy"]
 
 min-error-logs = ["tracing/release_max_level_error"]

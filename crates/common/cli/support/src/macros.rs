@@ -5,10 +5,10 @@
 ///
 /// ```rust,ignore
 /// // Default workspace suppressions only (e.g. discv5=error):
-/// base_cli_utils::init_tracing!(log_config)?;
+/// base_common_cli_support::init_tracing!(log_config)?;
 ///
 /// // With additional binary-specific suppressions:
-/// base_cli_utils::init_tracing!(log_config, ["libp2p_gossipsub=error"])?;
+/// base_common_cli_support::init_tracing!(log_config, ["libp2p_gossipsub=error"])?;
 /// ```
 #[macro_export]
 macro_rules! init_tracing {
@@ -26,8 +26,8 @@ macro_rules! init_tracing {
 /// # Usage
 ///
 /// ```rust,ignore
-/// base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
-/// base_cli_utils::define_metrics_args!("BASE_PROPOSER", 7300);
+/// base_common_cli_support::define_metrics_args!("BASE_NODE", 9090);
+/// base_common_cli_support::define_metrics_args!("BASE_PROPOSER", 7300);
 /// ```
 ///
 /// The generated struct has four fields: `enabled`, `interval`, `port`, `addr`.
@@ -111,7 +111,7 @@ macro_rules! define_metrics_args {
 /// # Usage
 ///
 /// ```rust,ignore
-/// base_cli_utils::define_log_args!("BASE_PROPOSER");
+/// base_common_cli_support::define_log_args!("BASE_PROPOSER");
 /// ```
 ///
 /// The generated struct has six fields covering verbosity, stdout quiet mode,
@@ -214,8 +214,8 @@ macro_rules! define_log_args {
 /// # Usage
 ///
 /// ```rust,ignore
-/// base_cli_utils::define_health_args!("BASE_CHALLENGER", 8080);
-/// base_cli_utils::define_health_args!("BASE_PROPOSER", 8080);
+/// base_common_cli_support::define_health_args!("BASE_CHALLENGER", 8080);
+/// base_common_cli_support::define_health_args!("BASE_PROPOSER", 8080);
 /// ```
 ///
 /// The generated struct has two fields: `addr` and `port`.
@@ -275,7 +275,7 @@ macro_rules! define_health_args {
 /// # Usage
 ///
 /// ```rust,ignore
-/// base_cli_utils::define_cli_env!("BASE_CHALLENGER");
+/// base_common_cli_support::define_cli_env!("BASE_CHALLENGER");
 ///
 /// #[arg(long = "l1-eth-rpc", env = cli_env!("L1_ETH_RPC"))]
 /// pub l1_eth_rpc: Url,

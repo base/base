@@ -3,7 +3,7 @@
 use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{extract::ws::Message, http::Uri};
-use base_cli_utils::LogConfig;
+use base_common_cli_support::LogConfig;
 use clap::Parser;
 use dotenvy::dotenv;
 use ipnet::IpNet;
@@ -20,7 +20,7 @@ use websocket_proxy::{
     TrustedProxyConfig, WebsocketSubscriber,
 };
 
-base_cli_utils::define_log_args!("WEBSOCKET_PROXY");
+base_common_cli_support::define_log_args!("WEBSOCKET_PROXY");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]

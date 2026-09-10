@@ -18,8 +18,8 @@ strum = { workspace = true }
 metrics = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
-base-cli-utils = { workspace = true }
 alloy-primitives = { workspace = true }
+base-common-cli-support = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-consensus-batch-types = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
@@ -51,4 +51,4 @@ tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
 default = ["otlp"]
-otlp = ["base-cli-utils/otlp"]
+otlp = ["base-common-cli-support/otlp"]

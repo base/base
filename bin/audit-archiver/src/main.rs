@@ -26,7 +26,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use base_cli_utils::LogConfig;
+use base_common_cli_support::LogConfig;
 use clap::{Parser, ValueEnum};
 use jsonrpsee::server::{ServerBuilder, stop_channel};
 use moka::{policy::EvictionPolicy, sync::Cache};
@@ -38,8 +38,8 @@ use tokio::{
 use tower::ServiceBuilder;
 use tracing::{error, info};
 
-base_cli_utils::define_log_args!("TIPS_AUDIT");
-base_cli_utils::define_metrics_args!("TIPS_AUDIT", 9002);
+base_common_cli_support::define_log_args!("TIPS_AUDIT");
+base_common_cli_support::define_metrics_args!("TIPS_AUDIT", 9002);
 
 #[derive(Debug, Clone, ValueEnum)]
 enum S3ConfigType {
@@ -247,7 +247,7 @@ async fn main() -> Result<()> {
         .init_tracing_subscriber()
         .expect("Failed to initialize tracing");
 
-    base_cli_utils::MetricsConfig::from(args.metrics.clone())
+    base_common_cli_support::MetricsConfig::from(args.metrics.clone())
         .init()
         .expect("Failed to install Prometheus exporter");
 

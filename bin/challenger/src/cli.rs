@@ -15,16 +15,17 @@ pub(crate) struct Cli {
 impl Cli {
     /// Run the challenger service.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        base_cli_utils::LogConfig::from(self.args.logging.clone()).init_tracing_subscriber()?;
+        base_common_cli_support::LogConfig::from(self.args.logging.clone())
+            .init_tracing_subscriber()?;
         let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
         config
             .metrics
             .init_with(|| {
-                base_cli_utils::register_version_metrics!();
+                base_common_cli_support::register_version_metrics!();
                 base_challenger::ChallengerMetrics::up().set(1.0);
             })
             .wrap_err("failed to install Prometheus recorder")?;
-        base_cli_utils::RuntimeManager::new()
+        base_common_cli_support::RuntimeManager::new()
             .run_until_ctrl_c(base_challenger::ChallengerService::run(config))
     }
 }

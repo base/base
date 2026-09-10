@@ -3,7 +3,7 @@
 use std::{num::NonZeroU64, path::PathBuf, time::Duration};
 
 use alloy_primitives::{Address, U256, utils::format_ether};
-use base_cli_utils::RuntimeManager;
+use base_common_cli_support::RuntimeManager;
 use base_common_client_ethereum::Provider;
 use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner, TransactionBuilder};
 use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};

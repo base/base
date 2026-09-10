@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use base_cli_utils::CliRunner;
 use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::CliRunner;
 use base_execution_cli::{
     BaseCliComponents,
     chainspec::BaseChainSpecParser,

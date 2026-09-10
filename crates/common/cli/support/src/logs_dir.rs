@@ -57,7 +57,7 @@ impl LogsDir {
 /// # Example
 ///
 /// ```ignore
-/// use base_cli_utils::logs_dir;
+/// use base_common_cli_support::logs_dir;
 ///
 /// let logs_dir = logs_dir!();
 /// // On macOS with package "base-builder": ~/Library/Caches/base-builder/logs

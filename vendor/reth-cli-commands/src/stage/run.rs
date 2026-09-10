@@ -6,8 +6,8 @@ use std::{any::Any, net::SocketAddr, sync::Arc};
 
 use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
-use base_cli_utils::CliContext;
 use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::CliContext;
 use base_common_cli_support::get_secret_key;
 use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_network_service::BlockDownloaderProvider;

@@ -624,7 +624,7 @@ impl StandardBaseRethNode {
         }
         launch.services.forwarding = Some(tx_forwarding_config);
         Self::configure_upgrade_signal_runtime(launch, &rollup_args)?;
-        base_cli_utils::register_version_metrics!();
+        base_common_cli_support::register_version_metrics!();
         Ok(())
     }
 

@@ -22,8 +22,8 @@ dotenvy = { workspace = true }
 jsonrpsee = { workspace = true }
 aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
-base-cli-utils = { workspace = true }
 aws-credential-types = { workspace = true }
+base-common-cli-support = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }

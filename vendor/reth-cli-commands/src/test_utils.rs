@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::ChainSpecParser;
-use base_cli_utils::parse_genesis;
 use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::parse_genesis;
 
 /// Chains supported by reth. First value should be used as the default.
 pub const SUPPORTED_CHAINS: &[&str] = &["base", "base-sepolia", "base-devnet", "base-zeronet"];

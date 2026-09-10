@@ -1,6 +1,6 @@
 //! `base snapshot` subcommand group: snapshot manifest generation and download.
 
-use base_cli_utils::CliRunner;
+use base_common_cli_support::CliRunner;
 use base_execution_cli::{
     chainspec::BaseChainSpecParser,
     commands::{SnapshotManifestCommand, download},

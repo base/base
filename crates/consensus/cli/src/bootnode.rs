@@ -7,8 +7,8 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chain_config::RollupConfig;
+use base_common_cli_support::{LogConfig, RuntimeManager};
 use base_consensus_network_service::BootNode;
 use base_consensus_network_service::BootNodes;
 use base_consensus_network_service::BootStoreFile;
@@ -59,15 +59,15 @@ pub struct BootnodeEnr {
 impl Bootnode {
     /// Runs the CLI.
     pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_cli_utils::init_tracing!(
+        base_common_cli_support::init_tracing!(
             LogConfig::from(self.logging.clone()),
             ["libp2p_gossipsub=error"]
         )?;
 
         let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
 
-        base_cli_utils::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_cli_utils::register_version_metrics!();
+        base_common_cli_support::MetricsConfig::from(self.metrics.clone()).init_with(|| {
+            base_common_cli_support::register_version_metrics!();
             CliMetrics::init_rollup_config(&cfg);
             CliMetrics::init_bootnode_p2p(&self.p2p);
         })?;

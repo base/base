@@ -17,11 +17,10 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 base-metering = { workspace = true }
 base-reth-cli = { workspace = true }
-base-common-cli-support = { workspace = true }
-base-cli-utils = { workspace = true }
 reth-node-core = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-node-metrics = { workspace = true }
+base-common-cli-support = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-tasks = { workspace = true }
 base-execution-state-types = { workspace = true }
@@ -89,11 +88,4 @@ jemalloc-symbols = ["jemalloc-prof", "reth-node-metrics/jemalloc-symbols"]
 
 dev = ["base-common-types-chain/arbitrary", "dep:proptest", "reth-cli-commands/arbitrary"]
 
-serde = [
-    "alloy-eips/serde",
-    "base-common-chain-config/serde",
-    "base-common-types-chain/serde",
-    "base-execution-network-service/serde",
-    "secp256k1/serde",
-    "url/serde",
-]
+serde = ["alloy-eips/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-network-service/serde", "secp256k1/serde", "url/serde"]
