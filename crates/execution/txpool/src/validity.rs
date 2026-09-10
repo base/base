@@ -1,8 +1,11 @@
 //! State predicates carried by pooled transactions.
 
+use std::fmt;
+
 use alloy_primitives::{Address, U256};
 use reth_transaction_pool::ValidPoolTransaction;
 use revm::Database;
+use serde::{Deserializer, de};
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 
@@ -347,12 +350,74 @@ impl ValidityPredicate {
     }
 }
 
+/// Deserializes a sequence of [`ValidityPredicate`] while rejecting the batch as
+/// soon as it exceeds [`DEFAULT_MAX_VALIDITY_PREDICATES`].
+///
+/// The count limit is otherwise enforced only after the whole vector has been
+/// deserialized (see [`ValidityPredicate::validate_batch`] and
+/// [`TransactionValidity::validate`]). That late check still allocates one
+/// object per submitted item, so an unauthenticated caller can force the node to
+/// parse and allocate tens of thousands of predicates that are ultimately
+/// rejected. Aborting mid-stream at item 65 bounds the allocation to at most
+/// `DEFAULT_MAX_VALIDITY_PREDICATES + 1` predicates regardless of the request
+/// body size.
+///
+/// The bound is the fixed wire ceiling ([`DEFAULT_MAX_VALIDITY_PREDICATES`]), not
+/// a node's configured maximum: deserialization has no access to runtime
+/// configuration, and a node's configured maximum can never exceed this ceiling.
+/// The configured maximum is still enforced afterward by the count check.
+pub fn deserialize_bounded_predicates<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ValidityPredicate>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoundedPredicatesVisitor;
+
+    impl<'de> de::Visitor<'de> for BoundedPredicatesVisitor {
+        type Value = Vec<ValidityPredicate>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "a sequence of at most {DEFAULT_MAX_VALIDITY_PREDICATES} validity predicates"
+            )
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            // Cap the preallocation independently of the caller-reported length
+            // hint so a large hint cannot itself drive a large allocation.
+            let mut predicates = Vec::with_capacity(
+                seq.size_hint().unwrap_or(0).min(DEFAULT_MAX_VALIDITY_PREDICATES),
+            );
+            while let Some(predicate) = seq.next_element::<ValidityPredicate>()? {
+                if predicates.len() == DEFAULT_MAX_VALIDITY_PREDICATES {
+                    return Err(de::Error::custom(format!(
+                        "too many validity predicates: maximum {DEFAULT_MAX_VALIDITY_PREDICATES}"
+                    )));
+                }
+                predicates.push(predicate);
+            }
+            Ok(predicates)
+        }
+    }
+
+    deserializer.deserialize_seq(BoundedPredicatesVisitor)
+}
+
 /// Experimental validity predicates carried with a validated transaction.
 /// The builder evaluates these predicates against each candidate insertion point.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TransactionValidity {
     /// Predicates intended to control when the transaction is valid for inclusion.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_bounded_predicates"
+    )]
     pub validity: Vec<ValidityPredicate>,
 }
 
@@ -570,6 +635,70 @@ mod tests {
             }]
         );
         assert_eq!(serde_json::to_value(payload).unwrap(), value);
+    }
+
+    /// A single storage predicate encoded as JSON, used to assemble oversized
+    /// `validity` arrays for the bounded-deserialization tests.
+    fn storage_predicate_json() -> &'static str {
+        r#"{"type":"storage","params":{"address":"0xabababababababababababababababababababab","slot":"0x1","op":"=","value":"0x789"}}"#
+    }
+
+    /// Builds a JSON `TransactionValidity` body carrying `count` predicates.
+    fn transaction_validity_json(count: usize) -> String {
+        let predicates = vec![storage_predicate_json(); count].join(",");
+        format!(r#"{{"validity":[{predicates}]}}"#)
+    }
+
+    #[test]
+    fn deserialize_accepts_exactly_the_maximum_predicates() {
+        let json = transaction_validity_json(DEFAULT_MAX_VALIDITY_PREDICATES);
+        let payload: TransactionValidity =
+            serde_json::from_str(&json).expect("a full batch at the limit must decode");
+        assert_eq!(payload.validity.len(), DEFAULT_MAX_VALIDITY_PREDICATES);
+    }
+
+    #[test]
+    fn deserialize_rejects_predicate_past_the_maximum() {
+        let json = transaction_validity_json(DEFAULT_MAX_VALIDITY_PREDICATES + 1);
+        let error = serde_json::from_str::<TransactionValidity>(&json)
+            .expect_err("a batch past the limit must fail to decode");
+        assert!(
+            error.to_string().contains("too many validity predicates"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn deserialize_stops_before_allocating_an_oversized_batch() {
+        // The DoS shape: a body far larger than the limit must be rejected
+        // without materializing every predicate. The bounded visitor aborts at
+        // item 65 regardless of how many follow.
+        let json = transaction_validity_json(100_000);
+        let error = serde_json::from_str::<TransactionValidity>(&json)
+            .expect_err("a massively oversized batch must fail to decode");
+        assert!(
+            error.to_string().contains("too many validity predicates"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn deserialize_bounded_predicates_directly_bounds_a_bare_sequence() {
+        // The helper is exercised directly on a bare predicate array to prove
+        // the bound is a property of the sequence visitor, independent of the
+        // wrapping struct.
+        let mut deserializer = serde_json::Deserializer::from_str("[]");
+        let empty =
+            deserialize_bounded_predicates(&mut deserializer).expect("an empty sequence decodes");
+        assert!(empty.is_empty());
+
+        let predicates =
+            vec![storage_predicate_json(); DEFAULT_MAX_VALIDITY_PREDICATES + 1].join(",");
+        let oversized = format!("[{predicates}]");
+        let mut deserializer = serde_json::Deserializer::from_str(&oversized);
+        let error = deserialize_bounded_predicates(&mut deserializer)
+            .expect_err("an oversized sequence is rejected");
+        assert!(error.to_string().contains("too many validity predicates"));
     }
 
     #[test]
