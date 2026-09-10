@@ -26,7 +26,7 @@ use crate::native_mdbx::{
 };
 
 /// The default maximum duration of a read transaction.
-#[cfg(feature = "read-tx-timeouts")]
+
 const DEFAULT_MAX_READ_TRANSACTION_DURATION: Duration = Duration::from_secs(5 * 60);
 
 /// An environment supports multiple databases, all residing in the same shared-memory map.
@@ -57,7 +57,7 @@ impl Environment {
             log_level: None,
             kind: Default::default(),
             handle_slow_readers: None,
-            #[cfg(feature = "read-tx-timeouts")]
+
             max_read_transaction_duration: None,
         }
     }
@@ -93,7 +93,7 @@ impl Environment {
     }
 
     /// Returns the number of timed out transactions that were not aborted by the user yet.
-    #[cfg(feature = "read-tx-timeouts")]
+
     pub fn timed_out_not_aborted_transactions(&self) -> usize {
         self.inner.txn_manager.timed_out_not_aborted_read_transactions().unwrap_or(0)
     }
@@ -625,7 +625,7 @@ pub struct EnvironmentBuilder {
     log_level: Option<ffi::MDBX_log_level_t>,
     kind: EnvironmentKind,
     handle_slow_readers: Option<HandleSlowReadersCallback>,
-    #[cfg(feature = "read-tx-timeouts")]
+
     /// The maximum duration of a read transaction. If [None], but the `read-tx-timeout` feature is
     /// enabled, the default value of [`DEFAULT_MAX_READ_TRANSACTION_DURATION`] is used.
     max_read_transaction_duration: Option<read_transactions::MaxReadTransactionDuration>,
@@ -760,10 +760,6 @@ impl EnvironmentBuilder {
 
         let env_ptr = EnvPtr(env);
 
-        #[cfg(not(feature = "read-tx-timeouts"))]
-        let txn_manager = TxnManager::new(env_ptr);
-
-        #[cfg(feature = "read-tx-timeouts")]
         let txn_manager = {
             if let crate::native_mdbx::MaxReadTransactionDuration::Set(duration) = self
                 .max_read_transaction_duration
@@ -907,7 +903,6 @@ impl EnvironmentBuilder {
     }
 }
 
-#[cfg(feature = "read-tx-timeouts")]
 pub(crate) mod read_transactions {
     use std::time::Duration;
 
@@ -915,7 +910,7 @@ pub(crate) mod read_transactions {
 
     /// The maximum duration of a read transaction.
     #[derive(Debug, Clone, Copy)]
-    #[cfg(feature = "read-tx-timeouts")]
+
     pub enum MaxReadTransactionDuration {
         /// The maximum duration of a read transaction is unbounded.
         Unbounded,
@@ -923,7 +918,6 @@ pub(crate) mod read_transactions {
         Set(Duration),
     }
 
-    #[cfg(feature = "read-tx-timeouts")]
     impl MaxReadTransactionDuration {
         pub const fn as_duration(&self) -> Option<Duration> {
             match self {

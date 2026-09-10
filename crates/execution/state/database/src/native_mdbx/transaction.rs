@@ -9,15 +9,13 @@ use std::{
 
 use parking_lot::{Mutex, MutexGuard};
 
-#[cfg(feature = "read-tx-timeouts")]
-use crate::native_mdbx::ffi::mdbx_txn_renew;
 use crate::native_mdbx::{
     Cursor, Error, Stat, TableObject,
     database::Database,
     environment::Environment,
     error::{Result, mdbx_result},
     ffi,
-    ffi::{MDBX_TXN_RDONLY, MDBX_TXN_READWRITE, MDBX_txn_flags_t},
+    ffi::{MDBX_TXN_RDONLY, MDBX_TXN_READWRITE, MDBX_txn_flags_t, mdbx_txn_renew},
     flags::{DatabaseFlags, WriteFlags},
     txn_manager::{TxnManagerMessage, TxnPtr},
 };
@@ -89,7 +87,6 @@ where
     pub(crate) fn new_from_ptr(env: Environment, txn_ptr: *mut ffi::MDBX_txn) -> Self {
         let txn = TransactionPtr::new(txn_ptr);
 
-        #[cfg(feature = "read-tx-timeouts")]
         if K::IS_READ_ONLY {
             env.txn_manager().add_active_read_transaction(txn_ptr, txn.clone())
         }
@@ -176,7 +173,6 @@ where
     pub fn commit(self) -> Result<CommitLatency> {
         match self.txn_execute(|txn| {
             if K::IS_READ_ONLY {
-                #[cfg(feature = "read-tx-timeouts")]
                 self.env().txn_manager().remove_active_read_transaction(txn);
 
                 let mut latency = CommitLatency::new();
@@ -266,7 +262,7 @@ where
     }
 
     /// Disables a timeout for this read transaction.
-    #[cfg(feature = "read-tx-timeouts")]
+
     pub fn disable_timeout(&self) {
         if K::IS_READ_ONLY {
             self.env().txn_manager().remove_active_read_transaction(self.inner.txn.txn);
@@ -350,7 +346,7 @@ where
         let _ = self.txn.txn_execute_renew_on_timeout(|txn| {
             if !self.has_committed() {
                 if K::IS_READ_ONLY {
-                    #[cfg(feature = "read-tx-timeouts")]
+
                     self.env.txn_manager().remove_active_read_transaction(txn);
 
                     // Reset and return the handle to the pool for lock-free reuse.
@@ -544,19 +540,14 @@ impl Transaction<RW> {
 #[derive(Debug, Clone)]
 pub(crate) struct TransactionPtr {
     txn: *mut ffi::MDBX_txn,
-    #[cfg(feature = "read-tx-timeouts")]
+
     timed_out: Arc<AtomicBool>,
     lock: Arc<Mutex<()>>,
 }
 
 impl TransactionPtr {
     fn new(txn: *mut ffi::MDBX_txn) -> Self {
-        Self {
-            txn,
-            #[cfg(feature = "read-tx-timeouts")]
-            timed_out: Arc::new(AtomicBool::new(false)),
-            lock: Arc::new(Mutex::new(())),
-        }
+        Self { txn, timed_out: Arc::new(AtomicBool::new(false)), lock: Arc::new(Mutex::new(())) }
     }
 
     /// Returns `true` if the transaction is timed out.
@@ -567,12 +558,11 @@ impl TransactionPtr {
     ///
     /// Importantly, we can't rely on `MDBX_TXN_FINISHED` flag to check if the transaction is timed
     /// out using `mdbx_txn_reset`, because MDBX uses it in other cases too.
-    #[cfg(feature = "read-tx-timeouts")]
+
     fn is_timed_out(&self) -> bool {
         self.timed_out.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    #[cfg(feature = "read-tx-timeouts")]
     pub(crate) fn set_timed_out(&self) {
         self.timed_out.store(true, std::sync::atomic::Ordering::SeqCst);
     }
@@ -607,7 +597,7 @@ impl TransactionPtr {
         // No race condition with the `TxnManager` timing out the transaction is possible here,
         // because we're taking a lock for any actions on the transaction pointer, including a call
         // to the `mdbx_txn_reset`.
-        #[cfg(feature = "read-tx-timeouts")]
+
         if self.is_timed_out() {
             return Err(Error::ReadTransactionTimeout);
         }
@@ -627,7 +617,7 @@ impl TransactionPtr {
         let _lck = self.lock();
 
         // To be able to do any operations on the transaction, we need to renew it first.
-        #[cfg(feature = "read-tx-timeouts")]
+
         if self.is_timed_out() {
             mdbx_result(unsafe { mdbx_txn_renew(self.txn) })?;
         }

@@ -41,18 +41,14 @@ impl fmt::Debug for TxnManagerMessage {
 #[derive(Debug)]
 pub(crate) struct TxnManager {
     sender: SyncSender<TxnManagerMessage>,
-    #[cfg(feature = "read-tx-timeouts")]
+
     read_transactions: Option<std::sync::Arc<read_transactions::ReadTransactions>>,
 }
 
 impl TxnManager {
     pub(crate) fn new(env: EnvPtr) -> Self {
         let (tx, rx) = sync_channel(0);
-        let txn_manager = Self {
-            sender: tx,
-            #[cfg(feature = "read-tx-timeouts")]
-            read_transactions: None,
-        };
+        let txn_manager = Self { sender: tx, read_transactions: None };
 
         txn_manager.start_message_listener(env, rx);
 
@@ -121,7 +117,6 @@ impl TxnManager {
     }
 }
 
-#[cfg(feature = "read-tx-timeouts")]
 mod read_transactions {
     use std::{
         backtrace::Backtrace,

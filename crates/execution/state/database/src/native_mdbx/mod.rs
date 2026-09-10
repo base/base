@@ -2,8 +2,6 @@
 
 pub extern crate base_execution_state_mdbx_sys as ffi;
 
-#[cfg(feature = "read-tx-timeouts")]
-pub use crate::native_mdbx::environment::read_transactions::MaxReadTransactionDuration;
 pub use crate::native_mdbx::{
     codec::*,
     cursor::{Cursor, Iter, IterDup},
@@ -11,6 +9,7 @@ pub use crate::native_mdbx::{
     environment::{
         Environment, EnvironmentBuilder, EnvironmentKind, Geometry, HandleSlowReadersCallback,
         HandleSlowReadersReturnCode, Info, PageSize, Stat,
+        read_transactions::MaxReadTransactionDuration,
     },
     error::{Error, Result},
     flags::*,
