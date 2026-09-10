@@ -1751,8 +1751,8 @@ mod tests {
             time::Duration,
         };
 
-        let limiter = Arc::new(StreamingUploadLimiter::new(3));
-        let permits: Vec<_> = (0..3).map(|_| limiter.acquire()).collect();
+        let limiter = Arc::new(StreamingUploadLimiter::new(4));
+        let permits: Vec<_> = (0..4).map(|_| limiter.acquire()).collect();
         let (started_tx, started_rx) = std_mpsc::channel();
         let blocked_limiter = Arc::clone(&limiter);
         let blocked = std::thread::spawn(move || {
@@ -1763,7 +1763,7 @@ mod tests {
 
         assert!(
             started_rx.recv_timeout(Duration::from_millis(50)).is_err(),
-            "a fourth archive must wait while all three streaming slots are occupied"
+            "a fifth archive must wait while all four streaming slots are occupied"
         );
 
         drop(permits);
