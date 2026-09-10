@@ -15,7 +15,7 @@ use base_common_types_rpc::{
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride},
 };
-use base_execution_evm_blocks::{BlockBuilder, BlockExecutor, CancelOnDrop, Evm};
+use base_execution_evm_blocks::{BlockExecutor, CancelOnDrop, Evm};
 use base_execution_evm_runtime::{
     Block, Cfg, Database, DatabaseCommit, EvmDatabaseError, ResultAndState, State, Transaction,
 };

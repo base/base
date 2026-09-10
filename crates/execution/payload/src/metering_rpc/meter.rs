@@ -11,9 +11,7 @@ use base_common_types_chain::{BlockHeader, SealedHeader, Transaction as _};
 use base_common_types_payload::{
     BundleExtensions, BundleTxs, OpcodeGas, ParsedBundle, TransactionResult,
 };
-use base_execution_evm_blocks::{
-    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _,
-};
+use base_execution_evm_blocks::{BaseEvmConfig, BaseNextBlockEnvAttributes, Evm as _};
 use base_execution_evm_runtime::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, BaseSpecId, BaseUpgrade, EvmState,
     GasParams, KECCAK_EMPTY, L1BlockInfo, PolicyRegistryStorage, State, StoredAccount as Account,

@@ -11,7 +11,7 @@ use base_common_types_rpc::{
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
 };
-use base_execution_evm_blocks::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, Evm};
+use base_execution_evm_blocks::{BlockBuilderOutcome, BlockExecutor, Evm};
 use base_execution_evm_runtime::{
     Address, Block, Bytes, Database, ExecutionResult, PrecompilesMap, TxKind, TxResult, U256,
 };
@@ -288,8 +288,8 @@ pub fn apply_precompile_overrides(
 ///
 /// [`TransactionRequest`]: base_common_types_rpc::TransactionRequest
 #[expect(clippy::type_complexity)]
-pub fn execute_transactions<S>(
-    mut builder: S,
+pub fn execute_transactions<'a, DB, I>(
+    mut builder: base_execution_evm_blocks::BasicBlockBuilder<'a, DB, I>,
     state_provider: impl StateProvider,
     calls: Vec<BaseTransactionRequest>,
     remaining_call_gas_limit: &mut Option<u64>,
@@ -297,14 +297,15 @@ pub fn execute_transactions<S>(
     compute_state_root: bool,
     converter: &crate::eth_services::BaseRpcConverter,
 ) -> Result<
-    (
-        BlockBuilderOutcome,
-        Vec<ExecutionResult<<<S::Executor as BlockExecutor>::Evm as Evm>::HaltReason>>,
-    ),
+    (BlockBuilderOutcome, Vec<ExecutionResult<base_execution_evm_runtime::BaseHaltReason>>),
     EthApiError,
 >
 where
-    S: BlockBuilder<Executor: BlockExecutor<Evm: Evm<DB: Database<Error: Into<EthApiError>>>>>,
+    DB: Database + 'a,
+    DB::Error: Into<EthApiError>,
+    I: base_execution_evm_runtime::Inspector<
+            base_execution_evm_runtime::BaseContext<&'a mut base_execution_evm_runtime::State<DB>>,
+        >,
 {
     builder.apply_pre_execution_changes()?;
 

@@ -160,7 +160,7 @@ pub trait Executor<DB: Database>: Sized {
 ///
 /// # Usage
 ///
-/// This is typically created internally by [`BlockBuilder::finish`] after all
+/// This is typically created internally by [`BasicBlockBuilder::finish`] after all
 /// transactions have been executed:
 ///
 /// ```rust,ignore
@@ -247,81 +247,6 @@ pub struct BlockBuilderOutcome {
     pub block_access_list: Option<BlockAccessList>,
 }
 
-/// A type that knows how to execute and build a block.
-///
-/// It wraps an inner [`BlockExecutor`] and provides a way to execute transactions and
-/// construct a block.
-///
-/// This is a helper to erase `BasicBlockBuilder` type.
-pub trait BlockBuilder {
-    /// Inner [`BlockExecutor`].
-    type Executor: BlockExecutor<Transaction = BaseTxEnvelope, Receipt = BaseReceipt>;
-
-    /// Invokes [`BlockExecutor::apply_pre_execution_changes`].
-    fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError>;
-
-    /// Invokes [`BlockExecutor::execute_transaction_with_commit_condition`] and saves the
-    /// transaction in internal state only if the transaction was committed.
-    fn execute_transaction_with_commit_condition(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-        f: impl FnOnce(&<Self::Executor as BlockExecutor>::Result) -> CommitChanges,
-    ) -> Result<Option<GasOutput>, BlockExecutionError>;
-
-    /// Invokes [`BlockExecutor::execute_transaction_with_result_closure`] and saves the
-    /// transaction in internal state.
-    fn execute_transaction_with_result_closure(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-        f: impl FnOnce(&<Self::Executor as BlockExecutor>::Result),
-    ) -> Result<GasOutput, BlockExecutionError> {
-        self.execute_transaction_with_commit_condition(tx, |res| {
-            f(res);
-            CommitChanges::Yes
-        })
-        .map(Option::unwrap_or_default)
-    }
-
-    /// Invokes [`BlockExecutor::execute_transaction`] and saves the transaction in
-    /// internal state.
-    fn execute_transaction(
-        &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-    ) -> Result<GasOutput, BlockExecutionError> {
-        self.execute_transaction_with_result_closure(tx, |_| ())
-    }
-
-    /// Completes the block building process and returns the [`BlockBuilderOutcome`].
-    ///
-    /// When `state_root_precomputed` is `None`, the state root is computed internally via
-    /// `state_root_with_updates()`. When `Some`, the provided root and trie updates are used
-    /// directly, skipping the expensive computation (e.g. when using the sparse trie pipeline).
-    fn finish(
-        self,
-        state_provider: impl StateProvider,
-        state_root_precomputed: Option<(B256, TrieUpdates)>,
-    ) -> Result<BlockBuilderOutcome, BlockExecutionError>;
-
-    /// Provides mutable access to the inner [`BlockExecutor`].
-    fn executor_mut(&mut self) -> &mut Self::Executor;
-
-    /// Provides access to the inner [`BlockExecutor`].
-    fn executor(&self) -> &Self::Executor;
-
-    /// Helper to access inner [`BlockExecutor::Evm`] mutably.
-    fn evm_mut(&mut self) -> &mut <Self::Executor as BlockExecutor>::Evm {
-        self.executor_mut().evm_mut()
-    }
-
-    /// Helper to access inner [`BlockExecutor::Evm`].
-    fn evm(&self) -> &<Self::Executor as BlockExecutor>::Evm {
-        self.executor().evm()
-    }
-
-    /// Consumes the type and returns the underlying [`BlockExecutor`].
-    fn into_executor(self) -> Self::Executor;
-}
-
 /// A type that constructs a block from transactions and execution results.
 #[derive(Debug)]
 pub struct BasicBlockBuilder<'a, DB: Database, I> {
@@ -375,26 +300,27 @@ where
     }
 }
 
-impl<'a, DB, I> BlockBuilder for BasicBlockBuilder<'a, DB, I>
+impl<'a, DB, I> BasicBlockBuilder<'a, DB, I>
 where
     DB: Database + 'a,
     I: base_execution_evm_runtime::Inspector<
             base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
         >,
 {
-    type Executor = base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>;
-
-    fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+    /// Invokes [`BlockExecutor::apply_pre_execution_changes`].
+    pub fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.executor.apply_pre_execution_changes()?;
         self.executor.evm_mut().db_mut().bump_bal_index();
 
         Ok(())
     }
 
-    fn execute_transaction_with_commit_condition(
+    /// Invokes [`BlockExecutor::execute_transaction_with_commit_condition`] and saves the
+    /// transaction in internal state only if the transaction was committed.
+    pub fn execute_transaction_with_commit_condition(
         &mut self,
-        tx: impl ExecutorTx<Self::Executor>,
-        f: impl FnOnce(&<Self::Executor as BlockExecutor>::Result) -> CommitChanges,
+        tx: impl ExecutorTx<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>>,
+        f: impl FnOnce(&<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (tx_env, tx) = tx.into_parts();
         if let Some(gas_used) =
@@ -408,7 +334,12 @@ where
         }
     }
 
-    fn finish(
+    /// Completes the block building process and returns the [`BlockBuilderOutcome`].
+    ///
+    /// When `state_root_precomputed` is `None`, the state root is computed internally via
+    /// `state_root_with_updates()`. When `Some`, the provided root and trie updates are used
+    /// directly, skipping the expensive computation (e.g. when using the sparse trie pipeline).
+    pub fn finish(
         self,
         state: impl StateProvider,
         state_root_precomputed: Option<(B256, TrieUpdates)>,
@@ -458,16 +389,59 @@ where
         })
     }
 
-    fn executor_mut(&mut self) -> &mut Self::Executor {
+    /// Provides mutable access to the inner [`BlockExecutor`].
+    pub fn executor_mut(
+        &mut self,
+    ) -> &mut base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> {
         &mut self.executor
     }
 
-    fn executor(&self) -> &Self::Executor {
+    /// Provides access to the inner [`BlockExecutor`].
+    pub fn executor(&self) -> &base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> {
         &self.executor
     }
 
-    fn into_executor(self) -> Self::Executor {
+    /// Consumes the type and returns the underlying [`BlockExecutor`].
+    pub fn into_executor(
+        self,
+    ) -> base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> {
         self.executor
+    }
+
+    /// Invokes [`BlockExecutor::execute_transaction_with_result_closure`] and saves the
+    /// transaction in internal state.
+    pub fn execute_transaction_with_result_closure(
+        &mut self,
+        tx: impl ExecutorTx<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>>,
+        f: impl FnOnce(&<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Result),
+    ) -> Result<GasOutput, BlockExecutionError> {
+        self.execute_transaction_with_commit_condition(tx, |res| {
+            f(res);
+            CommitChanges::Yes
+        })
+        .map(Option::unwrap_or_default)
+    }
+
+    /// Invokes [`BlockExecutor::execute_transaction`] and saves the transaction in
+    /// internal state.
+    pub fn execute_transaction(
+        &mut self,
+        tx: impl ExecutorTx<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>>,
+    ) -> Result<GasOutput, BlockExecutionError> {
+        self.execute_transaction_with_result_closure(tx, |_| ())
+    }
+
+    /// Helper to access inner [`BlockExecutor::Evm`] mutably.
+    pub fn evm_mut(&mut self) -> &mut <base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Evm{
+        self.executor_mut().evm_mut()
+    }
+
+    /// Helper to access inner [`BlockExecutor::Evm`].
+    pub fn evm(
+        &self,
+    ) -> &<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Evm
+    {
+        self.executor().evm()
     }
 }
 

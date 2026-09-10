@@ -16,7 +16,7 @@ use base_common_types_payload::{
     BaseBuiltPayload, BeaconEngineMessage, BeaconOnNewPayloadError, ForkchoiceState,
     OnForkChoiceUpdated, PayloadStatus,
 };
-use base_execution_evm_blocks::{BaseEvmConfig, BlockBuilder, BlockBuilderOutcome};
+use base_execution_evm_blocks::{BaseEvmConfig, BlockBuilderOutcome};
 use base_execution_evm_runtime::{BlockExecutionError, BlockValidationError, State};
 use base_execution_payload::BaseEngineValidator;
 use base_execution_state_types::{BlockReader, ProviderError, StateProviderFactory};

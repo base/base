@@ -20,9 +20,8 @@ use base_common_types_payload::{
     BasePayloadAttributes, BuiltPayloadExecutedBlock, PayloadBuilderError, PayloadId,
 };
 use base_execution_evm_blocks::{
-    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
-    BlockExecutionError, BlockExecutor, BlockValidationError, CancelOnDrop, Database,
-    ExecutionWitnessRecord,
+    BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilderOutcome, BlockExecutionError,
+    BlockExecutor, BlockValidationError, CancelOnDrop, Database, ExecutionWitnessRecord,
 };
 use base_execution_evm_runtime::{
     Block, BlockEnv, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State, TxResult,
@@ -620,17 +619,16 @@ impl BasePayloadBuilderCtx {
         is_better_payload(self.best_payload.as_ref(), total_fees)
     }
 
-    /// Prepares a [`BlockBuilder`] for the next block.
+    /// Prepares a [`base_execution_evm_blocks::BasicBlockBuilder`] for the next block.
     pub fn block_builder<'a, DB: Database>(
         &'a self,
         db: &'a mut State<DB>,
     ) -> Result<
-        impl BlockBuilder<
-            Executor = base_execution_evm_runtime::BaseBlockExecutor<
-                &'a mut base_execution_evm_runtime::State<DB>,
-                base_execution_evm_runtime::NoOpInspector,
-            >,
-        > + 'a,
+        base_execution_evm_blocks::BasicBlockBuilder<
+            'a,
+            DB,
+            base_execution_evm_runtime::NoOpInspector,
+        >,
         PayloadBuilderError,
     > {
         self.evm_config
@@ -677,10 +675,16 @@ impl BasePayloadBuilderCtx {
     /// attribute pre-includes; pre-includes there may legitimately be skipped on `InvalidTx`,
     /// so the historical skip-and-continue behavior is preserved.
     #[instrument(skip_all, fields(phase = "sequencer_txs"))]
-    pub fn execute_sequencer_transactions(
+    pub fn execute_sequencer_transactions<'a, DB, I>(
         &self,
-        builder: &mut impl BlockBuilder,
-    ) -> Result<ExecutionInfo, PayloadBuilderError> {
+        builder: &mut base_execution_evm_blocks::BasicBlockBuilder<'a, DB, I>,
+    ) -> Result<ExecutionInfo, PayloadBuilderError>
+    where
+        DB: Database + 'a,
+        I: base_execution_evm_runtime::Inspector<
+                base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
+            >,
+    {
         let mut info = ExecutionInfo::new();
         let no_tx_pool = self.attributes().no_tx_pool;
         let resource_metering = &self.builder_config.resource_metering;
@@ -771,15 +775,17 @@ impl BasePayloadBuilderCtx {
     ///
     /// Returns `Ok(Some(()))` if the job was cancelled.
     #[instrument(skip_all, fields(phase = "mempool_txs"))]
-    pub fn execute_best_transactions<Builder>(
+    pub fn execute_best_transactions<'a, DB, I>(
         &self,
         info: &mut ExecutionInfo,
-        builder: &mut Builder,
+        builder: &mut base_execution_evm_blocks::BasicBlockBuilder<'a, DB, I>,
         mut best_txs: impl ParkablePayloadTransactions<Transaction = BasePooledTransaction>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
-        Builder: BlockBuilder,
-        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
+        DB: Database + 'a,
+        I: base_execution_evm_runtime::Inspector<
+                base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
+            >,
     {
         let gas_limit = builder.evm_mut().block().gas_limit();
         // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
@@ -1372,7 +1378,7 @@ mod tests {
     };
     use base_common_types_payload::{MeterBundleResponse, OpcodeGas, PayloadId, TransactionResult};
     use base_execution_evm_blocks::{
-        BaseEvmConfig, BlockBuilder, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
+        BaseEvmConfig, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
     };
     use base_execution_evm_runtime::{BaseTime, EvmState, State, StoredAccount as Account};
     use base_execution_state_operations::{

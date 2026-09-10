@@ -28,7 +28,7 @@ use base_execution_state_types::AnyError;
 use crate::ExecutableTxIterator;
 use crate::{
     BaseBlockAssembler, BaseEvmEnvBuilder, EvmEnv,
-    execute::{BasicBlockBuilder, BasicBlockExecutor, BlockBuilder, Executor},
+    execute::{BasicBlockBuilder, BasicBlockExecutor, Executor},
 };
 
 /// Context relevant for execution of a next Base block.
@@ -292,11 +292,11 @@ impl BaseEvmConfig {
         Ok(self.create_executor(evm, ctx))
     }
 
-    /// Creates a [`BlockBuilder`]. Should be used when building a new block.
+    /// Creates a [`base_execution_evm_blocks::BasicBlockBuilder`]. Should be used when building a new block.
     ///
     /// Block builder wraps an inner [`base_execution_evm_runtime::BlockExecutor`] and has a similar
     /// interface. Builder collects all of the executed transactions, and once
-    /// [`BlockBuilder::finish`] is called, it invokes the configured [`crate::BaseBlockAssembler`] to
+    /// [`base_execution_evm_blocks::BasicBlockBuilder::finish`] is called, it invokes the configured [`crate::BaseBlockAssembler`] to
     /// create a block.
     ///
     /// # Example
@@ -312,12 +312,7 @@ impl BaseEvmConfig {
         evm: base_execution_evm_runtime::BaseEvm<&'a mut State<DB>, I>,
         parent: &'a SealedHeader,
         ctx: BaseBlockExecutionCtx,
-    ) -> impl BlockBuilder<
-        Executor = base_execution_evm_runtime::BaseBlockExecutor<
-            &'a mut base_execution_evm_runtime::State<DB>,
-            I,
-        >,
-    >
+    ) -> BasicBlockBuilder<'a, DB, I>
     where
         DB: Database,
         I: base_execution_evm_runtime::Inspector<
@@ -333,7 +328,7 @@ impl BaseEvmConfig {
         }
     }
 
-    /// Creates a [`BlockBuilder`] for building of a new block. This is a helper to invoke
+    /// Creates a [`base_execution_evm_blocks::BasicBlockBuilder`] for building of a new block. This is a helper to invoke
     /// [`BaseEvmConfig::create_block_builder`].
     ///
     /// This is the primary method for building new blocks. It combines:
@@ -368,12 +363,7 @@ impl BaseEvmConfig {
         parent: &'a SealedHeader,
         attributes: BaseNextBlockEnvAttributes,
     ) -> Result<
-        impl BlockBuilder<
-            Executor = base_execution_evm_runtime::BaseBlockExecutor<
-                &'a mut base_execution_evm_runtime::State<DB>,
-                base_execution_evm_runtime::NoOpInspector,
-            >,
-        >,
+        BasicBlockBuilder<'a, DB, base_execution_evm_runtime::NoOpInspector>,
         EIP1559ParamError,
     > {
         let evm_env = self.next_evm_env(parent, &attributes)?;
