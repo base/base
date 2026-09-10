@@ -30,7 +30,7 @@ impl ShadowIndexerExEx {
         let mut last_finished_height = None;
 
         while let Some(notification) = ctx.notifications.try_next().await? {
-            let is_syncing = ctx.network().is_syncing();
+            let is_syncing = ctx.network.is_syncing();
             let kind = Self::notification_kind(&notification);
             let fully_processed = {
                 let _timer = base_common_observability_metrics::timed!(

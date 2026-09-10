@@ -47,7 +47,7 @@
 //!             }
 //!
 //!             // Signal completion for pruning
-//!             ctx.send_finished_height(committed.tip().num_hash());
+//!             ctx.events.send(reth_exex::ExExEvent::FinishedHeight(committed.tip().num_hash()))?;
 //!         }
 //!     }
 //!
@@ -92,9 +92,6 @@ pub use backfill::*;
 
 mod context;
 pub use context::*;
-
-mod dyn_context;
-pub use dyn_context::*;
 
 mod event;
 pub use event::*;

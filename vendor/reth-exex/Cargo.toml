@@ -21,10 +21,6 @@ metrics = { workspace = true }
 rmp-serde = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-config = { workspace = true }
-reth-node-core = { workspace = true }
-base-node-context = { workspace = true }
-base-execution-txpool = {workspace = true}
 base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
@@ -33,7 +29,6 @@ base-execution-state-types = { workspace = true }
 base-execution-state-provider = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 base-execution-network-service = { workspace = true }
-base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 itertools = { workspace = true, features = ["use_std"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -72,7 +67,6 @@ serde = [
     "secp256k1/serde",
     "reth-primitives-traits/serde",
     "base-execution-state-types/serde",
-    "reth-config/serde",
     "base-execution-state-provider/serde",
     "base-execution-state-memory/serde",
 ]

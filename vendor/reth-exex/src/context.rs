@@ -1,156 +1,27 @@
-use std::fmt::Debug;
-
 use alloy_eips::BlockNumHash;
 use base_common_runtime_tasks::TaskExecutor;
-use base_execution_engine_types::ExExHead;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_payload_builder::PayloadBuilderHandle;
+use base_execution_network_service::NetworkHandle;
 use base_execution_state_provider::providers::BlockchainProvider;
-use reth_node_core::node_config::NodeConfig;
-use tokio::sync::mpsc::{UnboundedSender, error::SendError};
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{ExExContextDyn, ExExEvent, ExExNotifications, ExExNotificationsStream};
+use crate::{ExExEvent, ExExNotifications};
 
-/// Captures the context that an `ExEx` has access to.
-///
-/// This type wraps various node components that the `ExEx` has access to.
+/// Handles used by the node's proof-history and indexing observers.
+#[derive(Debug)]
 pub struct ExExContext {
-    /// The current head of the blockchain at launch.
+    /// Canonical head when the observer started.
     pub head: BlockNumHash,
-    /// The config of the node
-    pub config: NodeConfig,
-    /// The loaded node config
-    pub reth_config: reth_config::Config,
-    /// Channel used to send [`ExExEvent`]s to the rest of the node.
-    ///
-    /// # Important
-    ///
-    /// The exex should emit a `FinishedHeight` whenever a processed block is safe to prune.
-    /// Additionally, the exex can preemptively emit a `FinishedHeight` event to specify what
-    /// blocks to receive notifications for.
+    /// Observer progress events used to coordinate pruning.
     pub events: UnboundedSender<ExExEvent>,
-    /// Channel to receive [`ExExNotification`](crate::ExExNotification)s.
-    ///
-    /// # Important
-    ///
-    /// Once an [`ExExNotification`](crate::ExExNotification) is sent over the channel, it is
-    /// considered delivered by the node.
+    /// Canonical-chain notifications and backfill stream.
     pub notifications: ExExNotifications<BlockchainProvider>,
-
-    /// Node components
-    pub components: base_node_context::BaseNodeContext,
-}
-
-impl Debug for ExExContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExExContext")
-            .field("head", &self.head)
-            .field("config", &self.config)
-            .field("reth_config", &self.reth_config)
-            .field("events", &self.events)
-            .field("notifications", &self.notifications)
-            .field("components", &"...")
-            .finish()
-    }
-}
-
-impl ExExContext {
-    /// Returns dynamic version of the context
-    pub fn into_dyn(self) -> ExExContextDyn {
-        ExExContextDyn::from(self)
-    }
-}
-
-impl ExExContext {
-    /// Returns the transaction pool of the node.
-    pub fn pool(&self) -> &base_execution_txpool::BaseTransactionPool<BlockchainProvider> {
-        self.components.pool()
-    }
-
-    /// Returns the node's evm config.
-    pub fn evm_config(&self) -> &BaseEvmConfig {
-        self.components.evm_config()
-    }
-
-    /// Returns the provider of the node.
-    pub fn provider(&self) -> &BlockchainProvider {
-        self.components.provider()
-    }
-
-    /// Returns the handle to the network
-    pub fn network(&self) -> &base_execution_network_service::NetworkHandle {
-        self.components.network()
-    }
-
-    /// Returns the handle to the payload builder service.
-    pub fn payload_builder_handle(&self) -> &PayloadBuilderHandle {
-        self.components.payload_builder_handle()
-    }
-
-    /// Returns the task executor.
-    ///
-    /// This type should be used to spawn (critical) tasks.
-    pub fn task_executor(&self) -> &TaskExecutor {
-        self.components.task_executor()
-    }
-
-    /// Sets notifications stream to [`crate::ExExNotificationsWithoutHead`], a stream of
-    /// notifications without a head.
-    pub fn set_notifications_without_head(&mut self) {
-        self.notifications.set_without_head();
-    }
-
-    /// Sets notifications stream to [`crate::ExExNotificationsWithHead`], a stream of notifications
-    /// with the provided head.
-    pub fn set_notifications_with_head(&mut self, head: ExExHead) {
-        self.notifications.set_with_head(head);
-    }
-
-    /// As [`set_notifications_with_head`](Self::set_notifications_with_head), but backfills up to
-    /// the node's current canonical head rather than the head captured at launch.
-    pub fn catch_up_notifications_with_head(&mut self, head: ExExHead) -> eyre::Result<()> {
-        self.notifications.catch_up_with_head(head)
-    }
-
-    /// Sends an [`ExExEvent::FinishedHeight`] to the ExEx task manager letting it know that this
-    /// ExEx has processed the corresponding block.
-    ///
-    /// Returns an error if the channel was closed (ExEx task manager panicked).
-    pub fn send_finished_height(
-        &self,
-        height: BlockNumHash,
-    ) -> Result<(), SendError<BlockNumHash>> {
-        self.events.send(ExExEvent::FinishedHeight(height)).map_err(|_| SendError(height))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use base_execution_engine_types::ExExHead;
-
-    use crate::ExExContext;
-
-    /// <https://github.com/paradigmxyz/reth/issues/12054>
-    #[test]
-    const fn issue_12054() {
-        #[expect(dead_code)]
-        struct ExEx {
-            ctx: ExExContext,
-        }
-
-        impl ExEx {
-            async fn _test_bounds(mut self) -> eyre::Result<()> {
-                self.ctx.pool();
-                self.ctx.evm_config();
-                self.ctx.provider();
-                self.ctx.network();
-                self.ctx.payload_builder_handle();
-                self.ctx.task_executor();
-                self.ctx.set_notifications_without_head();
-                self.ctx.set_notifications_with_head(ExExHead { block: Default::default() });
-                Ok(())
-            }
-        }
-    }
+    /// Read access to canonical blocks and state.
+    pub provider: BlockchainProvider,
+    /// Execution rules used when backfilling history.
+    pub evm_config: BaseEvmConfig,
+    /// Executor for observer background work.
+    pub task_executor: TaskExecutor,
+    /// Network synchronization status for the indexer.
+    pub network: NetworkHandle,
 }

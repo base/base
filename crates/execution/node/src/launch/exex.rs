@@ -103,9 +103,10 @@ impl ExExLauncher {
             // create the launch context for the exex
             let context = ExExContext {
                 head,
-                config: config_container.config.clone(),
-                reth_config: config_container.toml_config.clone(),
-                components: components.clone(),
+                provider: components.provider().clone(),
+                evm_config: components.evm_config().clone(),
+                task_executor: components.task_executor().clone(),
+                network: components.network().clone(),
                 events,
                 notifications,
             };

@@ -2,7 +2,6 @@ use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_primitives::BlockNumber;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::PruneModes;
 
@@ -72,14 +71,5 @@ impl<P: Clone> BackfillJobFactory<P> {
             thresholds: self.thresholds.clone(),
             stream_parallelism: self.stream_parallelism,
         }
-    }
-}
-
-impl BackfillJobFactory<()> {
-    /// Creates a new [`BackfillJobFactory`] from [`BaseNodeContext`].
-    pub fn new_from_components(
-        components: base_node_context::BaseNodeContext,
-    ) -> BackfillJobFactory<BlockchainProvider> {
-        BackfillJobFactory::<_>::new(components.evm_config().clone(), components.provider().clone())
     }
 }

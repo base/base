@@ -12,6 +12,9 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
+use base_execution_state_provider::{
+    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
+};
 #[cfg(feature = "metrics")]
 use base_execution_state_tasks::BaseProofsStore;
 use base_execution_state_tasks::{
@@ -22,9 +25,6 @@ use base_execution_state_tasks::{
 use base_execution_state_types::Chain;
 use futures::TryStreamExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
-use base_execution_state_provider::{
-    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
-};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
@@ -167,7 +167,7 @@ where
 
         // If storage is behind tip, start syncing immediately rather than waiting
         // for the first notification.
-        let best_block = self.ctx.provider().best_block_number()?;
+        let best_block = self.ctx.provider.best_block_number()?;
         let latest_stored = self.storage.get_latest_block_number()?.map(|(n, _)| n).unwrap_or(0);
         if latest_stored < best_block {
             info!(
@@ -181,12 +181,12 @@ where
 
         let prune_task = BaseProofStoragePrunerTask::new(
             self.storage.clone(),
-            self.ctx.provider().clone(),
+            self.ctx.provider.clone(),
             self.proofs_history_window,
             self.proofs_history_prune_interval,
         );
         self.ctx
-            .task_executor()
+            .task_executor
             .spawn_with_graceful_shutdown_signal(|signal| Box::pin(prune_task.run(signal)));
 
         self.ctx.notifications.set_without_head();
@@ -254,11 +254,11 @@ where
         let task_sync_target = Arc::clone(&sync_target);
 
         let task_storage = self.storage.clone();
-        let task_provider = self.ctx.provider().clone();
-        let task_evm_config = self.ctx.evm_config().clone();
+        let task_provider = self.ctx.provider.clone();
+        let task_evm_config = self.ctx.evm_config.clone();
         let verification_interval = self.verification_interval;
 
-        self.ctx.task_executor().spawn_critical_task(
+        self.ctx.task_executor.spawn_critical_task(
             "base::exex::proofs_storage_sync_loop",
             async move {
                 let storage = task_storage.clone();
@@ -638,11 +638,11 @@ mod tests {
     use base_execution_state_tasks::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
-    use base_execution_state_types::{Chain, ExecutionOutcome};
-    use reth_primitives_traits::RecoveredBlock;
     use base_execution_state_trie::{
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
     };
+    use base_execution_state_types::{Chain, ExecutionOutcome};
+    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
 

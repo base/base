@@ -19,9 +19,7 @@ tokio = { workspace = true }
 reth-exex = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-config = { workspace = true }
 futures-util = { workspace = true }
-reth-node-core = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }

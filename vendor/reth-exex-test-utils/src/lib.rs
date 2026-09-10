@@ -37,7 +37,6 @@ use base_execution_txpool::Pool;
 use base_node_context::BaseNodeContext;
 use futures_util::FutureExt;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
-use reth_node_core::node_config::NodeConfig;
 use reth_primitives_traits::{Block as _, RecoveredBlock};
 use tempfile::TempDir;
 use thiserror::Error;
@@ -212,11 +211,12 @@ pub async fn test_exex_context_with_chain_spec(
 
     let ctx = ExExContext {
         head,
-        config: NodeConfig::test(),
-        reth_config: reth_config::Config::default(),
         events: events_tx,
         notifications,
-        components,
+        provider: components.provider,
+        evm_config: components.evm_config,
+        task_executor: components.task_executor,
+        network: components.network,
     };
 
     Ok((
