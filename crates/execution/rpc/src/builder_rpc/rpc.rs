@@ -303,10 +303,12 @@ mod tests {
         let handler = extension_handler(true);
         let (sender, raw) = create_eip1559_tx();
 
+        let tx_hash = *BaseTransactionSigned::decode_2718(&mut raw.as_ref()).unwrap().hash();
         let tx = validated_transaction(sender, raw, test_validity(false));
 
         handler.insert_validated_transaction(tx).await.unwrap();
-        assert_eq!(handler.pool.pooled_transaction_hashes().len(), 1);
+        assert!(handler.pool.get(&tx_hash).is_some());
+        assert!(!handler.pool.pooled_transaction_hashes().contains(&tx_hash));
     }
 
     #[tokio::test]
