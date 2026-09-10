@@ -7,7 +7,7 @@ use base_common_types_chain::{
     BlockBodyExt as BlockBody, BlockHeader, Recovered, RecoveredBlock, transaction::TxHashRef,
 };
 use base_common_types_rpc::{BlockId, TransactionInfo};
-use base_execution_evm_blocks::{BlockExecutor, Evm, IntoTxEnv, TracingCtx};
+use base_execution_evm_blocks::{Evm, IntoTxEnv, TracingCtx};
 use base_execution_evm_runtime::{Block, ResultAndState};
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderTx;

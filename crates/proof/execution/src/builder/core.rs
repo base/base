@@ -12,7 +12,7 @@ use base_common_types_chain::{BaseReceipt, Header, Sealed, crypto::RecoveryError
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_runtime::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BlockExecutionResult,
-    BlockExecutor, BundleRetention, State,
+    BundleRetention, State,
 };
 use base_proof_witness_mpt::TrieHinter;
 

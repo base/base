@@ -11,7 +11,7 @@ use base_common_types_rpc::{
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
     state::StateOverride,
 };
-use base_execution_evm_blocks::{BlockBuilderOutcome, BlockExecutor, Evm};
+use base_execution_evm_blocks::{BlockBuilderOutcome, Evm};
 use base_execution_evm_runtime::{
     Address, Block, Bytes, Database, ExecutionResult, PrecompilesMap, TxKind, TxResult, U256,
 };
@@ -277,7 +277,7 @@ pub fn apply_precompile_overrides(
 }
 
 /// Converts all [`TransactionRequest`]s into [`Recovered`] transactions and applies them to the
-/// given [`BlockExecutor`].
+/// given [`base_execution_evm_runtime::BaseBlockExecutor`].
 ///
 /// Returns all executed transactions and the result of the execution.
 ///

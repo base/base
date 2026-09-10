@@ -19,7 +19,7 @@ use base_common_types_rpc::{
     BlockTransactionsKind, Bundle, GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
     GethTraceResult as TraceResult, Index, StateContext, state::EvmOverrides,
 };
-use base_execution_evm_blocks::{BlockExecutor, ExecutionWitnessRecord, Executor};
+use base_execution_evm_blocks::{ExecutionWitnessRecord, Executor};
 use base_execution_evm_runtime::{BundleRetention, Database, DatabaseCommit, Evm, State};
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::{

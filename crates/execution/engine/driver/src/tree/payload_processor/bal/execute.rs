@@ -26,8 +26,8 @@ use base_common_runtime::Runtime;
 use base_common_types_chain::BaseReceipt;
 use base_execution_evm_blocks::{BaseEvmConfig, Database, ExecutableTxFor};
 use base_execution_evm_runtime::{
-    Block, BlockExecutionError, BlockExecutor, BlockValidationError, BundleRetention, Evm,
-    ResultAndState, State, TxResult, bal::Bal as RevmBal,
+    Block, BlockExecutionError, BlockValidationError, BundleRetention, Evm, ResultAndState, State,
+    TxResult, bal::Bal as RevmBal,
 };
 use base_execution_state_provider::BlockExecutionOutput;
 use crossbeam_channel::{Receiver, Sender};

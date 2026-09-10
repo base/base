@@ -122,8 +122,8 @@ use base_common_types_payload::{
 };
 use base_execution_engine_observers::InvalidBlockWitnessHook;
 use base_execution_evm_blocks::{
-    BaseBeaconConsensus, BaseEvmConfig, BlockExecutor, ConsensusError, ExecutableTxFor,
-    ExecutableTxIterator, OnStateHook, ReceiptRootBloom,
+    BaseBeaconConsensus, BaseEvmConfig, ConsensusError, ExecutableTxFor, ExecutableTxIterator,
+    OnStateHook, ReceiptRootBloom,
 };
 use base_execution_evm_runtime::{BlockExecutionError, BundleAccount, BundleRetention, Evm, State};
 use base_execution_payload::{BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources};
@@ -1098,23 +1098,24 @@ impl BasicEngineValidator {
     /// - Collecting transaction senders for later use
     ///
     /// Returns the executor (for finalization) and the collected senders.
-    fn execute_transactions<'a, E, Tx, InnerTx, Err, DB>(
+    fn execute_transactions<'a, I, Tx, Err, DB>(
         &self,
-        mut executor: E,
+        mut executor: base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>,
         transaction_count: usize,
         transactions: impl Iterator<Item = Result<Tx, Err>>,
         receipt_tx: &crossbeam_channel::Sender<IndexedReceipt>,
         executed_tx_index: &AtomicUsize,
         has_bal: bool,
-    ) -> Result<(E, Vec<Address>), BlockExecutionError>
+    ) -> Result<
+        (base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>, Vec<Address>),
+        BlockExecutionError,
+    >
     where
-        E: BlockExecutor<
-                Receipt = BaseReceipt,
-                Evm: base_execution_evm_runtime::Evm<DB = &'a mut State<DB>>,
+        I: base_execution_evm_runtime::Inspector<
+                base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
             >,
-        Tx: base_execution_evm_runtime::ExecutableTx<E>
-            + base_execution_evm_runtime::RecoveredTx<InnerTx>,
-        InnerTx: TxHashRef,
+        Tx: base_execution_evm_runtime::ExecutableTx
+            + base_execution_evm_runtime::RecoveredTx<base_common_types_chain::BaseTxEnvelope>,
         DB: base_execution_evm_runtime::Database + 'a,
         Err: core::error::Error + Send + Sync + 'static,
     {
@@ -1147,7 +1148,9 @@ impl BasicEngineValidator {
             self.metrics.record_transaction_wait(wait_start.elapsed());
 
             let tx = tx_result.map_err(BlockExecutionError::other)?;
-            let tx_signer = *<Tx as base_execution_evm_runtime::RecoveredTx<InnerTx>>::signer(&tx);
+            let tx_signer = *<Tx as base_execution_evm_runtime::RecoveredTx<
+                base_common_types_chain::BaseTxEnvelope,
+            >>::signer(&tx);
 
             senders.push(tx_signer);
 

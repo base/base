@@ -294,7 +294,7 @@ impl BaseEvmConfig {
 
     /// Creates a [`base_execution_evm_blocks::BasicBlockBuilder`]. Should be used when building a new block.
     ///
-    /// Block builder wraps an inner [`base_execution_evm_runtime::BlockExecutor`] and has a similar
+    /// Block builder wraps an inner [`base_execution_evm_runtime::BaseBlockExecutor`] and has a similar
     /// interface. Builder collects all of the executed transactions, and once
     /// [`base_execution_evm_blocks::BasicBlockBuilder::finish`] is called, it invokes the configured [`crate::BaseBlockAssembler`] to
     /// create a block.

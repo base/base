@@ -21,7 +21,7 @@ use base_common_types_payload::{
 };
 use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilderOutcome, BlockExecutionError,
-    BlockExecutor, BlockValidationError, CancelOnDrop, Database, ExecutionWitnessRecord,
+    BlockValidationError, CancelOnDrop, Database, ExecutionWitnessRecord,
 };
 use base_execution_evm_runtime::{
     Block, BlockEnv, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State, TxResult,

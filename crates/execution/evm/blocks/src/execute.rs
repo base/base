@@ -9,8 +9,7 @@ use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, Recovered, RecoveredBlock, SealedHeader,
 };
 pub use base_execution_evm_runtime::{
-    BlockExecutionError, BlockExecutor, BlockValidationError, GasOutput,
-    InternalBlockExecutionError,
+    BlockExecutionError, BlockValidationError, GasOutput, InternalBlockExecutionError,
 };
 use base_execution_evm_runtime::{
     BundleRetention, BundleState, CommitChanges, Evm, EvmEnv, ExecutableTxParts, RecoveredTx,
@@ -262,42 +261,39 @@ pub struct BasicBlockBuilder<'a, DB: Database, I> {
     pub assembler: &'a crate::BaseBlockAssembler,
 }
 
-/// Conversions for executable transactions.
-pub trait ExecutorTx<Executor: BlockExecutor> {
-    /// Converts the transaction into a tuple of [`base_execution_evm_runtime::BaseTransaction`] and [`Recovered`].
-    fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>);
+/// Converts transactions into a Base environment and an owned recovered transaction.
+pub trait ExecutorTx {
+    /// Splits this transaction into its execution environment and recovered envelope.
+    fn into_parts(self)
+    -> (base_execution_evm_runtime::BaseTransaction, Recovered<BaseTxEnvelope>);
 }
 
-impl<Executor: BlockExecutor> ExecutorTx<Executor>
-    for WithEncoded<Recovered<Executor::Transaction>>
-{
-    fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>) {
+impl ExecutorTx for WithEncoded<Recovered<BaseTxEnvelope>> {
+    fn into_parts(
+        self,
+    ) -> (base_execution_evm_runtime::BaseTransaction, Recovered<BaseTxEnvelope>) {
         (self.to_tx_env(), self.1)
     }
 }
 
-impl<Executor: BlockExecutor> ExecutorTx<Executor> for Recovered<Executor::Transaction> {
-    fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Self) {
+impl ExecutorTx for Recovered<BaseTxEnvelope> {
+    fn into_parts(self) -> (base_execution_evm_runtime::BaseTransaction, Self) {
         (self.to_tx_env(), self)
     }
 }
 
-impl<Executor: BlockExecutor> ExecutorTx<Executor>
-    for (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>)
-{
-    fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>) {
+impl ExecutorTx for (base_execution_evm_runtime::BaseTransaction, Recovered<BaseTxEnvelope>) {
+    fn into_parts(
+        self,
+    ) -> (base_execution_evm_runtime::BaseTransaction, Recovered<BaseTxEnvelope>) {
         self
     }
 }
 
-impl<Executor> ExecutorTx<Executor> for WithTxEnv<Recovered<Executor::Transaction>>
-where
-    Executor: BlockExecutor<
-            Transaction: Clone,
-            Evm: Evm<Tx = base_execution_evm_runtime::BaseTransaction>,
-        >,
-{
-    fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>) {
+impl ExecutorTx for WithTxEnv<Recovered<BaseTxEnvelope>> {
+    fn into_parts(
+        self,
+    ) -> (base_execution_evm_runtime::BaseTransaction, Recovered<BaseTxEnvelope>) {
         (self.tx_env, Arc::unwrap_or_clone(self.tx))
     }
 }
@@ -309,7 +305,7 @@ where
             base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
         >,
 {
-    /// Invokes [`BlockExecutor::apply_pre_execution_changes`].
+    /// Invokes [`base_execution_evm_runtime::BaseBlockExecutor::apply_pre_execution_changes`].
     pub fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.executor.apply_pre_execution_changes()?;
         self.executor.evm_mut().db_mut().bump_bal_index();
@@ -317,12 +313,12 @@ where
         Ok(())
     }
 
-    /// Invokes [`BlockExecutor::execute_transaction_with_commit_condition`] and saves the
+    /// Invokes [`base_execution_evm_runtime::BaseBlockExecutor::execute_transaction_with_commit_condition`] and saves the
     /// transaction in internal state only if the transaction was committed.
     pub fn execute_transaction_with_commit_condition(
         &mut self,
-        tx: impl ExecutorTx<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>>,
-        f: impl FnOnce(&<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Result) -> CommitChanges,
+        tx: impl ExecutorTx,
+        f: impl FnOnce(&base_execution_evm_runtime::BaseTxResult) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (tx_env, tx) = tx.into_parts();
         if let Some(gas_used) =
@@ -391,31 +387,31 @@ where
         })
     }
 
-    /// Provides mutable access to the inner [`BlockExecutor`].
+    /// Provides mutable access to the inner [`base_execution_evm_runtime::BaseBlockExecutor`].
     pub fn executor_mut(
         &mut self,
     ) -> &mut base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> {
         &mut self.executor
     }
 
-    /// Provides access to the inner [`BlockExecutor`].
+    /// Provides access to the inner [`base_execution_evm_runtime::BaseBlockExecutor`].
     pub fn executor(&self) -> &base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> {
         &self.executor
     }
 
-    /// Consumes the type and returns the underlying [`BlockExecutor`].
+    /// Consumes the type and returns the underlying [`base_execution_evm_runtime::BaseBlockExecutor`].
     pub fn into_executor(
         self,
     ) -> base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> {
         self.executor
     }
 
-    /// Invokes [`BlockExecutor::execute_transaction_with_result_closure`] and saves the
+    /// Invokes [`base_execution_evm_runtime::BaseBlockExecutor::execute_transaction_with_result_closure`] and saves the
     /// transaction in internal state.
     pub fn execute_transaction_with_result_closure(
         &mut self,
-        tx: impl ExecutorTx<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>>,
-        f: impl FnOnce(&<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Result),
+        tx: impl ExecutorTx,
+        f: impl FnOnce(&base_execution_evm_runtime::BaseTxResult),
     ) -> Result<GasOutput, BlockExecutionError> {
         self.execute_transaction_with_commit_condition(tx, |res| {
             f(res);
@@ -424,30 +420,27 @@ where
         .map(Option::unwrap_or_default)
     }
 
-    /// Invokes [`BlockExecutor::execute_transaction`] and saves the transaction in
+    /// Invokes [`base_execution_evm_runtime::BaseBlockExecutor::execute_transaction`] and saves the transaction in
     /// internal state.
     pub fn execute_transaction(
         &mut self,
-        tx: impl ExecutorTx<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>>,
+        tx: impl ExecutorTx,
     ) -> Result<GasOutput, BlockExecutionError> {
         self.execute_transaction_with_result_closure(tx, |_| ())
     }
 
-    /// Helper to access inner [`BlockExecutor::Evm`] mutably.
-    pub fn evm_mut(&mut self) -> &mut <base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Evm{
+    /// Helper to access inner [`base_execution_evm_runtime::BaseBlockExecutor::Evm`] mutably.
+    pub fn evm_mut(&mut self) -> &mut base_execution_evm_runtime::BaseEvm<&'a mut State<DB>, I> {
         self.executor_mut().evm_mut()
     }
 
-    /// Helper to access inner [`BlockExecutor::Evm`].
-    pub fn evm(
-        &self,
-    ) -> &<base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I> as BlockExecutor>::Evm
-    {
+    /// Helper to access inner [`base_execution_evm_runtime::BaseBlockExecutor::Evm`].
+    pub fn evm(&self) -> &base_execution_evm_runtime::BaseEvm<&'a mut State<DB>, I> {
         self.executor().evm()
     }
 }
 
-/// A generic block executor that uses a [`BlockExecutor`] to
+/// A generic block executor that uses a [`base_execution_evm_runtime::BaseBlockExecutor`] to
 /// execute blocks.
 #[expect(missing_debug_implementations)]
 pub struct BasicBlockExecutor<DB> {
