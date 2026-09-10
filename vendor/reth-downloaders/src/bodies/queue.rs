@@ -9,11 +9,11 @@ use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::{Stream, stream::FuturesUnordered};
 use futures_util::StreamExt;
-use reth_network_p2p::{
-    bodies::{client::BodiesClient, response::BlockResponse},
-    error::DownloadResult,
-};
 use reth_primitives_traits::SealedHeader;
+use {
+    base_execution_network_wire::BodiesClient, reth_network_p2p::bodies::response::BlockResponse,
+    reth_network_p2p::error::DownloadResult,
+};
 
 use super::request::BodiesRequestFuture;
 use crate::metrics::BodyDownloaderMetrics;

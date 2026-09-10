@@ -5,17 +5,13 @@ use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
+use base_execution_network_types::PeerId;
+use base_execution_network_wire::{
+    BlockClient, BodiesClient, BodiesFut, DownloadClient, HeadersClient, HeadersDirection,
+    HeadersFut, HeadersRequest, Priority, RequestError,
+};
 use futures::Future;
 use itertools::{Either, Itertools};
-use reth_network_p2p::{
-    BlockClient,
-    bodies::client::{BodiesClient, BodiesFut},
-    download::DownloadClient,
-    error::RequestError,
-    headers::client::{HeadersClient, HeadersDirection, HeadersFut, HeadersRequest},
-    priority::Priority,
-};
-use base_execution_network_types::PeerId;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use thiserror::Error;
 use tokio::{
@@ -713,16 +709,17 @@ mod tests {
     use assert_matches::assert_matches;
     use async_compression::tokio::write::GzipEncoder;
     use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
+    use base_execution_state_provider::test_utils::create_test_provider_factory;
     use futures_util::stream::StreamExt;
     use rand::Rng;
-    use reth_network_p2p::{
-        bodies::downloader::BodyDownloader,
-        headers::downloader::{HeaderDownloader, SyncTarget},
-    };
-    use base_execution_state_provider::test_utils::create_test_provider_factory;
     use tokio::{
         fs::File,
         io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
+    };
+    use {
+        reth_network_p2p::bodies::downloader::BodyDownloader,
+        reth_network_p2p::headers::downloader::HeaderDownloader,
+        reth_network_p2p::headers::downloader::SyncTarget,
     };
 
     use super::*;

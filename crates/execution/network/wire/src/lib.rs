@@ -80,3 +80,8 @@ pub mod test_utils;
 pub use tokio_util::codec::{
     LengthDelimitedCodec as PassthroughCodec, LengthDelimitedCodecError as PassthroughCodecError,
 };
+
+#[cfg(feature = "requests")]
+mod requests;
+#[cfg(feature = "requests")]
+pub use requests::*;

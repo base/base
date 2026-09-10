@@ -28,16 +28,8 @@ use base_execution_network_wire::GetByteCodesMessage;
 use base_execution_network_wire::GetStorageRangesMessage;
 use base_execution_network_wire::Protocol;
 use base_execution_network_wire::StorageRangesMessage;
+use base_execution_network_wire::{SnapClient, SnapResponse};
 use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_network::{
-    BlockDownloaderProvider,
-    eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
-};
-use reth_network_p2p::snap::client::{SnapClient, SnapResponse};
-use reth_primitives_traits::Block as _;
 use base_execution_state_provider::{
     BalProvider, BalStoreHandle, BlockReader, BlockWriter, ChainSpecProvider, HashingWriter,
     HeaderProvider, InMemoryBalStore, ProviderFactory, RawBal, StateProviderFactory,
@@ -45,8 +37,16 @@ use base_execution_state_provider::{
     providers::{BlockchainProvider, SNAPSHOT_STATE_RETENTION},
     test_utils::{ExtendedAccount, MockEthProvider, create_test_provider_factory},
 };
-use reth_testing_utils::generators::{self, BlockParams};
 use base_execution_state_trie::{HashedPostState, HashedStorage};
+use base_execution_state_types::StorageEntry;
+use base_execution_state_types::{StageCheckpoint, StageId};
+use reth_network::{
+    BlockDownloaderProvider,
+    eth_requests::SOFT_RESPONSE_LIMIT,
+    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
+};
+use reth_primitives_traits::Block as _;
+use reth_testing_utils::generators::{self, BlockParams};
 
 mod protocol;
 

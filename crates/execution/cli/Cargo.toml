@@ -40,13 +40,13 @@ base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
-reth-network-p2p = { workspace = true, features = ["default"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-txpool-tracing = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
+base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-network-discovery = {features = ["default"], workspace = true}

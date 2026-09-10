@@ -7,11 +7,11 @@ use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_wire::BodiesClient;
 use clap::{Parser, Subcommand};
 use reth_cli_util::hash_or_num_value_parser;
 use reth_config::Config;
 use reth_network::{BlockDownloaderProvider, NetworkConfigBuilder};
-use reth_network_p2p::bodies::client::BodiesClient;
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs},
     utils::get_single_header,
@@ -193,8 +193,10 @@ impl<C: ChainSpecParser> DownloadArgs<C> {
         let p2p_secret_key = self.network.secret_key(default_secret_key_path)?;
         let rlpx_socket = (self.network.addr, self.network.port).into();
         let boot_nodes = self.network.resolved_bootnodes().unwrap_or_else(|| {
-            base_execution_network_types::NodeRecord::parse_bootnodes(self.chain.config.bootnodes.execution)
-                .unwrap_or_default()
+            base_execution_network_types::NodeRecord::parse_bootnodes(
+                self.chain.config.bootnodes.execution,
+            )
+            .unwrap_or_default()
         });
 
         let net = NetworkConfigBuilder::new(p2p_secret_key, Runtime::test())

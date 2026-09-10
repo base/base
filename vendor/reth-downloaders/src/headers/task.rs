@@ -9,14 +9,15 @@ use base_common_runtime_tasks::Runtime;
 use futures::Stream;
 use futures_util::StreamExt;
 use pin_project::pin_project;
-use reth_network_p2p::headers::{
-    downloader::{HeaderDownloader, SyncTarget},
-    error::HeadersDownloaderResult,
-};
 use reth_primitives_traits::SealedHeader;
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_util::sync::PollSender;
+use {
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+    reth_network_p2p::headers::downloader::SyncTarget,
+    reth_network_p2p::headers::error::HeadersDownloaderResult,
+};
 
 /// The maximum number of header results to hold in the buffer.
 pub const HEADERS_TASK_BUFFER_SIZE: usize = 8;

@@ -8,14 +8,14 @@ use std::{
 use alloy_primitives::B256;
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
-use futures::{Future, FutureExt};
-use reth_network_p2p::{
-    bodies::{client::BodiesClient, response::BlockResponse},
-    error::{DownloadError, DownloadResult},
-    priority::Priority,
-};
 use base_execution_network_types::{PeerId, WithPeerId};
+use futures::{Future, FutureExt};
 use reth_primitives_traits::{GotExpected, InMemorySize, SealedBlock, SealedHeader};
+use {
+    base_execution_network_wire::BodiesClient, base_execution_network_wire::Priority,
+    reth_network_p2p::bodies::response::BlockResponse, reth_network_p2p::error::DownloadError,
+    reth_network_p2p::error::DownloadResult,
+};
 
 use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 

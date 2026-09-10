@@ -16,16 +16,15 @@ use base_execution_state_api::HeaderProvider;
 use futures::Stream;
 use futures_util::StreamExt;
 use reth_config::BodiesConfig;
-use reth_network_p2p::{
-    bodies::{
-        client::BodiesClient,
-        downloader::{BodyDownloader, BodyDownloaderResult},
-        response::BlockResponse,
-    },
-    error::{DownloadError, DownloadResult},
-};
 use reth_primitives_traits::{InMemorySize, SealedHeader};
 use tracing::info;
+use {
+    base_execution_network_wire::BodiesClient,
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::bodies::downloader::BodyDownloaderResult,
+    reth_network_p2p::bodies::response::BlockResponse, reth_network_p2p::error::DownloadError,
+    reth_network_p2p::error::DownloadResult,
+};
 
 use super::queue::BodiesRequestQueue;
 use crate::{bodies::task::TaskDownloader, metrics::BodyDownloaderMetrics};

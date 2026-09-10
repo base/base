@@ -38,10 +38,7 @@ use base_execution_network_wire::Receipts70;
 use base_execution_network_wire::RequestPair;
 use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::UnifiedStatus;
-use reth_network_p2p::{
-    error::{RequestError, RequestResult},
-    snap::client::SnapResponse,
-};
+use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::{Stream, StreamExt, wrappers::UnboundedReceiverStream};
 

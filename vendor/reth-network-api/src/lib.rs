@@ -35,6 +35,7 @@ use base_execution_network_wire::Capability;
 use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::UnifiedStatus;
+pub use base_execution_network_wire::{BlockClient, HeadersClient};
 pub use custody::CellCustody;
 pub use downloaders::BlockDownloaderProvider;
 pub use error::NetworkError;
@@ -42,7 +43,6 @@ pub use events::{
     DiscoveredEvent, DiscoveryEvent, NetworkEvent, NetworkEventListenerProvider, PeerRequest,
     PeerRequestSender, RequestMessage,
 };
-pub use reth_network_p2p::{BlockClient, HeadersClient};
 
 /// The `PeerId` type.
 pub type PeerId = alloy_primitives::B512;

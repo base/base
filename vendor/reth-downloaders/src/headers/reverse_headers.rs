@@ -14,23 +14,24 @@ use alloy_primitives::{B256, BlockNumber};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_network_types::PeerId;
 use futures::{FutureExt, stream::Stream};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use rayon::prelude::*;
 use reth_config::config::HeadersConfig;
-use reth_network_p2p::{
-    error::{DownloadError, DownloadResult, PeerRequestResult},
-    headers::{
-        client::{HeadersClient, HeadersRequest},
-        downloader::{HeaderDownloader, SyncTarget, validate_header_download},
-        error::{HeadersDownloaderError, HeadersDownloaderResult},
-    },
-    priority::Priority,
-};
-use base_execution_network_types::PeerId;
 use reth_primitives_traits::{GotExpected, SealedHeader};
 use thiserror::Error;
 use tracing::{debug, error, trace};
+use {
+    base_execution_network_wire::HeadersClient, base_execution_network_wire::HeadersRequest,
+    base_execution_network_wire::PeerRequestResult, base_execution_network_wire::Priority,
+    reth_network_p2p::error::DownloadError, reth_network_p2p::error::DownloadResult,
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+    reth_network_p2p::headers::downloader::SyncTarget,
+    reth_network_p2p::headers::downloader::validate_header_download,
+    reth_network_p2p::headers::error::HeadersDownloaderError,
+    reth_network_p2p::headers::error::HeadersDownloaderResult,
+};
 
 use super::task::TaskDownloader;
 use crate::metrics::HeaderDownloaderMetrics;
@@ -63,7 +64,7 @@ impl From<HeadersResponseError> for ReverseHeadersDownloaderError {
 /// requests at a time but yielding them in batches on [`Stream::poll_next`].
 ///
 /// **Note:** This downloader downloads in reverse, see also
-/// [`reth_network_p2p::headers::client::HeadersDirection`], this means the batches of headers that
+/// [`base_execution_network_wire::HeadersDirection`], this means the batches of headers that
 /// this downloader yields will start at the chain tip and move towards the local head: falling
 /// block numbers.
 #[must_use = "Stream does nothing unless polled"]
@@ -1285,10 +1286,12 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_types_chain::Header;
     use base_execution_evm_blocks::BaseBeaconConsensus;
-    use reth_network_p2p::{
-        download::DownloadClient, error::PeerRequestResult, test_utils::TestHeadersClient,
-    };
     use base_execution_network_types::WithPeerId;
+    use {
+        base_execution_network_wire::DownloadClient,
+        base_execution_network_wire::PeerRequestResult,
+        reth_network_p2p::test_utils::TestHeadersClient,
+    };
 
     use super::*;
     use crate::headers::test_utils::child_header;

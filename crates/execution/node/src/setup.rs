@@ -15,11 +15,12 @@ use reth_downloaders::{
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
 use reth_exex::ExExManagerHandle;
-use reth_network_p2p::{
-    BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
-};
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use tokio::sync::watch;
+use {
+    base_execution_network_wire::BlockClient, reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+};
 use {base_execution_state_types::PruneConfig, reth_config::config::StageConfig};
 
 /// Constructs a [Pipeline] that's wired to the network

@@ -4,19 +4,22 @@ use std::{
 };
 
 use base_execution_state_database::{DbCursorRO, DbTx, DbTxMut, tables};
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
-use futures_util::TryStreamExt;
-use reth_network_p2p::bodies::{downloader::BodyDownloader, response::BlockResponse};
 use base_execution_state_provider::{
     BlockReader, BlockWriter, DBProvider, ProviderError, StaticFileProviderFactory, StatsReader,
     providers::StaticFileWriter,
 };
+use base_execution_state_types::ProviderResult;
+use base_execution_state_types::StaticFileSegment;
+use futures_util::TryStreamExt;
 use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
 use tracing::*;
+use {
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::bodies::response::BlockResponse,
+};
 
 use super::missing_static_data_error;
 
@@ -482,22 +485,21 @@ mod tests {
             DbCursorRO, DbTx, DbTxMut, models::StoredBlockBodyIndices, models::StoredBlockOmmers,
         };
         use base_execution_state_database::{static_file::HeaderWithHashMask, tables};
-        use base_execution_state_types::StaticFileSegment;
-        use futures_util::Stream;
-        use reth_network_p2p::{
-            bodies::{
-                downloader::{BodyDownloader, BodyDownloaderResult},
-                response::BlockResponse,
-            },
-            error::DownloadResult,
-        };
-        use reth_primitives_traits::{SealedBlock, SealedHeader};
         use base_execution_state_provider::{
             HeaderProvider, ProviderFactory, StaticFileProviderFactory, TransactionsProvider,
             providers::StaticFileWriter,
         };
+        use base_execution_state_types::StaticFileSegment;
+        use futures_util::Stream;
+        use reth_primitives_traits::{SealedBlock, SealedHeader};
         use reth_stages_api::{ExecInput, ExecOutput, UnwindInput};
         use reth_testing_utils::generators::{self, BlockRangeParams};
+        use {
+            reth_network_p2p::bodies::downloader::BodyDownloader,
+            reth_network_p2p::bodies::downloader::BodyDownloaderResult,
+            reth_network_p2p::bodies::response::BlockResponse,
+            reth_network_p2p::error::DownloadResult,
+        };
 
         use crate::{
             stages::bodies::BodyStage,

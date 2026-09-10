@@ -8,12 +8,12 @@ use futures::Stream;
 use reth_primitives_traits::SealedHeader;
 
 use super::error::HeadersDownloaderResult;
-use crate::error::{DownloadError, DownloadResult};
+use crate::{error::DownloadError, error::DownloadResult};
 
 /// A downloader capable of fetching and yielding block headers.
 ///
 /// A downloader represents a distinct strategy for submitting requests to download block headers,
-/// while a [`HeadersClient`][crate::headers::client::HeadersClient] represents a client capable
+/// while a [`HeadersClient`][base_execution_network_wire::HeadersClient] represents a client capable
 /// of fulfilling these requests.
 ///
 /// A [`HeaderDownloader`] is a [Stream] that returns batches of headers.

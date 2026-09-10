@@ -1,5 +1,4 @@
-/// Traits and types for block body clients.
-pub mod client;
+//! Bodies download orchestration.
 
 /// Block body downloaders.
 pub mod downloader;

@@ -17,15 +17,13 @@ use futures::{Future, FutureExt, Stream, StreamExt};
 use reth_primitives_traits::SealedHeader;
 use tokio::sync::Mutex;
 
-use crate::{
-    download::DownloadClient,
-    error::{DownloadError, DownloadResult, PeerRequestResult, RequestError},
-    headers::{
-        client::{HeadersClient, HeadersRequest},
-        downloader::{HeaderDownloader, SyncTarget},
-        error::HeadersDownloaderResult,
-    },
-    priority::Priority,
+use {
+    crate::error::DownloadError, crate::error::DownloadResult,
+    crate::headers::downloader::HeaderDownloader, crate::headers::downloader::SyncTarget,
+    crate::headers::error::HeadersDownloaderResult, base_execution_network_wire::DownloadClient,
+    base_execution_network_wire::HeadersClient, base_execution_network_wire::HeadersRequest,
+    base_execution_network_wire::PeerRequestResult, base_execution_network_wire::Priority,
+    base_execution_network_wire::RequestError,
 };
 
 /// A test downloader which just returns the values that have been pushed to it.

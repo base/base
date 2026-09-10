@@ -32,10 +32,10 @@ use base_execution_network_wire::NewPooledTransactionHashes;
 use base_execution_network_wire::RawCapabilityMessage;
 use base_execution_network_wire::RequestPair;
 use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::{RequestError, SnapResponse};
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
 use reth_network_api::{PeerRequest, RequestMessage};
-use reth_network_p2p::{error::RequestError, snap::client::SnapResponse};
 use reth_primitives_traits::Block;
 use rustc_hash::FxHashMap;
 use tokio::{
@@ -1330,11 +1330,11 @@ mod tests {
     use base_execution_network_wire::NewPooledTransactionHashes72;
     use base_execution_network_wire::P2PStream;
     use base_execution_network_wire::Protocol;
+    use base_execution_network_wire::RequestResult;
     use base_execution_network_wire::UnauthedEthStream;
     use base_execution_network_wire::UnauthedP2PStream;
     use base_execution_network_wire::UnifiedStatus;
     use futures::task::noop_waker;
-    use reth_network_p2p::error::RequestResult;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::{
         net::{TcpListener, TcpStream},

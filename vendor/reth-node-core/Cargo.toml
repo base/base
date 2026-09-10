@@ -42,11 +42,11 @@ derive_more = { workspace = true, features = ["full"] }
 reth-config = { workspace = true, features = ["serde"] }
 reth-network = { workspace = true, features = ["serde"] }
 tracing = { workspace = true, features = ["attributes"] }
-reth-network-p2p = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 reth-primitives-traits = { workspace = true, features = ["rayon"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
+base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-network-discovery = {features = ["default"], workspace = true}
 base-execution-state-api = { workspace = true, features = ["std", "db-api"] }

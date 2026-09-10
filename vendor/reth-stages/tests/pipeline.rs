@@ -27,10 +27,6 @@ use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_network_p2p::{
-    bodies::downloader::BodyDownloader,
-    headers::downloader::{HeaderDownloader, SyncTarget},
-};
 use reth_primitives_traits::{
     RecoveredBlock, SealedBlock,
     crypto::secp256k1::public_key_to_address,
@@ -40,6 +36,11 @@ use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_testing_utils::generators::{self, generate_key};
 use tokio::sync::watch;
+use {
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+    reth_network_p2p::headers::downloader::SyncTarget,
+};
 
 /// Counter contract deployed bytecode compiled with Solidity 0.8.31.
 /// ```solidity

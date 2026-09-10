@@ -23,6 +23,7 @@ use base_execution_network_wire::BroadcastPoolTransactions;
 use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::NewPooledTransactionHashes;
 use base_execution_network_wire::SharedTransactions;
+use base_execution_network_wire::{NetworkSyncUpdater, SyncState, SyncStateProvider};
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -33,7 +34,6 @@ use reth_network_api::{
     events::{NetworkPeersEvents, PeerEvent, PeerEventStream},
     test_utils::{PeersHandle, PeersHandleProvider},
 };
-use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState, SyncStateProvider};
 use secp256k1::SecretKey;
 use tokio::sync::{
     mpsc::{self, UnboundedSender},

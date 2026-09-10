@@ -3,14 +3,10 @@
 use std::ops::RangeInclusive;
 
 use alloy_primitives::B256;
-pub use futures::future::Either;
+use futures::future::Either;
 
 use crate::{
-    bodies::client::BodiesClient,
-    download::DownloadClient,
-    headers::client::{HeadersClient, HeadersRequest},
-    priority::Priority,
-    receipts::client::ReceiptsClient,
+    BodiesClient, DownloadClient, HeadersClient, HeadersRequest, Priority, ReceiptsClient,
 };
 
 impl<A, B> DownloadClient for Either<A, B>

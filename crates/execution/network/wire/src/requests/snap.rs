@@ -1,20 +1,15 @@
-use base_execution_network_wire::AccountRangeMessage;
-use base_execution_network_wire::BlockAccessListsMessage;
-use base_execution_network_wire::ByteCodesMessage;
-use base_execution_network_wire::GetAccountRangeMessage;
-use base_execution_network_wire::GetBlockAccessListsMessage;
-use base_execution_network_wire::GetByteCodesMessage;
-use base_execution_network_wire::GetStorageRangesMessage;
-use base_execution_network_wire::SnapProtocolMessage;
-use base_execution_network_wire::StorageRangesMessage;
+use crate::AccountRangeMessage;
+use crate::BlockAccessListsMessage;
+use crate::ByteCodesMessage;
+use crate::GetAccountRangeMessage;
+use crate::GetBlockAccessListsMessage;
+use crate::GetByteCodesMessage;
+use crate::GetStorageRangesMessage;
+use crate::SnapProtocolMessage;
+use crate::StorageRangesMessage;
 use futures::Future;
 
-use crate::{
-    download::DownloadClient,
-    error::{PeerRequestResult, RequestError},
-    full_block::NoopFullBlockClient,
-    priority::Priority,
-};
+use crate::{DownloadClient, PeerRequestResult, Priority};
 
 /// Response types for snap sync requests
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,66 +115,9 @@ pub trait SnapClient: DownloadClient {
     ) -> Self::Output;
 }
 
-/// Fails every snap request with [`RequestError::UnsupportedCapability`], so the noop client can
-/// stand in wherever a [`SnapClient`] bound is required but snap is not served.
-impl SnapClient for NoopFullBlockClient {
-    type Output = futures::future::Ready<PeerRequestResult<SnapResponse>>;
-
-    /// Fails the account range request as unsupported.
-    fn get_account_range_with_priority(
-        &self,
-        _request: GetAccountRangeMessage,
-        _priority: Priority,
-    ) -> Self::Output {
-        unsupported()
-    }
-
-    /// Fails the storage ranges request as unsupported.
-    fn get_storage_ranges(&self, _request: GetStorageRangesMessage) -> Self::Output {
-        unsupported()
-    }
-
-    /// Fails the prioritized storage ranges request as unsupported.
-    fn get_storage_ranges_with_priority(
-        &self,
-        _request: GetStorageRangesMessage,
-        _priority: Priority,
-    ) -> Self::Output {
-        unsupported()
-    }
-
-    /// Fails the bytecode request as unsupported.
-    fn get_byte_codes(&self, _request: GetByteCodesMessage) -> Self::Output {
-        unsupported()
-    }
-
-    /// Fails the prioritized bytecode request as unsupported.
-    fn get_byte_codes_with_priority(
-        &self,
-        _request: GetByteCodesMessage,
-        _priority: Priority,
-    ) -> Self::Output {
-        unsupported()
-    }
-
-    /// Fails the block access lists request as unsupported.
-    fn get_block_access_lists_with_priority(
-        &self,
-        _request: GetBlockAccessListsMessage,
-        _priority: Priority,
-    ) -> Self::Output {
-        unsupported()
-    }
-}
-
-/// The noop answer to any snap request: immediately ready, no capability.
-fn unsupported() -> futures::future::Ready<PeerRequestResult<SnapResponse>> {
-    futures::future::ready(Err(RequestError::UnsupportedCapability))
-}
-
 #[cfg(test)]
 mod tests {
-    use base_execution_network_wire::BlockAccessLists;
+    use crate::BlockAccessLists;
     use test_case::test_case;
 
     use super::*;

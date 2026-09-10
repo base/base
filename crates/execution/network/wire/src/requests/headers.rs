@@ -4,13 +4,12 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use crate::HeadersDirection;
 use alloy_eips::BlockHashOrNumber;
 use base_common_types_chain::Header;
-pub use base_execution_network_wire::BlockHeaders;
-pub use base_execution_network_wire::HeadersDirection;
 use futures::{Future, FutureExt};
 
-use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
+use crate::{DownloadClient, PeerRequestResult, Priority};
 
 /// The header request struct to be sent to connected peers, which
 /// will proceed to ask them to stream the requested headers to us.

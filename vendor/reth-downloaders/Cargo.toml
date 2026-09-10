@@ -29,7 +29,6 @@ base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 itertools = { workspace = true, optional = true }
 base-execution-network-types = { workspace = true }
-base-execution-state-provider = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
@@ -39,7 +38,9 @@ tokio = { workspace = true, features = ["sync", "fs", "io-util"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-provider = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
+base-execution-network-wire = {workspace = true, features = ["requests"]}
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
@@ -51,12 +52,12 @@ reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {workspace = true, features = ["serde"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 
 [features]

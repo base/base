@@ -55,9 +55,9 @@ base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-network-discovery = {features = ["default"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
-base-execution-network-wire = {workspace = true, features = ["default", "transport"]}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
+base-execution-network-wire = {workspace = true, features = ["default", "transport", "requests"]}
 
 [dev-dependencies]
 url = { workspace = true }

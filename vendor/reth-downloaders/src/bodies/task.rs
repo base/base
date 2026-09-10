@@ -11,13 +11,14 @@ use base_common_runtime_tasks::Runtime;
 use futures::Stream;
 use futures_util::StreamExt;
 use pin_project::pin_project;
-use reth_network_p2p::{
-    bodies::downloader::{BodyDownloader, BodyDownloaderResult},
-    error::DownloadResult,
-};
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_util::sync::PollSender;
+use {
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::bodies::downloader::BodyDownloaderResult,
+    reth_network_p2p::error::DownloadResult,
+};
 
 /// The maximum number of [`BodyDownloaderResult`]s to hold in the buffer.
 pub const BODIES_TASK_BUFFER_SIZE: usize = 4;
@@ -134,8 +135,8 @@ mod tests {
 
     use assert_matches::assert_matches;
     use base_execution_evm_blocks::BaseBeaconConsensus;
-    use reth_network_p2p::error::DownloadError;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
+    use reth_network_p2p::error::DownloadError;
 
     use super::*;
     use crate::{

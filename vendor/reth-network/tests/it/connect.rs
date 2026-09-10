@@ -9,7 +9,9 @@ use base_execution_network_discovery::Discv4Config;
 use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::HeadersDirection;
+use base_execution_network_wire::{HeadersClient, HeadersRequest, NetworkSyncUpdater, SyncState};
 use base_execution_state_api::NoopProvider;
+use base_execution_state_provider::test_utils::MockEthProvider;
 use futures::StreamExt;
 use reth_network::{
     BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
@@ -20,11 +22,6 @@ use reth_network_api::{
     NetworkInfo, PeerKind, Peers, PeersInfo,
     events::{PeerEvent, SessionInfo},
 };
-use reth_network_p2p::{
-    headers::client::{HeadersClient, HeadersRequest},
-    sync::{NetworkSyncUpdater, SyncState},
-};
-use base_execution_state_provider::test_utils::MockEthProvider;
 use secp256k1::SecretKey;
 use tokio::task;
 use url::Host;

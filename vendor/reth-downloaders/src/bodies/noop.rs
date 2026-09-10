@@ -2,9 +2,10 @@ use std::{fmt::Debug, ops::RangeInclusive};
 
 use alloy_primitives::BlockNumber;
 use futures::Stream;
-use reth_network_p2p::{
-    bodies::{downloader::BodyDownloader, response::BlockResponse},
-    error::{DownloadError, DownloadResult},
+use {
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::bodies::response::BlockResponse, reth_network_p2p::error::DownloadError,
+    reth_network_p2p::error::DownloadResult,
 };
 
 /// A [`BodyDownloader`] implementation that does nothing.

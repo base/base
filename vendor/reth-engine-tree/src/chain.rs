@@ -4,9 +4,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::Stream;
 use base_common_types_chain::BaseBlock;
-use reth_network_p2p::BlockClient;
+use base_execution_network_wire::BlockClient;
+use futures::Stream;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};
 
 use crate::engine::EngineHandler;
@@ -37,8 +37,7 @@ use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};
 /// [`EngineHandler::on_event`].
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct ChainOrchestrator<S, Client: BlockClient<Block = BaseBlock> + 'static>
-{
+pub struct ChainOrchestrator<S, Client: BlockClient<Block = BaseBlock> + 'static> {
     /// The handler for advancing the chain.
     handler: EngineHandler<S, Client>,
     /// Controls backfill sync.
@@ -96,7 +95,8 @@ where
                             Ok(ctrl) => {
                                 tracing::debug!(?ctrl, "backfill sync finished");
                                 // notify handler that backfill sync finished
-                                this.handler.on_event(FromOrchestrator::BackfillSyncFinished(ctrl).into());
+                                this.handler
+                                    .on_event(FromOrchestrator::BackfillSyncFinished(ctrl).into());
                                 Poll::Ready(ChainEvent::BackfillSyncFinished)
                             }
                             Err(err) => {

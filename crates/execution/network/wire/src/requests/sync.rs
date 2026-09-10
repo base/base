@@ -1,7 +1,7 @@
 //! Traits used when interacting with the sync status of the network.
 
+use crate::BlockRangeUpdate;
 use alloy_eips::eip2124::{ForkFilter, Head};
-use base_execution_network_wire::BlockRangeUpdate;
 
 /// A type that provides information about whether the node is currently syncing and the network is
 /// currently serving syncing related requests.

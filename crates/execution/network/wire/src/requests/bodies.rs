@@ -8,7 +8,7 @@ use alloy_primitives::B256;
 use futures::{Future, FutureExt};
 use reth_primitives_traits::BlockBody;
 
-use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
+use crate::{DownloadClient, PeerRequestResult, Priority};
 
 /// The bodies future type
 pub type BodiesFut<B = base_common_types_chain::BaseBlockBody> =

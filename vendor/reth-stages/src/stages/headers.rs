@@ -14,10 +14,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::StreamExt;
-use reth_network_p2p::headers::{
-    downloader::{HeaderDownloader, HeaderSyncGap, SyncTarget},
-    error::HeadersDownloaderError,
-};
 use reth_primitives_traits::SealedHeader;
 use reth_stages_api::{
     CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput, HeadersCheckpoint, Stage,
@@ -25,6 +21,12 @@ use reth_stages_api::{
 };
 use tokio::sync::watch;
 use tracing::*;
+use {
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+    reth_network_p2p::headers::downloader::HeaderSyncGap,
+    reth_network_p2p::headers::downloader::SyncTarget,
+    reth_network_p2p::headers::error::HeadersDownloaderError,
+};
 
 /// The headers stage.
 ///
@@ -402,8 +404,11 @@ mod tests {
         use reth_downloaders::headers::reverse_headers::{
             ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder,
         };
-        use reth_network_p2p::test_utils::{TestHeaderDownloader, TestHeadersClient};
         use tokio::sync::watch;
+        use {
+            reth_network_p2p::test_utils::TestHeaderDownloader,
+            reth_network_p2p::test_utils::TestHeadersClient,
+        };
 
         use super::*;
         use crate::test_utils::{TestRunnerError, TestStageDB};

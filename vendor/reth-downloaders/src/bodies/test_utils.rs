@@ -4,11 +4,11 @@
 
 use alloy_primitives::map::B256Map;
 use base_common_types_chain::{BaseBlockBody as BlockBody, BlockHeader};
-use reth_network_p2p::bodies::response::BlockResponse;
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     ProviderFactory, StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
 };
+use reth_network_p2p::bodies::response::BlockResponse;
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 
 pub(crate) fn zip_blocks<'a>(
     headers: impl Iterator<Item = &'a SealedHeader>,

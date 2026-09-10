@@ -42,9 +42,12 @@ use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::HeaderSyncGapProvider;
 use base_execution_state_types::{PruneMode, PruneModes};
 use reth_config::config::StageConfig;
-use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
 use reth_stages_api::Stage;
 use tokio::sync::watch;
+use {
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+};
 
 use crate::{
     StageSet, StageSetBuilder,

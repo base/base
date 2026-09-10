@@ -39,6 +39,7 @@ use base_execution_network_wire::Receipts70;
 use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::StorageData;
 use base_execution_network_wire::StorageRangesMessage;
+use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
 use base_execution_state_api::{
     BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
     ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
@@ -46,10 +47,6 @@ use base_execution_state_api::{
 use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use reth_network_api::test_utils::PeersHandle;
-use reth_network_p2p::{
-    error::{RequestError, RequestResult},
-    snap::client::SnapResponse,
-};
 use reth_primitives_traits::Block;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -844,9 +841,9 @@ mod tests {
     use base_common_types_chain::constants::EMPTY_ROOT_HASH;
     use base_execution_state_api::NoopProvider;
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use reth_network_api::test_utils::PeersHandle;
-    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use test_case::test_case;
     use tokio::sync::mpsc;
 

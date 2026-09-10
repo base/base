@@ -27,10 +27,10 @@ use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::GetReceipts70;
 use base_execution_network_wire::NewBlockHashes;
 use base_execution_network_wire::NewBlockPayload;
+use base_execution_network_wire::ReceiptsResponse;
 use base_execution_network_wire::UnifiedStatus;
 use rand::seq::SliceRandom;
 use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
-use reth_network_p2p::receipts::client::ReceiptsResponse;
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
@@ -702,9 +702,9 @@ mod tests {
     use base_execution_network_wire::Capabilities;
     use base_execution_network_wire::Capability;
     use base_execution_network_wire::EthVersion;
+    use base_execution_network_wire::{BodiesClient, RequestError};
     use base_execution_state_api::NoopProvider;
     use reth_network_api::PeerRequestSender;
-    use reth_network_p2p::{bodies::client::BodiesClient, error::RequestError};
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 

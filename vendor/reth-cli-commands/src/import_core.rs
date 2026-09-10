@@ -19,14 +19,15 @@ use reth_downloaders::{
     file_client::{ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient},
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
-use reth_network_p2p::{
-    bodies::downloader::BodyDownloader,
-    headers::downloader::{HeaderDownloader, SyncTarget},
-};
 use reth_node_events::node::NodeEvent;
 use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
+use {
+    reth_network_p2p::bodies::downloader::BodyDownloader,
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+    reth_network_p2p::headers::downloader::SyncTarget,
+};
 
 /// Configuration for importing blocks from RLP files.
 #[derive(Debug, Clone, Default)]

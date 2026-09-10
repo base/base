@@ -35,12 +35,9 @@ use base_execution_network_wire::RequestPair;
 use base_execution_network_wire::SharedTransactions;
 use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::Transactions;
+use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
 use futures::FutureExt;
 use reth_network_api::{PeerRequest, RequestMessage};
-use reth_network_p2p::{
-    error::{RequestError, RequestResult},
-    snap::client::SnapResponse,
-};
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 

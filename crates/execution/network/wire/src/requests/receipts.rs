@@ -1,11 +1,11 @@
 use std::pin::Pin;
 
+use crate::Receipts70;
 use alloy_primitives::B256;
 use base_common_types_chain::TxReceipt;
-use base_execution_network_wire::Receipts70;
 use futures::Future;
 
-use crate::{download::DownloadClient, error::PeerRequestResult, priority::Priority};
+use crate::{DownloadClient, PeerRequestResult, Priority};
 
 /// The receipts future type
 pub type ReceiptsFut<R = base_common_types_chain::EthereumReceipt> =

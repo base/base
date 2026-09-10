@@ -20,15 +20,10 @@ use futures::FutureExt;
 use reth_primitives_traits::{SealedBlock, SealedBlockWith, SealedHeader};
 use tracing::{debug, trace};
 
-use super::headers::client::HeadersRequest;
-use crate::{
-    BlockClient,
-    block_access_lists::client::{BalRequirement, BlockAccessListsClient},
-    bodies::client::{BodiesClient, SingleBodyRequest},
-    download::DownloadClient,
-    error::PeerRequestResult,
-    headers::client::{HeadersClient, SingleHeaderRequest},
-    priority::Priority,
+use base_execution_network_wire::HeadersRequest;
+use base_execution_network_wire::{
+    BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, DownloadClient,
+    HeadersClient, PeerRequestResult, Priority, SingleBodyRequest, SingleHeaderRequest,
 };
 
 /// A sealed block with optional validated raw block access-list data.
@@ -1217,7 +1212,7 @@ mod tests {
     use parking_lot::Mutex;
 
     use super::*;
-    use crate::{error::RequestError, test_utils::TestFullBlockClient};
+    use {crate::test_utils::TestFullBlockClient, base_execution_network_wire::RequestError};
 
     const EMPTY_LIST_CODE: u8 = 0xc0;
     use tokio::time::{Duration, timeout};

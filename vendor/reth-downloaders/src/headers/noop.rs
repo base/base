@@ -1,11 +1,12 @@
 use std::fmt::Debug;
 
 use futures::Stream;
-use reth_network_p2p::headers::{
-    downloader::{HeaderDownloader, SyncTarget},
-    error::HeadersDownloaderError,
-};
 use reth_primitives_traits::SealedHeader;
+use {
+    reth_network_p2p::headers::downloader::HeaderDownloader,
+    reth_network_p2p::headers::downloader::SyncTarget,
+    reth_network_p2p::headers::error::HeadersDownloaderError,
+};
 
 /// A [`HeaderDownloader`] implementation that does nothing.
 #[derive(Debug, Default)]

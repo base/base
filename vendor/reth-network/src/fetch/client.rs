@@ -18,19 +18,13 @@ use base_execution_network_wire::GetBlockAccessListsMessage;
 use base_execution_network_wire::GetByteCodesMessage;
 use base_execution_network_wire::GetStorageRangesMessage;
 use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::{
+    BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, BodiesFut, DownloadClient,
+    HeadersClient, HeadersRequest, PeerRequestResult, Priority, ReceiptsClient, ReceiptsFut,
+    RequestError, SnapClient, SnapResponse,
+};
 use futures::{future, future::Either};
 use reth_network_api::test_utils::PeersHandle;
-use reth_network_p2p::{
-    BlockClient,
-    block_access_lists::client::{BalRequirement, BlockAccessListsClient},
-    bodies::client::{BodiesClient, BodiesFut},
-    download::DownloadClient,
-    error::{PeerRequestResult, RequestError},
-    headers::client::{HeadersClient, HeadersRequest},
-    priority::Priority,
-    receipts::client::{ReceiptsClient, ReceiptsFut},
-    snap::client::{SnapClient, SnapResponse},
-};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{fetch::DownloadRequest, flattened_response::FlattenedResponse};

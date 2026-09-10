@@ -50,6 +50,7 @@ base-execution-state-trie = {features = ["metrics"], workspace = true}
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-provider = {workspace = true, features = ["rayon"]}
 serde_json = { workspace = true, features = ["alloc"], optional = true }
+base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-payload-types = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }

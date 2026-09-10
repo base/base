@@ -11,19 +11,8 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-/// Shared abstractions for downloader implementations.
-pub mod download;
-
 /// Traits for implementing P2P block body clients.
 pub mod bodies;
-
-/// Traits for implementing P2P block access lists clients.
-pub mod block_access_lists;
-/// Traits for implementing P2P receipt clients.
-pub mod receipts;
-
-/// A downloader that combines two different downloaders/client implementations.
-pub mod either;
 
 /// An implementation that uses headers and bodies traits to download full blocks
 pub mod full_block;
@@ -34,37 +23,17 @@ pub use full_block::{FullBlockClient, NoopFullBlockClient};
 /// [`HeadersClient`].
 ///
 /// [`Consensus`]: base_execution_evm_blocks::Consensus
-/// [`HeadersClient`]: crate::headers::client::HeadersClient
+/// [`HeadersClient`]: base_execution_network_wire::HeadersClient
 pub mod headers;
 
 /// Error types broadly used by p2p interfaces for any operation which may produce an error when
 /// interacting with the network implementation
 pub mod error;
 
-/// Priority enum for `BlockHeader` and `BlockBody` requests
-pub mod priority;
-
-/// Syncing related traits.
-pub mod sync;
-
-/// Snap related traits.
-pub mod snap;
-
 /// Common test helpers for mocking out Consensus, Downloaders and Header Clients.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
 pub use base_execution_network_wire::BlockAccessLists;
-pub use block_access_lists::client::{BalRequirement, BlockAccessListsClient};
-pub use bodies::client::BodiesClient;
-pub use headers::client::HeadersClient;
-pub use receipts::client::ReceiptsClient;
-use reth_primitives_traits::Block;
 
-/// Helper trait that unifies network behaviour needed for fetching entire blocks.
-pub trait BlockClient:
-    HeadersClient + BodiesClient<Body = base_common_types_chain::BaseBlockBody> + Unpin + Clone
-{
-    /// The Block type that this client fetches.
-    type Block: Block;
-}
+mod noop_snap;

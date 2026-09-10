@@ -5,11 +5,11 @@ use std::sync::Arc;
 use alloy_eips::BlockHashOrNumber;
 use backon::Retryable;
 use base_common_chain_config::BaseChainSpec;
+use base_execution_network_wire::BodiesClient;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::p2p::{DownloadArgs, enode, rlpx};
 use reth_cli_util::hash_or_num_value_parser;
 use reth_network::{BlockDownloaderProvider, NetworkHandle};
-use reth_network_p2p::bodies::client::BodiesClient;
 use reth_node_core::utils::get_single_header;
 
 pub mod bootnode;

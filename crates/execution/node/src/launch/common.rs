@@ -44,6 +44,7 @@ use base_common_observability_tracing::{
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_network_wire::HeadersClient;
 use base_execution_state_database::{DatabaseMetrics, models::PartialStateTrieUnwindMarker};
 use base_execution_state_maintenance::init::{
     InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate,
@@ -68,7 +69,6 @@ use rayon::ThreadPoolBuilder;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_engine_local::MiningMode;
 use reth_exex::ExExManagerHandle;
-use reth_network_p2p::headers::client::HeadersClient;
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},

@@ -11,10 +11,10 @@ use base_common_chain_activation::{
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
 use base_execution_network_discovery::NetworkStackId;
+use base_execution_network_wire::NetworkSyncUpdater;
+use base_execution_state_provider::{BlockNumReader, HeaderProvider};
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
 use reth_network::NetworkHandle;
-use reth_network_p2p::sync::NetworkSyncUpdater;
-use base_execution_state_provider::{BlockNumReader, HeaderProvider};
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;

@@ -2,8 +2,8 @@
 
 use std::fmt::Debug;
 
+use base_execution_network_wire::{BlockAccessListsClient, BlockClient};
 use futures::Future;
-use reth_network_p2p::{BlockAccessListsClient, BlockClient};
 use tokio::sync::oneshot;
 
 /// Provides client for downloading blocks.

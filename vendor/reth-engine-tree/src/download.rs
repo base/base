@@ -12,12 +12,13 @@ use alloy_primitives::{B256, map::B256Set};
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::FutureExt;
-use reth_network_p2p::{
-    BlockClient,
-    full_block::{FetchFullBlockFuture, FetchFullBlockRangeFuture, FullBlockClient},
-};
 use reth_primitives_traits::SealedBlock;
 use tracing::trace;
+use {
+    base_execution_network_wire::BlockClient, reth_network_p2p::full_block::FetchFullBlockFuture,
+    reth_network_p2p::full_block::FetchFullBlockRangeFuture,
+    reth_network_p2p::full_block::FullBlockClient,
+};
 
 use crate::{engine::DownloadRequest, metrics::BlockDownloaderMetrics};
 

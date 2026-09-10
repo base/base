@@ -9,14 +9,9 @@ use base_execution_network_wire::HeadersDirection;
 use parking_lot::Mutex;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 
-use crate::{
-    BlockClient,
-    block_access_lists::client::{BalRequirement, BlockAccessListsClient},
-    bodies::client::BodiesClient,
-    download::DownloadClient,
-    error::PeerRequestResult,
-    headers::client::{HeadersClient, HeadersRequest},
-    priority::Priority,
+use base_execution_network_wire::{
+    BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, DownloadClient,
+    HeadersClient, HeadersRequest, PeerRequestResult, Priority,
 };
 
 /// A headers+bodies client that stores the headers and bodies in memory, with an artificial soft

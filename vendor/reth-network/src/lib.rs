@@ -152,6 +152,7 @@ pub use base_execution_network_types::PeersConfig;
 pub use base_execution_network_types::SessionsConfig;
 pub use base_execution_network_wire::DisconnectReason;
 pub use base_execution_network_wire::HelloMessageWithProtocols;
+pub use base_execution_network_wire::{NetworkSyncUpdater, SyncState};
 pub use builder::NetworkBuilder;
 pub use config::{NetworkConfig, NetworkConfigBuilder};
 pub use discovery::Discovery;
@@ -167,7 +168,6 @@ pub use reth_network_api::{
 };
 /// re-export p2p interfaces
 pub use reth_network_p2p as p2p;
-pub use reth_network_p2p::sync::{NetworkSyncUpdater, SyncState};
 pub use session::{
     ActiveSessionHandle, ActiveSessionMessage, Direction, EthRlpxConnection, PeerInfo,
     PendingSessionEvent, PendingSessionHandle, PendingSessionHandshakeError, SessionCommand,

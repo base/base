@@ -10,6 +10,13 @@ use base_execution_network_wire::BlockAccessLists;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::GetBlockAccessLists;
 use base_execution_network_wire::HeadersDirection;
+use base_execution_network_wire::{
+    BlockAccessListsClient, BodiesClient, HeadersClient, HeadersRequest, RequestError,
+};
+use base_execution_state_provider::{
+    BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
+    ProviderResult, RawBal, test_utils::MockEthProvider,
+};
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use reth_network::{
@@ -18,16 +25,6 @@ use reth_network::{
     test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
 };
 use reth_network_api::{NetworkInfo, Peers};
-use reth_network_p2p::{
-    BlockAccessListsClient,
-    bodies::client::BodiesClient,
-    error::RequestError,
-    headers::client::{HeadersClient, HeadersRequest},
-};
-use base_execution_state_provider::{
-    BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
-    ProviderResult, RawBal, test_utils::MockEthProvider,
-};
 use tokio::sync::oneshot;
 
 type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>, TestPool>;

@@ -1,7 +1,4 @@
-/// Trait definition for [`HeadersClient`]
-///
-/// [`HeadersClient`]: client::HeadersClient
-pub mod client;
+//! Headers download orchestration.
 
 /// A downloader that receives and verifies block headers, is generic
 /// over the Consensus and the `HeadersClient` being used.

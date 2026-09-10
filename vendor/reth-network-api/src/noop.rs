@@ -14,9 +14,9 @@ use base_execution_network_types::ReputationChangeKind;
 use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::ProtocolVersion;
 use enr::{Enr, secp256k1::SecretKey};
-use reth_network_p2p::{NoopFullBlockClient, sync::NetworkSyncUpdater};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use {base_execution_network_wire::NetworkSyncUpdater, reth_network_p2p::NoopFullBlockClient};
 
 use crate::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
@@ -188,7 +188,7 @@ impl BlockDownloaderProvider for NoopNetwork {
 impl NetworkSyncUpdater for NoopNetwork {
     fn update_status(&self, _head: alloy_eip2124::Head) {}
 
-    fn update_sync_state(&self, _state: reth_network_p2p::sync::SyncState) {}
+    fn update_sync_state(&self, _state: base_execution_network_wire::SyncState) {}
 
     fn update_block_range(&self, _: base_execution_network_wire::BlockRangeUpdate) {}
 }

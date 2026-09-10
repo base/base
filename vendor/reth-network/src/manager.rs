@@ -455,7 +455,7 @@ impl NetworkManager {
     /// Returns a new [`FetchClient`] that can be cloned and shared.
     ///
     /// The [`FetchClient`] is the entrypoint for sending requests to the network, including
-    /// `snap/2` requests via its [`SnapClient`](reth_network_p2p::snap::client::SnapClient) impl.
+    /// `snap/2` requests via its [`SnapClient`](base_execution_network_wire::SnapClient) impl.
     pub fn fetch_client(&self) -> FetchClient {
         self.swarm.state().fetch_client()
     }

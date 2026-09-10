@@ -52,6 +52,7 @@ use base_execution_network_wire::PooledTransactions;
 use base_execution_network_wire::RequestTxHashes;
 use base_execution_network_wire::Transactions;
 use base_execution_network_wire::ValidAnnouncementData;
+use base_execution_network_wire::{RequestError, RequestResult, SyncStateProvider};
 use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
     PropagatedTransactions, TransactionPool, ValidPoolTransaction,
@@ -68,10 +69,6 @@ use policy::NetworkPolicies;
 use reth_network_api::{
     NetworkEvent, NetworkEventListenerProvider, PeerKind, PeerRequest, PeerRequestSender, Peers,
     events::{PeerEvent, SessionInfo},
-};
-use reth_network_p2p::{
-    error::{RequestError, RequestResult},
-    sync::SyncStateProvider,
 };
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
@@ -2352,6 +2349,7 @@ mod tests {
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
         BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
     };
+    use base_execution_network_wire::{NetworkSyncUpdater, RequestError, RequestResult, SyncState};
     use base_execution_state_api::NoopProvider;
     use base_execution_txpool::{
         BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError, InMemoryBlobStore,
@@ -2364,10 +2362,6 @@ mod tests {
     };
     use futures::FutureExt;
     use reth_network_api::{NetworkInfo, PeerKind};
-    use reth_network_p2p::{
-        error::{RequestError, RequestResult},
-        sync::{NetworkSyncUpdater, SyncState},
-    };
     use secp256k1::SecretKey;
     use tracing::error;
 

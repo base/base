@@ -24,17 +24,13 @@ use base_execution_network_wire::GetBlockBodies;
 use base_execution_network_wire::GetBlockHeaders;
 use base_execution_network_wire::GetReceipts;
 use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::{
+    BalRequirement, EthResponseValidator, HeadersRequest, PeerRequestResult, Priority,
+    ReceiptsResponse, RequestError, RequestResult, SnapResponse,
+};
 pub use client::FetchClient;
 use futures::StreamExt;
 use reth_network_api::test_utils::PeersHandle;
-use reth_network_p2p::{
-    block_access_lists::client::BalRequirement,
-    error::{EthResponseValidator, PeerRequestResult, RequestError, RequestResult},
-    headers::client::HeadersRequest,
-    priority::Priority,
-    receipts::client::ReceiptsResponse,
-    snap::client::SnapResponse,
-};
 use tokio::sync::{mpsc, mpsc::UnboundedSender, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

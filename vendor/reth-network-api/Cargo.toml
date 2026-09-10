@@ -30,8 +30,8 @@ reth-network-p2p = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 base-execution-network-types = {features = ["std"], workspace = true}
-base-execution-network-wire = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+base-execution-network-wire = { workspace = true, features = ["default", "requests"] }
 
 [features]
 serde = [

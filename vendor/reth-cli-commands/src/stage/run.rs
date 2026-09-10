@@ -8,6 +8,11 @@ use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use base_cli_utils::CliContext;
 use base_common_chain_config::BaseChainSpec;
+use base_execution_network_wire::HeadersClient;
+use base_execution_state_provider::{
+    ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
+    providers::BlockchainProvider,
+};
 use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::get_secret_key;
@@ -18,7 +23,6 @@ use reth_downloaders::{
 };
 use reth_exex::ExExManagerHandle;
 use reth_network::BlockDownloaderProvider;
-use reth_network_p2p::HeadersClient;
 use reth_node_core::{
     args::{NetworkArgs, StageEnum},
     version::version_metadata,
@@ -29,10 +33,6 @@ use reth_node_metrics::{
     version::VersionInfo,
 };
 use reth_primitives_traits::FastInstant as Instant;
-use base_execution_state_provider::{
-    ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
-    providers::BlockchainProvider,
-};
 use reth_stages::{
     ExecInput, ExecOutput, ExecutionStageThresholds, Stage, StageExt, UnwindInput, UnwindOutput,
     stages::{
