@@ -6,7 +6,7 @@ use base_execution_state_database::{
 };
 use tracing::debug;
 
-use crate::PruneLimiter;
+use crate::pruning::PruneLimiter;
 
 /// Result of a single prune step in [`DbTxPruneExt::prune_table_with_range_step`].
 #[derive(Debug, Clone, Copy)]
@@ -189,12 +189,12 @@ mod tests {
 
     use alloy_primitives::{B256, U256};
     use base_execution_state_database::{DbTxMut, tables};
-    use base_execution_state_types::StorageEntry;
     use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
+    use base_execution_state_types::StorageEntry;
     use reth_stages::test_utils::TestStageDB;
 
     use super::DbTxPruneExt;
-    use crate::PruneLimiter;
+    use crate::pruning::PruneLimiter;
 
     fn storage_entry(slot_byte: u8) -> StorageEntry {
         StorageEntry { key: B256::with_last_byte(slot_byte), value: U256::from(slot_byte) }

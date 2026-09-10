@@ -1,11 +1,11 @@
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 use base_execution_state_database::DbTxMut;
+use base_execution_state_maintenance::{
+    PruneMode, PruneModes, PruneSegment, PrunerBuilder, SegmentOutput, SegmentOutputCheckpoint,
+};
 use base_execution_state_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderFactory,
-};
-use reth_prune::{
-    PruneMode, PruneModes, PruneSegment, PrunerBuilder, SegmentOutput, SegmentOutputCheckpoint,
 };
 use reth_stages_api::{
     ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
@@ -190,11 +190,11 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
+    use base_execution_state_maintenance::PruneMode;
     use base_execution_state_provider::{
         TransactionsProvider, TransactionsProviderExt, providers::StaticFileWriter,
     };
-    use reth_prune::PruneMode;
+    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;

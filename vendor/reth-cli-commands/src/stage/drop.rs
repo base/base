@@ -6,8 +6,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use base_execution_state_database::{DatabaseError, mdbx::tx::Tx};
 use base_execution_state_database::{DbTx, DbTxMut, tables};
-use base_execution_state_types::StaticFileSegment;
-use clap::Parser;
+use base_execution_state_maintenance::PruneSegment;
 use base_execution_state_maintenance::{
     DbTool,
     init::{
@@ -15,11 +14,12 @@ use base_execution_state_maintenance::{
         insert_genesis_storage_history,
     },
 };
-use reth_node_core::args::StageEnum;
 use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory, StaticFileWriter,
 };
-use reth_prune::PruneSegment;
+use base_execution_state_types::StaticFileSegment;
+use clap::Parser;
+use reth_node_core::args::StageEnum;
 use reth_stages::StageId;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};

@@ -1,12 +1,12 @@
 use base_execution_state_database::DbTxMut;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::{PruneMode, PrunePurpose, PruneSegment, SegmentOutput};
 use base_execution_state_provider::{
     BlockReader, DBProvider, StaticFileProviderFactory, StorageSettingsCache, TransactionsProvider,
 };
+use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::{PruneMode, PrunePurpose, PruneSegment, SegmentOutput};
 use tracing::{debug, instrument};
 
-use crate::{
+use crate::pruning::{
     PrunerError,
     segments::{self, PruneInput, Segment},
 };

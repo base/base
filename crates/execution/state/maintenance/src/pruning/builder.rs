@@ -12,7 +12,7 @@ use base_execution_state_types::PruneModes;
 use reth_exex_types::FinishedExExHeight;
 use tokio::sync::watch;
 
-use crate::{Pruner, segments::SegmentSet};
+use crate::pruning::{Pruner, segments::SegmentSet};
 
 /// Contains the information required to build a pruner
 #[derive(Debug, Clone)]

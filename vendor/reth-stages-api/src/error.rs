@@ -2,11 +2,13 @@ use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::DecompressError;
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_evm_runtime::BlockExecutionError;
+use base_execution_state_maintenance::{
+    PruneSegment, PruneSegmentError, PrunerError, UnwindTargetPrunedError,
+};
+use base_execution_state_provider::ProviderError;
 use base_execution_state_types::DatabaseError;
 use base_execution_state_types::StaticFileSegment;
 use reth_network_p2p::error::DownloadError;
-use base_execution_state_provider::ProviderError;
-use reth_prune::{PruneSegment, PruneSegmentError, PrunerError, UnwindTargetPrunedError};
 use thiserror::Error;
 use tokio::sync::broadcast::error::SendError;
 

@@ -20,7 +20,6 @@ rayon = { workspace = true }
 page_size = { workspace = true }
 reth-exex = { workspace = true }
 thiserror = { workspace = true }
-reth-prune = { workspace = true }
 reth-config = { workspace = true }
 futures-util = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -34,7 +33,7 @@ base-execution-evm-runtime = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-maintenance = {workspace = true}
 alloy-rlp = { workspace = true, features = ["core-net"] }
 num-traits = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }

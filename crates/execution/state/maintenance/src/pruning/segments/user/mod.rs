@@ -1,3 +1,4 @@
+//! Pruning segment implementations.
 mod account_history;
 mod bodies;
 mod receipts;

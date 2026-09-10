@@ -1,3 +1,4 @@
+//! Pruning segment implementations.
 mod receipts;
 mod set;
 mod user;
@@ -5,14 +6,14 @@ mod user;
 use std::{fmt::Debug, ops::RangeInclusive};
 
 use alloy_primitives::{BlockNumber, TxNumber};
+use base_execution_state_provider::{
+    BlockReader, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
+};
 use base_execution_state_types::StageId;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutput,
     SegmentOutputCheckpoint,
-};
-use base_execution_state_provider::{
-    BlockReader, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
 };
 pub use set::SegmentSet;
 use tracing::error;
@@ -21,7 +22,7 @@ pub use user::{
     StorageHistory, TransactionLookup,
 };
 
-use crate::{PruneLimiter, PrunerError};
+use crate::pruning::{PruneLimiter, PrunerError};
 
 /// Prunes data from static files for a given segment.
 ///
@@ -107,7 +108,7 @@ where
 
 /// A segment represents a pruning of some portion of the data.
 ///
-/// Segments are called from [`Pruner`](crate::Pruner) with the following lifecycle:
+/// Segments are called from [`Pruner`](crate::pruning::Pruner) with the following lifecycle:
 /// 1. Call [`Segment::prune`] with `delete_limit` of [`PruneInput`].
 /// 2. If [`Segment::prune`] returned a [`Some`] in `checkpoint` of [`SegmentOutput`], call
 ///    [`Segment::save_checkpoint`].

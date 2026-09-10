@@ -3878,10 +3878,14 @@ version = "0.0.0"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
+ "assert_matches",
  "base-common-chain-config",
  "base-common-io-files",
+ "base-common-observability-metrics",
+ "base-common-observability-tracing",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-memory",
  "base-execution-state-provider",
@@ -3889,12 +3893,18 @@ dependencies = [
  "base-execution-state-types",
  "boyer-moore-magiclen",
  "eyre",
+ "metrics",
  "rayon",
+ "reth-exex-types",
  "reth-primitives-traits",
+ "reth-stages",
+ "reth-testing-utils",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 
@@ -4360,7 +4370,6 @@ dependencies = [
  "reth-node-metrics",
  "reth-payload-util",
  "reth-primitives-traits",
- "reth-prune",
  "reth-rpc-builder",
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
@@ -13767,7 +13776,6 @@ dependencies = [
  "reth-node-events",
  "reth-node-metrics",
  "reth-primitives-traits",
- "reth-prune",
  "reth-stages",
  "reth-static-file",
  "secp256k1 0.30.0",
@@ -14010,7 +14018,6 @@ dependencies = [
  "reth-exex-types",
  "reth-network-p2p",
  "reth-primitives-traits",
- "reth-prune",
  "reth-stages",
  "reth-stages-api",
  "reth-static-file",
@@ -14432,31 +14439,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-prune"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "assert_matches",
- "base-common-observability-metrics",
- "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-execution-state-api",
- "base-execution-state-database",
- "base-execution-state-provider",
- "base-execution-state-types",
- "metrics",
- "reth-exex-types",
- "reth-primitives-traits",
- "reth-stages",
- "reth-testing-utils",
- "rustc-hash",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "reth-rpc-builder"
 version = "0.0.0"
 dependencies = [
@@ -14634,7 +14616,6 @@ dependencies = [
  "reth-exex",
  "reth-network-p2p",
  "reth-primitives-traits",
- "reth-prune",
  "reth-stages-api",
  "reth-static-file",
  "reth-testing-utils",
@@ -14660,13 +14641,13 @@ dependencies = [
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-state-database",
+ "base-execution-state-maintenance",
  "base-execution-state-provider",
  "base-execution-state-types",
  "futures-util",
  "metrics",
  "reth-network-p2p",
  "reth-primitives-traits",
- "reth-prune",
  "reth-static-file",
  "reth-testing-utils",
  "thiserror 2.0.19",

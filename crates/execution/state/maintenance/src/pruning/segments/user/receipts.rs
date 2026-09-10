@@ -1,14 +1,14 @@
 use base_execution_state_database::DbTxMut;
-use base_execution_state_types::{
-    PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
-};
 use base_execution_state_provider::{
     BlockReader, DBProvider, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
     StorageSettingsCache, TransactionsProvider,
 };
+use base_execution_state_types::{
+    PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
+};
 use tracing::instrument;
 
-use crate::{
+use crate::pruning::{
     PrunerError,
     segments::{PruneInput, Segment},
 };
@@ -52,7 +52,7 @@ where
         ret(level = "trace")
     )]
     fn prune(&self, provider: &Provider, input: PruneInput) -> Result<SegmentOutput, PrunerError> {
-        crate::segments::receipts::prune(provider, input)
+        crate::pruning::segments::receipts::prune(provider, input)
     }
 
     fn save_checkpoint(
@@ -60,6 +60,6 @@ where
         provider: &Provider,
         checkpoint: PruneCheckpoint,
     ) -> ProviderResult<()> {
-        crate::segments::receipts::save_checkpoint(provider, checkpoint)
+        crate::pruning::segments::receipts::save_checkpoint(provider, checkpoint)
     }
 }

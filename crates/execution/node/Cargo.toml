@@ -17,14 +17,12 @@ alloy-rlp = { workspace = true }
 humantime = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-exex = { workspace = true }
-reth-prune = { workspace = true }
 reth-config = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 reth-node-core = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-engine-tree = { workspace = true }
@@ -56,6 +54,7 @@ url = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
+base-execution-state-maintenance = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 base-execution-network-discovery = { workspace = true }
 serde_json = { workspace = true,  features = ["alloc"]}
@@ -88,7 +87,6 @@ base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256
 
 [dev-dependencies]
 alloy-genesis = { workspace = true  }
-base-execution-state-maintenance = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-payload-util = { workspace = true }
 base-execution-rpc = { workspace = true }
@@ -100,6 +98,7 @@ base-execution-state-trie = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }

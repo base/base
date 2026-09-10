@@ -25,12 +25,10 @@ humantime = { workspace = true }
 itertools = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
-reth-prune = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
 base-cli-utils = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-node-events = { workspace = true }
@@ -51,6 +49,7 @@ tar = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
+base-execution-state-maintenance = {workspace = true}
 blake3 = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }

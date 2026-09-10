@@ -1,21 +1,21 @@
 //! Common receipts pruning logic.
 //!
-//! - [`crate::segments::user::Receipts`] is responsible for pruning receipts according to the
+//! - [`crate::pruning::segments::user::Receipts`] is responsible for pruning receipts according to the
 //!   user-configured settings (for example, on a full node or with a custom prune config)
 
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_database::{DbTxMut, tables};
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::{
-    PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
-};
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, ProviderResult, PruneCheckpointWriter,
     StaticFileProviderFactory, StorageSettingsCache, TransactionsProvider,
 };
+use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::{
+    PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
+};
 use tracing::{debug, trace};
 
-use crate::{
+use crate::pruning::{
     PrunerError,
     db_ext::DbTxPruneExt,
     segments::{self, PruneInput},

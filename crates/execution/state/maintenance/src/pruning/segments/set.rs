@@ -1,12 +1,12 @@
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader, StorageSettingsCache};
 use base_execution_state_database::DbTxMut;
-use base_execution_state_types::PruneModes;
 use base_execution_state_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, providers::StaticFileProvider,
 };
+use base_execution_state_types::PruneModes;
 
-use crate::segments::{
+use crate::pruning::segments::{
     AccountHistory, Bodies, Segment, SenderRecovery, StorageHistory, TransactionLookup,
     UserReceipts, user::ReceiptsByLogs,
 };

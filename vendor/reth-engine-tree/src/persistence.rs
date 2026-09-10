@@ -9,6 +9,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_runtime_tasks::spawn_os_thread;
+use base_execution_state_maintenance::{PrunerError, PrunerWithFactory};
 use base_execution_state_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
@@ -16,7 +17,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::ProviderError;
 use crossbeam_channel::Sender as CrossbeamSender;
 use reth_primitives_traits::FastInstant as Instant;
-use reth_prune::{PrunerError, PrunerWithFactory};
 use reth_stages_api::{MetricEvent, MetricEventsSender};
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
@@ -403,6 +403,8 @@ mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
     use base_execution_state_database::Database;
+    use base_execution_state_maintenance::Pruner;
+    use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         AccountReader, BalConfig, BalNotificationStream, BalStore, BalStoreHandle,
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,
@@ -411,9 +413,7 @@ mod tests {
         test_utils::create_test_provider_factory,
     };
     use base_execution_state_types::PruneMode;
-    use base_execution_state_maintenance::init::init_genesis;
     use reth_exex_types::FinishedExExHeight;
-    use reth_prune::Pruner;
     use tokio::sync::mpsc::unbounded_channel;
     use {
         base_execution_state_provider::test_utils::TestBlockBuilder,

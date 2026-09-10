@@ -4,6 +4,8 @@ use std::sync::Arc;
 use crate::ChainSpecParser;
 use base_cli_utils::CliContext;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_execution_state_maintenance::PrunerBuilder;
+use base_execution_state_provider::RocksDBProviderFactory;
 use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::cancellation::CancellationToken;
@@ -13,8 +15,6 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
-use base_execution_state_provider::RocksDBProviderFactory;
-use reth_prune::PrunerBuilder;
 use reth_static_file::StaticFileProducer;
 use tracing::info;
 

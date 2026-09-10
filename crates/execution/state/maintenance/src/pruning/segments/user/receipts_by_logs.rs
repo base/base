@@ -1,13 +1,15 @@
 use base_common_types_chain::{BaseReceipt, TxReceipt};
 use base_execution_state_database::{DbTxMut, tables};
+use base_execution_state_provider::{
+    BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider,
+};
 use base_execution_state_types::{
     MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment,
     ReceiptsLogPruneConfig, SegmentOutput,
 };
-use base_execution_state_provider::{BlockReader, DBProvider, PruneCheckpointWriter, TransactionsProvider};
 use tracing::{instrument, trace};
 
-use crate::{
+use crate::pruning::{
     PrunerError,
     db_ext::DbTxPruneExt,
     segments::{PruneInput, Segment},
@@ -231,13 +233,15 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseReceipt;
     use base_execution_state_database::{DbCursorRO, DbTx, tables};
+    use base_execution_state_provider::{
+        BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
+    };
     use base_execution_state_types::{PruneMode, PruneSegment, ReceiptsLogPruneConfig};
     use reth_primitives_traits::InMemorySize;
-    use base_execution_state_provider::{BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams, random_eoa_account, random_log};
 
-    use crate::segments::{PruneInput, PruneLimiter, Segment, user::ReceiptsByLogs};
+    use crate::pruning::segments::{PruneInput, PruneLimiter, Segment, user::ReceiptsByLogs};
 
     #[test]
     fn prune_receipts_by_logs() {

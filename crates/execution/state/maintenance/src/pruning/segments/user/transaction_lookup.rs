@@ -1,18 +1,18 @@
 use alloy_primitives::TxNumber;
 use base_execution_state_api::StorageSettingsCache;
 use base_execution_state_database::{DbTxMut, tables};
+use base_execution_state_provider::{
+    BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
+    StaticFileProviderFactory, TransactionsProviderExt,
+};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
 };
 use reth_primitives_traits::SignedTransaction;
-use base_execution_state_provider::{
-    BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
-    StaticFileProviderFactory, TransactionsProviderExt,
-};
 use tracing::{debug, instrument, trace};
 
-use crate::{
+use crate::pruning::{
     PrunerError,
     segments::{PruneInput, Segment, SegmentOutput},
 };
@@ -206,12 +206,14 @@ mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_execution_state_database::tables;
-    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
     use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
+    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams};
 
-    use crate::segments::{PruneInput, PruneLimiter, Segment, SegmentOutput, TransactionLookup};
+    use crate::pruning::segments::{
+        PruneInput, PruneLimiter, Segment, SegmentOutput, TransactionLookup,
+    };
 
     #[test]
     fn prune_rocksdb() {

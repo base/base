@@ -14,29 +14,42 @@ categories.workspace = true
 [dependencies]
 rayon = { workspace = true }
 serde = { workspace = true }
-thiserror = { workspace = true }
+tokio = { workspace = true }
+metrics = { workspace = true }
+thiserror = {workspace = true}
+rustc-hash = { workspace = true }
 alloy-genesis = { workspace = true }
 base-common-io-files = { workspace = true }
 boyer-moore-magiclen = { workspace = true }
-reth-primitives-traits = { workspace = true }
-base-common-types-chain = { workspace = true }
+reth-primitives-traits = {workspace = true}
 base-common-chain-config = { workspace = true }
+base-execution-state-api = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
 base-execution-state-database = {workspace = true}
+base-execution-state-provider = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
-tracing = { workspace = true, features = ["attributes"] }
-base-execution-state-types = {workspace = true,features = ["std"]}
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+tracing = {features = ["attributes"], workspace = true}
+reth-exex-types = { workspace = true, features = ["default"] }
+base-common-types-chain = {features = ["reth"], workspace = true}
+alloy-primitives = {features = ["map-foldhash"], workspace = true}
+base-execution-state-types = {features = ["std"], workspace = true}
+base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [dev-dependencies]
+assert_matches = { workspace = true }
+reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
+reth-stages = { workspace = true, features = ["test-utils"] }
+reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
+base-execution-state-types = {workspace = true, features = ["arbitrary"]}
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [lints]

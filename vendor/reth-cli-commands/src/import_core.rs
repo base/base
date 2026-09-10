@@ -6,6 +6,11 @@ use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::{DbTx, tables};
+use base_execution_state_maintenance::PruneModes;
+use base_execution_state_provider::{
+    BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
+    StageCheckpointReader,
+};
 use futures::StreamExt;
 use reth_config::Config;
 use reth_downloaders::{
@@ -18,11 +23,6 @@ use reth_network_p2p::{
     headers::downloader::{HeaderDownloader, SyncTarget},
 };
 use reth_node_events::node::NodeEvent;
-use base_execution_state_provider::{
-    BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
-    StageCheckpointReader,
-};
-use reth_prune::PruneModes;
 use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
 use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
