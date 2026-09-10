@@ -6,7 +6,7 @@ use base_common_types_rpc::{
     BaseTransactionRequest, BlockId, CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO,
     state::EvmOverrides,
 };
-use base_execution_evm_blocks::{Database, Evm, TransactionEnvMut};
+use base_execution_evm_blocks::{Database, Evm};
 use base_execution_evm_runtime::{
     Block, Cfg, EvmDatabaseError, ExecutionResult, KECCAK_EMPTY, State, Transaction,
 };

@@ -47,7 +47,7 @@ mod tx;
 pub use tx::*;
 
 mod environment;
-pub use environment::{EvmEnv, EvmLimitParams, TransactionEnvMut};
+pub use environment::{EvmEnv, EvmLimitParams};
 
 #[macro_use]
 mod macros;

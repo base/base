@@ -7,7 +7,7 @@ use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
 use base_execution_evm_runtime::{
     Address, B256, BaseTransactionBuilder, Bytes, DEPOSIT_TRANSACTION_TYPE,
     DepositTransactionParts, EIP8130_TRANSACTION_TYPE, Eip8130TransactionParts, FromRecoveredTx,
-    FromTxWithEncoded, IntoTxEnv, SystemCallTx, Transaction, TxEnv, TxKind, U256,
+    FromTxWithEncoded, IntoTxEnv, SystemCallTx, Transaction, TransactionType, TxEnv, TxKind, U256,
 };
 
 /// Base transaction.
@@ -249,17 +249,41 @@ impl IntoTxEnv<Self> for BaseTransaction {
     }
 }
 
-impl base_execution_evm_runtime::TransactionEnvMut for BaseTransaction {
-    fn set_gas_limit(&mut self, gas_limit: u64) {
-        self.base.set_gas_limit(gas_limit);
+impl BaseTransaction {
+    /// Updates the execution gas limit.
+    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.base.gas_limit = gas_limit;
     }
 
-    fn set_nonce(&mut self, nonce: u64) {
-        self.base.set_nonce(nonce);
+    /// Returns this transaction with the supplied gas limit.
+    pub fn with_gas_limit(mut self, gas_limit: u64) -> Self {
+        self.base.gas_limit = gas_limit;
+        self
     }
 
-    fn set_access_list(&mut self, access_list: base_execution_evm_runtime::AccessList) {
-        self.base.set_access_list(access_list);
+    /// Updates the execution nonce.
+    pub fn set_nonce(&mut self, nonce: u64) {
+        self.base.nonce = nonce;
+    }
+
+    /// Returns this transaction with the supplied nonce.
+    pub fn with_nonce(mut self, nonce: u64) -> Self {
+        self.base.nonce = nonce;
+        self
+    }
+
+    /// Updates the access list, promoting a legacy transaction to EIP-2930.
+    pub fn set_access_list(&mut self, access_list: base_execution_evm_runtime::AccessList) {
+        self.base.access_list = access_list;
+        if self.base.tx_type == TransactionType::Legacy as u8 {
+            self.base.tx_type = TransactionType::Eip2930 as u8;
+        }
+    }
+
+    /// Returns this transaction with the supplied access list.
+    pub fn with_access_list(mut self, access_list: base_execution_evm_runtime::AccessList) -> Self {
+        self.set_access_list(access_list);
+        self
     }
 }
 
