@@ -16,7 +16,7 @@ use reth_rpc_convert::{
     TransactionConversionError, TryIntoTxEnv, transaction::ConvertReceiptInput,
 };
 
-use crate::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
+use crate::eth_services::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
 
 /// Converts Base RPC data using the provider and shared BaseTime cache.
 #[derive(Clone)]

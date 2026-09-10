@@ -1,4 +1,5 @@
 use crate::OtterscanServer;
+use crate::{EthApiError, utils::binary_search};
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
 use async_trait::async_trait;
@@ -16,7 +17,6 @@ use base_execution_evm_inspectors::{
 };
 use base_execution_evm_machine::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use reth_rpc_eth_types::{EthApiError, utils::binary_search};
 use reth_rpc_server_types::result::internal_rpc_err;
 
 use crate::{BaseEthApi, EthApiServer};

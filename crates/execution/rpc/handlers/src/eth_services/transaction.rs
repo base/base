@@ -86,8 +86,8 @@ impl TransactionSource<BaseTxEnvelope> {
     /// Conversion into network specific transaction type.
     pub fn into_transaction<Builder>(
         self,
-        resp_builder: &crate::BaseRpcConverter<Builder>,
-    ) -> Result<base_common_types_rpc::BaseTransaction, crate::BaseEthApiError>
+        resp_builder: &crate::eth_services::BaseRpcConverter<Builder>,
+    ) -> Result<base_common_types_rpc::BaseTransaction, crate::eth_services::BaseEthApiError>
     where
         Builder: base_execution_state_api::BlockReader<
                 Block = base_common_types_chain::BaseBlock,

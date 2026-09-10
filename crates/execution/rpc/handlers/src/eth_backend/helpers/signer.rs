@@ -1,5 +1,6 @@
 //! An abstraction over ethereum signers.
 
+use crate::SignError;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, Signature, eip191_hash_message, map::AddressMap};
 use alloy_signer::SignerSync;
@@ -8,7 +9,6 @@ use base_common_client_ethereum::{
 };
 use base_common_types_chain::{BaseTxEnvelope, SignableTransaction};
 use base_common_types_rpc::BaseTransactionRequest;
-use reth_rpc_eth_types::SignError;
 
 use crate::{EthSigner, Result};
 

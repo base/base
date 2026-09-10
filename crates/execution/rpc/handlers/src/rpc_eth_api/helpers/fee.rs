@@ -1,5 +1,9 @@
 //! Loads fee history from database. Helper trait for `eth_` fee and transaction RPC methods.
 
+use crate::{
+    BaseEthApiError, EthApiError, FeeHistoryEntry, RpcInvalidTransactionError,
+    fee_history::calculate_reward_percentiles_for_block, utils::checked_blob_gas_used_ratio,
+};
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::U256;
 use base_common_chain_config::ChainSpecProvider;
@@ -7,10 +11,6 @@ use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::{BlockNumberOrTag, FeeHistory};
 use base_execution_state_api::{BlockIdReader, BlockNumReader, BlockReaderIdExt, HeaderProvider};
 use futures::{Future, StreamExt};
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, FeeHistoryEntry, RpcInvalidTransactionError,
-    fee_history::calculate_reward_percentiles_for_block, utils::checked_blob_gas_used_ratio,
-};
 use tracing::debug;
 
 use crate::BaseEthApi;

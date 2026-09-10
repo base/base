@@ -10,12 +10,10 @@ use reth_rpc_server_types::constants::{
     DEFAULT_PROOF_PERMITS,
 };
 use {
+    crate::EthStateCache, crate::EthStateCacheConfig, crate::FeeHistoryCache,
+    crate::FeeHistoryCacheConfig, crate::ForwardConfig, crate::GasCap, crate::GasPriceOracle,
+    crate::fee_history::fee_history_cache_new_blocks_task,
     base_common_types_rpc::GasPriceOracleConfig, base_common_types_rpc::PendingBlockKind,
-    reth_rpc_eth_types::EthStateCache, reth_rpc_eth_types::EthStateCacheConfig,
-    reth_rpc_eth_types::FeeHistoryCache, reth_rpc_eth_types::FeeHistoryCacheConfig,
-    reth_rpc_eth_types::ForwardConfig, reth_rpc_eth_types::GasCap,
-    reth_rpc_eth_types::GasPriceOracle,
-    reth_rpc_eth_types::fee_history::fee_history_cache_new_blocks_task,
 };
 
 use crate::{BaseEthApi, BaseRpcContext, BaseRpcConverter, eth_backend::core::BaseEthApiInner};

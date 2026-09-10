@@ -1,5 +1,6 @@
 //! Loads chain metadata.
 
+use crate::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
 use alloy_primitives::{U64, U256};
 use base_common_types_chain::ChainInfo;
 use base_common_types_rpc::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus};
@@ -9,7 +10,6 @@ use base_execution_state_api::{
 use base_execution_state_types::{PruneMode, PruneSegment};
 use futures::Future;
 use reth_network_api::NetworkInfo;
-use reth_rpc_eth_types::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
 
 use crate::{BaseEthApi, EthSigner};
 

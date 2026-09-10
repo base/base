@@ -13,7 +13,7 @@ use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
 use reth_rpc_convert::{EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
 
-use crate::{
+use crate::eth_services::{
     EthApiError, RevertError,
     error::{RpcInvalidTransactionError, SignError},
 };
@@ -208,8 +208,8 @@ impl From<Infallible> for BaseEthApiError {
     }
 }
 
-impl From<crate::error::RpcPoolError> for BaseEthApiError {
-    fn from(error: crate::error::RpcPoolError) -> Self {
+impl From<crate::eth_services::error::RpcPoolError> for BaseEthApiError {
+    fn from(error: crate::eth_services::error::RpcPoolError) -> Self {
         Self::Eth(EthApiError::PoolError(error))
     }
 }

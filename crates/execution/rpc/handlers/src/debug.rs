@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::EthApiError;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -16,19 +17,18 @@ use base_execution_payload_builder::{
     builder::{BasePayloadBuilderCtx, Builder},
 };
 use base_execution_payload_types::PayloadBuilderError;
+use base_execution_state_provider::{
+    BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
+    StateProviderFactory,
+};
 use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
+use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_txpool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;
-use base_execution_state_provider::{
-    BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
-    StateProviderFactory,
-};
-use reth_rpc_eth_types::EthApiError;
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
-use base_execution_state_types::ExecutionWitnessMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 

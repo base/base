@@ -7,6 +7,7 @@ use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
+use base_execution_rpc_handlers::error::RpcPoolError;
 use base_execution_state_api::BlockReaderIdExt;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,
@@ -19,7 +20,6 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use reth_rpc_eth_types::error::RpcPoolError;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -309,13 +309,13 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, SignableTransaction,
         TxEip1559, TxEip8130,
     };
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use base_execution_txpool::{
         NoopTransactionPool, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},
     };
     use base_testing_support::build_test_genesis_zenith;
     use httpmock::prelude::*;
-    use base_execution_state_provider::test_utils::MockEthProvider;
     use serde_json::{self, json};
 
     use super::*;

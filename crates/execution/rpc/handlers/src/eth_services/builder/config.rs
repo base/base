@@ -10,7 +10,7 @@ use reth_rpc_server_types::constants::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use crate::eth_services::{
     EthStateCacheConfig, FeeHistoryCacheConfig, ForwardConfig, GasPriceOracleConfig,
     RPC_DEFAULT_GAS_CAP,
 };

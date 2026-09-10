@@ -10,6 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{
+    EthApiError, EthFilterConfig, EthStateCache, EthSubscriptionIdProvider,
+    logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
+};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::TxHash;
 use async_trait::async_trait;
@@ -32,10 +36,6 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_eth_types::{
-    EthApiError, EthFilterConfig, EthStateCache, EthSubscriptionIdProvider,
-    logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
-};
 use reth_rpc_server_types::{ToRpcResult, result::rpc_error_with_code};
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
@@ -789,7 +789,7 @@ impl PendingTransactionsReceiver {
 #[derive(Debug, Clone)]
 struct FullTransactionsReceiver<TxCompat> {
     txs_stream: Arc<Mutex<NewSubpoolTransactionStream>>,
-    converter: reth_rpc_eth_types::BaseRpcConverter<TxCompat>,
+    converter: crate::BaseRpcConverter<TxCompat>,
 }
 
 impl<TxCompat> FullTransactionsReceiver<TxCompat>
@@ -807,7 +807,7 @@ where
     /// Creates a new `FullTransactionsReceiver` encapsulating the provided transaction stream.
     fn new(
         stream: NewSubpoolTransactionStream,
-        converter: reth_rpc_eth_types::BaseRpcConverter<TxCompat>,
+        converter: crate::BaseRpcConverter<TxCompat>,
     ) -> Self {
         Self { txs_stream: Arc::new(Mutex::new(stream)), converter }
     }

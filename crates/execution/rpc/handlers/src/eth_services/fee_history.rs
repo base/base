@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use tracing::trace;
 
 use super::{EthApiError, EthStateCache};
-use crate::utils::checked_blob_gas_used_ratio;
+use crate::eth_services::utils::checked_blob_gas_used_ratio;
 
 /// Contains cached fee history entries for blocks.
 ///

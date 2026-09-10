@@ -1,7 +1,7 @@
 //! Inputs used to construct the Base eth API.
 
+use crate::{EthConfig, EthStateCache};
 use base_common_runtime_tasks::TaskExecutor;
-use reth_rpc_eth_types::{EthConfig, EthStateCache};
 
 /// Node components and RPC settings used to construct the Base eth API.
 #[derive(Debug)]

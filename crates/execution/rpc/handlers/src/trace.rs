@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::TraceApiServer;
+use crate::{BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction};
 use alloy_eips::BlockId;
 use alloy_primitives::{
     Address, B256, BlockHash, Bytes,
@@ -22,13 +23,10 @@ use base_execution_evm_inspectors::{
 };
 use base_execution_evm_runtime::DatabaseCommit;
 use base_execution_state_api::{BlockNumReader, BlockReader};
+use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_txpool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
-use base_execution_state_provider::providers::BlockchainProvider;
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthConfig, error::EthApiError, utils::recover_raw_transaction,
-};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 

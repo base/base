@@ -1,5 +1,6 @@
 use std::{future::Future, sync::Arc};
 
+use crate::{EthApiError, EthResult};
 use crate::{RethApiServer, RethJitAction};
 use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
@@ -14,7 +15,6 @@ use base_execution_state_types::ExecutionOutcome;
 use futures::{Stream, StreamExt};
 use jsonrpsee::{PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink, core::RpcResult};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_eth_types::{EthApiError, EthResult};
 use serde::Serialize;
 use tokio::sync::oneshot;
 use {

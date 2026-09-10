@@ -19,12 +19,12 @@ use tracing::trace;
 pub struct TxPoolApi<Pool, Eth> {
     /// An interface to interact with the pool
     pool: Pool,
-    converter: reth_rpc_eth_types::BaseRpcConverter<Eth>,
+    converter: crate::BaseRpcConverter<Eth>,
 }
 
 impl<Pool, Eth> TxPoolApi<Pool, Eth> {
     /// Creates a new instance of `TxpoolApi`.
-    pub const fn new(pool: Pool, converter: reth_rpc_eth_types::BaseRpcConverter<Eth>) -> Self {
+    pub const fn new(pool: Pool, converter: crate::BaseRpcConverter<Eth>) -> Self {
         Self { pool, converter }
     }
 }
@@ -44,10 +44,7 @@ where
 {
     fn content(
         &self,
-    ) -> Result<
-        TxpoolContent<base_common_types_rpc::BaseTransaction>,
-        reth_rpc_eth_types::BaseEthApiError,
-    > {
+    ) -> Result<TxpoolContent<base_common_types_rpc::BaseTransaction>, crate::BaseEthApiError> {
         #[inline]
         fn insert<RpcTxB>(
             tx: &base_execution_txpool::BasePooledTransaction,
@@ -55,8 +52,8 @@ where
                 Address,
                 BTreeMap<String, base_common_types_rpc::BaseTransaction>,
             >,
-            resp_builder: &reth_rpc_eth_types::BaseRpcConverter<RpcTxB>,
-        ) -> Result<(), reth_rpc_eth_types::BaseEthApiError>
+            resp_builder: &crate::BaseRpcConverter<RpcTxB>,
+        ) -> Result<(), crate::BaseEthApiError>
         where
             RpcTxB: base_execution_state_api::BlockReader<
                     Block = base_common_types_chain::BaseBlock,

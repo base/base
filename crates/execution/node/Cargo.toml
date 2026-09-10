@@ -35,7 +35,6 @@ reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
 base-tx-forwarding = { workspace = true }
 reth-node-ethstats = { workspace = true }
-reth-rpc-eth-types = { workspace = true }
 base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
@@ -72,11 +71,11 @@ base-execution-state-tasks = { workspace = true, features = ["metrics"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-network-types = { workspace = true, features = ["default"] }
-base-execution-rpc-handlers = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
+base-execution-rpc-handlers = {features = ["client", "default"], workspace = true}
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-tracing = { workspace = true, features = ["default", "std"] }
@@ -87,11 +86,10 @@ base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256
 alloy-genesis = { workspace = true  }
 alloy-hardforks = { workspace = true }
 reth-payload-util = { workspace = true }
-base-execution-rpc-handlers = { workspace = true }
-reth-rpc-eth-types = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
+base-execution-rpc-handlers = {workspace = true}
 base-execution-state-trie = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-common-client-ethereum = { workspace = true }
@@ -137,7 +135,7 @@ required-features = ["test-utils"]
 default = ["reth-codec"]
 asm-keccak = ["alloy-primitives/asm-keccak", "reth-node-core/asm-keccak", "base-execution-evm-runtime/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global", "reth-node-core/keccak-cache-global"]
-js-tracer = ["reth-rpc-eth-types/js-tracer", "base-execution-rpc-handlers/js-tracer"]
+js-tracer = ["base-execution-rpc-handlers/js-tracer"]
 test-utils = [
     "base-common-chain-config/test-utils",
     "base-common-types-chain/arbitrary",

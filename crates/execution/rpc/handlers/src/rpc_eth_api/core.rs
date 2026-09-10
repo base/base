@@ -2,6 +2,7 @@
 //! the `eth_` namespace.
 use std::collections::HashMap;
 
+use crate::{BaseEthApiError, EthApiError, EthCapabilities, FillTransaction};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2930::AccessListResult};
 use alloy_primitives::{Address, B64, B256, Bytes, U64, U256};
@@ -15,7 +16,6 @@ use base_common_types_rpc::{
     state::{EvmOverrides, StateOverride},
 };
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_eth_types::{BaseEthApiError, EthApiError, EthCapabilities, FillTransaction};
 use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
 use serde_json::Value;
 use tracing::trace;

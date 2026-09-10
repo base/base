@@ -1,5 +1,6 @@
 //! Streams subscriptions providers for `eth_subscribe`.
 
+use crate::logs_utils;
 use base_common_types_chain::{BlockHeader, TxReceipt, transaction::TxHashRef};
 use base_common_types_rpc::{
     BaseTransactionReceipt, Filter, Log, pubsub::TransactionReceiptsParams,
@@ -8,7 +9,6 @@ use base_execution_state_provider::CanonStateSubscriptions;
 use futures::StreamExt;
 use reth_primitives_traits::TransactionMeta;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_rpc_eth_types::logs_utils;
 use tracing::error;
 
 use crate::BaseEthApi;

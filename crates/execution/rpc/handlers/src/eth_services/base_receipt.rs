@@ -18,7 +18,7 @@ use base_execution_state_api::BlockReader;
 use reth_primitives_traits::SealedBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 
-use crate::{BaseEthApiError, BaseTimeCache, EthApiError, receipt::build_receipt};
+use crate::eth_services::{BaseEthApiError, BaseTimeCache, EthApiError, receipt::build_receipt};
 
 /// Converter for Base receipts.
 #[derive(Clone)]

@@ -12,8 +12,6 @@ mod config;
 pub use config::*;
 mod debug;
 pub use debug::*;
-mod error;
-pub use error::*;
 mod eth;
 pub use eth::*;
 mod metrics;
@@ -126,3 +124,6 @@ mod rpc_api_miner;
 #[cfg(feature = "client")]
 pub use rpc_api_miner::MinerApiClient;
 pub use rpc_api_miner::MinerApiServer;
+
+mod eth_services;
+pub use eth_services::*;

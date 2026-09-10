@@ -13,7 +13,7 @@ use derive_more::Constructor;
 use reth_primitives_traits::{IndexedTx, RecoveredBlock, SealedHeader};
 use {base_execution_state_provider::BlockState, base_execution_state_types::ExecutedBlock};
 
-use crate::block::BlockAndReceipts;
+use crate::eth_services::block::BlockAndReceipts;
 
 /// Configured [`base_execution_evm_blocks::EvmEnv`] for a pending block.
 #[derive(Debug, Clone, Constructor)]
@@ -146,8 +146,8 @@ impl PendingBlock {
     pub fn find_and_convert_transaction_receipt<C>(
         &self,
         tx_hash: TxHash,
-        converter: &crate::BaseRpcConverter<C>,
-    ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
+        converter: &crate::eth_services::BaseRpcConverter<C>,
+    ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
     where
         C: base_execution_state_api::BlockReader<
                 Block = base_common_types_chain::BaseBlock,

@@ -10,6 +10,7 @@ use base_execution_rpc_handlers::{
     AdminApi, BaseEthApi, BaseEthApiBuilder, BaseEthConfigApiServer,
     DebugExecutionWitnessApiServer, DevSigner, EthApiCtx, MinerApiExtServer,
 };
+use base_execution_rpc_handlers::{EthStateCache, cache::cache_new_blocks_task};
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::providers::BlockchainProvider;
@@ -23,7 +24,6 @@ use reth_node_core::node_config::NodeConfig;
 use reth_rpc_builder::{
     RpcConfig, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
 };
-use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
 use {base_execution_txpool::BaseTransactionPool, base_node_context::AddOnsContext};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};

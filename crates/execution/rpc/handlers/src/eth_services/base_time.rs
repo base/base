@@ -7,8 +7,8 @@ use std::{
 
 use alloy_primitives::BlockHash;
 use base_common_types_chain::BaseTransaction;
-use base_execution_state_api::{ProviderError, TransactionsProvider};
 use base_consensus_batch_types::BaseTimeUpdateTx;
+use base_execution_state_api::{ProviderError, TransactionsProvider};
 use lru::LruCache;
 
 /// Cache of validated `BaseTime` timestamps keyed by block hash.

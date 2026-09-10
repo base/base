@@ -8,7 +8,7 @@ use base_common_types_rpc::BaseTransactionReceipt;
 use reth_primitives_traits::{BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 
-use crate::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
+use crate::eth_services::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
 
 /// Cached data for a transaction lookup.
 #[derive(Debug, Clone)]
@@ -121,8 +121,8 @@ impl BlockAndReceipts {
     pub fn find_and_convert_transaction_receipt<C>(
         &self,
         tx_hash: TxHash,
-        converter: &crate::BaseRpcConverter<C>,
-    ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
+        converter: &crate::eth_services::BaseRpcConverter<C>,
+    ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
     where
         C: base_execution_state_api::BlockReader<
                 Block = base_common_types_chain::BaseBlock,
@@ -151,8 +151,8 @@ pub fn convert_transaction_receipt<C>(
     all_receipts: &[BaseReceipt],
     tx: IndexedTx<'_>,
     receipt: &BaseReceipt,
-    converter: &crate::BaseRpcConverter<C>,
-) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
+    converter: &crate::eth_services::BaseRpcConverter<C>,
+) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
 where
     C: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
@@ -189,8 +189,8 @@ impl CachedTransaction<BaseReceipt> {
     /// Returns `None` if receipts are not available or the transaction index is out of bounds.
     pub fn into_receipt<C>(
         self,
-        converter: &crate::BaseRpcConverter<C>,
-    ) -> Option<Result<BaseTransactionReceipt, crate::BaseEthApiError>>
+        converter: &crate::eth_services::BaseRpcConverter<C>,
+    ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
     where
         C: base_execution_state_api::BlockReader<
                 Block = base_common_types_chain::BaseBlock,

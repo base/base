@@ -1,8 +1,8 @@
 //! Spawns a blocking task. CPU heavy tasks are executed with the `rayon` library. IO heavy tasks
 //! are executed on the `tokio` runtime.
 
+use crate::{BaseEthApiError, EthApiError};
 use futures::Future;
-use reth_rpc_eth_types::{BaseEthApiError, EthApiError};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, oneshot};
 
 use crate::BaseEthApi;

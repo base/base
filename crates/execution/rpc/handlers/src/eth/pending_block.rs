@@ -3,8 +3,8 @@
 use alloy_eips::BlockNumberOrTag;
 use base_execution_state_api::{BlockReaderIdExt, StateProviderBox};
 use {
-    base_common_types_rpc::PendingBlockKind, reth_rpc_eth_types::EthApiError,
-    reth_rpc_eth_types::PendingBlock, reth_rpc_eth_types::block::BlockAndReceipts,
+    crate::EthApiError, crate::PendingBlock, crate::block::BlockAndReceipts,
+    base_common_types_rpc::PendingBlockKind,
 };
 
 use crate::{BaseEthApi, BaseEthApiError};

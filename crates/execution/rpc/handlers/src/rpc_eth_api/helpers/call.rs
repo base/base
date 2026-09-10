@@ -3,6 +3,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::{
+    BaseEthApiError, EthApiError, StateCacheDb,
+    simulate::{self, EthSimulateError},
+};
 use alloy_eips::eip2930::AccessListResult;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes, U256};
@@ -32,10 +36,6 @@ use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_primitives_traits::Recovered;
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, StateCacheDb,
-    simulate::{self, EthSimulateError},
-};
 use tracing::{trace, warn};
 use {
     reth_rpc_convert::OverrideBlockHashes, reth_rpc_convert::apply_block_overrides,
@@ -121,7 +121,7 @@ impl BaseEthApi {
                     let mut evm_env = this
                         .evm_config()
                         .next_evm_env(&parent, &attributes)
-                        .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+                        .map_err(|error| crate::EthApiError::Internal(error.into()))
                         .map_err(BaseEthApiError::from_eth_err)?;
 
                     // Always disable EIP-3607
@@ -176,7 +176,7 @@ impl BaseEthApi {
                     let ctx = this
                         .evm_config()
                         .context_for_next_block(&parent, attributes)
-                        .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+                        .map_err(|error| crate::EthApiError::Internal(error.into()))
                         .map_err(BaseEthApiError::from_eth_err)?;
                     let map_err = |e: EthApiError| -> BaseEthApiError {
                         match e.as_simulate_error() {
@@ -649,7 +649,7 @@ impl BaseEthApi {
                 let mut executor = this
                     .evm_config()
                     .executor_for_block(&mut db, block.sealed_block())
-                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+                    .map_err(|error| crate::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;
                 executor.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;
 

@@ -31,7 +31,6 @@ alloy-primitives = { workspace = true }
 base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-payload-util = { workspace = true }
-reth-rpc-eth-types = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
 nanoid = { workspace = true, optional = true }
@@ -93,7 +92,6 @@ base-execution-state-types = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-types = { workspace = true, features = ["default"] }
-base-execution-rpc-handlers = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-state-database = { workspace = true, features = ["default"] }
 base-common-observability-tracing = { workspace = true, features = ["otlp"] }
@@ -101,6 +99,7 @@ base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
+base-execution-rpc-handlers = {features = ["client", "default"], workspace = true}
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "json"] }
 
 [target.'cfg(unix)'.dependencies]

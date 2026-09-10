@@ -17,9 +17,9 @@ tracing = { workspace = true }
 jsonrpsee = { workspace = true }
 async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
-reth-rpc-eth-types = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
+base-execution-rpc-handlers = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 base-common-observability-events = { workspace = true }
 base-common-observability-metrics = { workspace = true }
@@ -36,10 +36,10 @@ base-common-client-ethereum = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
 httpmock = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-events = { workspace = true, features = ["test-utils"] }
 
 [features]

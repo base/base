@@ -24,7 +24,7 @@ use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_rpc_convert::RpcBlockConverter;
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 
-use crate::{EthApiError, error::ToRpcError};
+use crate::eth_services::{EthApiError, error::ToRpcError};
 
 /// Fallback seconds added between simulated block timestamps when neither the user nor the chain
 /// hint provides a value.
@@ -297,7 +297,7 @@ pub fn execute_transactions<S, T>(
     remaining_call_gas_limit: &mut Option<u64>,
     chain_id: u64,
     compute_state_root: bool,
-    converter: &crate::BaseRpcConverter<T>,
+    converter: &crate::eth_services::BaseRpcConverter<T>,
 ) -> Result<
     (
         BlockBuilderOutcome,
@@ -418,7 +418,7 @@ pub fn resolve_transaction<DB: Database, T>(
     chain_id: u64,
     disable_nonce_check: bool,
     db: &mut DB,
-    converter: &crate::BaseRpcConverter<T>,
+    converter: &crate::eth_services::BaseRpcConverter<T>,
 ) -> Result<Recovered<BaseTxEnvelope>, EthApiError>
 where
     DB::Error: Into<EthApiError>,
@@ -499,8 +499,8 @@ pub fn build_simulated_block<T>(
     block: RecoveredBlock,
     results: Vec<ExecutionResult<HaltReasonFor>>,
     txs_kind: BlockTransactionsKind,
-    converter: &crate::BaseRpcConverter<T>,
-) -> Result<SimulatedBlock<BaseBlockResponse>, crate::BaseEthApiError>
+    converter: &crate::eth_services::BaseRpcConverter<T>,
+) -> Result<SimulatedBlock<BaseBlockResponse>, crate::eth_services::BaseEthApiError>
 where
     T: base_execution_state_api::BlockReader<
             Block = base_common_types_chain::BaseBlock,
@@ -518,7 +518,8 @@ where
     for (index, (result, tx)) in results.into_iter().zip(block.body().transactions()).enumerate() {
         let call = match result {
             ExecutionResult::Halt { reason, gas, .. } => {
-                let error = crate::BaseEthApiError::from_evm_halt(reason, tx.gas_limit());
+                let error =
+                    crate::eth_services::BaseEthApiError::from_evm_halt(reason, tx.gas_limit());
                 SimCallResult {
                     return_data: Bytes::new(),
                     error: Some(SimulateError {
@@ -533,7 +534,7 @@ where
                 }
             }
             ExecutionResult::Revert { output, gas, .. } => {
-                let error = crate::BaseEthApiError::from_revert(output.clone());
+                let error = crate::eth_services::BaseEthApiError::from_revert(output.clone());
                 SimCallResult {
                     return_data: Bytes::new(),
                     error: Some(SimulateError {
@@ -601,7 +602,7 @@ mod tests {
     use super::{
         EthSimulateError, INTERNAL_ERROR_CODE, apply_precompile_overrides, sanitize_chain,
     };
-    use crate::{EthApiError, error::ToRpcError};
+    use crate::eth_services::{EthApiError, error::ToRpcError};
 
     #[test]
     fn nonce_max_value_error_uses_internal_error_code() {

@@ -3,16 +3,14 @@
 
 use std::sync::Arc;
 
+use crate::{BaseEthApiError, EthApiError, utils::calculate_gas_used_and_next_log_index};
 use base_common_types_chain::{BaseReceipt, TxReceipt, transaction::TransactionMeta};
 use base_common_types_rpc::BaseTransactionReceipt;
 use base_execution_state_api::ProviderTx;
+use base_execution_state_provider::providers::BlockchainProvider;
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock};
-use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, utils::calculate_gas_used_and_next_log_index,
-};
 
 use crate::BaseEthApi;
 

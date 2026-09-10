@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::MevSimApiServer;
+use crate::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
 use base_common_runtime_tasks::pool::BlockingTaskGuard;
@@ -19,7 +20,6 @@ use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
-use reth_rpc_eth_types::{BaseEthApiError, EthApiError, utils::recover_raw_transaction};
 use tracing::trace;
 use {base_execution_evm_runtime::BlockEnvironment, reth_rpc_convert::apply_block_overrides};
 

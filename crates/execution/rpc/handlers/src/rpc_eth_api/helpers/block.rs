@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::BaseEthApiError;
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
 use base_common_types_chain::{TxReceipt, transaction::TxHashRef};
@@ -14,7 +15,6 @@ use reth_primitives_traits::{
     AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,
 };
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_rpc_eth_types::BaseEthApiError;
 
 use crate::BaseEthApi;
 

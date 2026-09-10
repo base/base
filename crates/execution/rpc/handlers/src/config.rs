@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::EthApiError;
 use alloy_eip2124::Head;
 use alloy_eips::{
     eip4844::BLOB_TX_MIN_BLOB_GASPRICE,
@@ -18,7 +19,6 @@ use base_execution_evm_runtime::database::EmptyDB;
 use base_execution_state_api::BlockReaderIdExt;
 use base_execution_state_types::ProviderError;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_eth_types::EthApiError;
 
 /// RPC endpoint support for [EIP-7910](https://eips.ethereum.org/EIPS/eip-7910)
 #[cfg_attr(not(feature = "client"), rpc(server, namespace = "eth"))]
@@ -59,7 +59,7 @@ where
         let current_precompiles = Self::evm_to_precompiles_map(
             self.evm_config
                 .evm_for_block(EmptyDB::default(), &latest)
-                .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?,
+                .map_err(|error| crate::EthApiError::Internal(error.into()))?,
         );
 
         let mut fork_timestamps =
@@ -94,7 +94,7 @@ where
             let next_precompiles = Self::evm_to_precompiles_map(
                 self.evm_config
                     .evm_for_block(EmptyDB::default(), &fake_header)
-                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?,
+                    .map_err(|error| crate::EthApiError::Internal(error.into()))?,
             );
 
             config.next =
@@ -113,7 +113,7 @@ where
         let last_precompiles = Self::evm_to_precompiles_map(
             self.evm_config
                 .evm_for_block(EmptyDB::default(), &fake_header)
-                .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))?,
+                .map_err(|error| crate::EthApiError::Internal(error.into()))?,
         );
 
         config.last =

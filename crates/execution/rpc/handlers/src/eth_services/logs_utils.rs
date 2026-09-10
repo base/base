@@ -15,17 +15,17 @@ use jsonrpsee_types::ErrorObject;
 use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use thiserror::Error;
 
-use crate::EthApiError;
+use crate::eth_services::EthApiError;
 
 /// Returns all matching and converted logs of a block's receipts when the transaction hashes are
 /// known.
 pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
-    converter: &crate::BaseRpcConverter<C>,
+    converter: &crate::eth_services::BaseRpcConverter<C>,
     filter: &Filter,
     header: &reth_primitives_traits::SealedHeader,
     tx_hashes_and_receipts: I,
     removed: bool,
-) -> Result<Vec<Log>, crate::BaseEthApiError>
+) -> Result<Vec<Log>, crate::eth_services::BaseEthApiError>
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
     C: base_execution_state_api::BlockReader<
@@ -84,7 +84,7 @@ pub enum ProviderOrBlock<'a, P: BlockReader> {
 /// If the log matches, look up the corresponding transaction hash.
 pub fn append_matching_block_logs<P, C>(
     all_logs: &mut Vec<Log>,
-    converter: &crate::BaseRpcConverter<C>,
+    converter: &crate::eth_services::BaseRpcConverter<C>,
     provider_or_block: ProviderOrBlock<'_, P>,
     filter: &Filter,
     header: &reth_primitives_traits::SealedHeader,

@@ -1,4 +1,5 @@
 //! Helpers for `eth_blockAccessList` RPC method.
+use crate::{BaseEthApiError, EthApiError};
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal};
 use alloy_primitives::Bytes;
 use base_common_types_chain::BlockHeader;
@@ -6,7 +7,6 @@ use base_common_types_rpc::BlockId;
 use base_execution_evm_blocks::{BlockExecutor, Evm};
 use base_execution_evm_runtime::database::State;
 use base_execution_state_api::StateProviderFactory;
-use reth_rpc_eth_types::{BaseEthApiError, EthApiError};
 
 use crate::BaseEthApi;
 
@@ -26,7 +26,7 @@ impl BaseEthApi {
                 self.cache().get_bal(block.hash()).await.map_err(BaseEthApiError::from_eth_err)?
             {
                 let (bal, _) = DecodedBal::from_rlp_bytes(cached_bal.as_raw().clone())
-                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+                    .map_err(|error| crate::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?
                     .split();
                 return Ok(Some(Vec::from(bal)));
@@ -44,7 +44,7 @@ impl BaseEthApi {
                 let mut executor = eth_api
                     .evm_config()
                     .executor_for_block(&mut db, block.sealed_block())
-                    .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+                    .map_err(|error| crate::EthApiError::Internal(error.into()))
                     .map_err(BaseEthApiError::from_eth_err)?;
 
                 executor.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;

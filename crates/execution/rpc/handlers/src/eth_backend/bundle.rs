@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+use crate::{
+    BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
+};
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Keccak256, U256, uint};
 use base_common_chain_config::ChainSpecProvider;
@@ -14,9 +17,6 @@ use base_execution_evm_runtime::BlockEnvironment;
 use base_execution_evm_runtime::{DatabaseCommit, DatabaseRef};
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, RpcInvalidTransactionError, utils::recover_raw_transaction,
-};
 
 use crate::{BaseEthApi, EthCallBundleApiServer};
 

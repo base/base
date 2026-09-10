@@ -150,7 +150,6 @@ members = [
   "crates/execution/state/provider",
   "vendor/reth-rpc-builder",
   "vendor/reth-rpc-convert",
-  "vendor/reth-rpc-eth-types",
   "vendor/reth-rpc-layer",
   "vendor/reth-rpc-server-types",
   "vendor/reth-stages",
@@ -459,7 +458,6 @@ reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = fals
 reth-engine-local = { path = "vendor/reth-engine-local", default-features = false }
 base-execution-network-types = { path = "crates/execution/network/types", default-features = false }
 reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
-reth-rpc-eth-types = { path = "vendor/reth-rpc-eth-types", default-features = false }
 reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = false }
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }

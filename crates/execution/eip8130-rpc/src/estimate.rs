@@ -8,8 +8,8 @@ use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
 use base_execution_evm_machine::{Block, BlockEnv, ExecutionResult};
 use base_execution_evm_runtime::BaseTransaction as BaseRevm;
 use base_execution_rpc_handlers::BaseEthApi;
+use base_execution_rpc_handlers::BaseEthApiError;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_rpc_eth_types::BaseEthApiError;
 use {
     base_execution_evm_runtime::EvmFactory, reth_rpc_convert::apply_block_overrides,
     reth_rpc_convert::apply_state_overrides,

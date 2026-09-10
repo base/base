@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin};
 use alloy_eips::eip7840::BlobParams;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
@@ -28,9 +29,6 @@ use base_execution_txpool::{
 };
 use futures::Future;
 use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin,
-};
 use tracing::debug;
 
 use crate::BaseEthApi;
@@ -52,7 +50,7 @@ impl BaseEthApi {
             let evm_env = self
                 .evm_config()
                 .evm_env(block.header())
-                .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+                .map_err(|error| crate::EthApiError::Internal(error.into()))
                 .map_err(BaseEthApiError::from_eth_err)?;
 
             return Ok(PendingBlockEnv::new(
@@ -72,7 +70,7 @@ impl BaseEthApi {
         let evm_env = self
             .evm_config()
             .next_evm_env(&latest, &crate::BasePendingEnv::attributes(&latest))
-            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+            .map_err(|error| crate::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)?;
 
         Ok(PendingBlockEnv::new(evm_env, PendingBlockEnvOrigin::DerivedFromLatest(latest)))
@@ -168,7 +166,7 @@ impl BaseEthApi {
         let mut builder = self
             .evm_config()
             .builder_for_next_block(&mut db, parent, crate::BasePendingEnv::attributes(parent))
-            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+            .map_err(|error| crate::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)?;
 
         builder.apply_pre_execution_changes().map_err(BaseEthApiError::from_eth_err)?;

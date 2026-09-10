@@ -6,7 +6,7 @@ use base_common_types_chain::{BaseTransactionInfo, BaseTxEnvelope, DepositInfo};
 use base_common_types_rpc::TransactionInfo;
 use base_execution_state_api::{ProviderError, ReceiptProvider, TransactionsProvider};
 
-use crate::BaseTimeCache;
+use crate::eth_services::BaseTimeCache;
 
 /// Enriches transaction metadata with Base deposit and timestamp fields.
 ///

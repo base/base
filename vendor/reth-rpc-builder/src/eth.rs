@@ -1,6 +1,6 @@
 use base_common_runtime_tasks::Runtime;
+use base_execution_rpc_handlers::EthConfig;
 use base_execution_rpc_handlers::{BaseEthApi, EthFilter, EthPubSub};
-use reth_rpc_eth_types::EthConfig;
 
 /// Handlers for core, filter and pubsub `eth` namespace APIs.
 #[derive(Debug, Clone)]

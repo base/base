@@ -3,6 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use crate::{BaseEthApiError, EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError};
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_serde::JsonStorageKey;
@@ -18,9 +19,6 @@ use base_execution_state_types::MultiProofTargets;
 use base_execution_txpool::TransactionPool;
 use futures::Future;
 use reth_primitives_traits::RecoveredBlock;
-use reth_rpc_eth_types::{
-    BaseEthApiError, EthApiError, PendingBlockEnv, RpcInvalidTransactionError, SignError,
-};
 use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 
 use crate::BaseEthApi;
@@ -191,9 +189,7 @@ impl BaseEthApi {
                     .map(|(address, slots)| {
                         let proof = multiproof
                             .account_proof(address, &slots)
-                            .map_err(|error| {
-                                reth_rpc_eth_types::EthApiError::Internal(error.into())
-                            })
+                            .map_err(|error| crate::EthApiError::Internal(error.into()))
                             .map_err(BaseEthApiError::from_eth_err)?;
                         let storage_keys =
                             slots.into_iter().map(JsonStorageKey::from).collect::<Vec<_>>();
@@ -322,7 +318,7 @@ impl BaseEthApi {
     ) -> Result<EvmEnvFor, BaseEthApiError> {
         self.evm_config()
             .evm_env(header)
-            .map_err(|error| reth_rpc_eth_types::EthApiError::Internal(error.into()))
+            .map_err(|error| crate::EthApiError::Internal(error.into()))
             .map_err(BaseEthApiError::from_eth_err)
     }
 

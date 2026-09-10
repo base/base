@@ -35,7 +35,7 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use super::{EthStateCacheConfig, MultiConsumerLruCache};
-use crate::block::CachedTransaction;
+use crate::eth_services::block::CachedTransaction;
 
 pub mod config;
 pub mod db;

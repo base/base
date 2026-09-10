@@ -2,13 +2,13 @@
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
-use base_common_types_rpc::state::StateOverride;
 use base_common_types_chain::Eip8130Constants;
-use base_execution_evm_precompiles::NonceManagerStorage;
 use base_common_types_rpc::Eip8130Nonce;
+use base_common_types_rpc::state::StateOverride;
+use base_execution_evm_precompiles::NonceManagerStorage;
 use base_execution_rpc_handlers::BaseEthApi;
+use base_execution_rpc_handlers::EthApiError;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
-use reth_rpc_eth_types::EthApiError;
 
 /// Reads 2D channel nonces (`nonces[account][nonce_key]`) from the Nonce Manager
 /// precompile, with optional state-override support.

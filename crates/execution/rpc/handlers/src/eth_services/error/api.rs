@@ -1,6 +1,8 @@
 //! Concrete Ethereum error classification used by Base RPC.
 
-use crate::{EthApiError, error::RpcInvalidTransactionError, simulate::EthSimulateError};
+use crate::eth_services::{
+    EthApiError, error::RpcInvalidTransactionError, simulate::EthSimulateError,
+};
 
 impl EthApiError {
     /// Returns [`EthSimulateError`] if this error maps to a simulate-specific error code.

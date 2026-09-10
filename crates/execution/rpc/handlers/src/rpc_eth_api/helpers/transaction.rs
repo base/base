@@ -3,6 +3,12 @@
 
 use std::sync::Arc;
 
+use crate::{
+    BaseEthApiError,
+    EthApiError::{self},
+    FillTransaction, SignError, TransactionSource,
+    utils::binary_search,
+};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
@@ -15,19 +21,13 @@ use base_common_types_rpc::{BaseTransactionRequest, TransactionInfo, state::EvmO
 use base_execution_state_api::{
     BlockNumReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
 };
+use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_txpool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
 };
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
-use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_convert::TransactionConversionError;
-use reth_rpc_eth_types::{
-    BaseEthApiError,
-    EthApiError::{self},
-    FillTransaction, SignError, TransactionSource,
-    utils::binary_search,
-};
 
 use super::EthSigner;
 use crate::BaseEthApi;
@@ -640,10 +640,10 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::{Block, Header, Transaction};
     use base_common_types_rpc::request::TransactionRequest;
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use base_execution_txpool::{
         TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,
     };
-    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
 
@@ -742,7 +742,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+            crate::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().pool_size().total, 1);
@@ -756,7 +756,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+            crate::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().pool_size().total, 1);
@@ -770,7 +770,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+            crate::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().pool_size().total, 1);
@@ -784,7 +784,7 @@ mod tests {
 
         assert!(matches!(
             err,
-            reth_rpc_eth_types::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
+            crate::BaseEthApiError::Eth(EthApiError::TransactionConfirmationTimeout { duration, .. })
                 if duration == Duration::from_millis(1)
         ));
         assert_eq!(eth_api.pool().pool_size().total, 1);

@@ -2,11 +2,11 @@
 
 use std::result;
 
+use crate::SignError;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, Signature};
 use base_common_types_rpc::TransactionRequest;
 use dyn_clone::DynClone;
-use reth_rpc_eth_types::SignError;
 
 /// Result returned by [`EthSigner`] methods.
 pub type Result<T> = result::Result<T, SignError>;

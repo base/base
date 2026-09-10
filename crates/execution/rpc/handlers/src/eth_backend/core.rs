@@ -20,10 +20,8 @@ use base_execution_txpool::{
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 use {
-    base_common_types_rpc::PendingBlockKind, reth_rpc_eth_types::EthApiError,
-    reth_rpc_eth_types::EthStateCache, reth_rpc_eth_types::FeeHistoryCache,
-    reth_rpc_eth_types::GasCap, reth_rpc_eth_types::GasPriceOracle,
-    reth_rpc_eth_types::PendingBlock,
+    crate::EthApiError, crate::EthStateCache, crate::FeeHistoryCache, crate::GasCap,
+    crate::GasPriceOracle, crate::PendingBlock, base_common_types_rpc::PendingBlockKind,
 };
 
 use crate::{BaseRpcContext, BaseRpcConverter, BaseTimeCache, SequencerClient, SignersForRpc};
@@ -318,9 +316,7 @@ impl BaseEthApiInner {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let request = base_execution_txpool::BatchTxRequest::new(origin, transaction, response_tx);
 
-        self.tx_batch_sender()
-            .send(request)
-            .map_err(|_| reth_rpc_eth_types::EthApiError::BatchTxSendError)?;
+        self.tx_batch_sender().send(request).map_err(|_| crate::EthApiError::BatchTxSendError)?;
 
         Ok(response_rx.await??)
     }

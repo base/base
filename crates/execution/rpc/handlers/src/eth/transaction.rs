@@ -2,6 +2,7 @@
 
 use std::{future::Future, time::Duration};
 
+use crate::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use alloy_primitives::{B256, Bytes};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
@@ -16,7 +17,6 @@ use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
 use futures::StreamExt;
 use reth_primitives_traits::{SignerRecoverable, WithEncoded};
-use reth_rpc_eth_types::{EthApiError, TransactionSource, block::convert_transaction_receipt};
 use tracing::{debug, instrument, warn};
 
 use crate::{
