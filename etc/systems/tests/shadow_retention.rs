@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use alloy_primitives::B256;
 use anyhow::Result;
 use base_shadow_indexer_db::{
     PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockPayload, ShadowBlockRepo,
@@ -93,12 +94,12 @@ impl TestDatabase {
 
 fn shadow_row(number: i64) -> ShadowBlockRow {
     let now = Utc::now();
-    let mut hash = vec![0; 32];
+    let mut hash = [0u8; 32];
     hash[24..].copy_from_slice(&number.to_be_bytes());
 
     ShadowBlockRow {
         number,
-        hash: ShadowHash::encode(&hash),
+        hash: ShadowHash::new(B256::new(hash)),
         canonical_hash: None,
         created_at: now,
         updated_at: now,

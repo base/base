@@ -193,10 +193,11 @@ impl ShadowWriter {
 mod tests {
     use std::time::Duration;
 
+    use alloy_primitives::B256;
     use anyhow::anyhow;
     use base_shadow_indexer_db::{
         PgConnectionParams, ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig,
-        ShadowFlushOutcome,
+        ShadowFlushOutcome, ShadowHash,
     };
     use chrono::{DateTime, Utc};
     use reth_primitives_traits::RecoveredBlock;
@@ -220,7 +221,7 @@ mod tests {
     fn sample_row(number: i64, created_at: DateTime<Utc>) -> ShadowBlockRow {
         ShadowBlockRow {
             number,
-            hash: "0xhash".to_owned(),
+            hash: ShadowHash::new(B256::repeat_byte(0x11)),
             canonical_hash: None,
             created_at,
             updated_at: created_at,
@@ -237,7 +238,10 @@ mod tests {
     }
 
     fn canonical(number: i64) -> ShadowWrite {
-        ShadowWrite::Canonical(ShadowCanonicalRef { number, hash: "0xcanonical".to_owned() })
+        ShadowWrite::Canonical(ShadowCanonicalRef {
+            number,
+            hash: ShadowHash::new(B256::repeat_byte(0x22)),
+        })
     }
 
     #[tokio::test]

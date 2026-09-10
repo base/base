@@ -151,7 +151,7 @@ impl ShadowIndexerExEx {
         &self,
         block: &RecoveredBlock<BaseBlock>,
         receipts: &[BaseReceipt],
-        canonical_hash: Option<String>,
+        canonical_hash: Option<ShadowHash>,
     ) -> Result<ShadowBlockRow> {
         let _timer = base_metrics::timed!(ShadowExExMetrics::build_row_duration_seconds());
 
@@ -170,7 +170,7 @@ impl ShadowIndexerExEx {
 
         Ok(ShadowBlockRow {
             number,
-            hash: ShadowHash::encode(block.hash().as_slice()),
+            hash: ShadowHash::new(block.hash()),
             canonical_hash,
             created_at: now,
             updated_at: now,
@@ -189,7 +189,7 @@ impl ShadowIndexerExEx {
             let canonical_hash = new
                 .blocks()
                 .get(&block.header().number())
-                .map(|canonical_block| ShadowHash::encode(canonical_block.hash().as_slice()));
+                .map(|canonical_block| ShadowHash::new(canonical_block.hash()));
 
             if canonical_hash.is_none() {
                 unresolved = unresolved.saturating_add(1);
@@ -231,8 +231,7 @@ impl ShadowIndexerExEx {
             let number = i64::try_from(block.header().number()).map_err(|error| {
                 eyre::eyre!("block number overflow for shadow indexer canonical ref: {error}")
             })?;
-            let canonical =
-                ShadowCanonicalRef { number, hash: ShadowHash::encode(block.hash().as_slice()) };
+            let canonical = ShadowCanonicalRef { number, hash: ShadowHash::new(block.hash()) };
 
             if !self.send_write(ShadowWrite::Canonical(canonical)).await? {
                 return Ok(false);
@@ -356,12 +355,10 @@ mod tests {
         assert_eq!(rows.len(), old.blocks().len(), "only old-chain blocks are emitted");
 
         for row in &rows {
-            assert_eq!(row.hash, ShadowHash::encode(block_hash(row.number as u64, 0).as_slice()));
+            assert_eq!(row.hash, ShadowHash::new(block_hash(row.number as u64, 0)));
             assert_eq!(
                 row.canonical_hash,
-                Some(ShadowHash::encode(
-                    block_hash(row.number as u64, NEW_CHAIN_VARIANT).as_slice()
-                )),
+                Some(ShadowHash::new(block_hash(row.number as u64, NEW_CHAIN_VARIANT))),
                 "reorged-out row points at the new canonical hash at its height"
             );
         }
@@ -382,10 +379,7 @@ mod tests {
         assert_eq!(missing.canonical_hash, None, "no new block at height 9 => canonical hash None");
 
         let present = rows.iter().find(|row| row.number == 6).expect("old block 6 reorged out");
-        assert_eq!(
-            present.canonical_hash,
-            Some(ShadowHash::encode(block_hash(6, NEW_CHAIN_VARIANT).as_slice()))
-        );
+        assert_eq!(present.canonical_hash, Some(ShadowHash::new(block_hash(6, NEW_CHAIN_VARIANT))));
     }
 
     #[tokio::test]
@@ -427,7 +421,7 @@ mod tests {
         for entry in &canonical {
             assert_eq!(
                 entry.hash,
-                ShadowHash::encode(block_hash(entry.number as u64, NEW_CHAIN_VARIANT).as_slice())
+                ShadowHash::new(block_hash(entry.number as u64, NEW_CHAIN_VARIANT))
             );
         }
     }

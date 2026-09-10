@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_consensus::{Transaction, TxReceipt, Typed2718};
-use alloy_primitives::{B256, hex};
+use alloy_primitives::hex;
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -148,7 +148,7 @@ async fn get_shadow_candidates(
     let repo = state.repo()?;
     let canonical_hash = parse_block_id(&id)?;
 
-    let shadows = repo.list_reorged_by_canonical(&canonical_hash).await?;
+    let shadows = repo.list_reorged_by_canonical(canonical_hash).await?;
     tracing::info!(
         target: "shadow_metrics::api",
         endpoint = "shadow-candidates",
@@ -191,7 +191,7 @@ async fn get_shadow_candidates_batch(
         return Ok(Json(HashMap::new()));
     }
 
-    let hashes: Vec<String> = parsed;
+    let hashes: Vec<ShadowHash> = parsed;
     let repo = state.repo()?;
     let shadows = repo.list_reorged_by_canonicals(&hashes).await?;
 
@@ -200,7 +200,7 @@ async fn get_shadow_candidates_batch(
         let Some(canonical_hash) = shadow.canonical_hash.as_ref() else {
             continue;
         };
-        let key = canonical_hash.clone();
+        let key = canonical_hash.to_string();
         result.entry(key).or_default().push(shadow_block_summary(shadow));
     }
 
@@ -259,7 +259,7 @@ async fn get_shadow_block(
     let hash = parse_block_id(&id)?;
 
     let repo = state.repo()?;
-    let Some(row) = repo.get_summary_by_block_hash(&hash).await? else {
+    let Some(row) = repo.get_summary_by_block_hash(hash).await? else {
         tracing::info!(
             target: "shadow_metrics::api",
             endpoint = "shadow-blocks",
@@ -285,17 +285,14 @@ async fn get_shadow_block(
 /// Lookups are string equality against `shadow_blocks.hash`, so `0xAB..` from a caller must not
 /// miss a row written as `0xab..`. Going through `B256` both rejects anything that is not a hash
 /// and collapses every accepted spelling onto the one [`ShadowHash`] writes.
-fn parse_block_id(id: &str) -> Result<String, ApiError> {
-    id.trim()
-        .parse::<B256>()
-        .map(|hash| ShadowHash::encode(hash.as_slice()))
-        .map_err(|_| ApiError::BadRequest)
+fn parse_block_id(id: &str) -> Result<ShadowHash, ApiError> {
+    id.trim().parse::<ShadowHash>().map_err(|_| ApiError::BadRequest)
 }
 
 /// Resolves a stored block by hash (canonical or reorged-out shadow).
 async fn resolve_block(repo: &ShadowBlockRepo, id: &str) -> Result<ShadowBlockRow, ApiError> {
     let hash = parse_block_id(id)?;
-    repo.get_by_block_hash(&hash).await?.ok_or(ApiError::NotFound)
+    repo.get_by_block_hash(hash).await?.ok_or(ApiError::NotFound)
 }
 
 fn shadow_block_summary(row: &ShadowSummaryRow) -> ShadowBlockSummary {
@@ -308,8 +305,8 @@ fn shadow_block_summary(row: &ShadowSummaryRow) -> ShadowBlockSummary {
 
     ShadowBlockSummary {
         number: row.number,
-        hash: row.hash.clone(),
-        canonical_hash: row.canonical_hash.clone(),
+        hash: row.hash.to_string(),
+        canonical_hash: row.canonical_hash.map(|hash| hash.to_string()),
         timestamp: row.header.0.timestamp,
         builder_version: stats.builder_version,
         gas_used: stats.gas_used,
@@ -333,7 +330,7 @@ fn block_detail(row: &ShadowBlockRow) -> BlockDetail {
 
     BlockDetail {
         number: row.number,
-        hash: row.hash.clone(),
+        hash: row.hash.to_string(),
         parent_hash: hex::encode_prefixed(header.parent_hash),
         timestamp: header.timestamp,
         gas_used: header.gas_used,
@@ -342,7 +339,7 @@ fn block_detail(row: &ShadowBlockRow) -> BlockDetail {
         // Constant so the response shape survives the column drop: the table only ever holds
         // blocks the chain discarded.
         reorged_out: true,
-        canonical_hash: row.canonical_hash.clone(),
+        canonical_hash: row.canonical_hash.map(|hash| hash.to_string()),
         tx_count: block.body().transactions.len(),
         transactions,
     }
@@ -411,7 +408,7 @@ fn tx_type_str(tx: &BaseTxEnvelope) -> &'static str {
 #[cfg(test)]
 mod tests {
     use alloy_consensus::{Block, BlockBody, Header, Receipt, Sealable};
-    use alloy_primitives::{Address, TxKind, U256};
+    use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_consensus::{BaseReceipt, TxDeposit};
     use base_shadow_indexer_db::ShadowBlockPayload;
     use chrono::Utc;
@@ -427,7 +424,7 @@ mod tests {
         sample_row_with(None)
     }
 
-    fn sample_row_with(canonical_hash: Option<String>) -> ShadowBlockRow {
+    fn sample_row_with(canonical_hash: Option<ShadowHash>) -> ShadowBlockRow {
         sample_row_full(42, 21_000, "test", canonical_hash)
     }
 
@@ -435,7 +432,7 @@ mod tests {
         number: i64,
         gas_used: u64,
         builder_version: &str,
-        canonical_hash: Option<String>,
+        canonical_hash: Option<ShadowHash>,
     ) -> ShadowBlockRow {
         let deposit = TxDeposit {
             gas_limit: 21_000,
@@ -458,7 +455,7 @@ mod tests {
         let now = Utc::now();
         ShadowBlockRow {
             number,
-            hash: ShadowHash::encode(&[0xab; 32]),
+            hash: ShadowHash::new(B256::repeat_byte(0xab)),
             canonical_hash,
             created_at: now,
             updated_at: now,
@@ -503,7 +500,7 @@ mod tests {
 
     #[test]
     fn block_detail_exposes_replacement_hash() {
-        let detail = block_detail(&sample_row_with(Some(ShadowHash::encode(&[0xcd; 32]))));
+        let detail = block_detail(&sample_row_with(Some(ShadowHash::new(B256::repeat_byte(0xcd)))));
         assert_eq!(
             detail.canonical_hash.as_deref(),
             Some(format!("0x{}", "cd".repeat(32)).as_str())
@@ -524,8 +521,8 @@ mod tests {
     fn sample_summary_row(row: &ShadowBlockRow) -> ShadowSummaryRow {
         ShadowSummaryRow {
             number: row.number,
-            hash: row.hash.clone(),
-            canonical_hash: row.canonical_hash.clone(),
+            hash: row.hash,
+            canonical_hash: row.canonical_hash,
             builder_version: row.payload.builder_version.clone(),
             header: Json(row.payload.block.header().clone()),
             transactions: Json(row.payload.block.body().transactions.clone()),
@@ -543,7 +540,8 @@ mod tests {
 
     #[test]
     fn shadow_block_summary_reports_shadow_only_fields() {
-        let shadow = sample_row_full(100, 30_000, "shadow", Some(ShadowHash::encode(&[0xcd; 32])));
+        let shadow =
+            sample_row_full(100, 30_000, "shadow", Some(ShadowHash::new(B256::repeat_byte(0xcd))));
         let summary = shadow_block_summary(&sample_summary_row(&shadow));
 
         assert_eq!(summary.number, 100);

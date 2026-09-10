@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_consensus::{Block, BlockBody, Header, SignableTransaction, TxEip1559};
-use alloy_primitives::{Address, Signature};
+use alloy_primitives::{Address, B256, Signature};
 use anyhow::Result;
 use base_common_consensus::{BaseTxEnvelope, TxDeposit};
 use base_shadow_indexer_db::{
@@ -76,8 +76,9 @@ impl ShadowBlockFixture {
 
         ShadowBlockRow {
             number,
-            hash: ShadowHash::encode(&[hash_seed; 32]),
-            canonical_hash: canonical_hash_seed.map(|seed| ShadowHash::encode(&[seed; 32])),
+            hash: ShadowHash::new(B256::repeat_byte(hash_seed)),
+            canonical_hash: canonical_hash_seed
+                .map(|seed| ShadowHash::new(B256::repeat_byte(seed))),
             created_at: now,
             updated_at: now,
             payload,
@@ -143,7 +144,7 @@ async fn canonical_block_never_clears_an_established_hash() -> Result<()> {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].canonical_hash,
-        Some(ShadowHash::encode(&[0x92; 32])),
+        Some(ShadowHash::new(B256::repeat_byte(0x92))),
         "canonical hash is monotonic"
     );
 
@@ -162,7 +163,7 @@ async fn a_later_candidate_at_a_height_does_not_inherit_the_replaced_hash() -> R
     assert_eq!(rows.len(), 1, "a height keys one row");
     assert_eq!(
         rows[0].hash,
-        ShadowHash::encode(&[0xa3; 32]),
+        ShadowHash::new(B256::repeat_byte(0xa3)),
         "the new candidate replaces the old one"
     );
     assert_eq!(
@@ -181,7 +182,7 @@ async fn a_canonical_ref_does_not_resolve_a_candidate_stored_after_it() -> Resul
     let mut writes = reorged([ShadowBlockFixture::new(91).into_row(0xb1, None)]);
     writes.extend(canonical([ShadowCanonicalRef {
         number: 91,
-        hash: ShadowHash::encode(&[0xb2; 32]),
+        hash: ShadowHash::new(B256::repeat_byte(0xb2)),
     }]));
     writes.extend(reorged([ShadowBlockFixture::new(91).into_row(0xb3, None)]));
     repo.flush(&writes).await?;
@@ -190,7 +191,7 @@ async fn a_canonical_ref_does_not_resolve_a_candidate_stored_after_it() -> Resul
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0].hash,
-        ShadowHash::encode(&[0xb3; 32]),
+        ShadowHash::new(B256::repeat_byte(0xb3)),
         "the last candidate at the height is stored"
     );
     assert_eq!(
@@ -242,7 +243,7 @@ async fn unresolved_backlog_counts_rows_awaiting_a_canonical_block() -> Result<(
 
     repo.flush(&canonical([ShadowCanonicalRef {
         number: 101,
-        hash: ShadowHash::encode(&[0xc4; 32]),
+        hash: ShadowHash::new(B256::repeat_byte(0xc4)),
     }]))
     .await?;
 
@@ -359,7 +360,7 @@ async fn an_unresolved_row_still_registers_in_the_backlog_after_the_contract() -
 
     repo.flush(&canonical([ShadowCanonicalRef {
         number: 501,
-        hash: ShadowHash::encode(&[0xf2; 32]),
+        hash: ShadowHash::new(B256::repeat_byte(0xf2)),
     }]))
     .await?;
 
@@ -377,12 +378,13 @@ async fn a_row_is_retrievable_by_the_hash_string_it_was_stored_under() -> Result
     repo.flush(&reorged([ShadowBlockFixture::new(502).into_row(0xd1, Some(0xd2))])).await?;
 
     let found = repo
-        .get_by_block_hash(&ShadowHash::encode(&[0xd1; 32]))
+        .get_by_block_hash(ShadowHash::new(B256::repeat_byte(0xd1)))
         .await?
         .expect("stored row is found by its hash");
     assert_eq!(found.number, 502);
 
-    let candidates = repo.list_reorged_by_canonical(&ShadowHash::encode(&[0xd2; 32])).await?;
+    let candidates =
+        repo.list_reorged_by_canonical(ShadowHash::new(B256::repeat_byte(0xd2))).await?;
     assert_eq!(
         candidates.iter().map(|row| row.number).collect::<Vec<_>>(),
         [502],

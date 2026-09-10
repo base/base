@@ -3,15 +3,17 @@ use chrono::{DateTime, Utc};
 use reth_primitives_traits::RecoveredBlock;
 use serde::{Deserialize, Serialize};
 
+use crate::ShadowHash;
+
 /// Persisted shadow block row.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct ShadowBlockRow {
     /// Block number.
     pub number: i64,
-    /// Block hash, as `0x`-prefixed lowercase hex. See [`crate::ShadowHash`].
-    pub hash: String,
+    /// Block hash.
+    pub hash: ShadowHash,
     /// Replacement block hash at this height, absent until that block is canonical.
-    pub canonical_hash: Option<String>,
+    pub canonical_hash: Option<ShadowHash>,
     /// Creation time.
     pub created_at: DateTime<Utc>,
     /// Database-maintained update time.
@@ -28,8 +30,8 @@ pub struct ShadowBlockRow {
 pub struct ShadowCanonicalRef {
     /// Block number.
     pub number: i64,
-    /// Block hash, as `0x`-prefixed lowercase hex. See [`crate::ShadowHash`].
-    pub hash: String,
+    /// Block hash.
+    pub hash: ShadowHash,
 }
 
 /// A unit of work applied to `shadow_blocks`, carried in the order the `ExEx` produced it.
