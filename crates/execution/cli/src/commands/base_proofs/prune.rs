@@ -8,7 +8,7 @@ use base_execution_state_tasks::{
     RocksdbProofsStorage,
 };
 use base_node_config::version_metadata;
-use base_node_core::{
+use base_node_service::{
     DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
     TWELVE_HOURS_IN_BLOCKS,
 };

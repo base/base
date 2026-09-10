@@ -7,7 +7,7 @@ use base_common_runtime_tasks::Runtime;
 use base_execution_network_service::types::NatResolver;
 use base_execution_rpc_handlers::AdminApiServer;
 use base_node_config::{NetworkArgs, NodeConfig, RpcServerArgs};
-use base_node_core::NodeHandle;
+use base_node_service::NodeHandle;
 
 // <https://github.com/paradigmxyz/reth/issues/19765>
 #[tokio::test(flavor = "multi_thread")]
@@ -29,7 +29,7 @@ async fn test_admin_external_ip() -> eyre::Result<()> {
         .with_rpc(RpcServerArgs::default().with_unused_ports().with_http());
 
     let NodeHandle { node, node_exit_future: _ } =
-        base_node_core::NodeLaunch::testing(node_config, exec).launch().await?;
+        base_node_service::NodeLaunch::testing(node_config, exec).launch().await?;
 
     assert!(node.rpc_server_handle().http_local_addr().is_some());
 

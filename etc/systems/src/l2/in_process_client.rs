@@ -14,7 +14,7 @@ use base_node_config::{
     DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, MetricArgs, NetworkArgs,
     NodeExitFuture, RpcServerArgs,
 };
-use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
+use base_node_service::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Context, Result, eyre};
 use tempfile::TempDir;
 use tracing::warn;
@@ -206,16 +206,16 @@ impl InProcessClient {
             Self::create_test_database(&db_path)?
         };
 
-        let mut rpc = base_node_core::BaseRpcServices::default();
+        let mut rpc = base_node_service::BaseRpcServices::default();
         rpc.sequencer = Some(config.builder_rpc_url.clone());
         rpc.validity = config
             .enable_experimental_validity_transactions
             .then_some(base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES);
-        let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        let mut builder = base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         builder.base = base_node;
         builder.rpc = rpc;
 
-        let services = base_node_core::NodeServices {
+        let services = base_node_service::NodeServices {
             forwarding: config.tx_forwarding_config,
             upgrade_signal: config.upgrade_signal,
             shadow_indexer: config.shadow_indexer,

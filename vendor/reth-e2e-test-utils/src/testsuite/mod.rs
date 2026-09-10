@@ -302,7 +302,7 @@ impl TestBuilder {
     /// Run the test scenario
     pub async fn run(
         mut self,
-        node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+        node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     ) -> Result<()> {
         let mut setup = self.setup.take();
 

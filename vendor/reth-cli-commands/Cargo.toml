@@ -58,7 +58,7 @@ tracing = { workspace = true, features = ["attributes"] }
 comfy-table = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default"] }
+base-node-service = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = {features = ["std"], workspace = true}
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

@@ -130,7 +130,7 @@ impl Setup {
     pub async fn apply(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+        node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     ) -> Result<()> {
         // Note: this future is quite large so we box it
         Box::pin(self.apply_(env, node_factory)).await
@@ -140,7 +140,7 @@ impl Setup {
     async fn apply_(
         &mut self,
         env: &mut Environment,
-        node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+        node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     ) -> Result<()> {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;

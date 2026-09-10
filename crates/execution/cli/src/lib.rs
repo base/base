@@ -22,7 +22,7 @@ pub use node::{
 /// Standard Base execution-node runner wiring.
 mod standard_node;
 
-pub use base_node_core::{
+pub use base_node_service::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, RuntimeForkFilterNetwork,
 };
 // This allows us to manually enable node metrics features, required for proper jemalloc metric

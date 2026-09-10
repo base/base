@@ -48,7 +48,7 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default", "test-utils"] }
+base-node-service = { workspace = true, features = ["default", "test-utils"] }
 base-execution-state-database = {workspace = true, features = ["test-utils"]}
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }

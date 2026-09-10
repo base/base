@@ -9,7 +9,7 @@ use base_common_types_payload::PayloadAttributes;
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, payload::EthPayloadBuilderAttributes,
 };
-use base_node_core::BaseNode;
+use base_node_service::BaseNode;
 use tokio::sync::Mutex;
 
 use crate::{NodeHelperType, transaction::TransactionTestContext, wallet::Wallet};
@@ -23,7 +23,7 @@ pub struct BaseNodeTestUtils;
 
 impl BaseNodeTestUtils {
     /// Supplies Base components and add-ons for a temporary node.
-    pub fn test_setup() -> base_node_core::BaseNode {
+    pub fn test_setup() -> base_node_service::BaseNode {
         let node = BaseNode::default();
         node
     }

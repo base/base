@@ -10,7 +10,7 @@ use base_execution_state_tasks::{
     MdbxProofsStorage, RocksdbProofsStorage,
 };
 use base_node_config::version_metadata;
-use base_node_core::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
+use base_node_service::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};

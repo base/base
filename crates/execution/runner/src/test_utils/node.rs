@@ -14,7 +14,7 @@ use base_node_config::{
     DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, NetworkArgs, NodeExitFuture,
     RpcServerArgs,
 };
-use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
+use base_node_service::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
 
 use crate::test_utils::engine::EngineApi;
@@ -58,8 +58,8 @@ impl fmt::Debug for LocalNode {
 impl LocalNode {
     /// Launch a new local node with the provided extensions and chain spec.
     pub async fn new(
-        services: base_node_core::NodeServices,
-        rpc: base_node_core::BaseRpcServices,
+        services: base_node_service::NodeServices,
+        rpc: base_node_service::BaseRpcServices,
         chain_spec: Arc<BaseChainSpec>,
     ) -> Result<Self> {
         let exec = Runtime::test();
@@ -90,7 +90,7 @@ impl LocalNode {
         node_config = node_config
             .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
-        let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, exec.clone());
+        let mut builder = base_node_service::NodeLaunch::new(node_config.clone(), db, exec.clone());
         builder.base = base_node;
         builder.rpc = rpc;
         builder.services = services;
@@ -175,7 +175,7 @@ mod tests {
     use base_node_config::{
         DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, NetworkArgs,
     };
-    use base_node_core::{BaseNode, NodeConfig, RollupArgs};
+    use base_node_service::{BaseNode, NodeConfig, RollupArgs};
     use base_testing_support::build_test_genesis;
 
     use super::LocalNode;
@@ -212,7 +212,7 @@ mod tests {
                 datadir: MaybePlatformPath::<DataDirPath>::from(path.clone()),
                 ..Default::default()
             });
-        let mut launch = base_node_core::NodeLaunch::new(config, db, runtime.clone());
+        let mut launch = base_node_service::NodeLaunch::new(config, db, runtime.clone());
         launch.base = base;
         let handle = launch.launch().await.unwrap();
         assert!(handle.node.rpc_server_handle().http_local_addr().is_none());

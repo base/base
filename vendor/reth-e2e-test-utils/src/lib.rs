@@ -41,7 +41,7 @@ pub use setup_builder::E2ETestSetupBuilder;
 
 /// Creates and connects the requested number of test nodes.
 pub async fn setup(
-    node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+    node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -55,7 +55,7 @@ pub async fn setup(
 
 /// Creates and connects test nodes with the supplied engine configuration.
 pub async fn setup_engine(
-    node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+    node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
@@ -76,7 +76,7 @@ pub async fn setup_engine(
 
 /// Creates test nodes and optionally connects their networks.
 pub async fn setup_engine_with_connection(
-    node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+    node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,

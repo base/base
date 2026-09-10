@@ -17,7 +17,7 @@ use base_common_client_ethereum::{Identity, ProviderBuilder, RootProvider};
 use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use base_execution_txpool_pool::{BasePooledTransaction, TransactionPool};
 use base_node_config::{DatadirArgs, NetworkArgs, NodeExitFuture, RpcServerArgs};
-use base_node_core::{BaseNode, NodeConfig, RollupArgs};
+use base_node_service::{BaseNode, NodeConfig, RollupArgs};
 use base_node_runner::test_utils::init_silenced_tracing;
 use futures::FutureExt;
 use nanoid::nanoid;
@@ -108,7 +108,7 @@ where
 pub struct LocalInstanceBuilder {
     builder_config: BuilderConfig,
     node_config: NodeConfig,
-    rpc: base_node_core::BaseRpcServices,
+    rpc: base_node_service::BaseRpcServices,
 }
 
 impl LocalInstanceBuilder {
@@ -118,7 +118,7 @@ impl LocalInstanceBuilder {
         Self {
             builder_config,
             node_config: default_node_config(),
-            rpc: base_node_core::BaseRpcServices {
+            rpc: base_node_service::BaseRpcServices {
                 builder: Some(Default::default()),
                 ..Default::default()
             },
@@ -178,7 +178,7 @@ impl LocalInstance {
     async fn launch(
         builder_config: BuilderConfig,
         node_config: NodeConfig,
-        rpc: base_node_core::BaseRpcServices,
+        rpc: base_node_service::BaseRpcServices,
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
@@ -196,7 +196,7 @@ impl LocalInstance {
 
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
 
-        let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        let mut builder = base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         builder.base = base_node;
         builder.payload = Some(service_builder);
         builder.rpc = rpc;

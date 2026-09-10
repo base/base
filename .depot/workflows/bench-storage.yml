@@ -5,7 +5,7 @@ on:
     paths:
       - "Cargo.lock"
       - "Cargo.toml"
-      - "crates/execution/node/**"
+      - "crates/node/service/**"
       - "etc/scripts/ci/bench_compare.py"
       - "etc/scripts/ci/run_storage_bench.sh"
       - ".depot/workflows/bench-storage.yml"

@@ -63,7 +63,7 @@ rand = { workspace = true, features = ["default"] }
 base-execution-evm-primitives = { workspace = true }
 base-execution-state-maintenance = { workspace = true }
 alloy-genesis = { workspace = true, features = ["std"] }
-base-node-core = { workspace = true, features = ["default"] }
+base-node-service = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio = {workspace = true, features = ["default", "rt", "sync"]}
 base-node-runner = { workspace = true, features = ["test-utils"] }

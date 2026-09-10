@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_runtime_tasks::Runtime;
 use base_execution_state_tasks::InitializationJob;
-use base_node_core::{
+use base_node_service::{
     BaseNode, NodeConfig, ProofHistory, ProofHistoryBackend, ProofsHistoryDbBackend, RollupArgs,
 };
 use reth_e2e_test_utils::{
@@ -47,7 +47,7 @@ async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Resul
             }
         }
         let runtime = Runtime::test();
-        let mut launch = base_node_core::NodeLaunch::testing(config, runtime.clone());
+        let mut launch = base_node_service::NodeLaunch::testing(config, runtime.clone());
         launch.base = BaseNode::new(args);
         let handle = launch.launch().await?;
         let progress = handle

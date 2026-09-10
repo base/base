@@ -5,5 +5,5 @@ set -euo pipefail
 
 baseline="${1:?usage: run_storage_bench.sh BASELINE}"
 
-cargo bench --locked -p base-node-core --bench provider -- \
+cargo bench --locked -p base-node-service --bench provider -- \
   --save-baseline "$baseline" --noplot

@@ -14,7 +14,7 @@ use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
-use base_node_core::BaseNode;
+use base_node_service::BaseNode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
 

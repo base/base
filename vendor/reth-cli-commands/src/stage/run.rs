@@ -25,7 +25,7 @@ use base_execution_sync_pipeline::{
 use base_execution_sync_pipeline::{BodiesDownloaderBuilder, ReverseHeadersDownloaderBuilder};
 use base_execution_sync_pipeline::{HashingConfig, SenderRecoveryConfig, TransactionLookupConfig};
 use base_node_config::{NetworkArgs, StageEnum, version_metadata};
-use base_node_core::metrics_hooks;
+use base_node_service::metrics_hooks;
 use clap::Parser;
 use reth_node_metrics::{
     chain::ChainSpecInfo,

@@ -45,8 +45,8 @@ pub struct PreparedBlock {
 /// Builder for configuring and launching a test harness.
 #[derive(Debug, Default)]
 pub struct TestHarnessBuilder {
-    rpc: base_node_core::BaseRpcServices,
-    services: base_node_core::NodeServices,
+    rpc: base_node_service::BaseRpcServices,
+    services: base_node_service::NodeServices,
     chain_spec: Option<Arc<BaseChainSpec>>,
 }
 

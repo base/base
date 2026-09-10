@@ -232,7 +232,7 @@ impl BaseNode {
     ///
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpec;
-    /// use base_node_core::BaseNode;
+    /// use base_node_service::BaseNode;
     /// use std::sync::Arc;
     ///
     /// fn demo(runtime: base_common_runtime_tasks::Runtime) {
@@ -246,7 +246,7 @@ impl BaseNode {
     ///
     /// ```no_run
     /// use base_common_chain_config::BaseChainSpecBuilder;
-    /// use base_node_core::BaseNode;
+    /// use base_node_service::BaseNode;
     /// use base_execution_state_provider::providers::ReadOnlyConfig;
     ///
     /// fn demo(runtime: base_common_runtime_tasks::Runtime) {

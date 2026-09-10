@@ -54,7 +54,7 @@ members = [
   "crates/consensus/driver/service",
   "crates/execution/cli",
   "crates/execution/evm/blocks",
-  "crates/execution/node",
+  "crates/node/service",
   "crates/execution/node-context",
   "crates/execution/payload/builder",
   "crates/execution/payload/types",
@@ -286,7 +286,7 @@ base-consensus-derive-pipeline = { path = "crates/consensus/derive/pipeline", de
 base-consensus-source-providers = { path = "crates/consensus/source/providers", default-features = false }
 
 # Execution
-base-node-core = { path = "crates/execution/node", default-features = false }
+base-node-service = { path = "crates/node/service", default-features = false }
 base-execution-cli = { path = "crates/execution/cli", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }

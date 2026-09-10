@@ -37,7 +37,7 @@ futures = { workspace = true, features = ["default"] }
 base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default"] }
+base-node-service = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
@@ -60,7 +60,7 @@ base-common-chain-config = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
-base-node-core = { workspace = true, features = ["test-utils"] }
+base-node-service = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
 
 [build-dependencies]
@@ -74,9 +74,9 @@ default = []
 
 # Opentelemetry feature to activate tracing and logs export
 
-asm-keccak = ["base-node-core/asm-keccak", "base-node-config/asm-keccak"]
+asm-keccak = ["base-node-service/asm-keccak", "base-node-config/asm-keccak"]
 
-keccak-cache-global = ["base-node-core/keccak-cache-global", "base-node-config/keccak-cache-global"]
+keccak-cache-global = ["base-node-service/keccak-cache-global", "base-node-config/keccak-cache-global"]
 
 # Jemalloc allocator support
 jemalloc = ["base-node-config/jemalloc", "reth-node-metrics/jemalloc"]

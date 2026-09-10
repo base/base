@@ -9,7 +9,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_config::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
-use base_node_core::{NodeConfig, NodeHandle};
+use base_node_service::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
 use reth_primitives_traits::AlloyBlockHeader;
 use tracing::{Instrument, Level, span};
@@ -98,7 +98,7 @@ where
     /// Builds and launches the test nodes.
     pub async fn build(
         self,
-        node_factory: impl Fn() -> base_node_core::BaseNode + Send + Sync,
+        node_factory: impl Fn() -> base_node_service::BaseNode + Send + Sync,
     ) -> eyre::Result<(Vec<NodeHelperType>, Wallet)> {
         let runtime = Runtime::test();
 
@@ -132,7 +132,7 @@ where
                 };
 
                 let span = span!(Level::INFO, "node", idx);
-                let mut launch = base_node_core::NodeLaunch::testing(node_config, runtime.clone());
+                let mut launch = base_node_service::NodeLaunch::testing(node_config, runtime.clone());
                 launch.base = node_factory();
                 launch.engine_tree_config = tree_config.clone();
                 let NodeHandle { node, node_exit_future: _ } =

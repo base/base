@@ -11,7 +11,7 @@ use base_execution_state_provider::{
     StageCheckpointReader,
 };
 use base_execution_state_types::StageId;
-use base_node_core::FullNode;
+use base_node_service::FullNode;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;

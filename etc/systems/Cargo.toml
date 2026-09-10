@@ -67,7 +67,7 @@ testcontainers-modules = { workspace = true, features = ["postgres"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
 base-consensus-driver-service = {features = ["default"], workspace = true}
 base-common-chain-activation = { workspace = true, features = ["default"] }
-base-node-core = { workspace = true, features = ["default", "test-utils"] }
+base-node-service = { workspace = true, features = ["default", "test-utils"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-state-database = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }

@@ -11,7 +11,7 @@ use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use base_node_config::DatadirArgs;
-use base_node_core::NodeConfig;
+use base_node_service::NodeConfig;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
@@ -46,7 +46,7 @@ async fn test_queued_transaction_included_after_nonce_gap_closes() {
             .db(),
     );
     let runtime = Runtime::test();
-    let node_handle = base_node_core::NodeLaunch::new(config.clone(), db, runtime.clone())
+    let node_handle = base_node_service::NodeLaunch::new(config.clone(), db, runtime.clone())
         .launch()
         .await
         .expect("Failed to launch node");

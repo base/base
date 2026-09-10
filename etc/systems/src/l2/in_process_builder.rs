@@ -19,7 +19,7 @@ use base_node_config::{
     DataDirPath, DatadirArgs, MaybePlatformPath, MetricArgs, NetworkArgs, NodeExitFuture,
     RpcServerArgs,
 };
-use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
+use base_node_service::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};
 use tempfile::TempDir;
 use tracing::warn;
@@ -141,7 +141,7 @@ impl InProcessBuilder {
         let base_node = BaseNode::new(rollup_args.clone());
 
         let base_node = base_node.with_da_config(da_config).with_gas_limit_config(gas_limit_config);
-        let mut rpc = base_node_core::BaseRpcServices::default();
+        let mut rpc = base_node_service::BaseRpcServices::default();
 
         let mut node_config = create_node_config(chain_spec, &data_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
@@ -155,7 +155,7 @@ impl InProcessBuilder {
         let p2p_port = node_config.network.port;
 
         let accept_validity_transactions = config.enable_experimental_validity_transactions;
-        let services = base_node_core::NodeServices {
+        let services = base_node_service::NodeServices {
             shadow_indexer: config.shadow_indexer,
             ..Default::default()
         };
@@ -164,7 +164,7 @@ impl InProcessBuilder {
             DEFAULT_MAX_VALIDITY_PREDICATES,
         ));
         rpc.validity = accept_validity_transactions.then_some(DEFAULT_MAX_VALIDITY_PREDICATES);
-        let mut launch = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        let mut launch = base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         launch.base = base_node;
         launch.payload = Some(builder_config.into_payload_service_config());
         launch.rpc = rpc;

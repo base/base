@@ -8,7 +8,7 @@ use base_builder_core::{
     },
 };
 use base_node_config::TxPoolArgs;
-use base_node_core::NodeConfig;
+use base_node_service::NodeConfig;
 
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {

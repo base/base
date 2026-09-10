@@ -1,7 +1,7 @@
 //! Full-block payload service configuration.
 
 use base_execution_payload_builder::config::BaseBuilderConfig;
-use base_node_core::BasePayloadServiceConfig;
+use base_node_service::BasePayloadServiceConfig;
 
 use crate::BuilderConfig;
 

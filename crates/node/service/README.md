@@ -1,4 +1,4 @@
-# `base-node-core`
+# `base-node-service`
 
 Base execution startup and lifecycle shared by `base rpc` and `base sequencer`.
 
@@ -12,7 +12,7 @@ transaction, bundle, metering, proof-history, forwarding, tracing, and upgrade-s
 HTTP/WS transport settings and service enablement remain operational options.
 
 ```rust,ignore
-use base_node_core::NodeLaunch;
+use base_node_service::NodeLaunch;
 
 let node = NodeLaunch::new(config, database, task_executor).launch().await?;
 ```

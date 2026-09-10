@@ -12,7 +12,7 @@ use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use base_execution_state_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
 use base_execution_state_types::StageId;
 use base_node_config::DatadirArgs;
-use base_node_core::NodeConfig;
+use base_node_service::NodeConfig;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
@@ -50,7 +50,7 @@ async fn test_base_node_custom_genesis_number() {
             .db(),
     );
     let runtime = base_common_runtime_tasks::Runtime::test();
-    let node_handle = base_node_core::NodeLaunch::new(config.clone(), db, runtime.clone())
+    let node_handle = base_node_service::NodeLaunch::new(config.clone(), db, runtime.clone())
         .launch()
         .await
         .expect("Failed to launch node");

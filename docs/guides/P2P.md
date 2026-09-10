@@ -572,7 +572,7 @@ The execution layer P2P stack is built on reth, which is a high-performance Ethe
 client written in Rust. The Base-specific customizations live under
 [`crates/execution/`](https://github.com/base/base/tree/main/crates/execution), and the node
 definition is in
-[`crates/execution/node/`](https://github.com/base/base/tree/main/crates/execution/node).
+[`crates/node/service/`](https://github.com/base/base/tree/main/crates/node/service).
 
 
 ### How reth handles networking
@@ -603,7 +603,7 @@ nodes and DNS-based discovery.
 
 ### The BaseNetworkBuilder
 
-The [`BaseNetworkBuilder`](https://github.com/base/base/blob/main/crates/execution/node/src/node.rs)
+The [`BaseNetworkBuilder`](https://github.com/base/base/blob/main/crates/node/service/src/node.rs)
 is the component that configures reth's network for Base. It has two configuration knobs:
 
 ```rust
@@ -708,7 +708,7 @@ pipeline runs as background tasks on the node's task executor.
 
 The execution layer P2P is configured through reth's standard network flags plus Base-specific
 rollup flags defined in
-[`args.rs`](https://github.com/base/base/blob/main/crates/execution/node/src/args.rs). The key flags
+[`args.rs`](https://github.com/base/base/blob/main/crates/node/service/src/args.rs). The key flags
 are:
 
 `--rollup.sequencer` sets the sequencer endpoint for transaction forwarding.
@@ -802,10 +802,10 @@ networks are completely separate and serve different purposes.
 **Execution layer node and networking:**
 
 -
-  [`crates/execution/node/src/node.rs`](https://github.com/base/base/blob/main/crates/execution/node/src/node.rs)
+  [`crates/node/service/src/node.rs`](https://github.com/base/base/blob/main/crates/node/service/src/node.rs)
   — BaseNetworkBuilder and network configuration
 -
-  [`crates/execution/node/src/args.rs`](https://github.com/base/base/blob/main/crates/execution/node/src/args.rs)
+  [`crates/node/service/src/args.rs`](https://github.com/base/base/blob/main/crates/node/service/src/args.rs)
   — Rollup-specific CLI arguments
 
 **Execution layer transaction pool:**

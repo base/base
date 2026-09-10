@@ -10,7 +10,7 @@ use base_node_config::{
     DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs, NodeConfig,
     PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
 };
-use base_node_core::{NodeHandle, NodeLaunch};
+use base_node_service::{NodeHandle, NodeLaunch};
 use clap::{Args, value_parser};
 use tracing::info;
 

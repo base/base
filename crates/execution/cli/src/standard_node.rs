@@ -24,7 +24,7 @@ use base_execution_txpool_pool::TransactionTracingConfig as TxpoolConfig;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
 };
-use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
+use base_node_service::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
 use tracing::warn;
 use url::Url;
 
@@ -889,8 +889,8 @@ mod tests {
         args.rpc.enable_experimental_validity_transactions = true;
 
         StandardBaseRethNode::configure(
-            &mut base_node_core::NodeLaunch::testing(
-                base_node_core::NodeConfig::test(),
+            &mut base_node_service::NodeLaunch::testing(
+                base_node_service::NodeConfig::test(),
                 base_common_runtime_tasks::Runtime::test(),
             ),
             args,
@@ -916,8 +916,8 @@ mod tests {
     fn bundle_metering_can_start_without_a_payload_resource_schedule() {
         let args =
             CommandParser::<StandardNodeArgs>::parse_from(["base", "--enable-metering"]).args;
-        let mut launch = base_node_core::NodeLaunch::testing(
-            base_node_core::NodeConfig::test(),
+        let mut launch = base_node_service::NodeLaunch::testing(
+            base_node_service::NodeConfig::test(),
             base_common_runtime_tasks::Runtime::test(),
         );
         StandardBaseRethNode::configure(&mut launch, args).unwrap();
@@ -1249,8 +1249,8 @@ mod tests {
         .args;
 
         StandardBaseRethNode::configure(
-            &mut base_node_core::NodeLaunch::testing(
-                base_node_core::NodeConfig::test(),
+            &mut base_node_service::NodeLaunch::testing(
+                base_node_service::NodeConfig::test(),
                 base_common_runtime_tasks::Runtime::test(),
             ),
             args,

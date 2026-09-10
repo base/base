@@ -14,7 +14,7 @@ use base_execution_network_discv5::ConfigBuilder as Discv5ConfigBuilder;
 use base_execution_network_discv5::Event;
 use base_execution_network_discv5::ProtocolIdentity;
 use base_execution_network_types::NodeRecord;
-use base_node_core::BASE_V0_PROTOCOL_VERSION;
+use base_node_service::BASE_V0_PROTOCOL_VERSION;
 use clap::Parser;
 use secp256k1::SecretKey;
 use tokio::select;

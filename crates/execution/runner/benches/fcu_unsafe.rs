@@ -101,7 +101,7 @@ fn init_bench_tracing() {
         let mut filter =
             EnvFilter::builder().with_default_directive(default_level.into()).from_env_lossy();
 
-        for directive in ["base_common_runtime_tasks=off", "base_node_core::launch::common=off"] {
+        for directive in ["base_common_runtime_tasks=off", "base_node_service::launch::common=off"] {
             if let Ok(directive) = directive.parse() {
                 filter = filter.add_directive(directive);
             }

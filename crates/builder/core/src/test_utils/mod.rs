@@ -14,7 +14,7 @@ use alloy_primitives::B256;
 pub use apis::*;
 use base_common_client_ethereum::{PrivateKeySigner, TxSignerSync};
 use base_common_types_chain::{BaseTransactionSigned, BaseTypedTransaction};
-use base_node_core::NodeConfig;
+use base_node_service::NodeConfig;
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
