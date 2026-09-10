@@ -25,7 +25,7 @@ humantime = { workspace = true }
 itertools = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
-base-node-config = { workspace = true }
+base-node-config = {workspace = true}
 alloy-hardforks = { workspace = true }
 reth-node-events = { workspace = true }
 reth-node-metrics = { workspace = true }
@@ -53,7 +53,6 @@ futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 crossterm = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["crossterm"] }
-reth-config = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 comfy-table = { workspace = true, features = ["default"] }
@@ -85,4 +84,18 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 
 [features]
-arbitrary = ["dep:proptest", "dep:arbitrary", "dep:proptest-arbitrary-interop", "base-execution-state-database/arbitrary", "base-execution-network-wire/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "reth-primitives-traits/arbitrary", "base-execution-state-memory/arbitrary"]
+arbitrary = [
+    "dep:proptest",
+    "dep:arbitrary",
+    "dep:proptest-arbitrary-interop",
+    "base-execution-state-database/arbitrary",
+    "base-execution-network-wire/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "base-common-types-chain/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-common-types-chain/arbitrary",
+    "base-execution-state-types/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "base-execution-state-memory/arbitrary",
+]

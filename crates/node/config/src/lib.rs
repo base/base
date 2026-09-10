@@ -24,3 +24,6 @@ pub use utils::*;
 
 mod version;
 pub use version::*;
+
+mod file_config;
+pub use file_config::Config as NodeFileConfig;

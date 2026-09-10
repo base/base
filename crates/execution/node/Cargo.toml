@@ -16,11 +16,10 @@ fdlimit = { workspace = true }
 alloy-rlp = { workspace = true }
 humantime = { workspace = true }
 jsonrpsee = { workspace = true }
-reth-config = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
-base-node-config = { workspace = true }
+base-node-config = {workspace = true}
 reth-node-events = { workspace = true }
 base-node-context = { workspace = true }
 reth-node-metrics = { workspace = true }

@@ -23,7 +23,7 @@ use base_node_config::{
 use clap::Parser;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
-use {base_execution_state_types::EtlConfig, reth_config::Config};
+use {base_execution_state_types::EtlConfig, base_node_config::NodeFileConfig as Config};
 
 pub use crate::CliNodeComponents;
 

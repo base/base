@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
+use base_node_config::NodeFileConfig as Config;
 use clap::Parser;
 use eyre::{WrapErr, bail};
-use reth_config::Config;
 /// `reth config` command
 #[derive(Debug, Parser)]
 pub struct Command {

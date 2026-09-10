@@ -1,5 +1,4 @@
 //! Configuration files.
-#[cfg(feature = "serde")]
 use std::path::Path;
 
 use base_execution_network_types::PeersConfig;
@@ -9,13 +8,11 @@ use base_execution_state_maintenance::StaticFilesConfig;
 use base_execution_state_types::PruneConfig;
 use base_execution_sync_pipeline::StageConfig;
 
-#[cfg(feature = "serde")]
 const EXTENSION: &str = "toml";
 
 /// Configuration for the reth node.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(default))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Config {
     /// Nodes to bootstrap P2P discovery with, as `enode://` URLs or `enr:` records.
     ///
@@ -24,14 +21,14 @@ pub struct Config {
     /// Configuration for each stage in the pipeline.
     pub stages: StageConfig,
     /// Configuration for pruning.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub prune: PruneConfig,
     /// Configuration for the discovery service.
     pub peers: PeersConfig,
     /// Configuration for peer sessions.
     pub sessions: SessionsConfig,
     /// Configuration for static files.
-    #[cfg_attr(feature = "serde", serde(default))]
+    #[serde(default)]
     pub static_files: StaticFilesConfig,
 }
 
@@ -42,7 +39,6 @@ impl Config {
     }
 }
 
-#[cfg(feature = "serde")]
 impl Config {
     /// Load a [`Config`] from a specified path.
     ///
@@ -99,8 +95,8 @@ impl Config {
     }
 }
 
-#[cfg(all(test, feature = "serde"))]
-pub mod tests {
+#[cfg(test)]
+mod tests {
     use std::{path::Path, str::FromStr, time::Duration};
 
     use base_execution_network_types::TrustedPeer;

@@ -10,7 +10,7 @@ use tracing::info;
 use {
     base_execution_state_maintenance::BlocksPerFileConfig,
     base_execution_state_maintenance::StaticFilesConfig, base_execution_state_types::PruneConfig,
-    reth_config::config::Config,
+    base_node_config::NodeFileConfig as Config,
 };
 
 use crate::download::{

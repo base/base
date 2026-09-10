@@ -15,8 +15,8 @@ use base_execution_sync_pipeline::{
     DefaultStages, ExecutionStage, ExecutionStageThresholds, OfflineStages, Pipeline, StageSet,
 };
 use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
+use base_node_config::NodeFileConfig as Config;
 use clap::{Parser, Subcommand};
-use reth_config::Config;
 use tokio::sync::watch;
 use tracing::info;
 

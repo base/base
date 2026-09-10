@@ -17,8 +17,8 @@ use base_execution_sync_pipeline::{
     ReverseHeadersDownloaderBuilder,
 };
 use base_execution_sync_pipeline::{ControlFlow, Pipeline, StageId, StageSet, *};
+use base_node_config::NodeFileConfig as Config;
 use futures::StreamExt;
-use reth_config::Config;
 use reth_node_events::node::NodeEvent;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};

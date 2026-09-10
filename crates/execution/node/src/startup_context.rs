@@ -69,7 +69,7 @@ impl BuilderContext {
     }
 
     /// Returns the loaded reh.toml config.
-    pub const fn reth_config(&self) -> &reth_config::Config {
+    pub const fn reth_config(&self) -> &base_node_config::NodeFileConfig {
         &self.config_container.toml_config
     }
 

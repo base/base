@@ -142,10 +142,13 @@ impl LaunchContext {
     /// `config`.
     ///
     /// This is async because the trusted peers may have to be resolved.
-    pub fn load_toml_config(&self, config: &NodeConfig) -> eyre::Result<reth_config::Config> {
+    pub fn load_toml_config(
+        &self,
+        config: &NodeConfig,
+    ) -> eyre::Result<base_node_config::NodeFileConfig> {
         let config_path = config.config.clone().unwrap_or_else(|| self.data_dir.config());
 
-        let mut toml_config = reth_config::Config::from_path(&config_path)
+        let mut toml_config = base_node_config::NodeFileConfig::from_path(&config_path)
             .wrap_err_with(|| format!("Could not load config file {config_path:?}"))?;
 
         Self::save_pruning_config(&mut toml_config, config, &config_path)?;
@@ -166,7 +169,7 @@ impl LaunchContext {
     /// Save prune config to the toml file if node is a full node or has custom pruning CLI
     /// arguments. Also migrates deprecated prune config values to new defaults.
     fn save_pruning_config(
-        reth_config: &mut reth_config::Config,
+        reth_config: &mut base_node_config::NodeFileConfig,
         config: &NodeConfig,
         config_path: impl AsRef<std::path::Path>,
     ) -> eyre::Result<()> {
@@ -355,13 +358,13 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
         &mut self.left_mut().config
     }
 
-    /// Returns the attached toml config [`reth_config::Config`].
-    pub const fn toml_config(&self) -> &reth_config::Config {
+    /// Returns the attached toml config [`base_node_config::NodeFileConfig`].
+    pub const fn toml_config(&self) -> &base_node_config::NodeFileConfig {
         &self.left().toml_config
     }
 
-    /// Returns the attached toml config [`reth_config::Config`].
-    pub const fn toml_config_mut(&mut self) -> &mut reth_config::Config {
+    /// Returns the attached toml config [`base_node_config::NodeFileConfig`].
+    pub const fn toml_config_mut(&mut self) -> &mut base_node_config::NodeFileConfig {
         &mut self.left_mut().toml_config
     }
 
@@ -1125,7 +1128,7 @@ pub struct WithConfigs {
     /// The configured, usually derived from the CLI.
     pub config: NodeConfig,
     /// The loaded reth.toml config.
-    pub toml_config: reth_config::Config,
+    pub toml_config: base_node_config::NodeFileConfig,
 }
 
 impl Clone for WithConfigs {
@@ -1252,8 +1255,8 @@ mod tests {
     use base_execution_state_database::models::PartialStateTrieUnwindMarker;
     use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
     use base_execution_sync_pipeline::{FinishCheckpoint, StageCheckpoint, StageId};
+    use base_node_config::NodeFileConfig as Config;
     use base_node_config::PruningArgs;
-    use reth_config::Config;
 
     use super::{LaunchContext, NodeConfig, get_partial_trie_unwind_marker};
 

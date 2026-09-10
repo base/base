@@ -10,9 +10,9 @@ use base_common_cli_support::hash_or_num_value_parser;
 use base_common_runtime_tasks::Runtime;
 use base_execution_network_service::{BlockDownloaderProvider, NetworkConfigBuilder};
 use base_execution_network_wire::BodiesClient;
+use base_node_config::NodeFileConfig as Config;
 use base_node_config::{DatadirArgs, NetworkArgs, get_single_header};
 use clap::{Parser, Subcommand};
-use reth_config::Config;
 
 pub mod bootnode;
 pub mod enode;

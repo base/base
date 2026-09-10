@@ -9,6 +9,7 @@ use std::{
     sync::OnceLock,
 };
 
+use crate::NodeFileConfig as Config;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
@@ -43,7 +44,6 @@ use clap::{
     Args,
     builder::{OsStr, Resettable},
 };
-use reth_config::Config;
 use secp256k1::SecretKey;
 use tracing::error;
 
@@ -1168,10 +1168,10 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use crate::NodeFileConfig as Config;
     use base_common_chain_config::BaseChainSpec;
     use base_execution_network_types::NodeRecord;
     use clap::Parser;
-    use reth_config::Config;
     use secp256k1::SecretKey;
 
     use super::*;

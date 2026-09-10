@@ -89,7 +89,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-common-cli-support](../../crates/common/cli/support/Cargo.toml) | Consolidate; retain required code |
 | `reth-codecs` | Merged into [base-common-types-chain](../../crates/common/types/chain/Cargo.toml) with the consensus types it encodes |
 | [base-common-codec-macros](../../crates/common/codec/macros/Cargo.toml) | Retain shared infrastructure |
-| [reth-config](../../vendor/reth-config/Cargo.toml) | Retain shared infrastructure |
+| [reth-config](../../crates/node/config/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus](../../vendor/reth-consensus/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus-common](../../vendor/reth-consensus-common/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus-debug-client](../../vendor/reth-consensus-debug-client/Cargo.toml) | Optional capability; separate removal decision |

@@ -114,7 +114,6 @@ members = [
   "vendor/reth-cli-commands",
   "crates/common/cli/support",
   "crates/common/codec/macros",
-  "vendor/reth-config",
   "vendor/reth-consensus-debug-client",
   "crates/execution/state/database",
   "crates/execution/state/maintenance",
@@ -407,7 +406,6 @@ base-execution-state-database = { path = "crates/execution/state/database", defa
 base-execution-state-trie = { path = "crates/execution/state/trie", default-features = false }
 base-execution-engine-observers = { path = "crates/execution/engine/observers", default-features = false }
 base-execution-sync-pipeline = { path = "crates/execution/sync/pipeline", default-features = false }
-reth-config = { path = "vendor/reth-config", default-features = false }
 base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 base-execution-network-service = { path = "crates/execution/network/service", default-features = false }
