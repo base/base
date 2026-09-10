@@ -111,7 +111,7 @@ impl Default for ShadowValidityConfig {
 /// Builder API that decorates sampled transactions before normal validated insertion.
 #[derive(Debug)]
 pub struct ShadowValidityBuilderApi {
-    inner: BuilderApiImpl<base_execution_txpool::BaseTransactionPool>,
+    inner: BuilderApiImpl,
     config: ShadowValidityConfig,
 }
 

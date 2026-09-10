@@ -42,33 +42,28 @@ pub trait BuilderApi {
 /// directly into the pool without re-validating signatures, since the sender
 /// addresses are trusted from the forwarding mempool node.
 #[derive(Debug)]
-pub struct BuilderApiImpl<P> {
-    pool: P,
+pub struct BuilderApiImpl {
+    pool: base_execution_txpool::BaseTransactionPool,
     accept_extensions: bool,
     max_extension_items: usize,
 }
 
-impl<P> BuilderApiImpl<P> {
+impl BuilderApiImpl {
     /// Creates a new handler backed by the given transaction pool.
     ///
-    /// This constructor is defined only for [`TransactionValidity`] so that
-    /// `BuilderApiImpl::new(pool)` resolves without a type annotation. A single
-    /// constructor on the generic impl would leave `TransactionValidity` unconstrained at every
-    /// call site (`E0282`), because type-parameter defaults do not participate
-    /// in inference for associated-function calls.
-    pub const fn new(pool: P) -> Self {
+    pub const fn new(pool: base_execution_txpool::BaseTransactionPool) -> Self {
         Self { pool, accept_extensions: false, max_extension_items: 0 }
     }
 }
 
-impl<P> BuilderApiImpl<P> {
+impl BuilderApiImpl {
     /// Creates a new handler carrying the wire extension payload `TransactionValidity`.
     ///
     /// Non-empty extension payloads are rejected unless `accept_extensions` is
     /// explicitly enabled. Extension payloads validate `max_extension_items`
     /// according to their own item semantics.
     pub const fn with_extensions(
-        pool: P,
+        pool: base_execution_txpool::BaseTransactionPool,
         accept_extensions: bool,
         max_extension_items: usize,
     ) -> Self {
@@ -77,10 +72,7 @@ impl<P> BuilderApiImpl<P> {
 }
 
 #[async_trait::async_trait]
-impl<P> BuilderApiServer for BuilderApiImpl<P>
-where
-    P: TransactionPool + Send + Sync + 'static,
-{
+impl BuilderApiServer for BuilderApiImpl {
     async fn insert_validated_transaction(&self, tx: ValidatedTransaction) -> RpcResult<()> {
         debug!(
             sender = %tx.sender,
@@ -169,7 +161,7 @@ where
     }
 }
 
-impl<P> BuilderApiImpl<P> {
+impl BuilderApiImpl {
     fn emit_validated_insert_event(
         &self,
         event_type: TransactionEventType,
@@ -198,9 +190,7 @@ mod tests {
     use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, TxDeposit, TxEip1559,
     };
-    use base_execution_txpool::{
-        BasePooledTransaction, NoopTransactionPool, TransactionValidity, ValidatedTransaction,
-    };
+    use base_execution_txpool::{BasePooledTransaction, TransactionValidity, ValidatedTransaction};
 
     use super::*;
 
@@ -246,8 +236,16 @@ mod tests {
         (sender, Bytes::from(encoded))
     }
 
-    fn handler() -> BuilderApiImpl<NoopTransactionPool> {
-        BuilderApiImpl::new(NoopTransactionPool::new())
+    fn testing_pool() -> base_execution_txpool::BaseTransactionPool {
+        let mut genesis = base_testing_support::build_test_genesis_zenith();
+        genesis.config.chain_id = 1;
+        let mock = base_execution_state_provider::test_utils::MockEthProvider::new()
+            .with_chain_spec(base_common_chain_config::BaseChainSpec::from_genesis(genesis));
+        crate::test_utils::RpcTestUtils::pool_without_balance_checks(mock)
+    }
+
+    fn handler() -> BuilderApiImpl {
+        BuilderApiImpl::new(testing_pool())
     }
 
     fn validated_transaction(
@@ -276,12 +274,8 @@ mod tests {
         }
     }
 
-    fn extension_handler(accept_extensions: bool) -> BuilderApiImpl<NoopTransactionPool> {
-        BuilderApiImpl::<_>::with_extensions(
-            NoopTransactionPool::new(),
-            accept_extensions,
-            usize::MAX,
-        )
+    fn extension_handler(accept_extensions: bool) -> BuilderApiImpl {
+        BuilderApiImpl::with_extensions(testing_pool(), accept_extensions, usize::MAX)
     }
 
     #[tokio::test]
@@ -311,14 +305,8 @@ mod tests {
 
         let tx = validated_transaction(sender, raw, test_validity(false));
 
-        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
-        // The extension passed, so the request got as far as the noop pool,
-        // which rejects everything with an internal error.
-        assert_eq!(
-            err.code(),
-            ErrorCode::InternalError.code(),
-            "a passing extension must fall through to pool insertion"
-        );
+        handler.insert_validated_transaction(tx).await.unwrap();
+        assert_eq!(handler.pool.pooled_transaction_hashes().len(), 1);
     }
 
     #[tokio::test]
@@ -339,13 +327,12 @@ mod tests {
         let (sender, raw) = create_eip1559_tx();
         let tx = validated_transaction(sender, raw, TransactionValidity::default());
 
-        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
-
-        assert_eq!(err.code(), ErrorCode::InternalError.code());
+        handler.insert_validated_transaction(tx).await.unwrap();
+        assert_eq!(handler.pool.pooled_transaction_hashes().len(), 1);
     }
 
-    #[test]
-    fn both_validity_modes_build_rpc_modules() {
+    #[tokio::test]
+    async fn both_validity_modes_build_rpc_modules() {
         // The stock call-site shape must keep working untouched...
         let _stock = handler().into_rpc();
         // ...and a custom extension payload must also produce a module.
@@ -479,10 +466,7 @@ mod tests {
         let (sender, raw) = create_eip1559_tx();
         let tx = validated_transaction(sender, raw, TransactionValidity::default());
 
-        let result = handler.insert_validated_transaction(tx).await;
-        let err = result.unwrap_err();
-        // Decode should succeed, but the txpool is a noop so it will reject the tx
-        // This error code should be InternalError
-        assert_eq!(err.code(), ErrorCode::InternalError.code());
+        handler.insert_validated_transaction(tx).await.unwrap();
+        assert_eq!(handler.pool.pooled_transaction_hashes().len(), 1);
     }
 }
