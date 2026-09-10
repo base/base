@@ -110,14 +110,17 @@ impl Default for ShadowValidityConfig {
 
 /// Builder API that decorates sampled transactions before normal validated insertion.
 #[derive(Debug)]
-pub struct ShadowValidityBuilderApi<P> {
-    inner: BuilderApiImpl<P>,
+pub struct ShadowValidityBuilderApi {
+    inner: BuilderApiImpl<base_execution_txpool::BaseTransactionPool>,
     config: ShadowValidityConfig,
 }
 
-impl<P> ShadowValidityBuilderApi<P> {
+impl ShadowValidityBuilderApi {
     /// Creates a builder API using validated configuration.
-    pub const fn new(pool: P, config: BuilderApiConfig) -> Self {
+    pub const fn new(
+        pool: base_execution_txpool::BaseTransactionPool,
+        config: BuilderApiConfig,
+    ) -> Self {
         Self {
             inner: BuilderApiImpl::with_extensions(
                 pool,
@@ -130,10 +133,7 @@ impl<P> ShadowValidityBuilderApi<P> {
 }
 
 #[async_trait::async_trait]
-impl<P> BuilderApiServer for ShadowValidityBuilderApi<P>
-where
-    P: TransactionPool + Send + Sync + 'static,
-{
+impl BuilderApiServer for ShadowValidityBuilderApi {
     async fn insert_validated_transaction(&self, mut tx: ValidatedTransaction) -> RpcResult<()> {
         let outcome = self.config.inject(&mut tx);
         if self.config.is_enabled() {
