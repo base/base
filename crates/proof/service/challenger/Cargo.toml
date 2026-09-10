@@ -1,5 +1,5 @@
 [package]
-name = "base-challenger"
+name = "base-proof-service-challenger"
 description = "Base Challenger"
 version.workspace = true
 edition.workspace = true
@@ -48,7 +48,7 @@ base-common-observability-health = { workspace = true, features = ["axum-server"
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-challenger = { workspace = true, features = ["test-utils"] }
+base-proof-service-challenger = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]

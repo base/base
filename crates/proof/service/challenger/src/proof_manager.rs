@@ -927,7 +927,7 @@ mod tests {
                 let snapshot = snapshotter.snapshot().into_vec();
                 let count = snapshot.iter().find_map(|(key, _, _, value)| {
                     if key.kind() != MetricKind::Counter
-                        || key.key().name() != "base_challenger.proof_retries_exhausted_total"
+                        || key.key().name() != "base_proof_service_challenger.proof_retries_exhausted_total"
                     {
                         return None;
                     }

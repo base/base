@@ -701,7 +701,7 @@ mod tests {
         let snapshot = snapshotter.snapshot().into_vec();
         let finality_time = snapshot.iter().find_map(|(key, _, _, value)| {
             (key.kind() == MetricKind::Histogram
-                && key.key().name() == "base_challenger.game_finality_time_seconds")
+                && key.key().name() == "base_proof_service_challenger.game_finality_time_seconds")
                 .then_some(value)
         });
         assert_eq!(finality_time, Some(&DebugValue::Histogram(vec![2_000_000_000.0.into()])),);

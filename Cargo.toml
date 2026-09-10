@@ -71,7 +71,7 @@ members = [
   "crates/infra/snapshotter",
   "crates/infra/telemetry",
   "crates/infra/websocket-proxy",
-  "crates/proof/challenge",
+  "crates/proof/service/challenger",
   "crates/proof/l1/submission",
   "crates/proof/execution/client",
   "crates/proof/host/service",
@@ -311,7 +311,7 @@ base-proof-client-providers = { path = "crates/proof/client/providers", default-
 base-proof-witness-mpt = { path = "crates/proof/witness/mpt", default-features = false }
 base-proof-host-service = { path = "crates/proof/host/service", default-features = false }
 base-proposer = { path = "crates/proof/proposer", default-features = false }
-base-challenger = { path = "crates/proof/challenge", default-features = false }
+base-proof-service-challenger = { path = "crates/proof/service/challenger", default-features = false }
 base-proof-execution-client = { path = "crates/proof/execution/client", default-features = false }
 base-proof-witness-preimage = { path = "crates/proof/witness/preimage", default-features = false }
 base-proof-l1-submission = { path = "crates/proof/l1/submission", default-features = false }

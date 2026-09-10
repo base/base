@@ -897,7 +897,7 @@ mod tests {
         assert_eq!(
             snapshot.iter().find_map(|(ck, _, _, value)| {
                 if ck.kind() != MetricKind::Counter
-                    || ck.key().name() != "base_challenger.games_invalid_total"
+                    || ck.key().name() != "base_proof_service_challenger.games_invalid_total"
                 {
                     return None;
                 }
@@ -911,7 +911,7 @@ mod tests {
         assert!(
             snapshot.iter().any(|(ck, _, _, value)| {
                 ck.kind() == MetricKind::Histogram
-                    && ck.key().name() == "base_challenger.validation_latency_seconds"
+                    && ck.key().name() == "base_proof_service_challenger.validation_latency_seconds"
                     && matches!(value, DebugValue::Histogram(_))
             }),
             "checkpoint validation should record latency",

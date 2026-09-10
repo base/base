@@ -7,7 +7,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_challenger::{
+use base_proof_service_challenger::{
     AnchorUpdater, ChallengeSubmitter, DisputeIntent, DisputeProofManager, Driver,
     DriverComponents, GameScanner, OutputValidator, PendingProof, ProofKind, ProofPhase,
     test_utils::{
@@ -460,7 +460,7 @@ async fn test_step_invalid_tee_result_falls_back_to_zk_without_timeout() {
         .pending_proofs()
         .get(&addr(0))
         .expect("ZK fallback proof should be pending after invalid TEE result");
-    assert!(matches!(entry.kind, base_challenger::ProofKind::Zk { .. }));
+    assert!(matches!(entry.kind, base_proof_service_challenger::ProofKind::Zk { .. }));
     assert!(matches!(entry.phase, ProofPhase::AwaitingProof { .. }));
 }
 
@@ -765,7 +765,7 @@ async fn test_step_dual_proof_invalid_with_tee_provider_nullifies_tee_first() {
         .pending_proofs()
         .get(&addr(0))
         .expect("ZK proof should be pending after TEE nullification");
-    assert!(matches!(entry.kind, base_challenger::ProofKind::Zk { .. }));
+    assert!(matches!(entry.kind, base_proof_service_challenger::ProofKind::Zk { .. }));
     assert_eq!(entry.intent, DisputeIntent::Nullify);
 }
 

@@ -9,7 +9,7 @@ use eyre::WrapErr;
 #[group(skip)]
 pub(crate) struct Cli {
     #[command(flatten)]
-    args: base_challenger::Cli,
+    args: base_proof_service_challenger::Cli,
 }
 
 impl Cli {
@@ -17,15 +17,15 @@ impl Cli {
     pub(crate) fn run(self) -> eyre::Result<()> {
         base_common_cli_support::LogConfig::from(self.args.logging.clone())
             .init_tracing_subscriber()?;
-        let config = base_challenger::ChallengerConfig::from_cli(self.args)?;
+        let config = base_proof_service_challenger::ChallengerConfig::from_cli(self.args)?;
         config
             .metrics
             .init_with(|| {
                 base_common_cli_support::register_version_metrics!();
-                base_challenger::ChallengerMetrics::up().set(1.0);
+                base_proof_service_challenger::ChallengerMetrics::up().set(1.0);
             })
             .wrap_err("failed to install Prometheus recorder")?;
         base_common_cli_support::RuntimeManager::new()
-            .run_until_ctrl_c(base_challenger::ChallengerService::run(config))
+            .run_until_ctrl_c(base_proof_service_challenger::ChallengerService::run(config))
     }
 }

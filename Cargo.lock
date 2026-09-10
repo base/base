@@ -2383,52 +2383,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-challenger"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "async-trait",
- "base-challenger",
- "base-common-cli-support",
- "base-common-client-ethereum",
- "base-common-l1-transactions",
- "base-common-observability-health",
- "base-common-observability-metrics",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-proof-client-providers",
- "base-proof-l1-submission",
- "base-proof-service-client",
- "base-proof-service-protocol",
- "base-proof-types-protocol",
- "clap",
- "eyre",
- "futures",
- "humantime",
- "metrics",
- "metrics-util",
- "rstest",
- "rustls 0.23.43",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-challenger-bin"
 version = "0.0.0"
 dependencies = [
- "base-challenger",
  "base-common-cli-support",
+ "base-proof-service-challenger",
  "clap",
  "eyre",
 ]
@@ -4809,6 +4768,47 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-proof-service-challenger"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "async-trait",
+ "base-common-cli-support",
+ "base-common-client-ethereum",
+ "base-common-l1-transactions",
+ "base-common-observability-health",
+ "base-common-observability-metrics",
+ "base-common-runtime-tasks",
+ "base-common-types-chain",
+ "base-common-types-rpc",
+ "base-consensus-batch-types",
+ "base-proof-client-providers",
+ "base-proof-l1-submission",
+ "base-proof-service-challenger",
+ "base-proof-service-client",
+ "base-proof-service-protocol",
+ "base-proof-types-protocol",
+ "clap",
+ "eyre",
+ "futures",
+ "humantime",
+ "metrics",
+ "metrics-util",
+ "rstest",
+ "rustls 0.23.43",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
  "tracing",
  "url",
 ]

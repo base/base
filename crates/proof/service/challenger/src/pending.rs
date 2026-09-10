@@ -472,7 +472,7 @@ mod tests {
                 let snapshot = snapshotter.snapshot().into_vec();
                 let count = snapshot.iter().find_map(|(key, _, _, value)| {
                     if key.kind() != MetricKind::Counter
-                        || key.key().name() != "base_challenger.proof_session_failures_total"
+                        || key.key().name() != "base_proof_service_challenger.proof_session_failures_total"
                         || !key.key().labels().any(|label| {
                             label.key() == "reason" && label.value() == expected_reason
                         })

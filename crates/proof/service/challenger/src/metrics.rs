@@ -1,7 +1,7 @@
 //! Challenger metrics constants.
 
 base_common_observability_metrics::define_metrics! {
-    base_challenger,
+    base_proof_service_challenger,
     struct = ChallengerMetrics,
 
     #[describe("Challenger is running")]
