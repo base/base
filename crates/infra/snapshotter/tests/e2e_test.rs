@@ -721,7 +721,6 @@ async fn snapshot_generator_streams_archives_to_minio() -> Result<()> {
         SnapshotGenerator::generate_manifest_with_sink(
             &ManifestGenerationParams {
                 source_datadir: &source_path,
-                output_dir: None,
                 chain_id: 8453,
                 base_url: None,
                 block: Some(0),
@@ -1114,17 +1113,19 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         "storage_changesets",
     ];
     let baseline = tempfile::tempdir()?;
-    SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
-        source_datadir: source.path(),
-        output_dir: Some(baseline.path()),
-        chain_id: 8453,
-        base_url: None,
-        block: Some(1_999_999),
-        blocks_per_file: Some(500_000),
-        remote_static_files: &HashMap::new(),
-        previous_manifest: None,
-        upload_proofs: false,
-    })?;
+    SnapshotGenerator::generate_manifest(
+        &ManifestGenerationParams {
+            source_datadir: source.path(),
+            chain_id: 8453,
+            base_url: None,
+            block: Some(1_999_999),
+            blocks_per_file: Some(500_000),
+            remote_static_files: &HashMap::new(),
+            previous_manifest: None,
+            upload_proofs: false,
+        },
+        baseline.path(),
+    )?;
     let previous_manifest = parse_local_manifest(baseline.path())?;
 
     // Simulate the first three chunks of every component existing remotely.
@@ -1142,17 +1143,19 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     }
 
     let output = tempfile::tempdir()?;
-    let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
-        source_datadir: source.path(),
-        output_dir: Some(output.path()),
-        chain_id: 8453,
-        base_url: None,
-        block: Some(1_999_999),
-        blocks_per_file: Some(500_000),
-        remote_static_files: &remote,
-        previous_manifest: Some(&previous_manifest),
-        upload_proofs: false,
-    })?;
+    let files = SnapshotGenerator::generate_manifest(
+        &ManifestGenerationParams {
+            source_datadir: source.path(),
+            chain_id: 8453,
+            base_url: None,
+            block: Some(1_999_999),
+            blocks_per_file: Some(500_000),
+            remote_static_files: &remote,
+            previous_manifest: Some(&previous_manifest),
+            upload_proofs: false,
+        },
+        output.path(),
+    )?;
 
     let filenames: Vec<String> = files
         .iter()
@@ -1218,17 +1221,19 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
 
     let output = tempfile::tempdir()?;
     let empty_remote = HashMap::new();
-    let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
-        source_datadir: source.path(),
-        output_dir: Some(output.path()),
-        chain_id: 8453,
-        base_url: None,
-        block: Some(0),
-        blocks_per_file: Some(500_000),
-        remote_static_files: &empty_remote,
-        previous_manifest: None,
-        upload_proofs: true,
-    })?;
+    let files = SnapshotGenerator::generate_manifest(
+        &ManifestGenerationParams {
+            source_datadir: source.path(),
+            chain_id: 8453,
+            base_url: None,
+            block: Some(0),
+            blocks_per_file: Some(500_000),
+            remote_static_files: &empty_remote,
+            previous_manifest: None,
+            upload_proofs: true,
+        },
+        output.path(),
+    )?;
 
     assert!(
         files.iter().any(|f| f.file_name().is_some_and(|n| n == "proofs.tar.zst")),

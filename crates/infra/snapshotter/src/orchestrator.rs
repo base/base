@@ -193,7 +193,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let manifest = tokio::task::spawn_blocking(move || {
             let params = ManifestGenerationParams {
                 source_datadir: &source_datadir,
-                output_dir: None,
                 chain_id,
                 base_url: None,
                 block: Some(block),
