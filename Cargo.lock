@@ -3269,10 +3269,12 @@ dependencies = [
  "base-execution-state-trie",
  "base-execution-state-types",
  "base-execution-sync-pipeline",
+ "base-execution-txpool",
  "crossbeam-channel",
  "derive_more",
  "eyre",
  "futures",
+ "futures-util",
  "indexmap 2.14.0",
  "metrics",
  "metrics-util",
@@ -3288,6 +3290,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-stream",
  "tracing",
 ]
 
@@ -4616,7 +4619,6 @@ dependencies = [
  "reth-config",
  "reth-consensus-debug-client",
  "reth-e2e-test-utils",
- "reth-engine-local",
  "reth-engine-util",
  "reth-node-core",
  "reth-node-ethstats",
@@ -14065,26 +14067,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "reth-engine-local"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-engine-types",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-state-api",
- "base-execution-txpool",
- "eyre",
- "futures-util",
- "reth-primitives-traits",
- "tokio",
- "tokio-stream",
- "tracing",
 ]
 
 [[package]]

@@ -19,41 +19,45 @@ rayon = { workspace = true }
 metrics = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-execution-state-api = { workspace = true }
+futures-util = { workspace = true }
+base-execution-txpool = { workspace = true }
+base-execution-state-api = {workspace = true}
 base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-sync-pipeline = {workspace = true }
+base-execution-payload-builder = {workspace = true}
+eyre = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
-base-execution-payload-builder = { workspace = true }
 base-execution-state-maintenance = { workspace = true}
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 indexmap = { workspace = true, features = ["default"] }
+tracing = {features = ["attributes"], workspace = true}
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "sync"] }
+tokio-stream = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-common-types-payload = {workspace = true, features = ["serde"]}
+base-common-types-chain = {features = ["reth"], workspace = true}
+base-common-types-payload = {features = ["serde"], workspace = true}
+base-execution-engine-types = {features = ["std"], workspace = true}
 base-execution-state-types = {features = ["rayon"], workspace = true}
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
-base-execution-engine-types = { workspace = true, features = ["std"] }
 base-execution-state-trie = {features = ["metrics"], workspace = true}
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-provider = {workspace = true, features = ["rayon"]}
 serde_json = { workspace = true, features = ["alloc"], optional = true }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
-base-execution-payload-types = { workspace = true, features = ["default"] }
+base-execution-payload-types = {features = ["default"], workspace = true}
+reth-primitives-traits = {features = ["dashmap", "rayon"], workspace = true}
 base-execution-network-service = { workspace = true, features = ["default"] }
 base-execution-engine-observers = { workspace = true, features = ["witness"] }
-reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
+alloy-primitives = {features = ["getrandom", "map-foldhash"], workspace = true}
+tokio = {features = ["macros", "rt", "rt-multi-thread", "sync"], workspace = true}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 base-common-observability-tracing = { workspace = true, optional = true, features = ["default"] }
 base-execution-evm-blocks = {features = ["metrics", "optional-balance-check", "optional-no-base-fee"], workspace = true}

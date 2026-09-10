@@ -43,7 +43,7 @@ Removed the unused Ethereum local payload-attribute builder and the Ethereum-onl
 | Crate | Actual dependency and removal condition |
 | --- | --- |
 | `reth-consensus-debug-client` | Used by `reth-node-builder/src/launch/debug.rs` for fetching payloads from RPC/Etherscan and driving Engine API calls. Base's proof-history launch uses debug capabilities. Remove only with the corresponding debug launch modes. |
-| `reth-engine-local` | Generic local mining, mining mode, and finality defaults are wired into node configuration and debug launch. Base has its own local attributes builder. Remove the Ethereum attributes implementation first; removing the entire crate also removes or relocates Base local-mining support. |
+| `base-execution-engine-driver` | Generic local mining, mining mode, and finality defaults are wired into node configuration and debug launch. Base has its own local attributes builder. Remove the Ethereum attributes implementation first; removing the entire crate also removes or relocates Base local-mining support. |
 | `reth-node-ethstats` | Launched through `spawn_ethstats` in the engine launcher and exposed by `--ethstats`. Optional telemetry, not multi-network machinery. Delete if this integration is unwanted. |
 | `base-execution-engine-observers` | Node builder installs invalid-block witness hooks. This is useful for Base execution diagnostics; deletion removes that behavior. |
 | `reth-engine-util` | Engine launcher uses `EngineMessageStreamExt`; the crate implements engine-message recording/skipping/reorg debugging. Remove with those debugging features, or absorb the needed parts. |
@@ -103,7 +103,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
 | [reth-e2e-test-utils](../../vendor/reth-e2e-test-utils/Cargo.toml) | Test support; retain or migrate |
 | [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
-| [reth-engine-local](../../vendor/reth-engine-local/Cargo.toml) | Optional capability; separate removal decision |
+| [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Optional capability; separate removal decision |
 | [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-util](../../vendor/reth-engine-util/Cargo.toml) | Optional capability; separate removal decision |

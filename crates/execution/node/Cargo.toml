@@ -24,7 +24,6 @@ reth-node-core = { workspace = true }
 reth-engine-util = { workspace = true }
 reth-node-events = { workspace = true }
 base-node-context = { workspace = true }
-reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }
 base-tx-forwarding = { workspace = true }
 reth-node-ethstats = { workspace = true }
@@ -33,12 +32,12 @@ base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
 base-common-client-ethereum = {workspace = true}
 base-execution-rpc-server = { workspace = true }
+base-execution-engine-driver = {workspace = true}
 base-execution-payload-types = {workspace = true}
 base-execution-engine-types = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
-base-execution-engine-driver = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}

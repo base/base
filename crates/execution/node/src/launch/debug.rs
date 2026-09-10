@@ -2,9 +2,9 @@
 use std::sync::Arc;
 
 use base_common_client_ethereum::Base;
+use base_execution_engine_driver::{LocalMiner, MiningMode};
 use base_execution_payload_types::BaseBuiltPayload;
 use reth_consensus_debug_client::{DebugConsensusClient, EtherscanBlockProvider, RpcBlockProvider};
-use reth_engine_local::{LocalMiner, MiningMode};
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
 

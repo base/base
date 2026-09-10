@@ -31,3 +31,6 @@ pub mod test_utils;
 
 #[cfg(test)]
 pub use tree::payload_processor::bal::execute::L1InfoDeposit;
+
+mod miner;
+pub use miner::{LocalMiner, MiningMode};
