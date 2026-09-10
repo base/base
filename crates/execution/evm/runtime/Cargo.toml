@@ -218,12 +218,9 @@ dev = [
     "optional_priority_fee_check",
     "optional_fee_charge",
 ]
-hashbrown = ["alloy-primitives/map-hashbrown"]
-map-foldhash = ["alloy-primitives/map-foldhash"]
 optional_eip7623 = []
 optional_priority_fee_check = []
 p256-aws-lc-rs = ["dep:aws-lc-rs"]
-sha3-keccak = ["alloy-primitives/sha3-keccak"]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-common-chain-config/test-utils", "std"]
 rand = ["alloy-primitives/rand"]
 reth-codec = ["dep:bytes", "dep:modular-bitfield", "base-common-types-chain/alloy"]
