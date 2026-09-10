@@ -6,6 +6,7 @@ use base_common_types_chain::BlockHeader;
 use base_execution_state_database::{
     DbCursorRO, DbCursorRW, DbTx, DbTxMut, DbTxUnwindExt, RawKey, RawTable, RawValue, tables,
 };
+use base_execution_state_maintenance::Collector;
 use base_execution_state_provider::{
     BlockHashReader, DBProvider, HeaderSyncGapProvider, StaticFileProviderFactory,
     providers::StaticFileWriter,
@@ -13,7 +14,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::StreamExt;
-use reth_etl::Collector;
 use reth_network_p2p::headers::{
     downloader::{HeaderDownloader, HeaderSyncGap, SyncTarget},
     error::HeadersDownloaderError,

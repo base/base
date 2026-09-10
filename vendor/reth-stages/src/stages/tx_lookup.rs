@@ -1,5 +1,6 @@
 use alloy_primitives::{TxHash, TxNumber};
 use base_execution_state_database::{DbTxMut, Decode, Decompress, Tables, tables};
+use base_execution_state_maintenance::Collector;
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
@@ -7,7 +8,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::ProviderError;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_etl::Collector;
 use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
@@ -22,11 +22,11 @@ use {base_execution_state_types::EtlConfig, reth_config::config::TransactionLook
 /// [`tables::TransactionHashNumbers`] This is used for looking up changesets via the transaction
 /// hash.
 ///
-/// It uses [`reth_etl::Collector`] to collect all entries before finally writing them to disk.
+/// It uses [`base_execution_state_maintenance::Collector`] to collect all entries before finally writing them to disk.
 #[derive(Debug, Clone)]
 pub struct TransactionLookupStage {
     /// The maximum number of lookup entries to hold in memory before pushing them to
-    /// [`reth_etl::Collector`].
+    /// [`base_execution_state_maintenance::Collector`].
     chunk_size: u64,
     etl_config: EtlConfig,
     prune_mode: Option<PruneMode>,

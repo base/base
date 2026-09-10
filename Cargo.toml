@@ -131,7 +131,6 @@ members = [
   "vendor/reth-engine-tree",
   "vendor/reth-engine-util",
   "crates/execution/network/wire",
-  "vendor/reth-etl",
   "vendor/reth-exex",
   "vendor/reth-exex-test-utils",
   "vendor/reth-exex-types",
@@ -432,7 +431,6 @@ alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, packag
 
 # reth
 base-execution-state-database = { path = "crates/execution/state/database", default-features = false }
-reth-etl = { path = "vendor/reth-etl", default-features = false }
 base-execution-state-trie = { path = "crates/execution/state/trie", default-features = false }
 reth-exex = { path = "vendor/reth-exex", default-features = false }
 reth-prune = { path = "vendor/reth-prune", default-features = false }

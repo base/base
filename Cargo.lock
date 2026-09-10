@@ -3889,10 +3889,11 @@ dependencies = [
  "base-execution-state-types",
  "boyer-moore-magiclen",
  "eyre",
- "reth-etl",
+ "rayon",
  "reth-primitives-traits",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -14050,16 +14051,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-etl"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-execution-state-database",
- "rayon",
- "tempfile",
-]
-
-[[package]]
 name = "reth-exex"
 version = "0.0.0"
 dependencies = [
@@ -14640,7 +14631,6 @@ dependencies = [
  "rayon",
  "reth-config",
  "reth-downloaders",
- "reth-etl",
  "reth-exex",
  "reth-network-p2p",
  "reth-primitives-traits",

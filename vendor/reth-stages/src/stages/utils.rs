@@ -9,6 +9,7 @@ use base_execution_state_database::{
     models::sharded_key::NUM_OF_INDICES_IN_SHARD, models::storage_sharded_key::StorageShardedKey,
     tables,
 };
+use base_execution_state_maintenance::Collector;
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
     ProviderRange, ProviderResult, RocksDBProviderFactory, ShardedHistoryTable,
@@ -17,7 +18,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
-use reth_etl::Collector;
 use reth_stages_api::StageError;
 use tracing::info;
 

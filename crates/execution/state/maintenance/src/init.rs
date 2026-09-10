@@ -1,5 +1,6 @@
 //! Reth genesis initialization utility functions.
 
+use crate::Collector;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{
     Address, B256, U256, keccak256,
@@ -29,7 +30,6 @@ use base_execution_state_types::StateRootError;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_etl::Collector;
 use reth_primitives_traits::{GotExpected, SealedHeader};
 
 type DbStateRoot<'a, TX, A> = StateRootComputer<

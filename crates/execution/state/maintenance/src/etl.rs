@@ -1,19 +1,3 @@
-//! ETL data collector.
-//!
-//! This crate is useful for dumping unsorted data into temporary files and iterating on their
-//! sorted representation later on.
-//!
-//! This has multiple uses, such as optimizing database inserts (for Btree based databases) and
-//! memory management (as it moves the buffer to disk instead of memory).
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
 use std::{
     cmp::Reverse,
     collections::BinaryHeap,
@@ -21,12 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Key len and Value len encode use [`usize::to_be_bytes()`] the length is 8.
-const KV_LEN: usize = 8;
-
 use base_execution_state_database::{Compress, Encode, Key, Value};
 use rayon::prelude::*;
 use tempfile::{NamedTempFile, TempDir};
+
+/// Key len and Value len encode use [`usize::to_be_bytes()`] the length is 8.
+const KV_LEN: usize = 8;
 
 /// An ETL (extract, transform, load) data collector.
 ///
@@ -218,7 +202,7 @@ impl Iterator for EtlIter<'_> {
 
 /// A temporary ETL file.
 #[derive(Debug)]
-struct EtlFile {
+pub struct EtlFile {
     file: BufReader<NamedTempFile>,
     len: usize,
 }
@@ -227,7 +211,7 @@ impl EtlFile {
     /// Create a new file with the given data (which should be pre-sorted) at the given path.
     ///
     /// The file will be a temporary file.
-    pub(crate) fn new<K, V>(dir: &Path, buffer: Vec<(K, V)>) -> std::io::Result<Self>
+    pub fn new<K, V>(dir: &Path, buffer: Vec<(K, V)>) -> std::io::Result<Self>
     where
         Self: Sized,
         K: AsRef<[u8]>,
@@ -254,7 +238,7 @@ impl EtlFile {
     /// Read the next entry in the file.
     ///
     /// Can return error if it reaches EOF before filling the internal buffers.
-    pub(crate) fn read_next(&mut self) -> std::io::Result<Option<(Vec<u8>, Vec<u8>)>> {
+    pub fn read_next(&mut self) -> std::io::Result<Option<(Vec<u8>, Vec<u8>)>> {
         if self.len == 0 {
             return Ok(None);
         }

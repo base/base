@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -12,3 +11,6 @@ pub mod init;
 
 mod db_tool;
 pub use db_tool::*;
+
+mod etl;
+pub use etl::{Collector, EtlFile, EtlIter};

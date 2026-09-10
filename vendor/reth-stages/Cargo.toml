@@ -17,7 +17,6 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
-reth-etl = { workspace = true }
 page_size = { workspace = true }
 reth-exex = { workspace = true }
 thiserror = { workspace = true }
@@ -35,6 +34,7 @@ base-execution-evm-runtime = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 num-traits = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -53,13 +53,13 @@ paste = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-genesis = { workspace = true }
 assert_matches = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 reth-static-file = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-execution-network-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-stages-api = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }

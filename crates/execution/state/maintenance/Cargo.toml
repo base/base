@@ -12,8 +12,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+rayon = { workspace = true }
 serde = { workspace = true }
-reth-etl = { workspace = true }
 thiserror = { workspace = true }
 alloy-genesis = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -23,10 +23,11 @@ base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
+base-execution-state-database = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
-base-execution-state-database = { workspace = true }
 base-execution-state-provider = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 base-execution-state-types = {workspace = true,features = ["std"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -36,6 +37,7 @@ base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [lints]
 workspace = true

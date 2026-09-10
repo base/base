@@ -109,7 +109,7 @@ impl<R: RangeBounds<BlockNumber>> From<R> for BlockNumberAddressRange {
     }
 }
 
-/// [`Address`] concatenated with [`StorageKey`]. Used by `reth_etl` and history stages.
+/// [`Address`] concatenated with [`StorageKey`]. Used by `base_execution_state_maintenance` and history stages.
 ///
 /// Since it's used as a key, it isn't compressed when encoding it.
 #[derive(

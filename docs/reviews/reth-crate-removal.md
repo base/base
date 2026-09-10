@@ -118,7 +118,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | `reth-ethereum-forks` | Deleted after Base configuration consolidation |
 | `reth-ethereum-payload-builder` | Deleted after fixture migration |
 | [reth-ethereum-primitives](../../vendor/reth-ethereum-primitives/Cargo.toml) | Consolidate; retain required code |
-| [reth-etl](../../vendor/reth-etl/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |
 | [reth-evm](../../vendor/reth-evm/Cargo.toml) | Retain shared infrastructure |
 | `reth-evm-ethereum` | Deleted; explicit EVM parameters and test-only Alloy adapter |
 | [base-execution-state-tasks](../../crates/execution/state/tasks/Cargo.toml) | Retain shared infrastructure |
