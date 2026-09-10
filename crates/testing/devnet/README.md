@@ -7,3 +7,7 @@ observers, and optional external reference-node validation.
 
 Production node assembly and builder configuration live in `base-node-service`.
 RPC and payload definitions remain in their execution crates.
+
+The action harness models L1 mining, derivation, sequencer behavior, and batch
+submission. `ActionTestHarness` and the fork matrix support deterministic
+upgrade and reorganization scenarios.

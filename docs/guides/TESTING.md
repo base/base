@@ -40,7 +40,7 @@ is exercised:
 | Tier | Speed | What it exercises | Where |
 |---|---|---|---|
 | Unit tests | milliseconds | A single function or type in isolation | Colocated `#[cfg(test)] mod tests` blocks |
-| Action tests | milliseconds | Real protocol logic (batching, derivation) with in-memory actors | `actions/harness` (`base-action-harness`) |
+| Action tests | milliseconds | Real protocol logic (batching, derivation) with in-memory actors | `crates/testing/devnet` (`base-testing-devnet`) |
 | System tests | minutes | The full L1 + L2 stack via Docker/testcontainers | `etc/systems` (`base-system-tests`) |
 | Fuzz tests | hours (nightly) | Randomized transaction streams for sync-parity regressions | `base-system-tests`, nightly only |
 
@@ -86,7 +86,7 @@ just actions test
 or directly:
 
 ```sh
-cargo nextest run -p base-action-harness
+cargo nextest run -p base-testing-devnet
 ```
 
 See [`actions/README.md`](../../actions/README.md) for the actor architecture, how to write a new
@@ -192,7 +192,7 @@ status check.
 | `just fix` | Auto-fixes formatting, clippy, and zepter issues |
 | `just test` | Unit tests, full workspace |
 | `just test-affected` | Unit tests, affected crates only |
-| `just actions test` | Action tests (`base-action-harness`) |
+| `just actions test` | Action tests (`base-testing-devnet`) |
 | `just devnet tests` | System tests (`base-system-tests`, requires Docker) |
 | `just check` | Lists all `check::*` static-check recipes |
 | `just lychee` | Link check |

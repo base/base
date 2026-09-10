@@ -17,7 +17,7 @@ retries = 1
 # Action tests use a full EVM stack; the slowest tests can take 30-45 s.
 # Flag anything that runs longer than 90 s as slow and kill it after 2 periods.
 [[profile.ci.overrides]]
-filter = 'package(base-action-harness)'
+filter = 'package(base-testing-devnet)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
 # Nextest profiles do not inherit default-profile overrides. Without this, CI

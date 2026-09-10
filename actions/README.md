@@ -38,7 +38,7 @@ Concretely, an action test can verify things like:
 
 ```
 actions/
-└── harness/        base-action-harness crate
+└── harness/        base-testing-devnet crate
     src/
     ├── lib.rs                  public API (re-exports)
     ├── action.rs               Action trait, L2BlockProvider trait
@@ -62,7 +62,7 @@ actions/
     tests/                      integration tests - one scenario per module (subdirs when grouped)
 ```
 
-All actors live in the single `base-action-harness` crate. Action tests are
+All actors live in the single `base-testing-devnet` crate. Action tests are
 integration tests in `harness/tests/`; related scenarios may be grouped under a
 shared integration-test target with one module per scenario. Unit tests for
 individual actor internals live as inline `#[cfg(test)]` blocks inside the
@@ -211,7 +211,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dev-dependencies]
-base-action-harness.workspace = true
+base-testing-devnet.workspace = true
 ```
 
 Run the action tests:
@@ -223,5 +223,5 @@ just actions test
 Or run them directly with cargo:
 
 ```
-cargo nextest run -p base-action-harness
+cargo nextest run -p base-testing-devnet
 ```

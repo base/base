@@ -8,24 +8,24 @@ default:
 
 # Run all action tests
 test:
-    cargo nextest run -p base-action-harness
+    cargo nextest run -p base-testing-devnet
 
 # Run all action tests with the CI profile
 test-ci:
-    cargo nextest run -P ci --locked -p base-action-harness --cargo-profile ci
+    cargo nextest run -P ci --locked -p base-testing-devnet --cargo-profile ci
 
 # Run action tests with output shown (useful when debugging a failing test)
 test-verbose:
-    cargo nextest run -p base-action-harness --no-capture
+    cargo nextest run -p base-testing-devnet --no-capture
 
 # Check the action harness crate without running tests
 check:
-    cargo check -p base-action-harness
+    cargo check -p base-testing-devnet
 
 # Clippy the action harness crate
 lint:
-    cargo clippy -p base-action-harness --all-targets -- -D warnings
+    cargo clippy -p base-testing-devnet --all-targets -- -D warnings
 
 # Clippy the action harness crate with the CI profile
 lint-ci:
-    cargo clippy --locked -p base-action-harness --all-targets --profile ci -- -D warnings
+    cargo clippy --locked -p base-testing-devnet --all-targets --profile ci -- -D warnings
