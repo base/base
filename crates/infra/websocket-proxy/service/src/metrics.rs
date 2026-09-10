@@ -1,7 +1,7 @@
 //! Collected metrics for the websocket proxy.
 
 base_common_observability_metrics::define_metrics! {
-    websocket_proxy
+    base_infra_websocket_proxy_service
     #[describe("Messages sent to clients")]
     sent_messages: counter,
     #[describe("Count of messages that were unable to be sent")]

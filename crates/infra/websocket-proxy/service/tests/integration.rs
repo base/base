@@ -18,7 +18,7 @@ use tokio::{
 use tokio_tungstenite::connect_async;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
-use websocket_proxy::{Authentication, InMemoryRateLimit, Registry, Server, TrustedProxyConfig};
+use base_infra_websocket_proxy_service::{Authentication, InMemoryRateLimit, Registry, Server, TrustedProxyConfig};
 
 struct TestHarness {
     received_messages: Arc<Mutex<HashMap<usize, Vec<String>>>>,

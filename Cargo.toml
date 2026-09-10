@@ -70,7 +70,7 @@ members = [
   "crates/infra/sidecrush/service",
   "crates/infra/snapshotter/service",
   "crates/infra/telemetry/service",
-  "crates/infra/websocket-proxy",
+  "crates/infra/websocket-proxy/service",
   "crates/proof/service/challenger",
   "crates/proof/l1/submission",
   "crates/proof/execution/client",
@@ -302,7 +302,7 @@ base-infra-sidecrush-service = { path = "crates/infra/sidecrush/service", defaul
 base-infra-audit-service = { path = "crates/infra/audit/service", default-features = false }
 base-load-tests = { path = "crates/infra/load-tests", default-features = false }
 base-infra-snapshotter-service = { path = "crates/infra/snapshotter/service", default-features = false }
-websocket-proxy = { path = "crates/infra/websocket-proxy", default-features = false }
+base-infra-websocket-proxy-service = { path = "crates/infra/websocket-proxy/service", default-features = false }
 base-infra-telemetry-service = { path = "crates/infra/telemetry/service", default-features = false }
 base-infra-shadow-metrics-service = { path = "crates/infra/shadow-metrics/service", default-features = false }
 

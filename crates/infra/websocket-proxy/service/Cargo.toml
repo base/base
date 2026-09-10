@@ -1,5 +1,5 @@
 [package]
-name = "websocket-proxy"
+name = "base-infra-websocket-proxy-service"
 description = "WebSocket Proxy"
 version.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [lib]
-name = "websocket_proxy"
+name = "base_infra_websocket_proxy_service"
 
 [lints]
 workspace = true

@@ -4554,6 +4554,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-infra-websocket-proxy-service"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "backoff",
+ "base-common-http-proxy",
+ "base-common-observability-metrics",
+ "brotli",
+ "futures",
+ "http 1.4.2",
+ "metrics",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
@@ -17506,34 +17528,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "websocket-proxy"
-version = "0.0.0"
-dependencies = [
- "axum",
- "backoff",
- "base-common-http-proxy",
- "base-common-observability-metrics",
- "brotli",
- "futures",
- "http 1.4.2",
- "metrics",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "websocket-proxy-bin"
 version = "0.0.0"
 dependencies = [
  "axum",
  "base-common-cli-support",
  "base-common-observability-metrics",
+ "base-infra-websocket-proxy-service",
  "brotli",
  "clap",
  "dotenvy",
@@ -17545,7 +17546,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "websocket-proxy",
 ]
 
 [[package]]

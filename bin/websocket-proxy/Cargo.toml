@@ -26,7 +26,7 @@ futures = { workspace = true, features = ["default"] }
 hostname = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
-websocket-proxy = { workspace = true, features = ["default"] }
+base-infra-websocket-proxy-service = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }

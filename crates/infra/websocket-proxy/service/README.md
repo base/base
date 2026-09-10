@@ -1,4 +1,4 @@
-# `websocket-proxy`
+# `base-infra-websocket-proxy-service`
 
 ## Overview
 
@@ -19,18 +19,18 @@ Configure the upstream WebSocket URL via `--upstream-ws` or the `UPSTREAM_WS` en
 variable:
 
 ```bash
-websocket-proxy --upstream-ws ws://sequencer:9000
+base-infra-websocket-proxy-service --upstream-ws ws://sequencer:9000
 
 # Enable Brotli compression for downstream clients
-websocket-proxy --upstream-ws ws://sequencer:9000 --enable-compression
+base-infra-websocket-proxy-service --upstream-ws ws://sequencer:9000 --enable-compression
 
 # Trust client IP forwarding from a proxy network
-websocket-proxy \
+base-infra-websocket-proxy-service \
   --upstream-ws ws://sequencer:9000 \
   --trusted-proxy-cidrs 10.0.0.0/8
 ```
 
-Run `websocket-proxy --help` for a full list of parameters.
+Run `base-infra-websocket-proxy-service --help` for a full list of parameters.
 
 ### Trusted Proxies
 
@@ -63,7 +63,7 @@ The only configuration required is the upstream WebSocket URL to proxy. You can 
 
 You can see a full list of parameters by running:
 
-`websocket-proxy --help`
+`base-infra-websocket-proxy-service --help`
 
 ### Brotli Compression
 

@@ -15,7 +15,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
-use websocket_proxy::{
+use base_infra_websocket_proxy_service::{
     Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
     TrustedProxyConfig, WebsocketSubscriber,
 };
