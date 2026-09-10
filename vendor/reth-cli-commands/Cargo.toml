@@ -68,12 +68,12 @@ reth-network-p2p = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = {features = ["std"], workspace = true}
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-execution-state-types = {features = ["clap"], workspace = true}
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-execution-state-database = {workspace = true, features = ["mdbx"]}
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-wire = {workspace = true, features = ["transport"]}
+base-execution-state-types = {features = ["clap", "std"], workspace = true}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-network-discovery = {features = ["default"], workspace = true}

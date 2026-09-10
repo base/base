@@ -16,9 +16,9 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true, optional = true }
-base-execution-state-types = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 humantime-serde = { workspace = true, optional = true }
+base-execution-state-types = {workspace = true,features = ["std"]}
 base-execution-network-types = {features = ["std"], workspace = true}
 toml_0_9_12_spec_1_1_0 = { workspace = true, optional = true, features = ["default"] }
 

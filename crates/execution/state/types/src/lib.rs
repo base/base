@@ -176,3 +176,11 @@ mod sparse_updates;
 pub use sparse_updates::{
     LeafLookup, LeafLookupError, LeafUpdate, SparseTrieUpdates, TrieNodeEpoch,
 };
+
+mod prune_config;
+pub use prune_config::{DEFAULT_BLOCK_INTERVAL, PruneConfig};
+
+#[cfg(feature = "std")]
+mod etl_config;
+#[cfg(feature = "std")]
+pub use etl_config::EtlConfig;

@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
+use base_common_observability_tracing::tracing::debug;
 use base_common_runtime_tasks::TaskExecutor;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
-use reth_config::{PruneConfig, config::StageConfig};
+use base_execution_state_provider::ProviderFactory;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
@@ -16,11 +17,10 @@ use reth_exex::ExExManagerHandle;
 use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
 };
-use base_execution_state_provider::ProviderFactory;
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use reth_static_file::StaticFileProducer;
-use base_common_observability_tracing::tracing::debug;
 use tokio::sync::watch;
+use {base_execution_state_types::PruneConfig, reth_config::config::StageConfig};
 
 /// Constructs a [Pipeline] that's wired to the network
 #[expect(clippy::too_many_arguments)]

@@ -12,13 +12,6 @@ use base_execution_state_database::{
     models::ShardedKey, models::storage_sharded_key::StorageShardedKey, tables,
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::StateRootError;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_config::config::EtlConfig;
-use reth_etl::Collector;
-use reth_primitives_traits::{GotExpected, SealedHeader};
 use base_execution_state_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,
@@ -31,6 +24,13 @@ use base_execution_state_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot as StateRootComputer,
     StateRootProgress, prefix_set::TriePrefixSets,
 };
+use base_execution_state_types::EtlConfig;
+use base_execution_state_types::StateRootError;
+use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
+use base_execution_state_types::{StageCheckpoint, StageId};
+use reth_etl::Collector;
+use reth_primitives_traits::{GotExpected, SealedHeader};
 
 type DbStateRoot<'a, TX, A> = StateRootComputer<
     base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
@@ -1101,14 +1101,20 @@ mod tests {
         let address_with_balance = Address::with_last_byte(1);
         let address_with_storage = Address::with_last_byte(2);
         assert_eq!(
-            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(
+                &provider, block
+            )
+            .unwrap(),
             vec![
                 AccountBeforeTx { address: address_with_balance, info: None },
                 AccountBeforeTx { address: address_with_storage, info: None }
             ]
         );
         assert_eq!(
-            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(
+                &provider, block
+            )
+            .unwrap(),
             vec![(
                 BlockNumberAddress((block, address_with_storage)),
                 StorageEntry { key: storage_key, value: U256::ZERO }
@@ -1198,22 +1204,34 @@ mod tests {
         assert_eq!(account_file_start, 500_000);
         assert_eq!(storage_file_start, 500_000);
         assert!(
-            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, account_file_start)
-                .unwrap()
-                .is_empty()
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(
+                &provider,
+                account_file_start
+            )
+            .unwrap()
+            .is_empty()
         );
         assert!(
-            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, storage_file_start)
-                .unwrap()
-                .is_empty()
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(
+                &provider,
+                storage_file_start
+            )
+            .unwrap()
+            .is_empty()
         );
 
         assert_eq!(
-            base_execution_state_provider::ChangeSetReader::account_block_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::ChangeSetReader::account_block_changeset(
+                &provider, block
+            )
+            .unwrap(),
             vec![AccountBeforeTx { address, info: None }]
         );
         assert_eq!(
-            base_execution_state_provider::StorageChangeSetReader::storage_changeset(&provider, block).unwrap(),
+            base_execution_state_provider::StorageChangeSetReader::storage_changeset(
+                &provider, block
+            )
+            .unwrap(),
             vec![(
                 BlockNumberAddress((block, address)),
                 StorageEntry { key: storage_key, value: U256::ZERO }
@@ -1380,20 +1398,21 @@ mod tests {
             let _settings = factory.cached_storage_settings();
             let rocksdb = factory.rocksdb_provider();
 
-            let collect_rocksdb = |rocksdb: &base_execution_state_provider::providers::RocksDBProvider| {
-                (
-                    rocksdb
-                        .iter::<tables::AccountsHistory>()
-                        .unwrap()
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap(),
-                    rocksdb
-                        .iter::<tables::StoragesHistory>()
-                        .unwrap()
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap(),
-                )
-            };
+            let collect_rocksdb =
+                |rocksdb: &base_execution_state_provider::providers::RocksDBProvider| {
+                    (
+                        rocksdb
+                            .iter::<tables::AccountsHistory>()
+                            .unwrap()
+                            .collect::<Result<Vec<_>, _>>()
+                            .unwrap(),
+                        rocksdb
+                            .iter::<tables::StoragesHistory>()
+                            .unwrap()
+                            .collect::<Result<Vec<_>, _>>()
+                            .unwrap(),
+                    )
+                };
 
             let (accounts, storages) = { collect_rocksdb(&rocksdb) };
             assert_eq!(accounts, expected_accounts);

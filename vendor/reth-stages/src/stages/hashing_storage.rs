@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 
 use base_execution_state_database::{DbTxMut, tables};
-use base_execution_state_types::ProviderResult;
-use reth_config::config::{EtlConfig, HashingConfig};
 use base_execution_state_provider::{DBProvider, HashingWriter, StatsReader};
+use base_execution_state_types::ProviderResult;
 use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
+use {base_execution_state_types::EtlConfig, reth_config::config::HashingConfig};
 
 /// Advances the hashed-state checkpoint and restores hashed storage state during unwind.
 #[derive(Debug)]
@@ -111,8 +111,8 @@ fn stage_checkpoint_progress(provider: &impl StatsReader) -> ProviderResult<Enti
 mod tests {
     use alloy_primitives::{B256, U256};
     use base_execution_state_database::{DbTx, DbTxMut, tables};
-    use base_execution_state_types::StorageEntry;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
+    use base_execution_state_types::StorageEntry;
     use reth_stages_api::{ExecInput, Stage, StageCheckpoint};
 
     use super::StorageHashingStage;

@@ -1,13 +1,13 @@
 use std::fmt::Debug;
 
 use base_execution_state_database::{DbTxMut, tables};
-use base_execution_state_types::ProviderResult;
-use reth_config::config::{EtlConfig, HashingConfig};
 use base_execution_state_provider::{DBProvider, HashingWriter, StatsReader};
+use base_execution_state_types::ProviderResult;
 use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
+use {base_execution_state_types::EtlConfig, reth_config::config::HashingConfig};
 
 /// Advances the hashed-state checkpoint and restores hashed account state during unwind.
 #[derive(Clone, Debug)]

@@ -29,7 +29,6 @@ reth-stages-api = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
-base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
@@ -41,6 +40,7 @@ num-traits = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
 reth-network-p2p = { workspace = true, features = ["default"] }
+base-execution-state-types = {workspace = true,features = ["std"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm-blocks = {features = ["metrics"], workspace = true}

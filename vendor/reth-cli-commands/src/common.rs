@@ -8,23 +8,23 @@ use base_common_chain_config::BaseChainSpec;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::{DatabaseEnv, init_db, open_db_read_only};
+use base_execution_state_provider::{
+    BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
+    StorageSettings,
+    providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
+};
 use clap::Parser;
-use reth_config::{Config, config::EtlConfig};
 use reth_db_common::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
 };
-use base_execution_state_provider::{
-    BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
-    StorageSettings,
-    providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
-};
 use reth_stages::{Pipeline, PipelineTarget, sets::DefaultStages};
 use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
+use {base_execution_state_types::EtlConfig, reth_config::Config};
 
 pub use crate::CliNodeComponents;
 

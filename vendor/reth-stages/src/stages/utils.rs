@@ -15,8 +15,8 @@ use base_execution_state_provider::{
     StaticFileProviderFactory, prepare_history_shard_writes_parallel_vec,
     providers::StaticFileProvider,
 };
+use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
-use reth_config::config::EtlConfig;
 use reth_etl::Collector;
 use reth_stages_api::StageError;
 use tracing::info;

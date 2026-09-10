@@ -1,17 +1,17 @@
 use std::fmt::Debug;
 
 use base_execution_state_database::{DbTxMut, Tables, tables};
-use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_config::config::{EtlConfig, IndexHistoryConfig};
 use base_execution_state_provider::{
     DBProvider, EitherWriter, HistoryWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StorageSettingsCache,
 };
+use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use reth_stages_api::{
     BlockRangeOutput, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
 use tracing::info;
+use {base_execution_state_types::EtlConfig, reth_config::config::IndexHistoryConfig};
 
 use super::collect_account_history_indices;
 use crate::stages::utils::{
@@ -146,8 +146,9 @@ where
         if rebuild_from_empty {
             provider.with_rocksdb_batch_auto_commit(|rocksdb_batch| {
                 let mut writer = EitherWriter::new_accounts_history(provider, rocksdb_batch)?;
-                load_account_history_append(collector, &mut writer)
-                    .map_err(|e| base_execution_state_provider::ProviderError::other(Box::new(e)))?;
+                load_account_history_append(collector, &mut writer).map_err(|e| {
+                    base_execution_state_provider::ProviderError::other(Box::new(e))
+                })?;
                 Ok(((), writer.into_raw_rocksdb_batch()))
             })?;
         } else {
@@ -210,10 +211,10 @@ mod tests {
     }
     mod rocksdb_tests {
         use base_execution_state_api::StorageSettings;
-        use base_execution_state_types::StaticFileSegment;
         use base_execution_state_provider::{
             RocksDBProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
         };
+        use base_execution_state_types::StaticFileSegment;
 
         use super::*;
 

@@ -5,9 +5,12 @@ use base_execution_state_database::tables;
 use base_execution_state_database::{DbTx, DbTxMut};
 use base_execution_state_types::StageCheckpoint;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
-use reth_config::config::{BlocksPerFileConfig, Config, PruneConfig, StaticFilesConfig};
 use reth_node_core::args::DefaultPruningValues;
 use tracing::info;
+use {
+    base_execution_state_types::PruneConfig, reth_config::config::BlocksPerFileConfig,
+    reth_config::config::Config, reth_config::config::StaticFilesConfig,
+};
 
 use crate::download::{
     SelectionPreset,

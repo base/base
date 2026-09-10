@@ -6,19 +6,19 @@ use base_common_types_chain::BlockHeader;
 use base_execution_state_database::{
     DbCursorRO, DbCursorRW, DbTx, DbTxMut, DbTxUnwindExt, RawKey, RawTable, RawValue, tables,
 };
+use base_execution_state_provider::{
+    BlockHashReader, DBProvider, HeaderSyncGapProvider, StaticFileProviderFactory,
+    providers::StaticFileWriter,
+};
+use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::StreamExt;
-use reth_config::config::EtlConfig;
 use reth_etl::Collector;
 use reth_network_p2p::headers::{
     downloader::{HeaderDownloader, HeaderSyncGap, SyncTarget},
     error::HeadersDownloaderError,
 };
 use reth_primitives_traits::SealedHeader;
-use base_execution_state_provider::{
-    BlockHashReader, DBProvider, HeaderSyncGapProvider, StaticFileProviderFactory,
-    providers::StaticFileWriter,
-};
 use reth_stages_api::{
     CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput, HeadersCheckpoint, Stage,
     StageCheckpoint, StageError, StageId, UnwindInput, UnwindOutput,
@@ -384,7 +384,9 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
-    use base_execution_state_provider::{DatabaseProviderFactory, ProviderFactory, StaticFileProviderFactory};
+    use base_execution_state_provider::{
+        DatabaseProviderFactory, ProviderFactory, StaticFileProviderFactory,
+    };
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, random_header, random_header_range};
     use test_runner::HeadersTestRunner;
@@ -396,11 +398,11 @@ mod tests {
 
     mod test_runner {
         use base_execution_evm_blocks::BaseBeaconConsensus;
+        use base_execution_state_provider::{BlockNumReader, HeaderProvider};
         use reth_downloaders::headers::reverse_headers::{
             ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder,
         };
         use reth_network_p2p::test_utils::{TestHeaderDownloader, TestHeadersClient};
-        use base_execution_state_provider::{BlockNumReader, HeaderProvider};
         use tokio::sync::watch;
 
         use super::*;

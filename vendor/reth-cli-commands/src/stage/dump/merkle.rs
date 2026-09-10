@@ -5,15 +5,15 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::DatabaseEnv;
 use base_execution_state_database::{Database, TableImporter, models::BlockNumberAddress, tables};
-use eyre::Result;
-use reth_config::config::EtlConfig;
-use reth_db_common::DbTool;
-use reth_exex::ExExManagerHandle;
-use reth_node_core::dirs::{ChainPath, DataDirPath};
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},
 };
+use base_execution_state_types::EtlConfig;
+use eyre::Result;
+use reth_db_common::DbTool;
+use reth_exex::ExExManagerHandle;
+use reth_node_core::dirs::{ChainPath, DataDirPath};
 use reth_stages::{
     ExecutionStageThresholds, Stage, StageCheckpoint, UnwindInput,
     stages::{

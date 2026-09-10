@@ -16,10 +16,10 @@ use base_execution_state_api::{
     StorageSettings,
 };
 use base_execution_state_types::ProviderResult;
+use base_execution_state_types::PruneConfig;
 use base_execution_state_types::StageId;
 use base_execution_txpool::TransactionPool;
 use eyre::eyre;
-use reth_config::config::PruneConfig;
 use reth_engine_local::MiningMode;
 use reth_engine_primitives::TreeConfig;
 pub use reth_engine_primitives::{

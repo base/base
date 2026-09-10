@@ -1,19 +1,19 @@
 use alloy_primitives::{TxHash, TxNumber};
 use base_execution_state_database::{DbTxMut, Decode, Decompress, Tables, tables};
-use base_execution_state_types::ProviderError;
-use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_config::config::{EtlConfig, TransactionLookupConfig};
-use reth_etl::Collector;
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
     TransactionsProvider, TransactionsProviderExt,
 };
+use base_execution_state_types::ProviderError;
+use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
+use reth_etl::Collector;
 use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError, StageId,
     UnwindInput, UnwindOutput,
 };
 use tracing::*;
+use {base_execution_state_types::EtlConfig, reth_config::config::TransactionLookupConfig};
 
 /// The transaction lookup stage.
 ///
@@ -279,10 +279,10 @@ mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_execution_state_database::{DbCursorRO, DbTx};
-    use reth_primitives_traits::SealedBlock;
     use base_execution_state_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,
     };
+    use reth_primitives_traits::SealedBlock;
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
