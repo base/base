@@ -8,6 +8,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
+extern crate alloc;
+
 mod noop;
 pub use noop::{NoopDropTimer, NoopMetric};
 
@@ -46,3 +48,6 @@ pub mod common;
 
 #[cfg(feature = "std")]
 pub mod thread;
+
+mod gas_display;
+pub use gas_display::GasDisplay;

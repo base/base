@@ -500,6 +500,7 @@ impl<T> Deref for SealedBlockWith<T> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use alloy_rlp::{Decodable, Encodable};
     use base_common_types_chain::{BaseTxEnvelope, Header};
 

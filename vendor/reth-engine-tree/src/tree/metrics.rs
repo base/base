@@ -11,14 +11,19 @@ use base_execution_state_trie::updates::TrieUpdates;
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ProviderError;
 use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
-use {reth_primitives_traits::constants::gas_units::MEGAGAS, std::time::Instant};
+use {base_common_observability_metrics::GasDisplay, std::time::Instant};
 
 use crate::tree::{TreeOutcome, error::InsertBlockFatalError};
 
 /// Upper bounds for each gas bucket. The last bucket is a catch-all for
 /// everything above the final threshold: <5M, 5-10M, 10-20M, 20-30M, 30-40M, >40M.
-const GAS_BUCKET_THRESHOLDS: [u64; 5] =
-    [5 * MEGAGAS, 10 * MEGAGAS, 20 * MEGAGAS, 30 * MEGAGAS, 40 * MEGAGAS];
+const GAS_BUCKET_THRESHOLDS: [u64; 5] = [
+    5 * GasDisplay::MEGAGAS,
+    10 * GasDisplay::MEGAGAS,
+    20 * GasDisplay::MEGAGAS,
+    30 * GasDisplay::MEGAGAS,
+    40 * GasDisplay::MEGAGAS,
+];
 
 /// Total number of gas buckets (thresholds + 1 catch-all).
 const NUM_GAS_BUCKETS: usize = GAS_BUCKET_THRESHOLDS.len() + 1;
@@ -318,14 +323,14 @@ impl GasBucketMetrics {
     /// Returns a human-readable label like `<5M`, `5-10M`, … `>40M`.
     pub(crate) fn bucket_label(index: usize) -> String {
         if index == 0 {
-            let hi = GAS_BUCKET_THRESHOLDS[0] / MEGAGAS;
+            let hi = GAS_BUCKET_THRESHOLDS[0] / GasDisplay::MEGAGAS;
             format!("<{hi}M")
         } else if index < GAS_BUCKET_THRESHOLDS.len() {
-            let lo = GAS_BUCKET_THRESHOLDS[index - 1] / MEGAGAS;
-            let hi = GAS_BUCKET_THRESHOLDS[index] / MEGAGAS;
+            let lo = GAS_BUCKET_THRESHOLDS[index - 1] / GasDisplay::MEGAGAS;
+            let hi = GAS_BUCKET_THRESHOLDS[index] / GasDisplay::MEGAGAS;
             format!("{lo}-{hi}M")
         } else {
-            let lo = GAS_BUCKET_THRESHOLDS[GAS_BUCKET_THRESHOLDS.len() - 1] / MEGAGAS;
+            let lo = GAS_BUCKET_THRESHOLDS[GAS_BUCKET_THRESHOLDS.len() - 1] / GasDisplay::MEGAGAS;
             format!(">{lo}M")
         }
     }

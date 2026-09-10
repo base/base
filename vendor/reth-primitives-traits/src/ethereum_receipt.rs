@@ -21,6 +21,7 @@ impl EthereumReceiptRoot {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use alloy_eips::eip2718::Encodable2718;
     #[cfg(feature = "reth-codec")]
     use alloy_primitives::Bytes;

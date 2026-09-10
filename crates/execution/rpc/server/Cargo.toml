@@ -23,7 +23,6 @@ thiserror = { workspace = true }
 reth-node-core = { workspace = true }
 base-execution-txpool = {workspace = true}
 reth-engine-primitives = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
 tower = {workspace = true, features = ["full"]}
@@ -50,6 +49,7 @@ workspace = true
 [dev-dependencies]
 alloy-eips = { workspace = true }
 base-common-types-rpc = {workspace = true}
+reth-primitives-traits = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-network-types = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }

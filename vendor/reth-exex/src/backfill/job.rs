@@ -10,13 +10,16 @@ use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor,
 };
-use base_execution_state_types::PruneModes;
-use reth_primitives_traits::{Block as _, BlockBody as _, RecoveredBlock, format_gas_throughput};
 use base_execution_state_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
 };
+use base_execution_state_types::PruneModes;
 use reth_stages_api::ExecutionStageThresholds;
+use {
+    base_common_observability_metrics::GasDisplay, reth_primitives_traits::Block as _,
+    reth_primitives_traits::BlockBody as _, reth_primitives_traits::RecoveredBlock,
+};
 
 use crate::StreamBackfillJob;
 
@@ -136,7 +139,7 @@ where
             range = ?*self.range.start()..=last_block_number,
             block_fetch = ?fetch_block_duration,
             execution = ?execution_duration,
-            throughput = format_gas_throughput(cumulative_gas, execution_duration),
+            throughput = GasDisplay::throughput(cumulative_gas, execution_duration),
             "Finished executing block range"
         );
         self.range = last_block_number + 1..=*self.range.end();
@@ -227,10 +230,10 @@ mod tests {
     use base_common_types_chain::BlockHeader;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_maintenance::init::init_genesis;
-    use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
     use base_execution_state_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,
     };
+    use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
     use reth_testing_utils::generators;
 
     use crate::{

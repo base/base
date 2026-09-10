@@ -21,11 +21,11 @@ alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 reth-stages = { workspace = true }
 reth-engine-primitives = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-types-payload = { workspace = true }
 base-execution-network-service = { workspace = true }
+base-common-observability-metrics = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }

@@ -1,9 +1,5 @@
 //! Ethereum protocol-related constants
 
-/// Gas units, for example [`GIGAGAS`].
-pub mod gas_units;
-pub use gas_units::{GIGAGAS, KILOGAS, MEGAGAS};
-
 /// The client version: `reth/v{major}.{minor}.{patch}`
 pub const RETH_CLIENT_VERSION: &str = concat!("reth/v", env!("CARGO_PKG_VERSION"));
 

@@ -15,6 +15,7 @@ pub use base_common_types_chain::proofs::calculate_withdrawals_root;
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
+    use alloc::vec;
     use std::collections::HashMap;
 
     use alloy_genesis::GenesisAccount;

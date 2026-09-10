@@ -17,17 +17,17 @@ use base_execution_evm_blocks::Executor;
 use base_execution_evm_runtime::database::{AccountInfoRevert, BundleState, RevertToSlot};
 use base_execution_state_api::{ChangeSetReader, DBProvider, StorageChangeSetReader};
 use base_execution_state_memory::StoredAccount as Account;
-use clap::Parser;
-use eyre::WrapErr;
-use reth_cli_util::cancellation::CancellationToken;
-use reth_primitives_traits::{GotExpected, format_gas_throughput};
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderROFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,
 };
+use clap::Parser;
+use eyre::WrapErr;
+use reth_cli_util::cancellation::CancellationToken;
 use reth_stages::stages::calculate_gas_used_from_headers;
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
+use {base_common_observability_metrics::GasDisplay, reth_primitives_traits::GotExpected};
 
 use crate::common::{AccessRights, CliNodeComponents, Environment, EnvironmentArgs};
 
@@ -320,7 +320,7 @@ impl<C: ChainSpecParser> Command<C> {
                     if blocks_executed > 0 {
                         let progress = 100.0 * total_executed_gas as f64 / total_gas as f64;
                         info!(
-                            throughput=?format_gas_throughput(gas_executed, last_logged_time.elapsed()),
+                            throughput=?GasDisplay::throughput(gas_executed, last_logged_time.elapsed()),
                             progress=format!("{progress:.2}%"),
                             ?latest_executed_block,
                             "Executed {blocks_executed} blocks"
@@ -340,7 +340,7 @@ impl<C: ChainSpecParser> Command<C> {
                 end_block = max_block,
                 %total_executed_blocks,
                 ?latest_executed_block,
-                throughput=?format_gas_throughput(total_executed_gas, instant.elapsed()),
+                throughput=?GasDisplay::throughput(total_executed_gas, instant.elapsed()),
                 "Re-executed successfully"
             );
         } else {
@@ -351,7 +351,7 @@ impl<C: ChainSpecParser> Command<C> {
                 ?latest_executed_block,
                 invalid_block_count = invalid_blocks.len(),
                 ?invalid_blocks,
-                throughput=?format_gas_throughput(total_executed_gas, instant.elapsed()),
+                throughput=?GasDisplay::throughput(total_executed_gas, instant.elapsed()),
                 "Re-executed with invalid blocks"
             );
         }

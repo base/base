@@ -702,6 +702,7 @@ impl<'a> IndexedTx<'a> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use alloy_primitives::{Signature, TxKind, bytes};
     use base_common_types_chain::{BaseTxEnvelope, Header, TxLegacy};
 

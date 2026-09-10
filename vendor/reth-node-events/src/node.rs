@@ -9,6 +9,7 @@ use std::{
 };
 
 use alloy_primitives::{B256, BlockNumber};
+use base_common_observability_metrics::GasDisplay;
 use base_common_types_chain::{
     BlockHeader,
     constants::{GWEI_TO_WEI, MGAS_TO_GAS},
@@ -19,7 +20,6 @@ use base_execution_state_types::PrunerEvent;
 use base_execution_state_types::StaticFileProducerEvent;
 use futures::Stream;
 use reth_engine_primitives::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
-use reth_primitives_traits::{format_gas, format_gas_throughput};
 use reth_stages::{EntitiesCheckpoint, ExecOutput, PipelineEvent, StageCheckpoint, StageId};
 use tokio::time::Interval;
 use tracing::{debug, info, warn};
@@ -251,9 +251,9 @@ impl NodeState {
                     hash=?block.hash(),
                     peers=self.num_connected_peers(),
                     txs=block.body().transactions.len(),
-                    gas_used=%format_gas(block.gas_used()),
-                    gas_throughput=%format_gas_throughput(block.gas_used(), elapsed),
-                    gas_limit=%format_gas(block.gas_limit()),
+                    gas_used=%GasDisplay::amount(block.gas_used()),
+                    gas_throughput=%GasDisplay::throughput(block.gas_used(), elapsed),
+                    gas_limit=%GasDisplay::amount(block.gas_limit()),
                     full=%format!("{:.1}%", full),
                     base_fee=%format!("{:.2}Gwei", block.base_fee_per_gas().unwrap_or(0) as f64 / GWEI_TO_WEI as f64),
                     blobs=block.blob_gas_used().unwrap_or(0) / alloy_eips::eip4844::DATA_GAS_PER_BLOB,

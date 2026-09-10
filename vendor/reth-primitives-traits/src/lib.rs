@@ -105,12 +105,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[macro_use]
 extern crate alloc;
 
 /// Common constants.
 pub mod constants;
-pub use constants::gas_units::{format_gas, format_gas_throughput};
 
 pub mod receipt;
 

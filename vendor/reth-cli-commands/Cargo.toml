@@ -50,6 +50,7 @@ zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 base-execution-state-maintenance = {workspace = true}
 blake3 = { workspace = true, features = ["default"] }
+base-common-observability-metrics = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 crossterm = { workspace = true, features = ["default"] }
