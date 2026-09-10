@@ -23,7 +23,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-config = { workspace = true }
 reth-node-core = { workspace = true }
-reth-stages-api = { workspace = true }
 base-node-context = { workspace = true }
 base-execution-txpool = {workspace = true}
 base-common-io-files = { workspace = true }

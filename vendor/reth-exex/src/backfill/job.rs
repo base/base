@@ -14,8 +14,8 @@ use base_execution_state_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
 };
+use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::PruneModes;
-use reth_stages_api::ExecutionStageThresholds;
 use {
     base_common_observability_metrics::GasDisplay, reth_primitives_traits::Block as _,
     reth_primitives_traits::BlockBody as _, reth_primitives_traits::RecoveredBlock,

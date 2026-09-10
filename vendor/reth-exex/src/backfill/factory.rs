@@ -2,9 +2,9 @@ use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_primitives::BlockNumber;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_state_types::PruneModes;
 use base_execution_state_provider::providers::BlockchainProvider;
-use reth_stages_api::ExecutionStageThresholds;
+use base_execution_state_types::ExecutionStageThresholds;
+use base_execution_state_types::PruneModes;
 
 use super::stream::DEFAULT_PARALLELISM;
 use crate::BackfillJob;
