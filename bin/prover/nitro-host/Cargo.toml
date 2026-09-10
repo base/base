@@ -20,7 +20,7 @@ tracing = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-worker = { workspace = true }
 base-common-cli-support = { workspace = true }
-base-prover-service-client = { workspace = true }
+base-proof-service-client = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 uuid = { workspace = true, features = ["default", "v4"] }

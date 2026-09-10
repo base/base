@@ -28,7 +28,7 @@ base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-l1-transactions = {workspace = true}
 base-consensus-batch-types = { workspace = true }
-base-prover-service-client = { workspace = true }
+base-proof-service-client = { workspace = true }
 serde_json = { workspace = true, optional = true }
 url = { workspace = true, features = ["default"] }
 async-trait = { workspace = true, optional = true }

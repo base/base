@@ -23,7 +23,7 @@ use base_proof_contracts::{
     GameStatus,
 };
 use base_proof_client_providers::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
-use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+use base_proof_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_proof_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
     ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,

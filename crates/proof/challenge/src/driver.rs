@@ -9,7 +9,7 @@ use base_common_l1_transactions::TxManager;
 use base_common_runtime_tasks::TokioRuntime;
 use base_proof_contracts::AggregateVerifierClient;
 use base_proof_client_providers::{L1Provider, L2Provider};
-use base_prover_service_client::ProofRequesterProvider;
+use base_proof_service_client::ProofRequesterProvider;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};

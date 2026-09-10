@@ -3,7 +3,7 @@
 use std::{fmt, time::Duration};
 
 use alloy_primitives::{Address, B256};
-use base_prover_service_client::{
+use base_proof_service_client::{
     ProofRequesterClient, ProverServiceClientBuildError, ProverServiceClientConfig,
     ProverServiceClientError,
 };
@@ -700,7 +700,7 @@ mod tests {
         let endpoint =
             Url::parse("https://user:password@prover.example/rpc/api-key?token=secret").unwrap();
         let client = ProofsClient::connect(&endpoint).expect("client should build");
-        let source = base_prover_service_client::ProverServiceClientError::RpcTransport(
+        let source = base_proof_service_client::ProverServiceClientError::RpcTransport(
             JsonRpcClientError::Transport(
                 io::Error::other(format!("request to {endpoint} failed")).into(),
             ),

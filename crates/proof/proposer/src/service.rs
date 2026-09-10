@@ -21,7 +21,7 @@ use base_proof_contracts::{
 use base_proof_client_providers::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, RollupClient, RollupClientConfig,
 };
-use base_prover_service_client::{
+use base_proof_service_client::{
     ProofRequesterClient, ProofRequesterProvider, ProverServiceClientConfig,
 };
 use eyre::{Result, WrapErr};

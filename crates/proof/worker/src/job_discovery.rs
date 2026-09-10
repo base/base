@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
+use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{
     GetNextProofRequest, ProofJob, ProofType, TeeKind, ZkBackend, ZkVm,
 };

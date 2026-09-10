@@ -17,7 +17,7 @@ use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_types_protocol::ProofRequest as TeeProofRequest;
 use base_proof_client_providers::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
-use base_prover_service_client::ProofRequesterProvider;
+use base_proof_service_client::ProofRequesterProvider;
 use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 use tracing::{debug, info, warn};
 

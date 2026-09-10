@@ -29,7 +29,7 @@ use base_proof_worker::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_prover_service_client::{ProverServiceClientConfig, ProverWorkerClient};
+use base_proof_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;

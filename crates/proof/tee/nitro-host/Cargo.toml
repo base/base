@@ -23,7 +23,7 @@ alloy-primitives = { workspace = true }
 base-proof-worker = { workspace = true }
 base-proof-witness-preimage = { workspace = true }
 base-proof-contracts = { workspace = true }
-base-prover-service-client = { workspace = true }
+base-proof-service-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-enclave = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

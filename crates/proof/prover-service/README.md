@@ -12,4 +12,4 @@ an explicit unsupported error before being queued. Legacy ZK records and protoco
 types remain readable. See [CAVEATS.md](../../../CAVEATS.md).
 
 Enable `rpc-server` to generate the server trait. Use
-`base-prover-service-client` for requester and worker JSON-RPC clients.
+`base-proof-service-client` for requester and worker JSON-RPC clients.

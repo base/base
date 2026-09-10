@@ -15,7 +15,7 @@ base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }
 base-common-client-rollup = {workspace = true}
 serde = { workspace = true, features = ["std"] }
-base-prover-service-client = { workspace = true }
+base-proof-service-client = { workspace = true }
 base-common-l1-transactions = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 base-common-client-contracts = { workspace = true }

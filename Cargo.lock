@@ -2403,10 +2403,10 @@ dependencies = [
  "base-consensus-batch-types",
  "base-proof-client-providers",
  "base-proof-contracts",
+ "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-submission",
  "base-proof-types-protocol",
- "base-prover-service-client",
  "clap",
  "eyre",
  "futures",
@@ -4805,6 +4805,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-service-client"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "backon",
+ "base-common-runtime-tasks",
+ "base-proof-service-protocol",
+ "chrono",
+ "jsonrpsee",
+ "rstest",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-proof-service-protocol"
 version = "0.0.0"
 dependencies = [
@@ -4873,12 +4890,12 @@ dependencies = [
  "base-common-observability-health",
  "base-proof-contracts",
  "base-proof-host",
+ "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-tee-nitro-enclave",
  "base-proof-types-protocol",
  "base-proof-witness-preimage",
  "base-proof-worker",
- "base-prover-service-client",
  "chrono",
  "eyre",
  "jsonrpsee",
@@ -5028,8 +5045,8 @@ dependencies = [
  "async-trait",
  "backon",
  "base-common-runtime-tasks",
+ "base-proof-service-client",
  "base-proof-service-protocol",
- "base-prover-service-client",
  "chrono",
  "thiserror 2.0.19",
  "tokio",
@@ -5056,10 +5073,10 @@ dependencies = [
  "base-common-types-rpc",
  "base-proof-client-providers",
  "base-proof-contracts",
+ "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-submission",
  "base-proof-types-protocol",
- "base-prover-service-client",
  "clap",
  "eyre",
  "futures",
@@ -5105,10 +5122,10 @@ dependencies = [
  "base-common-chain-config",
  "base-common-cli-support",
  "base-proof-host",
+ "base-proof-service-client",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
  "base-proof-worker",
- "base-prover-service-client",
  "clap",
  "eyre",
  "serde",
@@ -5151,23 +5168,6 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-prover-service-client"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "backon",
- "base-common-runtime-tasks",
- "base-proof-service-protocol",
- "chrono",
- "jsonrpsee",
- "rstest",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -5564,9 +5564,9 @@ dependencies = [
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-proof-contracts",
+ "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-submission",
- "base-prover-service-client",
  "chrono",
  "clap",
  "crossterm",

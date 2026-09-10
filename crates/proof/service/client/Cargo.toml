@@ -1,5 +1,5 @@
 [package]
-name = "base-prover-service-client"
+name = "base-proof-service-client"
 description = "Role-specific JSON-RPC clients for the Base prover service"
 version.workspace = true
 edition.workspace = true

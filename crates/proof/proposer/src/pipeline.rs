@@ -211,7 +211,7 @@ mod tests {
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
     use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient};
-    use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
+    use base_proof_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_proof_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
         ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,

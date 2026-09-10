@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
+use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::HeartbeatRequest;
 use chrono::{DateTime, Utc};
 use tokio::time::{Instant, sleep, timeout};
@@ -214,7 +214,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
+    use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
     use base_proof_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         HeartbeatRequest, HeartbeatResponse, RecordProofSessionRequest, RecordProofSessionResponse,

@@ -15,7 +15,7 @@ pub use base_proof_worker::{
     MIN_WORKER_HEARTBEAT_INTERVAL as MIN_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
     WorkerHeartbeatConfig as ProofGeneratorHeartbeatConfig,
 };
-use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
+use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -358,7 +358,7 @@ mod tests {
     use base_proof_host::ProverConfig;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_proof_worker::ProofSubmitter;
-    use base_prover_service_client::ProverServiceClientError;
+    use base_proof_service_client::ProverServiceClientError;
     use base_proof_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,

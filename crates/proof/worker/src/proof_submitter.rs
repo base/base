@@ -10,7 +10,7 @@ use std::sync::{
 };
 
 use backon::Retryable;
-use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
+use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };

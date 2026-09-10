@@ -1,6 +1,6 @@
 //! Worker configuration for the nitro prover host.
 
-use base_prover_service_client::{ProverServiceClientConfig, ProverServiceClientConfigError};
+use base_proof_service_client::{ProverServiceClientConfig, ProverServiceClientConfigError};
 use thiserror::Error;
 
 /// Errors that can occur during nitro worker configuration validation.

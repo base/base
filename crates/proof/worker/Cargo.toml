@@ -16,7 +16,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-base-prover-service-client = { workspace = true }
+base-proof-service-client = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
