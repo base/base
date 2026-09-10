@@ -62,7 +62,7 @@ impl<DB: Database + DatabaseCommit, I: Inspector<BaseContext<DB>> + Clone> TxTra
     pub fn trace(
         &mut self,
         tx: impl IntoTxEnv<BaseTransaction>,
-    ) -> Result<TraceOutput<BaseHaltReason, I>, BaseError<DB>> {
+    ) -> Result<TraceOutput<I>, BaseError<DB>> {
         let result = self.evm.transact_commit(tx);
         let inspector = self.fuse_inspector();
         Ok(TraceOutput { result: result?, inspector })
@@ -114,9 +114,9 @@ impl<DB: Database + DatabaseCommit, I: Inspector<BaseContext<DB>> + Clone> TxTra
 
 /// Output of tracing a transaction.
 #[derive(Debug, Clone)]
-pub struct TraceOutput<H, I> {
+pub struct TraceOutput<I> {
     /// Inner EVM output.
-    pub result: ExecutionResult<H>,
+    pub result: ExecutionResult<BaseHaltReason>,
     /// Inspector state at the end of the execution.
     pub inspector: I,
 }
