@@ -18,39 +18,39 @@ base-reth-cli = { workspace = true }
 base-node-config = { workspace = true }
 reth-cli-commands = { workspace = true }
 base-common-cli-support = {workspace = true}
-tracing = {workspace = true, features = ["std"]}
+tracing = {features = ["std"], workspace = true}
 url = {workspace = true, features = ["default"]}
 base-consensus-batch-types = { workspace = true }
 base-execution-state-tasks = { workspace = true }
 base-execution-state-types = { workspace = true }
-eyre = {workspace = true, features = ["default"]}
+eyre = {features = ["default"], workspace = true}
 base-common-client-ethereum = { workspace = true }
 base-common-l1-transactions = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
-base-execution-rpc-handlers = { workspace = true }
 tar = { workspace = true, features = ["default"] }
-base-execution-payload-builder = {workspace = true}
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 backon = { workspace = true, features = ["default"] }
+base-common-observability-events = {workspace = true}
 base-execution-network-service = { workspace = true }
 futures = { workspace = true, features = ["default"] }
-base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-service = {features = ["default"], workspace = true}
-clap = {workspace = true, features = ["default", "derive", "env"]}
+clap = {features = ["default", "derive", "env"], workspace = true}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
 base-execution-txpool-pool = {features = ["default"], workspace = true}
 base-batcher-service-driver = {features = ["metrics"], workspace = true}
+base-execution-rpc-handlers = {features = ["default"], workspace = true}
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
 base-batcher-encoding-channel = { workspace = true, features = ["clap"] }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-network-types = { workspace = true, features = ["default"] }
+base-execution-payload-builder = {features = ["default"], workspace = true}
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-network-discovery = {features = ["default"], workspace = true}
 tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
@@ -60,10 +60,11 @@ base-common-chain-activation = { workspace = true, features = ["default", "metri
 
 [dev-dependencies]
 alloy-chains = { workspace = true }
+alloy-primitives = {workspace = true}
 alloy-hardforks = { workspace = true }
-alloy-primitives = { workspace = true }
 base-common-chain-config = { workspace = true }
-rstest = { workspace = true, features = ["default"] }
+base-execution-payload-types = { workspace = true }
+rstest = {features = ["default"], workspace = true}
 tempfile = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
 base-node-service = { workspace = true, features = ["test-utils"] }

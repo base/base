@@ -1,7 +1,6 @@
 //! Integrated execution, builder, and consensus sequencer command.
 use std::sync::Arc;
 
-use base_builder_cli::Args as BuilderArgs;
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::CliRunner;
@@ -11,9 +10,8 @@ use base_consensus_cli::{
 };
 use base_consensus_driver_service::LocalEngineClient;
 use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
-use base_node_cli::{
-    ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
-};
+use base_node_cli::BuilderArgs;
+use base_node_cli::{ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser};
 use base_node_service::BaseNode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;

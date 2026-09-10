@@ -2068,7 +2068,6 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
- "base-builder-cli",
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-cli-support",
@@ -2163,23 +2162,6 @@ dependencies = [
  "eyre",
  "tokio",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "base-builder-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-observability-events",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-rpc-handlers",
- "base-node-cli",
- "base-node-service",
- "clap",
- "eyre",
- "rstest",
- "tracing",
 ]
 
 [[package]]
@@ -4420,6 +4402,7 @@ dependencies = [
  "base-execution-network-types",
  "base-execution-network-wire",
  "base-execution-payload-builder",
+ "base-execution-payload-types",
  "base-execution-rpc-handlers",
  "base-execution-state-database",
  "base-execution-state-indexer",

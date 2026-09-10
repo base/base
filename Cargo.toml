@@ -33,7 +33,6 @@ members = [
   "bin/websocket-proxy",
   "crates/batcher/encoding/channel",
   "crates/batcher/service/driver",
-  "crates/builder/cli",
   "crates/common/chain/config",
   "crates/common/types/chain",
   "crates/execution/evm/runtime",
@@ -266,7 +265,6 @@ base-common-types-payload = { path = "crates/common/types/payload", default-feat
 base-common-observability-events = { path = "crates/common/observability/events", default-features = false }
 
 # Builder
-base-builder-cli = { path = "crates/builder/cli", default-features = false }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli", default-features = false }

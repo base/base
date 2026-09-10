@@ -3,11 +3,11 @@
 use core::time::Duration;
 use std::path::PathBuf;
 
+use crate::ShadowIndexerArgs;
 use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
 };
-use base_node_cli::ShadowIndexerArgs;
 use base_execution_payload_builder::MeteringStore;
 use base_execution_payload_builder::SharedMeteringStore;
 use base_execution_rpc_handlers::{
@@ -98,7 +98,7 @@ impl TransactionEventsArgs {
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, clap::Args)]
 #[command(next_help_heading = "Rollup")]
-pub struct Args {
+pub struct BuilderArgs {
     /// Rollup configuration
     #[command(flatten)]
     pub rollup_args: RollupArgs,
@@ -202,7 +202,7 @@ pub struct Args {
     pub shadow_indexer: ShadowIndexerArgs,
 }
 
-impl Args {
+impl BuilderArgs {
     /// Creates a [`MeteringStore`] from the CLI arguments.
     pub fn build_metering_store(&self) -> MeteringStore {
         MeteringStore::new(
@@ -213,7 +213,7 @@ impl Args {
     }
 }
 
-impl Default for Args {
+impl Default for BuilderArgs {
     fn default() -> Self {
         Self {
             rollup_args: RollupArgs::default(),
@@ -244,7 +244,7 @@ impl Default for Args {
     }
 }
 
-impl Args {
+impl BuilderArgs {
     /// Builds validated configuration for the builder transaction insertion RPC.
     ///
     /// # Errors
@@ -309,17 +309,17 @@ mod tests {
     #[derive(Debug, Parser)]
     struct CommandParser {
         #[command(flatten)]
-        args: Args,
+        args: BuilderArgs,
     }
 
-    fn convert(args: Args) -> BuilderConfig {
+    fn convert(args: BuilderArgs) -> BuilderConfig {
         let metering_provider: SharedMeteringStore = Arc::new(MeteringStore::default());
         args.into_builder_config(metering_provider).expect("conversion should succeed")
     }
 
     #[test]
     fn default_args_produce_valid_config() {
-        let args = Args::default();
+        let args = BuilderArgs::default();
         assert!(!args.enable_experimental_validity_transactions);
         assert_eq!(args.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert!(!args.shadow_validity_injection_enabled);
@@ -346,10 +346,10 @@ mod tests {
 
     #[test]
     fn shadow_validity_injection_requires_validity_support() {
-        let args = Args { shadow_validity_injection_enabled: true, ..Default::default() };
+        let args = BuilderArgs { shadow_validity_injection_enabled: true, ..Default::default() };
         assert!(args.builder_api_config().is_err());
 
-        let args = Args {
+        let args = BuilderArgs {
             enable_experimental_validity_transactions: true,
             shadow_validity_injection_enabled: true,
             shadow_validity_injection_sample_rate_bps: 250,
@@ -374,7 +374,7 @@ mod tests {
     #[case::enabled(true)]
     #[case::disabled(false)]
     fn manifest_precheck_flag_maps_to_config(#[case] enabled: bool) {
-        let args = Args { manifest_precheck_enabled: enabled, ..Default::default() };
+        let args = BuilderArgs { manifest_precheck_enabled: enabled, ..Default::default() };
         assert_eq!(convert(args).manifest_precheck_enabled, enabled);
     }
 
@@ -390,7 +390,7 @@ mod tests {
     #[case::block_time_2s(2000, 2000)]
     #[case::block_time_250ms(250, 250)]
     fn chain_block_time_maps_to_block_time(#[case] input_ms: u64, #[case] expected_ms: u64) {
-        let args = Args { chain_block_time: input_ms, ..Default::default() };
+        let args = BuilderArgs { chain_block_time: input_ms, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.block_time, Duration::from_millis(expected_ms));
     }
@@ -400,7 +400,7 @@ mod tests {
     #[case::none(None, None)]
     #[case::large_gas(Some(1_000_000), Some(1_000_000))]
     fn max_gas_per_txn_maps_correctly(#[case] input: Option<u64>, #[case] expected: Option<u64>) {
-        let args = Args { max_gas_per_txn: input, ..Default::default() };
+        let args = BuilderArgs { max_gas_per_txn: input, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.max_gas_per_txn, expected);
     }
@@ -410,7 +410,7 @@ mod tests {
     #[case::leeway_10s(10, 10)]
     #[case::leeway_0s(0, 0)]
     fn extra_block_deadline_maps_to_leeway(#[case] input_secs: u64, #[case] expected_secs: u64) {
-        let args = Args { extra_block_deadline_secs: input_secs, ..Default::default() };
+        let args = BuilderArgs { extra_block_deadline_secs: input_secs, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.block_time_leeway, Duration::from_secs(expected_secs));
     }
@@ -419,7 +419,7 @@ mod tests {
     fn metering_data_written_to_provider_is_readable_from_config() {
         let metering_provider: SharedMeteringStore =
             Arc::new(MeteringStore::new(true, 100, Duration::from_secs(30)));
-        let args = Args { enable_resource_metering: true, ..Default::default() };
+        let args = BuilderArgs { enable_resource_metering: true, ..Default::default() };
         let config = args
             .into_builder_config(Arc::clone(&metering_provider))
             .expect("conversion should succeed");
@@ -449,14 +449,14 @@ mod tests {
     #[case::zero(0, Duration::from_millis(0))]
     #[case::custom(25, Duration::from_millis(25))]
     fn predicate_eval_hard_cutoff_maps_correctly(#[case] input: u64, #[case] expected: Duration) {
-        let args = Args { predicate_eval_hard_cutoff_ms: input, ..Default::default() };
+        let args = BuilderArgs { predicate_eval_hard_cutoff_ms: input, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.predicate_eval_hard_cutoff, expected);
     }
 
     #[test]
     fn metering_store_ttl_propagates_to_store() {
-        let args = Args {
+        let args = BuilderArgs {
             metering_store_ttl_secs: 60,
             enable_resource_metering: true,
             ..Default::default()
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn metering_store_ttl_defaults_to_30s() {
-        let args = Args::default();
+        let args = BuilderArgs::default();
         assert_eq!(args.metering_store_ttl_secs, 30);
     }
 
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn combined_overrides_work_together() {
-        let args = Args {
+        let args = BuilderArgs {
             chain_block_time: 2000,
             max_gas_per_txn: Some(100000),
 
