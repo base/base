@@ -4683,41 +4683,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "ark-bls12-381",
- "ark-ff 0.6.0",
- "async-trait",
- "base-common-chain-config",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-execution-evm-machine",
- "base-execution-evm-runtime",
- "base-proof-execution-client",
- "base-proof-witness-mpt",
- "base-proof-witness-preimage",
- "c-kzg",
- "lru 0.16.4",
- "rand 0.9.5",
- "rayon",
- "rstest",
- "serde",
- "serde_json",
- "spin 0.10.1",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-proof-client"
 version = "0.0.0"
 dependencies = [
@@ -4728,7 +4693,6 @@ dependencies = [
  "base-consensus-derive-pipeline",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
- "base-proof",
  "base-proof-execution-client",
  "base-proof-witness-preimage",
  "rstest",
@@ -4761,12 +4725,15 @@ name = "base-proof-execution-client"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
+ "alloy-genesis",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-client",
  "alloy-transport",
  "alloy-transport-http",
  "alloy-trie",
+ "ark-bls12-381",
+ "ark-ff 0.6.0",
  "async-trait",
  "base-common-chain-config",
  "base-common-client-ethereum",
@@ -4777,9 +4744,14 @@ dependencies = [
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof-witness-mpt",
+ "base-proof-witness-preimage",
+ "c-kzg",
  "getrandom 0.2.17",
+ "lru 0.16.4",
  "rand 0.9.5",
+ "rayon",
  "rocksdb",
+ "rstest",
  "serde",
  "serde_json",
  "spin 0.10.1",
@@ -4811,8 +4783,8 @@ dependencies = [
  "base-consensus-batch-types",
  "base-consensus-source-providers",
  "base-execution-evm-runtime",
- "base-proof",
  "base-proof-client",
+ "base-proof-execution-client",
  "base-proof-types-protocol",
  "base-proof-witness-mpt",
  "base-proof-witness-preimage",
@@ -4879,8 +4851,8 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-execution-evm-runtime",
- "base-proof",
  "base-proof-client",
+ "base-proof-execution-client",
  "base-proof-types-protocol",
  "base-proof-witness-preimage",
  "bincode 2.0.1",

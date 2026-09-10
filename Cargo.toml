@@ -79,7 +79,6 @@ members = [
   "crates/proof/witness/mpt",
   "crates/proof/witness/preimage",
   "crates/proof/types/protocol",
-  "crates/proof/proof",
   "crates/proof/proposer",
   "crates/proof/prover-service",
   "crates/proof/prover-service/client",
@@ -312,7 +311,6 @@ base-telemetry-service = { path = "crates/infra/telemetry", default-features = f
 base-shadow-metrics = { path = "crates/infra/shadow-metrics", default-features = false }
 
 # Proof
-base-proof = { path = "crates/proof/proof", default-features = false }
 base-proof-rpc = { path = "crates/proof/rpc", default-features = false }
 base-proof-witness-mpt = { path = "crates/proof/witness/mpt", default-features = false }
 base-proof-host = { path = "crates/proof/host", default-features = false }

@@ -3,11 +3,11 @@ use std::sync::Arc;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Network, RootProvider};
+use base_common_client_rollup::OptimismRollupProviderExt;
 use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_execution_evm_runtime::BaseEvmFactory;
-use base_common_client_rollup::OptimismRollupProviderExt;
-use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
+use base_proof_execution_client::HintType;
 use base_proof_witness_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
     WitnessOracle,
@@ -174,7 +174,12 @@ impl Host {
             + Clone
             + std::fmt::Debug
             + 'static,
-        H: base_proof_witness_preimage::HintWriterClient + Send + Sync + Clone + std::fmt::Debug + 'static,
+        H: base_proof_witness_preimage::HintWriterClient
+            + Send
+            + Sync
+            + Clone
+            + std::fmt::Debug
+            + 'static,
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
         let _timer = base_common_observability_metrics::timed!(Metrics::replay_duration_seconds());

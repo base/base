@@ -11,13 +11,13 @@ use ark_bls12_381::Fr;
 use ark_ff::{AdditiveGroup, BigInteger, BigInteger256, Field, PrimeField};
 use async_trait::async_trait;
 use base_common_types_chain::Blob;
+use base_consensus_batch_types::BlockInfo;
 use base_consensus_derive_pipeline::BlobProvider;
 use base_proof_witness_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use base_consensus_batch_types::BlockInfo;
 use spin::Lazy;
 use tracing::info;
 
-use crate::{HintType, errors::OracleProviderError};
+use crate::oracle::{HintType, errors::OracleProviderError};
 
 /// An oracle-backed blob provider.
 #[derive(Debug, Clone)]

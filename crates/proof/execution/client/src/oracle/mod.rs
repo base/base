@@ -1,11 +1,4 @@
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![no_std]
-
-extern crate alloc;
-
-#[macro_use]
-extern crate tracing;
+//! Proof execution oracle.
 
 mod l1;
 pub use l1::*;

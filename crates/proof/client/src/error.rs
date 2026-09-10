@@ -1,5 +1,5 @@
 use base_consensus_derive_pipeline::PipelineErrorKind;
-use base_proof::OracleProviderError;
+use base_proof_execution_client::OracleProviderError;
 use base_proof_witness_preimage::errors::PreimageOracleError;
 use thiserror::Error;
 

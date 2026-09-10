@@ -9,7 +9,7 @@ use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use base_proof_witness_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
 use serde::{Deserialize, Serialize};
 
-use crate::{ScheduleId, errors::OracleProviderError};
+use crate::oracle::{ScheduleId, errors::OracleProviderError};
 
 /// The local key identifier for the L1 head hash.
 ///

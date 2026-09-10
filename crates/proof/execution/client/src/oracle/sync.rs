@@ -3,16 +3,16 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 
+use crate::{PipelineCursor, TipCursor};
 use alloy_primitives::B256;
 use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{Header, Sealed};
 use base_consensus_batch_types::{BatchValidationProvider, OutputRoot};
 use base_consensus_derive_pipeline::ChainProvider;
-use base_proof_execution_client::{PipelineCursor, TipCursor};
 use base_proof_witness_preimage::{PreimageKey, PreimageOracleClient};
 use spin::RwLock;
 
-use crate::errors::OracleProviderError;
+use crate::oracle::errors::OracleProviderError;
 
 /// Constructs a [`PipelineCursor`] from the caching oracle, boot info, and providers.
 pub async fn new_oracle_pipeline_cursor<L1, L2>(

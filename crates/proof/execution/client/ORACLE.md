@@ -1,6 +1,6 @@
-# `base-proof`
+# `base-proof-execution-client`
 
-`base-proof` is a Base state transition proof SDK.
+`base-proof-execution-client` is a Base state transition proof SDK.
 
 ## Overview
 
@@ -17,7 +17,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof = { workspace = true }
+base-proof-execution-client = { workspace = true }
 ```
 
 ```rust,ignore

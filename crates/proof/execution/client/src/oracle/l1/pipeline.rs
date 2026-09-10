@@ -3,6 +3,8 @@
 use alloc::{boxed::Box, sync::Arc};
 use core::fmt::Debug;
 
+use crate::TrieDBProvider;
+use crate::{DriverPipeline, PipelineCursor};
 use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealable;
 use async_trait::async_trait;
@@ -16,12 +18,10 @@ use base_consensus_derive_pipeline::{
     PolledAttributesQueueStage, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder,
     StepResult,
 };
-use base_proof_execution_client::TrieDBProvider;
-use base_proof_execution_client::{DriverPipeline, PipelineCursor};
 use base_proof_witness_preimage::{CommsClient, FlushableCache};
 use spin::RwLock;
 
-use crate::{
+use crate::oracle::{
     OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
     boot::BootInfo,
     sync::{SafeHeadFetcher, new_oracle_pipeline_cursor},

@@ -2,6 +2,8 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
+use crate::PipelineCursor;
+use crate::TrieDBProvider;
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, B256, Bytes};
 use alloy_rlp::Decodable;
@@ -10,13 +12,11 @@ use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, BlockBody, Header};
 use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use base_consensus_derive_pipeline::L2ChainProvider;
-use base_proof_execution_client::PipelineCursor;
-use base_proof_execution_client::TrieDBProvider;
 use base_proof_witness_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use base_proof_witness_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use spin::RwLock;
 
-use crate::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
+use crate::oracle::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
 
 /// The oracle-backed L2 chain provider for the client program.
 #[derive(Debug, Clone)]
@@ -178,7 +178,7 @@ impl<T: CommsClient> TrieProvider for OracleL2ChainProvider<T> {
     fn trie_node_by_hash(&self, key: B256) -> Result<TrieNode, OracleProviderError> {
         // On L2, trie node preimages are stored as keccak preimage types in the oracle. We assume
         // that a hint for these preimages has already been sent, prior to this call.
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             TrieNode::decode(
                 &mut self
                     .oracle
@@ -195,7 +195,7 @@ impl<T: CommsClient> TrieProvider for OracleL2ChainProvider<T> {
 impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
     fn bytecode_by_hash(&self, hash: B256) -> Result<Bytes, OracleProviderError> {
         // Fetch the bytecode preimage from the caching oracle.
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             HintType::L2Code
                 .with_data(&[hash.as_slice()])
                 .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
@@ -211,7 +211,7 @@ impl<T: CommsClient> TrieDBProvider for OracleL2ChainProvider<T> {
 
     fn header_by_hash(&self, hash: B256) -> Result<Header, OracleProviderError> {
         // Fetch the header from the caching oracle.
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             HintType::L2BlockHeader
                 .with_data(&[hash.as_slice()])
                 .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
@@ -228,7 +228,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     type Error = OracleProviderError;
 
     fn hint_trie_node(&self, hash: B256) -> Result<(), Self::Error> {
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             HintType::L2StateNode
                 .with_data(&[hash.as_slice()])
                 .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
@@ -238,7 +238,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
     }
 
     fn hint_account_proof(&self, address: Address, block_number: u64) -> Result<(), Self::Error> {
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             HintType::L2AccountProof
                 .with_data(&[block_number.to_be_bytes().as_ref(), address.as_slice()])
                 .with_data(self.chain_id.map_or_else(Vec::new, |id| id.to_be_bytes().to_vec()))
@@ -253,7 +253,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
         slot: alloy_primitives::U256,
         block_number: u64,
     ) -> Result<(), Self::Error> {
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             HintType::L2AccountStorageProof
                 .with_data(&[
                     block_number.to_be_bytes().as_ref(),
@@ -271,7 +271,7 @@ impl<T: CommsClient> TrieHinter for OracleL2ChainProvider<T> {
         parent_hash: B256,
         base_payload_attributes: &base_common_types_payload::BasePayloadAttributes,
     ) -> Result<(), Self::Error> {
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             let encoded_attributes =
                 serde_json::to_vec(base_payload_attributes).map_err(OracleProviderError::Serde)?;
 

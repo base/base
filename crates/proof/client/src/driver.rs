@@ -6,11 +6,11 @@ use base_consensus_derive_pipeline::EthereumDataSource;
 use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
-use base_proof::{
+use base_proof_execution_client::Driver;
+use base_proof_execution_client::{
     BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
     OraclePipeline,
 };
-use base_proof_execution_client::Driver;
 use base_proof_witness_preimage::{HintWriterClient, PreimageOracleClient};
 use spin::RwLock;
 

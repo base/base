@@ -7,12 +7,12 @@ use alloy_primitives::B256;
 use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt, ReceiptEnvelope, TxEnvelope};
+use base_consensus_batch_types::BlockInfo;
 use base_consensus_derive_pipeline::ChainProvider;
 use base_proof_witness_mpt::{OrderedListWalker, TrieNode, TrieProvider};
 use base_proof_witness_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use base_consensus_batch_types::BlockInfo;
 
-use crate::{HintType, errors::OracleProviderError};
+use crate::oracle::{HintType, errors::OracleProviderError};
 
 /// The oracle-backed L1 chain provider for the client program.
 #[derive(Debug, Clone)]
@@ -128,7 +128,7 @@ impl<T: CommsClient> TrieProvider for OracleL1ChainProvider<T> {
     fn trie_node_by_hash(&self, key: B256) -> Result<TrieNode, Self::Error> {
         // On L1, trie node preimages are stored as keccak preimage types in the oracle. We assume
         // that a hint for these preimages has already been sent, prior to this call.
-        crate::block_on(async move {
+        crate::oracle::block_on(async move {
             TrieNode::decode(
                 &mut self
                     .oracle

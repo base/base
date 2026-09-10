@@ -15,33 +15,48 @@ normal = ["getrandom"]
 
 [dependencies]
 tracing = {workspace = true}
+ark-ff = { workspace = true }
 alloy-rlp = {workspace = true}
 thiserror = {workspace = true}
-alloy-eips = { workspace = true }
-alloy-trie = { workspace = true }
-async-trait = { workspace = true }
-base-proof-witness-mpt = { workspace = true }
+alloy-eips = {workspace = true}
+alloy-trie = {workspace = true}
+async-trait = {workspace = true}
+alloy-genesis = { workspace = true }
+base-proof-witness-mpt = {workspace = true}
+c-kzg = { workspace = true, optional = true }
 base-consensus-batch-types = {workspace = true}
+base-execution-evm-machine = {workspace = true}
 base-execution-evm-runtime = {workspace = true}
-base-execution-evm-machine = { workspace = true }
-serde_json = { workspace = true, optional = true }
-spin = { workspace = true, features = ["default"] }
-base-consensus-derive-pipeline = { workspace = true }
+serde_json = {workspace = true, optional = false}
+spin = {workspace = true, features = ["default"]}
+base-proof-witness-preimage = { workspace = true }
+lru = { workspace = true, features = ["default"] }
+base-consensus-derive-pipeline = {workspace = true}
 alloy-transport = { workspace = true, optional = true }
 alloy-primitives = {workspace = true, features = ["rlp"]}
 getrandom_0_2_17 = { workspace = true, features = ["custom"] }
+ark-bls12-381 = { workspace = true, features = ["scalar_field"] }
 base-common-types-chain = {workspace = true, features = ["k256"]}
+serde = {workspace = true, optional = false, features = ["derive"]}
 rand = { workspace = true, optional = true, features = ["default"] }
-serde = { workspace = true, features = ["derive"], optional = true }
-base-common-chain-config = {workspace = true, features = ["default"]}
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
+tokio = {features = ["default", "full"], optional = true, workspace = true}
 base-common-types-payload = {workspace = true, features = ["k256", "serde"]}
-tokio = { workspace = true, features = ["default", "full"], optional = true }
+base-common-chain-config = {workspace = true, features = ["default", "serde"]}
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
 base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"], optional = true }
 
 [features]
-std = ["base-common-types-chain/std", "alloy-eips/std", "base-execution-evm-runtime/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-payload/std", "alloy-trie/std", "base-common-chain-config/std", "base-proof-witness-mpt/std", "base-consensus-batch-types/std", "getrandom_0_2_17/std", "serde?/std", "serde_json?/std", "thiserror/std", "tracing/std", "spin/std"]
-test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils", "dep:base-common-client-ethereum", "dep:alloy-rpc-client", "dep:alloy-transport", "dep:alloy-transport-http", "dep:rand", "dep:rocksdb", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:tokio", "std", "base-common-chain-config/serde"]
+std = ["base-common-types-chain/std", "alloy-eips/std", "base-execution-evm-runtime/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-payload/std", "alloy-trie/std", "base-common-chain-config/std", "base-proof-witness-mpt/std", "base-consensus-batch-types/std", "getrandom_0_2_17/std", "serde/std", "serde_json/std", "thiserror/std", "tracing/std", "spin/std", "alloy-eips/kzg", "alloy-genesis/std", "ark-bls12-381/std", "ark-ff/std", "base-proof-witness-preimage/std", "c-kzg?/std", "dep:c-kzg", "dep:tokio", "serde/std", "serde_json/std"]
+test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils", "dep:base-common-client-ethereum", "dep:alloy-rpc-client", "dep:alloy-transport", "dep:alloy-transport-http", "dep:rand", "dep:rocksdb", "dep:tempfile", "dep:tokio", "std", "base-common-chain-config/serde"]
+evm-std = ["base-execution-evm-runtime/std"]
+
+[dev-dependencies]
+rayon = { workspace = true }
+c-kzg = { workspace = true, features = [] }
+rand = { workspace = true, features = ["default"] }
+alloy-eips = { workspace = true, features = ["kzg"] }
+rstest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "full"] }

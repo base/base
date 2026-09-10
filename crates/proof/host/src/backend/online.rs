@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use base_proof::{Hint, HintType};
+use base_proof_execution_client::{Hint, HintType};
 use base_proof_witness_preimage::{
     HintRouter, PreimageFetcher, PreimageKey,
     errors::{PreimageOracleError, PreimageOracleResult},
@@ -203,14 +203,14 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_genesis::ChainConfig;
-    use base_common_client_ethereum::RootProvider;
     use base_common_chain_config::RollupConfig;
+    use base_common_client_ethereum::RootProvider;
     use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
-    use base_proof::{Hint, HintType};
+    use base_proof_execution_client::{Hint, HintType};
+    use base_proof_types_protocol::ProofRequest;
     use base_proof_witness_preimage::{
         HintRouter, PreimageFetcher, PreimageKey, errors::PreimageOracleError,
     };
-    use base_proof_types_protocol::ProofRequest;
     use tokio::sync::RwLock;
 
     use super::*;

@@ -6,10 +6,10 @@ use base_common_chain_config::ChainConfig;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_execution_evm_runtime::BaseEvmFactory;
-use base_proof::BootInfo;
 use base_proof_client::Prologue;
-use base_proof_witness_preimage::PreimageKey;
+use base_proof_execution_client::BootInfo;
 use base_proof_types_protocol::{PerChainConfig, ProofJournal, ProofResult, Proposal};
+use base_proof_witness_preimage::PreimageKey;
 use tracing::info;
 
 use crate::{

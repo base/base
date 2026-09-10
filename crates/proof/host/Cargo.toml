@@ -28,7 +28,6 @@ metrics = { workspace = true, optional = true }
 base-common-client-rollup = { workspace = true }
 base-consensus-batch-types = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
-base-proof = { workspace = true, features = ["std"] }
 base-consensus-source-providers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
@@ -42,16 +41,12 @@ base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "portable", "secp256k1", "std"],  workspace = true}
+base-proof-execution-client = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 proptest = { workspace = true, features = ["default"] }
 
 [features]
 disk = ["dep:rocksdb"]
-metrics = [
-    "base-execution-evm-runtime/metrics",
-    "base-consensus-source-providers/metrics",
-    "base-common-observability-metrics/metrics",
-    "dep:metrics",
-]
+metrics = ["base-execution-evm-runtime/metrics", "base-consensus-source-providers/metrics", "base-common-observability-metrics/metrics", "dep:metrics"]
 precompiles = []

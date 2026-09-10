@@ -10,7 +10,7 @@ use base_common_types_chain::Header;
 use base_proof_witness_mpt::{TrieHinter, TrieNode, TrieNodeError, TrieProvider};
 use base_proof_witness_preimage::errors::PreimageOracleError;
 
-use crate::errors::OracleProviderError;
+use crate::oracle::errors::OracleProviderError;
 
 /// The [`keccak256`] hash of the address of the EIP-2935 history storage contract.
 const HASHED_HISTORY_STORAGE_ADDRESS: B256 =
