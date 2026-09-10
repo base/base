@@ -96,9 +96,6 @@ pub use trace_geth::*;
 mod trace_opcode;
 pub use trace_opcode::*;
 
-mod trace_otterscan;
-pub use trace_otterscan::*;
-
 mod trace_parity;
 pub use trace_parity::*;
 

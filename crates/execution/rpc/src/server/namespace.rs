@@ -37,8 +37,6 @@ pub enum RpcNamespace {
     Rpc,
     /// The `reth` namespace.
     Reth,
-    /// The `ots` namespace.
-    Ots,
     /// The `miner` namespace.
     Miner,
     /// The `mev` namespace.
@@ -57,7 +55,6 @@ impl RpcNamespace {
         Self::Web3,
         Self::Rpc,
         Self::Reth,
-        Self::Ots,
         Self::Miner,
         Self::Mev,
     ];

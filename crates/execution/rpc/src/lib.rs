@@ -36,9 +36,6 @@ pub use rpc::*;
 mod core_debug;
 pub use core_debug::*;
 
-mod otterscan;
-pub use otterscan::*;
-
 mod admin;
 pub use admin::*;
 
@@ -78,11 +75,6 @@ mod rpc_api_debug;
 #[cfg(feature = "client")]
 pub use rpc_api_debug::DebugApiClient;
 pub use rpc_api_debug::DebugApiServer;
-
-mod rpc_api_otterscan;
-#[cfg(feature = "client")]
-pub use rpc_api_otterscan::OtterscanClient;
-pub use rpc_api_otterscan::OtterscanServer;
 
 mod rpc_api_admin;
 #[cfg(feature = "client")]

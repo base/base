@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use alloy_eips::{BlockId, BlockNumberOrTag, Encodable2718, eip1898::LenientBlockNumberOrTag};
+use alloy_eips::{BlockId, BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U64, U256};
 use base_common_types_rpc::{
     BaseTransactionRequest, Block, FeeHistory, Filter, Index, Log, PendingTransactionFilterKind,
@@ -12,7 +12,7 @@ use base_common_types_rpc::{
 use base_execution_network_wire::NodeRecord;
 use base_execution_rpc::{
     AdminApiClient, DebugApiClient, EthApiClient, EthCallBundleApiClient, EthFilterApiClient,
-    NetApiClient, OtterscanClient, TraceApiClient, Web3ApiClient,
+    NetApiClient, TraceApiClient, Web3ApiClient,
 };
 use jsonrpsee::{
     core::{
@@ -357,87 +357,6 @@ where
     Web3ApiClient::sha3(client, Bytes::default()).await.unwrap();
 }
 
-async fn test_basic_otterscan_calls<C>(client: &C)
-where
-    C: ClientT + SubscriptionClientT + Sync,
-{
-    let address = Address::default();
-    let sender = Address::default();
-    let tx_hash = TxHash::default();
-    let block_number = 0;
-    let page_number = 1;
-    let page_size = 10;
-    let nonce = 1;
-    let block_hash = B256::default();
-
-    OtterscanClient::get_header_by_number(
-        client,
-        LenientBlockNumberOrTag::new(BlockNumberOrTag::Number(block_number)),
-    )
-    .await
-    .unwrap();
-
-    OtterscanClient::has_code(client, address, None).await.unwrap();
-    OtterscanClient::has_code(client, address, Some(block_number.into())).await.unwrap();
-
-    OtterscanClient::get_api_level(client).await.unwrap();
-
-    OtterscanClient::get_internal_operations(client, tx_hash).await.unwrap();
-
-    OtterscanClient::get_transaction_error(client, tx_hash).await.unwrap();
-
-    OtterscanClient::trace_transaction(client, tx_hash).await.unwrap();
-
-    OtterscanClient::get_block_details(
-        client,
-        LenientBlockNumberOrTag::new(BlockNumberOrTag::Number(block_number)),
-    )
-    .await
-    .unwrap();
-    OtterscanClient::get_block_details(client, Default::default()).await.unwrap();
-
-    OtterscanClient::get_block_details_by_hash(client, block_hash).await.unwrap_err();
-
-    OtterscanClient::get_block_transactions(
-        client,
-        LenientBlockNumberOrTag::new(BlockNumberOrTag::Number(block_number)),
-        page_number,
-        page_size,
-    )
-    .await
-    .unwrap();
-
-    assert!(is_unimplemented(
-        OtterscanClient::search_transactions_before(
-            client,
-            address,
-            LenientBlockNumberOrTag::new(BlockNumberOrTag::Number(block_number)),
-            page_size,
-        )
-        .await
-        .err()
-        .unwrap()
-    ));
-    assert!(is_unimplemented(
-        OtterscanClient::search_transactions_after(
-            client,
-            address,
-            LenientBlockNumberOrTag::new(BlockNumberOrTag::Number(block_number)),
-            page_size,
-        )
-        .await
-        .err()
-        .unwrap()
-    ));
-    assert!(
-        OtterscanClient::get_transaction_by_sender_and_nonce(client, sender, nonce)
-            .await
-            .err()
-            .is_none()
-    );
-    assert!(OtterscanClient::get_contract_creator(client, address).await.unwrap().is_none());
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn test_call_filter_functions_http() {
     base_common_observability_tracing::init_test_tracing();
@@ -629,33 +548,6 @@ async fn test_call_web3_functions_http_and_ws() {
     let handle = launch_http_ws().await;
     let client = handle.http_client().unwrap();
     test_basic_web3_calls(&client).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_call_otterscan_functions_http() {
-    base_common_observability_tracing::init_test_tracing();
-
-    let handle = launch_http().await;
-    let client = handle.http_client().unwrap();
-    test_basic_otterscan_calls(&client).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_call_otterscan_functions_ws() {
-    base_common_observability_tracing::init_test_tracing();
-
-    let handle = launch_ws().await;
-    let client = handle.ws_client().await.unwrap();
-    test_basic_otterscan_calls(&client).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn test_call_otterscan_functions_http_and_ws() {
-    base_common_observability_tracing::init_test_tracing();
-
-    let handle = launch_http_ws().await;
-    let client = handle.http_client().unwrap();
-    test_basic_otterscan_calls(&client).await;
 }
 
 // <https://github.com/paradigmxyz/reth/issues/5830>

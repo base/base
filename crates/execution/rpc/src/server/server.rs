@@ -33,8 +33,8 @@ use crate::{
     AdminApi, AdminApiServer, BaseEthApi, DebugApi, DebugApiServer, EthApiServer, EthBundle,
     EthCallBundleApiServer, EthConfig, EthFilterApiServer, EthPubSubApiServer, EthSimBundle,
     EthSubscriptionIdProvider, MevSimApiServer, MinerApi, MinerApiServer, NetApi, NetApiServer,
-    OtterscanApi, OtterscanServer, RPCApi, RethApi, RethApiServer, RpcApiServer, TraceApi,
-    TraceApiServer, TxPoolApi, TxPoolApiServer, Web3Api, Web3ApiServer,
+    RPCApi, RethApi, RethApiServer, RpcApiServer, TraceApi, TraceApiServer, TxPoolApi,
+    TxPoolApiServer, Web3Api, Web3ApiServer,
     server::{
         AuthLayer, Claims, CompressionLayer, CorsDomainError, EthHandlers, JwtAuthValidator,
         JwtSecret, RpcNamespace, cors,
@@ -180,20 +180,8 @@ impl RpcRegistryInner {
     }
 
     /// Instantiates `Web3Api`
-    pub fn web3_api(&self) -> Web3Api<base_execution_network_service::NetworkHandle> {
+    pub fn web3_api(&self) -> Web3Api {
         Web3Api::new(self.network.clone())
-    }
-}
-
-impl RpcRegistryInner {
-    /// Instantiates `OtterscanApi`
-    ///
-    /// # Panics
-    ///
-    /// If called outside of the tokio runtime. See also [`Self::eth_api`]
-    pub fn otterscan_api(&self) -> OtterscanApi<BaseEthApi> {
-        let eth_api = self.eth_api().clone();
-        OtterscanApi::new(eth_api)
     }
 }
 
@@ -240,7 +228,7 @@ impl RpcRegistryInner {
     /// # Panics
     ///
     /// If called outside of the tokio runtime. See also [`Self::eth_api`]
-    pub fn net_api(&self) -> NetApi<base_execution_network_service::NetworkHandle> {
+    pub fn net_api(&self) -> NetApi {
         let eth_api = self.eth_api().clone();
         NetApi::new(self.network.clone(), eth_api)
     }
@@ -362,7 +350,6 @@ impl RpcRegistryInner {
                         )
                         .into_rpc()
                         .into(),
-                        RpcNamespace::Ots => OtterscanApi::new(eth_api.clone()).into_rpc().into(),
                         RpcNamespace::Reth => RethApi::new(
                             self.provider.clone(),
                             self.evm_config.clone(),
@@ -1337,7 +1324,6 @@ mod tests {
                 "trace" =>  RpcNamespace::Trace,
                 "web3" =>  RpcNamespace::Web3,
                 "rpc" => RpcNamespace::Rpc,
-                "ots" => RpcNamespace::Ots,
                 "reth" => RpcNamespace::Reth,
             );
     }

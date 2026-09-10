@@ -1,5 +1,5 @@
 use alloy_primitives::U64;
-use base_execution_network_service::PeersInfo;
+use base_execution_network_service::{NetworkHandle, PeersInfo};
 use jsonrpsee::core::RpcResult as Result;
 
 use crate::{BaseEthApi, NetApiServer};
@@ -7,27 +7,24 @@ use crate::{BaseEthApi, NetApiServer};
 /// `Net` API implementation.
 ///
 /// This type provides the functionality for handling `net` related requests.
-pub struct NetApi<Net> {
+pub struct NetApi {
     /// An interface to interact with the network
-    network: Net,
+    network: NetworkHandle,
     /// The implementation of `eth` API
     eth: BaseEthApi,
 }
 
 // === impl NetApi ===
 
-impl<Net> NetApi<Net> {
+impl NetApi {
     /// Returns a new instance with the given network and eth interface implementations
-    pub const fn new(network: Net, eth: BaseEthApi) -> Self {
+    pub const fn new(network: NetworkHandle, eth: BaseEthApi) -> Self {
         Self { network, eth }
     }
 }
 
 /// Net rpc implementation
-impl<Net> NetApiServer for NetApi<Net>
-where
-    Net: PeersInfo + 'static,
-{
+impl NetApiServer for NetApi {
     /// Handler for `net_version`
     fn version(&self) -> Result<String> {
         // Note: net_version is numeric: <https://github.com/paradigmxyz/reth/issues/5569>
@@ -45,7 +42,7 @@ where
     }
 }
 
-impl<Net> std::fmt::Debug for NetApi<Net> {
+impl std::fmt::Debug for NetApi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NetApi").finish_non_exhaustive()
     }
