@@ -22,10 +22,10 @@ use reth_stages_api::{
 use tokio::sync::watch;
 use tracing::*;
 use {
-    reth_network_p2p::headers::downloader::HeaderDownloader,
-    reth_network_p2p::headers::downloader::HeaderSyncGap,
-    reth_network_p2p::headers::downloader::SyncTarget,
-    reth_network_p2p::headers::error::HeadersDownloaderError,
+    base_execution_network_service::HeaderDownloader,
+    base_execution_network_service::HeaderSyncGap,
+    base_execution_network_service::HeadersDownloaderError,
+    base_execution_network_service::SyncTarget,
 };
 
 /// The headers stage.
@@ -406,8 +406,8 @@ mod tests {
         };
         use tokio::sync::watch;
         use {
-            reth_network_p2p::test_utils::TestHeaderDownloader,
-            reth_network_p2p::test_utils::TestHeadersClient,
+            base_execution_network_service::test_utils::TestHeaderDownloader,
+            base_execution_network_service::test_utils::TestHeadersClient,
         };
 
         use super::*;

@@ -1,3 +1,4 @@
+//! Scripted peer clients for network and sync tests.
 mod bodies;
 mod full_block;
 mod headers;

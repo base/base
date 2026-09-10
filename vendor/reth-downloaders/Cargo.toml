@@ -33,7 +33,6 @@ futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-network-p2p = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["sync", "fs", "io-util"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
@@ -42,6 +41,7 @@ base-execution-state-provider = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
 alloy-rlp = { workspace = true, features = ["core-net"], optional = true }
+base-execution-network-service = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
 
@@ -56,9 +56,9 @@ base-common-types-chain = {workspace = true, features = ["serde"]}
 async-compression = { workspace = true, features = ["gzip", "tokio"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
-reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
+base-execution-network-service = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 default = []
@@ -66,7 +66,7 @@ file-client = ["dep:async-compression", "dep:alloy-rlp", "dep:itertools"]
 test-utils = [
     "tempfile",
     "base-execution-evm-blocks/test-utils",
-    "reth-network-p2p/test-utils",
+    "base-execution-network-service/test-utils",
     "reth-testing-utils",
     "base-execution-state-provider/test-utils",
     "reth-primitives-traits/test-utils",

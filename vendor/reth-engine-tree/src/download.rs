@@ -15,9 +15,9 @@ use futures::FutureExt;
 use reth_primitives_traits::SealedBlock;
 use tracing::trace;
 use {
-    base_execution_network_wire::BlockClient, reth_network_p2p::full_block::FetchFullBlockFuture,
-    reth_network_p2p::full_block::FetchFullBlockRangeFuture,
-    reth_network_p2p::full_block::FullBlockClient,
+    base_execution_network_service::FetchFullBlockFuture,
+    base_execution_network_service::FetchFullBlockRangeFuture,
+    base_execution_network_service::FullBlockClient, base_execution_network_wire::BlockClient,
 };
 
 use crate::{engine::DownloadRequest, metrics::BlockDownloaderMetrics};
@@ -292,7 +292,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
     use base_execution_evm_blocks::BaseBeaconConsensus;
-    use reth_network_p2p::test_utils::TestFullBlockClient;
+    use base_execution_network_service::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
 
     use super::*;

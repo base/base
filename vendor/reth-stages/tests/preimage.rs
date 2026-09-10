@@ -45,9 +45,8 @@ use reth_stages_api::{Pipeline, StageSet};
 use reth_testing_utils::generators::{self, generate_key};
 use tokio::sync::watch;
 use {
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::headers::downloader::HeaderDownloader,
-    reth_network_p2p::headers::downloader::SyncTarget,
+    base_execution_network_service::BodyDownloader,
+    base_execution_network_service::HeaderDownloader, base_execution_network_service::SyncTarget,
 };
 
 type TestProviderFactory = base_execution_state_provider::ProviderFactory;

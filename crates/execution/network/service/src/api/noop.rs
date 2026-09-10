@@ -16,7 +16,7 @@ use base_execution_network_wire::ProtocolVersion;
 use enr::{Enr, secp256k1::SecretKey};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use {base_execution_network_wire::NetworkSyncUpdater, reth_network_p2p::NoopFullBlockClient};
+use {crate::NoopFullBlockClient, base_execution_network_wire::NetworkSyncUpdater};
 
 use crate::api::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,

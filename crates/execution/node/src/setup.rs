@@ -18,8 +18,8 @@ use reth_exex::ExExManagerHandle;
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use tokio::sync::watch;
 use {
-    base_execution_network_wire::BlockClient, reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::headers::downloader::HeaderDownloader,
+    base_execution_network_service::BodyDownloader,
+    base_execution_network_service::HeaderDownloader, base_execution_network_wire::BlockClient,
 };
 use {base_execution_state_types::PruneConfig, reth_config::config::StageConfig};
 

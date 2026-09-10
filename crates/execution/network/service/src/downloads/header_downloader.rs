@@ -7,8 +7,8 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::Stream;
 use reth_primitives_traits::SealedHeader;
 
-use super::error::HeadersDownloaderResult;
-use crate::{error::DownloadError, error::DownloadResult};
+use crate::HeadersDownloaderResult;
+use crate::{DownloadError, DownloadResult};
 
 /// A downloader capable of fetching and yielding block headers.
 ///
@@ -99,25 +99,31 @@ impl HeaderSyncGap {
     }
 }
 
-/// Validate whether the header is valid in relation to its parent.
-pub fn validate_header_download(
-    consensus: &BaseBeaconConsensus,
-    header: &SealedHeader,
-    parent: &SealedHeader,
-) -> DownloadResult<()> {
-    // validate header against parent
-    consensus.validate_header_against_parent(header, parent).map_err(|error| {
-        DownloadError::HeaderValidation {
+/// Validates peer-supplied headers and preserves their download error context.
+#[derive(Debug)]
+pub struct HeaderDownloadValidation;
+
+impl HeaderDownloadValidation {
+    /// Validate whether the header is valid in relation to its parent.
+    pub fn validate(
+        consensus: &BaseBeaconConsensus,
+        header: &SealedHeader,
+        parent: &SealedHeader,
+    ) -> DownloadResult<()> {
+        // validate header against parent
+        consensus.validate_header_against_parent(header, parent).map_err(|error| {
+            DownloadError::HeaderValidation {
+                hash: header.hash(),
+                number: header.number(),
+                error: Box::new(error),
+            }
+        })?;
+        // validate header standalone
+        consensus.validate_header(header).map_err(|error| DownloadError::HeaderValidation {
             hash: header.hash(),
             number: header.number(),
             error: Box::new(error),
-        }
-    })?;
-    // validate header standalone
-    consensus.validate_header(header).map_err(|error| DownloadError::HeaderValidation {
-        hash: header.hash(),
-        number: header.number(),
-        error: Box::new(error),
-    })?;
-    Ok(())
+        })?;
+        Ok(())
+    }
 }

@@ -50,8 +50,6 @@ pub use flattened_response::FlattenedResponse;
 pub use manager::NetworkManager;
 pub use metrics::TxTypesCounter;
 pub use network::NetworkHandle;
-/// re-export p2p interfaces
-pub use reth_network_p2p as p2p;
 pub use session::{
     ActiveSessionHandle, ActiveSessionMessage, EthRlpxConnection, PendingSessionEvent,
     PendingSessionHandle, PendingSessionHandshakeError, SessionCommand, SessionEvent, SessionId,
@@ -71,3 +69,6 @@ use smallvec as _;
 
 mod api;
 pub use api::*;
+
+mod downloads;
+pub use downloads::*;

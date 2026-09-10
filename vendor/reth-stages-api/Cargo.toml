@@ -31,8 +31,8 @@ tokio = { workspace = true, features = ["sync"] }
 base-execution-state-provider = { workspace = true }
 base-execution-state-maintenance = {workspace = true}
 tracing = { workspace = true, features = ["attributes"] }
-reth-network-p2p = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-network-service = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
 
 [dev-dependencies]
@@ -49,7 +49,7 @@ base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 test-utils = [
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-database/test-utils",
-    "reth-network-p2p/test-utils",
+    "base-execution-network-service/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-state-provider/test-utils",
     "base-execution-state-types/test-utils",

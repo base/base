@@ -13,3 +13,6 @@ pub use init::{
 };
 pub use testnet::{NetworkEventStream, Peer, PeerConfig, PeerHandle, Testnet, TestnetHandle};
 pub use transactions::{buffer_hash_to_tx_fetcher, new_mock_session, new_tx_manager};
+
+mod downloads;
+pub use downloads::*;

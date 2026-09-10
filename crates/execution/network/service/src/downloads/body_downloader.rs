@@ -4,8 +4,8 @@ use alloy_primitives::BlockNumber;
 use futures::Stream;
 use reth_primitives_traits::Block;
 
-use super::response::BlockResponse;
-use crate::error::DownloadResult;
+use crate::BlockResponse;
+use crate::DownloadResult;
 
 /// Body downloader return type.
 pub type BodyDownloaderResult = DownloadResult<Vec<BlockResponse>>;

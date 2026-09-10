@@ -38,13 +38,13 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 num-traits = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
-reth-network-p2p = { workspace = true, features = ["default"] }
 base-execution-state-types = {workspace = true,features = ["std"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm-blocks = {features = ["metrics"], workspace = true}
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
+base-execution-network-service = { workspace = true, features = ["default"] }
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 
 [dev-dependencies]
@@ -63,16 +63,16 @@ reth-stages-api = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 base-execution-state-trie = { workspace = true, features = ["test-utils"] }
-reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true, features = ["test-utils", "mdbx"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
+base-execution-network-service = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 test-utils = [
-    "reth-network-p2p/test-utils",
+    "base-execution-network-service/test-utils",
     "base-execution-state-database/test-utils",
     "base-execution-state-provider/test-utils",
     "reth-stages-api/test-utils",

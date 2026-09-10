@@ -15,7 +15,7 @@
 //! # use std::sync::Arc;
 //! # use reth_downloaders::bodies::bodies::BodiesDownloaderBuilder;
 //! # use reth_downloaders::headers::reverse_headers::ReverseHeadersDownloaderBuilder;
-//! # use reth_network_p2p::test_utils::{TestBodiesClient, TestHeadersClient};
+//! # use base_execution_network_service::test_utils::{TestBodiesClient, TestHeadersClient};
 //! # use alloy_primitives::B256;
 //! #
 //! # use base_execution_state_types::PruneModes;

@@ -24,9 +24,8 @@ use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 use {
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::headers::downloader::HeaderDownloader,
-    reth_network_p2p::headers::downloader::SyncTarget,
+    base_execution_network_service::BodyDownloader,
+    base_execution_network_service::HeaderDownloader, base_execution_network_service::SyncTarget,
 };
 
 /// Configuration for importing blocks from RLP files.

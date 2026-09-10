@@ -3,9 +3,8 @@ use std::{fmt::Debug, ops::RangeInclusive};
 use alloy_primitives::BlockNumber;
 use futures::Stream;
 use {
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::bodies::response::BlockResponse, reth_network_p2p::error::DownloadError,
-    reth_network_p2p::error::DownloadResult,
+    base_execution_network_service::BlockResponse, base_execution_network_service::BodyDownloader,
+    base_execution_network_service::DownloadError, base_execution_network_service::DownloadResult,
 };
 
 /// A [`BodyDownloader`] implementation that does nothing.

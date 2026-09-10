@@ -717,9 +717,9 @@ mod tests {
         io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
     };
     use {
-        reth_network_p2p::bodies::downloader::BodyDownloader,
-        reth_network_p2p::headers::downloader::HeaderDownloader,
-        reth_network_p2p::headers::downloader::SyncTarget,
+        base_execution_network_service::BodyDownloader,
+        base_execution_network_service::HeaderDownloader,
+        base_execution_network_service::SyncTarget,
     };
 
     use super::*;

@@ -136,7 +136,6 @@ members = [
   "crates/execution/state/mdbx-sys",
   "crates/execution/network/discovery",
   "crates/execution/network/service",
-  "vendor/reth-network-p2p",
   "crates/execution/network/types",
   "vendor/reth-node-core",
   "vendor/reth-node-ethstats",
@@ -433,7 +432,6 @@ reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
-reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }

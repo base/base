@@ -15,9 +15,9 @@ use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_util::sync::PollSender;
 use {
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::bodies::downloader::BodyDownloaderResult,
-    reth_network_p2p::error::DownloadResult,
+    base_execution_network_service::BodyDownloader,
+    base_execution_network_service::BodyDownloaderResult,
+    base_execution_network_service::DownloadResult,
 };
 
 /// The maximum number of [`BodyDownloaderResult`]s to hold in the buffer.
@@ -135,8 +135,8 @@ mod tests {
 
     use assert_matches::assert_matches;
     use base_execution_evm_blocks::BaseBeaconConsensus;
+    use base_execution_network_service::DownloadError;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
-    use reth_network_p2p::error::DownloadError;
 
     use super::*;
     use crate::{

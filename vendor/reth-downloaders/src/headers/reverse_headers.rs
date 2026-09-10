@@ -23,14 +23,14 @@ use reth_primitives_traits::{GotExpected, SealedHeader};
 use thiserror::Error;
 use tracing::{debug, error, trace};
 use {
-    base_execution_network_wire::HeadersClient, base_execution_network_wire::HeadersRequest,
-    base_execution_network_wire::PeerRequestResult, base_execution_network_wire::Priority,
-    reth_network_p2p::error::DownloadError, reth_network_p2p::error::DownloadResult,
-    reth_network_p2p::headers::downloader::HeaderDownloader,
-    reth_network_p2p::headers::downloader::SyncTarget,
-    reth_network_p2p::headers::downloader::validate_header_download,
-    reth_network_p2p::headers::error::HeadersDownloaderError,
-    reth_network_p2p::headers::error::HeadersDownloaderResult,
+    base_execution_network_service::DownloadError, base_execution_network_service::DownloadResult,
+    base_execution_network_service::HeaderDownloadValidation,
+    base_execution_network_service::HeaderDownloader,
+    base_execution_network_service::HeadersDownloaderError,
+    base_execution_network_service::HeadersDownloaderResult,
+    base_execution_network_service::SyncTarget, base_execution_network_wire::HeadersClient,
+    base_execution_network_wire::HeadersRequest, base_execution_network_wire::PeerRequestResult,
+    base_execution_network_wire::Priority,
 };
 
 use super::task::TaskDownloader;
@@ -653,7 +653,7 @@ where
 
     /// Validate whether the header is valid in relation to it's parent
     fn validate(&self, header: &SealedHeader, parent: &SealedHeader) -> DownloadResult<()> {
-        validate_header_download(&self.consensus, header, parent)
+        HeaderDownloadValidation::validate(&self.consensus, header, parent)
     }
 
     /// Clears all requests/responses.
@@ -1288,9 +1288,9 @@ mod tests {
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_network_types::WithPeerId;
     use {
+        base_execution_network_service::test_utils::TestHeadersClient,
         base_execution_network_wire::DownloadClient,
         base_execution_network_wire::PeerRequestResult,
-        reth_network_p2p::test_utils::TestHeadersClient,
     };
 
     use super::*;

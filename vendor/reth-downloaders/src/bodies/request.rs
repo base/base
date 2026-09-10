@@ -12,9 +12,9 @@ use base_execution_network_types::{PeerId, WithPeerId};
 use futures::{Future, FutureExt};
 use reth_primitives_traits::{GotExpected, InMemorySize, SealedBlock, SealedHeader};
 use {
-    base_execution_network_wire::BodiesClient, base_execution_network_wire::Priority,
-    reth_network_p2p::bodies::response::BlockResponse, reth_network_p2p::error::DownloadError,
-    reth_network_p2p::error::DownloadResult,
+    base_execution_network_service::BlockResponse, base_execution_network_service::DownloadError,
+    base_execution_network_service::DownloadResult, base_execution_network_wire::BodiesClient,
+    base_execution_network_wire::Priority,
 };
 
 use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};

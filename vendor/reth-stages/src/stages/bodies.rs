@@ -17,8 +17,7 @@ use reth_stages_api::{
 };
 use tracing::*;
 use {
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::bodies::response::BlockResponse,
+    base_execution_network_service::BlockResponse, base_execution_network_service::BodyDownloader,
 };
 
 use super::missing_static_data_error;
@@ -495,10 +494,10 @@ mod tests {
         use reth_stages_api::{ExecInput, ExecOutput, UnwindInput};
         use reth_testing_utils::generators::{self, BlockRangeParams};
         use {
-            reth_network_p2p::bodies::downloader::BodyDownloader,
-            reth_network_p2p::bodies::downloader::BodyDownloaderResult,
-            reth_network_p2p::bodies::response::BlockResponse,
-            reth_network_p2p::error::DownloadResult,
+            base_execution_network_service::BlockResponse,
+            base_execution_network_service::BodyDownloader,
+            base_execution_network_service::BodyDownloaderResult,
+            base_execution_network_service::DownloadResult,
         };
 
         use crate::{

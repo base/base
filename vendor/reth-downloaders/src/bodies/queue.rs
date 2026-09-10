@@ -11,8 +11,8 @@ use futures::{Stream, stream::FuturesUnordered};
 use futures_util::StreamExt;
 use reth_primitives_traits::SealedHeader;
 use {
-    base_execution_network_wire::BodiesClient, reth_network_p2p::bodies::response::BlockResponse,
-    reth_network_p2p::error::DownloadResult,
+    base_execution_network_service::BlockResponse, base_execution_network_service::DownloadResult,
+    base_execution_network_wire::BodiesClient,
 };
 
 use super::request::BodiesRequestFuture;

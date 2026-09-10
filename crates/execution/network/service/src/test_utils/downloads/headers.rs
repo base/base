@@ -18,9 +18,8 @@ use reth_primitives_traits::SealedHeader;
 use tokio::sync::Mutex;
 
 use {
-    crate::error::DownloadError, crate::error::DownloadResult,
-    crate::headers::downloader::HeaderDownloader, crate::headers::downloader::SyncTarget,
-    crate::headers::error::HeadersDownloaderResult, base_execution_network_wire::DownloadClient,
+    crate::DownloadError, crate::DownloadResult, crate::HeaderDownloader,
+    crate::HeadersDownloaderResult, crate::SyncTarget, base_execution_network_wire::DownloadClient,
     base_execution_network_wire::HeadersClient, base_execution_network_wire::HeadersRequest,
     base_execution_network_wire::PeerRequestResult, base_execution_network_wire::Priority,
     base_execution_network_wire::RequestError,

@@ -45,8 +45,8 @@ use reth_config::config::StageConfig;
 use reth_stages_api::Stage;
 use tokio::sync::watch;
 use {
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::headers::downloader::HeaderDownloader,
+    base_execution_network_service::BodyDownloader,
+    base_execution_network_service::HeaderDownloader,
 };
 
 use crate::{

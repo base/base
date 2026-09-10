@@ -229,8 +229,8 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::Header;
+    use base_execution_network_service::test_utils::TestFullBlockClient;
     use futures::poll;
-    use reth_network_p2p::test_utils::TestFullBlockClient;
     use reth_primitives_traits::SealedHeader;
     use reth_stages::ExecOutput;
     use reth_stages_api::StageCheckpoint;

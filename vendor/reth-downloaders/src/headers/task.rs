@@ -14,9 +14,9 @@ use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_util::sync::PollSender;
 use {
-    reth_network_p2p::headers::downloader::HeaderDownloader,
-    reth_network_p2p::headers::downloader::SyncTarget,
-    reth_network_p2p::headers::error::HeadersDownloaderResult,
+    base_execution_network_service::HeaderDownloader,
+    base_execution_network_service::HeadersDownloaderResult,
+    base_execution_network_service::SyncTarget,
 };
 
 /// The maximum number of header results to hold in the buffer.
@@ -157,7 +157,7 @@ mod tests {
     use std::sync::Arc;
 
     use base_execution_evm_blocks::BaseBeaconConsensus;
-    use reth_network_p2p::test_utils::TestHeadersClient;
+    use base_execution_network_service::test_utils::TestHeadersClient;
 
     use super::*;
     use crate::headers::{

@@ -19,11 +19,10 @@ use reth_config::BodiesConfig;
 use reth_primitives_traits::{InMemorySize, SealedHeader};
 use tracing::info;
 use {
+    base_execution_network_service::BlockResponse, base_execution_network_service::BodyDownloader,
+    base_execution_network_service::BodyDownloaderResult,
+    base_execution_network_service::DownloadError, base_execution_network_service::DownloadResult,
     base_execution_network_wire::BodiesClient,
-    reth_network_p2p::bodies::downloader::BodyDownloader,
-    reth_network_p2p::bodies::downloader::BodyDownloaderResult,
-    reth_network_p2p::bodies::response::BlockResponse, reth_network_p2p::error::DownloadError,
-    reth_network_p2p::error::DownloadResult,
 };
 
 use super::queue::BodiesRequestQueue;

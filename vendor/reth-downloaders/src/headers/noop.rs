@@ -3,9 +3,9 @@ use std::fmt::Debug;
 use futures::Stream;
 use reth_primitives_traits::SealedHeader;
 use {
-    reth_network_p2p::headers::downloader::HeaderDownloader,
-    reth_network_p2p::headers::downloader::SyncTarget,
-    reth_network_p2p::headers::error::HeadersDownloaderError,
+    base_execution_network_service::HeaderDownloader,
+    base_execution_network_service::HeadersDownloaderError,
+    base_execution_network_service::SyncTarget,
 };
 
 /// A [`HeaderDownloader`] implementation that does nothing.
