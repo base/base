@@ -2,7 +2,6 @@ use std::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
 use futures::Stream;
-use reth_primitives_traits::Block;
 
 use crate::BlockResponse;
 use crate::DownloadResult;
@@ -16,9 +15,6 @@ pub type BodyDownloaderResult = DownloadResult<Vec<BlockResponse>>;
 /// while a [`BodiesClient`][base_execution_network_wire::BodiesClient] represents a client capable of
 /// fulfilling these requests.
 pub trait BodyDownloader: Send + Stream<Item = BodyDownloaderResult> + Unpin {
-    /// The Block type this downloader supports
-    type Block: Block + 'static;
-
     /// Method for setting the download range.
     fn set_download_range(&mut self, range: RangeInclusive<BlockNumber>) -> DownloadResult<()>;
 }

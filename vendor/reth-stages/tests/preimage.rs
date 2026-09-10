@@ -1294,7 +1294,7 @@ fn build_pipeline_without_history<H, B>(
 ) -> Pipeline
 where
     H: HeaderDownloader + 'static,
-    B: BodyDownloader<Block = Block> + 'static,
+    B: BodyDownloader + 'static,
 {
     let consensus = Arc::new(BaseBeaconConsensus::noop());
     let stages_config = StageConfig::default();

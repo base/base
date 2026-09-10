@@ -5,7 +5,6 @@ use std::sync::Arc;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_observability_tracing::tracing::debug;
 use base_common_runtime_tasks::TaskExecutor;
-use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_maintenance::StaticFileProducer;
@@ -87,7 +86,7 @@ pub fn build_pipeline<H, B>(
 ) -> eyre::Result<Pipeline>
 where
     H: HeaderDownloader + 'static,
-    B: BodyDownloader<Block = BaseBlock> + 'static,
+    B: BodyDownloader + 'static,
 {
     let mut builder = Pipeline::builder();
 

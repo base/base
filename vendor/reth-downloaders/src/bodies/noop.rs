@@ -15,8 +15,6 @@ pub struct NoopBodiesDownloader<B> {
 }
 
 impl BodyDownloader for NoopBodiesDownloader<base_common_types_chain::BaseBlock> {
-    type Block = base_common_types_chain::BaseBlock;
-
     fn set_download_range(&mut self, _: RangeInclusive<BlockNumber>) -> DownloadResult<()> {
         Ok(())
     }

@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_wire::BlockClient;

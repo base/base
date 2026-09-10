@@ -4,7 +4,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_common_types_chain::BaseBlock;
 use base_execution_network_wire::BlockClient;
 use futures::Stream;
 use reth_engine_primitives::{BeaconEngineMessage, ConsensusEngineEvent};

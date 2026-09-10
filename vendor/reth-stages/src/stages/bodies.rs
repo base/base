@@ -148,7 +148,7 @@ where
         + StaticFileProviderFactory
         + StatsReader
         + BlockReader
-        + BlockWriter<Block = D::Block>,
+        + BlockWriter<Block = base_common_types_chain::BaseBlock>,
     D: BodyDownloader,
 {
     /// Return the id of the stage
@@ -477,9 +477,7 @@ mod tests {
         };
 
         use alloy_primitives::{B256, BlockNumber, TxNumber, map::B256Map};
-        use base_common_types_chain::{
-            BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
-        };
+        use base_common_types_chain::{BaseBlockBody as BlockBody, BlockHeader, Header};
         use base_execution_state_database::{
             DbCursorRO, DbTx, DbTxMut, models::StoredBlockBodyIndices, models::StoredBlockOmmers,
         };
@@ -756,8 +754,6 @@ mod tests {
         }
 
         impl BodyDownloader for TestBodyDownloader {
-            type Block = Block;
-
             fn set_download_range(
                 &mut self,
                 range: RangeInclusive<BlockNumber>,

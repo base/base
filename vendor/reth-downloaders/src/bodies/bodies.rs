@@ -293,8 +293,6 @@ where
     C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
-    type Block = base_common_types_chain::BaseBlock;
-
     /// Set a new download range (inclusive).
     ///
     /// If the provided range is a suffix of the current range with the same end block, the

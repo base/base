@@ -102,8 +102,7 @@ fn build_downloaders_from_file_client(
     stages_config: StageConfig,
     consensus: Arc<BaseBeaconConsensus>,
     provider_factory: base_execution_state_provider::ProviderFactory,
-) -> (impl HeaderDownloader, impl BodyDownloader<Block = Block>, base_common_runtime_tasks::Runtime)
-{
+) -> (impl HeaderDownloader, impl BodyDownloader, base_common_runtime_tasks::Runtime) {
     let tip = file_client.tip().expect("file client should have tip");
     let min_block = file_client.min_block().expect("file client should have min block");
     let max_block = file_client.max_block().expect("file client should have max block");
@@ -134,7 +133,7 @@ fn build_pipeline<H, B>(
 ) -> Pipeline
 where
     H: HeaderDownloader + 'static,
-    B: BodyDownloader<Block = Block> + 'static,
+    B: BodyDownloader + 'static,
 {
     let consensus = Arc::new(BaseBeaconConsensus::noop());
     let stages_config = StageConfig::default();
