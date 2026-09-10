@@ -7,8 +7,7 @@ use super::types::{CallTrace, CallTraceNode, TraceMemberOrder};
 /// An arena of recorded traces.
 ///
 /// This type will be populated via the [TracingInspector](super::TracingInspector).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallTraceArena {
     /// The arena of recorded trace nodes
     pub(crate) arena: Vec<CallTraceNode>,

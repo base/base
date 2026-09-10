@@ -22,8 +22,7 @@ use base_execution_evm_runtime::{
 use crate::inspectors::tracing::{config::TraceStyle, utils, utils::convert_memory};
 
 /// Decoded call data.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DecodedCallData {
     /// The function signature.
     pub signature: String,
@@ -32,8 +31,7 @@ pub struct DecodedCallData {
 }
 
 /// Additional decoded data enhancing the [CallTrace].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DecodedCallTrace {
     /// Optional decoded label for the call.
     pub label: Option<String>,
@@ -44,8 +42,7 @@ pub struct DecodedCallTrace {
 }
 
 /// A trace of a call with optional decoded data.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallTrace {
     /// The depth of the call.
     ///
@@ -166,8 +163,7 @@ impl CallTrace {
 }
 
 /// Additional decoded data enhancing the [CallLog].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DecodedCallLog {
     /// The decoded event name.
     pub name: Option<String>,
@@ -177,8 +173,7 @@ pub struct DecodedCallLog {
 }
 
 /// A log with optional decoded data.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallLog {
     /// The address of the log emitter.
     pub address: Address,
@@ -233,8 +228,7 @@ impl CallLog {
 }
 
 /// A node in the arena
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallTraceNode {
     /// Parent node index in the arena
     pub parent: Option<usize>,
@@ -483,9 +477,8 @@ impl CallTraceNode {
 }
 
 /// A unified representation of a call.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "UPPERCASE"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum CallKind {
     /// Represents a regular call.
     #[default]
@@ -616,8 +609,7 @@ pub(crate) struct CallTraceStepStackItem<'a> {
 }
 
 /// Ordering enum for calls, logs and steps
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TraceMemberOrder {
     /// Contains the index of the corresponding log
     Log(usize),
@@ -628,8 +620,7 @@ pub enum TraceMemberOrder {
 }
 
 /// Represents a decoded internal function call.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DecodedInternalCall {
     /// Name of the internal function.
     pub func_name: String,
@@ -640,8 +631,7 @@ pub struct DecodedInternalCall {
 }
 
 /// Represents a decoded trace step. Currently two formats are supported.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DecodedTraceStep {
     /// Decoded internal function call. Displayed similarly to external calls.
     ///
@@ -653,14 +643,13 @@ pub enum DecodedTraceStep {
 }
 
 /// Represents a tracked call step during execution
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CallTraceStep {
     // Fields filled in `step`
     /// Program counter before step execution
     pub pc: usize,
     /// Opcode to be executed
-    #[cfg_attr(feature = "serde", serde(with = "opcode_serde"))]
+    #[serde(with = "opcode_serde")]
     pub op: OpCode,
     /// Stack before step execution
     pub stack: Option<Box<[U256]>>,
@@ -778,8 +767,7 @@ impl CallTraceStep {
 /// Represents the source of a storage change - e.g., whether it came
 /// from an SSTORE or SLOAD instruction.
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StorageChangeReason {
     /// SLOAD opcode
     SLOAD,
@@ -794,8 +782,7 @@ pub enum StorageChangeReason {
 ///
 /// It is used to track both storage change and warm load of a storage slot. For warm load in regard
 /// to EIP-2929 AccessList had_value will be None.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StorageChange {
     /// key of the storage slot
     pub key: U256,
@@ -810,8 +797,7 @@ pub struct StorageChange {
 /// Represents the memory captured during execution
 ///
 /// This is a wrapper around the [SharedMemory](base_execution_evm_runtime::SharedMemory) context memory.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecordedMemory(pub(crate) Bytes);
 
 impl RecordedMemory {
@@ -863,7 +849,6 @@ impl AsRef<[u8]> for RecordedMemory {
     }
 }
 
-#[cfg(feature = "serde")]
 mod opcode_serde {
     use serde::{Deserialize, Deserializer, Serializer};
 

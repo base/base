@@ -49,7 +49,6 @@ base-execution-network-service = { workspace = true }
 futures = { features = ["default"], workspace = true }
 base-common-observability-events = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
-serde_json = { workspace = true, features = ["alloc"] }
 alloy-eip7928 = { features = ["rlp"], workspace = true }
 schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
@@ -57,6 +56,8 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { features = ["default"], workspace = true }
 opentelemetry = { workspace = true, features = ["default"] }
 jsonrpsee-core = { features = ["default"], workspace = true }
+serde_json = { workspace = true, features = ["alloc", "std"] }
+anstyle = { workspace = true, features = ["default", "std"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 tracing = { workspace = true, features = ["attributes", "std"] }
 base-common-runtime = { features = ["rayon"], workspace = true }
@@ -68,14 +69,13 @@ jsonrpsee-http-client = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-execution-payload = { workspace = true, features = ["default"] }
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
+serde = { workspace = true, features = ["derive", "default", "std"] }
 base-common-chain-config = { workspace = true, features = ["default"] }
-anstyle = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-maintenance = { workspace = true, optional = true }
 alloy-rpc-client = { features = ["default", "reqwest"], workspace = true }
 boa_engine = { workspace = true, optional = true, features = ["default"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
 base-common-types-rpc = { features = ["default", "serde"], workspace = true }
-serde = { workspace = true, features = ["derive", "default"], optional = true }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "map", "std"] }
 base-execution-evm-blocks = { features = ["default", "witness"], workspace = true }
 base-execution-network-wire = { features = ["secp256k1", "std"], workspace = true }
 base-common-types-chain = { features = ["k256", "reth", "serde"], workspace = true }
@@ -84,7 +84,7 @@ base-common-observability-metrics = { workspace = true, features = ["metrics", "
 base-execution-state-types = { features = ["default", "eip1186", "serde"], workspace = true }
 base-common-client-ethereum = { features = ["mnemonic", "debug-api", "reqwest", "ws"], workspace = true }
 base-common-types-payload = { workspace = true, features = ["serde", "std", "kzg", "jwt-aws-lc-rs", "default"] }
-base-execution-evm-runtime = { features = ["memory_limit", "optional_block_gas_limit", "optional_eip3607", "optional_fee_charge", "optional_no_base_fee"], workspace = true }
+base-execution-evm-runtime = { features = ["memory_limit", "optional_block_gas_limit", "optional_eip3607", "optional_fee_charge", "optional_no_base_fee", "std", "serde"], workspace = true }
 
 [dev-dependencies]
 alloy-eips = { workspace = true }
@@ -139,7 +139,7 @@ path = "benches/inspectors/js_tracer.rs"
 harness = false
 
 [features]
-default = ["metrics", "std"]
+default = ["metrics"]
 client = ["base-execution-state-provider/serde", "jsonrpsee/async-client", "jsonrpsee/client"]
 metrics = [
     "base-execution-payload/metrics",
@@ -155,12 +155,3 @@ test-utils = [
     "dep:base-execution-state-maintenance",
 ]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]
-serde = ["dep:serde", "base-execution-evm-runtime/serde"]
-std = [
-    "alloy-primitives/std",
-    "anstyle/std",
-    "serde/std",
-    "serde_json/std",
-    "base-execution-evm-runtime/std",
-    "thiserror/std",
-]
