@@ -4,18 +4,15 @@ use std::sync::Arc;
 
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_execution_engine_types::TreeConfig;
-use eyre::Result;
-use reth_e2e_test_utils::{
-    BaseNodeTestUtils,
-    testsuite::{
-        TestBuilder,
-        actions::{
-            AssertChainTip, BlockReference, CaptureBlock, CreateFork, FinalizeBlock, MakeCanonical,
-            ProduceBlocks, SendForkchoiceUpdate, UpdateBlockInfo,
-        },
-        setup::{NetworkSetup, Setup},
-    },
+use base_testing_devnet::{
+    BaseNodeTestUtils, testsuite::TestBuilder, testsuite::actions::AssertChainTip,
+    testsuite::actions::BlockReference, testsuite::actions::CaptureBlock,
+    testsuite::actions::CreateFork, testsuite::actions::FinalizeBlock,
+    testsuite::actions::MakeCanonical, testsuite::actions::ProduceBlocks,
+    testsuite::actions::SendForkchoiceUpdate, testsuite::actions::UpdateBlockInfo,
+    testsuite::setup::NetworkSetup, testsuite::setup::Setup,
 };
+use eyre::Result;
 
 use crate::fixtures::BaseTestPayload;
 

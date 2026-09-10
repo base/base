@@ -8,7 +8,7 @@ use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;
 
-use crate::testsuite::Environment;
+use crate::node_fixtures::testsuite::Environment;
 
 pub mod custom_fcu;
 pub mod engine_api;

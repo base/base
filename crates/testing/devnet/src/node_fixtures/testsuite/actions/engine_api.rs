@@ -7,7 +7,7 @@ use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;
 
-use crate::testsuite::{Action, Environment};
+use crate::node_fixtures::testsuite::{Action, Environment};
 
 /// Action that sends a newPayload request to a specific node.
 #[derive(Debug)]

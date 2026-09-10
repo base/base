@@ -8,7 +8,7 @@ use base_common_types_chain::{BaseTxEnvelope, BlockHeader, TxDeposit};
 use base_common_types_payload::PayloadAttributes;
 use base_consensus_batch_types::L1BlockInfoEcotone;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use reth_e2e_test_utils::BaseNodeTestUtils;
+use base_testing_devnet::BaseNodeTestUtils;
 use reth_primitives_traits::WithEncoded;
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
@@ -17,11 +17,11 @@ use base_common_types_rpc::{
     Transaction, TransactionInput, TransactionReceipt, TransactionRequest,
 };
 use base_execution_state_database::tables;
+use base_execution_state_provider::RocksDBProviderFactory;
+use base_testing_devnet::{E2ETestSetupBuilder, transaction::TransactionTestContext, wallet};
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use jsonrpsee::core::client::ClientT;
-use reth_e2e_test_utils::{E2ETestSetupBuilder, transaction::TransactionTestContext, wallet};
-use base_execution_state_provider::RocksDBProviderFactory;
 
 const ROCKSDB_POLL_TIMEOUT: Duration = Duration::from_secs(60);
 const ROCKSDB_POLL_INTERVAL: Duration = Duration::from_millis(50);

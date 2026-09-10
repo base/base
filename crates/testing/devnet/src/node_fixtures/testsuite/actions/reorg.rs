@@ -6,7 +6,7 @@ use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;
 
-use crate::testsuite::{
+use crate::node_fixtures::testsuite::{
     BlockInfo, Environment,
     actions::{Action, Sequence, produce_blocks::BroadcastLatestForkchoice},
 };

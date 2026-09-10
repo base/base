@@ -12,7 +12,7 @@ use base_execution_payload_builder::{
 use base_node_service::BaseNode;
 use tokio::sync::Mutex;
 
-use crate::{NodeHelperType, transaction::TransactionTestContext, wallet::Wallet};
+use crate::node_fixtures::{NodeHelperType, transaction::TransactionTestContext, wallet::Wallet};
 
 /// Base Node Helper type
 pub type BaseTestNode = NodeHelperType;
@@ -30,14 +30,14 @@ impl BaseNodeTestUtils {
 
     /// Returns the shared Base integration-test genesis.
     pub fn genesis() -> Genesis {
-        serde_json::from_str(include_str!("../test_data/base-genesis.json"))
+        serde_json::from_str(include_str!("../../test_data/base-genesis.json"))
             .expect("valid test genesis")
     }
 
     /// Creates the initial setup with `num_nodes` of the node config, started and connected.
     pub async fn setup(num_nodes: usize) -> eyre::Result<(Vec<BaseTestNode>, Wallet)> {
         let genesis = Self::genesis();
-        crate::setup_engine(
+        crate::node_fixtures::setup_engine(
             Self::test_setup,
             num_nodes,
             Arc::new(

@@ -1,4 +1,4 @@
-//! Utilities for end-to-end tests.
+//! Connected node fixtures and execution test scenarios.
 
 use std::sync::Arc;
 

@@ -8,7 +8,7 @@ use futures_util::future::BoxFuture;
 use tokio::time::{sleep, timeout};
 use tracing::debug;
 
-use crate::testsuite::{Action, Environment};
+use crate::node_fixtures::testsuite::{Action, Environment};
 
 /// Action to select which node should be active for subsequent single-node operations.
 #[derive(Debug)]
@@ -69,13 +69,17 @@ impl Action for CompareNodeChainTips {
 
             // Get latest block from each node
             let block_a = EthApiClient::block_by_number(
-                &node_a_client.rpc, alloy_eips::BlockNumberOrTag::Latest, false
+                &node_a_client.rpc,
+                alloy_eips::BlockNumberOrTag::Latest,
+                false,
             )
             .await?
             .ok_or_else(|| eyre::eyre!("Failed to get latest block from node {}", self.node_a))?;
 
             let block_b = EthApiClient::block_by_number(
-                &node_b_client.rpc, alloy_eips::BlockNumberOrTag::Latest, false
+                &node_b_client.rpc,
+                alloy_eips::BlockNumberOrTag::Latest,
+                false,
             )
             .await?
             .ok_or_else(|| eyre::eyre!("Failed to get latest block from node {}", self.node_b))?;

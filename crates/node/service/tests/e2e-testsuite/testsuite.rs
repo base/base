@@ -4,15 +4,11 @@ use alloy_primitives::{Address, B64, B256};
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use eyre::Result;
-use reth_e2e_test_utils::{
-    BaseNodeTestUtils,
-    testsuite::{
-        TestBuilder,
-        actions::AssertMineBlock,
-        setup::{NetworkSetup, Setup},
-    },
+use base_testing_devnet::{
+    BaseNodeTestUtils, testsuite::TestBuilder, testsuite::actions::AssertMineBlock,
+    testsuite::setup::NetworkSetup, testsuite::setup::Setup,
 };
+use eyre::Result;
 
 #[tokio::test]
 async fn test_testsuite_op_assert_mine_block() -> Result<()> {

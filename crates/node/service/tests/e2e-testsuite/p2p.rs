@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
+use base_testing_devnet::BaseNodeTestUtils;
 use futures::StreamExt;
-use reth_e2e_test_utils::BaseNodeTestUtils;
 use tokio::sync::Mutex;
 
 // Ignored: reth's deferred_trie `wait_cloned` debug_assert fires when called from a Rayon

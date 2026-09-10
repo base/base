@@ -6,7 +6,7 @@ use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;
 
-use crate::testsuite::{
+use crate::node_fixtures::testsuite::{
     Action, BlockInfo, Environment,
     actions::{Sequence, produce_blocks::ProduceBlocks},
 };
@@ -220,10 +220,13 @@ impl Action for ValidateFork {
             // walk backwards through the chain until we reach the fork base
             while current_number > self.fork_base_number {
                 let block = EthApiClient::block_by_hash(rpc_client, current_hash, false)
-                .await?
-                .ok_or_else(|| {
-                    eyre::eyre!("Block with hash {} not found during fork validation", current_hash)
-                })?;
+                    .await?
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "Block with hash {} not found during fork validation",
+                            current_hash
+                        )
+                    })?;
 
                 current_hash = block.header.parent_hash;
                 current_number = block.header.number.saturating_sub(1);

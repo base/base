@@ -6,7 +6,7 @@ use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;
 
-use crate::testsuite::{Action, Environment};
+use crate::node_fixtures::testsuite::{Action, Environment};
 
 /// Reference to a block for forkchoice update
 #[derive(Debug, Clone)]

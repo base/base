@@ -14,7 +14,7 @@ use futures_util::future::TryJoinAll;
 use reth_primitives_traits::AlloyBlockHeader;
 use tracing::{Instrument, Level, span};
 
-use crate::{NodeHelperType, node::NodeTestContext, wallet::Wallet};
+use crate::node_fixtures::{NodeHelperType, node::NodeTestContext, wallet::Wallet};
 
 /// Type alias for tree config modifier closure
 type TreeConfigModifier = Box<
@@ -132,7 +132,8 @@ where
                 };
 
                 let span = span!(Level::INFO, "node", idx);
-                let mut launch = base_node_service::NodeLaunch::testing(node_config, runtime.clone());
+                let mut launch =
+                    base_node_service::NodeLaunch::testing(node_config, runtime.clone());
                 launch.base = node_factory();
                 launch.engine_tree_config = tree_config.clone();
                 let NodeHandle { node, node_exit_future: _ } =

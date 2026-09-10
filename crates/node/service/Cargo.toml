@@ -88,7 +88,6 @@ base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256
 socket2 = { workspace = true }
 alloy-genesis = { workspace = true  }
 alloy-hardforks = { workspace = true }
-reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-rpc-handlers = {workspace = true}
@@ -110,6 +109,7 @@ base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "std", "test-utils"] }
 base-common-types-chain = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }
+base-testing-devnet = { workspace = true, features = ["test-utils"] }
 
 [[bench]]
 name = "provider"

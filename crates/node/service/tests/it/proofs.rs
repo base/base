@@ -4,14 +4,14 @@ use std::{sync::Arc, time::Duration};
 
 use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_runtime_tasks::Runtime;
+use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use base_execution_state_tasks::InitializationJob;
 use base_node_service::{
     BaseNode, NodeConfig, ProofHistory, ProofHistoryBackend, ProofsHistoryDbBackend, RollupArgs,
 };
-use reth_e2e_test_utils::{
+use base_testing_devnet::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Result<()> {

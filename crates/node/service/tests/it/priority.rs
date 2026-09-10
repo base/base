@@ -12,7 +12,7 @@ use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use base_node_config::DatadirArgs;
 use base_node_service::NodeConfig;
-use reth_e2e_test_utils::{
+use base_testing_devnet::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use tokio::sync::Mutex;

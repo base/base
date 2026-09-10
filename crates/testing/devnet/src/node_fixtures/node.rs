@@ -19,7 +19,9 @@ use reth_primitives_traits::Block;
 use tokio_stream::StreamExt;
 use url::Url;
 
-use crate::{network::NetworkTestContext, payload::PayloadTestContext, rpc::RpcTestContext};
+use crate::node_fixtures::{
+    network::NetworkTestContext, payload::PayloadTestContext, rpc::RpcTestContext,
+};
 
 /// A helper struct to handle node actions
 #[expect(missing_debug_implementations)]
@@ -305,12 +307,12 @@ impl NodeTestContext {
         self.inner.rpc_server_handle().http_client()
     }
 
-    /// Creates a [`crate::testsuite::NodeClient`] from this test context.
+    /// Creates a [`crate::node_fixtures::testsuite::NodeClient`] from this test context.
     ///
     /// This helper method extracts the necessary handles and creates a client
     /// that can interact with both the regular RPC and Engine API endpoints.
     /// It automatically includes the beacon engine handle for direct consensus engine interaction.
-    pub fn to_node_client(&self) -> eyre::Result<crate::testsuite::NodeClient> {
+    pub fn to_node_client(&self) -> eyre::Result<crate::node_fixtures::testsuite::NodeClient> {
         let rpc = self
             .rpc_client()
             .ok_or_else(|| eyre::eyre!("Failed to create HTTP RPC client for node"))?;
@@ -318,6 +320,11 @@ impl NodeTestContext {
         let url = self.rpc_url();
         let beacon_handle = self.inner.execution.driver.clone();
 
-        Ok(crate::testsuite::NodeClient::new_with_beacon_engine(rpc, execution, url, beacon_handle))
+        Ok(crate::node_fixtures::testsuite::NodeClient::new_with_beacon_engine(
+            rpc,
+            execution,
+            url,
+            beacon_handle,
+        ))
     }
 }

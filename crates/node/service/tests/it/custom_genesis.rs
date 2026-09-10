@@ -13,7 +13,7 @@ use base_execution_state_provider::{BlockReaderIdExt, HeaderProvider, StageCheck
 use base_execution_state_types::StageId;
 use base_node_config::DatadirArgs;
 use base_node_service::NodeConfig;
-use reth_e2e_test_utils::{
+use base_testing_devnet::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
 use tokio::sync::Mutex;

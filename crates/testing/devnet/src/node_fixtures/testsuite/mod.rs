@@ -9,7 +9,7 @@ use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
 
-use crate::testsuite::actions::{Action, ActionBox};
+use crate::node_fixtures::testsuite::actions::{Action, ActionBox};
 pub mod actions;
 pub mod setup;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ use base_execution_engine_driver::BaseExecutionHandle;
 use base_execution_engine_types::ConsensusEngineHandle;
 use url::Url;
 
-use crate::testsuite::setup::Setup;
+use crate::node_fixtures::testsuite::setup::Setup;
 
 /// Client handles for both regular RPC and Engine API endpoints
 #[derive(Clone)]

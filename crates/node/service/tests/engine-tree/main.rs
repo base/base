@@ -2,8 +2,8 @@
 
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;
+use base_testing_devnet::BaseNodeTestUtils;
 use fixtures::BaseTestPayload;
-use reth_e2e_test_utils::BaseNodeTestUtils;
 
 mod fcu_finalized_blocks;
 
@@ -12,17 +12,19 @@ use std::sync::Arc;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_payload::PayloadStatusEnum;
 use base_execution_engine_types::TreeConfig;
-use eyre::Result;
-use reth_e2e_test_utils::testsuite::{
-    TestBuilder,
-    actions::{
-        AssertChainTip, BlockReference, CaptureBlock, CompareNodeChainTips, CreateFork,
-        ExpectFcuStatus, FinalizeBlock, MakeCanonical, ProduceBlocks, ProduceBlocksLocally,
-        ProduceInvalidBlocks, ReorgTo, SelectActiveNode, SendForkchoiceUpdate, SendNewPayloads,
-        SetForkBase, UpdateBlockInfo, ValidateCanonicalTag, WaitForSync,
-    },
-    setup::{NetworkSetup, Setup},
+use base_testing_devnet::{
+    testsuite::TestBuilder, testsuite::actions::AssertChainTip, testsuite::actions::BlockReference,
+    testsuite::actions::CaptureBlock, testsuite::actions::CompareNodeChainTips,
+    testsuite::actions::CreateFork, testsuite::actions::ExpectFcuStatus,
+    testsuite::actions::FinalizeBlock, testsuite::actions::MakeCanonical,
+    testsuite::actions::ProduceBlocks, testsuite::actions::ProduceBlocksLocally,
+    testsuite::actions::ProduceInvalidBlocks, testsuite::actions::ReorgTo,
+    testsuite::actions::SelectActiveNode, testsuite::actions::SendForkchoiceUpdate,
+    testsuite::actions::SendNewPayloads, testsuite::actions::SetForkBase,
+    testsuite::actions::UpdateBlockInfo, testsuite::actions::ValidateCanonicalTag,
+    testsuite::actions::WaitForSync, testsuite::setup::NetworkSetup, testsuite::setup::Setup,
 };
+use eyre::Result;
 
 /// Creates the standard setup for engine tree e2e tests.
 fn default_engine_tree_setup() -> Setup {

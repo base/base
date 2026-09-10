@@ -8,19 +8,17 @@ use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_payload::PayloadAttributes;
 use base_execution_engine_types::TreeConfig;
+use base_testing_devnet::{
+    BaseNodeTestUtils, E2ETestSetupBuilder, testsuite::TestBuilder,
+    testsuite::actions::BlockReference, testsuite::actions::CaptureBlock,
+    testsuite::actions::CaptureBlockOnNode, testsuite::actions::CompareNodeChainTips,
+    testsuite::actions::CreateFork, testsuite::actions::FinalizeBlock,
+    testsuite::actions::MakeCanonical, testsuite::actions::ProduceBlocks,
+    testsuite::actions::ReorgTo, testsuite::actions::SelectActiveNode,
+    testsuite::setup::NetworkSetup, testsuite::setup::Setup,
+};
 use eyre::Result;
 use fixtures::BaseTestPayload;
-use reth_e2e_test_utils::{
-    BaseNodeTestUtils, E2ETestSetupBuilder,
-    testsuite::{
-        TestBuilder,
-        actions::{
-            BlockReference, CaptureBlock, CaptureBlockOnNode, CompareNodeChainTips, CreateFork,
-            FinalizeBlock, MakeCanonical, ProduceBlocks, ReorgTo, SelectActiveNode,
-        },
-        setup::{NetworkSetup, Setup},
-    },
-};
 
 #[tokio::test]
 async fn test_testsuite_produce_blocks() -> Result<()> {

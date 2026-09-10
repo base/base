@@ -17,7 +17,7 @@ use tokio::{
 };
 use tracing::debug;
 
-use crate::{E2ETestSetupBuilder, testsuite::Environment};
+use crate::node_fixtures::{E2ETestSetupBuilder, testsuite::Environment};
 
 /// Configuration for setting up test environment
 #[derive(Debug)]
@@ -212,7 +212,7 @@ impl Setup {
     async fn finalize_setup(
         &self,
         env: &mut Environment,
-        node_clients: Vec<crate::testsuite::NodeClient>,
+        node_clients: Vec<crate::node_fixtures::testsuite::NodeClient>,
         use_latest_block: bool,
     ) -> Result<()> {
         if node_clients.is_empty() {
@@ -267,7 +267,7 @@ impl Setup {
     /// Wait for all nodes to be ready to accept RPC requests
     async fn wait_for_nodes_ready(
         &self,
-        node_clients: &[crate::testsuite::NodeClient],
+        node_clients: &[crate::node_fixtures::testsuite::NodeClient],
     ) -> Result<()> {
         for (idx, client) in node_clients.iter().enumerate() {
             let mut retry_count = 0;
@@ -296,15 +296,15 @@ impl Setup {
     /// Get block info for a given block number or tag
     async fn get_block_info(
         &self,
-        client: &crate::testsuite::NodeClient,
+        client: &crate::node_fixtures::testsuite::NodeClient,
         block: BlockNumberOrTag,
-    ) -> Result<crate::testsuite::BlockInfo> {
+    ) -> Result<crate::node_fixtures::testsuite::BlockInfo> {
         let block = client
             .get_block_by_number(block)
             .await?
             .ok_or_else(|| eyre!("Block {:?} not found", block))?;
 
-        Ok(crate::testsuite::BlockInfo {
+        Ok(crate::node_fixtures::testsuite::BlockInfo {
             hash: block.header.hash,
             number: block.header.number,
             timestamp: block.header.timestamp,

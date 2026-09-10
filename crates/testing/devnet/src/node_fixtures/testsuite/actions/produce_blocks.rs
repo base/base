@@ -13,7 +13,7 @@ use futures_util::future::BoxFuture;
 use tokio::time::sleep;
 use tracing::debug;
 
-use crate::testsuite::{
+use crate::node_fixtures::testsuite::{
     BlockInfo, Environment,
     actions::{Action, Sequence, expect_fcu_not_syncing_or_accepted, validate_fcu_response},
 };
@@ -58,7 +58,9 @@ impl Action for AssertMineBlock {
 
             // get the latest block to use as parent
             let latest_block = EthApiClient::block_by_number(
-                rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
+                rpc_client,
+                alloy_eips::BlockNumberOrTag::Latest,
+                false,
             )
             .await?;
 
@@ -307,7 +309,9 @@ impl Action for BroadcastLatestForkchoice {
                 // fallback to RPC query
                 let rpc_client = &env.node_clients[0].rpc;
                 let current_head_block = EthApiClient::block_by_number(
-                    rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
+                    rpc_client,
+                    alloy_eips::BlockNumberOrTag::Latest,
+                    false,
                 )
                 .await?
                 .ok_or_else(|| eyre::eyre!("No latest block found from RPC"))?;
@@ -368,7 +372,9 @@ impl Action for UpdateBlockInfo {
             // get the latest block from the first client to update environment state
             let rpc_client = &env.node_clients[0].rpc;
             let latest_block = EthApiClient::block_by_number(
-                rpc_client, alloy_eips::BlockNumberOrTag::Latest, false
+                rpc_client,
+                alloy_eips::BlockNumberOrTag::Latest,
+                false,
             )
             .await?
             .ok_or_else(|| eyre::eyre!("No latest block found from RPC"))?;
@@ -464,7 +470,8 @@ impl Action for CheckPayloadAccepted {
 
                 // get the last header by number using latest_head_number
                 let rpc_latest_header = EthApiClient::header_by_number(
-                    rpc_client, alloy_eips::BlockNumberOrTag::Latest
+                    rpc_client,
+                    alloy_eips::BlockNumberOrTag::Latest,
                 )
                 .await?
                 .ok_or_else(|| eyre::eyre!("No latest header found from rpc"))?;
@@ -476,10 +483,9 @@ impl Action for CheckPayloadAccepted {
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("No next built payload found"))?;
 
-                let built_payload =
-                    base_common_types_payload::BaseExecutionPayloadEnvelopeV3::from(
-                        client.engine.clone().resolve_payload(payload_id).await?,
-                    );
+                let built_payload = base_common_types_payload::BaseExecutionPayloadEnvelopeV3::from(
+                    client.engine.clone().resolve_payload(payload_id).await?,
+                );
 
                 let execution_payload_envelope: ExecutionPayloadEnvelopeV3 = built_payload.into();
                 let new_payload_block_hash = execution_payload_envelope

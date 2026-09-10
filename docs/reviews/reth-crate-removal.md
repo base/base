@@ -6,7 +6,7 @@ Initial review against `8425d3a07`; updated after the authorized ERA and Ethereu
 
 Inventoried all **109 vendored `reth-*` crates** using workspace manifests, Cargo metadata, and the resolved Base dependency tree. Inspected source consumers for removal candidates and the shared functionality that blocks deletion. This is a crate/dependency architecture review, not a line-by-line correctness audit of every Reth implementation.
 
-`cargo tree --offline -p base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `reth-e2e-test-utils`, `reth-exex-test-utils`, and `base-testing-support`.
+`cargo tree --offline -p base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `base-testing-devnet`, `reth-exex-test-utils`, and `base-testing-support`.
 
 “Base only” is interpreted as a Base execution implementation, preserving Base mainnet, Base Sepolia, Base Zeronet, and local Base development/testing. It does not make Ethereum-compatible transactions, hardfork rules, execution-layer networking, database maintenance, or L1 interaction obsolete.
 
@@ -101,7 +101,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
-| [reth-e2e-test-utils](../../vendor/reth-e2e-test-utils/Cargo.toml) | Test support; retain or migrate |
+| [base-testing-devnet](../../crates/testing/devnet/Cargo.toml) | Test support; retain or migrate |
 | [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Optional capability; separate removal decision |
 | [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
