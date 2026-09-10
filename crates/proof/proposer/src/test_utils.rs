@@ -17,7 +17,7 @@ use base_proof_contracts::{
     GameStatus,
 };
 use base_proof_types_protocol::Proposal;
-use base_proof_rpc::{
+use base_proof_client_providers::{
     BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
 };
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};

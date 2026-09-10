@@ -18,7 +18,7 @@ humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
-base-proof-rpc = { workspace = true }
+base-proof-client-providers = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }
 base-proof-submission = { workspace = true }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient, game_lookup_key};
-use base_proof_rpc::{RollupProvider, RpcError};
+use base_proof_client_providers::{RollupProvider, RpcError};
 use futures::{StreamExt, TryStreamExt, stream};
 use tracing::{debug, info, warn};
 

@@ -1,6 +1,6 @@
 //! Error types for the proposer.
 
-use base_proof_rpc::RpcError;
+use base_proof_client_providers::RpcError;
 use base_proof_submission::ProofSubmissionError;
 use thiserror::Error;
 

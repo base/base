@@ -1,5 +1,5 @@
 [package]
-name = "base-proof-rpc"
+name = "base-proof-client-providers"
 description = "Shared RPC client abstractions for Base L1, L2, and rollup node interactions"
 version.workspace = true
 edition.workspace = true

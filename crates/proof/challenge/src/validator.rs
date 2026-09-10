@@ -12,7 +12,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
 use base_common_types_chain::Predeploys;
-use base_proof_rpc::{L2Provider, RpcError};
+use base_proof_client_providers::{L2Provider, RpcError};
 use base_consensus_batch_types::OutputRoot;
 use futures::stream::{self, StreamExt};
 use thiserror::Error;

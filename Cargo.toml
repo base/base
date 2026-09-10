@@ -83,7 +83,7 @@ members = [
   "crates/proof/prover-service/client",
   "crates/proof/prover-service/db",
   "crates/proof/prover-service/protocol",
-  "crates/proof/rpc",
+  "crates/proof/client/providers",
   "crates/proof/submission",
   "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/nitro-host",
@@ -310,7 +310,7 @@ base-telemetry-service = { path = "crates/infra/telemetry", default-features = f
 base-shadow-metrics = { path = "crates/infra/shadow-metrics", default-features = false }
 
 # Proof
-base-proof-rpc = { path = "crates/proof/rpc", default-features = false }
+base-proof-client-providers = { path = "crates/proof/client/providers", default-features = false }
 base-proof-witness-mpt = { path = "crates/proof/witness/mpt", default-features = false }
 base-proof-host = { path = "crates/proof/host", default-features = false }
 base-proposer = { path = "crates/proof/proposer", default-features = false }

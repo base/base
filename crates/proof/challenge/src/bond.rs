@@ -10,7 +10,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
 };
-use base_proof_rpc::L2Provider;
+use base_proof_client_providers::L2Provider;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 

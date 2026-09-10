@@ -12,7 +12,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_proof_rpc::{RollupClient, RollupClientConfig, RollupProvider};
+use base_proof_client_providers::{RollupClient, RollupClientConfig, RollupProvider};
 use serde_json::Value;
 use url::Url;
 

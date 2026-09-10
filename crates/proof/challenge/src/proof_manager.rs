@@ -15,7 +15,7 @@ use alloy_primitives::{Address, B256};
 use base_common_l1_transactions::{TxManager, TxManagerError};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
 use base_proof_types_protocol::ProofRequest as TeeProofRequest;
-use base_proof_rpc::{L1Provider, L2Provider};
+use base_proof_client_providers::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
@@ -626,7 +626,7 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_common_l1_transactions::TxManagerError;
     use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
-    use base_proof_rpc::L1Provider;
+    use base_proof_client_providers::L1Provider;
     use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
 
     use super::*;

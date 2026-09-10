@@ -15,7 +15,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use base_proof_rpc::RollupProvider;
+use base_proof_client_providers::RollupProvider;
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;

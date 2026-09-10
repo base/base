@@ -20,7 +20,7 @@ use base_challenger::{
 use base_common_l1_transactions::TxManagerError;
 use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
 use base_proof_types_protocol::Proposal;
-use base_proof_rpc::L1Provider;
+use base_proof_client_providers::L1Provider;
 use base_consensus_batch_types::OutputRoot;
 use base_prover_service_protocol::{
     ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
@@ -96,7 +96,7 @@ fn test_driver_with_l1_provider(
         anchor_updater: AnchorUpdater::new(
             factory,
             anchor_registry,
-            l2_provider as Arc<dyn base_proof_rpc::L2Provider>,
+            l2_provider as Arc<dyn base_proof_client_providers::L2Provider>,
             Address::repeat_byte(0xAA),
             1,
             100,

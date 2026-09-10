@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_rpc::RollupProvider;
+use base_proof_client_providers::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
 use base_prover_service_protocol::{

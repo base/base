@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use base_proof_rpc::RollupProvider;
+use base_proof_client_providers::RollupProvider;
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};

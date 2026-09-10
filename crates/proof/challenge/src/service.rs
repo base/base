@@ -16,7 +16,7 @@ use base_proof_contracts::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };
-use base_proof_rpc::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
+use base_proof_client_providers::{L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider};
 use base_prover_service_client::{ProofRequesterClient, ProverServiceClientConfig};
 use eyre::Result;
 use tokio_util::sync::CancellationToken;

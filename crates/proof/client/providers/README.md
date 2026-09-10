@@ -1,4 +1,4 @@
-# `base-proof-rpc`
+# `base-proof-client-providers`
 
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -26,14 +26,14 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-rpc = { workspace = true }
+base-proof-client-providers = { workspace = true }
 ```
 
 Instantiate the Alloy-backed clients to query L1, L2, and rollup nodes:
 
 ```rust,ignore
 use alloy_eips::BlockNumberOrTag;
-use base_proof_rpc::{L1Client, L1Provider, L2Client, RollupClient};
+use base_proof_client_providers::{L1Client, L1Provider, L2Client, RollupClient};
 
 let l1 = L1Client::new(l1_url)?;
 let l2 = L2Client::new(l2_url)?;

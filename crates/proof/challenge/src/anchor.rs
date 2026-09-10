@@ -9,7 +9,7 @@ use base_proof_contracts::{
     DisputeGameFactoryClient, GameStatus, encode_set_anchor_state_calldata, game_lookup_blocks,
     game_lookup_key,
 };
-use base_proof_rpc::L2Provider;
+use base_proof_client_providers::L2Provider;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 

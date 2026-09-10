@@ -2401,8 +2401,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-consensus-batch-types",
+ "base-proof-client-providers",
  "base-proof-contracts",
- "base-proof-rpc",
  "base-proof-submission",
  "base-proof-types-protocol",
  "base-prover-service-client",
@@ -4683,6 +4683,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-client-providers"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-client",
+ "alloy-transport",
+ "alloy-transport-http",
+ "async-trait",
+ "backon",
+ "base-common-chain-config",
+ "base-common-client-ethereum",
+ "base-common-client-rollup",
+ "base-common-runtime-tasks",
+ "base-common-types-rpc",
+ "metrics",
+ "moka",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-proof-contracts"
 version = "0.0.0"
 dependencies = [
@@ -4776,32 +4802,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-proof-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rpc-client",
- "alloy-transport",
- "alloy-transport-http",
- "async-trait",
- "backon",
- "base-common-chain-config",
- "base-common-client-ethereum",
- "base-common-client-rollup",
- "base-common-runtime-tasks",
- "base-common-types-rpc",
- "metrics",
- "moka",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -5041,8 +5041,8 @@ dependencies = [
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-rpc",
+ "base-proof-client-providers",
  "base-proof-contracts",
- "base-proof-rpc",
  "base-proof-submission",
  "base-proof-types-protocol",
  "base-prover-service-client",

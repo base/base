@@ -22,7 +22,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_rpc::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
+use base_proof_client_providers::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_prover_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
@@ -575,11 +575,11 @@ impl L2Provider for MockL2Provider {
     async fn block_by_number(
         &self,
         _block: BlockNumberOrTag,
-    ) -> RpcResult<base_proof_rpc::BaseBlock> {
+    ) -> RpcResult<base_proof_client_providers::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 
-    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_rpc::BaseBlock> {
+    async fn block_by_hash(&self, _hash: B256) -> RpcResult<base_proof_client_providers::BaseBlock> {
         Err(RpcError::BlockNotFound("not implemented in mock".into()))
     }
 }
