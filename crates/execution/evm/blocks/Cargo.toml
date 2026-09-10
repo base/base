@@ -20,7 +20,6 @@ alloy-hardforks = { workspace = true }
 reth-primitives-traits = {workspace = true}
 rayon = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
-base-execution-state-memory = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 base-execution-payload-types = { workspace = true }
@@ -28,6 +27,7 @@ alloy-eip7928 = {features = ["rlp"], workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
+base-execution-state-memory = {workspace = true,optional = true}
 base-common-types-chain = {features = ["reth"], workspace = true}
 base-execution-state-trie = { workspace = true, optional = true }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
@@ -52,6 +52,10 @@ base-common-chain-config = {features = ["std"], workspace = true}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = {features = ["arbitrary", "reth", "serde"], workspace = true}
+
+[dev-dependencies.base-execution-state-memory]
+workspace = true
+features = ["std"]
 
 [[test]]
 name = "block_execution"
@@ -86,7 +90,7 @@ std = [
     "base-execution-state-api/std",
     "thiserror/std",
     "tracing/std",
-    "base-execution-state-memory/std",
+    "base-execution-state-memory?/std",
 ]
 portable = ["base-execution-evm-runtime/portable"]
 test-utils = [
@@ -105,7 +109,7 @@ serde = [
     "base-execution-state-trie?/serde",
     "reth-primitives-traits/serde",
     "base-execution-state-api/serde",
-    "base-execution-state-memory/serde",
+    "base-execution-state-memory?/serde",
 ]
 gmp = ["base-execution-evm-runtime/gmp"]
 optional-balance-check = ["base-execution-evm-runtime/optional_balance_check"]
