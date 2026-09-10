@@ -1,5 +1,5 @@
 [package]
-name = "basectl-cli"
+name = "base-infra-basectl-service"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

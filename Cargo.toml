@@ -64,7 +64,7 @@ members = [
   "crates/execution/state/tasks",
   "crates/execution/txpool/pool",
   "crates/infra/audit/service",
-  "crates/infra/basectl",
+  "crates/infra/basectl/service",
   "crates/infra/load-tests",
   "crates/infra/shadow-metrics",
   "crates/infra/sidecrush",
@@ -297,7 +297,7 @@ base-execution-state-indexer = { path = "crates/execution/state/indexer", defaul
 base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }
 
 # Infra
-basectl-cli = { path = "crates/infra/basectl", default-features = false }
+base-infra-basectl-service = { path = "crates/infra/basectl/service", default-features = false }
 base-sidecrush = { path = "crates/infra/sidecrush", default-features = false }
 base-infra-audit-service = { path = "crates/infra/audit/service", default-features = false }
 base-load-tests = { path = "crates/infra/load-tests", default-features = false }

@@ -4423,6 +4423,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-infra-basectl-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-client",
+ "alloy-sol-types",
+ "alloy-transport",
+ "alloy-transport-http",
+ "anyhow",
+ "arboard",
+ "axum",
+ "base-common-chain-activation",
+ "base-common-chain-config",
+ "base-common-client-contracts",
+ "base-common-client-ethereum",
+ "base-common-client-rollup",
+ "base-common-l1-transactions",
+ "base-common-types-chain",
+ "base-common-types-rpc",
+ "base-consensus-batch-types",
+ "base-consensus-network-service",
+ "base-execution-evm-precompiles",
+ "base-execution-evm-runtime",
+ "base-proof-l1-submission",
+ "base-proof-service-client",
+ "base-proof-service-protocol",
+ "chrono",
+ "clap",
+ "crossterm",
+ "dirs",
+ "futures",
+ "jsonrpsee",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "toml 1.1.3+spec-1.1.0",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-infra-telemetry-service"
 version = "0.0.0"
 dependencies = [
@@ -5491,58 +5538,11 @@ name = "basectl"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "basectl-cli",
+ "base-infra-basectl-service",
  "clap",
  "rustls 0.23.43",
  "tokio",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "basectl-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rpc-client",
- "alloy-sol-types",
- "alloy-transport",
- "alloy-transport-http",
- "anyhow",
- "arboard",
- "axum",
- "base-common-chain-activation",
- "base-common-chain-config",
- "base-common-client-contracts",
- "base-common-client-ethereum",
- "base-common-client-rollup",
- "base-common-l1-transactions",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-consensus-network-service",
- "base-execution-evm-precompiles",
- "base-execution-evm-runtime",
- "base-proof-l1-submission",
- "base-proof-service-client",
- "base-proof-service-protocol",
- "chrono",
- "clap",
- "crossterm",
- "dirs",
- "futures",
- "jsonrpsee",
- "ratatui",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "toml 1.1.3+spec-1.1.0",
- "tracing",
- "url",
 ]
 
 [[package]]

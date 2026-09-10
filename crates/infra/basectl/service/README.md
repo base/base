@@ -1,4 +1,4 @@
-# `basectl-cli`
+# `base-infra-basectl-service`
 
 CLI parser, command implementations, and interactive monitor for Base infrastructure.
 
@@ -41,11 +41,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-basectl-cli = { workspace = true }
+base-infra-basectl-service = { workspace = true }
 ```
 
 ```rust,ignore
-use basectl_cli::Cli;
+use base_infra_basectl_service::Cli;
 use clap::Parser;
 
 if Cli::parse().run().await?.has_failures() {
