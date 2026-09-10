@@ -111,8 +111,8 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
-    cargo build --profile $PROFILE --package base-prover-service-bin --bin base-prover-service && \
-    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-prover-service /app/base-prover-service
+    cargo build --profile $PROFILE --package base-prover-service-bin --bin base-proof-service-server && \
+    cp /app/target/$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")/base-proof-service-server /app/base-proof-service-server
 
 FROM public.ecr.aws/docker/library/debian:trixie-slim AS runtime-base
 RUN apt-get update && \
@@ -154,6 +154,6 @@ COPY --from=sidecrush-builder /app/sidecrush ./sidecrush
 ENTRYPOINT ["./sidecrush"]
 
 FROM runtime-base AS prover-service
-COPY --from=prover-service-builder /app/base-prover-service ./base-prover-service
+COPY --from=prover-service-builder /app/base-proof-service-server ./base-proof-service-server
 EXPOSE 9000 9001
-ENTRYPOINT ["./base-prover-service"]
+ENTRYPOINT ["./base-proof-service-server"]

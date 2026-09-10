@@ -32,7 +32,7 @@ fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRa
 }
 
 #[tokio::test]
-#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-prover-service --test idempotency`"]
+#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test idempotency`"]
 async fn prove_block_range_with_session_id_returns_uuid() {
     let client = connect();
     let session_id = Uuid::new_v4().to_string();
@@ -46,7 +46,7 @@ async fn prove_block_range_with_session_id_returns_uuid() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-prover-service --test idempotency`"]
+#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test idempotency`"]
 async fn prove_block_range_with_session_id_uses_provided_id() {
     let client = connect();
     let session_id = "550e8400-e29b-41d4-a716-446655440000".to_string();
@@ -60,7 +60,7 @@ async fn prove_block_range_with_session_id_uses_provided_id() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-prover-service --test idempotency`"]
+#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test idempotency`"]
 async fn prove_block_range_duplicate_session_id_is_idempotent() {
     let client = connect();
     let session_id = "661f9a00-bbbb-4444-cccc-000000000001".to_string();
@@ -82,7 +82,7 @@ async fn prove_block_range_duplicate_session_id_is_idempotent() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-prover-service --test idempotency`"]
+#[ignore = "requires a running prover-service (set PROVER_RPC_ADDR); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test idempotency`"]
 async fn prove_block_range_empty_session_id_returns_error() {
     let client = connect();
 

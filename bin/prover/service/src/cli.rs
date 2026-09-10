@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 
 use base_common_cli_support::{LogConfig, RuntimeManager};
-use base_prover_service::{
+use base_proof_service_server::{
     ProverServiceServer, ServerConfig, StatusPoller, WorkerApiConfig, WorkerQueueConfig,
 };
 use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
@@ -123,7 +123,7 @@ impl Cli {
         LogConfig::from(logging).init_tracing_subscriber()?;
         base_common_cli_support::MetricsConfig::from(metrics).init_with(|| {
             base_common_cli_support::register_version_metrics!();
-            base_prover_service::ProverMetrics::init();
+            base_proof_service_server::ProverMetrics::init();
         })?;
         RuntimeManager::new().run_until_ctrl_c(async move { args.run().await })
     }

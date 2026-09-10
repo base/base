@@ -4844,6 +4844,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-service-server"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-proof-service-protocol",
+ "base-prover-service-db",
+ "chrono",
+ "jsonrpsee",
+ "metrics",
+ "metrics-util",
+ "rstest",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "base-proof-tee-nitro-enclave"
 version = "0.0.0"
 dependencies = [
@@ -5113,31 +5132,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-prover-service"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-proof-service-protocol",
- "base-prover-service-db",
- "chrono",
- "jsonrpsee",
- "metrics",
- "metrics-util",
- "rstest",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "base-prover-service-bin"
 version = "0.0.0"
 dependencies = [
  "base-common-cli-support",
  "base-proof-service-protocol",
- "base-prover-service",
+ "base-proof-service-server",
  "base-prover-service-db",
  "clap",
  "eyre",
@@ -5324,7 +5324,7 @@ dependencies = [
  "base-node-core",
  "base-node-runner",
  "base-proof-service-protocol",
- "base-prover-service",
+ "base-proof-service-server",
  "base-prover-service-db",
  "base-testing-support",
  "chrono",

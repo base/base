@@ -9,7 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "base-prover-service"
+name = "base-proof-service-server"
 path = "src/main.rs"
 
 [lints]
@@ -23,6 +23,6 @@ eyre = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }
-base-prover-service = { workspace = true, features = ["default"] }
+base-proof-service-server = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-proof-service-protocol = { workspace = true, features = ["default", "rpc-server"] }

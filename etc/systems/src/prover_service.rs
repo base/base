@@ -2,7 +2,7 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
+use base_proof_service_server::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
 use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
 use eyre::{Result, WrapErr};
@@ -54,7 +54,7 @@ impl InProcessProverService {
         let pool = db_config.init_pool().await.map_err(|error| {
             eyre::eyre!("failed to connect to prover-service Postgres: {error}")
         })?;
-        sqlx::migrate!("../../crates/proof/prover-service/db/migrations")
+        sqlx::migrate!("../../crates/proof/service/server/db/migrations")
             .run(&pool)
             .await
             .wrap_err("failed to apply prover-service migrations")?;

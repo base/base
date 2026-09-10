@@ -1,5 +1,5 @@
 [package]
-name = "base-prover-service"
+name = "base-proof-service-server"
 description = "Base prover service JSON-RPC definitions and server implementation"
 version.workspace = true
 edition.workspace = true

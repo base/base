@@ -3,7 +3,7 @@ set working-directory := '../..'
 
 _anvil := "-f etc/docker/docker-compose.yml -f etc/docker/docker-compose.anvil-l1.yml"
 _env := "--env-file etc/docker/devnet-env"
-_services := "base-proofs prover-service-postgres base-prover-service nitro-prover-1 nitro-prover-2 base-proposer"
+_services := "base-proofs prover-service-postgres base-proof-service-server nitro-prover-1 nitro-prover-2 base-proposer"
 
 # Show local Nitro proof-stack commands
 default:

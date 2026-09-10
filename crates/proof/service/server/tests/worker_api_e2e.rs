@@ -6,14 +6,14 @@
 //! Run with:
 //! ```sh
 //! DATABASE_URL=postgres://prover:prover@localhost:5433/prover \
-//!   cargo nextest run --run-ignored all -p base-prover-service --test worker_api_e2e --test-threads=1
+//!   cargo nextest run --run-ignored all -p base-proof-service-server --test worker_api_e2e --test-threads=1
 //! ```
 //!
 //! Tests are marked `#[ignore]` so they're skipped by default.
 
 use std::{net::SocketAddr, time::Duration};
 
-use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
+use base_proof_service_server::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
     ProofStatus as DbProofStatus, ZkVmKind,

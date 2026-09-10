@@ -1,6 +1,6 @@
 # Base Prover Service
 
-`base-prover-service` defines the JSON-RPC contract used to submit proof
+`base-proof-service-server` defines the JSON-RPC contract used to submit proof
 requests, poll proof status, and coordinate worker-owned proof jobs. It also
 provides the service implementation and queue-maintenance status polling.
 
