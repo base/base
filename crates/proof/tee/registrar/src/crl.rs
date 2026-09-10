@@ -1,11 +1,14 @@
 //! CRL (Certificate Revocation List) checking for AWS Nitro intermediate
 //! certificates.
 //!
-//! Checks are fail-closed. A certificate whose CRL cannot be fetched and parsed
-//! is reported as indeterminate rather than clean, so a partial failure in a
-//! multi-certificate chain can never collapse into a clean result.
+//! Checks are fail-closed. A certificate whose CRL cannot be fetched or
+//! authenticated is reported as indeterminate rather than clean, so a partial
+//! failure in a multi-certificate chain can never collapse into a clean result.
 
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use alloy_primitives::B256;
 use async_trait::async_trait;
@@ -35,6 +38,7 @@ pub struct CertCrlInfo {
     pub crl_url: Option<String>,
     /// Issuer/serial identity used by the hinted `CertManager`.
     pub revocation_id: B256,
+    issuer_cert: Vec<u8>,
 }
 
 impl CertCrlInfo {
@@ -43,31 +47,33 @@ impl CertCrlInfo {
     /// # Errors
     ///
     /// Returns an error if any CA certificate cannot be parsed from DER.
-    pub fn from_cert_plans(certs: &[CertPlan]) -> Result<Vec<Self>, CrlError> {
-        certs
-            .iter()
-            .enumerate()
-            .filter(|(_, cert)| cert.kind == CertKind::Ca)
-            .map(|(index, cert_plan)| {
-                let (remaining, cert) =
-                    X509Certificate::from_der(&cert_plan.cert).map_err(|e| {
-                        CrlError(format!("certificate parse error: certificate {}: {e}", index + 1))
-                    })?;
-                if !remaining.is_empty() {
-                    return Err(CrlError(format!(
-                        "certificate parse error: certificate {}: trailing DER data ({} bytes)",
-                        index + 1,
-                        remaining.len()
-                    )));
-                }
-                Ok(Self {
-                    index: index + 1,
-                    serial_number: cert.tbs_certificate.serial.to_bytes_be(),
-                    crl_url: Self::extract_crl_distribution_point(&cert),
-                    revocation_id: cert_plan.revocation_id,
-                })
-            })
-            .collect()
+    pub fn from_cert_plans(root_cert: &[u8], certs: &[CertPlan]) -> Result<Vec<Self>, CrlError> {
+        let mut issuer_cert = root_cert;
+        let mut infos = Vec::new();
+        for (index, cert_plan) in certs.iter().enumerate() {
+            if cert_plan.kind != CertKind::Ca {
+                continue;
+            }
+            let (remaining, cert) = X509Certificate::from_der(&cert_plan.cert).map_err(|e| {
+                CrlError(format!("certificate parse error: certificate {}: {e}", index + 1))
+            })?;
+            if !remaining.is_empty() {
+                return Err(CrlError(format!(
+                    "certificate parse error: certificate {}: trailing DER data ({} bytes)",
+                    index + 1,
+                    remaining.len()
+                )));
+            }
+            infos.push(Self {
+                index: index + 1,
+                serial_number: cert.tbs_certificate.serial.to_bytes_be(),
+                crl_url: Self::extract_crl_distribution_point(&cert),
+                revocation_id: cert_plan.revocation_id,
+                issuer_cert: issuer_cert.to_vec(),
+            });
+            issuer_cert = &cert_plan.cert;
+        }
+        Ok(infos)
     }
 
     fn extract_crl_distribution_point(cert: &X509Certificate<'_>) -> Option<String> {
@@ -129,7 +135,8 @@ pub struct CrlChainStatus {
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait CrlSource: fmt::Debug + Send + Sync {
-    /// Classifies every CA certificate in `certs` against its CRL distribution point.
+    /// Classifies every CA certificate in `certs` against its CRL distribution point, using
+    /// `root_cert` as the issuer of the first CA.
     ///
     /// A certificate with no CRL distribution point has no applicable CRL and is
     /// treated as clean.
@@ -138,7 +145,11 @@ pub trait CrlSource: fmt::Debug + Send + Sync {
     ///
     /// Returns an error if the certificates cannot be parsed, which leaves the
     /// revocation status of the whole chain unknown.
-    async fn check_chain(&self, certs: &[CertPlan]) -> Result<CrlChainStatus, CrlError>;
+    async fn check_chain(
+        &self,
+        root_cert: &[u8],
+        certs: &[CertPlan],
+    ) -> Result<CrlChainStatus, CrlError>;
 }
 
 /// [`CrlSource`] that fetches CRLs over HTTP from AWS Nitro distribution points.
@@ -173,6 +184,7 @@ impl CrlChecker {
     async fn fetch_and_check_crl(
         &self,
         crl_url: &str,
+        issuer_cert: &[u8],
         serial_number: &[u8],
     ) -> Result<bool, CrlError> {
         if !Self::is_allowed_crl_host(crl_url) {
@@ -215,13 +227,29 @@ impl CrlChecker {
             )));
         }
 
-        Self::crl_contains_serial(crl_url, &crl_bytes, serial_number)
+        Self::crl_contains_serial(crl_url, &crl_bytes, issuer_cert, serial_number)
     }
 
     fn crl_contains_serial(
         crl_url: &str,
         crl_bytes: &[u8],
+        issuer_cert: &[u8],
         serial_number: &[u8],
+    ) -> Result<bool, CrlError> {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| CrlError(format!("CRL validation error: system time: {error}")))?
+            .as_secs();
+        let now_secs = i64::try_from(now_secs).unwrap_or(i64::MAX);
+        Self::crl_contains_serial_at(crl_url, crl_bytes, issuer_cert, serial_number, now_secs)
+    }
+
+    fn crl_contains_serial_at(
+        crl_url: &str,
+        crl_bytes: &[u8],
+        issuer_cert: &[u8],
+        serial_number: &[u8],
+        now_secs: i64,
     ) -> Result<bool, CrlError> {
         let (remaining, crl) = CertificateRevocationList::from_der(crl_bytes)
             .map_err(|e| CrlError(format!("CRL parse error: {crl_url}: {e}")))?;
@@ -232,6 +260,31 @@ impl CrlChecker {
             )));
         }
 
+        let (remaining, issuer) = X509Certificate::from_der(issuer_cert).map_err(|e| {
+            CrlError(format!("CRL validation error: {crl_url}: issuer certificate: {e}"))
+        })?;
+        if !remaining.is_empty() {
+            return Err(CrlError(format!(
+                "CRL validation error: {crl_url}: issuer certificate has trailing DER data ({})",
+                remaining.len()
+            )));
+        }
+        if crl.issuer() != issuer.subject() {
+            return Err(CrlError(format!("CRL validation error: {crl_url}: issuer mismatch")));
+        }
+        if crl.last_update().timestamp() > now_secs {
+            return Err(CrlError(format!("CRL validation error: {crl_url}: not yet valid")));
+        }
+        let next_update = crl.next_update().ok_or_else(|| {
+            CrlError(format!("CRL validation error: {crl_url}: missing next update"))
+        })?;
+        if next_update.timestamp() < now_secs {
+            return Err(CrlError(format!("CRL validation error: {crl_url}: expired")));
+        }
+        crl.verify_signature(issuer.public_key()).map_err(|e| {
+            CrlError(format!("CRL validation error: {crl_url}: signature verification failed: {e}"))
+        })?;
+
         // `to_bytes_be()` normalizes away ASN.1 leading-zero padding.
         Ok(crl.iter_revoked_certificates().any(|revoked_cert| {
             revoked_cert.user_certificate.to_bytes_be().as_slice() == serial_number
@@ -241,8 +294,12 @@ impl CrlChecker {
 
 #[async_trait]
 impl CrlSource for CrlChecker {
-    async fn check_chain(&self, certs: &[CertPlan]) -> Result<CrlChainStatus, CrlError> {
-        let cert_infos = CertCrlInfo::from_cert_plans(certs)?;
+    async fn check_chain(
+        &self,
+        root_cert: &[u8],
+        certs: &[CertPlan],
+    ) -> Result<CrlChainStatus, CrlError> {
+        let cert_infos = CertCrlInfo::from_cert_plans(root_cert, certs)?;
         let mut status = CrlChainStatus::default();
 
         for info in &cert_infos {
@@ -253,7 +310,7 @@ impl CrlSource for CrlChecker {
 
             debug!(cert_index = info.index, url = %crl_url, "fetching CRL");
 
-            match self.fetch_and_check_crl(crl_url, &info.serial_number).await {
+            match self.fetch_and_check_crl(crl_url, &info.issuer_cert, &info.serial_number).await {
                 Ok(true) => {
                     warn!(
                         cert_index = info.index,
@@ -317,6 +374,12 @@ mod tests {
         "02012a170d3234303130323030303030305a300a06082a8648ce3d04030303020000"
     );
 
+    /// AWS Nitro root-signed CRL. Validity: 2026-09-10T16:02:17Z to
+    /// 2026-09-11T17:02:17Z.
+    const AUTHENTIC_CRL_DER: [u8; 300] = hex!(
+        "308201283081ae020101300a06082a8648ce3d0403023049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573170d3236303931303136303231375a170d3236303931313137303231375aa0343032300f0603551d140408020601a08c452653301f0603551d230418301680149025b50dd90547e796c396fa729dcf99a9df4b96300a06082a8648ce3d0403020369003066023100f9ee2430efc6be388854105289c82b65e3f9c31ab3601f5e816ee9af014ca4a5c880cd55dc3b818cf243dc70924ef457023100da78011d1c80a5b4fe8cad9bf06984b55b4b46960a0e261cf6a5429c13529fc34e6d9d0c65ab7ccd9e926214e13b09a5"
+    );
+
     /// Real AWS Nitro root CA (self-signed, P384). Validity: 2019-10-28 to
     /// 2049-10-28.
     const ROOT_HEX: &str = "3082021130820196a003020102021100f93175681b90afe11d46ccb4e4e7f856300a06082a8648ce3d0403033049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573301e170d3139313032383133323830355a170d3439313032383134323830355a3049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c617665733076301006072a8648ce3d020106052b8104002203620004fc0254eba608c1f36870e29ada90be46383292736e894bfff672d989444b5051e534a4b1f6dbe3c0bc581a32b7b176070ede12d69a3fea211b66e752cf7dd1dd095f6f1370f4170843d9dc100121e4cf63012809664487c9796284304dc53ff4a3423040300f0603551d130101ff040530030101ff301d0603551d0e041604149025b50dd90547e796c396fa729dcf99a9df4b96300e0603551d0f0101ff040403020186300a06082a8648ce3d0403030369003066023100a37f2f91a1c9bd5ee7b8627c1698d255038e1f0343f95b63a9628c3d39809545a11ebcbf2e3b55d8aeee71b4c3d6adf3023100a2f39b1605b27028a5dd4ba069b5016e65b4fbde8fe0061d6a53197f9cdaf5d943bc61fc2beb03cb6fee8d2302f3dff6";
@@ -347,6 +410,10 @@ mod tests {
             parent_cert_hash: B256::repeat_byte(index as u8 - 1),
             revocation_id: B256::repeat_byte(index as u8 + 0x10),
         }
+    }
+
+    fn root_cert() -> Vec<u8> {
+        hex::decode(ROOT_HEX).expect("static hex fixture decodes")
     }
 
     /// The CA steps of a hinted plan: the pinned root is not a plan step, so the
@@ -380,7 +447,7 @@ mod tests {
 
     #[test]
     fn extracts_cert_info_for_ca_steps_only() {
-        let infos = CertCrlInfo::from_cert_plans(&intermediate_plans()).unwrap();
+        let infos = CertCrlInfo::from_cert_plans(&root_cert(), &intermediate_plans()).unwrap();
 
         assert_eq!(infos.iter().map(|info| info.index).collect::<Vec<_>>(), vec![1, 2, 3]);
         assert_eq!(
@@ -398,7 +465,7 @@ mod tests {
         let mut certs = intermediate_plans();
         certs[1].cert = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        let err = CertCrlInfo::from_cert_plans(&certs).unwrap_err();
+        let err = CertCrlInfo::from_cert_plans(&root_cert(), &certs).unwrap_err();
 
         assert!(
             err.to_string().contains("certificate parse error"),
@@ -411,7 +478,7 @@ mod tests {
         let mut certs = intermediate_plans();
         certs[1].cert.extend_from_slice(b"chain-4256-trailing-der");
 
-        let err = CertCrlInfo::from_cert_plans(&certs).unwrap_err();
+        let err = CertCrlInfo::from_cert_plans(&root_cert(), &certs).unwrap_err();
         let msg = err.to_string();
 
         assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");
@@ -424,7 +491,7 @@ mod tests {
         let mut certs = intermediate_plans();
         certs[0].cert = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        let err = CrlChecker::new().unwrap().check_chain(&certs).await.unwrap_err();
+        let err = CrlChecker::new().unwrap().check_chain(&root_cert(), &certs).await.unwrap_err();
 
         assert!(
             err.to_string().contains("certificate parse error"),
@@ -438,7 +505,7 @@ mod tests {
     async fn unfetchable_distribution_point_is_indeterminate_not_clean() {
         let certs = vec![ca_plan(1, INTER3_HEX), ca_plan(2, DISALLOWED_CDP_CA_HEX)];
 
-        let status = CrlChecker::new().unwrap().check_chain(&certs).await.unwrap();
+        let status = CrlChecker::new().unwrap().check_chain(&root_cert(), &certs).await.unwrap();
 
         assert!(status.revoked.is_empty());
         assert_eq!(
@@ -453,29 +520,77 @@ mod tests {
     async fn chain_without_distribution_points_is_clean() {
         let certs = vec![ca_plan(1, INTER3_HEX)];
 
-        let status = CrlChecker::new().unwrap().check_chain(&certs).await.unwrap();
+        let status = CrlChecker::new().unwrap().check_chain(&root_cert(), &certs).await.unwrap();
 
         assert!(status.revoked.is_empty());
         assert!(status.indeterminate.is_empty());
     }
 
     #[test]
-    fn crl_membership_matches_only_the_listed_serial() {
-        for (serial, expected) in [(&[0x2a][..], true), (&[0x2b][..], false)] {
-            assert_eq!(
-                CrlChecker::crl_contains_serial("test.crl", &REVOKED_CRL_DER, serial).unwrap(),
-                expected,
-                "serial {serial:?}"
-            );
-        }
-        assert!(!CrlChecker::crl_contains_serial("test.crl", &EMPTY_CRL_DER, &[0x2a]).unwrap());
+    fn unauthenticated_crl_membership_is_rejected() {
+        let err = CrlChecker::crl_contains_serial_at(
+            "test.crl",
+            &REVOKED_CRL_DER,
+            &root_cert(),
+            &[0x2a],
+            1_704_067_200,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("issuer mismatch"), "got: {err}");
+    }
+
+    #[test]
+    fn crl_must_have_a_valid_signature_and_window() {
+        let (_, crl) = CertificateRevocationList::from_der(&AUTHENTIC_CRL_DER).unwrap();
+        let now_secs = crl.last_update().timestamp();
+
+        assert!(
+            !CrlChecker::crl_contains_serial_at(
+                "test.crl",
+                &AUTHENTIC_CRL_DER,
+                &root_cert(),
+                &[0x2a],
+                now_secs,
+            )
+            .unwrap()
+        );
+
+        let mut forged = AUTHENTIC_CRL_DER;
+        *forged.last_mut().unwrap() ^= 1;
+        let err = CrlChecker::crl_contains_serial_at(
+            "test.crl",
+            &forged,
+            &root_cert(),
+            &[0x2a],
+            now_secs,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("signature verification failed"), "got: {err}");
+
+        let err = CrlChecker::crl_contains_serial_at(
+            "test.crl",
+            &AUTHENTIC_CRL_DER,
+            &root_cert(),
+            &[0x2a],
+            crl.next_update().unwrap().timestamp() + 1,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("expired"), "got: {err}");
     }
 
     #[test]
     fn crl_parse_rejects_trailing_der() {
         let mut aliased = EMPTY_CRL_DER.to_vec();
         aliased.extend_from_slice(b"chain-4256-trailing-crl");
-        let err = CrlChecker::crl_contains_serial("test.crl", &aliased, &[]).unwrap_err();
+        let err = CrlChecker::crl_contains_serial_at(
+            "test.crl",
+            &aliased,
+            &root_cert(),
+            &[],
+            1_704_067_200,
+        )
+        .unwrap_err();
         let msg = err.to_string();
 
         assert!(msg.contains("trailing DER data"), "expected trailing DER error, got: {msg}");

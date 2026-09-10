@@ -623,8 +623,9 @@ where
             return Ok(true);
         };
         RegistrarMetrics::crl_checks_total().increment(1);
-        let Some(status) =
-            signer_cancel.run_until_cancelled(crl_source.check_chain(&plan.certs)).await
+        let Some(status) = signer_cancel
+            .run_until_cancelled(crl_source.check_chain(&plan.root_cert, &plan.certs))
+            .await
         else {
             return Ok(false);
         };
@@ -1729,7 +1730,7 @@ mod tests {
     /// Builds a CRL source that answers a single chain check with `result`.
     fn crl_source(result: std::result::Result<CrlChainStatus, CrlError>) -> Box<dyn CrlSource> {
         let mut source = MockCrlSource::new();
-        source.expect_check_chain().return_once(move |_| result);
+        source.expect_check_chain().return_once(move |_, _| result);
         Box::new(source)
     }
 
