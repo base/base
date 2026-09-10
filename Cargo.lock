@@ -3801,9 +3801,9 @@ dependencies = [
  "reth-node-core",
  "reth-primitives-traits",
  "reth-rpc-layer",
- "reth-rpc-server-types",
  "serde",
  "serde_json",
+ "strum 0.27.2",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
@@ -13887,7 +13887,6 @@ dependencies = [
  "reth-network-api",
  "reth-node-core",
  "reth-primitives-traits",
- "reth-rpc-server-types",
  "serde_json",
  "tempfile",
  "tokio",
@@ -14411,14 +14410,6 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
-]
-
-[[package]]
-name = "reth-rpc-server-types"
-version = "0.0.0"
-dependencies = [
- "serde",
- "strum 0.27.2",
 ]
 
 [[package]]

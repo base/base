@@ -24,15 +24,15 @@ reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 base-execution-txpool = {workspace = true}
-reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-rpc-handlers = {workspace = true}
+serde = {workspace = true, features = ["derive"]}
 tower = { workspace = true, features = ["full"] }
 http = { workspace = true, features = ["default"] }
-serde = { workspace = true, features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 base-execution-state-provider = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 tower-http = { workspace = true, features = ["default", "full"] }

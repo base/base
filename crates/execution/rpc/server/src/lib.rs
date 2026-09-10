@@ -35,5 +35,6 @@ mod rate_limiter;
 pub use rate_limiter::*;
 
 pub use jsonrpsee::server::ServerBuilder;
-pub use reth_rpc_server_types::RethRpcModule;
+mod namespace;
+pub use namespace::RpcNamespace;
 pub use tower::layer::util::{Identity, Stack};

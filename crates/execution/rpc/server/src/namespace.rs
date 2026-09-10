@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 )]
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
-pub enum RethRpcModule {
+pub enum RpcNamespace {
     /// The `admin` namespace.
     Admin,
     /// The `debug` namespace.
@@ -45,7 +45,7 @@ pub enum RethRpcModule {
     Mev,
 }
 
-impl RethRpcModule {
+impl RpcNamespace {
     /// All built-in namespaces, in registration order.
     pub const ALL: &'static [Self] = &[
         Self::Admin,

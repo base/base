@@ -6,6 +6,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::RpcNamespace;
 use crate::{
     CorsDomainError, EthHandlers, cors,
     error::{RpcError, ServerKind},
@@ -41,7 +42,6 @@ use jsonrpsee::{
 };
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
-use reth_rpc_server_types::RethRpcModule;
 use serde::{Deserialize, Serialize};
 use tower::layer::util::Identity;
 use tower_http::cors::CorsLayer;
@@ -92,7 +92,7 @@ pub struct RpcRegistryInner {
     /// to put trace calls behind semaphore
     blocking_pool_guard: BlockingTaskGuard,
     /// Contains the [Methods] of a module
-    modules: HashMap<RethRpcModule, Methods>,
+    modules: HashMap<RpcNamespace, Methods>,
     /// eth config settings
     eth_config: EthConfig,
     /// Notification channel for engine API events
@@ -295,7 +295,7 @@ impl RpcRegistryInner {
         module
     }
 
-    /// Returns the [Methods] for the given [`RethRpcModule`]
+    /// Returns the [Methods] for the given [`RpcNamespace`]
     ///
     /// If this is the first time the namespace is requested, a new instance of API implementation
     /// will be created.
@@ -308,21 +308,21 @@ impl RpcRegistryInner {
             self.eth_handlers().clone();
 
         // Create a copy, so we can list out all the methods for rpc_ api
-        let namespaces: Vec<_> = RethRpcModule::modules().collect();
+        let namespaces: Vec<_> = RpcNamespace::modules().collect();
         namespaces
             .iter()
             .map(|namespace| {
                 self.modules
                     .entry(namespace.clone())
                     .or_insert_with(|| match namespace.clone() {
-                        RethRpcModule::Admin => AdminApi::new(
+                        RpcNamespace::Admin => AdminApi::new(
                             self.network.clone(),
                             self.provider.chain_spec(),
                             self.pool.clone(),
                         )
                         .into_rpc()
                         .into(),
-                        RethRpcModule::Debug => DebugApi::new(
+                        RpcNamespace::Debug => DebugApi::new(
                             eth_api.clone(),
                             self.blocking_pool_guard.clone(),
                             &self.executor,
@@ -330,7 +330,7 @@ impl RpcRegistryInner {
                         )
                         .into_rpc()
                         .into(),
-                        RethRpcModule::Eth => {
+                        RpcNamespace::Eth => {
                             // merge all eth handlers
                             let mut module = eth_api.clone().into_rpc();
                             module.merge(eth_filter.clone().into_rpc()).expect("No conflicts");
@@ -347,24 +347,24 @@ impl RpcRegistryInner {
 
                             module.into()
                         }
-                        RethRpcModule::Net => {
+                        RpcNamespace::Net => {
                             NetApi::new(self.network.clone(), eth_api.clone()).into_rpc().into()
                         }
-                        RethRpcModule::Trace => TraceApi::new(
+                        RpcNamespace::Trace => TraceApi::new(
                             eth_api.clone(),
                             self.blocking_pool_guard.clone(),
                             self.eth_config.clone(),
                         )
                         .into_rpc()
                         .into(),
-                        RethRpcModule::Web3 => Web3Api::new(self.network.clone()).into_rpc().into(),
-                        RethRpcModule::Txpool => TxPoolApi::new(
+                        RpcNamespace::Web3 => Web3Api::new(self.network.clone()).into_rpc().into(),
+                        RpcNamespace::Txpool => TxPoolApi::new(
                             self.eth.api.pool().clone(),
                             dyn_clone::clone(self.eth.api.converter()),
                         )
                         .into_rpc()
                         .into(),
-                        RethRpcModule::Rpc => RPCApi::new(
+                        RpcNamespace::Rpc => RPCApi::new(
                             namespaces
                                 .iter()
                                 .map(|module| (module.to_string(), "1.0".to_string()))
@@ -372,8 +372,8 @@ impl RpcRegistryInner {
                         )
                         .into_rpc()
                         .into(),
-                        RethRpcModule::Ots => OtterscanApi::new(eth_api.clone()).into_rpc().into(),
-                        RethRpcModule::Reth => RethApi::new(
+                        RpcNamespace::Ots => OtterscanApi::new(eth_api.clone()).into_rpc().into(),
+                        RpcNamespace::Reth => RethApi::new(
                             self.provider.clone(),
                             self.evm_config.clone(),
                             self.blocking_pool_guard.clone(),
@@ -381,8 +381,8 @@ impl RpcRegistryInner {
                         )
                         .into_rpc()
                         .into(),
-                        RethRpcModule::Miner => MinerApi::default().into_rpc().into(),
-                        RethRpcModule::Mev => {
+                        RpcNamespace::Miner => MinerApi::default().into_rpc().into(),
+                        RpcNamespace::Mev => {
                             EthSimBundle::new(eth_api.clone(), self.blocking_pool_guard.clone())
                                 .into_rpc()
                                 .into()
@@ -787,7 +787,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
 /// Configure a http transport only
 ///
 /// ```
-/// use base_execution_rpc_server::{RethRpcModule, TransportRpcModuleConfig};
+/// use base_execution_rpc_server::{RpcNamespace, TransportRpcModuleConfig};
 /// let config =
 ///     TransportRpcModuleConfig::default().with_http();
 /// ```
@@ -931,7 +931,7 @@ impl TransportRpcModules {
     /// Returns all unique endpoints installed for the given module.
     ///
     /// Note: In case of duplicate method names this only record the first occurrence.
-    pub fn methods_by_module(&self, module: RethRpcModule) -> Methods {
+    pub fn methods_by_module(&self, module: RpcNamespace) -> Methods {
         self.methods_by(|name| name.starts_with(module.as_str()))
     }
 
@@ -1332,7 +1332,7 @@ mod tests {
         macro_rules! assert_rpc_module {
             ($($s:expr => $v:expr,)*) => {
                 $(
-                    let val: RethRpcModule  = $s.parse().unwrap();
+                    let val: RpcNamespace  = $s.parse().unwrap();
                     assert_eq!(val, $v);
                     assert_eq!(val.to_string(), $s);
                 )*
@@ -1340,15 +1340,15 @@ mod tests {
         }
         assert_rpc_module!
         (
-                "admin" =>  RethRpcModule::Admin,
-                "debug" =>  RethRpcModule::Debug,
-                "eth" =>  RethRpcModule::Eth,
-                "net" =>  RethRpcModule::Net,
-                "trace" =>  RethRpcModule::Trace,
-                "web3" =>  RethRpcModule::Web3,
-                "rpc" => RethRpcModule::Rpc,
-                "ots" => RethRpcModule::Ots,
-                "reth" => RethRpcModule::Reth,
+                "admin" =>  RpcNamespace::Admin,
+                "debug" =>  RpcNamespace::Debug,
+                "eth" =>  RpcNamespace::Eth,
+                "net" =>  RpcNamespace::Net,
+                "trace" =>  RpcNamespace::Trace,
+                "web3" =>  RpcNamespace::Web3,
+                "rpc" => RpcNamespace::Rpc,
+                "ots" => RpcNamespace::Ots,
+                "reth" => RpcNamespace::Reth,
             );
     }
 
@@ -1504,7 +1504,7 @@ mod tests {
 
     #[test]
     fn test_add_or_replace_configured() {
-        // Create a config that enables RethRpcModule::Eth for HTTP and WS, but NOT IPC
+        // Create a config that enables RpcNamespace::Eth for HTTP and WS, but NOT IPC
         let config = TransportRpcModuleConfig::default().with_http().with_ws();
 
         // Create HTTP module with an existing method (to test "replace")
@@ -1527,7 +1527,7 @@ mod tests {
         new_module.register_method("eth_new", |_, _, _| "added").unwrap(); // Add
         let new_methods: Methods = new_module.into();
 
-        // Call the function for RethRpcModule::Eth
+        // Call the function for RpcNamespace::Eth
         let result = modules.add_or_replace_configured(new_methods);
         assert!(result.is_ok(), "Function should succeed");
 
