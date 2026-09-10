@@ -1,7 +1,7 @@
 //! Top-level command dispatch for the unified Base binary.
 
-use base_batcher_cli::BatcherArgs;
 use base_common_cli_support::CliRunner;
+use base_node_cli::BatcherArgs;
 use base_node_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use clap::Subcommand;
 

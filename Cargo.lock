@@ -2068,7 +2068,6 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
- "base-batcher-cli",
  "base-builder-cli",
  "base-common-chain-activation",
  "base-common-chain-config",
@@ -2087,26 +2086,6 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "base-batcher-cli"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-batcher-encoding-channel",
- "base-batcher-service-driver",
- "base-common-cli-support",
- "base-common-client-ethereum",
- "base-common-l1-transactions",
- "base-common-runtime-tasks",
- "base-consensus-batch-types",
- "clap",
- "eyre",
- "humantime",
- "serde",
  "tracing",
  "url",
 ]
@@ -4424,12 +4403,17 @@ dependencies = [
  "alloy-primitives",
  "axum",
  "backon",
+ "base-batcher-encoding-channel",
+ "base-batcher-service-driver",
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-cli-support",
+ "base-common-client-ethereum",
+ "base-common-l1-transactions",
  "base-common-observability-events",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-consensus-batch-types",
  "base-execution-network-discovery",
  "base-execution-network-discv5",
  "base-execution-network-service",
@@ -4455,6 +4439,7 @@ dependencies = [
  "reth-cli-commands",
  "rstest",
  "secp256k1 0.30.0",
+ "serde",
  "serde_json",
  "tar",
  "tempfile",

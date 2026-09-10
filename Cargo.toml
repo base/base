@@ -31,7 +31,6 @@ members = [
   "bin/sidecrush",
   "bin/snapshotter",
   "bin/websocket-proxy",
-  "crates/batcher/cli",
   "crates/batcher/encoding/channel",
   "crates/batcher/service/driver",
   "crates/builder/cli",
@@ -317,7 +316,6 @@ base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier", defa
 base-proof-service-protocol = { path = "crates/proof/service/protocol", default-features = false }
 
 # Batcher
-base-batcher-cli = { path = "crates/batcher/cli", default-features = false }
 base-batcher-encoding-channel = { path = "crates/batcher/encoding/channel", default-features = false }
 base-batcher-service-driver = { path = "crates/batcher/service/driver", default-features = false }
 

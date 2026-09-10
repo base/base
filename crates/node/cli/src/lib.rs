@@ -29,3 +29,6 @@ pub use standard_node::{
     MeteringArgs, ResourceMeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs,
     StandardBaseRethNode, StandardNodeArgs,
 };
+
+mod batcher;
+pub use batcher::{BatcherArgs, SignerCli};

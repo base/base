@@ -11,23 +11,25 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-tracing = { workspace = true }
-humantime = { workspace = true }
+humantime = {workspace = true}
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 base-reth-cli = { workspace = true }
 base-node-config = { workspace = true }
 reth-cli-commands = { workspace = true }
 base-common-cli-support = {workspace = true}
-base-common-runtime-tasks = { workspace = true }
+tracing = {workspace = true, features = ["std"]}
+url = {workspace = true, features = ["default"]}
+base-consensus-batch-types = { workspace = true }
 base-execution-state-tasks = { workspace = true }
 base-execution-state-types = { workspace = true }
+eyre = {workspace = true, features = ["default"]}
+base-common-client-ethereum = { workspace = true }
+base-common-l1-transactions = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
 base-execution-rpc-handlers = { workspace = true }
 tar = { workspace = true, features = ["default"] }
-url = { workspace = true, features = ["default"] }
 base-execution-payload-builder = {workspace = true}
-eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 backon = { workspace = true, features = ["default"] }
@@ -35,13 +37,18 @@ base-execution-network-service = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive", "std"] }
+alloy-primitives = { workspace = true, features = ["std"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-service = {features = ["default"], workspace = true}
+clap = {workspace = true, features = ["default", "derive", "env"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
-clap = { workspace = true, features = ["default", "derive", "env"] }
+base-common-runtime-tasks = {workspace = true, features = ["tokio"]}
 base-execution-txpool-pool = {features = ["default"], workspace = true}
+base-batcher-service-driver = {features = ["metrics"], workspace = true}
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
+base-batcher-encoding-channel = { workspace = true, features = ["clap"] }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
@@ -85,11 +92,4 @@ jemalloc-symbols = ["jemalloc-prof", "base-node-service/jemalloc-symbols"]
 
 dev = ["base-common-types-chain/arbitrary", "dep:proptest", "reth-cli-commands/arbitrary"]
 
-serde = [
-    "alloy-eips/serde",
-    "base-common-chain-config/serde",
-    "base-common-types-chain/serde",
-    "base-execution-network-service/serde",
-    "secp256k1/serde",
-    "url/serde",
-]
+serde = ["alloy-eips/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-network-service/serde", "secp256k1/serde", "url/serde"]

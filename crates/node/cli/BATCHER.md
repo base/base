@@ -1,4 +1,4 @@
-# `base-batcher-cli`
+# `base-node-cli`
 
 Arguments and startup for `base batcher`.
 
