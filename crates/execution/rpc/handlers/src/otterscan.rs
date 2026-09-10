@@ -1,4 +1,5 @@
 use crate::OtterscanServer;
+use crate::RpcErrorFactory;
 use crate::{EthApiError, utils::binary_search};
 use alloy_eips::{BlockId, eip1898::LenientBlockNumberOrTag};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256};
@@ -17,7 +18,6 @@ use base_execution_evm_inspectors::{
 };
 use base_execution_evm_machine::ExecutionResult;
 use jsonrpsee::{core::RpcResult, types::ErrorObjectOwned};
-use reth_rpc_server_types::result::internal_rpc_err;
 
 use crate::{BaseEthApi, EthApiServer};
 
@@ -197,14 +197,14 @@ impl OtterscanServer for OtterscanApi<BaseEthApi> {
         // check if the number of transactions matches the number of receipts
         let tx_len = block.transactions.len();
         if tx_len != receipts.len() {
-            return Err(internal_rpc_err(
+            return Err(RpcErrorFactory::internal(
                 "the number of transactions does not match the number of receipts",
             ));
         }
 
         // make sure the block is full
         let BlockTransactions::Full(transactions) = &mut block.transactions else {
-            return Err(internal_rpc_err("block is not full"));
+            return Err(RpcErrorFactory::internal("block is not full"));
         };
 
         let page = block_transaction_page_range(tx_len, page_number, page_size);
@@ -258,7 +258,7 @@ impl OtterscanServer for OtterscanApi<BaseEthApi> {
         _block_number: LenientBlockNumberOrTag,
         _page_size: usize,
     ) -> RpcResult<TransactionsWithReceipts> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for `ots_searchTransactionsAfter`
@@ -268,7 +268,7 @@ impl OtterscanServer for OtterscanApi<BaseEthApi> {
         _block_number: LenientBlockNumberOrTag,
         _page_size: usize,
     ) -> RpcResult<TransactionsWithReceipts> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for `ots_getTransactionBySenderAndNonce`

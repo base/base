@@ -30,7 +30,7 @@ where
             .network
             .network_status()
             .await
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?;
         Ok(status.client_version)
     }
 

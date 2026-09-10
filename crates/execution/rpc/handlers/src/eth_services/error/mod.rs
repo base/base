@@ -9,6 +9,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 
+use crate::RpcErrorFactory;
 use crate::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
@@ -22,9 +23,6 @@ use base_execution_txpool::{
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
 };
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
-use reth_rpc_server_types::result::{
-    block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
-};
 use tokio::sync::oneshot::error::RecvError;
 use {
     crate::CallError, crate::StateOverrideError, base_execution_evm_runtime::BlockExecutionError,
@@ -51,7 +49,7 @@ impl ToRpcError for RpcError<TransportErrorKind> {
                 payload.message.clone(),
                 payload.data.clone(),
             ),
-            err => internal_rpc_err(err.to_string()),
+            err => RpcErrorFactory::internal(err.to_string()),
         }
     }
 }
@@ -308,19 +306,22 @@ impl From<EthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
             | EthApiError::InvalidTracerConfig
             | EthApiError::TransactionConversionError(_)
             | EthApiError::InvalidRewardPercentiles
-            | EthApiError::InvalidBytecode(_) => invalid_params_rpc_err(error.to_string()),
+            | EthApiError::InvalidBytecode(_) => RpcErrorFactory::invalid_params(error.to_string()),
             EthApiError::InvalidTransaction(err) => err.into(),
             EthApiError::PoolError(err) => err.into(),
             EthApiError::PrevrandaoNotSet
             | EthApiError::ExcessBlobGasNotSet
             | EthApiError::InvalidBlockData(_)
             | EthApiError::Internal(_)
-            | EthApiError::EvmCustom(_) => internal_rpc_err(error.to_string()),
+            | EthApiError::EvmCustom(_) => RpcErrorFactory::internal(error.to_string()),
             EthApiError::UnknownBlockOrTxIndex | EthApiError::TransactionNotFound => {
-                rpc_error_with_code(EthRpcErrorCode::ResourceNotFound.code(), error.to_string())
+                RpcErrorFactory::with_code(
+                    EthRpcErrorCode::ResourceNotFound.code(),
+                    error.to_string(),
+                )
             }
             EthApiError::TracingTransactionNotFound | EthApiError::GenesisNotTraceable => {
-                rpc_error_with_code(
+                RpcErrorFactory::with_code(
                     jsonrpsee_types::error::CALL_EXECUTION_FAILED_CODE,
                     error.to_string(),
                 )
@@ -330,48 +331,50 @@ impl From<EthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
                     BlockId::Hash(hash) => hash.block_hash.to_string(),
                     BlockId::Number(number) => number.to_string(),
                 };
-                rpc_error_with_code(
+                RpcErrorFactory::with_code(
                     jsonrpsee_types::error::CALL_EXECUTION_FAILED_CODE,
                     format!("block {id} not found"),
                 )
             }
             EthApiError::HeaderNotFound(id) | EthApiError::ReceiptsNotFound(id) => {
-                rpc_error_with_code(
+                RpcErrorFactory::with_code(
                     EthRpcErrorCode::ResourceNotFound.code(),
-                    format!("block not found: {}", block_id_to_str(id)),
+                    format!("block not found: {}", RpcErrorFactory::block_id_message(id)),
                 )
             }
-            EthApiError::HeaderRangeNotFound(start_id, end_id) => rpc_error_with_code(
+            EthApiError::HeaderRangeNotFound(start_id, end_id) => RpcErrorFactory::with_code(
                 EthRpcErrorCode::ResourceNotFound.code(),
                 format!(
                     "{error}: start block: {}, end block: {}",
-                    block_id_to_str(start_id),
-                    block_id_to_str(end_id),
+                    RpcErrorFactory::block_id_message(start_id),
+                    RpcErrorFactory::block_id_message(end_id),
                 ),
             ),
-            err @ EthApiError::TransactionConfirmationTimeout { .. } => rpc_error_with_code(
+            err @ EthApiError::TransactionConfirmationTimeout { .. } => RpcErrorFactory::with_code(
                 EthRpcErrorCode::TransactionConfirmationTimeout.code(),
                 err.to_string(),
             ),
-            EthApiError::Unsupported(msg) => internal_rpc_err(msg),
-            EthApiError::InternalJsTracerError(msg) => internal_rpc_err(msg),
-            EthApiError::InvalidParams(msg) => invalid_params_rpc_err(msg),
-            err @ EthApiError::ExecutionTimedOut(_) => rpc_error_with_code(
+            EthApiError::Unsupported(msg) => RpcErrorFactory::internal(msg),
+            EthApiError::InternalJsTracerError(msg) => RpcErrorFactory::internal(msg),
+            EthApiError::InvalidParams(msg) => RpcErrorFactory::invalid_params(msg),
+            err @ EthApiError::ExecutionTimedOut(_) => RpcErrorFactory::with_code(
                 jsonrpsee_types::error::CALL_EXECUTION_FAILED_CODE,
                 err.to_string(),
             ),
             err @ (EthApiError::InternalBlockingTaskError | EthApiError::InternalEthError) => {
-                internal_rpc_err(err.to_string())
+                RpcErrorFactory::internal(err.to_string())
             }
-            err @ EthApiError::TransactionInputError(_) => invalid_params_rpc_err(err.to_string()),
+            err @ EthApiError::TransactionInputError(_) => {
+                RpcErrorFactory::invalid_params(err.to_string())
+            }
             EthApiError::PrunedHistoryUnavailable { .. } => {
-                rpc_error_with_code(4444, error.to_string())
+                RpcErrorFactory::with_code(4444, error.to_string())
             }
             EthApiError::Other(err) => err.to_rpc_error(),
-            EthApiError::MuxTracerError(msg) => internal_rpc_err(msg.to_string()),
-            EthApiError::BatchTxRecvError(err) => internal_rpc_err(err.to_string()),
+            EthApiError::MuxTracerError(msg) => RpcErrorFactory::internal(msg.to_string()),
+            EthApiError::BatchTxRecvError(err) => RpcErrorFactory::internal(err.to_string()),
             EthApiError::BatchTxSendError => {
-                internal_rpc_err("Batch transaction sender channel closed".to_string())
+                RpcErrorFactory::internal("Batch transaction sender channel closed".to_string())
             }
             EthApiError::CallManyError { bundle_index, tx_index, error } => {
                 jsonrpsee_types::error::ErrorObject::owned(
@@ -384,7 +387,7 @@ impl From<EthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
                 )
             }
             EthApiError::BlockAccessListNotAvailablePreAmsterdam => {
-                rpc_error_with_code(4445, error.to_string())
+                RpcErrorFactory::with_code(4445, error.to_string())
             }
         }
     }
@@ -520,7 +523,7 @@ impl From<BlockExecutionError> for EthApiError {
                         ))
                     } else {
                         Self::InvalidTransaction(RpcInvalidTransactionError::other(
-                            rpc_error_with_code(
+                            RpcErrorFactory::with_code(
                                 EthRpcErrorCode::TransactionRejected.code(),
                                 error.to_string(),
                             ),
@@ -846,14 +849,14 @@ impl From<RpcInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'s
         match err {
             RpcInvalidTransactionError::Revert(revert) => {
                 // include out data if some
-                rpc_err(
+                RpcErrorFactory::with_code_and_data(
                     revert.error_code(),
                     revert.to_string(),
                     revert.output.as_ref().map(|out| out.as_ref()),
                 )
             }
             RpcInvalidTransactionError::Other(err) => err.to_rpc_error(),
-            err => rpc_err(err.error_code(), err.to_string(), None),
+            err => RpcErrorFactory::with_code_and_data(err.error_code(), err.to_string(), None),
         }
     }
 }
@@ -912,9 +915,9 @@ impl From<InvalidTransaction> for RpcInvalidTransactionError {
             | InvalidTransaction::Eip7702NotSupported
             | InvalidTransaction::Eip7873NotSupported => Self::TxTypeNotSupported,
             InvalidTransaction::Eip7873MissingTarget => {
-                Self::other(internal_rpc_err(err.to_string()))
+                Self::other(RpcErrorFactory::internal(err.to_string()))
             }
-            InvalidTransaction::Str(_) => Self::other(internal_rpc_err(err.to_string())),
+            InvalidTransaction::Str(_) => Self::other(RpcErrorFactory::internal(err.to_string())),
         }
     }
 }
@@ -1069,9 +1072,10 @@ impl From<RpcPoolError> for jsonrpsee_types::error::ErrorObject<'static> {
     fn from(error: RpcPoolError) -> Self {
         match error {
             RpcPoolError::Invalid(err) => err.into(),
-            RpcPoolError::TxPoolOverflow => {
-                rpc_error_with_code(EthRpcErrorCode::TransactionRejected.code(), error.to_string())
-            }
+            RpcPoolError::TxPoolOverflow => RpcErrorFactory::with_code(
+                EthRpcErrorCode::TransactionRejected.code(),
+                error.to_string(),
+            ),
             RpcPoolError::AlreadyKnown
             | RpcPoolError::InvalidSender
             | RpcPoolError::Underpriced
@@ -1086,9 +1090,9 @@ impl From<RpcPoolError> for jsonrpsee_types::error::ErrorObject<'static> {
             | RpcPoolError::Eip4844(_)
             | RpcPoolError::Eip7702(_)
             | RpcPoolError::AddressAlreadyReserved => {
-                rpc_error_with_code(EthRpcErrorCode::InvalidInput.code(), error.to_string())
+                RpcErrorFactory::with_code(EthRpcErrorCode::InvalidInput.code(), error.to_string())
             }
-            RpcPoolError::Other(other) => internal_rpc_err(other.to_string()),
+            RpcPoolError::Other(other) => RpcErrorFactory::internal(other.to_string()),
         }
     }
 }

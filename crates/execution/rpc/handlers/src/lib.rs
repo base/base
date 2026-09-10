@@ -135,3 +135,6 @@ pub use conversion::*;
 
 mod eip8130;
 pub use eip8130::*;
+
+mod rpc_error;
+pub use rpc_error::RpcErrorFactory;

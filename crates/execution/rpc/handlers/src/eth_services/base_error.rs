@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 
+use crate::RpcErrorFactory;
 use crate::{EthTxEnvError, TransactionConversionError};
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
@@ -11,7 +12,6 @@ use base_execution_evm_blocks::{BaseBlockExecutionError, ProviderError};
 use base_execution_evm_machine::{EVMError, ExecutionResult, InvalidTransaction};
 use base_execution_evm_runtime::{BaseHaltReason, BaseTransactionError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
-use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
 
 use crate::eth_services::{
     EthApiError, RevertError,
@@ -50,7 +50,7 @@ impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
         match err {
             BaseEthApiError::Eth(err) => err.into(),
             BaseEthApiError::InvalidTransaction(err) => err.into(),
-            BaseEthApiError::Evm(_) => internal_rpc_err(err.to_string()),
+            BaseEthApiError::Evm(_) => RpcErrorFactory::internal(err.to_string()),
             BaseEthApiError::Sequencer(err) => err.into(),
         }
     }
@@ -92,7 +92,11 @@ impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'
             | BaseInvalidTransactionError::MissingEnvelopedTx
             | BaseInvalidTransactionError::Eip8130NotAccepted
             | BaseInvalidTransactionError::Eip8130Rejected(_) => {
-                rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
+                RpcErrorFactory::with_code_and_data(
+                    EthRpcErrorCode::TransactionRejected.code(),
+                    err.to_string(),
+                    None,
+                )
             }
         }
     }

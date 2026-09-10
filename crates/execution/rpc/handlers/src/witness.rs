@@ -2,6 +2,7 @@
 
 use std::{fmt::Debug, sync::Arc};
 
+use crate::RpcErrorFactory;
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chain_config::ChainSpecProvider;
@@ -15,7 +16,6 @@ use base_execution_txpool::TransactionPool;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_server_types::result::internal_rpc_err;
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
@@ -78,7 +78,7 @@ where
 
         let parent_header = self
             .parent_header(parent_block_hash)
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?;
 
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
@@ -88,8 +88,8 @@ where
         });
 
         rx.await
-            .map_err(|err| internal_rpc_err(err.to_string()))?
-            .map_err(|err| internal_rpc_err(err.to_string()))
+            .map_err(|err| RpcErrorFactory::internal(err.to_string()))?
+            .map_err(|err| RpcErrorFactory::internal(err.to_string()))
     }
 }
 

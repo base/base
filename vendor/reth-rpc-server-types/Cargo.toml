@@ -16,10 +16,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-alloy-eips = { workspace = true }
-jsonrpsee-types = { workspace = true }
 base-common-types-rpc = {workspace = true}
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
-jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

@@ -1,6 +1,7 @@
 //! Utilities for serving `eth_simulateV1`
 
 use crate::RpcBlockConverter;
+use crate::RpcErrorFactory;
 use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
 use base_common_client_ethereum::{NetworkTransactionBuilder, TransactionBuilder};
@@ -22,7 +23,6 @@ use base_execution_evm_runtime::{PrecompilesMap, TxResult};
 use base_execution_state_api::{NoopProvider, StateProvider};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
-use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 
 use crate::eth_services::{EthApiError, error::ToRpcError};
 
@@ -55,7 +55,7 @@ pub enum EthSimulateError {
     #[error("Client adjustable limit reached")]
     GasLimitReached,
     /// Base block for the simulation was not found.
-    #[error("block not found: {}", block_id_to_str(*block))]
+    #[error("block not found: {}", RpcErrorFactory::block_id_message(*block))]
     BlockNotFound {
         /// The block id that was requested.
         block: BlockId,
@@ -142,7 +142,7 @@ impl EthSimulateError {
 
 impl ToRpcError for EthSimulateError {
     fn to_rpc_error(&self) -> ErrorObject<'static> {
-        rpc_err(self.error_code(), self.to_string(), None)
+        RpcErrorFactory::with_code_and_data(self.error_code(), self.to_string(), None)
     }
 }
 

@@ -2,6 +2,7 @@
 //! the `eth_` namespace.
 use std::collections::HashMap;
 
+use crate::RpcErrorFactory;
 use crate::{BaseEthApiError, EthApiError, EthCapabilities, FillTransaction};
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2930::AccessListResult};
@@ -16,7 +17,6 @@ use base_common_types_rpc::{
     state::{EvmOverrides, StateOverride},
 };
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_server_types::result::internal_rpc_err;
 use serde_json::Value;
 use tracing::trace;
 
@@ -438,19 +438,19 @@ impl EthApiServer for BaseEthApi {
         trace!(target: "rpc::eth", "Serving eth_protocolVersion");
         BaseEthApi::protocol_version(self)
             .await
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))
     }
 
     /// Handler for: `eth_syncing`
     fn syncing(&self) -> RpcResult<SyncStatus> {
         trace!(target: "rpc::eth", "Serving eth_syncing");
         BaseEthApi::sync_status(self)
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))
     }
 
     /// Handler for: `eth_coinbase`
     async fn author(&self) -> RpcResult<Address> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for: `eth_accounts`
@@ -465,9 +465,7 @@ impl EthApiServer for BaseEthApi {
         Ok(U256::from(
             BaseEthApi::chain_info(self)
                 .map_err(|err| {
-                    reth_rpc_server_types::result::internal_rpc_err(format!(
-                        "failed to read chain info: {err}"
-                    ))
+                    crate::RpcErrorFactory::internal(format!("failed to read chain info: {err}"))
                 })?
                 .best_number,
         ))
@@ -483,7 +481,7 @@ impl EthApiServer for BaseEthApi {
     fn capabilities(&self) -> RpcResult<EthCapabilities> {
         trace!(target: "rpc::eth", "Serving eth_capabilities");
         BaseEthApi::capabilities(self)
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))
     }
 
     /// Handler for: `eth_getBlockByHash`
@@ -843,7 +841,7 @@ impl EthApiServer for BaseEthApi {
 
     /// Handler for: `eth_mining`
     async fn is_mining(&self) -> RpcResult<bool> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for: `eth_hashrate`
@@ -853,7 +851,7 @@ impl EthApiServer for BaseEthApi {
 
     /// Handler for: `eth_getWork`
     async fn get_work(&self) -> RpcResult<Work> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for: `eth_submitHashrate`
@@ -868,7 +866,7 @@ impl EthApiServer for BaseEthApi {
         _pow_hash: B256,
         _mix_digest: B256,
     ) -> RpcResult<bool> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for: `eth_sendTransaction`

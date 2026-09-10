@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::EthApiError;
+use crate::RpcErrorFactory;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -28,7 +29,6 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_server_types::result::internal_rpc_err;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
@@ -167,7 +167,7 @@ where
 
             let parent_header = self
                 .parent_header(parent_block_hash)
-                .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
+                .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?;
 
             let (tx, rx) = oneshot::channel();
             let this = Arc::clone(&self.inner);
@@ -210,8 +210,8 @@ where
             });
 
             rx.await
-                .map_err(|err| internal_rpc_err(err.to_string()))?
-                .map_err(|err| internal_rpc_err(err.to_string()))
+                .map_err(|err| RpcErrorFactory::internal(err.to_string()))?
+                .map_err(|err| RpcErrorFactory::internal(err.to_string()))
         })
         .await
     }
@@ -264,12 +264,12 @@ where
             .inner
             .storage
             .get_earliest_block_number()
-            .map_err(|err| internal_rpc_err(err.to_string()))?;
+            .map_err(|err| RpcErrorFactory::internal(err.to_string()))?;
         let latest = self
             .inner
             .storage
             .get_latest_block_number()
-            .map_err(|err| internal_rpc_err(err.to_string()))?;
+            .map_err(|err| RpcErrorFactory::internal(err.to_string()))?;
 
         Ok(ProofsSyncStatus {
             earliest: earliest.map(|(block_number, _)| block_number),

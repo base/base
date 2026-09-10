@@ -2,6 +2,7 @@ use crate::RpcBlockConverter;
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::DebugApiServer;
+use crate::RpcErrorFactory;
 use crate::{BaseEthApiError, EthApiError, StateCacheDb};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_genesis::ChainConfig;
@@ -42,7 +43,6 @@ use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
-use reth_rpc_server_types::result::internal_rpc_err;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;
@@ -748,18 +748,16 @@ impl DebugApiServer for DebugApi {
             BlockId::Hash(hash) => self
                 .provider()
                 .header(hash.into())
-                .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?,
+                .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?,
             BlockId::Number(number_or_tag) => {
                 let number = self
                     .provider()
                     .convert_block_number(number_or_tag)
-                    .map_err(|err| {
-                        reth_rpc_server_types::result::internal_rpc_err(err.to_string())
-                    })?
+                    .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?
                     .ok_or(EthApiError::HeaderNotFound(block_id))?;
-                self.provider().header_by_number(number).map_err(|err| {
-                    reth_rpc_server_types::result::internal_rpc_err(err.to_string())
-                })?
+                self.provider()
+                    .header_by_number(number)
+                    .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?
             }
         }
         .ok_or(EthApiError::HeaderNotFound(block_id))?;
@@ -774,7 +772,7 @@ impl DebugApiServer for DebugApi {
         let block = self
             .provider()
             .block_by_id(block_id)
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?
             .ok_or(EthApiError::HeaderNotFound(block_id))?;
         let mut res = Vec::new();
         block.encode(&mut res);
@@ -804,7 +802,7 @@ impl DebugApiServer for DebugApi {
         let block: RecoveredBlock = self
             .provider()
             .block_with_senders_by_id(block_id, TransactionVariant::NoHash)
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?
             .unwrap_or_default();
         Ok(block.into_transactions_recovered().map(|tx| tx.encoded_2718().into()).collect())
     }
@@ -814,7 +812,7 @@ impl DebugApiServer for DebugApi {
         Ok(self
             .provider()
             .receipts_by_block_id(block_id)
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?
             .ok_or(EthApiError::HeaderNotFound(block_id))?
             .into_iter()
             .map(|receipt| ReceiptWithBloom::from(receipt).encoded_2718().into())
@@ -847,7 +845,9 @@ impl DebugApiServer for DebugApi {
 
             let bad_block =
                 serde_json::to_value(BadBlockSerde { block, hash, rlp, reason: entry.reason })
-                    .map_err(|err| EthApiError::other(internal_rpc_err(err.to_string())))?;
+                    .map_err(|err| {
+                        EthApiError::other(RpcErrorFactory::internal(err.to_string()))
+                    })?;
 
             bad_blocks.push(bad_block);
         }
@@ -869,7 +869,7 @@ impl DebugApiServer for DebugApi {
         _start_exclusive: BlockNumberOrTag,
         _end_inclusive: BlockNumberOrTag,
     ) -> RpcResult<Vec<BlockTraceResult>> {
-        Err(internal_rpc_err("unimplemented"))
+        Err(RpcErrorFactory::internal("unimplemented"))
     }
 
     /// Handler for `debug_traceBlock`
@@ -1177,7 +1177,7 @@ impl DebugApiServer for DebugApi {
             .inner
             .bad_block_store
             .get(block_hash)
-            .ok_or_else(|| internal_rpc_err("bad block not found in cache"))?;
+            .ok_or_else(|| RpcErrorFactory::internal("bad block not found in cache"))?;
 
         let evm_env = self
             .eth_api()

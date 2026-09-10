@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::RpcErrorFactory;
 use alloy_primitives::TxHash;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_rpc::{
@@ -18,7 +19,6 @@ use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink, server::SubscriptionMessage, types::ErrorObject,
 };
 use reth_network_api::NetworkInfo;
-use reth_rpc_server_types::result::{internal_rpc_err, invalid_params_rpc_err};
 use serde::Serialize;
 use tokio_stream::{
     Stream,
@@ -90,7 +90,7 @@ impl EthPubSub {
                 let filter = match params {
                     Some(Params::Logs(filter)) => *filter,
                     Some(Params::Bool(_)) => {
-                        return Err(invalid_params_rpc_err("Invalid params for logs"));
+                        return Err(RpcErrorFactory::invalid_params("Invalid params for logs"));
                     }
                     _ => Default::default(),
                 };
@@ -125,7 +125,7 @@ impl EthPubSub {
                             // only hashes requested
                         }
                         _ => {
-                            return Err(invalid_params_rpc_err(
+                            return Err(RpcErrorFactory::invalid_params(
                                 "Invalid params for newPendingTransactions",
                             ));
                         }
@@ -184,7 +184,7 @@ impl EthPubSub {
                     Some(Params::TransactionReceipts(filter)) => filter,
                     None | Some(Params::None) => TransactionReceiptsParams::default(),
                     _ => {
-                        return Err(invalid_params_rpc_err(
+                        return Err(RpcErrorFactory::invalid_params(
                             "Invalid params for transactionReceipts",
                         ));
                     }
@@ -196,7 +196,7 @@ impl EthPubSub {
                 )
                 .await
             }
-            _ => Err(invalid_params_rpc_err("Unsupported subscription kind")),
+            _ => Err(RpcErrorFactory::invalid_params("Unsupported subscription kind")),
         }
     }
 }
@@ -233,7 +233,7 @@ impl SubscriptionSerializeError {
 
 impl From<SubscriptionSerializeError> for ErrorObject<'static> {
     fn from(value: SubscriptionSerializeError) -> Self {
-        internal_rpc_err(value.to_string())
+        RpcErrorFactory::internal(value.to_string())
     }
 }
 

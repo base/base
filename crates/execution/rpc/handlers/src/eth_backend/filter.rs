@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::RpcErrorFactory;
 use crate::{
     EthApiError, EthFilterConfig, EthStateCache, EthSubscriptionIdProvider,
     logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
@@ -36,7 +37,6 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_server_types::result::rpc_error_with_code;
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,
@@ -556,7 +556,7 @@ impl EthFilterInner {
         let last_poll_block_number = self
             .provider()
             .best_block_number()
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?;
         let subscription_id = self.id_provider.next_id();
 
         let id = match subscription_id {
@@ -955,20 +955,22 @@ pub enum EthFilterError {
 impl From<EthFilterError> for jsonrpsee::types::error::ErrorObject<'static> {
     fn from(err: EthFilterError) -> Self {
         match err {
-            EthFilterError::FilterNotFound(_) => rpc_error_with_code(
+            EthFilterError::FilterNotFound(_) => RpcErrorFactory::with_code(
                 jsonrpsee::types::error::INVALID_PARAMS_CODE,
                 "filter not found",
             ),
-            err @ EthFilterError::InternalError => {
-                rpc_error_with_code(jsonrpsee::types::error::INTERNAL_ERROR_CODE, err.to_string())
-            }
+            err @ EthFilterError::InternalError => RpcErrorFactory::with_code(
+                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                err.to_string(),
+            ),
             EthFilterError::EthAPIError(err) => err.into(),
             err @ (EthFilterError::InvalidBlockRangeParams
             | EthFilterError::QueryExceedsMaxBlocks(_)
             | EthFilterError::QueryExceedsMaxResults { .. }
-            | EthFilterError::BlockRangeExceedsHead { .. }) => {
-                rpc_error_with_code(jsonrpsee::types::error::INVALID_PARAMS_CODE, err.to_string())
-            }
+            | EthFilterError::BlockRangeExceedsHead { .. }) => RpcErrorFactory::with_code(
+                jsonrpsee::types::error::INVALID_PARAMS_CODE,
+                err.to_string(),
+            ),
         }
     }
 }

@@ -94,7 +94,7 @@ where
             .network
             .get_all_peers()
             .await
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?;
         let mut infos = Vec::with_capacity(peers.len());
 
         for peer in peers {
@@ -129,7 +129,7 @@ where
             .network
             .network_status()
             .await
-            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
+            .map_err(|err| crate::RpcErrorFactory::internal(err.to_string()))?;
         let mut config = ChainConfig {
             chain_id: self.chain_spec.chain().id(),
             terminal_total_difficulty_passed: true,
