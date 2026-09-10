@@ -8,7 +8,9 @@
 
 use std::sync::Arc;
 
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_blocks};
+use base_proof_contracts::{
+    AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_blocks, resolve_intervals,
+};
 
 use crate::error::ProposerError;
 
@@ -80,27 +82,18 @@ impl IntervalResolver {
         &self,
         starting_block: u64,
     ) -> Result<Intervals, ProposerError> {
-        let impl_address = self
-            .factory_client
-            .game_impls(self.game_type)
-            .await
-            .map_err(|e| ProposerError::Contract(format!("gameImpls lookup failed: {e}")))?;
-        if impl_address.is_zero() {
-            return Err(ProposerError::Contract(format!(
-                "no AggregateVerifier implementation registered for game type {}",
-                self.game_type
-            )));
-        }
-
-        let (block_interval, intermediate_block_interval) = self
-            .verifier_client
-            .read_intervals_for_starting_block(impl_address, starting_block)
-            .await
-            .map_err(|e| {
-                ProposerError::Contract(format!(
-                    "intervalsForStartingBlock({starting_block}) failed: {e}"
-                ))
-            })?;
+        let (block_interval, intermediate_block_interval) = resolve_intervals(
+            self.factory_client.as_ref(),
+            self.verifier_client.as_ref(),
+            self.game_type,
+            starting_block,
+        )
+        .await
+        .map_err(|e| {
+            ProposerError::Contract(format!(
+                "interval lookup for block {starting_block} failed: {e}"
+            ))
+        })?;
 
         Ok(Intervals { block_interval, intermediate_block_interval })
     }
