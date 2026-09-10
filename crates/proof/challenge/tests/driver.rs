@@ -18,7 +18,7 @@ use base_challenger::{
     },
 };
 use base_common_l1_transactions::TxManagerError;
-use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
+use base_proof_l1_submission::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
 use base_proof_types_protocol::Proposal;
 use base_proof_client_providers::L1Provider;
 use base_consensus_batch_types::OutputRoot;
@@ -38,7 +38,7 @@ const BOGUS_CLAIM: B256 = B256::repeat_byte(0x01);
 /// `MockGameState { tee_prover: DEFAULT_TEE_PROVER, ..game_state(20) }`.
 fn game_state(l2_block_number: u64) -> MockGameState {
     MockGameState {
-        game_info: base_proof_contracts::GameInfo {
+        game_info: base_proof_l1_submission::GameInfo {
             root_claim: BOGUS_CLAIM,
             l2_block_number,
             parent_address: Address::ZERO,

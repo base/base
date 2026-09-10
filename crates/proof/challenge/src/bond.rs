@@ -6,7 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
 use base_common_l1_transactions::TxManager;
 use base_common_runtime_tasks::Clock;
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
 };
@@ -531,7 +531,7 @@ mod tests {
         resolved_at: u64,
         bond_unlocked: bool,
     ) -> crate::test_utils::MockGameState {
-        let mut state = mock_state(base_proof_contracts::GameStatus::InProgress, zk_prover, 100);
+        let mut state = mock_state(base_proof_l1_submission::GameStatus::InProgress, zk_prover, 100);
         state.bond_recipient = bond_recipient;
         state.resolved_at = resolved_at;
         state.bond_unlocked = bond_unlocked;

@@ -66,7 +66,7 @@ impl HealthzApiServer for RegistrationHealthzRpc {
 mod tests {
     use std::sync::{Arc, atomic::Ordering};
 
-    use base_proof_contracts::TEEProverRegistryClient;
+    use base_proof_l1_submission::TEEProverRegistryClient;
 
     use super::*;
     use crate::{test_utils::MockRegistry, transport::NitroTransport};

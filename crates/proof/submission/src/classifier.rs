@@ -1,7 +1,7 @@
 //! Known revert classification for proof contract transactions.
 
 use base_common_l1_transactions::TxManagerError;
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     already_proven_selector, game_already_exists_selector, invalid_parent_game_selector,
     invalid_signer_selector, l1_origin_too_old_selector,
 };

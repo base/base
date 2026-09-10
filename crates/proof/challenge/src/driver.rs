@@ -7,7 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_common_l1_transactions::TxManager;
 use base_common_runtime_tasks::TokioRuntime;
-use base_proof_contracts::AggregateVerifierClient;
+use base_proof_l1_submission::AggregateVerifierClient;
 use base_proof_client_providers::{L1Provider, L2Provider};
 use base_proof_service_client::ProofRequesterProvider;
 use tokio::select;

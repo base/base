@@ -16,7 +16,7 @@ use base_common_client_ethereum::{Provider, ProviderBuilder};
 use base_common_l1_transactions::BalanceMonitorLayer;
 use base_common_l1_transactions::{BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig};
 use base_common_observability_health::HealthServer;
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     CertManagerContractClient, NitroValidatorClient, NitroValidatorContractClient,
     TEEProverRegistryClient, TEEProverRegistryContractClient,
 };

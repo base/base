@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_common_types_rpc::{EIP1186AccountProofResponse, Header};
 use base_common_client_rollup::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,

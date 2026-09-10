@@ -13,7 +13,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use base_common_l1_transactions::{TxManager, TxManagerError};
-use base_proof_contracts::{AggregateVerifierClient, GameStatus};
+use base_proof_l1_submission::{AggregateVerifierClient, GameStatus};
 use base_proof_types_protocol::ProofRequest as TeeProofRequest;
 use base_proof_client_providers::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
@@ -625,7 +625,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use base_common_l1_transactions::TxManagerError;
-    use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
+    use base_proof_l1_submission::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
     use base_proof_client_providers::L1Provider;
     use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
 

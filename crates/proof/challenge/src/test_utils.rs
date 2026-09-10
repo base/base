@@ -17,7 +17,7 @@ use base_common_types_chain::{
     Eip658Value, Header as ConsensusHeader, Predeploys, Receipt, ReceiptEnvelope, ReceiptWithBloom,
 };
 use base_common_types_rpc::{EIP1186AccountProofResponse, Header as RpcHeader, TransactionReceipt};
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,

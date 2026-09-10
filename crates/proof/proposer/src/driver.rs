@@ -237,16 +237,16 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry: Arc<dyn base_proof_contracts::AnchorStateRegistryClient> =
+        let anchor_registry: Arc<dyn base_proof_l1_submission::AnchorStateRegistryClient> =
             Arc::new(MockAnchorStateRegistry {
                 anchor_root: test_anchor_root(0),
                 anchor_game: Address::ZERO,
             });
-        let factory: Arc<dyn base_proof_contracts::DisputeGameFactoryClient> =
+        let factory: Arc<dyn base_proof_l1_submission::DisputeGameFactoryClient> =
             Arc::new(MockDisputeGameFactory::default());
         let proof_requester: Arc<dyn base_proof_service_client::ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
-        let verifier: Arc<dyn base_proof_contracts::AggregateVerifierClient> =
+        let verifier: Arc<dyn base_proof_l1_submission::AggregateVerifierClient> =
             Arc::new(MockAggregateVerifier::default());
         let output_proposer: Arc<dyn crate::OutputProposer> =
             Arc::new(MockOutputProposer::default());

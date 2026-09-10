@@ -14,7 +14,7 @@ use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
 use base_common_l1_transactions::BalanceMonitorLayer;
 use base_common_l1_transactions::{BaseTxMetrics, SimpleTxManager};
 use base_common_observability_health::HealthServer;
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     AggregateVerifierClient, AggregateVerifierContractClient, AnchorStateRegistryClient,
     AnchorStateRegistryContractClient, DisputeGameFactoryClient, DisputeGameFactoryContractClient,
 };

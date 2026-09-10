@@ -20,7 +20,7 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 base-proof-client-providers = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-contracts = { workspace = true }
+base-proof-l1-submission = { workspace = true }
 base-proof-types-protocol = { workspace = true }
 base-proof-submission = { workspace = true }
 base-common-cli-support = { workspace = true }

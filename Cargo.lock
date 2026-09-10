@@ -2402,7 +2402,7 @@ dependencies = [
  "base-common-types-rpc",
  "base-consensus-batch-types",
  "base-proof-client-providers",
- "base-proof-contracts",
+ "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-submission",
@@ -4709,24 +4709,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-contracts"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "alloy-transport",
- "async-trait",
- "base-common-client-contracts",
- "base-common-client-ethereum",
- "futures",
- "rstest",
- "serde_json",
- "thiserror 2.0.19",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-proof-execution-client"
 version = "0.0.0"
 dependencies = [
@@ -4805,6 +4787,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-l1-submission"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "alloy-transport",
+ "async-trait",
+ "base-common-client-contracts",
+ "base-common-client-ethereum",
+ "futures",
+ "rstest",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-proof-service-client"
 version = "0.0.0"
 dependencies = [
@@ -4842,7 +4842,7 @@ dependencies = [
  "base-common-l1-transactions",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-proof-contracts",
+ "base-proof-l1-submission",
  "thiserror 2.0.19",
  "tokio",
 ]
@@ -4888,8 +4888,8 @@ dependencies = [
  "async-trait",
  "base-common-chain-config",
  "base-common-observability-health",
- "base-proof-contracts",
  "base-proof-host",
+ "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-tee-nitro-enclave",
@@ -4945,7 +4945,7 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-proof-contracts",
+ "base-proof-l1-submission",
  "base-proof-tee-nitro-verifier",
  "base-proof-types-protocol",
  "ciborium",
@@ -5072,7 +5072,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-proof-client-providers",
- "base-proof-contracts",
+ "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-submission",
@@ -5563,7 +5563,7 @@ dependencies = [
  "base-consensus-network-service",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
- "base-proof-contracts",
+ "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-submission",

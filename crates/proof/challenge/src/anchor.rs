@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::Address;
 use base_common_l1_transactions::TxManager;
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     AggregateVerifierClient, AnchorRoot, AnchorSnapshot, AnchorStateRegistryClient,
     DisputeGameFactoryClient, GameStatus, encode_set_anchor_state_calldata, game_lookup_blocks,
     game_lookup_key,

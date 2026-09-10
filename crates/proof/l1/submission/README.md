@@ -1,4 +1,4 @@
-# `base-proof-contracts`
+# `base-proof-l1-submission`
 
 <a href="https://github.com/base/base/actions/workflows/ci.yml"><img src="https://github.com/base/base/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
 <a href="https://github.com/base/base/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
@@ -24,13 +24,13 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-contracts = { workspace = true }
+base-proof-l1-submission = { workspace = true }
 ```
 
 Use the Alloy-backed clients to interact with onchain contracts:
 
 ```rust,ignore
-use base_proof_contracts::DisputeGameFactoryClient;
+use base_proof_l1_submission::DisputeGameFactoryClient;
 
 let factory = DisputeGameFactoryClient::new(provider, factory_address);
 let games = factory.get_all_games(game_type, 0, count).await?;

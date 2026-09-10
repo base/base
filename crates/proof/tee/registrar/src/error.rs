@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, B256};
 use base_common_l1_transactions::TxManagerError;
-use base_proof_contracts::ContractError;
+use base_proof_l1_submission::ContractError;
 use base_proof_tee_nitro_verifier::VerifierError;
 use thiserror::Error;
 

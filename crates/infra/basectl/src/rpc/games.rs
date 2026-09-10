@@ -10,8 +10,8 @@ use alloy_primitives::{Address, B256};
 use alloy_transport::{TransportError, TransportErrorKind};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Transaction as _;
-pub use base_proof_contracts::GameStatus;
-use base_proof_contracts::{
+pub use base_proof_l1_submission::GameStatus;
+use base_proof_l1_submission::{
     AggregateVerifierClient, AggregateVerifierContractClient, ContractError,
     DisputeGameFactoryClient, DisputeGameFactoryContractClient, decode_create_calldata,
     encode_extra_data,
@@ -510,7 +510,7 @@ mod tests {
     use alloy_sol_types::SolValue;
     use alloy_transport::{TransportErrorKind, mock::Asserter};
     use base_common_client_ethereum::RootProvider;
-    use base_proof_contracts::{AggregateVerifierContractClient, DisputeGameFactoryContractClient};
+    use base_proof_l1_submission::{AggregateVerifierContractClient, DisputeGameFactoryContractClient};
     use url::Url;
 
     use super::{GameListFilter, GamesClient};

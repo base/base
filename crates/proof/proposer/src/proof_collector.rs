@@ -431,7 +431,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
-    use base_proof_contracts::{
+    use base_proof_l1_submission::{
         AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key,
     };
     use base_proof_types_protocol::ProofRequest;

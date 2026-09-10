@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::Address;
-use base_proof_contracts::{AnchorStateRegistryClient, DisputeGameFactoryClient, game_lookup_key};
+use base_proof_l1_submission::{AnchorStateRegistryClient, DisputeGameFactoryClient, game_lookup_key};
 use base_proof_client_providers::{RollupProvider, RpcError};
 use futures::{StreamExt, TryStreamExt, stream};
 use tracing::{debug, info, warn};
@@ -292,7 +292,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use alloy_primitives::{Address, B256};
-    use base_proof_contracts::AnchorRoot;
+    use base_proof_l1_submission::AnchorRoot;
 
     use super::*;
     use crate::test_utils::{

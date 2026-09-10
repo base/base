@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_common_l1_transactions::{TxCandidate, TxManager};
-use base_proof_contracts::{encode_challenge_calldata, encode_nullify_calldata};
+use base_proof_l1_submission::{encode_challenge_calldata, encode_nullify_calldata};
 use tracing::{debug, info};
 
 use crate::{ChallengeSubmitError, ChallengerMetrics, DisputeIntent};
@@ -166,7 +166,7 @@ impl DisputeIntent {
 mod tests {
     use alloy_primitives::Address;
     use base_common_l1_transactions::TxManagerError;
-    use base_proof_contracts::l1_origin_too_old_selector;
+    use base_proof_l1_submission::l1_origin_too_old_selector;
     use base_proof_submission::KnownRevert;
 
     use super::*;

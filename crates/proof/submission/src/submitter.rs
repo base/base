@@ -31,7 +31,7 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
     ) -> Result<TransactionReceipt, ProofSubmissionError> {
         self.submit_calldata(
             game_address,
-            base_proof_contracts::encode_verify_proposal_proof_calldata(proof_bytes),
+            base_proof_l1_submission::encode_verify_proposal_proof_calldata(proof_bytes),
         )
         .await
     }
@@ -165,7 +165,7 @@ mod tests {
         assert_eq!(candidate.value, U256::ZERO);
         assert_eq!(
             candidate.tx_data,
-            base_proof_contracts::encode_verify_proposal_proof_calldata(proof_bytes)
+            base_proof_l1_submission::encode_verify_proposal_proof_calldata(proof_bytes)
         );
     }
 

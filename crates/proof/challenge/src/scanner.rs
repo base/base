@@ -1,6 +1,6 @@
 //! Game scanner for the challenger service.
 //!
-//! Scans the [`DisputeGameFactory`](base_proof_contracts::DisputeGameFactoryClient)
+//! Scans the [`DisputeGameFactory`](base_proof_l1_submission::DisputeGameFactoryClient)
 //! for dispute games that require action. Each game is classified into one
 //! of four [`GameCategory`] variants based on its on-chain state:
 //!
@@ -38,7 +38,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use base_proof_contracts::{
+use base_proof_l1_submission::{
     AggregateVerifierClient, AnchorStateRegistryClient, DisputeGameFactoryClient, GameAtIndex,
     GameInfo, GameStatus,
 };
@@ -533,7 +533,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes, U256};
     use async_trait::async_trait;
-    use base_proof_contracts::{
+    use base_proof_l1_submission::{
         AggregateVerifierClient, AnchorStateRegistryClient, ContractError,
         DisputeGameFactoryClient, GameAtIndex, GameStatus,
     };
