@@ -67,6 +67,10 @@ as dependency boundaries. It is included in `just check all`, `just ci` and
   and infra remain enforced. The complete policy is in
   [check-crate-deps.py](../../etc/scripts/ci/check-crate-deps.py).
 
+## Validation
+
+See [build, regression-test and Docker devnet results](validation.md).
+
 ## Internal dependency graph
 
 [Open the complete SVG](crates.svg), or inspect the [Graphviz source](crates.dot).
