@@ -9,8 +9,8 @@ use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
-        bootnode::BootnodeCommand, reth::RethCommand, rpc::RpcCommand, sequencer::SequencerCommand,
-        snapshot::SnapshotCommand, update::UpdateCommand,
+        bootnode::BootnodeCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
+        sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
     },
     config::ChainResolver,
 };
@@ -28,6 +28,9 @@ pub(crate) enum BaseCommand {
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
+    /// Run the integrated node in follow mode (execution + consensus follow node).
+    #[command(name = "follow")]
+    Follow(Box<FollowCommand>),
     /// Run integrated execution, builder, and consensus services in sequencer mode.
     #[command(name = "sequencer")]
     Sequencer(Box<SequencerCommand>),
@@ -58,6 +61,7 @@ impl BaseCommand {
             }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
+            Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Sequencer(sequencer) => {
                 (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)
             }
