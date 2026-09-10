@@ -18,10 +18,7 @@ use crate::eth_services::block::BlockAndReceipts;
 #[derive(Debug, Clone, Constructor)]
 pub struct PendingBlockEnv {
     /// Configured [`base_execution_evm_blocks::EvmEnv`] for the pending block.
-    pub evm_env: base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >,
+    pub evm_env: base_execution_evm_runtime::EvmEnv,
     /// Origin block for the config
     pub origin: PendingBlockEnvOrigin,
 }

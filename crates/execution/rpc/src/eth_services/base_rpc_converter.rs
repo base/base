@@ -83,10 +83,7 @@ impl BaseRpcConverter {
     pub fn tx_env(
         &self,
         request: BaseTransactionRequest,
-        evm_env: &base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: &base_execution_evm_runtime::EvmEnv,
     ) -> Result<base_execution_evm_runtime::BaseTransaction, BaseEthApiError> {
         request.try_into_tx_env(evm_env).map_err(Into::into)
     }

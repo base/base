@@ -155,6 +155,8 @@ pub use evm_api::*;
 #[cfg(any(test, feature = "test-utils"))]
 mod eth;
 #[cfg(any(test, feature = "test-utils"))]
+pub use eth::ReferenceEvmEnv;
+#[cfg(any(test, feature = "test-utils"))]
 pub use eth::*;
 
 mod execution_error;

@@ -184,7 +184,7 @@ pub struct BlockAssemblerInput<'a, 'b> {
     /// Configuration of EVM used when executing the block.
     ///
     /// Contains context relevant to EVM such as [`base_execution_evm_runtime::BlockEnv`].
-    pub evm_env: EvmEnv<base_execution_evm_runtime::BaseSpecId>,
+    pub evm_env: EvmEnv,
     /// [`base_execution_evm_runtime::BaseBlockExecutionCtx`] used to execute the block.
     pub execution_ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     /// Parent block header.
@@ -208,7 +208,7 @@ impl<'a, 'b> BlockAssemblerInput<'a, 'b> {
     /// Creates a new [`BlockAssemblerInput`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        evm_env: EvmEnv<base_execution_evm_runtime::BaseSpecId>,
+        evm_env: EvmEnv,
         execution_ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
         parent: &'a SealedHeader,
         transactions: Vec<BaseTxEnvelope>,
@@ -379,6 +379,7 @@ impl<'a, DB, Executor> BlockBuilder for BasicBlockBuilder<'a, Executor>
 where
     Executor: BlockExecutor<
             Evm: Evm<
+                Env = EvmEnv,
                 Spec = base_execution_evm_runtime::BaseSpecId,
                 HaltReason = base_execution_evm_runtime::BaseHaltReason,
                 BlockEnv = base_execution_evm_runtime::BlockEnv,

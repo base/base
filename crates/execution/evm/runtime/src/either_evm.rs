@@ -1,11 +1,12 @@
 use alloy_primitives::{Address, Bytes};
-use base_execution_evm_runtime::{CfgEnv, Evm, EvmEnv, either};
+use base_execution_evm_runtime::{CfgEnv, Evm, either};
 
 impl<L, R> Evm for either::Either<L, R>
 where
     L: Evm,
     R: Evm<
             DB = L::DB,
+            Env = L::Env,
             Tx = L::Tx,
             Error = L::Error,
             HaltReason = L::HaltReason,
@@ -16,6 +17,7 @@ where
         >,
 {
     type DB = L::DB;
+    type Env = L::Env;
     type Tx = L::Tx;
     type Error = L::Error;
     type HaltReason = L::HaltReason;
@@ -69,7 +71,7 @@ where
         either::for_both!(self, evm => evm.transact_commit(tx))
     }
 
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec, Self::BlockEnv>)
+    fn finish(self) -> (Self::DB, Self::Env)
     where
         Self: Sized,
     {
@@ -83,7 +85,7 @@ where
         either::for_both!(self, evm => evm.into_db())
     }
 
-    fn into_env(self) -> EvmEnv<Self::Spec, Self::BlockEnv>
+    fn into_env(self) -> Self::Env
     where
         Self: Sized,
     {

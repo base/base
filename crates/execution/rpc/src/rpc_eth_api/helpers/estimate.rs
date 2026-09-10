@@ -35,10 +35,7 @@ impl BaseEthApi {
     ///  - `nonce` is set to `None`
     pub fn estimate_gas_with<S>(
         &self,
-        mut evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        mut evm_env: base_execution_evm_runtime::EvmEnv,
         mut request: BaseTransactionRequest,
         state: S,
         overrides: EvmOverrides,

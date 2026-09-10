@@ -314,13 +314,7 @@ impl BaseEthApi {
     pub fn evm_env_for_header(
         &self,
         header: &base_common_types_chain::SealedHeader,
-    ) -> Result<
-        base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
-        BaseEthApiError,
-    > {
+    ) -> Result<base_execution_evm_runtime::EvmEnv, BaseEthApiError> {
         self.evm_config()
             .evm_env(header)
             .map_err(|error| crate::EthApiError::Internal(error.into()))
@@ -336,18 +330,8 @@ impl BaseEthApi {
     pub fn evm_env_at(
         &self,
         at: BlockId,
-    ) -> impl Future<
-        Output = Result<
-            (
-                base_execution_evm_runtime::EvmEnv<
-                    base_execution_evm_runtime::BaseSpecId,
-                    base_execution_evm_runtime::BlockEnv,
-                >,
-                BlockId,
-            ),
-            BaseEthApiError,
-        >,
-    > + Send {
+    ) -> impl Future<Output = Result<(base_execution_evm_runtime::EvmEnv, BlockId), BaseEthApiError>>
+    + Send {
         async move {
             if at.is_pending() {
                 let PendingBlockEnv { evm_env, origin } = self.pending_block_env_and_cfg()?;
@@ -380,14 +364,7 @@ impl BaseEthApi {
         at: BlockId,
     ) -> impl Future<
         Output = Result<
-            (
-                Arc<RecoveredBlock>,
-                base_execution_evm_runtime::EvmEnv<
-                    base_execution_evm_runtime::BaseSpecId,
-                    base_execution_evm_runtime::BlockEnv,
-                >,
-                BlockId,
-            ),
+            (Arc<RecoveredBlock>, base_execution_evm_runtime::EvmEnv, BlockId),
             BaseEthApiError,
         >,
     > + Send {

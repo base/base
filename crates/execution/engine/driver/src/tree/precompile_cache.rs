@@ -258,7 +258,7 @@ impl CachedPrecompileMetrics {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_blocks::{EthEvmFactory, Evm, EvmEnv, ReferenceEvmFactory};
+    use base_execution_evm_blocks::{EthEvmFactory, Evm, ReferenceEvmEnv, ReferenceEvmFactory};
     use base_execution_evm_runtime::{
         CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileStatus as PrecompileStatus,
         EmptyDB, TxEnv, hardfork::SpecId,
@@ -305,7 +305,8 @@ mod tests {
 
     #[test]
     fn test_precompile_cache_map_separate_addresses() {
-        let mut evm = EthEvmFactory::default().create_evm(EmptyDB::default(), EvmEnv::default());
+        let mut evm =
+            EthEvmFactory::default().create_evm(EmptyDB::default(), ReferenceEvmEnv::default());
         let input_data = b"same_input";
         let gas_limit = 100_000;
 

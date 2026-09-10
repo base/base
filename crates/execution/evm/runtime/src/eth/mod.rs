@@ -8,7 +8,7 @@ use core::{
 use alloy_primitives::{Address, Bytes};
 pub(crate) use base_execution_evm_runtime::EthEvmContext;
 use base_execution_evm_runtime::{
-    BlockEnv, CfgEnv, DBErrorMarker, Database, EVMError, EthPrecompiles, Evm, EvmEnv,
+    BlockEnv, CfgEnv, DBErrorMarker, Database, EVMError, EthPrecompiles, Evm,
     EvmMachine as RevmEvm, ExecuteEvm, HaltReason, InspectEvm, Inspector, InterpreterResult,
     MainBuilder, MainContext, NoOpInspector, PrecompileProvider, PrecompileSpecId, Precompiles,
     PrecompilesMap, ResultAndState, SystemCallEvm, TxEnv, evm_api::ReferenceEvmFactory,
@@ -27,8 +27,8 @@ pub struct EthEvmBuilder<DB: Database, I = NoOpInspector> {
 }
 
 impl<DB: Database> EthEvmBuilder<DB, NoOpInspector> {
-    /// Creates a builder from the provided `EvmEnv` and database.
-    pub fn new(db: DB, env: EvmEnv) -> Self {
+    /// Creates a builder from the provided `ReferenceEvmEnv` and database.
+    pub fn new(db: DB, env: ReferenceEvmEnv) -> Self {
         Self {
             db,
             block_env: env.block_env,
@@ -157,6 +157,7 @@ where
     I: Inspector<EthEvmContext<DB>>,
     PRECOMPILE: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>,
 {
+    type Env = ReferenceEvmEnv;
     type DB = DB;
     type Tx = TxEnv;
     type Error = EVMError<DB::Error>;
@@ -194,7 +195,7 @@ where
         self.inner.system_call_with_caller(caller, contract, data)
     }
 
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
+    fn finish(self) -> (Self::DB, ReferenceEvmEnv) {
         let base_execution_evm_runtime::ReferenceContext {
             block: block_env,
             cfg: cfg_env,
@@ -202,7 +203,7 @@ where
             ..
         } = self.inner.ctx;
 
-        (journaled_state.database, EvmEnv { block_env, cfg_env })
+        (journaled_state.database, ReferenceEvmEnv { block_env, cfg_env })
     }
 
     fn set_inspector_enabled(&mut self, enabled: bool) {
@@ -237,14 +238,18 @@ impl ReferenceEvmFactory for EthEvmFactory {
     type BlockEnv = BlockEnv;
     type Precompiles = PrecompilesMap;
 
-    fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
+    fn create_evm<DB: Database>(
+        &self,
+        db: DB,
+        input: ReferenceEvmEnv,
+    ) -> Self::Evm<DB, NoOpInspector> {
         EthEvmBuilder::new(db, input).build()
     }
 
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
         &self,
         db: DB,
-        input: EvmEnv,
+        input: ReferenceEvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I> {
         EthEvmBuilder::new(db, input).activate_inspector(inspector).build()
@@ -269,6 +274,7 @@ mod tests {
         DB: Database,
         I: Inspector<EthEvmContext<Box<DB>>>,
     {
+        type Env = ReferenceEvmEnv;
         type DB = DB;
         type Tx = TxEnv;
         type Error = EVMError<DB::Error>;
@@ -306,7 +312,7 @@ mod tests {
             self.inner.transact_system_call(caller, contract, data)
         }
 
-        fn finish(self) -> (Self::DB, EvmEnv<Self::Spec, Self::BlockEnv>) {
+        fn finish(self) -> (Self::DB, ReferenceEvmEnv) {
             let (db, env) = self.inner.finish();
             (*db, env)
         }
@@ -341,14 +347,18 @@ mod tests {
         type BlockEnv = BlockEnv;
         type Precompiles = PrecompilesMap;
 
-        fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
+        fn create_evm<DB: Database>(
+            &self,
+            db: DB,
+            input: ReferenceEvmEnv,
+        ) -> Self::Evm<DB, NoOpInspector> {
             TestEvm { inner: EthEvmBuilder::new(Box::new(db), input).build() }
         }
 
         fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
             &self,
             db: DB,
-            input: EvmEnv,
+            input: ReferenceEvmEnv,
             inspector: I,
         ) -> Self::Evm<DB, I> {
             TestEvm {
@@ -361,7 +371,7 @@ mod tests {
 
     #[test]
     fn factory_context_can_adapt_database() {
-        let input = EvmEnv::default();
+        let input = ReferenceEvmEnv::default();
         let mut evm = TestFactory.create_evm(EmptyDB::default(), input.clone());
         let _: &EmptyDB = evm.db();
         let _: &mut EmptyDB = evm.db_mut();
@@ -396,7 +406,8 @@ mod tests {
             early_cfg_env.spec = early_spec;
             early_cfg_env.chain_id = 1;
 
-            let early_env = EvmEnv { block_env: BlockEnv::default(), cfg_env: early_cfg_env };
+            let early_env =
+                ReferenceEvmEnv { block_env: BlockEnv::default(), cfg_env: early_cfg_env };
             let factory = EthEvmFactory;
             let mut early_evm = factory.create_evm(EmptyDB::default(), early_env);
 
@@ -410,7 +421,8 @@ mod tests {
             later_cfg_env.spec = later_spec;
             later_cfg_env.chain_id = 1;
 
-            let later_env = EvmEnv { block_env: BlockEnv::default(), cfg_env: later_cfg_env };
+            let later_env =
+                ReferenceEvmEnv { block_env: BlockEnv::default(), cfg_env: later_cfg_env };
             let mut later_evm = factory.create_evm(EmptyDB::default(), later_env);
 
             // precompile should be available in later spec
@@ -421,3 +433,6 @@ mod tests {
         }
     }
 }
+
+mod environment;
+pub use environment::ReferenceEvmEnv;

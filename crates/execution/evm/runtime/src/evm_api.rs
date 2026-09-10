@@ -6,8 +6,8 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_common_types_chain::transaction::TxHashRef;
 pub(crate) use base_execution_evm_runtime::Database;
 use base_execution_evm_runtime::{
-    BlockEnvironment, CfgEnv, ContextTr, DatabaseCommit, EvmEnv, EvmError, ExecutionResult,
-    HaltReasonTr, Inspector, IntoTxEnv, ResultAndState,
+    BlockEnvironment, CfgEnv, ContextTr, DatabaseCommit, EvmError, ExecutionResult, HaltReasonTr,
+    Inspector, IntoTxEnv, ResultAndState,
 };
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -22,6 +22,8 @@ use crate::{DBErrorMarker, NoOpInspector};
 pub trait Evm {
     /// Database type held by the EVM.
     type DB: Database;
+    /// Environment returned when the EVM is consumed.
+    type Env;
     /// The transaction object that the EVM will execute.
     ///
     /// This type represents the transaction environment that the EVM operates on internally.
@@ -126,7 +128,7 @@ pub trait Evm {
     }
 
     /// Consumes the EVM and returns the inner [`EvmEnv`].
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec, Self::BlockEnv>)
+    fn finish(self) -> (Self::DB, Self::Env)
     where
         Self: Sized;
 
@@ -139,7 +141,7 @@ pub trait Evm {
     }
 
     /// Consumes the EVM and returns the inner [`EvmEnv`].
-    fn into_env(self) -> EvmEnv<Self::Spec, Self::BlockEnv>
+    fn into_env(self) -> Self::Env
     where
         Self: Sized,
     {
@@ -287,7 +289,7 @@ pub trait ReferenceEvmFactory {
     fn create_evm<DB: Database>(
         &self,
         db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        evm_env: crate::ReferenceEvmEnv,
     ) -> Self::Evm<DB, NoOpInspector>;
 
     /// Creates a new instance of an EVM with an inspector.
@@ -297,7 +299,7 @@ pub trait ReferenceEvmFactory {
     fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
         &self,
         db: DB,
-        input: EvmEnv<Self::Spec, Self::BlockEnv>,
+        input: crate::ReferenceEvmEnv,
         inspector: I,
     ) -> Self::Evm<DB, I>;
 }

@@ -42,10 +42,7 @@ pub fn execute_block<'a, Tx, Err, DB, MakeDb>(
     evm_config: &'a BaseEvmConfig,
     make_db: &'a MakeDb,
     input_bal: Arc<DecodedBal>,
-    evm_env: base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >,
+    evm_env: base_execution_evm_runtime::EvmEnv,
     ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
@@ -83,10 +80,7 @@ fn execute_block_inner<'scope, Tx, Err, DB, MakeDb>(
     evm_config: &'scope BaseEvmConfig,
     make_db: &'scope MakeDb,
     input_bal: Arc<DecodedBal>,
-    evm_env: base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >,
+    evm_env: base_execution_evm_runtime::EvmEnv,
     ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,

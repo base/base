@@ -333,13 +333,7 @@ impl BasicEngineValidator {
     pub fn evm_env_for(
         &self,
         input: &BlockOrPayload,
-    ) -> Result<
-        base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
-        EIP1559ParamError,
-    > {
+    ) -> Result<base_execution_evm_runtime::EvmEnv, EIP1559ParamError> {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.evm_env(block.header())?),

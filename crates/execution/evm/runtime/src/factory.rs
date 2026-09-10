@@ -1,7 +1,7 @@
 use alloy_primitives::Address;
 use base_execution_evm_runtime::{
-    BaseContext, BaseEvm, BaseSpecId, Builder, Context, Database, DatabaseCommit, DefaultBase,
-    EvmEnv, Inspector, NoOpInspector, TxTracer,
+    BaseContext, BaseEvm, Builder, Context, Database, DatabaseCommit, DefaultBase, EvmEnv,
+    Inspector, NoOpInspector, TxTracer,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`crate::PrecompilesMap`].
@@ -53,11 +53,7 @@ impl Default for BaseEvmFactory {
 
 impl BaseEvmFactory {
     /// Creates a Base EVM with the supplied database and environment.
-    pub fn create_evm<DB: Database>(
-        &self,
-        db: DB,
-        input: EvmEnv<BaseSpecId>,
-    ) -> BaseEvm<DB, NoOpInspector> {
+    pub fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> BaseEvm<DB, NoOpInspector> {
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
@@ -70,7 +66,7 @@ impl BaseEvmFactory {
     pub fn create_evm_with_inspector<DB: Database, I: Inspector<BaseContext<DB>>>(
         &self,
         db: DB,
-        input: EvmEnv<BaseSpecId>,
+        input: EvmEnv,
         inspector: I,
     ) -> BaseEvm<DB, I> {
         Context::base()
@@ -84,15 +80,31 @@ impl BaseEvmFactory {
     }
 }
 
+impl BaseEvmFactory {
+    /// Creates a transaction tracer with the supplied database and inspector.
+    pub fn create_tracer<DB, I>(
+        &self,
+        db: DB,
+        input: EvmEnv,
+        inspector: I,
+    ) -> TxTracer<BaseEvm<DB, I>>
+    where
+        DB: Database + DatabaseCommit,
+        I: Inspector<BaseContext<DB>> + Clone,
+    {
+        TxTracer::new(self.create_evm_with_inspector(db, input, inspector))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use base_execution_evm_runtime::{
-        BaseUpgrade, BlockEnv, CfgEnv, EmptyDB, EvmEnv, NoOpInspector,
+        BaseSpecId, BaseUpgrade, BlockEnv, CfgEnv, EmptyDB, EvmEnv, NoOpInspector,
     };
 
     use super::*;
 
-    fn default_env() -> EvmEnv<BaseSpecId> {
+    fn default_env() -> EvmEnv {
         EvmEnv::new(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)), BlockEnv::default())
     }
 
@@ -109,21 +121,5 @@ mod tests {
         let evm =
             factory.create_evm_with_inspector(EmptyDB::default(), default_env(), NoOpInspector {});
         assert!(evm.inspect);
-    }
-}
-
-impl BaseEvmFactory {
-    /// Creates a transaction tracer with the supplied database and inspector.
-    pub fn create_tracer<DB, I>(
-        &self,
-        db: DB,
-        input: EvmEnv<BaseSpecId>,
-        inspector: I,
-    ) -> TxTracer<BaseEvm<DB, I>>
-    where
-        DB: Database + DatabaseCommit,
-        I: Inspector<BaseContext<DB>> + Clone,
-    {
-        TxTracer::new(self.create_evm_with_inspector(db, input, inspector))
     }
 }

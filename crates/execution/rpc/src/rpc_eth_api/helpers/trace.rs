@@ -26,10 +26,7 @@ impl BaseEthApi {
     pub fn inspect<'a>(
         &self,
         db: &'a mut StateCacheDb,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         tx_env: impl IntoTxEnv<base_execution_evm_runtime::BaseTransaction>,
         inspector: impl base_execution_evm_runtime::Inspector<
             base_execution_evm_runtime::BaseContext<&'a mut StateCacheDb>,
@@ -168,10 +165,7 @@ impl BaseEthApi {
     ) -> Result<
         (
             ResultAndState<base_execution_evm_runtime::BaseHaltReason>,
-            base_execution_evm_runtime::EvmEnv<
-                base_execution_evm_runtime::BaseSpecId,
-                base_execution_evm_runtime::BlockEnv,
-            >,
+            base_execution_evm_runtime::EvmEnv,
         ),
         BaseEthApiError,
     > {

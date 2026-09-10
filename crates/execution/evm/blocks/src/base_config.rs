@@ -98,7 +98,7 @@ impl BaseEvmConfig {
     }
 
     /// Builds the execution environment for a block header.
-    pub fn evm_env(&self, header: &Header) -> Result<EvmEnv<BaseSpecId>, EIP1559ParamError> {
+    pub fn evm_env(&self, header: &Header) -> Result<EvmEnv, EIP1559ParamError> {
         Ok(BaseEvmEnvBuilder::evm_env(header, self.chain_spec()))
     }
 
@@ -107,7 +107,7 @@ impl BaseEvmConfig {
         &self,
         parent: &Header,
         attributes: &BaseNextBlockEnvAttributes,
-    ) -> Result<EvmEnv<BaseSpecId>, EIP1559ParamError> {
+    ) -> Result<EvmEnv, EIP1559ParamError> {
         let base_fee =
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
 
@@ -144,13 +144,7 @@ impl BaseEvmConfig {
     pub fn evm_env_for_payload(
         &self,
         payload: &ExecutionData,
-    ) -> Result<
-        base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
-        EIP1559ParamError,
-    > {
+    ) -> Result<base_execution_evm_runtime::EvmEnv, EIP1559ParamError> {
         Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
     }
 
@@ -205,10 +199,7 @@ impl BaseEvmConfig {
     pub fn evm_with_env<DB: Database>(
         &self,
         db: DB,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
     ) -> base_execution_evm_runtime::BaseEvm<DB, base_execution_evm_runtime::NoOpInspector> {
         self.evm_factory().create_evm(db, evm_env)
     }
@@ -241,10 +232,7 @@ impl BaseEvmConfig {
     pub fn evm_with_env_and_inspector<DB, I>(
         &self,
         db: DB,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         inspector: I,
     ) -> base_execution_evm_runtime::BaseEvm<DB, I>
     where

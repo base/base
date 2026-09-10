@@ -2,14 +2,14 @@
 
 use alloy_primitives::Bytes;
 use base_common_types_rpc::BaseTransactionRequest;
-use base_execution_evm_runtime::{BaseTransaction as BaseRevm, BlockEnvironment, EvmEnv};
+use base_execution_evm_runtime::{BaseTransaction as BaseRevm, EvmEnv};
 
 use crate::conversion::{EthTxEnvError, TryIntoTxEnv};
 
-impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for BaseTransactionRequest {
+impl TryIntoTxEnv<BaseRevm> for BaseTransactionRequest {
     type Err = EthTxEnvError;
 
-    fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<BaseRevm, Self::Err> {
+    fn try_into_tx_env(self, evm_env: &EvmEnv) -> Result<BaseRevm, Self::Err> {
         Ok(BaseRevm {
             base: self.as_ref().clone().try_into_tx_env(evm_env)?,
             enveloped_tx: Some(Bytes::new()),

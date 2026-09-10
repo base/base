@@ -325,6 +325,7 @@ where
     type Error = EVMError<DB::Error, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;
+    type Env = EvmEnv;
     type BlockEnv = BlockEnv;
     type Precompiles = base_execution_evm_runtime::PrecompilesMap;
     type Inspector = I;
@@ -397,7 +398,7 @@ where
         SystemCallEvm::system_call_with_caller(self, caller, contract, data)
     }
 
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
+    fn finish(self) -> (Self::DB, EvmEnv) {
         let base_execution_evm_runtime::Context {
             block: block_env,
             cfg: cfg_env,

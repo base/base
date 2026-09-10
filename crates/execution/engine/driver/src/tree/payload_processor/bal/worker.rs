@@ -54,10 +54,7 @@ pub(super) fn spawn_worker<'scope, Tx, Err, DB, MakeDb>(
     evm_config: &'scope BaseEvmConfig,
     make_db: &'scope MakeDb,
     received_bal_revm: Arc<RevmBal>,
-    evm_env: base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >,
+    evm_env: base_execution_evm_runtime::EvmEnv,
     ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
 ) where
     Tx: ExecutableTxFor + Send + 'scope,

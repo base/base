@@ -14,10 +14,7 @@ use crate::tree::error::InsertPayloadError;
 #[derive(Debug, Clone)]
 pub struct ExecutionEnv {
     /// Evm environment.
-    pub evm_env: base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >,
+    pub evm_env: base_execution_evm_runtime::EvmEnv,
     /// Hash of the block being executed.
     pub hash: B256,
     /// Hash of the parent block.
@@ -46,10 +43,7 @@ pub struct ExecutionEnv {
 
 impl ExecutionEnv
 where
-    base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >: Default,
+    base_execution_evm_runtime::EvmEnv: Default,
 {
     /// Creates a new [`ExecutionEnv`] with default values for testing.
     #[cfg(any(test, feature = "test-utils"))]

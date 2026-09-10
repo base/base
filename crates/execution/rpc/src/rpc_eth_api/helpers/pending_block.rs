@@ -102,10 +102,7 @@ impl BaseEthApi {
     pub fn build_pool_pending_block(
         &self,
         parent: SealedHeader,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
     ) -> impl Future<Output = Result<Option<PendingBlock>, BaseEthApiError>> + Send {
         async move {
             // we couldn't find the real pending block, so we need to build it ourselves

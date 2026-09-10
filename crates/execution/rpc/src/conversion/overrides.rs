@@ -632,7 +632,8 @@ mod tests {
         use alloy_primitives::{Bytes, TxKind};
         use base_execution_evm_runtime::{
             AccountInfo, CfgEnv, ContextTr, CreateInputs, CreateOutcome, EmptyDB, EthEvmFactory,
-            Evm, EvmEnv, Inspector, JournalTr, ReferenceEvmFactory, TxEnv, hardfork::SpecId,
+            Evm, Inspector, JournalTr, ReferenceEvmEnv, ReferenceEvmFactory, TxEnv,
+            hardfork::SpecId,
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;
@@ -705,8 +706,10 @@ mod tests {
         let mut cfg = CfgEnv::default();
         cfg.spec = SpecId::CANCUN;
         cfg.chain_id = 1;
-        let env =
-            EvmEnv { block_env: base_execution_evm_runtime::BlockEnv::default(), cfg_env: cfg };
+        let env = ReferenceEvmEnv {
+            block_env: base_execution_evm_runtime::BlockEnv::default(),
+            cfg_env: cfg,
+        };
 
         let factory = EthEvmFactory::default();
 

@@ -34,7 +34,7 @@ impl BaseEvmEnvBuilder {
     }
 
     /// Builds an [`EvmEnv`] for a block header using Base spec resolution.
-    pub fn evm_env(header: &Header, chain_spec: &BaseChainSpec) -> EvmEnv<BaseSpecId> {
+    pub fn evm_env(header: &Header, chain_spec: &BaseChainSpec) -> EvmEnv {
         let spec = BaseSpecId::from_header(chain_spec, header);
         let cfg_env = Self::cfg_env(spec, header.timestamp, chain_spec);
         let blob_excess_gas_and_price = Self::blob_excess_gas_and_price(spec);
@@ -61,7 +61,7 @@ impl BaseEvmEnvBuilder {
         attributes: &BaseNextBlockEnvAttributes,
         base_fee_per_gas: u64,
         chain_spec: &BaseChainSpec,
-    ) -> EvmEnv<BaseSpecId> {
+    ) -> EvmEnv {
         let spec = BaseSpecId::from_timestamp(chain_spec, attributes.timestamp);
         let cfg_env = Self::cfg_env(spec, attributes.timestamp, chain_spec);
         let blob_excess_gas_and_price = Self::blob_excess_gas_and_price(spec);
@@ -84,10 +84,7 @@ impl BaseEvmEnvBuilder {
 
     /// Builds an [`EvmEnv`] for engine payload execution.
     #[cfg(feature = "std")]
-    pub fn payload_evm_env(
-        payload: &ExecutionData,
-        chain_spec: &BaseChainSpec,
-    ) -> EvmEnv<BaseSpecId> {
+    pub fn payload_evm_env(payload: &ExecutionData, chain_spec: &BaseChainSpec) -> EvmEnv {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
         let spec = BaseSpecId::from_timestamp(chain_spec, timestamp);

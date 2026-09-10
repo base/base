@@ -31,7 +31,7 @@ where
         payload_attrs: &BasePayloadAttributes,
         base_fee_params: &BaseFeeParams,
         min_base_fee: u64,
-    ) -> ExecutorResult<EvmEnv<BaseSpecId>> {
+    ) -> ExecutorResult<EvmEnv> {
         let block_env = self.prepare_block_env(
             spec_id,
             parent_header,

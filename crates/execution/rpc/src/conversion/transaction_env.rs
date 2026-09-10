@@ -1,8 +1,6 @@
-use core::fmt::Debug;
-
 use alloy_primitives::{TxKind, U256};
 use base_common_types_rpc::request::{TransactionInputError, TransactionRequest};
-use base_execution_evm_runtime::{BlockEnvironment, EvmEnv, TxEnv, either::Either};
+use base_execution_evm_runtime::{Block, EvmEnv, TxEnv, either::Either};
 use thiserror::Error;
 
 use crate::conversion::{CallFees, CallFeesError};
@@ -10,17 +8,12 @@ use crate::conversion::{CallFees, CallFeesError};
 /// Converts `self` into `T`.
 ///
 /// Should create an executable transaction environment using [`TransactionRequest`].
-pub trait TryIntoTxEnv<
-    T,
-    Spec = base_execution_evm_runtime::hardfork::SpecId,
-    BlockEnv = base_execution_evm_runtime::BlockEnv,
->
-{
+pub trait TryIntoTxEnv<T> {
     /// An associated error that can occur during the conversion.
     type Err;
 
     /// Performs the conversion.
-    fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, BlockEnv>) -> Result<T, Self::Err>;
+    fn try_into_tx_env(self, evm_env: &EvmEnv) -> Result<T, Self::Err>;
 }
 
 /// An Ethereum specific transaction environment error than can occur during conversion from
@@ -35,10 +28,10 @@ pub enum EthTxEnvError {
     Input(#[from] TransactionInputError),
 }
 
-impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<TxEnv, Spec, Block> for TransactionRequest {
+impl TryIntoTxEnv<TxEnv> for TransactionRequest {
     type Err = EthTxEnvError;
 
-    fn try_into_tx_env(self, evm_env: &EvmEnv<Spec, Block>) -> Result<TxEnv, Self::Err> {
+    fn try_into_tx_env(self, evm_env: &EvmEnv) -> Result<TxEnv, Self::Err> {
         // Ensure that if versioned hashes are set, they're not empty
         if self.blob_versioned_hashes.as_ref().is_some_and(|hashes| hashes.is_empty()) {
             return Err(CallFeesError::BlobTransactionMissingBlobHashes.into());

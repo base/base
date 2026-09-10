@@ -3,9 +3,8 @@
 use core::{any::Any, fmt::Debug};
 
 use crate::{
-    U256,
+    BaseSpecId, U256,
     core_machine::{AccessList, BlockEnv, CfgEnv, TransactionType, TxEnv},
-    hardfork::SpecId,
 };
 
 /// The Ethereum transaction and configuration context.
@@ -14,27 +13,30 @@ pub type EthEvmContext<DB> = crate::core_machine::ReferenceContext<TxEnv, CfgEnv
 
 /// Container type that holds both the configuration and block environment for EVM execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvmEnv<Spec = SpecId, BlockEnv = crate::core_machine::BlockEnv> {
+pub struct EvmEnv {
     /// The configuration environment with handler settings
-    pub cfg_env: CfgEnv<Spec>,
+    pub cfg_env: CfgEnv<BaseSpecId>,
     /// The block environment containing block-specific data
     pub block_env: BlockEnv,
 }
 
-impl<Spec: Default + Into<SpecId> + Clone, B: Default> Default for EvmEnv<Spec, B> {
+impl Default for EvmEnv {
     fn default() -> Self {
-        Self { cfg_env: CfgEnv::new_with_spec(Spec::default()), block_env: B::default() }
+        Self {
+            cfg_env: CfgEnv::new_with_spec(BaseSpecId::default()),
+            block_env: BlockEnv::default(),
+        }
     }
 }
 
-impl<Spec, BlockEnv> EvmEnv<Spec, BlockEnv> {
+impl EvmEnv {
     /// Create a new `EvmEnv` from its components.
     ///
     /// # Arguments
     ///
     /// * `cfg_env_with_handler_cfg` - The configuration environment with handler settings
     /// * `block` - The block environment containing block-specific data
-    pub const fn new(cfg_env: CfgEnv<Spec>, block_env: BlockEnv) -> Self {
+    pub const fn new(cfg_env: CfgEnv<BaseSpecId>, block_env: BlockEnv) -> Self {
         Self { cfg_env, block_env }
     }
 
@@ -50,23 +52,14 @@ impl<Spec, BlockEnv> EvmEnv<Spec, BlockEnv> {
     }
 }
 
-impl<Spec, BlockEnv: BlockEnvironment> EvmEnv<Spec, BlockEnv> {
-    /// Sets an extension on the environment.
-    pub fn map_block_env<NewBlockEnv>(
-        self,
-        f: impl FnOnce(BlockEnv) -> NewBlockEnv,
-    ) -> EvmEnv<Spec, NewBlockEnv> {
-        let Self { cfg_env, block_env } = self;
-        EvmEnv { cfg_env, block_env: f(block_env) }
-    }
-
+impl EvmEnv {
     /// Returns a reference to the block environment.
     pub const fn block_env(&self) -> &BlockEnv {
         &self.block_env
     }
 
     /// Returns a reference to the configuration environment.
-    pub const fn cfg_env(&self) -> &CfgEnv<Spec> {
+    pub const fn cfg_env(&self) -> &CfgEnv<BaseSpecId> {
         &self.cfg_env
     }
 
@@ -76,7 +69,7 @@ impl<Spec, BlockEnv: BlockEnvironment> EvmEnv<Spec, BlockEnv> {
     }
 
     /// Returns the spec id of the chain
-    pub const fn spec_id(&self) -> &Spec {
+    pub const fn spec_id(&self) -> &BaseSpecId {
         &self.cfg_env.spec
     }
 
@@ -156,8 +149,8 @@ impl<Spec, BlockEnv: BlockEnvironment> EvmEnv<Spec, BlockEnv> {
     }
 }
 
-impl<Spec, BlockEnv> From<(CfgEnv<Spec>, BlockEnv)> for EvmEnv<Spec, BlockEnv> {
-    fn from((cfg_env, block_env): (CfgEnv<Spec>, BlockEnv)) -> Self {
+impl From<(CfgEnv<BaseSpecId>, BlockEnv)> for EvmEnv {
+    fn from((cfg_env, block_env): (CfgEnv<BaseSpecId>, BlockEnv)) -> Self {
         Self { cfg_env, block_env }
     }
 }
@@ -273,7 +266,7 @@ mod tests {
             tx_gas_limit_cap: Some(999_999),
         };
 
-        let evm_env: EvmEnv<SpecId> = EvmEnv::default().with_limits(limits);
+        let evm_env: EvmEnv = EvmEnv::default().with_limits(limits);
 
         assert_eq!(evm_env.cfg_env.max_code_size(), 1234);
         assert_eq!(evm_env.cfg_env.max_initcode_size(), 5678);
@@ -284,7 +277,7 @@ mod tests {
     fn test_evm_env_with_osaka_defaults() {
         // osaka() provides explicit EIP-7825 gas cap and standard code size limits.
         let limits = EvmLimitParams::osaka();
-        let evm_env: EvmEnv<SpecId> = EvmEnv::default().with_limits(limits);
+        let evm_env: EvmEnv = EvmEnv::default().with_limits(limits);
 
         assert_eq!(evm_env.cfg_env.max_code_size(), crate::eip170::MAX_CODE_SIZE);
         assert_eq!(evm_env.cfg_env.max_initcode_size(), crate::eip3860::MAX_INITCODE_SIZE);
@@ -302,10 +295,8 @@ mod tests {
     #[test]
     fn test_evm_env_with_osaka_limits() {
         // osaka() has tx_gas_limit_cap set to EIP-7825's cap.
-        use crate::core_machine::{BlockEnv, CfgEnv};
-
         let limits = EvmLimitParams::osaka();
-        let cfg_env = CfgEnv::new_with_spec(SpecId::OSAKA);
+        let cfg_env = CfgEnv::new_with_spec(BaseSpecId::default());
         let evm_env = EvmEnv::new(cfg_env, BlockEnv::default()).with_limits(limits);
 
         assert_eq!(evm_env.cfg_env.tx_gas_limit_cap(), crate::eip7825::TX_GAS_LIMIT_CAP);

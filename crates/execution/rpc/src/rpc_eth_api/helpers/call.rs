@@ -417,10 +417,7 @@ impl BaseEthApi {
     /// [`BlockId`].
     pub fn create_access_list_with(
         &self,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         at: BlockId,
         request: BaseTransactionRequest,
         state_override: Option<StateOverride>,
@@ -469,10 +466,7 @@ impl BaseEthApi {
     pub fn caller_gas_allowance(
         &self,
         mut db: impl Database<Error: Into<EthApiError>>,
-        _evm_env: &base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        _evm_env: &base_execution_evm_runtime::EvmEnv,
         tx_env: &base_execution_evm_runtime::BaseTransaction,
     ) -> Result<u64, BaseEthApiError> {
         crate::caller_gas_allowance(&mut db, tx_env).map_err(BaseEthApiError::from_eth_err)
@@ -483,10 +477,7 @@ impl BaseEthApi {
     pub fn transact<DB>(
         &self,
         db: DB,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         tx_env: base_execution_evm_runtime::BaseTransaction,
     ) -> Result<ResultAndState<base_execution_evm_runtime::BaseHaltReason>, BaseEthApiError>
     where
@@ -503,10 +494,7 @@ impl BaseEthApi {
     pub fn transact_with_inspector<DB, I>(
         &self,
         db: DB,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         tx_env: base_execution_evm_runtime::BaseTransaction,
         inspector: I,
     ) -> Result<ResultAndState<base_execution_evm_runtime::BaseHaltReason>, BaseEthApiError>
@@ -599,10 +587,7 @@ impl BaseEthApi {
     where
         F: FnOnce(
                 &mut StateCacheDb,
-                base_execution_evm_runtime::EvmEnv<
-                    base_execution_evm_runtime::BaseSpecId,
-                    base_execution_evm_runtime::BlockEnv,
-                >,
+                base_execution_evm_runtime::EvmEnv,
                 base_execution_evm_runtime::BaseTransaction,
             ) -> Result<R, BaseEthApiError>
             + Send
@@ -724,10 +709,7 @@ impl BaseEthApi {
     /// `None`, they fall back to the [`base_execution_evm_blocks::EvmEnv`]'s settings.
     pub fn create_txn_env(
         &self,
-        evm_env: &base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: &base_execution_evm_runtime::EvmEnv,
         mut request: BaseTransactionRequest,
         mut db: impl Database<Error: Into<EthApiError>>,
     ) -> Result<base_execution_evm_runtime::BaseTransaction, BaseEthApiError> {
@@ -759,21 +741,12 @@ impl BaseEthApi {
     #[expect(clippy::type_complexity)]
     pub fn prepare_call_env<DB>(
         &self,
-        mut evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        mut evm_env: base_execution_evm_runtime::EvmEnv,
         mut request: BaseTransactionRequest,
         db: &mut DB,
         overrides: EvmOverrides,
     ) -> Result<
-        (
-            base_execution_evm_runtime::EvmEnv<
-                base_execution_evm_runtime::BaseSpecId,
-                base_execution_evm_runtime::BlockEnv,
-            >,
-            base_execution_evm_runtime::BaseTransaction,
-        ),
+        (base_execution_evm_runtime::EvmEnv, base_execution_evm_runtime::BaseTransaction),
         BaseEthApiError,
     >
     where

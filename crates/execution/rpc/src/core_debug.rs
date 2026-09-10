@@ -103,10 +103,7 @@ impl DebugApi {
     async fn trace_block(
         &self,
         block: Arc<RecoveredBlock>,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BaseEthApiError> {
         self.eth_api()

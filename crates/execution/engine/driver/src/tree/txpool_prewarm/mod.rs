@@ -66,10 +66,7 @@ impl Handle {
     pub(crate) fn start(
         &self,
         parent_hash: B256,
-        evm_env: base_execution_evm_runtime::EvmEnv<
-            base_execution_evm_runtime::BaseSpecId,
-            base_execution_evm_runtime::BlockEnv,
-        >,
+        evm_env: base_execution_evm_runtime::EvmEnv,
         provider_builder: StateProviderBuilder,
     ) {
         self.control.start(parent_hash, Job { evm_env, provider_builder });
@@ -105,9 +102,6 @@ pub trait Source: Send + Sync + Debug {
 
 /// A request to warm txpool transactions against one fully validated parent state.
 struct Job {
-    evm_env: base_execution_evm_runtime::EvmEnv<
-        base_execution_evm_runtime::BaseSpecId,
-        base_execution_evm_runtime::BlockEnv,
-    >,
+    evm_env: base_execution_evm_runtime::EvmEnv,
     provider_builder: StateProviderBuilder,
 }
