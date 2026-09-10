@@ -270,6 +270,7 @@ impl BlockWatcher {
                 continue;
             };
             let latest_number = latest.observation.number;
+            let latest_tx_count = latest.tx_hashes.len();
             let blocks_advanced =
                 last_seen_block.map_or(1, |seen| latest_number.saturating_sub(seen).max(1));
             let pulse_expected_boundary = expected_boundary
@@ -349,9 +350,19 @@ impl BlockWatcher {
             } else if last_progress_log.elapsed() >= Duration::from_secs(15)
                 && self.results_tracker.pending_count() > 0
             {
+                let (measured_pending, measured_pending_gas) =
+                    self.results_tracker.measured_unconfirmed_inventory();
                 warn!(
                     pending = self.results_tracker.pending_count(),
+                    in_flight = self.results_tracker.total_in_flight(),
+                    measured_pending,
+                    measured_pending_gas,
                     latest = latest_number,
+                    latest_txs = latest_tx_count,
+                    latest_gas_used = latest.gas_used,
+                    latest_gas_limit = latest.gas_limit,
+                    blocks_advanced,
+                    block_has_measured_pending = has_measured_pending,
                     "block watcher scanned block but matched no pending hashes"
                 );
                 last_progress_log = Instant::now();
