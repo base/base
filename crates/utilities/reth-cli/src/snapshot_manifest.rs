@@ -185,8 +185,11 @@ impl SnapshotManifestExt for SnapshotManifest {
 pub struct ManifestGenerationParams<'a> {
     /// Reth node datadir containing static files, state DB, and optional proofs DB.
     pub source_datadir: &'a Path,
-    /// Directory where snapshot archives and `manifest.json` are written.
-    pub output_dir: &'a Path,
+    /// Optional directory where the directory-backed generator writes archives and `manifest.json`.
+    ///
+    /// This is required by [`SnapshotGenerator::generate_manifest`] and unused by
+    /// [`SnapshotGenerator::generate_manifest_with_sink`].
+    pub output_dir: Option<&'a Path>,
     /// Chain ID recorded in the manifest.
     pub chain_id: u64,
     /// Optional base URL recorded in the manifest.
@@ -272,24 +275,23 @@ impl SnapshotGenerator {
     ///
     /// From <https://github.com/paradigmxyz/reth/blob/420693521fccd1437071a15a4a54a3a98b5492cf/crates/cli/commands/src/download/manifest.rs>
     pub fn generate_manifest(params: &ManifestGenerationParams<'_>) -> Result<Vec<PathBuf>> {
-        std::fs::create_dir_all(params.output_dir).with_context(|| {
-            format!("failed to create output dir {}", params.output_dir.display())
-        })?;
+        let output_dir = params
+            .output_dir
+            .context("output_dir is required for directory-backed snapshot generation")?;
+        std::fs::create_dir_all(output_dir)
+            .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
 
-        let sink = DirectoryArchiveSink::new(params.output_dir);
+        let sink = DirectoryArchiveSink::new(output_dir);
         let manifest = Self::generate_manifest_with_sink(params, &sink)?;
-        std::fs::write(
-            params.output_dir.join("manifest.json"),
-            serde_json::to_string_pretty(&manifest)?,
-        )?;
-        let files = Self::collect_output_files(params.output_dir)?;
+        std::fs::write(output_dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
+        let files = Self::collect_output_files(output_dir)?;
         info!(file_count = files.len(), "snapshot generation complete");
         Ok(files)
     }
 
     /// Generates archives using an arbitrary synchronous output sink.
     ///
-    /// Unlike [`Self::generate_manifest`], this neither creates `output_dir` nor writes a
+    /// Unlike [`Self::generate_manifest`], this neither creates an output directory nor writes a
     /// manifest. Callers that stream archives can publish the returned manifest after every sink
     /// writer has completed successfully.
     pub fn generate_manifest_with_sink(
@@ -304,7 +306,6 @@ impl SnapshotGenerator {
 
         info!(
             source = %params.source_datadir.display(),
-            output = %params.output_dir.display(),
             chain_id = params.chain_id,
             block,
             blocks_per_file,
@@ -1021,7 +1022,7 @@ mod tests {
     ) -> ManifestGenerationParams<'a> {
         ManifestGenerationParams {
             source_datadir,
-            output_dir,
+            output_dir: Some(output_dir),
             chain_id: 8453,
             base_url: None,
             block,
@@ -1391,7 +1392,7 @@ mod tests {
 
         let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
             source_datadir: source.path(),
-            output_dir: output.path(),
+            output_dir: Some(output.path()),
             chain_id: 8453,
             base_url: None,
             block: Some(2_000_000),

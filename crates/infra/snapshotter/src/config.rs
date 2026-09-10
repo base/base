@@ -58,19 +58,6 @@ pub struct SnapshotterConfig {
     #[arg(long, short = 'd')]
     pub source_datadir: PathBuf,
 
-    /// Directory containing legacy staged snapshot runs for upload-only recovery.
-    ///
-    /// Normal snapshot runs stream compressed archives directly to object storage and do not
-    /// create a run directory here. A unique `run-<timestamp>` subdirectory is only expected
-    /// when using [`Self::upload_existing_run_timestamp`].
-    #[arg(long, short = 'o')]
-    pub output_dir: PathBuf,
-
-    /// Upload an already-generated `run-<timestamp>` directory from `output_dir`
-    /// instead of stopping the EL and regenerating snapshot artifacts.
-    #[arg(long)]
-    pub upload_existing_run_timestamp: Option<u64>,
-
     /// S3-compatible bucket name.
     #[arg(long)]
     pub bucket: String,
