@@ -13,9 +13,6 @@ pub use server::{
     TransportRpcModules,
 };
 
-mod config;
-pub use config::RpcConfig;
-
 mod cors;
 pub use cors::CorsDomainError;
 

@@ -3626,7 +3626,6 @@ dependencies = [
  "base-execution-rpc-handlers",
  "base-execution-state-provider",
  "base-execution-txpool-pool",
- "base-node-config",
  "clap",
  "dyn-clone",
  "http 1.4.2",

@@ -14,7 +14,7 @@ use base_execution_rpc_handlers::{
 use base_execution_rpc_handlers::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_rpc_handlers::{EthStateCache, cache::cache_new_blocks_task};
 use base_execution_rpc_server::{
-    RpcConfig, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
+    RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
 };
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
@@ -26,6 +26,7 @@ pub use jsonrpsee::{
 };
 use {crate::AddOnsContext, base_execution_txpool_pool::BaseTransactionPool};
 
+use crate::RpcConfig;
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
 /// Handles for the Base node's public RPC services.

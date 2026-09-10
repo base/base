@@ -98,3 +98,6 @@ pub use ethstats::*;
 
 mod builder_config;
 pub use builder_config::BuilderConfig;
+
+mod rpc_config;
+pub use rpc_config::RpcConfig;

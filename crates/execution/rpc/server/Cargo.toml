@@ -20,7 +20,6 @@ metrics = { workspace = true }
 dyn-clone = { workspace = true }
 pin-project = {workspace = true}
 thiserror = { workspace = true }
-base-node-config = { workspace = true }
 base-execution-txpool-pool = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
@@ -55,7 +54,6 @@ base-execution-network-types = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 serde_json = { workspace = true, features = ["alloc"] }
-clap = { workspace = true, features = ["default", "derive"] }
 http-body-util = { workspace = true, features = ["default"] }
 reqwest = {workspace = true, features = ["rustls", "stream"]}
 base-common-types-chain = { workspace = true, features = ["serde"]}
