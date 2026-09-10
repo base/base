@@ -1,5 +1,5 @@
 [package]
-name = "base-telemetry-service"
+name = "base-infra-telemetry-service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

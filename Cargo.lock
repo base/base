@@ -4423,6 +4423,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-infra-telemetry-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base-common-http-proxy",
+ "base-common-observability-health",
+ "base-execution-network-types",
+ "base-execution-network-wire",
+ "clap",
+ "discv5",
+ "futures",
+ "governor 0.7.0",
+ "ipnet",
+ "libp2p",
+ "libp2p-identity",
+ "mockall",
+ "reqwest",
+ "secp256k1 0.30.0",
+ "serde",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
@@ -5354,41 +5383,12 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "base-common-cli-support",
- "base-telemetry-service",
+ "base-infra-telemetry-service",
  "clap",
  "dotenvy",
  "serde",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "base-telemetry-service"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "anyhow",
- "async-trait",
- "axum",
- "base-common-http-proxy",
- "base-common-observability-health",
- "base-execution-network-types",
- "base-execution-network-wire",
- "clap",
- "discv5",
- "futures",
- "governor 0.7.0",
- "ipnet",
- "libp2p",
- "libp2p-identity",
- "mockall",
- "reqwest",
- "secp256k1 0.30.0",
- "serde",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

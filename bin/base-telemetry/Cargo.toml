@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 dotenvy = { workspace = true }
-base-telemetry-service = { workspace = true }
+base-infra-telemetry-service = { workspace = true }
 base-common-cli-support = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default", "std"] }

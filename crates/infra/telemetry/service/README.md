@@ -1,4 +1,4 @@
-# `base-telemetry-service`
+# `base-infra-telemetry-service`
 
 Axum backend for Base telemetry services.
 

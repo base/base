@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use base_common_cli_support::{LogConfig, RuntimeManager};
-use base_telemetry_service::{BaseTelemetryServer, ServerConfig};
+use base_infra_telemetry_service::{BaseTelemetryServer, ServerConfig};
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
 
