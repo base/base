@@ -9,6 +9,11 @@ use url::Url;
 /// EL to be considered "at tip".
 pub const DEFAULT_TIP_THRESHOLD_SECS: u64 = 10;
 
+/// Default number of archive streams compressed and uploaded concurrently.
+///
+/// This preserves parallel packaging of the state, RocksDB-index, and proofs databases.
+pub const DEFAULT_MAX_STREAMING_ARCHIVES: usize = 3;
+
 /// How the S3/R2 client is configured.
 #[derive(Debug, Clone, ValueEnum)]
 pub enum S3ConfigType {
@@ -101,6 +106,14 @@ pub struct SnapshotterConfig {
     /// Defaults to Rayon's global thread count, normally the available CPU count.
     #[arg(long)]
     pub snapshot_threads: Option<usize>,
+
+    /// Maximum number of archive streams compressed and uploaded concurrently.
+    ///
+    /// The default of three preserves parallel compression of the state, RocksDB-index, and
+    /// proofs databases. Each active stream can retain roughly 1.25 `GiB` of compressed data
+    /// while an S3 multipart part is uploaded and retried; lower this on memory-constrained nodes.
+    #[arg(long, env = "SNAPSHOTTER_MAX_STREAMING_ARCHIVES", default_value = "3")]
+    pub max_streaming_archives: NonZeroUsize,
 
     /// Number of completed timestamped snapshot run directories to retain remotely.
     ///
