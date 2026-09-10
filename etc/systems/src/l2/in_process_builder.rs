@@ -86,7 +86,7 @@ pub struct InProcessBuilder {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     /// Native execution client shared with the co-located consensus node.
-    pub execution: base_consensus_engine::LocalEngineClient,
+    pub execution: base_consensus_driver_service::LocalEngineClient,
     metrics_addr: SocketAddr,
 
     p2p_port: u16,
@@ -185,7 +185,7 @@ impl InProcessBuilder {
             .ws_local_addr()
             .ok_or_else(|| eyre!("WebSocket RPC server failed to bind to address"))?;
 
-        let execution = base_consensus_engine::LocalEngineClient {
+        let execution = base_consensus_driver_service::LocalEngineClient {
             l1: base_consensus_source_providers::L1RpcProvider::new_http(Url::parse(
                 "http://127.0.0.1:1",
             )?),

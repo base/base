@@ -12,17 +12,17 @@ use base_common_types_payload::{
     PayloadStatusEnum,
 };
 use base_common_types_rpc::{BaseTransaction, Block as RpcBlock, BlockTransactions};
+use base_consensus_batch_types::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
 use base_consensus_derive_pipeline::Signal;
-use base_consensus_engine::{
-    Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
-    ForkchoiceCheckpointReader,
-    test_utils::{MockEngineClient, test_engine_client_builder},
-};
 use base_consensus_driver_service::{
     DerivationClientResult, EngineActorRequest, EngineDerivationClient, EngineError,
     EngineProcessor, NoopCheckpointWriter, ValidatorEngineRequestHandler,
 };
-use base_consensus_batch_types::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+use base_consensus_driver_service::{
+    Engine, EngineState, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
+    ForkchoiceCheckpointReader, engine_test_utils::MockEngineClient,
+    engine_test_utils::test_engine_client_builder,
+};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
@@ -158,7 +158,8 @@ impl PrunedHistoryStartup {
         );
         let (request_tx, request_rx) = mpsc::channel(8);
         let handler = ValidatorEngineRequestHandler::new(processor);
-        let handle = base_consensus_driver_service::EngineRequestReceiver::start(handler, request_rx);
+        let handle =
+            base_consensus_driver_service::EngineRequestReceiver::start(handler, request_rx);
 
         RunningValidatorProcessor {
             state_rx,

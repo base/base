@@ -1,4 +1,4 @@
-use base_consensus_engine::LocalEngineClient;
+use crate::LocalEngineClient;
 
 use crate::NodeMode;
 

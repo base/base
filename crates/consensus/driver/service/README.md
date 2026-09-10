@@ -9,7 +9,7 @@ An implementation of the Base [RollupNode][rn-spec] service.
 
 ## Overview
 
-This crate wires together every subsystem of the Base consensus node into a single runnable service. It owns no domain logic itself — derivation lives in `base-consensus-derive-pipeline`, engine state management lives in `base-consensus-engine`, peer-to-peer gossip lives in `base-consensus-network-service`, and so on. What this crate provides is the composition layer: it constructs each subsystem as an independent async actor, opens the typed channels between them, and manages the shared lifetime of all actors through a single `CancellationToken`.
+This crate wires together every subsystem of the Base consensus node into a single runnable service. It owns no domain logic itself — derivation lives in `base-consensus-derive-pipeline`, engine state management lives in `base-consensus-driver-service`, peer-to-peer gossip lives in `base-consensus-network-service`, and so on. What this crate provides is the composition layer: it constructs each subsystem as an independent async actor, opens the typed channels between them, and manages the shared lifetime of all actors through a single `CancellationToken`.
 
 The entry point for most callers is `RollupNodeBuilder`, which accepts the required configuration for each subsystem and produces a `RollupNode` whose `start()` method blocks until the process receives SIGINT or SIGTERM or until any actor exits with an error.
 
@@ -57,7 +57,7 @@ Finally, `spawn_and_wait!` spawns all constructed actors onto the `JoinSet` and 
 
 ## Engine Actor
 
-The engine actor is the hub of the service. All other actors that need to affect the L2 execution layer send requests to it. It owns the `Engine` struct from `base-consensus-engine`, which maintains the task queue and the `EngineState` watch channel. The actor's main loop receives `EngineActorRequest` variants and routes them:
+The engine actor is the hub of the service. All other actors that need to affect the L2 execution layer send requests to it. It owns the `Engine` struct from `base-consensus-driver-service`, which maintains the task queue and the `EngineState` watch channel. The actor's main loop receives `EngineActorRequest` variants and routes them:
 
 `BuildRequest` carries a `PayloadId` response channel and is forwarded to the processing task, which calls `engine_api::forkchoice_updated` with the payload attributes to begin block building and returns the resulting `PayloadId`.
 

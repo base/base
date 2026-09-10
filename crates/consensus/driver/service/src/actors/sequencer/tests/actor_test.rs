@@ -7,6 +7,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::SealTaskError;
 use alloy_primitives::{Address, B256, utils::parse_ether};
 use alloy_transport::TransportErrorKind;
 use base_common_chain_config::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
@@ -14,9 +15,10 @@ use base_common_types_chain::BaseTxEnvelope;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
 };
-use base_consensus_derive_pipeline::{BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder};
-use base_consensus_engine::SealTaskError;
 use base_consensus_batch_types::{AttributesWithParent, BlockInfo, L2BlockInfo};
+use base_consensus_derive_pipeline::{
+    BuilderError, PipelineErrorKind, test_utils::TestAttributesBuilder,
+};
 use jsonrpsee::core::ClientError;
 use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};

@@ -275,11 +275,11 @@ mod tests {
         sync::Arc,
     };
 
+    use crate::{EngineClient, LocalEngineClient};
     use alloy_primitives::{Address, B256};
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::Upgrades;
     use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
-    use base_consensus_engine::{EngineClient, LocalEngineClient};
     use base_consensus_network_service::LocalNode as DiscoveryNode;
     use base_consensus_source_providers::LocalL2Provider;
     use base_node_runner::test_utils::LocalNode;

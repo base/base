@@ -1,5 +1,5 @@
+use crate::BuildTaskError;
 use base_consensus_derive_pipeline::PipelineErrorKind;
-use base_consensus_engine::BuildTaskError;
 
 use crate::{
     L1OriginSelectorError, UnsafePayloadGossipClientError, actors::engine::EngineClientError,

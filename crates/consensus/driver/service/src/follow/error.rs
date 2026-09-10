@@ -1,6 +1,6 @@
+use crate::{EngineTaskError, EngineTaskErrorSeverity};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_consensus_engine::{EngineTaskError, EngineTaskErrorSeverity};
 use base_consensus_batch_types::FromBlockError;
 use thiserror::Error;
 

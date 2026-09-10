@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
+use crate::ConsolidateInput;
 use async_trait::async_trait;
-use base_consensus_engine::ConsolidateInput;
 use derive_more::Constructor;
 use tokio::sync::mpsc;
 

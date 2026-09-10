@@ -2,9 +2,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use crate::ConsolidateInput;
 use alloy_primitives::B256;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_engine::ConsolidateInput;
 use base_consensus_batch_types::L2BlockInfo;
 use tracing::debug;
 
@@ -323,11 +323,11 @@ impl ShadowReconciliationGate {
 
 #[cfg(test)]
 mod tests {
+    use crate::{ConsolidateInput, engine_test_utils::TestAttributesBuilder};
     use alloy_primitives::{Address, B256, Bloom, U256};
     use base_common_types_payload::{
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1,
     };
-    use base_consensus_engine::{ConsolidateInput, test_utils::TestAttributesBuilder};
     use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
     use super::{CanonicalUnsafeCatchup, ShadowReconciliationGate};

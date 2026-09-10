@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 redb = {workspace = true}
 libp2p = {workspace = true}
-serde = { workspace = true }
 discv5 = { workspace = true }
 async-trait = {workspace = true}
 http-body = { workspace = true }
@@ -21,69 +20,77 @@ alloy-signer = { workspace = true }
 async-stream = { workspace = true }
 ethereum_ssz = { workspace = true }
 alloy-genesis = { workspace = true }
+alloy-transport = {workspace = true}
 libp2p-stream = { workspace = true }
-alloy-transport = { workspace = true }
-base-consensus-engine = {workspace = true}
-base-common-types-chain = { workspace = true }
-metrics = { workspace = true, optional = true }
-tracing = {features = ["std"], workspace = true}
-base-execution-state-tasks = { workspace = true }
-thiserror = {features = ["std"], workspace = true}
+alloy-json-rpc = { workspace = true }
+metrics = {optional = true, workspace = true}
+reth-primitives-traits = { workspace = true }
+serde = {features = ["std"], workspace = true}
+base-execution-state-tasks = {workspace = true}
+tracing = {workspace = true, features = ["std"]}
+base-execution-engine-driver = {workspace = true}
+base-execution-engine-types = { workspace = true }
+thiserror = {workspace = true, features = ["std"]}
 url = { workspace = true, features = ["default"] }
 backon = {workspace = true, features = ["default"]}
 base-consensus-network-service = {workspace = true}
+base-execution-network-service = {workspace = true}
 http = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
 base-consensus-source-providers = {workspace = true}
+base-execution-state-provider = { workspace = true }
 bytes = { workspace = true, features = ["default"] }
 ipnet = { workspace = true, features = ["default"] }
 base-consensus-derive-pipeline = { workspace = true }
+base-execution-payload-builder = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+base-common-observability-metrics = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
 base-common-observability-health = { workspace = true }
-base-common-observability-metrics = { workspace = true }
 tokio-stream = { workspace = true, features = ["default"] }
-alloy-eips = {features = ["serde", "std"], workspace = true}
+alloy-eips = {workspace = true, features = ["serde", "std"]}
 opentelemetry = { workspace = true, features = ["default"] }
 http-body-util = { workspace = true, features = ["default"] }
-derive_more = { workspace = true, features = ["debug", "eq"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
+base-common-types-chain = {features = ["std"], workspace = true}
 base-common-client-rollup = {workspace = true, features = ["server"]}
-base-common-types-rpc = {features = ["serde", "std"], workspace = true}
 base-common-chain-activation = {workspace = true, features = ["default"]}
-base-consensus-batch-types = {features = ["serde", "std"], workspace = true}
+base-consensus-batch-types = {workspace = true, features = ["serde", "std"]}
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 jsonrpsee = {workspace = true, features = ["http-client", "macros", "server"]}
-alloy-primitives = {features = ["map", "rlp", "serde", "std"], workspace = true}
-base-common-types-payload = {workspace = true, features = ["jwt", "serde", "std"]}
-base-common-chain-config = {workspace = true, features = ["default", "serde", "std"]}
-tokio = {features = ["default", "macros", "rt", "rt-multi-thread", "time"], workspace = true}
+alloy-primitives = {workspace = true, features = ["map", "rlp", "serde", "std"]}
+base-common-types-payload = {features = ["jwt", "serde", "std"], workspace = true}
+base-common-types-rpc = {workspace = true, features = ["default", "serde", "std"]}
+base-common-chain-config = {features = ["default", "serde", "std"], workspace = true}
+tokio = {workspace = true, features = ["default", "macros", "rt", "rt-multi-thread", "time"]}
+derive_more = {features = ["constructor", "debug", "deref", "display", "eq", "from_str"], workspace = true}
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
-base-common-client-ethereum = {workspace = true, features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"]}
+base-common-client-ethereum = {features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"], workspace = true}
 
 [dev-dependencies]
+arbitrary = {workspace = true}
 mockall = { workspace = true }
-arbitrary = { workspace = true }
 base-common-client-ethereum = { workspace = true }
-rand = { workspace = true, features = ["default"] }
+metrics-exporter-prometheus = { workspace = true }
+rstest = {features = ["default"], workspace = true}
 anyhow = { workspace = true, features = ["default"] }
-rstest = { workspace = true, features = ["default"] }
 tempfile = {features = ["default"], workspace = true}
 httpmock = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["k256"] }
 metrics-util = { workspace = true, features = ["debugging"] }
+rand = {features = ["default", "thread_rng"], workspace = true}
 tracing-subscriber = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
-base-common-types-rpc = { workspace = true, features = ["default"] }
-base-consensus-engine = { workspace = true, features = ["test-utils"] }
-base-common-chain-config = {features = ["test-utils"], workspace = true}
 base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
 base-consensus-derive-pipeline = { workspace = true, features = ["test-utils"] }
 base-common-types-payload = { workspace = true, features = ["arbitrary", "std"] }
+base-common-chain-config = {workspace = true, features = ["default", "test-utils"]}
 base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "std"] }
+base-common-types-rpc = {features = ["arbitrary", "default", "k256"], workspace = true}
 tokio = {features = ["default", "macros", "rt", "sync", "test-util"], workspace = true}
 
 [features]
@@ -91,7 +98,6 @@ default = []
 metrics = [
     "base-consensus-derive-pipeline/metrics",
     "base-consensus-network-service/metrics",
-    "base-consensus-engine/metrics",
     "base-consensus-source-providers/metrics",
     "base-common-observability-metrics/metrics",
     "base-common-chain-activation/metrics",
@@ -99,3 +105,4 @@ metrics = [
     "libp2p/metrics",
     "tower-http/metrics",
 ]
+test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils"]

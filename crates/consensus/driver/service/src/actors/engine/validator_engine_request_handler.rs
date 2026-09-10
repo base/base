@@ -2,11 +2,11 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_eips::BlockNumberOrTag;
-use base_consensus_engine::{
+use crate::{
     ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrors, FinalizeTask,
     Metrics as EngineMetrics, SealTaskError,
 };
+use alloy_eips::BlockNumberOrTag;
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{error, warn};

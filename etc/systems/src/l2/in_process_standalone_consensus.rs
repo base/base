@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_consensus_driver_service::{StandalonePrefund, StandaloneSequencerNode};
 use base_consensus_batch_types::L1BlockInfoTx;
+use base_consensus_driver_service::{StandalonePrefund, StandaloneSequencerNode};
 use eyre::Result;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,7 @@ pub struct InProcessStandaloneSequencerConfig {
     /// Canonical rollup configuration for the snapshot chain.
     pub rollup_config: RollupConfig,
     /// Native execution client for the co-located execution node.
-    pub execution: base_consensus_engine::LocalEngineClient,
+    pub execution: base_consensus_driver_service::LocalEngineClient,
     /// L1-info transaction decoded from the snapshot head.
     pub l1_info: L1BlockInfoTx,
     /// Effective system configuration at the snapshot head.

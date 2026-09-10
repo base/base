@@ -36,7 +36,7 @@ pub struct InProcessFollowConsensusConfig {
     /// Source L2 execution RPC endpoint URL to follow.
     pub source_l2_rpc_url: Url,
     /// Native execution client for the co-located execution node.
-    pub execution: base_consensus_engine::LocalEngineClient,
+    pub execution: base_consensus_driver_service::LocalEngineClient,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is applied to the follow node's rollup

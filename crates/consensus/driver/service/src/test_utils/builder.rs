@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use crate::SafeHeadResponse;
+use crate::{Engine, EngineState};
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use base_common_chain_config::{ChainGenesis, RollupConfig};
 use base_common_types_chain::Header as ConsensusHeader;
-use base_consensus_derive_pipeline::test_utils::new_test_pipeline;
-use base_consensus_engine::{Engine, EngineState};
 use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
+use base_consensus_derive_pipeline::test_utils::new_test_pipeline;
 use tokio::{
     sync::{mpsc, oneshot, watch},
     task::JoinHandle,

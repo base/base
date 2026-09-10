@@ -1,12 +1,12 @@
 use std::{fmt::Debug, sync::Arc};
 
-use async_trait::async_trait;
-use base_common_chain_config::RollupConfig;
-use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_engine::{
+use crate::{
     EngineClient, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskExt, InsertTask,
     SynchronizeTask,
 };
+use async_trait::async_trait;
+use base_common_chain_config::RollupConfig;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_batch_types::L2BlockInfo;
 use tokio::sync::Mutex;
 
@@ -96,6 +96,7 @@ impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E
 mod tests {
     use std::{sync::Arc, time::Duration};
 
+    use crate::engine_test_utils::test_engine_client_builder;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, U256};
     use base_common_chain_config::RollupConfig;
@@ -104,7 +105,6 @@ mod tests {
         BaseExecutionPayload, BaseExecutionPayloadEnvelope, ExecutionPayloadV1, ForkchoiceUpdated,
         PayloadStatus, PayloadStatusEnum,
     };
-    use base_consensus_engine::test_utils::test_engine_client_builder;
     use base_consensus_batch_types::{BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
     use tokio::time::{self, Instant};
 

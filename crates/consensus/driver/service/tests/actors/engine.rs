@@ -9,12 +9,12 @@ use std::{
 };
 
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
+use base_consensus_driver_service::EngineQueries;
 use base_consensus_driver_service::{
     BuildRequest, EngineActor, EngineActorRequest, EngineError, EngineRequestReceiver,
     EngineRpcClient, NodeActor,
 };
-use base_consensus_engine::EngineQueries;
-use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 use jsonrpsee::types::ErrorCode;
 use opentelemetry::Context;
 use tokio::{

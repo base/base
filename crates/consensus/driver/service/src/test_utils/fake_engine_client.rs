@@ -1,6 +1,6 @@
-//! In-memory fake [`base_consensus_engine::EngineClient`] with call-log-first behavior.
+//! In-memory fake [`crate::EngineClient`] with call-log-first behavior.
 //!
-//! This fake is intentionally distinct from `base_consensus_engine::test_utils::MockEngineClient`:
+//! This fake is intentionally distinct from `crate::engine_test_utils::MockEngineClient`:
 //! it prioritizes deterministic call capture so Tier-0 actor-integration tests can assert exactly
 //! which Engine API requests were sent by the CL. Responses are still scriptable per call.
 
@@ -9,6 +9,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use crate::{EngineClient, ExecutionClientError as EngineClientError};
 use alloy_eips::{BlockId, BlockNumberOrTag, eip1898::BlockNumberOrTag as Eip1898BlockNumberOrTag};
 use alloy_primitives::{Address, B256};
 use alloy_transport::{TransportError, TransportErrorKind};
@@ -21,7 +22,6 @@ use base_common_types_payload::{
     PayloadId, PayloadStatus,
 };
 use base_common_types_rpc::BaseBlockResponse;
-use base_consensus_engine::{EngineClient, EngineClientError};
 use base_consensus_batch_types::L2BlockInfo;
 
 /// Scripted response for an forkchoice call.
@@ -260,7 +260,7 @@ impl EngineClient for FakeEngineClient {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> Result<Option<base_consensus_engine::SealedBlock>, EngineClientError> {
+    ) -> Result<Option<crate::SealedBlock>, EngineClientError> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         let BlockId::Number(tag) = block else { return Ok(None) };
         state.calls.push(EngineClientCall::L2BlockByLabel(tag));
@@ -268,7 +268,7 @@ impl EngineClient for FakeEngineClient {
             .l2_blocks_by_label
             .get(&tag)
             .cloned()
-            .map(base_consensus_engine::test_utils::MockEngineClient::native_block))
+            .map(crate::engine_test_utils::MockEngineClient::native_block))
     }
 
     async fn storage_root(
@@ -285,14 +285,14 @@ impl EngineClient for FakeEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<base_consensus_engine::SealedBlock>, EngineClientError> {
+    ) -> Result<Option<crate::SealedBlock>, EngineClientError> {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockByLabel(numtag));
         Ok(state
             .l2_blocks_by_label
             .get(&numtag)
             .cloned()
-            .map(base_consensus_engine::test_utils::MockEngineClient::native_block))
+            .map(crate::engine_test_utils::MockEngineClient::native_block))
     }
 
     async fn l2_block_info_by_label(

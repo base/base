@@ -2,11 +2,11 @@
 
 use std::{sync::Arc, time::Instant};
 
-use alloy_eips::BlockNumberOrTag;
-use base_consensus_engine::{
+use crate::{
     ConsolidateTask, EngineClient, EngineTask, EngineTaskError, EngineTaskErrorSeverity,
     EngineTaskErrors, FinalizeTask, Metrics as EngineMetrics, SealTaskError,
 };
+use alloy_eips::BlockNumberOrTag;
 use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
@@ -679,11 +679,11 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use base_common_chain_config::RollupConfig;
-    use base_consensus_engine::{
-        Engine, EngineState,
-        test_utils::{MockEngineClient, test_engine_client_builder},
+    use crate::{
+        Engine, EngineState, engine_test_utils::MockEngineClient,
+        engine_test_utils::test_engine_client_builder,
     };
+    use base_common_chain_config::RollupConfig;
     use base_consensus_batch_types::L2BlockInfo;
     use jsonrpsee::core::ClientError;
     use tokio::sync::watch;

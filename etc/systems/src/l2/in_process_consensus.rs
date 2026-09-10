@@ -57,7 +57,7 @@ pub struct InProcessConsensusConfig {
     /// L1 beacon API endpoint URL.
     pub l1_beacon_url: Url,
     /// Native execution client for the co-located execution node.
-    pub execution: base_consensus_engine::LocalEngineClient,
+    pub execution: base_consensus_driver_service::LocalEngineClient,
     /// Node mode (Sequencer or Validator).
     pub mode: NodeMode,
     /// Sequencer signing key (required for Sequencer mode).

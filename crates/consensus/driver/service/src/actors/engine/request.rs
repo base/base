@@ -1,7 +1,5 @@
+use crate::{BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError};
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId};
-use base_consensus_engine::{
-    BuildTaskError, ConsolidateInput, EngineQueries, InsertTaskError, SealTaskError,
-};
 use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 use opentelemetry::Context;
 use thiserror::Error;

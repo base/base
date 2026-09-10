@@ -23,7 +23,6 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-rpc = { workspace = true }
-base-consensus-engine = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
@@ -44,7 +43,7 @@ base-consensus-batch-types = { workspace = true, features = ["std"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
-base-consensus-driver-service = {features = ["default"], workspace = true}
+base-consensus-driver-service = {workspace = true, features = ["default"]}
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }
 base-batcher-service-driver = {workspace = true, features = ["test-utils"]}
 base-common-chain-config = {features = ["default", "std"], workspace = true}

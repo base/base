@@ -7,12 +7,14 @@
 
 use std::{collections::VecDeque, sync::Arc};
 
+use crate::ConsolidateInput;
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use base_consensus_derive_pipeline::{L1RetrievalProvider, PipelineError, PipelineResult};
-use base_consensus_engine::ConsolidateInput;
-use base_consensus_source_providers::{APIConfigResponse, APIGenesisResponse, BeaconClient, BoxedBlob};
 use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
+use base_consensus_derive_pipeline::{L1RetrievalProvider, PipelineError, PipelineResult};
+use base_consensus_source_providers::{
+    APIConfigResponse, APIGenesisResponse, BeaconClient, BoxedBlob,
+};
 use tokio::sync::{Mutex, mpsc};
 
 use super::FakeEngineClientHandle;

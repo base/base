@@ -80,7 +80,7 @@ pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     /// Native execution client shared with the co-located consensus node.
-    pub execution: base_consensus_engine::LocalEngineClient,
+    pub execution: base_consensus_driver_service::LocalEngineClient,
     metrics_addr: SocketAddr,
     chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
@@ -235,7 +235,7 @@ impl InProcessClient {
             .ws_local_addr()
             .ok_or_else(|| eyre!("Failed to get websocket api address"))?;
 
-        let execution = base_consensus_engine::LocalEngineClient {
+        let execution = base_consensus_driver_service::LocalEngineClient {
             l1: base_consensus_source_providers::L1RpcProvider::new_http(Url::parse(
                 "http://127.0.0.1:1",
             )?),

@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use alloy_eips::BlockNumberOrTag;
-use base_common_chain_config::RollupConfig;
-use base_common_types_chain::BaseTxEnvelope;
-use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_consensus_derive_pipeline::{ResetSignal, Signal};
-use base_consensus_engine::{
+use crate::{
     ConsolidateTask, Engine, EngineClient, EngineSyncStateUpdate, EngineTask, EngineTaskError,
     EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, ForkchoiceCheckpointLabel,
     ForkchoiceCheckpointReader, InsertTask, InsertTaskResult, NoopForkchoiceCheckpointReader,
 };
+use alloy_eips::BlockNumberOrTag;
+use base_common_chain_config::RollupConfig;
+use base_common_types_chain::BaseTxEnvelope;
+use base_common_types_payload::BaseExecutionPayloadEnvelope;
 use base_consensus_batch_types::{BaseTimeUpdateTx, L2BlockInfo};
+use base_consensus_derive_pipeline::{ResetSignal, Signal};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
@@ -93,7 +93,7 @@ where
     }
 
     /// Returns the current engine state.
-    pub const fn engine_state(&self) -> &base_consensus_engine::EngineState {
+    pub const fn engine_state(&self) -> &crate::EngineState {
         self.engine.state()
     }
 
@@ -679,6 +679,13 @@ where
 mod tests {
     use std::sync::Arc;
 
+    use crate::{
+        ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
+        EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
+        ForkchoiceCheckpointReader, engine_test_utils::TestAttributesBuilder,
+        engine_test_utils::TestEngineStateBuilder, engine_test_utils::test_block_info,
+        engine_test_utils::test_engine_client_builder,
+    };
     use alloy_eips::{BlockId, BlockNumHash, BlockNumberOrTag, NumHash, eip2718::Encodable2718};
     use alloy_primitives::{Address, B256, Bloom, Sealed, U256};
     use async_trait::async_trait;
@@ -693,17 +700,10 @@ mod tests {
     use base_common_types_rpc::{
         BaseTransaction, Block as RpcBlock, BlockTransactions, Transaction as EthTransaction,
     };
-    use base_consensus_derive_pipeline::Signal;
-    use base_consensus_engine::{
-        ConsolidateInput, Engine, EngineClient, EngineState, EngineTaskError,
-        EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
-        ForkchoiceCheckpointReader,
-        test_utils::{
-            TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
-            test_engine_client_builder,
-        },
+    use base_consensus_batch_types::{
+        BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo,
     };
-    use base_consensus_batch_types::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo};
+    use base_consensus_derive_pipeline::Signal;
     use rstest::rstest;
     use tokio::sync::{mpsc, watch};
 
@@ -806,10 +806,7 @@ mod tests {
         safe_head: Option<L2BlockInfo>,
         config: RollupConfig,
     ) -> (
-        EngineProcessor<
-            base_consensus_engine::test_utils::MockEngineClient,
-            MockEngineDerivationClient,
-        >,
+        EngineProcessor<crate::engine_test_utils::MockEngineClient, MockEngineDerivationClient>,
         watch::Receiver<usize>,
     ) {
         let client = Arc::new(test_engine_client_builder().build());
@@ -2096,7 +2093,7 @@ mod tests {
     /// [`Signal::FlushChannel`] to the derivation actor and resume servicing requests rather
     /// than retrying the poisoned task in place. Without the
     /// [`EngineTaskErrorSeverity::Flush`] mapping plus the head-pop in
-    /// [`base_consensus_engine::Engine::drain`], the processor would either spin on the same
+    /// [`crate::Engine::drain`], the processor would either spin on the same
     /// FCU forever or starve every later request behind the poisoned head.
     #[tokio::test]
     async fn build_invalid_payload_dispatches_flush_signal_exactly_once() {

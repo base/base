@@ -22,9 +22,9 @@ base-node-core = { workspace = true }
 base-batcher-cli = { workspace = true }
 base-builder-cli = { workspace = true }
 reth-cli-commands = { workspace = true }
-base-consensus-engine = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
+base-consensus-driver-service = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
 reth-cli-util = { workspace = true, optional = true }
 base-consensus-source-providers = { workspace = true }

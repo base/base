@@ -2,7 +2,7 @@
 //!
 //! [`EngineActor`]: super::EngineActor
 
-use base_consensus_engine::{EngineResetError, EngineTaskErrors};
+use crate::{EngineResetError, EngineTaskErrors};
 
 /// An error from the [`EngineActor`].
 ///

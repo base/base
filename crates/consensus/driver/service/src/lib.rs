@@ -79,3 +79,21 @@ mod safedb;
 pub use safedb::{
     DisabledSafeDB, SafeDB, SafeDBError, SafeDBReader, SafeHeadListener, SafeHeadResponse,
 };
+
+mod engine;
+pub use engine::{
+    AttributesMatch, AttributesMismatch, BuildTaskError, ConsolidateInput, ConsolidateTask,
+    ConsolidateTaskError, Engine, EngineBuildError, EngineClient,
+    EngineClientError as ExecutionClientError, EngineQueries, EngineQueriesError,
+    EngineQuerySender, EngineResetError, EngineState, EngineSyncState, EngineSyncStateUpdate,
+    EngineTask, EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, EngineTaskExt,
+    FinalizeTask, FinalizeTaskError, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
+    ForkchoiceCheckpointReader, InsertPayloadPolicy, InsertPayloadSafety, InsertTask,
+    InsertTaskError, InsertTaskResult, L2ForkchoiceState, LocalEngineClient,
+    NoopForkchoiceCheckpointReader, SealTask, SealTaskError, SealedBlock, SyncStartError,
+    SynchronizeTask, SynchronizeTaskError, find_starting_forkchoice,
+    find_starting_forkchoice_with_checkpoint_reader,
+};
+
+#[cfg(any(test, feature = "test-utils"))]
+pub use engine::test_utils as engine_test_utils;

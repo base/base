@@ -11,13 +11,13 @@ use std::{
     time::Instant,
 };
 
+use crate::EngineState;
 use crate::{SafeDBError, SafeDBReader, SafeHeadResponse};
 use alloy_eips::BlockNumberOrTag;
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_consensus_engine::EngineState;
-use base_consensus_network_service::GossipMetrics;
 use base_consensus_batch_types::SyncStatus;
+use base_consensus_network_service::GossipMetrics;
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
@@ -38,7 +38,7 @@ static RPC_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 /// This is a server implementation of [`crate::rpc::RollupNodeApiServer`].
 #[derive(Debug)]
 pub struct RollupRpc {
-    /// The channel to send [`base_consensus_engine::EngineQueries`]s.
+    /// The channel to send [`crate::EngineQueries`]s.
     pub engine_client: EngineRpcClient,
     /// The channel to send [`crate::rpc::L1WatcherQueries`]s.
     pub l1_watcher_sender: L1WatcherQuerySender,
