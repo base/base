@@ -2,7 +2,7 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 
 use alloy_signer::utils::public_key_to_address;
 use base_common_observability_health::{HealthzApiServer, HealthzRpc};
-use base_proof_host::ProverConfig;
+use base_proof_host_service::ProverConfig;
 use base_proof_types_protocol::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
     RpcModule,

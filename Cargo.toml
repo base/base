@@ -74,7 +74,7 @@ members = [
   "crates/proof/challenge",
   "crates/proof/l1/submission",
   "crates/proof/execution/client",
-  "crates/proof/host",
+  "crates/proof/host/service",
   "crates/proof/witness/mpt",
   "crates/proof/witness/preimage",
   "crates/proof/types/protocol",
@@ -311,7 +311,7 @@ base-shadow-metrics = { path = "crates/infra/shadow-metrics", default-features =
 # Proof
 base-proof-client-providers = { path = "crates/proof/client/providers", default-features = false }
 base-proof-witness-mpt = { path = "crates/proof/witness/mpt", default-features = false }
-base-proof-host = { path = "crates/proof/host", default-features = false }
+base-proof-host-service = { path = "crates/proof/host/service", default-features = false }
 base-proposer = { path = "crates/proof/proposer", default-features = false }
 base-proof-worker = { path = "crates/proof/worker", default-features = false }
 base-challenger = { path = "crates/proof/challenge", default-features = false }

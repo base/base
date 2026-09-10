@@ -1,5 +1,5 @@
 [package]
-name = "base-proof-host"
+name = "base-proof-host-service"
 description = "Generic host-side infrastructure for the Base fault proof host."
 version.workspace = true
 edition.workspace = true

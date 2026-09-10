@@ -1,7 +1,7 @@
 //! Metrics for the proof host.
 
 base_common_observability_metrics::define_metrics! {
-    base_proof_host
+    base_proof_host_service
 
     #[describe("Total proof requests received")]
     #[label(name = "mode", default = ["online"])]

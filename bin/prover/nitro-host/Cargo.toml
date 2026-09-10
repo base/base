@@ -26,7 +26,7 @@ tokio-util = { workspace = true, features = ["default"] }
 uuid = { workspace = true, features = ["default", "v4"] }
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }
-base-proof-host = { workspace = true, features = ["metrics"] }
+base-proof-host-service = { workspace = true, features = ["metrics"] }
 base-proof-tee-nitro-enclave = { workspace = true, optional = true }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-chain-config = { workspace = true, features = ["default"] }

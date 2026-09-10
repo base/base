@@ -12,7 +12,7 @@ use alloy_primitives::Address;
 use base_common_chain_config::rollup_config;
 use base_common_cli_support::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_host::ProverConfig;
+use base_proof_host_service::ProverConfig;
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 #[cfg(target_os = "linux")]

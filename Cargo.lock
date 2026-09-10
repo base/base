@@ -4749,7 +4749,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-host"
+name = "base-proof-host-service"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4878,7 +4878,7 @@ dependencies = [
  "async-trait",
  "base-common-chain-config",
  "base-common-observability-health",
- "base-proof-host",
+ "base-proof-host-service",
  "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
@@ -5110,7 +5110,7 @@ dependencies = [
  "alloy-primitives",
  "base-common-chain-config",
  "base-common-cli-support",
- "base-proof-host",
+ "base-proof-host-service",
  "base-proof-service-client",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",

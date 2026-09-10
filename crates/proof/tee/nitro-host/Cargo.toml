@@ -18,7 +18,7 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 base-common-observability-health = { workspace = true }
 alloy-signer = { workspace = true }
-base-proof-host = { workspace = true }
+base-proof-host-service = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-worker = { workspace = true }
 base-proof-witness-preimage = { workspace = true }
@@ -44,4 +44,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 
 [features]
-metrics = ["base-proof-host/metrics"]
+metrics = ["base-proof-host-service/metrics"]

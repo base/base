@@ -36,7 +36,7 @@ impl ProverBackend for NitroBackend {
     }
 
     fn prover_label(&self) -> &'static str {
-        base_proof_host::Metrics::PROVER_NITRO
+        base_proof_host_service::Metrics::PROVER_NITRO
     }
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroHostError> {

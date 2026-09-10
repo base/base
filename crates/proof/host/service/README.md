@@ -1,4 +1,4 @@
-# `base-proof-host`
+# `base-proof-host-service`
 
 Generic host-side infrastructure for the Base fault proof host.
 
@@ -17,11 +17,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-host = { workspace = true }
+base-proof-host-service = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_host::{Host, HostConfig, OnlineHostBackend};
+use base_proof_host_service::{Host, HostConfig, OnlineHostBackend};
 
 let config = HostConfig::from_cli(args)?;
 let host = Host::new(config, OnlineHostBackend::new(providers));
