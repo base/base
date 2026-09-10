@@ -1,7 +1,9 @@
 //! L1 stack orchestration (Reth + Lighthouse).
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
+use alloy_network::Ethereum;
+use alloy_provider::{Provider, RootProvider};
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -114,6 +116,32 @@ impl L1Stack {
     /// Returns a reference to the Lighthouse beacon container.
     pub const fn beacon(&self) -> &LighthouseBeaconContainer {
         &self.beacon
+    }
+
+    /// Maximum time to wait for the L1 validator to propose its first block.
+    pub const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(240);
+
+    /// Poll interval while waiting for the first L1 block.
+    const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+    /// Waits until the L1 validator has proposed at least one block after genesis.
+    ///
+    /// Beacon genesis is stamped when offline genesis generation begins, so the chain only
+    /// starts advancing once that timestamp passes. Reth serves RPC the whole time, so callers
+    /// that skip this gate see a live endpoint pinned at block 0: L2 derivation never finds an
+    /// L1 origin and L1 transactions never leave the pool.
+    pub async fn wait_for_block_production(&self) -> Result<()> {
+        let provider = RootProvider::<Ethereum>::new_http(self.rpc_url().await?);
+        tokio::time::timeout(Self::BLOCK_PRODUCTION_TIMEOUT, async {
+            loop {
+                if provider.get_block_number().await.is_ok_and(|number| number > 0) {
+                    return;
+                }
+                tokio::time::sleep(Self::BLOCK_POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .wrap_err("L1 did not produce a block before the deadline")
     }
 
     /// Returns the public RPC URL of the Reth container.
