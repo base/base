@@ -3246,6 +3246,7 @@ dependencies = [
  "alloy-rlp",
  "assert_matches",
  "base-common-chain-config",
+ "base-common-io-files",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
@@ -3276,10 +3277,12 @@ dependencies = [
  "futures",
  "futures-util",
  "indexmap 2.14.0",
+ "itertools 0.14.0",
  "metrics",
  "metrics-util",
  "moka",
  "parking_lot",
+ "pin-project",
  "proptest",
  "rand 0.8.7",
  "rand 0.9.5",
@@ -3287,10 +3290,12 @@ dependencies = [
  "reth-primitives-traits",
  "reth-testing-utils",
  "schnellru",
+ "serde",
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tracing",
 ]
 
@@ -4619,7 +4624,6 @@ dependencies = [
  "reth-config",
  "reth-consensus-debug-client",
  "reth-e2e-test-utils",
- "reth-engine-util",
  "reth-node-core",
  "reth-node-ethstats",
  "reth-node-events",
@@ -14067,34 +14071,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "reth-engine-util"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "base-common-chain-config",
- "base-common-io-files",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-engine-types",
- "base-execution-evm-blocks",
- "base-execution-evm-runtime",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-state-api",
- "eyre",
- "futures",
- "itertools 0.14.0",
- "pin-project",
- "reth-primitives-traits",
- "serde",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

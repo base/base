@@ -46,7 +46,7 @@ Removed the unused Ethereum local payload-attribute builder and the Ethereum-onl
 | `base-execution-engine-driver` | Generic local mining, mining mode, and finality defaults are wired into node configuration and debug launch. Base has its own local attributes builder. Remove the Ethereum attributes implementation first; removing the entire crate also removes or relocates Base local-mining support. |
 | `reth-node-ethstats` | Launched through `spawn_ethstats` in the engine launcher and exposed by `--ethstats`. Optional telemetry, not multi-network machinery. Delete if this integration is unwanted. |
 | `base-execution-engine-observers` | Node builder installs invalid-block witness hooks. This is useful for Base execution diagnostics; deletion removes that behavior. |
-| `reth-engine-util` | Engine launcher uses `EngineMessageStreamExt`; the crate implements engine-message recording/skipping/reorg debugging. Remove with those debugging features, or absorb the needed parts. |
+| `base-execution-engine-driver` | Engine launcher uses `EngineMessageStreamExt`; the crate implements engine-message recording/skipping/reorg debugging. Remove with those debugging features, or absorb the needed parts. |
 
 ## Crate boundaries that can be consolidated
 
@@ -106,7 +106,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Optional capability; separate removal decision |
 | [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Retain shared infrastructure |
-| [reth-engine-util](../../vendor/reth-engine-util/Cargo.toml) | Optional capability; separate removal decision |
+| [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Optional capability; separate removal decision |
 | reth-era | Deleted |
 | reth-era-downloader | Deleted |
 | reth-era-utils | Deleted |

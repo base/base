@@ -1,13 +1,3 @@
-//! Collection of various stream utilities for consensus engine.
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
 use std::path::PathBuf;
 
 use base_common_chain_config::ChainSpecProvider;
@@ -17,17 +7,13 @@ use base_execution_payload_builder::BaseEngineValidator;
 use futures::Stream;
 use tokio_util::either::Either;
 
-pub mod engine_store;
-use engine_store::EngineStoreStream;
+use crate::EngineStoreStream;
 
-pub mod skip_fcu;
-use skip_fcu::EngineSkipFcu;
+use crate::EngineSkipFcu;
 
-pub mod skip_new_payload;
-use skip_new_payload::EngineSkipNewPayload;
+use crate::EngineSkipNewPayload;
 
-pub mod reorg;
-use reorg::EngineReorg;
+use crate::EngineReorg;
 
 /// The collection of stream extensions for engine API message stream.
 pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {

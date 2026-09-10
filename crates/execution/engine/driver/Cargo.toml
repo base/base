@@ -16,51 +16,56 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
+serde = { workspace = true }
 metrics = { workspace = true }
+itertools = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
+pin-project = { workspace = true }
 futures-util = { workspace = true }
+base-common-io-files = { workspace = true }
 base-execution-txpool = { workspace = true }
 base-execution-state-api = {workspace = true}
+base-common-chain-config = {workspace = true }
+base-execution-evm-runtime = {workspace = true}
 base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
-base-execution-evm-runtime = { workspace = true }
+eyre = {workspace = true, features = ["default"]}
 base-execution-sync-pipeline = {workspace = true }
 base-execution-payload-builder = {workspace = true}
-eyre = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
+futures = {workspace = true, features = ["default"]}
 base-execution-state-maintenance = { workspace = true}
-futures = { workspace = true, features = ["default"] }
+serde_json = { features = ["alloc"], workspace = true}
+alloy-rlp = {workspace = true, features = ["core-net"]}
 derive_more = { workspace = true, features = ["full"] }
 indexmap = { workspace = true, features = ["default"] }
-tracing = {features = ["attributes"], workspace = true}
+tracing = {workspace = true, features = ["attributes"]}
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 schnellru = { workspace = true, features = ["default"] }
-alloy-rlp = { workspace = true, features = ["core-net"] }
 parking_lot = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "sync"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-common-chain-config = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
-base-common-types-chain = {features = ["reth"], workspace = true}
-base-common-types-payload = {features = ["serde"], workspace = true}
-base-execution-engine-types = {features = ["std"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["reth"]}
+tokio-util = { workspace = true, features = ["default", "codec"] }
+base-common-types-payload = {workspace = true, features = ["serde"]}
+base-execution-engine-types = {workspace = true, features = ["std"]}
 base-execution-state-types = {features = ["rayon"], workspace = true}
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 base-execution-state-trie = {features = ["metrics"], workspace = true}
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-provider = {workspace = true, features = ["rayon"]}
-serde_json = { workspace = true, features = ["alloc"], optional = true }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
-base-execution-payload-types = {features = ["default"], workspace = true}
-reth-primitives-traits = {features = ["dashmap", "rayon"], workspace = true}
+base-execution-payload-types = {workspace = true, features = ["default"]}
+reth-primitives-traits = {workspace = true, features = ["dashmap", "rayon"]}
 base-execution-network-service = { workspace = true, features = ["default"] }
 base-execution-engine-observers = { workspace = true, features = ["witness"] }
-alloy-primitives = {features = ["getrandom", "map-foldhash"], workspace = true}
-tokio = {features = ["macros", "rt", "rt-multi-thread", "sync"], workspace = true}
+alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash"]}
+tokio = {workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"]}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 base-common-observability-tracing = { workspace = true, optional = true, features = ["default"] }
-base-execution-evm-blocks = {features = ["metrics", "optional-balance-check", "optional-no-base-fee"], workspace = true}
+base-execution-evm-blocks = {workspace = true, features = ["metrics", "optional-balance-check", "optional-no-base-fee"]}
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -85,7 +90,6 @@ base-execution-network-service = { workspace = true, features = ["default", "tes
 
 [features]
 test-utils = [
-    "dep:base-common-chain-config",
     "base-execution-state-provider/test-utils",
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-database/test-utils",
@@ -100,9 +104,4 @@ test-utils = [
     "base-common-runtime-tasks/test-utils",
     "base-execution-state-memory/test-utils",
 ]
-trie-debug = [
-    "base-execution-state-trie/trie-debug",
-    "base-execution-state-tasks/trie-debug",
-    "base-execution-engine-types/trie-debug",
-    "dep:serde_json",
-]
+trie-debug = ["base-execution-state-trie/trie-debug", "base-execution-state-tasks/trie-debug", "base-execution-engine-types/trie-debug"]

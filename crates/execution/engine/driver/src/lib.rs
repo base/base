@@ -34,3 +34,18 @@ pub use tree::payload_processor::bal::execute::L1InfoDeposit;
 
 mod miner;
 pub use miner::{LocalMiner, MiningMode};
+
+mod skip_new_payload;
+pub use skip_new_payload::EngineSkipNewPayload;
+
+mod engine_store;
+pub use engine_store::{EngineMessageStore, EngineStoreStream, StoredEngineApiMessage};
+
+mod reorg;
+pub use reorg::EngineReorg;
+
+mod skip_fcu;
+pub use skip_fcu::EngineSkipFcu;
+
+mod message_stream;
+pub use message_stream::EngineMessageStreamExt;
