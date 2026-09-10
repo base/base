@@ -68,7 +68,6 @@ where
     /// recovery walk.
     pub async fn run(&self, cancel: CancellationToken) {
         info!(
-            block_interval = self.config.block_interval,
             poll_interval_secs = self.config.poll_interval.as_secs(),
             submit_timeout_secs = ?self.config.submit_timeout.map(|timeout| timeout.as_secs()),
             "Starting proving pipeline"
@@ -217,10 +216,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        OutputProposer, ProofDispatcherConfig, ProofRecoveryConfig, ProofSubmitter,
+        OutputProposer, ProofRecoveryConfig, ProofSubmitter,
         test_utils::{
             MockAggregateVerifier, MockAnchorStateRegistry, MockDisputeGameFactory, MockL1, MockL2,
-            MockOutputProposer, MockRollupClient, test_anchor_root, test_sync_status,
+            MockOutputProposer, MockRollupClient, test_anchor_root, test_fixed_interval_resolver,
+            test_sync_status,
         },
     };
 
@@ -291,23 +291,19 @@ mod tests {
             Arc::new(MockDisputeGameFactory::default());
         let verifier = Arc::new(MockAggregateVerifier::default());
         let output_proposer: Arc<dyn OutputProposer> = Arc::new(MockOutputProposer::default());
-        let config = DriverConfig {
-            poll_interval: Duration::from_millis(10),
-            block_interval: 100,
-            intermediate_block_interval: 100,
-            ..Default::default()
-        };
+        let config =
+            DriverConfig { poll_interval: Duration::from_millis(10), ..Default::default() };
+        let intervals = test_fixed_interval_resolver(100, 100);
         let proof_dispatcher = ProofDispatcher::new(
             Arc::clone(&proof_requester),
             Arc::<MockL1>::clone(&l1),
             l2,
             Arc::<MockRollupClient>::clone(&rollup),
-            ProofDispatcherConfig::from(&config),
+            Arc::clone(&intervals),
+            config.proposer_address,
         );
         let proof_recovery = Arc::new(ProofRecovery::new(
             ProofRecoveryConfig {
-                block_interval: config.block_interval,
-                intermediate_block_interval: config.intermediate_block_interval,
                 game_type: config.game_type,
                 anchor_state_registry_address: config.anchor_state_registry_address,
                 scan_concurrency: config.recovery_scan_concurrency,
@@ -315,19 +311,21 @@ mod tests {
             Arc::<MockRollupClient>::clone(&rollup),
             anchor_registry,
             factory,
+            Arc::clone(&intervals),
         ));
         let proof_submitter = ProofSubmitter::new(
             output_proposer,
             Arc::<MockRollupClient>::clone(&rollup),
             Arc::new(MockDisputeGameFactory::default()),
             verifier,
+            Arc::clone(&intervals),
             &config,
         );
         let proof_collector = ProofCollector::new(
             Arc::clone(&proof_requester),
             Arc::clone(&rollup),
             proof_submitter,
-            config.block_interval,
+            intervals,
             config.submit_timeout,
         );
         ProvingPipeline::new(config, proof_dispatcher, proof_recovery, proof_collector)

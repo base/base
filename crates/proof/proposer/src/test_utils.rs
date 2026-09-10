@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use alloy_eips::BlockNumberOrTag;
@@ -30,7 +30,9 @@ use base_prover_service_protocol::{
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
-use crate::{error::ProposerError, output_proposer::OutputProposer};
+use crate::{
+    error::ProposerError, output_proposer::OutputProposer, proposal_intervals::IntervalResolver,
+};
 
 const TEST_SIGNATURE: [u8; 65] = {
     let mut signature = [0xab; 65];
@@ -216,7 +218,7 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
         Ok(U256::ZERO)
     }
     async fn game_impls(&self, _: u32) -> Result<Address, ContractError> {
-        Ok(Address::ZERO)
+        Ok(TEST_IMPL_ADDRESS)
     }
     async fn games(
         &self,
@@ -238,11 +240,65 @@ impl DisputeGameFactoryClient for MockDisputeGameFactory {
     }
 }
 
+/// Address returned by `MockDisputeGameFactory::game_impls`.
+pub const TEST_IMPL_ADDRESS: Address = Address::repeat_byte(0xA1);
+
 /// Mock aggregate verifier contract client for tests.
-#[derive(Debug, Default)]
+///
+/// `read_intervals_for_starting_block` mirrors the onchain
+/// `intervalsForStartingBlock`: games whose range starts at or after
+/// `fast_activation_block` are created with the fast-cadence interval pair.
+/// The default is a chain on which the speedup is unscheduled.
+#[derive(Debug)]
 pub struct MockAggregateVerifier {
     /// L1 head returned by `l1_head()`.
     pub l1_head: B256,
+    /// Slow-cadence `BLOCK_INTERVAL`.
+    pub block_interval: u64,
+    /// Slow-cadence `INTERMEDIATE_BLOCK_INTERVAL`.
+    pub intermediate_block_interval: u64,
+    /// First starting block that uses the fast-cadence interval pair.
+    pub fast_activation_block: u64,
+    /// Fast-cadence `BLOCK_INTERVAL`.
+    pub fast_block_interval: u64,
+    /// Fast-cadence `INTERMEDIATE_BLOCK_INTERVAL`.
+    pub fast_intermediate_block_interval: u64,
+}
+
+impl Default for MockAggregateVerifier {
+    fn default() -> Self {
+        Self {
+            l1_head: B256::ZERO,
+            block_interval: 100,
+            intermediate_block_interval: 100,
+            fast_activation_block: u64::MAX,
+            fast_block_interval: 100,
+            fast_intermediate_block_interval: 100,
+        }
+    }
+}
+
+/// Builds an [`IntervalResolver`] backed by `verifier` and a default factory.
+pub fn test_interval_resolver(verifier: MockAggregateVerifier) -> Arc<IntervalResolver> {
+    Arc::new(IntervalResolver::new(
+        Arc::new(verifier),
+        Arc::new(MockDisputeGameFactory::default()),
+        0,
+    ))
+}
+
+/// Builds an [`IntervalResolver`] that reports a single interval pair everywhere.
+pub fn test_fixed_interval_resolver(
+    block_interval: u64,
+    intermediate_block_interval: u64,
+) -> Arc<IntervalResolver> {
+    test_interval_resolver(MockAggregateVerifier {
+        block_interval,
+        intermediate_block_interval,
+        fast_block_interval: block_interval,
+        fast_intermediate_block_interval: intermediate_block_interval,
+        ..Default::default()
+    })
 }
 
 #[async_trait]
@@ -273,6 +329,17 @@ impl AggregateVerifierClient for MockAggregateVerifier {
     }
     async fn read_intermediate_block_interval(&self, _: Address) -> Result<u64, ContractError> {
         unimplemented!("unused in proposer tests")
+    }
+    async fn read_intervals_for_starting_block(
+        &self,
+        _: Address,
+        starting_block: u64,
+    ) -> Result<(u64, u64), ContractError> {
+        if starting_block < self.fast_activation_block {
+            Ok((self.block_interval, self.intermediate_block_interval))
+        } else {
+            Ok((self.fast_block_interval, self.fast_intermediate_block_interval))
+        }
     }
     async fn intermediate_output_roots(&self, _: Address) -> Result<Vec<B256>, ContractError> {
         unimplemented!("unused in proposer tests")
