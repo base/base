@@ -40,7 +40,7 @@ pub fn build_networked_pipeline<Client>(
     disabled_stages: &[StageId],
 ) -> eyre::Result<Pipeline>
 where
-    Client: BlockClient<Block = BaseBlock> + 'static,
+    Client: BlockClient + 'static,
 {
     // building network downloaders using the fetch client
     let header_downloader = ReverseHeadersDownloaderBuilder::new(config.headers)

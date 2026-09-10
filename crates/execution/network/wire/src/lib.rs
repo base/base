@@ -65,9 +65,9 @@ pub use ecies::{
 mod transport;
 #[cfg(feature = "transport")]
 pub use transport::{
-    CanDisconnect, DEFAULT_TCP_PORT, DisconnectP2P, EthHandshake, EthHandshakeError,
-    EthRlpxHandshake, EthSnapMessage, EthSnapStream, EthStream, EthStreamError, EthStreamInner,
-    EthereumEthHandshake, HANDSHAKE_TIMEOUT, HelloMessage, HelloMessageBuilder,
+    CanDisconnect, DEFAULT_ETH_CLIENT_VERSION, DEFAULT_TCP_PORT, DisconnectP2P, EthHandshake,
+    EthHandshakeError, EthRlpxHandshake, EthSnapMessage, EthSnapStream, EthStream, EthStreamError,
+    EthStreamInner, EthereumEthHandshake, HANDSHAKE_TIMEOUT, HelloMessage, HelloMessageBuilder,
     HelloMessageWithProtocols, MAX_RESERVED_MESSAGE_ID, P2PHandshakeError, P2PMessage,
     P2PMessageID, P2PStream, P2PStreamError, PingState, Pinger, PingerError, PingerEvent,
     ProtoVersion, Protocol, SharedCapabilities, SharedCapability, SharedCapabilityError, UnauthEth,

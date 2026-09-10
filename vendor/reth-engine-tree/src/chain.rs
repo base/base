@@ -37,14 +37,14 @@ use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};
 /// [`EngineHandler::on_event`].
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct ChainOrchestrator<S, Client: BlockClient<Block = BaseBlock> + 'static> {
+pub struct ChainOrchestrator<S, Client: BlockClient + 'static> {
     /// The handler for advancing the chain.
     handler: EngineHandler<S, Client>,
     /// Controls backfill sync.
     backfill_sync: PipelineSync,
 }
 
-impl<S, Client: BlockClient<Block = BaseBlock> + 'static> ChainOrchestrator<S, Client>
+impl<S, Client: BlockClient + 'static> ChainOrchestrator<S, Client>
 where
     S: Stream<Item = BeaconEngineMessage> + Unpin,
 {
@@ -142,7 +142,7 @@ where
     }
 }
 
-impl<S, Client: BlockClient<Block = BaseBlock> + 'static> Stream for ChainOrchestrator<S, Client>
+impl<S, Client: BlockClient + 'static> Stream for ChainOrchestrator<S, Client>
 where
     S: Stream<Item = BeaconEngineMessage> + Unpin,
 {

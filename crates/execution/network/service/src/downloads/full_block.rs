@@ -11,7 +11,7 @@ use std::{
 
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_types::{PeerId, WithPeerId};
 use base_execution_network_wire::BlockAccessLists;
@@ -1085,9 +1085,7 @@ impl HeadersClient for NoopFullBlockClient {
     }
 }
 
-impl BlockClient for NoopFullBlockClient {
-    type Block = BaseBlock;
-}
+impl BlockClient for NoopFullBlockClient {}
 
 impl BlockAccessListsClient for NoopFullBlockClient {
     type Output = futures::future::Ready<PeerRequestResult<BlockAccessLists>>;
@@ -1640,9 +1638,7 @@ mod tests {
         }
     }
 
-    impl BlockClient for FullBlockWithAccessListsClient {
-        type Block = base_common_types_chain::BaseBlock;
-    }
+    impl BlockClient for FullBlockWithAccessListsClient {}
 
     #[derive(Clone, Debug)]
     struct FailingBodiesClient {
@@ -1698,9 +1694,7 @@ mod tests {
         }
     }
 
-    impl BlockClient for FailingBodiesClient {
-        type Block = base_common_types_chain::BaseBlock;
-    }
+    impl BlockClient for FailingBodiesClient {}
 
     #[tokio::test]
     async fn download_full_block_range() {

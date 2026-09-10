@@ -10,7 +10,7 @@ use std::{
 
 use crate::PeersHandle;
 use alloy_primitives::B256;
-use base_common_types_chain::{BaseBlock, BaseReceipt};
+use base_common_types_chain::BaseReceipt;
 use base_execution_network_types::PeerId;
 use base_execution_network_types::ReputationChangeKind;
 use base_execution_network_wire::BlockAccessLists;
@@ -141,9 +141,7 @@ impl ReceiptsClient for FetchClient {
     }
 }
 
-impl BlockClient for FetchClient {
-    type Block = BaseBlock;
-}
+impl BlockClient for FetchClient {}
 
 impl BlockAccessListsClient for FetchClient {
     type Output =

@@ -24,14 +24,14 @@ use crate::{
 
 /// Routes consensus requests to the execution tree and downloads missing blocks.
 #[derive(Debug)]
-pub struct EngineHandler<S, Client: BlockClient<Block = BaseBlock> + 'static> {
+pub struct EngineHandler<S, Client: BlockClient + 'static> {
     to_tree: Sender<FromEngine>,
     from_tree: UnboundedReceiver<EngineApiEvent>,
     incoming_requests: S,
     downloader: BasicBlockDownloader<Client>,
 }
 
-impl<S, Client: BlockClient<Block = BaseBlock> + 'static> EngineHandler<S, Client> {
+impl<S, Client: BlockClient + 'static> EngineHandler<S, Client> {
     /// Connects the execution tree, consensus stream, and downloader.
     pub const fn new(
         to_tree: Sender<FromEngine>,
@@ -48,7 +48,7 @@ impl<S, Client: BlockClient<Block = BaseBlock> + 'static> EngineHandler<S, Clien
     }
 }
 
-impl<S, Client: BlockClient<Block = BaseBlock> + 'static> EngineHandler<S, Client>
+impl<S, Client: BlockClient + 'static> EngineHandler<S, Client>
 where
     S: Stream<Item = BeaconEngineMessage> + Unpin,
 {

@@ -14416,7 +14416,6 @@ dependencies = [
  "base-execution-state-types",
  "futures-util",
  "metrics",
- "reth-primitives-traits",
  "reth-testing-utils",
  "thiserror 2.0.19",
  "tokio",

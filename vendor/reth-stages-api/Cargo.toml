@@ -21,7 +21,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 futures-util = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-execution-state-types = {workspace = true}
@@ -50,7 +49,6 @@ test-utils = [
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-database/test-utils",
     "base-execution-network-service/test-utils",
-    "reth-primitives-traits/test-utils",
     "base-execution-state-provider/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",

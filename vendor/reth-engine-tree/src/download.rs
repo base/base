@@ -78,7 +78,7 @@ impl<Client: BlockClient + 'static> std::fmt::Debug for BasicBlockDownloader<Cli
 
 impl<Client> BasicBlockDownloader<Client>
 where
-    Client: BlockClient<Block = base_common_types_chain::BaseBlock> + 'static,
+    Client: BlockClient + 'static,
 {
     /// Create a new instance
     pub fn new(client: Client, consensus: Arc<BaseBeaconConsensus>) -> Self {
@@ -190,7 +190,7 @@ where
 
 impl<Client> BasicBlockDownloader<Client>
 where
-    Client: BlockClient<Block = base_common_types_chain::BaseBlock>,
+    Client: BlockClient,
 {
     /// Handles incoming download actions.
     pub fn on_action(&mut self, action: DownloadAction) {

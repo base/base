@@ -66,7 +66,7 @@ pub fn build_engine_orchestrator<Client, S>(
     runtime: Runtime,
 ) -> ChainOrchestrator<S, Client>
 where
-    Client: BlockClient<Block = BaseBlock> + 'static,
+    Client: BlockClient + 'static,
     S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());

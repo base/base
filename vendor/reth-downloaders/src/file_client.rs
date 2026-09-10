@@ -430,9 +430,7 @@ impl DownloadClient for FileClient {
     }
 }
 
-impl BlockClient for FileClient {
-    type Block = base_common_types_chain::BaseBlock;
-}
+impl BlockClient for FileClient {}
 
 /// File reader type for handling different compression formats.
 #[derive(Debug)]

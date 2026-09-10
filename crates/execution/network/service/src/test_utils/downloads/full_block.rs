@@ -171,9 +171,7 @@ impl BodiesClient for TestFullBlockClient {
     }
 }
 
-impl BlockClient for TestFullBlockClient {
-    type Block = base_common_types_chain::BaseBlock;
-}
+impl BlockClient for TestFullBlockClient {}
 
 impl BlockAccessListsClient for TestFullBlockClient {
     type Output = futures::future::Ready<PeerRequestResult<BlockAccessLists>>;
