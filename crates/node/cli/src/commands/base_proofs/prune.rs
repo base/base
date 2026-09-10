@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use crate::{AccessRights, Environment, EnvironmentArgs};
 use base_common_chain_config::BaseChainSpec;
 use base_execution_state_tasks::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
@@ -13,15 +14,13 @@ use base_node_service::{
     TWELVE_HOURS_IN_BLOCKS,
 };
 use clap::Parser;
-use reth_cli_commands::ChainSpecParser;
-use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use tracing::info;
 
 /// Prunes the proofs storage by removing old proof history and state updates.
 #[derive(Debug, Parser)]
-pub struct PruneCommand<C: ChainSpecParser> {
+pub struct PruneCommand {
     #[command(flatten)]
-    env: EnvironmentArgs<C>,
+    env: EnvironmentArgs,
 
     /// The path to the storage DB for proofs history.
     #[arg(
@@ -73,7 +72,7 @@ pub struct PruneCommand<C: ChainSpecParser> {
     pub proofs_history_prune_batch_size: u64,
 }
 
-impl<C: ChainSpecParser> PruneCommand<C> {
+impl PruneCommand {
     /// Execute [`PruneCommand`].
     pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         let Self {
@@ -161,7 +160,7 @@ impl<C: ChainSpecParser> PruneCommand<C> {
     }
 }
 
-impl<C: ChainSpecParser> PruneCommand<C> {
+impl PruneCommand {
     /// Returns the underlying chain being used to run this command
     pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)

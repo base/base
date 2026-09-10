@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 tracing = { workspace = true }
 base-node-service = { workspace = true }
-reth-cli-commands = { workspace = true }
 base-common-cli-support = { workspace = true}
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
@@ -29,7 +28,7 @@ alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "env"] }
 figment = { workspace = true, features = ["env", "toml"] }
-base-node-cli = {workspace = true, features = ["default"]}
+base-node-cli = {features = ["default"], workspace = true}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-execution-payload-builder = {workspace = true, features = ["default"]}
 base-common-chain-config = {features = ["default", "std"], workspace = true}

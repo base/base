@@ -96,7 +96,6 @@ members = [
   "crates/common/process/nodes",
   "crates/common/client/ethereum",
   "crates/execution/network/discv5",
-  "vendor/reth-cli-commands",
   "crates/common/cli/support",
   "crates/common/codec/macros",
   "crates/testing/debug/client",
@@ -384,7 +383,6 @@ base-execution-state-types = { path = "crates/execution/state/types", default-fe
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }
 base-execution-engine-driver = { path = "crates/execution/engine/driver", default-features = false }
-reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
 base-execution-network-types = { path = "crates/execution/network/types", default-features = false }
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }

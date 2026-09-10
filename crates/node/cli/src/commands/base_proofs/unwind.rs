@@ -2,7 +2,9 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use crate::{AccessRights, Environment, EnvironmentArgs};
 use base_common_chain_config::BaseChainSpec;
+use base_common_types_chain::BlockHeader as _;
 use base_execution_state_provider::{BlockReader, TransactionVariant};
 use base_execution_state_tasks::{
     BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
@@ -10,18 +12,15 @@ use base_execution_state_tasks::{
 use base_node_config::version_metadata;
 use base_node_service::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
-use reth_cli_commands::ChainSpecParser;
-use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
-use base_common_types_chain::BlockHeader as _;
 use tracing::{info, warn};
 
 /// Unwinds the proofs storage to a specific block number.
 ///
 /// This command removes all proof history and state updates after the target block number.
 #[derive(Debug, Parser)]
-pub struct UnwindCommand<C: ChainSpecParser> {
+pub struct UnwindCommand {
     #[command(flatten)]
-    env: EnvironmentArgs<C>,
+    env: EnvironmentArgs,
 
     /// The path to the storage DB for proofs history.
     #[arg(
@@ -52,7 +51,7 @@ pub struct UnwindCommand<C: ChainSpecParser> {
     pub target: u64,
 }
 
-impl<C: ChainSpecParser> UnwindCommand<C> {
+impl UnwindCommand {
     /// Execute [`UnwindCommand`].
     pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb, target } = self;
@@ -149,7 +148,7 @@ impl<C: ChainSpecParser> UnwindCommand<C> {
     }
 }
 
-impl<C: ChainSpecParser> UnwindCommand<C> {
+impl UnwindCommand {
     /// Returns the underlying chain being used to run this command
     pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)

@@ -1,0 +1,248 @@
+//! P2P Debugging tool
+
+use std::{path::PathBuf, sync::Arc};
+
+use alloy_eips::BlockHashOrNumber;
+use backon::{ConstantBuilder, Retryable};
+use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::hash_or_num_value_parser;
+use base_common_runtime_tasks::Runtime;
+use base_execution_network_service::{BlockDownloaderProvider, NetworkConfigBuilder};
+use base_execution_network_wire::BodiesClient;
+use base_node_config::NodeFileConfig as Config;
+use base_node_config::{DatadirArgs, NetworkArgs, get_single_header};
+use clap::{Parser, Subcommand};
+
+mod bootnode;
+pub use bootnode::Command as BootnodeCommand;
+mod enode;
+pub use enode::Command as EnodeCommand;
+mod rlpx;
+pub use rlpx::Command as RlpxCommand;
+
+/// `reth p2p` command
+#[derive(Debug, Parser)]
+pub struct Command {
+    #[command(subcommand)]
+    command: Subcommands,
+}
+
+impl Command {
+    /// Execute `p2p` command
+    pub async fn execute(self) -> eyre::Result<()> {
+        match self.command {
+            Subcommands::Header { args, id } => {
+                let handle = args.launch_network().await?;
+                let fetch_client = handle.fetch_client().await?;
+                let backoff = args.backoff();
+
+                let header = (move || get_single_header(fetch_client.clone(), id))
+                    .retry(backoff)
+                    .notify(|err, _| tracing::warn!(target: "reth::cli", error = %err, "Error requesting header. Retrying..."))
+                    .await?;
+                tracing::info!(target: "reth::cli", ?header, "Successfully downloaded header");
+            }
+
+            Subcommands::Body { args, id } => {
+                let handle = args.launch_network().await?;
+                let fetch_client = handle.fetch_client().await?;
+                let backoff = args.backoff();
+
+                let hash = match id {
+                    BlockHashOrNumber::Hash(hash) => hash,
+                    BlockHashOrNumber::Number(number) => {
+                        tracing::info!(target: "reth::cli", "Block number provided. Downloading header first...");
+                        let client = fetch_client.clone();
+                        let header = (move || {
+                            get_single_header(client.clone(), BlockHashOrNumber::Number(number))
+                        })
+                        .retry(backoff)
+                        .notify(|err, _| tracing::warn!(target: "reth::cli", error = %err, "Error requesting header. Retrying..."))
+                        .await?;
+                        header.hash()
+                    }
+                };
+                let (_, result) = (move || {
+                    let client = fetch_client.clone();
+                    client.get_block_bodies(vec![hash])
+                })
+                .retry(backoff)
+                .notify(|err, _| tracing::warn!(target: "reth::cli", error = %err, "Error requesting block. Retrying..."))
+                .await?
+                .split();
+                if result.len() != 1 {
+                    eyre::bail!(
+                        "Invalid number of bodies received. Expected: 1. Received: {}",
+                        result.len()
+                    );
+                }
+                let body = result.into_iter().next().unwrap();
+                tracing::info!(target: "reth::cli", ?body, "Successfully downloaded body")
+            }
+            Subcommands::Rlpx(command) => {
+                command.execute().await?;
+            }
+            Subcommands::Bootnode(command) => {
+                command.execute().await?;
+            }
+            Subcommands::Enode(command) => {
+                command.execute()?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Command {
+    /// Returns the underlying chain being used to run this command
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
+        match &self.command {
+            Subcommands::Header { args, .. } => Some(&args.chain),
+            Subcommands::Body { args, .. } => Some(&args.chain),
+            Subcommands::Rlpx(_) => None,
+            Subcommands::Bootnode(_) => None,
+            Subcommands::Enode(_) => None,
+        }
+    }
+}
+
+/// `reth p2p` subcommands
+#[derive(Subcommand, Debug)]
+pub enum Subcommands {
+    /// Download block header
+    Header {
+        /// Download and connection options.
+        #[command(flatten)]
+        args: DownloadArgs,
+        /// The header number or hash
+        #[arg(value_parser = hash_or_num_value_parser)]
+        id: BlockHashOrNumber,
+    },
+    /// Download block body
+    Body {
+        /// Download and connection options.
+        #[command(flatten)]
+        args: DownloadArgs,
+        /// The block number or hash
+        #[arg(value_parser = hash_or_num_value_parser)]
+        id: BlockHashOrNumber,
+    },
+    /// RLPx utilities
+    Rlpx(rlpx::Command),
+    /// Bootnode command
+    Bootnode(bootnode::Command),
+    /// Print enode identifier
+    Enode(enode::Command),
+}
+
+/// Options for downloading headers and bodies from peers.
+#[derive(Debug, Clone, Parser)]
+pub struct DownloadArgs {
+    /// The number of retries per request
+    #[arg(long, default_value = "5")]
+    retries: usize,
+
+    #[command(flatten)]
+    network: NetworkArgs,
+
+    #[command(flatten)]
+    datadir: DatadirArgs,
+
+    /// The path to the configuration file to use.
+    #[arg(long, value_name = "FILE", verbatim_doc_comment)]
+    config: Option<PathBuf>,
+
+    /// The chain this node is running.
+    ///
+    /// Possible values are either a built-in chain or the path to a chain specification file.
+    #[arg(
+        long,
+        value_name = "CHAIN_OR_PATH",
+        long_help = crate::BaseChainSpecParser::help_message(),
+        default_value = crate::BaseChainSpecParser::default_value(),
+        value_parser = crate::BaseChainSpecParser::parser()
+    )]
+    chain: Arc<BaseChainSpec>,
+}
+
+impl DownloadArgs {
+    /// Creates and spawns the network and returns the handle.
+    pub async fn launch_network(
+        &self,
+    ) -> eyre::Result<base_execution_network_service::NetworkHandle> {
+        let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain());
+        let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());
+
+        // Load configuration
+        let mut config = Config::from_path(&config_path).unwrap_or_default();
+
+        config.peers.trusted_nodes.extend(self.network.trusted_peers.clone());
+
+        if config.peers.trusted_nodes.is_empty() && self.network.trusted_only {
+            eyre::bail!(
+                "No trusted nodes. Set trusted peer with `--trusted-peer <enode record>` or set `--trusted-only` to `false`"
+            );
+        }
+
+        config.peers.trusted_nodes_only |= self.network.trusted_only;
+
+        let default_secret_key_path = data_dir.p2p_secret();
+        let p2p_secret_key = self.network.secret_key(default_secret_key_path)?;
+        let rlpx_socket = (self.network.addr, self.network.port).into();
+        let boot_nodes = self.network.resolved_bootnodes().unwrap_or_else(|| {
+            base_execution_network_types::NodeRecord::parse_bootnodes(
+                self.chain.config.bootnodes.execution,
+            )
+            .unwrap_or_default()
+        });
+
+        let net = NetworkConfigBuilder::new(p2p_secret_key, Runtime::test())
+            .peer_config(config.peers_config_with_basic_nodes_from_file(None))
+            .sessions_config(config.sessions)
+            .external_ip_resolver(self.network.nat.clone())
+            .network_id(self.network.network_id)
+            .boot_nodes(boot_nodes.clone())
+            .apply(|builder| {
+                self.network.discovery.apply_to_builder(builder, rlpx_socket, boot_nodes)
+            })
+            .build_with_noop_provider(self.chain.clone())
+            .manager()
+            .await?;
+        let handle = net.handle().clone();
+        tokio::task::spawn(net);
+
+        Ok(handle)
+    }
+
+    /// Builds the retry policy for peer requests.
+    pub fn backoff(&self) -> ConstantBuilder {
+        ConstantBuilder::default().with_max_times(self.retries.max(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_header_cmd() {
+        let _args: Command = Command::parse_from(["reth", "header", "--chain", "base", "1000"]);
+    }
+
+    #[test]
+    fn parse_body_cmd() {
+        let _args: Command = Command::parse_from(["reth", "body", "--chain", "base", "1000"]);
+    }
+
+    #[test]
+    fn parse_enode_cmd() {
+        let _args: Command = Command::parse_from(["reth", "enode", "/tmp/secret"]);
+    }
+
+    #[test]
+    fn parse_enode_cmd_with_ip() {
+        let _args: Command =
+            Command::parse_from(["reth", "enode", "/tmp/secret", "--ip", "192.168.1.1"]);
+    }
+}

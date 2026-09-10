@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
 use clap::{Parser, Subcommand};
-use reth_cli_commands::ChainSpecParser;
 
 pub mod init;
 pub mod prune;
@@ -12,12 +11,12 @@ pub mod unwind;
 
 /// `base-node base-proofs` command
 #[derive(Debug, Parser)]
-pub struct Command<C: ChainSpecParser> {
+pub struct Command {
     #[command(subcommand)]
-    command: Subcommands<C>,
+    command: Subcommands,
 }
 
-impl<C: ChainSpecParser> Command<C> {
+impl Command {
     /// Execute `base-proofs` command
     pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         match self.command {
@@ -28,7 +27,7 @@ impl<C: ChainSpecParser> Command<C> {
     }
 }
 
-impl<C: ChainSpecParser> Command<C> {
+impl Command {
     /// Returns the underlying chain being used to run this command
     pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         match &self.command {
@@ -41,14 +40,14 @@ impl<C: ChainSpecParser> Command<C> {
 
 /// `base-node base-proofs` subcommands
 #[derive(Debug, Subcommand)]
-pub enum Subcommands<C: ChainSpecParser> {
+pub enum Subcommands {
     /// Initialize the proofs storage with the current state of the chain
     #[command(name = "init")]
-    Init(init::InitCommand<C>),
+    Init(init::InitCommand),
     /// Prune old proof history to reclaim space
     #[command(name = "prune")]
-    Prune(prune::PruneCommand<C>),
+    Prune(prune::PruneCommand),
     /// Unwind the proofs storage to a specific block
     #[command(name = "unwind")]
-    Unwind(unwind::UnwindCommand<C>),
+    Unwind(unwind::UnwindCommand),
 }

@@ -2,7 +2,7 @@
 
 use base_common_cli_support::CliRunner;
 use base_node_cli::BatcherArgs;
-use base_node_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
+use base_node_cli::commands::base_proofs;
 use clap::Subcommand;
 
 use crate::{
@@ -37,7 +37,7 @@ pub(crate) enum BaseCommand {
     Reth(Box<RethCommand>),
     /// Manage storage of historical proofs in the fault-proof window (uses its own --chain flag).
     #[command(name = "proofs")]
-    Proofs(Box<base_proofs::Command<BaseChainSpecParser>>),
+    Proofs(Box<base_proofs::Command>),
     /// Snapshot manifest generation and download utilities (uses its own --chain flag).
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),

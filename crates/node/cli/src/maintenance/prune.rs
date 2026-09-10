@@ -1,0 +1,126 @@
+//! Command that runs pruning.
+use std::sync::Arc;
+
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_common_cli_support::CancellationToken;
+use base_common_cli_support::CliContext;
+use base_execution_state_maintenance::PrunerBuilder;
+use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_provider::RocksDBProviderFactory;
+use base_node_config::{MetricArgs, version_metadata};
+use base_node_service::metrics_hooks;
+use base_node_service::{ChainSpecInfo, MetricServer, MetricServerConfig, VersionInfo};
+use clap::Parser;
+use tracing::info;
+
+use crate::{AccessRights, EnvironmentArgs};
+
+/// Prunes according to the configuration
+#[derive(Debug, Parser)]
+pub struct PruneCommand {
+    #[command(flatten)]
+    env: EnvironmentArgs,
+
+    /// Prometheus metrics configuration.
+    #[command(flatten)]
+    metrics: MetricArgs,
+}
+
+impl PruneCommand {
+    /// Execute the `prune` command
+    pub async fn execute(self, ctx: CliContext) -> eyre::Result<()> {
+        let env = self.env.init(AccessRights::RW, ctx.task_executor.clone())?;
+        let provider_factory = env.provider_factory;
+        let config = env.config.prune;
+        let data_dir = env.data_dir;
+
+        if let Some(listen_addr) = self.metrics.prometheus {
+            let config = MetricServerConfig::new(
+                listen_addr,
+                VersionInfo { version: version_metadata().cargo_pkg_version.as_ref() },
+                ChainSpecInfo { name: provider_factory.chain_spec().chain().to_string() },
+                ctx.task_executor.clone(),
+                metrics_hooks(&provider_factory),
+                data_dir.pprof_dumps(),
+            );
+
+            MetricServer::new(config).serve().await?;
+        }
+
+        // Copy data from database to static files
+        info!(target: "reth::cli", "Copying data from database to static files...");
+        let static_file_producer =
+            StaticFileProducer::new(provider_factory.clone(), config.segments.clone());
+        let lowest_static_file_height =
+            static_file_producer.lock().copy_to_static_files()?.min_block_num();
+        info!(target: "reth::cli", ?lowest_static_file_height, "Copied data from database to static files");
+
+        // Delete data which has been copied to static files.
+        if let Some(prune_tip) = lowest_static_file_height {
+            info!(target: "reth::cli", ?prune_tip, ?config, "Pruning data from database...");
+
+            // Set up cancellation token for graceful shutdown on Ctrl+C
+            let cancellation = CancellationToken::new();
+            let cancellation_clone = cancellation.clone();
+            ctx.task_executor.spawn_critical_task("prune-ctrl-c", async move {
+                tokio::signal::ctrl_c().await.expect("failed to listen for ctrl-c");
+                cancellation_clone.cancel();
+            });
+
+            // Use batched pruning with a limit to bound memory, running in a loop until complete.
+            //
+            // A limit of 20_000_000 results in a max memory usage of ~5G.
+            const DELETE_LIMIT: usize = 20_000_000;
+            let mut pruner = PrunerBuilder::new(config)
+                .delete_limit(DELETE_LIMIT)
+                .build_with_provider_factory(provider_factory.clone());
+
+            let mut total_pruned = 0usize;
+            loop {
+                if cancellation.is_cancelled() {
+                    info!(target: "reth::cli", total_pruned, "Pruning interrupted by user");
+                    break;
+                }
+
+                let output = pruner.run(prune_tip)?;
+                let batch_pruned: usize = output.segments.iter().map(|(_, seg)| seg.pruned).sum();
+                total_pruned = total_pruned.saturating_add(batch_pruned);
+
+                if output.progress.is_finished() {
+                    info!(target: "reth::cli", total_pruned, "Pruned data from database");
+                    break;
+                }
+
+                if batch_pruned == 0 {
+                    return Err(eyre::eyre!(
+                        "pruner made no progress but reported more data remaining; \
+                         aborting to prevent infinite loop"
+                    ));
+                }
+
+                info!(
+                    target: "reth::cli",
+                    batch_pruned,
+                    total_pruned,
+                    "Pruning batch complete, continuing..."
+                );
+            }
+        }
+
+        // Flush and compact RocksDB to reclaim disk space after pruning
+        {
+            info!(target: "reth::cli", "Flushing and compacting RocksDB...");
+            provider_factory.rocksdb_provider().flush_and_compact()?;
+            info!(target: "reth::cli", "RocksDB compaction complete");
+        }
+
+        Ok(())
+    }
+}
+
+impl PruneCommand {
+    /// Returns the underlying chain being used to run this command
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
+        Some(&self.env.chain)
+    }
+}

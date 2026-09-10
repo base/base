@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use crate::{AccessRights, Environment, EnvironmentArgs};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::ChainInfo;
 use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
@@ -12,8 +13,6 @@ use base_execution_state_tasks::{
 use base_node_config::version_metadata;
 use base_node_service::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
-use reth_cli_commands::ChainSpecParser;
-use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
 use tracing::info;
 
 /// Initializes the proofs storage with the current state of the chain.
@@ -21,9 +20,9 @@ use tracing::info;
 /// This command must be run before starting the node with proofs history enabled.
 /// It backfills the proofs storage with trie nodes from the current chain state.
 #[derive(Debug, Parser)]
-pub struct InitCommand<C: ChainSpecParser> {
+pub struct InitCommand {
     #[command(flatten)]
-    env: EnvironmentArgs<C>,
+    env: EnvironmentArgs,
 
     /// The path to the storage DB for proofs history.
     ///
@@ -51,7 +50,7 @@ pub struct InitCommand<C: ChainSpecParser> {
     pub proofs_history_rocksdb: ProofsHistoryRocksdbArgs,
 }
 
-impl<C: ChainSpecParser> InitCommand<C> {
+impl InitCommand {
     /// Execute the `proofs init` command.
     pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
@@ -142,7 +141,7 @@ impl<C: ChainSpecParser> InitCommand<C> {
     }
 }
 
-impl<C: ChainSpecParser> InitCommand<C> {
+impl InitCommand {
     /// Returns the underlying chain being used to run this command
     pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         Some(&self.env.chain)

@@ -1,10 +1,7 @@
 //! `base snapshot` subcommand group: snapshot manifest generation and download.
 
 use base_common_cli_support::CliRunner;
-use base_node_cli::{
-    chainspec::BaseChainSpecParser,
-    commands::{SnapshotManifestCommand, download},
-};
+use base_node_cli::commands::{SnapshotManifestCommand, download};
 use clap::{Parser, Subcommand};
 
 /// Snapshot manifest generation and download utilities.
@@ -30,7 +27,7 @@ pub(crate) enum SnapshotSubcommand {
     Manifest(SnapshotManifestCommand),
     /// Download Base node snapshots from R2 storage.
     #[command(name = "download")]
-    Download(Box<download::BaseDownloadCommand<BaseChainSpecParser>>),
+    Download(Box<download::BaseDownloadCommand>),
 }
 
 impl SnapshotSubcommand {

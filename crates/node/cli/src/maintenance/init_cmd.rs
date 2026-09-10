@@ -1,0 +1,42 @@
+//! Command that initializes the node from a genesis file.
+
+use std::sync::Arc;
+
+use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_common_types_chain::BlockHeader;
+use base_execution_state_provider::BlockHashReader;
+use clap::Parser;
+use tracing::info;
+
+use crate::{AccessRights, Environment, EnvironmentArgs};
+
+/// Initializes the database with the genesis block.
+#[derive(Debug, Parser)]
+pub struct InitCommand {
+    #[command(flatten)]
+    env: EnvironmentArgs,
+}
+
+impl InitCommand {
+    /// Execute the `init` command
+    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+        info!(target: "reth::cli", "reth init starting");
+
+        let Environment { provider_factory, .. } = self.env.init(AccessRights::RW, runtime)?;
+
+        let genesis_block_number = provider_factory.chain_spec().genesis_header().number();
+        let hash = provider_factory
+            .block_hash(genesis_block_number)?
+            .ok_or_else(|| eyre::eyre!("Genesis hash not found."))?;
+
+        info!(target: "reth::cli", hash = ?hash, "Genesis block written");
+        Ok(())
+    }
+}
+
+impl InitCommand {
+    /// Returns the underlying chain being used to run this command
+    pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
+        Some(&self.env.chain)
+    }
+}

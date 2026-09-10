@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::{DownloadArgs, EnodeCommand, RlpxCommand};
 use alloy_eips::BlockHashOrNumber;
 use backon::Retryable;
 use base_common_chain_config::BaseChainSpec;
@@ -10,7 +11,6 @@ use base_execution_network_service::{BlockDownloaderProvider, NetworkHandle};
 use base_execution_network_wire::BodiesClient;
 use base_node_config::get_single_header;
 use clap::{Parser, Subcommand};
-use reth_cli_commands::p2p::{DownloadArgs, enode, rlpx};
 
 pub mod bootnode;
 
@@ -115,7 +115,7 @@ enum Subcommands {
     /// Download a block header by number or hash.
     Header {
         #[command(flatten)]
-        args: DownloadArgs<crate::chainspec::BaseChainSpecParser>,
+        args: DownloadArgs,
         /// Block number or hash to fetch.
         #[arg(value_parser = hash_or_num_value_parser)]
         id: BlockHashOrNumber,
@@ -123,15 +123,15 @@ enum Subcommands {
     /// Download a block body by number or hash.
     Body {
         #[command(flatten)]
-        args: DownloadArgs<crate::chainspec::BaseChainSpecParser>,
+        args: DownloadArgs,
         /// Block number or hash to fetch.
         #[arg(value_parser = hash_or_num_value_parser)]
         id: BlockHashOrNumber,
     },
     /// `RLPx` utilities.
-    Rlpx(rlpx::Command),
+    Rlpx(RlpxCommand),
     /// Start a discovery-only bootnode.
     Bootnode(bootnode::Command),
     /// Print the enode identifier of this node.
-    Enode(enode::Command),
+    Enode(EnodeCommand),
 }

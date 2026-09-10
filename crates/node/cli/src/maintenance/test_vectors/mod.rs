@@ -1,14 +1,15 @@
 //! Command for generating test vectors.
 
-use std::sync::Arc;
-
-use crate::{
-    GENERATE_VECTORS as ETH_GENERATE_VECTORS, READ_VECTORS as ETH_READ_VECTORS,
-    generate_table_vectors, generate_vector, generate_vectors_with, read_vector, read_vectors_with,
-};
-use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::TxDeposit;
 use clap::{Parser, Subcommand};
+
+mod compact;
+pub use compact::{
+    GENERATE_VECTORS, IDENTIFIER_TYPE, READ_VECTORS, VECTOR_SIZE, VECTORS_FOLDER, generate_vector,
+    generate_vectors, generate_vectors_with, read_vector, read_vectors, read_vectors_with,
+    type_name,
+};
+mod tables;
+pub use tables::generate_vectors as generate_table_vectors;
 
 /// Generate test-vectors for different data types.
 #[derive(Debug, Parser)]
@@ -25,8 +26,12 @@ pub enum Subcommands {
         /// List of table names. Case-sensitive.
         names: Vec<String>,
     },
-    /// Generates test vectors for `Compact` types with `--write`. Reads and checks generated
-    /// vectors with `--read`.
+    /// Randomly generate test vectors for each `Compact` type using the `--write` flag.
+    ///
+    /// The generated vectors are serialized in both `json` and `Compact` formats and saved to a
+    /// file.
+    ///
+    /// Use the `--read` flag to read and validate the previously generated vectors from a file.
     #[group(multiple = false, required = true)]
     Compact {
         /// Write test vectors to a file.
@@ -44,22 +49,16 @@ impl Command {
     pub async fn execute(self) -> eyre::Result<()> {
         match self.command {
             Subcommands::Tables { names } => {
-                generate_table_vectors(names)?;
+                tables::generate_vectors(names)?;
             }
             Subcommands::Compact { write, .. } => {
                 if write {
-                    generate_vectors_with(ETH_GENERATE_VECTORS)?;
-                    generate_vectors_with(&[generate_vector::<TxDeposit>])?;
+                    compact::generate_vectors()?;
                 } else {
-                    read_vectors_with(ETH_READ_VECTORS)?;
-                    read_vectors_with(&[read_vector::<TxDeposit>])?;
+                    compact::read_vectors()?;
                 }
             }
         }
         Ok(())
-    }
-    /// Returns the underlying chain being used to run this command
-    pub const fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
-        None
     }
 }

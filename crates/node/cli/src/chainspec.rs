@@ -1,20 +1,40 @@
 use std::sync::Arc;
 
+use crate::ChainSpecValueParser;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::ChainConfig;
 use base_common_cli_support::parse_genesis;
-use reth_cli_commands::ChainSpecParser;
+use clap::builder::TypedValueParser;
 
 /// Base chain specification parser.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct BaseChainSpecParser;
 
-impl ChainSpecParser for BaseChainSpecParser {
-    const SUPPORTED_CHAINS: &'static [&'static str] = ChainConfig::SUPPORTED_NAMES;
+impl BaseChainSpecParser {
+    /// Built-in Base chains accepted by maintenance commands.
+    pub const SUPPORTED_CHAINS: &'static [&'static str] = ChainConfig::SUPPORTED_NAMES;
 
-    fn parse(s: &str) -> eyre::Result<Arc<BaseChainSpec>> {
+    /// Parses a built-in Base chain or genesis JSON.
+    pub fn parse(s: &str) -> eyre::Result<Arc<BaseChainSpec>> {
         chain_value_parser(s)
+    }
+    /// Default chain selected by maintenance commands.
+    pub fn default_value() -> Option<&'static str> {
+        Self::SUPPORTED_CHAINS.first().copied()
+    }
+
+    /// Clap parser for Base chain specifications.
+    pub const fn parser() -> impl TypedValueParser<Value = Arc<BaseChainSpec>> {
+        ChainSpecValueParser
+    }
+
+    /// Help text describing supported chain inputs.
+    pub fn help_message() -> String {
+        format!(
+            "The chain this node is running.\nPossible values are either a built-in chain or the path to a chain specification file.\n\nBuilt-in chains:\n    {}",
+            Self::SUPPORTED_CHAINS.join(", ")
+        )
     }
 }
 
@@ -37,10 +57,7 @@ mod tests {
     #[test]
     fn parse_known_chain_spec() {
         for &chain in BaseChainSpecParser::SUPPORTED_CHAINS {
-            assert!(
-                <BaseChainSpecParser as ChainSpecParser>::parse(chain).is_ok(),
-                "Failed to parse {chain}"
-            );
+            assert!(BaseChainSpecParser::parse(chain).is_ok(), "Failed to parse {chain}");
         }
     }
 }

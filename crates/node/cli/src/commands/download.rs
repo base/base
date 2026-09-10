@@ -10,13 +10,12 @@ use std::{
     sync::Arc,
 };
 
+use crate::{DownloadCommand, DownloadDefaults};
 use base_common_chain_config::BaseChainSpec;
 use base_node_config::DatadirArgs;
 use clap::Parser;
 use eyre::Result;
 use futures::StreamExt;
-use reth_cli_commands::ChainSpecParser;
-use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
@@ -28,9 +27,9 @@ use tracing::info;
 /// When `--proofs` is passed, the command runs reth's standard download
 /// then fetches and extracts the proofs archive from the same snapshot source.
 #[derive(Debug, Parser)]
-pub struct BaseDownloadCommand<C: ChainSpecParser> {
+pub struct BaseDownloadCommand {
     #[command(flatten)]
-    inner: DownloadCommand<C>,
+    inner: DownloadCommand,
 
     /// Also download the proofs database for fault proof support.
     ///
@@ -41,7 +40,7 @@ pub struct BaseDownloadCommand<C: ChainSpecParser> {
     proofs: bool,
 }
 
-impl<C: ChainSpecParser> BaseDownloadCommand<C> {
+impl BaseDownloadCommand {
     /// Executes the download command.
     pub async fn execute(self) -> Result<()> {
         let Self { inner, proofs } = self;
@@ -94,7 +93,7 @@ fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs
     datadir_args
 }
 
-impl<C: ChainSpecParser> BaseDownloadCommand<C> {
+impl BaseDownloadCommand {
     /// Returns the underlying chain spec.
     pub fn chain_spec(&self) -> Option<&Arc<BaseChainSpec>> {
         self.inner.chain_spec()
@@ -339,12 +338,11 @@ mod tests {
     use clap::Parser;
 
     use super::*;
-    use crate::chainspec::BaseChainSpecParser;
 
     #[derive(Parser)]
     struct TestCli {
         #[command(flatten)]
-        args: BaseDownloadCommand<BaseChainSpecParser>,
+        args: BaseDownloadCommand,
     }
 
     fn create_proofs_archive(content_pairs: &[(&str, &[u8])]) -> Vec<u8> {

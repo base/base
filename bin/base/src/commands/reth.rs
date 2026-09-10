@@ -4,15 +4,17 @@ use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::CliRunner;
-use base_node_cli::{
-    BaseCliComponents,
-    chainspec::BaseChainSpecParser,
-    commands::{GenesisOutputRootCommand, init_state, p2p},
-};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_node_cli::{
+    CliNodeComponents,
+    commands::{GenesisOutputRootCommand, p2p},
+};
+use base_node_cli::{
+    ConfigCommand, DbCommand, DumpGenesisCommand, InitCommand, PruneCommand, ReExecuteCommand,
+    StageCommand,
+};
 use clap::{Parser, Subcommand};
-use reth_cli_commands::{config_cmd, db, dump_genesis, init_cmd, prune, re_execute, stage};
 
 /// Execution-layer maintenance utilities for `base`.
 #[derive(Parser, Debug)]
@@ -34,34 +36,34 @@ impl RethCommand {
 pub(crate) enum RethSubcommand {
     /// Database debugging utilities.
     #[command(name = "db")]
-    Db(db::Command<BaseChainSpecParser>),
+    Db(DbCommand),
     /// Initialize the database from a genesis file.
     #[command(name = "init")]
-    Init(init_cmd::InitCommand<BaseChainSpecParser>),
+    Init(InitCommand),
     /// Initialize the database from a state dump file.
     #[command(name = "init-state")]
-    InitState(init_state::BaseInitStateCommand<BaseChainSpecParser>),
+    InitState(base_node_cli::InitStateCommand),
     /// Dump genesis block JSON configuration to stdout.
     #[command(name = "dump-genesis")]
-    DumpGenesis(dump_genesis::DumpGenesisCommand<BaseChainSpecParser>),
+    DumpGenesis(DumpGenesisCommand),
     /// Print the OP Stack output root for an L2 genesis configuration.
     #[command(name = "genesis-output-root")]
     GenesisOutputRoot(GenesisOutputRootCommand),
     /// Manipulate individual stages.
     #[command(name = "stage")]
-    Stage(Box<stage::Command<BaseChainSpecParser>>),
+    Stage(Box<StageCommand>),
     /// P2P debugging utilities.
     #[command(name = "p2p")]
     P2P(Box<p2p::Command>),
     /// Write config to stdout.
     #[command(name = "config")]
-    Config(config_cmd::Command),
+    Config(ConfigCommand),
     /// Prune according to the configuration without any limits.
     #[command(name = "prune")]
-    Prune(prune::PruneCommand<BaseChainSpecParser>),
+    Prune(PruneCommand),
     /// Re-execute blocks in parallel to verify historical sync correctness.
     #[command(name = "re-execute")]
-    ReExecute(re_execute::Command<BaseChainSpecParser>),
+    ReExecute(ReExecuteCommand),
 }
 
 impl RethSubcommand {
@@ -113,8 +115,8 @@ impl RethSubcommand {
         }
     }
 
-    pub(crate) fn base_components(spec: Arc<BaseChainSpec>) -> BaseCliComponents {
-        BaseCliComponents {
+    pub(crate) fn base_components(spec: Arc<BaseChainSpec>) -> CliNodeComponents {
+        CliNodeComponents {
             evm_config: BaseEvmConfig::new(Arc::clone(&spec)),
             consensus: Arc::new(BaseBeaconConsensus::new(spec)),
         }

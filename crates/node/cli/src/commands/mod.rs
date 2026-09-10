@@ -4,7 +4,6 @@ pub mod base_proofs;
 pub mod download;
 mod genesis_output_root;
 pub use genesis_output_root::GenesisOutputRootCommand;
-pub mod init_state;
 pub mod p2p;
 mod snapshot_manifest;
 pub use snapshot_manifest::SnapshotManifestCommand;

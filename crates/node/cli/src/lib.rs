@@ -9,10 +9,9 @@
 
 /// Base chain specification parser.
 pub mod chainspec;
+pub use chainspec::BaseChainSpecParser;
 /// Base CLI commands.
 pub mod commands;
-mod types;
-pub use types::BaseCliComponents;
 
 mod node;
 pub use node::{
@@ -46,3 +45,6 @@ pub use consensus::{
     MetricsArgs, P2PArgs, P2PConfigError, P2PNetworkArgs, RpcArgs, SequencerArgs, SignerArgs,
     SignerArgsParseError, resolve_host,
 };
+
+mod maintenance;
+pub use maintenance::*;
