@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::{Address, TxHash, TxKind, U256};
-use base_load_tests::{
+use base_testing_load_service::{
     AccountPool, KeyStream, MetricsCollector, Payload, SeededRng, TransactionMetrics,
     TransferPayload, WorkloadConfig, WorkloadGenerator,
 };

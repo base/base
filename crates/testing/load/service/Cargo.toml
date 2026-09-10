@@ -1,5 +1,5 @@
 [package]
-name = "base-load-tests"
+name = "base-testing-load-service"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

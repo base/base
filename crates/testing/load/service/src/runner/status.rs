@@ -98,7 +98,7 @@ impl LoadTestDisplay {
     /// [`LoadTestDisplay::new`] after the run duration is known.
     pub fn init_tracing() -> Result<Option<MultiProgress>> {
         let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("warn,base_load_tests=info,base_load_tester=info"));
+            .unwrap_or_else(|_| EnvFilter::new("warn,base_testing_load_service=info,base_load_tester=info"));
         let interactive = Self::terminal_supported(io::stderr().is_terminal());
         let multi_progress = interactive
             .then(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr_with_hz(10)));

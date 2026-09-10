@@ -65,7 +65,7 @@ members = [
   "crates/execution/txpool/pool",
   "crates/infra/audit/service",
   "crates/infra/basectl/service",
-  "crates/infra/load-tests",
+  "crates/testing/load/service",
   "crates/infra/shadow-metrics/service",
   "crates/infra/sidecrush/service",
   "crates/infra/snapshotter/service",
@@ -300,7 +300,7 @@ base-execution-payload-builder = { path = "crates/execution/payload/builder", de
 base-infra-basectl-service = { path = "crates/infra/basectl/service", default-features = false }
 base-infra-sidecrush-service = { path = "crates/infra/sidecrush/service", default-features = false }
 base-infra-audit-service = { path = "crates/infra/audit/service", default-features = false }
-base-load-tests = { path = "crates/infra/load-tests", default-features = false }
+base-testing-load-service = { path = "crates/testing/load/service", default-features = false }
 base-infra-snapshotter-service = { path = "crates/infra/snapshotter/service", default-features = false }
 base-infra-websocket-proxy-service = { path = "crates/infra/websocket-proxy/service", default-features = false }
 base-infra-telemetry-service = { path = "crates/infra/telemetry/service", default-features = false }

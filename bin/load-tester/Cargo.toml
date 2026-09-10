@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-base-load-tests = { workspace = true }
+base-testing-load-service = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-cli-support = { workspace = true }
 url = { workspace = true, features = ["default"] }

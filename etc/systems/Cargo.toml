@@ -27,7 +27,7 @@ async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 base-node-config = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-load-tests = { workspace = true }
+base-testing-load-service = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-client-rollup = {workspace = true}
 base-common-runtime-tasks = {workspace = true}

@@ -7,7 +7,7 @@ use base_common_cli_support::RuntimeManager;
 use base_common_client_ethereum::Provider;
 use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner, TransactionBuilder};
 use base_common_types_rpc::{BlockNumberOrTag, TransactionRequest};
-use base_load_tests::{
+use base_testing_load_service::{
     AccountPool, BaselineError, DEFAULT_MAX_GAS_PRICE, FundedAccount, LoadRunner, LoadTestDisplay,
     LoadTestDisplayConfig, LoadTestRunHooks, LoadTestRunOptions, MetricsSummary, QueryProvider,
     ReceiptCoverage, Result as LoadResult, RpcProviders, RpcResultExt, TestConfig,
@@ -240,7 +240,7 @@ async fn run_load_test(args: LoadArgs) -> Result<()> {
     println!();
 
     let display_duration = if args.continuous { None } else { load_config.duration };
-    let output = base_load_tests::LoadTestExecutor::run_prepared(
+    let output = base_testing_load_service::LoadTestExecutor::run_prepared(
         test_config,
         load_config,
         funding_key,

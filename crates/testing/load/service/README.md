@@ -6,7 +6,7 @@ Load testing and benchmarking framework for Base infrastructure.
 
 | Crate | Description |
 |-------|-------------|
-| `base-load-tests` | Core library with workload generation, transaction submission, and metrics collection |
+| `base-testing-load-service` | Core library with workload generation, transaction submission, and metrics collection |
 | `base-load-tester-bin` | Binary crate for running load tests and rescue/drain commands |
 
 ## Goals
@@ -41,10 +41,10 @@ Or run directly with cargo:
 
 ```bash
 # Build the crates
-cargo build -p base-load-tests -p base-load-tester-bin
+cargo build -p base-testing-load-service -p base-load-tester-bin
 
 # Run tests
-cargo test -p base-load-tests
+cargo test -p base-testing-load-service
 
 # Run the load test binary with a config file
 cargo run -p base-load-tester-bin --bin base-load-tester -- path/to/config.yaml
@@ -62,7 +62,7 @@ change chain configuration.
 # Use a funded local-devnet account, never a production key.
 FUNDER_KEY=0x... LOAD_TEST_OUTPUT=cobalt-results.json \
   cargo run -p base-load-tester-bin --bin base-load-tester -- \
-  crates/infra/load-tests/examples/cobalt-devnet.yaml
+  crates/testing/load/service/examples/cobalt-devnet.yaml
 ```
 
 ## Configuration
@@ -132,7 +132,7 @@ interactive terminal, a compact live footer stays below the logs through setup, 
 confirmation draining. Redirected and non-interactive runs emit the same five-second structured
 progress events without terminal control sequences.
 
-Use `RUST_LOG=base_load_tests=debug` for pacing diagnostics. Normal per-transaction and per-account
+Use `RUST_LOG=base_testing_load_service=debug` for pacing diagnostics. Normal per-transaction and per-account
 events are available only at trace level. Avoid trace logging for sustained load runs because its
 volume scales with transaction count.
 

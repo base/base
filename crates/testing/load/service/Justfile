@@ -25,7 +25,7 @@ run network='devnet' *args:
     if [ -z "${FUNDER_KEY:-}" ] && [ "{{network}}" = "devnet" ]; then
         export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
     fi
-    cargo run -p base-load-tester-bin --bin base-load-tester -- crates/infra/load-tests/examples/{{network}}.yaml {{args}}
+    cargo run -p base-load-tester-bin --bin base-load-tester -- crates/testing/load/service/examples/{{network}}.yaml {{args}}
 
 # Devnet deploys a local WETH/USDC harness and renders dynamic addresses.
 # Other networks use examples/real-token-<network>.yaml and expect contracts
@@ -40,7 +40,7 @@ real-token network='devnet' *args:
     fi
 
     if [ "{{network}}" != "devnet" ]; then
-        config="crates/infra/load-tests/examples/real-token-{{network}}.yaml"
+        config="crates/testing/load/service/examples/real-token-{{network}}.yaml"
         if [ ! -f "$config" ]; then
             echo "real-token config not found: $config" >&2
             exit 1
@@ -50,7 +50,7 @@ real-token network='devnet' *args:
     fi
 
     contracts_dir="crates/testing/support/contracts"
-    template="crates/infra/load-tests/examples/real-token-devnet.yaml.template"
+    template="crates/testing/load/service/examples/real-token-devnet.yaml.template"
     rendered_config="$(mktemp "${TMPDIR:-/tmp}/base-real-token-devnet.XXXXXX")"
 
     echo "Installing Foundry dependencies..."
@@ -94,7 +94,7 @@ validity-stress *args:
     fi
 
     contracts_dir="crates/testing/support/contracts"
-    template="crates/infra/load-tests/examples/validity-stress.yaml.template"
+    template="crates/testing/load/service/examples/validity-stress.yaml.template"
     rendered_config="$(mktemp "${TMPDIR:-/tmp}/base-validity-stress.XXXXXX.yaml")"
     mutator_pid=""
     cleanup() {
@@ -124,7 +124,7 @@ validity-stress *args:
         exit 1
     fi
 
-    cargo run --quiet -p base-load-tests --example render_validity_stress -- \
+    cargo run --quiet -p base-testing-load-service --example render_validity_stress -- \
         "$template" "$counter" "$rendered_config"
 
     mutator_key="${VALIDITY_STRESS_MUTATOR_KEY:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}"
@@ -167,7 +167,7 @@ real-token-recover network='sepolia':
     #!/usr/bin/env bash
     set -euo pipefail
 
-    config="crates/infra/load-tests/examples/real-token-{{network}}.yaml"
+    config="crates/testing/load/service/examples/real-token-{{network}}.yaml"
     if [ ! -f "$config" ]; then
         echo "real-token config not found: $config" >&2
         exit 1

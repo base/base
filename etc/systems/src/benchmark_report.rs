@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use alloy_primitives::{Address, B256};
-use base_load_tests::MetricsSummary;
+use base_testing_load_service::MetricsSummary;
 use chrono::{SecondsFormat, Utc};
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
@@ -315,7 +315,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_primitives::{Address, B256};
-    use base_load_tests::{MetricsSummary, TestConfig, ThroughputMetrics};
+    use base_testing_load_service::{MetricsSummary, TestConfig, ThroughputMetrics};
 
     use super::{SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics};
 

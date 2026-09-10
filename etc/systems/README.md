@@ -138,7 +138,7 @@ cargo run --release -p base-system-tests --bin base-bench -- snapshot \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \
   --load-test-config \
-    crates/infra/load-tests/examples/account-create-mainnet-snapshot.yaml \
+    crates/testing/load/service/examples/account-create-mainnet-snapshot.yaml \
   --benchmark-run snapshot-throughput \
   --scenario account-create-2s \
   --output-dir results/account-create-2s

@@ -16,7 +16,7 @@ use std::{
 use base_common_client_ethereum::{Base, PrivateKeySigner};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_rpc::BlockNumberOrTag;
-use base_load_tests::{
+use base_testing_load_service::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
     MetricsSummary, TestConfig,
 };

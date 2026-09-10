@@ -29,7 +29,7 @@ use base_common_client_ethereum::{Base, PrivateKeySigner, TransactionBuilder};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
-use base_load_tests::{CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator};
+use base_testing_load_service::{CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, Account,
     SystemTestStackBuilder,

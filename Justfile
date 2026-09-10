@@ -13,7 +13,7 @@ mod actions 'actions'
 # Docker-based local devnet management
 mod devnet 'etc/docker'
 # Load testing for networks
-mod load-test 'crates/infra/load-tests'
+mod load-test 'crates/testing/load/service'
 # Formatting, clippy, udeps, and deny checks
 mod check 'etc/just/check.just'
 # Cargo build targets and contract compilation
