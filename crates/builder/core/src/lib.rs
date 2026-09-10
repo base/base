@@ -7,16 +7,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), allow(unused_crate_dependencies))]
 
-mod config;
 pub use base_execution_payload_builder::{
     MeteringStore, ResourceMeteringConfig, SharedMeteringStore,
 };
-pub use config::BuilderConfig;
+pub use base_node_service::BuilderConfig;
 
-mod traits;
-pub use traits::{ClientBounds, PayloadTxsBounds, PoolBounds};
-
-mod service;
 pub use base_execution_rpc_handlers::{
     BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS,
     ShadowValidityBuilderApi, ShadowValidityConfig, ShadowValidityConfigError,

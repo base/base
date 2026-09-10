@@ -95,3 +95,6 @@ pub use node_metrics::*;
 
 mod ethstats;
 pub use ethstats::*;
+
+mod builder_config;
+pub use builder_config::BuilderConfig;
