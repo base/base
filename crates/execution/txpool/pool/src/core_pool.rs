@@ -494,8 +494,6 @@ where
     V: TransactionValidator,
     S: BlobStore + Clone,
 {
-    type Block = V::Block;
-
     #[instrument(skip(self), target = "txpool")]
     fn set_block_info(&self, info: BlockInfo) {
         trace!(target: "txpool", "updating pool block info");

@@ -731,17 +731,15 @@ impl BlockNumReader for ProviderFactory {
 }
 
 impl BlockReader for ProviderFactory {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<BaseBlock>> {
         self.provider()?.find_block_by_hash(hash, source)
     }
 
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<BaseBlock>> {
         self.provider()?.block(id)
     }
 
@@ -771,7 +769,7 @@ impl BlockReader for ProviderFactory {
         self.provider()?.sealed_block_with_senders(id, transaction_kind)
     }
 
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<BaseBlock>> {
         self.provider()?.block_range(range)
     }
 

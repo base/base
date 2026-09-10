@@ -10,7 +10,7 @@ use base_common_chain_config::Upgrades;
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Predeploys;
-use base_common_types_chain::{BlockExt as BlockT, RecoveredBlock};
+use base_common_types_chain::RecoveredBlock;
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_consensus_batch_types::BaseTimeUpdateTx;
@@ -326,7 +326,7 @@ impl TestHarness {
             .block(BlockHashOrNumber::Number(best_number))
             .expect("able to load canonical block")
             .expect("canonical block exists");
-        BlockT::try_into_recovered(block).expect("able to recover canonical block")
+        block.try_into_recovered().expect("able to recover canonical block")
     }
 
     /// Return the chain specification used by the harness.

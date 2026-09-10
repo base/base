@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use alloy_hardforks::EthereumHardforks;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
-use base_common_types_chain::{BlockExt as _, SealedBlock};
+use base_common_types_chain::SealedBlock;
 use base_common_types_payload::{BasePayloadError, ExecutionData, PayloadError};
 use derive_more::Constructor;
 

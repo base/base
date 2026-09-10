@@ -14,7 +14,7 @@ pub use transaction::{
 
 mod block;
 pub use block::{
-    Block, BlockBody, BlockHeader, BlockRecoveryError, IndexedTx, RecoveredBlock, SealedBlock,
+    BlockBody, BlockHeader, BlockRecoveryError, IndexedTx, RecoveredBlock, SealedBlock,
     SealedBlockRecoveryError, SealedBlockWith, SealedOrRecoveredBlock,
 };
 

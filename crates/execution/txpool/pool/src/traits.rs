@@ -67,13 +67,13 @@ use alloy_primitives::{
     Address, B128, B256, TxHash,
     map::{AddressSet, B256Map},
 };
-use base_common_types_chain::{BlockExt as Block, Recovered, SealedBlock};
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
 use futures_util::{Stream, ready};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;
+use {base_common_types_chain::Recovered, base_common_types_chain::SealedBlock};
 
 use crate::{
     AddedTransactionOutcome, AllTransactionsEvents, SubPool,
@@ -713,9 +713,6 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
 /// Extension for [`TransactionPool`] trait that allows to set the current block info.
 #[auto_impl::auto_impl(&, Arc)]
 pub trait TransactionPoolExt: TransactionPool {
-    /// The block type used for chain tip updates.
-    type Block: Block;
-
     /// Sets the current block info for the pool.
     fn set_block_info(&self, info: BlockInfo);
 

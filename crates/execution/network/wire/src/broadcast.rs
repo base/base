@@ -14,9 +14,12 @@ use alloy_rlp::{
     RlpEncodableWrapper, decode_append,
 };
 use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
-use base_common_types_chain::{BlockExt as Block, InMemorySize, OnceLock, SignedTransaction};
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use derive_more::{Constructor, Deref, DerefMut, From, IntoIterator};
+use {
+    base_common_types_chain::InMemorySize, base_common_types_chain::OnceLock,
+    base_common_types_chain::SignedTransaction,
+};
 
 use crate::{EthMessage, EthVersion};
 
@@ -87,11 +90,8 @@ impl From<NewBlockHashes> for Vec<BlockHashNumber> {
 pub trait NewBlockPayload:
     Encodable + Decodable + Clone + Eq + Debug + Send + Sync + Unpin + 'static
 {
-    /// The block type.
-    type Block: Block;
-
     /// Returns a reference to the block.
-    fn block(&self) -> &Self::Block;
+    fn block(&self) -> &base_common_types_chain::BaseBlock;
 }
 
 /// A new block with the current total difficulty, which includes the difficulty of the returned
@@ -107,9 +107,7 @@ pub struct NewBlock<B = base_common_types_chain::Block<EthereumTxEnvelope<TxEip4
 }
 
 impl NewBlockPayload for NewBlock<base_common_types_chain::BaseBlock> {
-    type Block = base_common_types_chain::BaseBlock;
-
-    fn block(&self) -> &Self::Block {
+    fn block(&self) -> &base_common_types_chain::BaseBlock {
         &self.block
     }
 }

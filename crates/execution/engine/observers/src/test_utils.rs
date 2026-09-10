@@ -4,7 +4,7 @@ use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::{BlockExt as _, RecoveredBlock};
+use base_common_types_chain::RecoveredBlock;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_service::{
     NetworkConfigBuilder, NetworkManager, config::rng_secret_key,

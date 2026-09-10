@@ -18,7 +18,7 @@ use alloy_primitives::{
     B256,
     map::{FbBuildHasher, HashMap},
 };
-use base_common_types_chain::BlockExt as Block;
+
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_network_types::PeerAddr;
 use base_execution_network_types::PeerId;

@@ -13,9 +13,6 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
-use base_common_types_chain::{
-    BlockBodyExt as BlockBody, BlockExt as BlockTrait, ReceiptWithBloom, RecoveredBlock,
-};
 use base_common_types_chain::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use base_common_types_rpc::BlockTransactionsKind;
 use base_common_types_rpc::{
@@ -32,9 +29,8 @@ use base_execution_evm_runtime::{
     database::{BundleRetention, State},
 };
 use base_execution_state_api::{
-    BlockIdReader, BlockReaderIdExt, HashedPostStateProvider, HeaderProvider, ProviderBlock,
-    ReceiptProviderIdExt, StateProviderFactory, StateRootProvider, StorageRootProvider,
-    TransactionVariant,
+    BlockIdReader, BlockReaderIdExt, HashedPostStateProvider, HeaderProvider, ReceiptProviderIdExt,
+    StateProviderFactory, StateRootProvider, StorageRootProvider, TransactionVariant,
 };
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::{
@@ -48,6 +44,10 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;
+use {
+    base_common_types_chain::BlockBodyExt as BlockBody, base_common_types_chain::ReceiptWithBloom,
+    base_common_types_chain::RecoveredBlock,
+};
 
 use crate::BaseEthApi;
 
@@ -169,7 +169,7 @@ impl DebugApi {
         rlp_block: Bytes,
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BaseEthApiError> {
-        let block: ProviderBlock<BlockchainProvider> = Decodable::decode(&mut rlp_block.as_ref())
+        let block: base_common_types_chain::BaseBlock = Decodable::decode(&mut rlp_block.as_ref())
             .map_err(BlockError::RlpDecodeRawBlock)
             .map_err(BaseEthApiError::from_eth_err)?;
 

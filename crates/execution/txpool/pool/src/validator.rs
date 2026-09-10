@@ -15,12 +15,8 @@ use base_common_chain_config::DaFootprintGasScalarUpdate;
 use base_common_chain_config::Upgrades;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{
-    AccountChange, BaseBlock, BlockHeader, ChangeType, Eip8130Constants, Eip8130Contracts,
-    Eip8130Signed, Eip8130TimestampError, InitialActor, SignedChange, Transaction,
-    constants::KECCAK_EMPTY,
-};
-use base_common_types_chain::{
-    BlockExt as Block, GotExpected, InvalidTransactionError, SealedBlock,
+    AccountChange, BlockHeader, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
+    Eip8130TimestampError, InitialActor, SignedChange, Transaction, constants::KECCAK_EMPTY,
 };
 use base_execution_evm_machine::JournalCheckpoint;
 use base_execution_evm_precompiles::NonceManagerStorage;
@@ -43,6 +39,10 @@ use base_execution_txpool_pool::{
 };
 use lru::LruCache;
 use parking_lot::RwLock;
+use {
+    base_common_types_chain::GotExpected, base_common_types_chain::InvalidTransactionError,
+    base_common_types_chain::SealedBlock,
+};
 
 use crate::{
     BasePooledTransaction, ConfigSlot, DataAvailabilitySized, InvalidationKey, LimitClass,
@@ -2138,8 +2138,6 @@ impl<Client> TransactionValidator for BaseTransactionValidator<Client>
 where
     Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
 {
-    type Block = BaseBlock;
-
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,

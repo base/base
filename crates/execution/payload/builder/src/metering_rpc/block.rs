@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::BlockExt as BlockT;
+
 use base_common_types_chain::{BaseBlock, BlockHeader, transaction::SignerRecoverable};
 use base_execution_evm_blocks::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder};
 use base_execution_evm_runtime::database::State;

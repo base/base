@@ -14,7 +14,7 @@ use alloy_primitives::{
 use base_common_chain_config::ChainSpecProvider;
 use base_common_io_files::FsPathError;
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::{BaseBlock, BlockHeader, transaction::TxHashRef};
+use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_common_types_chain::{SealedHeader, SignedTransaction};
 use base_execution_state_api::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use base_execution_state_types::CanonStateNotification;
@@ -101,7 +101,7 @@ pub fn maintain_transaction_pool_future<Client, P, St>(
 ) -> BoxFuture<'static, ()>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + 'static,
-    P: TransactionPoolExt<Block = BaseBlock> + 'static,
+    P: TransactionPoolExt + 'static,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     async move {
@@ -121,7 +121,7 @@ pub async fn maintain_transaction_pool<Client, P, St>(
     config: MaintainPoolConfig,
 ) where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + 'static,
-    P: TransactionPoolExt<Block = BaseBlock> + 'static,
+    P: TransactionPoolExt + 'static,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     let metrics = MaintainPoolMetrics::default();

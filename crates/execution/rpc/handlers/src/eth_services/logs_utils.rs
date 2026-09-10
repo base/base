@@ -28,10 +28,8 @@ pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
 ) -> Result<Vec<Log>, crate::eth_services::BaseEthApiError>
 where
     I: IntoIterator<Item = (TxHash, &'a BaseReceipt)>,
-    C: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    C: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -93,10 +91,8 @@ pub fn append_matching_block_logs<P, C>(
 ) -> Result<(), EthApiError>
 where
     P: BlockReader<Transaction: SignedTransaction>,
-    C: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    C: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync

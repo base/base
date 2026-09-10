@@ -17,7 +17,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_metrics::GasDisplay;
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::BlockHeader;
 use base_execution_engine_observers::{
     ExExManagerHandle, ExExNotification, ExExNotificationSource,
 };
@@ -261,7 +261,7 @@ impl ExecutionStage {
 impl<Provider> Stage<Provider> for ExecutionStage
 where
     Provider: DBProvider
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + StaticFileProviderFactory
         + StatsReader
         + BlockHashReader
@@ -742,6 +742,7 @@ mod tests {
     use alloy_rlp::Decodable;
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_types_chain::SealedBlock;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_runtime::database::{AccountStatus, BundleAccount};
     use base_execution_state_database::{DbTx, DbTxMut, models::metadata::StorageSettings};
@@ -755,7 +756,6 @@ mod tests {
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
     use base_testing_support::generators;
-    use {base_common_types_chain::BlockExt as _, base_common_types_chain::SealedBlock};
 
     use super::*;
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;

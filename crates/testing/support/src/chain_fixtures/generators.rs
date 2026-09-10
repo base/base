@@ -15,9 +15,6 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bytes, TxKind, U256};
 use base_common_types_chain::{
-    BlockExt as _, Log, SealedBlock, SealedHeader, crypto::secp256k1::sign_message, proofs,
-};
-use base_common_types_chain::{
     EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
     SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
 };
@@ -26,6 +23,11 @@ use base_execution_state_types::StorageEntry;
 pub use rand::Rng;
 use rand::{SeedableRng, distr::uniform::SampleRange, rngs::StdRng};
 use secp256k1::{Keypair, Secp256k1};
+use {
+    base_common_types_chain::Log, base_common_types_chain::SealedBlock,
+    base_common_types_chain::SealedHeader,
+    base_common_types_chain::crypto::secp256k1::sign_message, base_common_types_chain::proofs,
+};
 
 /// Used to pass arguments for random block generation function in tests
 #[derive(Debug, Default)]

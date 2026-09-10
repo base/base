@@ -6,7 +6,6 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_observability_tracing::tracing::debug;
-use base_common_types_chain::BaseBlock;
 use base_common_types_chain::RecoveredBlock;
 use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use base_execution_state_provider::{BlockReader, Chain, StateProviderFactory};
@@ -113,7 +112,7 @@ where
 
 impl<P> Stream for StreamBackfillJob<P, SingleBlockStreamItem>
 where
-    P: BlockReader<Block = BaseBlock> + StateProviderFactory + Clone + Unpin + 'static,
+    P: BlockReader + StateProviderFactory + Clone + Unpin + 'static,
 {
     type Item = BackfillJobResult<SingleBlockStreamItem>;
 
@@ -145,7 +144,7 @@ where
 
 impl<P> Stream for StreamBackfillJob<P, BatchBlockStreamItem>
 where
-    P: BlockReader<Block = BaseBlock> + StateProviderFactory + Clone + Unpin + 'static,
+    P: BlockReader + StateProviderFactory + Clone + Unpin + 'static,
 {
     type Item = BackfillJobResult<BatchBlockStreamItem>;
 
@@ -233,10 +232,10 @@ mod tests {
 
     use alloy_primitives::{Address, TxKind, U256, b256};
     use base_common_chain_config::BaseChainSpec;
+    use base_common_types_chain::crypto::secp256k1::public_key_to_address;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
     };
-    use base_common_types_chain::{BlockExt as _, crypto::secp256k1::public_key_to_address};
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         ProviderFactory, providers::BlockchainProvider,

@@ -517,13 +517,11 @@ impl BlockIdReader for BlockchainProvider {
 }
 
 impl BlockReader for BlockchainProvider {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<BaseBlock>> {
         self.consistent_provider()?.find_block_by_hash(hash, source)
     }
 
@@ -535,7 +533,7 @@ impl BlockReader for BlockchainProvider {
         self.consistent_provider()?.find_sealed_or_recovered_block(hash, source)
     }
 
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<BaseBlock>> {
         self.consistent_provider()?.block(id)
     }
 
@@ -571,7 +569,7 @@ impl BlockReader for BlockchainProvider {
         self.consistent_provider()?.sealed_block_with_senders(id, transaction_kind)
     }
 
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<BaseBlock>> {
         self.consistent_provider()?.block_range(range)
     }
 
@@ -881,7 +879,7 @@ impl BlockReaderIdExt for BlockchainProvider
 where
     Self: ReceiptProviderIdExt,
 {
-    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<BaseBlock>> {
         self.consistent_provider()?.block_by_id(id)
     }
 
@@ -1009,7 +1007,6 @@ mod tests {
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
-    use base_common_types_chain::{BlockExt as _, RecoveredBlock, SealedBlock, SignerRecoverable};
     use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
     use base_execution_state_api::{
         BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
@@ -1039,6 +1036,10 @@ mod tests {
         crate::CanonStateSubscriptions, crate::NewCanonicalChain,
         crate::test_utils::TestBlockBuilder, base_execution_state_types::CanonStateNotification,
         base_execution_state_types::ExecutedBlock,
+    };
+    use {
+        base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedBlock,
+        base_common_types_chain::SignerRecoverable,
     };
 
     use super::SNAPSHOT_STATE_RETENTION;

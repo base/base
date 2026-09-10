@@ -7,11 +7,11 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B64, B256, U256};
 use alloy_rlp::Encodable;
 use base_common_chain_config::BaseChainSpec;
+use base_common_types_chain::SealedBlock;
 use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
     constants::EMPTY_WITHDRAWALS,
 };
-use base_common_types_chain::{BlockExt as BlockTrait, SealedBlock};
 use tracing::debug;
 
 /// Generate test blocks for a given chain spec
@@ -115,7 +115,7 @@ pub fn generate_test_blocks(chain_spec: &BaseChainSpec, count: u64) -> Vec<Seale
 
         // Create the block
         let block = Block { header: header.clone(), body: body.clone() };
-        let sealed_block = BlockTrait::seal_slow(block);
+        let sealed_block = block.seal_slow();
 
         debug!(target: "e2e::import",
             "Generated block {} with hash {:?}",

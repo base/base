@@ -162,7 +162,7 @@ where
     C: BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + HeaderProvider
         + Clone
         + Unpin

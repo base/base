@@ -6,7 +6,7 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_observability_tracing::tracing::{debug, trace};
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor,
 };
@@ -18,7 +18,7 @@ use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::PruneModes;
 use {
     base_common_observability_metrics::GasDisplay, base_common_types_chain::BlockBodyExt as _,
-    base_common_types_chain::BlockExt as _, base_common_types_chain::RecoveredBlock,
+    base_common_types_chain::RecoveredBlock,
 };
 
 use crate::StreamBackfillJob;
@@ -42,7 +42,7 @@ pub struct BackfillJob<P> {
 
 impl<P> Iterator for BackfillJob<P>
 where
-    P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
+    P: HeaderProvider + BlockReader + StateProviderFactory,
 {
     type Item = BackfillJobResult<Chain>;
 
@@ -57,7 +57,7 @@ where
 
 impl<P> BackfillJob<P>
 where
-    P: BlockReader<Block = BaseBlock> + HeaderProvider + StateProviderFactory,
+    P: BlockReader + HeaderProvider + StateProviderFactory,
 {
     /// Converts the backfill job into a single block backfill job.
     pub fn into_single_blocks(self) -> SingleBlockBackfillJob<P> {
@@ -114,7 +114,8 @@ where
             // Unseal the block for execution
             let (block, senders) = block.split_sealed();
             let (header, body) = block.split_sealed_header_body();
-            let block = P::Block::new_sealed(header, body).with_senders(senders);
+            let block = base_common_types_chain::SealedBlock::from_sealed_parts(header, body)
+                .with_senders(senders);
 
             results.push(executor.execute_one(&block)?);
             execution_duration += execute_start.elapsed();
@@ -168,7 +169,7 @@ pub struct SingleBlockBackfillJob<P> {
 
 impl<P> Iterator for SingleBlockBackfillJob<P>
 where
-    P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
+    P: HeaderProvider + BlockReader + StateProviderFactory,
 {
     type Item = BackfillJobResult<(RecoveredBlock, BlockExecutionOutput)>;
 
@@ -179,7 +180,7 @@ where
 
 impl<P> SingleBlockBackfillJob<P>
 where
-    P: HeaderProvider + BlockReader<Block = BaseBlock> + StateProviderFactory,
+    P: HeaderProvider + BlockReader + StateProviderFactory,
 {
     /// Converts the single block backfill job into a stream.
     pub fn into_stream(self) -> StreamBackfillJob<P, (RecoveredBlock, BlockExecutionOutput)> {

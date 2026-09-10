@@ -406,8 +406,6 @@ pub struct MockTransactionValidator {
 }
 
 impl TransactionValidator for MockTransactionValidator {
-    type Block = base_common_types_chain::BaseBlock;
-
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,

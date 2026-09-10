@@ -3,11 +3,11 @@ use std::sync::Arc;
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, TxKind, U256, b256};
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
+use base_common_types_chain::RecoveredBlock;
 use base_common_types_chain::{
     BaseBlock, BaseBlockBody, BaseTypedTransaction, BlockHeader, Header, TxEip2930,
     constants::ETH_TO_WEI,
 };
-use base_common_types_chain::{BlockExt as _, RecoveredBlock};
 use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionOutput, Executor};
 use base_execution_state_provider::{
     BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory,

@@ -32,10 +32,8 @@ impl<Pool, Eth> TxPoolApi<Pool, Eth> {
 impl<Pool, Eth> TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
-    Eth: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    Eth: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -56,7 +54,6 @@ where
         ) -> Result<(), crate::BaseEthApiError>
         where
             RpcTxB: base_execution_state_api::BlockReader<
-                    Block = base_common_types_chain::BaseBlock,
                     Transaction = base_common_types_chain::BaseTxEnvelope,
                 > + base_common_chain_config::ChainSpecProvider
                 + Clone
@@ -91,10 +88,8 @@ where
 impl<Pool, Eth> TxPoolApiServer for TxPoolApi<Pool, Eth>
 where
     Pool: TransactionPool + 'static,
-    Eth: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    Eth: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync

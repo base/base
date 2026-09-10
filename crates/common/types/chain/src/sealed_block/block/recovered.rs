@@ -12,10 +12,11 @@ use base_common_types_chain::{
 };
 use derive_more::Deref;
 
-use crate::sealed_block::{
-    Block, BlockBody, InMemorySize, SealedHeader,
-    block::{SealedBlock, error::SealedBlockRecoveryError},
-    RecoveryError, SignedTransaction,
+use {
+    crate::sealed_block::BlockBody, crate::sealed_block::InMemorySize,
+    crate::sealed_block::RecoveryError, crate::sealed_block::SealedHeader,
+    crate::sealed_block::SignedTransaction, crate::sealed_block::block::SealedBlock,
+    crate::sealed_block::block::error::SealedBlockRecoveryError,
 };
 
 /// A block with senders recovered from the block's transactions.

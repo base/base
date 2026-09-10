@@ -150,7 +150,6 @@ impl PendingBlock {
     ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
     where
         C: base_execution_state_api::BlockReader<
-                Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
             > + base_common_chain_config::ChainSpecProvider
             + Clone

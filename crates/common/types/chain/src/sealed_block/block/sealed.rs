@@ -9,10 +9,11 @@ use alloy_rlp::{Decodable, Encodable};
 use base_common_types_chain::{BaseBlock, BaseBlockBody, BlockHeader as _, Header};
 use bytes::BufMut;
 
-use crate::sealed_block::{
-    RecoveryError,
-    Block, BlockBody, GotExpected, InMemorySize, SealedHeader,
-    block::{RecoveredBlock, error::BlockRecoveryError},
+use {
+    crate::sealed_block::BlockBody, crate::sealed_block::GotExpected,
+    crate::sealed_block::InMemorySize, crate::sealed_block::RecoveryError,
+    crate::sealed_block::SealedHeader, crate::sealed_block::block::RecoveredBlock,
+    crate::sealed_block::block::error::BlockRecoveryError,
 };
 
 /// Sealed full block composed of the block's header and body.
@@ -191,7 +192,7 @@ impl SealedBlock {
 
     /// Returns the length of the block.
     pub fn rlp_length(&self) -> usize {
-        BaseBlock::rlp_length(self.header(), self.body())
+        BaseBlock::rlp_length_for(self.header(), self.body())
     }
 
     /// Recovers all senders from the transactions in the block.
@@ -324,7 +325,7 @@ impl Deref for SealedBlock {
 
 impl Encodable for SealedBlock {
     fn encode(&self, out: &mut dyn BufMut) {
-        BaseBlock::rlp_encode(self.header(), self.body(), out);
+        BaseBlock::rlp_encode_from_parts(self.header(), self.body(), out);
     }
 
     fn length(&self) -> usize {
@@ -606,7 +607,7 @@ mod tests {
         block.encode(&mut block_encoded);
 
         let mut borrowed_encoded = Vec::new();
-        <base_common_types_chain::Block<BaseTxEnvelope> as Block>::rlp_encode(
+        base_common_types_chain::BaseBlock::rlp_encode_from_parts(
             &block.header,
             &block.body,
             &mut borrowed_encoded,

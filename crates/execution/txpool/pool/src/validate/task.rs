@@ -226,8 +226,6 @@ impl<V> TransactionValidator for TransactionValidationTaskExecutor<V>
 where
     V: TransactionValidator + 'static,
 {
-    type Block = V::Block;
-
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,
@@ -349,8 +347,6 @@ mod tests {
     struct NoopValidator;
 
     impl TransactionValidator for NoopValidator {
-        type Block = base_common_types_chain::BaseBlock;
-
         async fn validate_transaction(
             &self,
             _origin: TransactionOrigin,
@@ -405,8 +401,6 @@ mod tests {
     struct SameOriginBatchValidator;
 
     impl TransactionValidator for SameOriginBatchValidator {
-        type Block = base_common_types_chain::BaseBlock;
-
         async fn validate_transaction(
             &self,
             _origin: TransactionOrigin,

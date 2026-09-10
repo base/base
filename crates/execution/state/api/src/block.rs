@@ -4,10 +4,11 @@ use core::ops::RangeInclusive;
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockNumber, TxNumber};
 use base_common_types_chain::BaseReceipt;
-use base_common_types_chain::{
-    BlockExt as _, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock,
-};
 use base_execution_state_types::ProviderResult;
+use {
+    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedHeader,
+    base_common_types_chain::SealedOrRecoveredBlock,
+};
 
 use crate::{
     BlockBodyIndicesProvider, BlockNumReader, HeaderProvider, ReceiptProvider,
@@ -45,9 +46,6 @@ impl BlockSource {
     }
 }
 
-/// A helper type alias to access [`BlockReader::Block`].
-pub type ProviderBlock<P> = <P as BlockReader>::Block;
-
 /// Api trait for fetching `Block` related data.
 ///
 /// If not requested otherwise, implementers of this trait should prioritize fetching blocks from
@@ -60,9 +58,6 @@ pub trait BlockReader:
     + ReceiptProvider
     + Send
 {
-    /// The block type this provider reads.
-    type Block: base_common_types_chain::BlockExt;
-
     /// Tries to find in the given block source.
     ///
     /// Note: this only operates on the hash because the number might be ambiguous.
@@ -72,7 +67,7 @@ pub trait BlockReader:
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>>;
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>>;
 
     /// Tries to find a sealed or recovered block in the given block source.
     ///
@@ -95,7 +90,10 @@ pub trait BlockReader:
     /// Returns the block with given id from the database.
     ///
     /// Returns `None` if block is not found.
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>>;
+    fn block(
+        &self,
+        id: BlockHashOrNumber,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>>;
 
     /// Returns the pending block if available
     ///
@@ -112,14 +110,20 @@ pub trait BlockReader:
     /// Returns the block with matching hash from the database.
     ///
     /// Returns `None` if block is not found.
-    fn block_by_hash(&self, hash: B256) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         self.block(hash.into())
     }
 
     /// Returns the block with matching number from database.
     ///
     /// Returns `None` if block is not found.
-    fn block_by_number(&self, num: u64) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_number(
+        &self,
+        num: u64,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         self.block(num.into())
     }
 
@@ -148,7 +152,10 @@ pub trait BlockReader:
     /// Returns all blocks in the given inclusive range.
     ///
     /// Note: returns only available blocks
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>>;
+    fn block_range(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<Vec<base_common_types_chain::BaseBlock>>;
 
     /// Returns a range of blocks from the database, along with the senders of each
     /// transaction in the blocks.
@@ -169,13 +176,11 @@ pub trait BlockReader:
 }
 
 impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
-    type Block = T::Block;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::find_block_by_hash(self, hash, source)
     }
     fn find_sealed_or_recovered_block(
@@ -185,7 +190,10 @@ impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
     ) -> ProviderResult<Option<SealedOrRecoveredBlock>> {
         T::find_sealed_or_recovered_block(self, hash, source)
     }
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(
+        &self,
+        id: BlockHashOrNumber,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::block(self, id)
     }
     fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
@@ -196,10 +204,16 @@ impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
     ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         T::pending_block_and_receipts(self)
     }
-    fn block_by_hash(&self, hash: B256) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::block_by_hash(self, hash)
     }
-    fn block_by_number(&self, num: u64) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_number(
+        &self,
+        num: u64,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::block_by_number(self, num)
     }
     fn recovered_block(
@@ -216,7 +230,10 @@ impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
     ) -> ProviderResult<Option<RecoveredBlock>> {
         T::sealed_block_with_senders(self, id, transaction_kind)
     }
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<Vec<base_common_types_chain::BaseBlock>> {
         T::block_range(self, range)
     }
     fn block_with_senders_range(
@@ -237,13 +254,11 @@ impl<T: BlockReader + Send + Sync> BlockReader for Arc<T> {
 }
 
 impl<T: BlockReader + Send + Sync> BlockReader for &T {
-    type Block = T::Block;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::find_block_by_hash(self, hash, source)
     }
     fn find_sealed_or_recovered_block(
@@ -253,7 +268,10 @@ impl<T: BlockReader + Send + Sync> BlockReader for &T {
     ) -> ProviderResult<Option<SealedOrRecoveredBlock>> {
         T::find_sealed_or_recovered_block(self, hash, source)
     }
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(
+        &self,
+        id: BlockHashOrNumber,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::block(self, id)
     }
     fn pending_block(&self) -> ProviderResult<Option<RecoveredBlock>> {
@@ -264,10 +282,16 @@ impl<T: BlockReader + Send + Sync> BlockReader for &T {
     ) -> ProviderResult<Option<(RecoveredBlock, Vec<BaseReceipt>)>> {
         T::pending_block_and_receipts(self)
     }
-    fn block_by_hash(&self, hash: B256) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_hash(
+        &self,
+        hash: B256,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::block_by_hash(self, hash)
     }
-    fn block_by_number(&self, num: u64) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_number(
+        &self,
+        num: u64,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         T::block_by_number(self, num)
     }
     fn recovered_block(
@@ -284,7 +308,10 @@ impl<T: BlockReader + Send + Sync> BlockReader for &T {
     ) -> ProviderResult<Option<RecoveredBlock>> {
         T::sealed_block_with_senders(self, id, transaction_kind)
     }
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<Vec<base_common_types_chain::BaseBlock>> {
         T::block_range(self, range)
     }
     fn block_with_senders_range(
@@ -318,7 +345,10 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     /// Returns the block with matching tag from the database
     ///
     /// Returns `None` if block is not found.
-    fn block_by_number_or_tag(&self, id: BlockNumberOrTag) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_number_or_tag(
+        &self,
+        id: BlockNumberOrTag,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         self.convert_block_number(id)?.map_or_else(|| Ok(None), |num| self.block(num.into()))
     }
 
@@ -357,7 +387,10 @@ pub trait BlockReaderIdExt: BlockReader + ReceiptProviderIdExt {
     /// Returns the block with the matching [`BlockId`] from the database.
     ///
     /// Returns `None` if block is not found.
-    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>>;
+    fn block_by_id(
+        &self,
+        id: BlockId,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>>;
 
     /// Returns the block with senders with matching [`BlockId`].
     ///

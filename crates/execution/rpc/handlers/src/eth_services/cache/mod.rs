@@ -11,7 +11,7 @@ use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use base_common_runtime_tasks::Runtime;
-use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader};
+use base_common_types_chain::{BaseReceipt, BlockHeader};
 use base_common_types_chain::{InMemorySize, RecoveredBlock};
 use base_execution_evm_runtime::{
     bytecode::Bytecode,
@@ -98,7 +98,7 @@ impl EthStateCache {
         config: EthStateCacheConfig,
     ) -> (Self, EthStateCacheService<Provider, Runtime>)
     where
-        Provider: BlockReader<Block = BaseBlock> + BalProvider,
+        Provider: BlockReader + BalProvider,
     {
         let EthStateCacheConfig {
             max_blocks,
@@ -136,7 +136,7 @@ impl EthStateCache {
         executor: Runtime,
     ) -> Self
     where
-        Provider: BlockReader<Block = BaseBlock> + BalProvider + Clone + Unpin + 'static,
+        Provider: BlockReader + BalProvider + Clone + Unpin + 'static,
     {
         let (this, service) = Self::create(provider, executor.clone(), config);
         executor.spawn_critical_task("eth state cache", service);
@@ -1430,17 +1430,18 @@ mod tests {
     }
 
     impl BlockReader for TestBalProvider {
-        type Block = Block;
-
         fn find_block_by_hash(
             &self,
             _hash: B256,
             _source: BlockSource,
-        ) -> ProviderResult<Option<Self::Block>> {
+        ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
             Ok(None)
         }
 
-        fn block(&self, _id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+        fn block(
+            &self,
+            _id: BlockHashOrNumber,
+        ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
             Ok(None)
         }
 
@@ -1473,7 +1474,7 @@ mod tests {
         fn block_range(
             &self,
             _range: RangeInclusive<BlockNumber>,
-        ) -> ProviderResult<Vec<Self::Block>> {
+        ) -> ProviderResult<Vec<base_common_types_chain::BaseBlock>> {
             Ok(Vec::new())
         }
 

@@ -4,9 +4,12 @@ use std::{fmt, fmt::Debug, future::Future, time::Instant};
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, B256, TxHash, U256};
-use base_common_types_chain::{BlockExt as Block, InMemorySize, Recovered, SealedBlock};
 use base_common_types_chain::{Transaction, Typed2718};
 use futures_util::future::Either;
+use {
+    base_common_types_chain::InMemorySize, base_common_types_chain::Recovered,
+    base_common_types_chain::SealedBlock,
+};
 
 use crate::{
     PriceBumpConfig,
@@ -174,9 +177,6 @@ impl ValidTransaction {
 pub trait TransactionValidator: Debug + Send + Sync {
     /// The transaction type to validate.
 
-    /// The block type used for new head block notifications.
-    type Block: Block;
-
     /// Validates the transaction and returns a [`TransactionValidationOutcome`] describing the
     /// validity of the given transaction.
     ///
@@ -247,10 +247,8 @@ pub trait TransactionValidator: Debug + Send + Sync {
 impl<A, B> TransactionValidator for Either<A, B>
 where
     A: TransactionValidator,
-    B: TransactionValidator<Block = A::Block>,
+    B: TransactionValidator,
 {
-    type Block = A::Block;
-
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,

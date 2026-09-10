@@ -8,7 +8,6 @@ use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use base_common_types_chain::{
     BaseTxEnvelope, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
 };
-use base_common_types_chain::{BlockExt as _, SealedBlock, WithEncoded};
 /// Re-export for use in downstream arguments.
 pub use base_common_types_payload::BasePayloadAttributes;
 use base_common_types_payload::{
@@ -17,6 +16,7 @@ use base_common_types_payload::{
     ExecutionPayloadFieldV2, ExecutionPayloadV1, ExecutionPayloadV3,
     PayloadAttributes as EthPayloadAttributes, PayloadId,
 };
+use {base_common_types_chain::SealedBlock, base_common_types_chain::WithEncoded};
 
 use crate::BuiltPayloadExecutedBlock;
 
@@ -274,7 +274,7 @@ impl BaseBuiltPayload {
     ) -> base_common_types_payload::ExecutionData {
         base_common_types_payload::ExecutionData::from_block_unchecked_with_extras(
             block.hash(),
-            &block.into_block().into_ethereum_block(),
+            &block.into_block(),
             bal,
         )
     }
@@ -334,11 +334,7 @@ impl From<BaseBuiltPayload> for base_common_types_payload::ExecutionData {
         let block_hash = block.hash();
         let block = Arc::unwrap_or_clone(block).into_block();
 
-        Self::from_block_unchecked_with_extras(
-            block_hash,
-            &block.into_ethereum_block(),
-            block_access_list,
-        )
+        Self::from_block_unchecked_with_extras(block_hash, &block, block_access_list)
     }
 }
 

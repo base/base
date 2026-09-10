@@ -90,7 +90,6 @@ impl TransactionSource<BaseTxEnvelope> {
     ) -> Result<base_common_types_rpc::BaseTransaction, crate::eth_services::BaseEthApiError>
     where
         Builder: base_execution_state_api::BlockReader<
-                Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
             > + base_common_chain_config::ChainSpecProvider
             + Clone

@@ -17,7 +17,7 @@ use std::{
 use crate::{PeerRequest, RequestMessage};
 use alloy_eips::merge::EPOCH_SLOTS;
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
-use base_common_types_chain::BlockExt as Block;
+
 use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
 use base_execution_network_types::PeerId;
 use base_execution_network_wire::Capabilities;

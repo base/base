@@ -2871,18 +2871,16 @@ impl BlockNumReader for StaticFileProvider {
 /* Cannot be successfully implemented but must exist for trait requirements */
 
 impl BlockReader for StaticFileProvider {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         _hash: B256,
         _source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<BaseBlock>> {
         // Required data not present in static_files
         Err(ProviderError::UnsupportedProvider)
     }
 
-    fn block(&self, _id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(&self, _id: BlockHashOrNumber) -> ProviderResult<Option<BaseBlock>> {
         // Required data not present in static_files
         Err(ProviderError::UnsupportedProvider)
     }
@@ -2917,7 +2915,7 @@ impl BlockReader for StaticFileProvider {
         Err(ProviderError::UnsupportedProvider)
     }
 
-    fn block_range(&self, _range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(&self, _range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<BaseBlock>> {
         // Required data not present in static_files
         Err(ProviderError::UnsupportedProvider)
     }

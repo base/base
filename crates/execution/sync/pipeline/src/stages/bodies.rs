@@ -148,7 +148,7 @@ where
         + StaticFileProviderFactory
         + StatsReader
         + BlockReader
-        + BlockWriter<Block = base_common_types_chain::BaseBlock>,
+        + BlockWriter,
     D: BodyDownloader,
 {
     /// Return the id of the stage

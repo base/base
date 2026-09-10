@@ -6,8 +6,8 @@ use alloy_eips::BlockId;
 use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
+use base_common_types_chain::BlockHeader;
 use base_common_types_chain::SealedHeader;
-use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{
     BlockReader, BlockReaderIdExt, ChangeSetReader, StateProviderFactory, TransactionVariant,
@@ -110,7 +110,7 @@ where
     Provider: BlockReaderIdExt
         + ChangeSetReader
         + StateProviderFactory
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + CanonStateSubscriptions
         + 'static,
 {
@@ -187,7 +187,7 @@ where
     Provider: BlockReaderIdExt
         + ChangeSetReader
         + StateProviderFactory
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + CanonStateSubscriptions
         + ForkChoiceSubscriptions
         + PersistedBlockSubscriptions

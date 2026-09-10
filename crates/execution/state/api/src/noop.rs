@@ -194,17 +194,18 @@ impl BlockReaderIdExt for NoopProvider {
 }
 
 impl BlockReader for NoopProvider {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         _hash: B256,
         _source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         Ok(None)
     }
 
-    fn block(&self, _id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(
+        &self,
+        _id: BlockHashOrNumber,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         Ok(None)
     }
 
@@ -234,7 +235,10 @@ impl BlockReader for NoopProvider {
         Ok(None)
     }
 
-    fn block_range(&self, _range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(
+        &self,
+        _range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<Vec<base_common_types_chain::BaseBlock>> {
         Ok(Vec::new())
     }
 

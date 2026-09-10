@@ -11,7 +11,7 @@ use std::{
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
 use base_common_runtime_tasks::{spawn_os_thread, utils::increase_thread_priority};
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::BlockHeader;
 use base_common_types_payload::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
@@ -429,13 +429,13 @@ impl<P: Debug> std::fmt::Debug for EngineApiTreeHandler<P> {
 impl<P> EngineApiTreeHandler<P>
 where
     P: DatabaseProviderFactory
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + StateProviderFactory
         + StateReader
         + BalProvider
         + Clone
         + 'static,
-    P::Provider: BlockReader<Block = BaseBlock>
+    P::Provider: BlockReader
         + PruneCheckpointReader
         + StageCheckpointReader
         + ChangeSetReader

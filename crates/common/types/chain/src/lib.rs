@@ -205,9 +205,9 @@ pub mod primitive_header_test_utils;
 pub use sealed_block::gas_spent_by_transactions;
 #[cfg(feature = "k256")]
 pub use sealed_block::{
-    Block as BlockExt, BlockBody as BlockBodyExt, BlockHeader as BlockHeaderExt,
-    EthereumReceiptRoot, GotExpected, GotExpectedBoxed, IndexedTx, MaybeSerde, RecoveredBlock,
-    SealedBlock, SealedBlockWith, SealedOrRecoveredBlock, SignedTransaction,
+    BlockBody as BlockBodyExt, BlockHeader as BlockHeaderExt, EthereumReceiptRoot, GotExpected,
+    GotExpectedBoxed, IndexedTx, MaybeSerde, RecoveredBlock, SealedBlock, SealedBlockWith,
+    SealedOrRecoveredBlock, SignedTransaction,
 };
 #[cfg(feature = "k256")]
 pub use sealed_block::{

@@ -11,9 +11,9 @@ use crate::PeersHandle;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
-use base_common_types_chain::BlockExt as Block;
+
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
+    BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
 };
 use base_execution_network_types::PeerId;
 use base_execution_network_wire::AccountData;
@@ -660,7 +660,7 @@ where
     C: BalProvider
         + StateProviderFactory
         + StateRangeProviderFactory
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + HeaderProvider
         + Unpin,
 {

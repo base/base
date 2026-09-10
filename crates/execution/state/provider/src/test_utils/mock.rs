@@ -22,10 +22,6 @@ use base_common_types_chain::{
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
-use base_common_types_chain::{
-    BlockBodyExt as BlockBody, BlockExt as Block, GotExpected, RecoveredBlock, SealedHeader,
-    SignerRecoverable,
-};
 use base_execution_state_api::{
     BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,
     HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
@@ -47,6 +43,11 @@ use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
+use {
+    base_common_types_chain::BlockBodyExt as BlockBody, base_common_types_chain::GotExpected,
+    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedHeader,
+    base_common_types_chain::SignerRecoverable,
+};
 
 use crate::{
     AccountReader, BalProvider, BalStoreHandle, BlockHashReader, BlockIdReader, BlockNumReader,
@@ -856,17 +857,18 @@ impl BlockIdReader for MockEthProvider {
 
 //look
 impl BlockReader for MockEthProvider {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         _source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         self.block(hash.into())
     }
 
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(
+        &self,
+        id: BlockHashOrNumber,
+    ) -> ProviderResult<Option<base_common_types_chain::BaseBlock>> {
         let lock = self.blocks.lock();
         match id {
             BlockHashOrNumber::Hash(hash) => Ok(lock.get(&hash).cloned()),
@@ -902,7 +904,10 @@ impl BlockReader for MockEthProvider {
         Ok(None)
     }
 
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(
+        &self,
+        range: RangeInclusive<BlockNumber>,
+    ) -> ProviderResult<Vec<base_common_types_chain::BaseBlock>> {
         let lock = self.blocks.lock();
 
         let mut blocks: Vec<_> = lock

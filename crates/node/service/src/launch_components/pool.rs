@@ -1,6 +1,5 @@
 //! Pool component for the node builder.
 
-use base_common_types_chain::BaseBlock;
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_txpool_pool::{DiskFileBlobStore, PoolConfig, TransactionPool};
 
@@ -53,7 +52,7 @@ fn spawn_pool_maintenance_task<Pool>(
     pool_config: &PoolConfig,
 ) -> eyre::Result<()>
 where
-    Pool: base_execution_txpool_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
+    Pool: base_execution_txpool_pool::TransactionPoolExt + Clone + 'static,
 {
     let chain_events = ctx.provider().canonical_state_stream();
     let client = ctx.provider().clone();
@@ -83,7 +82,7 @@ pub fn spawn_maintenance_tasks<Pool>(
     pool_config: &PoolConfig,
 ) -> eyre::Result<()>
 where
-    Pool: base_execution_txpool_pool::TransactionPoolExt<Block = BaseBlock> + Clone + 'static,
+    Pool: base_execution_txpool_pool::TransactionPoolExt + Clone + 'static,
 {
     spawn_local_backup_task(ctx, pool.clone())?;
     spawn_pool_maintenance_task(ctx, pool, pool_config)?;

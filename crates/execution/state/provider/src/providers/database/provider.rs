@@ -51,9 +51,8 @@ use rayon::slice::ParallelSliceMut;
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
 use {
-    base_common_types_chain::BlockBodyExt as _, base_common_types_chain::BlockExt as _,
-    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedHeader,
-    std::time::Instant,
+    base_common_types_chain::BlockBodyExt as _, base_common_types_chain::RecoveredBlock,
+    base_common_types_chain::SealedHeader, std::time::Instant,
 };
 
 use super::SaveBlocksInput;
@@ -1640,13 +1639,11 @@ impl<TX: DbTx + 'static> BlockNumReader for DatabaseProvider<TX> {
 }
 
 impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<BaseBlock>> {
         if source.is_canonical() { self.block(hash.into()) } else { Ok(None) }
     }
 
@@ -1657,7 +1654,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
     /// will return None.
     ///
     /// Returns an error if the requested block is below the earliest available history.
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<BaseBlock>> {
         if let Some(number) = self.convert_hash_or_number(id)? {
             let earliest_available = self.static_file_provider.earliest_history_height();
             if number < earliest_available {
@@ -1681,7 +1678,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
             .pop()
             .ok_or(ProviderError::InvalidStorageOutput)?;
 
-            return Ok(Some(Self::Block::new(header, body)));
+            return Ok(Some(BaseBlock::new(header, body)));
         }
 
         Ok(None)
@@ -1715,7 +1712,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
             transaction_kind,
             |block_number| self.header_by_number(block_number),
             |header, body, senders| {
-                Self::Block::new(header, body)
+                BaseBlock::new(header, body)
                     // Note: we're using unchecked here because we know the block contains valid txs
                     // wrt to its height and can ignore the s value check so pre
                     // EIP-2 txs are allowed
@@ -1736,7 +1733,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
             transaction_kind,
             |block_number| self.sealed_header(block_number),
             |header, body, senders| {
-                Self::Block::new_sealed(header, body)
+                base_common_types_chain::SealedBlock::from_sealed_parts(header, body)
                     // Note: we're using unchecked here because we know the block contains valid txs
                     // wrt to its height and can ignore the s value check so pre
                     // EIP-2 txs are allowed
@@ -1747,11 +1744,11 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
         )
     }
 
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<BaseBlock>> {
         self.block_range(
             range,
             |range| self.headers_range(range),
-            |header, body, _| Ok(Self::Block::new(header, body)),
+            |header, body, _| Ok(BaseBlock::new(header, body)),
         )
     }
 
@@ -1763,7 +1760,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
             range,
             |range| self.headers_range(range),
             |header, body, senders| {
-                Self::Block::new(header, body)
+                BaseBlock::new(header, body)
                     .try_into_recovered_unchecked(senders)
                     .map_err(|_| ProviderError::SenderRecoveryError)
             },
@@ -1778,7 +1775,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
             range,
             |range| self.sealed_headers_range(range),
             |header, body, senders| {
-                Self::Block::new_sealed(header, body)
+                base_common_types_chain::SealedBlock::from_sealed_parts(header, body)
                     .try_with_senders(senders)
                     .map_err(|_| ProviderError::SenderRecoveryError)
             },
@@ -3071,7 +3068,6 @@ impl<TX: DbTxMut + DbTx + 'static> BlockExecutionWriter for DatabaseProvider<TX>
 }
 
 impl<TX: DbTxMut + DbTx + 'static> BlockWriter for DatabaseProvider<TX> {
-    type Block = BaseBlock;
     type Receipt = BaseReceipt;
 
     /// Inserts the block into the database, writing to both static files and MDBX.

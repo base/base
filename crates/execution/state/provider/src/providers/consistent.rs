@@ -595,13 +595,11 @@ impl BlockIdReader for ConsistentProvider {
 }
 
 impl BlockReader for ConsistentProvider {
-    type Block = BaseBlock;
-
     fn find_block_by_hash(
         &self,
         hash: B256,
         source: BlockSource,
-    ) -> ProviderResult<Option<Self::Block>> {
+    ) -> ProviderResult<Option<BaseBlock>> {
         if matches!(source, BlockSource::Canonical | BlockSource::Any)
             && let Some(block) = self.get_in_memory_or_storage_by_block(
                 hash.into(),
@@ -656,7 +654,7 @@ impl BlockReader for ConsistentProvider {
         Ok(None)
     }
 
-    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<Self::Block>> {
+    fn block(&self, id: BlockHashOrNumber) -> ProviderResult<Option<BaseBlock>> {
         self.get_in_memory_or_storage_by_block(
             id,
             |db_provider| db_provider.block(id),
@@ -704,7 +702,7 @@ impl BlockReader for ConsistentProvider {
         )
     }
 
-    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<Self::Block>> {
+    fn block_range(&self, range: RangeInclusive<BlockNumber>) -> ProviderResult<Vec<BaseBlock>> {
         self.get_in_memory_or_storage_by_block_range_while(
             range,
             |db_provider, range, _| db_provider.block_range(range),
@@ -1056,7 +1054,7 @@ impl ChainSpecProvider for ConsistentProvider {
 }
 
 impl BlockReaderIdExt for ConsistentProvider {
-    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<Self::Block>> {
+    fn block_by_id(&self, id: BlockId) -> ProviderResult<Option<BaseBlock>> {
         match id {
             BlockId::Number(num) => self.block_by_number_or_tag(num),
             BlockId::Hash(hash) => {

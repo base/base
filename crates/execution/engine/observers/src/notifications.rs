@@ -8,7 +8,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_observability_tracing::tracing::debug;
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::BlockHeader;
 use base_execution_engine_types::ExExHead;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::{
@@ -152,12 +152,7 @@ impl<P> ExExNotifications<P> {
 
 impl<P> ExExNotificationsStream for ExExNotifications<P>
 where
-    P: BlockReader<Block = BaseBlock>
-        + HeaderProvider
-        + StateProviderFactory
-        + Clone
-        + Unpin
-        + 'static,
+    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
 {
     fn set_without_head(&mut self) {
         let current = std::mem::replace(&mut self.inner, ExExNotificationsInner::Invalid);
@@ -213,12 +208,7 @@ where
 
 impl<P> Stream for ExExNotifications<P>
 where
-    P: BlockReader<Block = BaseBlock>
-        + HeaderProvider
-        + StateProviderFactory
-        + Clone
-        + Unpin
-        + 'static,
+    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
 {
     type Item = eyre::Result<ExExNotification>;
 
@@ -363,12 +353,7 @@ impl<P> ExExNotificationsWithHead<P> {
 
 impl<P> ExExNotificationsWithHead<P>
 where
-    P: BlockReader<Block = BaseBlock>
-        + HeaderProvider
-        + StateProviderFactory
-        + Clone
-        + Unpin
-        + 'static,
+    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
 {
     /// Checks if the ExEx head is on the canonical chain.
     ///
@@ -457,12 +442,7 @@ where
 
 impl<P> Stream for ExExNotificationsWithHead<P>
 where
-    P: BlockReader<Block = BaseBlock>
-        + HeaderProvider
-        + StateProviderFactory
-        + Clone
-        + Unpin
-        + 'static,
+    P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
 {
     type Item = eyre::Result<ExExNotification>;
 
@@ -553,11 +533,12 @@ where
 
 #[cfg(test)]
 mod tests {
+    use base_common_types_chain::BaseBlock;
     use std::collections::BTreeMap;
 
     use alloy_eips::BlockNumHash;
-    use base_common_types_chain::BlockExt as _;
-    use base_common_types_chain::{BaseBlock, Header};
+
+    use base_common_types_chain::Header;
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,

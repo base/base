@@ -73,7 +73,7 @@ impl ExecutorMetrics {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use base_common_types_chain::BlockExt as BlockTrait;
+
     use base_common_types_chain::{BaseBlock as Block, Header};
 
     use super::*;

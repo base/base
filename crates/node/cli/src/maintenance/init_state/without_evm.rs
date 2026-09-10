@@ -2,7 +2,7 @@ use std::path::Path;
 
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::BlockHeader;
 use base_common_types_chain::{SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
@@ -76,7 +76,7 @@ fn append_first_block<Provider>(
     header: &base_common_types_chain::SealedHeader,
 ) -> ProviderResult<()>
 where
-    Provider: BlockWriter<Block = BaseBlock> + StaticFileProviderFactory,
+    Provider: BlockWriter + StaticFileProviderFactory,
 {
     provider_rw.insert_block(
         &SealedBlock::from_sealed_parts(header.clone(), Default::default())

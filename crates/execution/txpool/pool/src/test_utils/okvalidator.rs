@@ -1,4 +1,4 @@
-use base_common_types_chain::{BaseBlock as Block, Transaction};
+use base_common_types_chain::Transaction;
 
 use crate::{
     TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
@@ -28,8 +28,6 @@ impl Default for OkValidator {
 }
 
 impl TransactionValidator for OkValidator {
-    type Block = Block;
-
     async fn validate_transaction(
         &self,
         _origin: TransactionOrigin,

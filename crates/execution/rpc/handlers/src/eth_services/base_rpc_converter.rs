@@ -5,8 +5,7 @@ use alloy_primitives::{Signature, U256};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::SealedBlock;
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
-    transaction::Recovered,
+    BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError, transaction::Recovered,
 };
 use base_common_types_rpc::{
     BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
@@ -43,7 +42,7 @@ impl<Provider: Clone> BaseRpcConverter<Provider> {
 
 impl<Provider> BaseRpcConverter<Provider>
 where
-    Provider: BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope>
+    Provider: BlockReader<Transaction = BaseTxEnvelope>
         + ChainSpecProvider
         + Clone
         + Send

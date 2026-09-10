@@ -9,8 +9,7 @@ use std::{
 
 use alloy_primitives::Bytes;
 use base_common_chain_config::ChainSpecProvider;
-use base_common_types_chain::{BaseBlock, BlockHeader, Transaction};
-use base_common_types_chain::{BlockBodyExt as _, BlockExt as _, SealedBlock, SignedTransaction};
+use base_common_types_chain::{BlockHeader, Transaction};
 use base_common_types_payload::{ForkchoiceState, PayloadStatus};
 use base_execution_engine_types::{
     BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated,
@@ -25,6 +24,10 @@ use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
 use tokio::sync::oneshot;
 use tracing::*;
+use {
+    base_common_types_chain::BlockBodyExt as _, base_common_types_chain::SealedBlock,
+    base_common_types_chain::SignedTransaction,
+};
 
 #[derive(Debug)]
 enum EngineReorgState {
@@ -98,7 +101,7 @@ impl<S, Provider> EngineReorg<S, Provider> {
 impl<S, Provider> Stream for EngineReorg<S, Provider>
 where
     S: Stream<Item = BeaconEngineMessage>,
-    Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
+    Provider: BlockReader + StateProviderFactory + ChainSpecProvider,
 {
     type Item = S::Item;
 
@@ -226,7 +229,7 @@ fn create_reorg_head<Provider>(
     next_payload: base_common_types_payload::ExecutionData,
 ) -> Result<(SealedBlock, Option<Bytes>), base_execution_engine_types::EngineRequestError>
 where
-    Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
+    Provider: BlockReader + StateProviderFactory + ChainSpecProvider,
 {
     // Ensure next payload is valid.
     let next_block = payload_validator.convert_payload_to_block(next_payload).map_err(|error| {

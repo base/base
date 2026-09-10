@@ -127,7 +127,6 @@ impl BlockAndReceipts {
     ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
     where
         C: base_execution_state_api::BlockReader<
-                Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
             > + base_common_chain_config::ChainSpecProvider
             + Clone
@@ -156,10 +155,8 @@ pub fn convert_transaction_receipt<C>(
     converter: &crate::eth_services::BaseRpcConverter<C>,
 ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
 where
-    C: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    C: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -195,7 +192,6 @@ impl CachedTransaction<BaseReceipt> {
     ) -> Option<Result<BaseTransactionReceipt, crate::eth_services::BaseEthApiError>>
     where
         C: base_execution_state_api::BlockReader<
-                Block = base_common_types_chain::BaseBlock,
                 Transaction = base_common_types_chain::BaseTxEnvelope,
             > + base_common_chain_config::ChainSpecProvider
             + Clone

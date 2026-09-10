@@ -797,10 +797,8 @@ struct FullTransactionsReceiver<TxCompat> {
 
 impl<TxCompat> FullTransactionsReceiver<TxCompat>
 where
-    TxCompat: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    TxCompat: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -845,10 +843,8 @@ trait FullTransactionsFilter<T>: fmt::Debug + Send + Sync + Unpin + 'static {
 impl<TxCompat> FullTransactionsFilter<base_common_types_rpc::BaseTransaction>
     for FullTransactionsReceiver<TxCompat>
 where
-    TxCompat: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    TxCompat: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync

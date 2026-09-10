@@ -40,7 +40,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider
         + BlockReaderIdExt
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + HeaderProvider
         + Clone,
 {
@@ -59,7 +59,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider
         + BlockReaderIdExt
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + HeaderProvider
         + Clone
         + Send
@@ -249,7 +249,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider
         + BlockReaderIdExt
-        + BlockReader<Block = BaseBlock>
+        + BlockReader
         + HeaderProvider
         + Clone
         + Send

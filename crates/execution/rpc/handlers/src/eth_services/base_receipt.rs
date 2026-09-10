@@ -9,8 +9,7 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::SealedBlock;
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
-    ReceiptWithBloom, TxReceipt,
+    BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt, ReceiptWithBloom, TxReceipt,
 };
 use base_common_types_rpc::{
     BaseTransactionReceipt, L1BlockInfo, Log, TransactionReceipt, TransactionReceiptFields,
@@ -42,8 +41,7 @@ impl<Provider> BaseReceiptConverter<Provider> {
 
 impl<Provider> BaseReceiptConverter<Provider>
 where
-    Provider:
-        BlockReader<Block = BaseBlock, Transaction = BaseTxEnvelope> + ChainSpecProvider + 'static,
+    Provider: BlockReader<Transaction = BaseTxEnvelope> + ChainSpecProvider + 'static,
 {
     /// Adds the validated BaseTime timestamp to a receipt log.
     pub fn convert_log(

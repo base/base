@@ -15,7 +15,7 @@ use alloy_rlp::Encodable;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{
-    BaseBlock, BlockHeader, Transaction, Typed2718,
+    BlockHeader, Transaction, Typed2718,
     constants::{
         EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP4844_TX_TYPE_ID, EIP7702_TX_TYPE_ID,
         KECCAK_EMPTY, LEGACY_TX_TYPE_ID,
@@ -874,8 +874,6 @@ impl<Client> TransactionValidator for EthTransactionValidator<Client>
 where
     Client: ChainSpecProvider + StateProviderFactory,
 {
-    type Block = BaseBlock;
-
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,

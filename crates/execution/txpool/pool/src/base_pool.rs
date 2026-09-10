@@ -1411,8 +1411,6 @@ where
     BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
-    type Block = <TransactionValidationTaskExecutor<BaseTransactionValidator<Client>> as TransactionValidator>::Block;
-
     fn set_block_info(&self, info: BlockInfo) {
         self.protocol_pool.set_block_info(info)
     }

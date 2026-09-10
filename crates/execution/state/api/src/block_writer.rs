@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::BlockNumber;
-use base_common_types_chain::{BlockExt as Block, RecoveredBlock};
+use base_common_types_chain::RecoveredBlock;
 use base_execution_state_types::HashedPostStateSorted;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StoredBlockBodyIndices;
@@ -52,8 +52,6 @@ pub struct PersistenceFrontiers {
 /// Block Writer
 #[auto_impl::auto_impl(&, Arc, Box)]
 pub trait BlockWriter {
-    /// The body this writer can write.
-    type Block: Block;
     /// The receipt type for [`ExecutionOutcome`].
     type Receipt: Send + Sync;
 

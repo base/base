@@ -862,7 +862,6 @@ fn duration_until(unix_timestamp_secs: u64) -> Duration {
 #[cfg(test)]
 mod tests {
     use base_common_types_chain::BaseBlock;
-    use base_common_types_chain::BlockExt as _;
 
     use super::*;
 

@@ -307,10 +307,8 @@ pub fn execute_transactions<S, T>(
 >
 where
     S: BlockBuilder<Executor: BlockExecutor<Evm: Evm<DB: Database<Error: Into<EthApiError>>>>>,
-    T: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    T: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -422,10 +420,8 @@ pub fn resolve_transaction<DB: Database, T>(
 ) -> Result<Recovered<BaseTxEnvelope>, EthApiError>
 where
     DB::Error: Into<EthApiError>,
-    T: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    T: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync
@@ -502,10 +498,8 @@ pub fn build_simulated_block<T>(
     converter: &crate::eth_services::BaseRpcConverter<T>,
 ) -> Result<SimulatedBlock<BaseBlockResponse>, crate::eth_services::BaseEthApiError>
 where
-    T: base_execution_state_api::BlockReader<
-            Block = base_common_types_chain::BaseBlock,
-            Transaction = base_common_types_chain::BaseTxEnvelope,
-        > + base_common_chain_config::ChainSpecProvider
+    T: base_execution_state_api::BlockReader<Transaction = base_common_types_chain::BaseTxEnvelope>
+        + base_common_chain_config::ChainSpecProvider
         + Clone
         + Send
         + Sync

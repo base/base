@@ -308,12 +308,12 @@ mod tests {
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
         SystemAddresses, TxDeposit,
     };
-    use base_common_types_chain::{BlockExt as _, Recovered, SealedBlock};
     use base_execution_evm_runtime::L1BlockInfo;
     use base_execution_evm_runtime::{
         database::{BundleState, CacheDB, EmptyDB},
         state::{AccountInfo, Bytecode},
     };
+    use {base_common_types_chain::Recovered, base_common_types_chain::SealedBlock};
 
     use super::*;
 
