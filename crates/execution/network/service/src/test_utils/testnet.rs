@@ -390,7 +390,7 @@ pub struct Peer<C, Pool = TestPool> {
     #[pin]
     network: NetworkManager,
     #[pin]
-    request_handler: Option<EthRequestHandler<C>>,
+    request_handler: Option<EthRequestHandler>,
     #[pin]
     transactions_manager: Option<TransactionsManager<Pool>>,
     pool: Option<Pool>,
@@ -445,14 +445,14 @@ where
     }
 
     /// Set a new request handler that's connected to the peer's network
-    pub fn install_request_handler(&mut self)
-    where
-        C: BalProvider,
-    {
+    pub fn install_request_handler(
+        &mut self,
+        client: base_execution_state_provider::BlockchainProvider,
+    ) {
         let (tx, rx) = channel(ETH_REQUEST_CHANNEL_CAPACITY);
         self.network.set_eth_request_handler(tx);
         let peers = self.network.peers_handle();
-        let request_handler = EthRequestHandler::new(self.client.clone(), peers, rx);
+        let request_handler = EthRequestHandler::new(client, peers, rx);
         self.request_handler = Some(request_handler);
     }
 

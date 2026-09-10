@@ -63,19 +63,19 @@ trait SnapTestProvider:
     + Unpin
     + 'static
 {
+    fn request_provider(&self) -> BlockchainProvider;
 }
 
-impl<T> SnapTestProvider for T where
-    T: BlockReader
-        + HeaderProvider
-        + BalProvider
-        + StateProviderFactory
-        + StateRangeProviderFactory
-        + ChainSpecProvider
-        + Clone
-        + Unpin
-        + 'static
-{
+impl SnapTestProvider for BlockchainProvider {
+    fn request_provider(&self) -> BlockchainProvider {
+        self.clone()
+    }
+}
+
+impl SnapTestProvider for Arc<MockEthProvider> {
+    fn request_provider(&self) -> BlockchainProvider {
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(self)
+    }
 }
 
 /// Spawns a 2-peer testnet where both peers are snap/2-capable and serve requests against
@@ -94,7 +94,7 @@ async fn spawn_snap_testnet_with_protocols<C: SnapTestProvider>(
         let peer = PeerConfig::with_protocols(provider.clone(), protocols.clone());
         net.add_peer_with_config(peer).await.unwrap();
     }
-    net.for_each_mut(|peer| peer.install_request_handler());
+    net.for_each_mut(|peer| peer.install_request_handler(provider.request_provider()));
 
     let net = net.spawn();
     net.connect_peers().await;

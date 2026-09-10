@@ -48,6 +48,54 @@ impl ProviderTestUtils {
         provider
     }
 
+    /// Creates a live request-serving provider from network fixture data.
+    pub fn for_requests(mock: &MockEthProvider) -> BlockchainProvider {
+        let mut provider = Self::empty(mock.chain_spec());
+        provider.bal_store = mock.bal_store.clone();
+        Self::sync_requests(&provider, mock);
+        provider
+    }
+
+    /// Refreshes a request fixture while its network tasks continue serving the same provider.
+    pub fn sync_requests(provider: &BlockchainProvider, mock: &MockEthProvider) {
+        let writer = provider.database_provider_rw().expect("request fixture writer");
+        mock.write_accounts_to(&writer).expect("request account fixtures");
+        writer.commit().expect("commit request accounts");
+        let mut headers: Vec<_> =
+            mock.headers.lock().iter().map(|(hash, header)| (*hash, header.clone())).collect();
+        headers.sort_by_key(|(_, header)| header.number);
+        let blocks = mock.blocks.lock();
+        let receipts = mock.receipts.lock();
+        let executed: Vec<_> = headers
+            .into_iter()
+            .map(|(hash, header)| {
+                let block = blocks
+                    .get(&hash)
+                    .cloned()
+                    .unwrap_or_else(|| BaseBlock::new(header.clone(), Default::default()));
+                let senders = vec![Default::default(); block.body.transactions.len()];
+                base_execution_state_types::ExecutedBlock::new(
+                    Arc::new(RecoveredBlock::new(block, senders, hash)),
+                    Arc::new(base_execution_state_types::BlockExecutionOutput {
+                        result: base_execution_state_types::BlockExecutionResult {
+                            receipts: receipts.get(&header.number).cloned().unwrap_or_default(),
+                            ..Default::default()
+                        },
+                        state: Default::default(),
+                    }),
+                    Default::default(),
+                )
+            })
+            .collect();
+        if let Some(last) = executed.last() {
+            let head = last.recovered_block().clone_sealed_header();
+            provider
+                .canonical_in_memory_state()
+                .update_chain(crate::NewCanonicalChain::Commit { new: executed });
+            provider.canonical_in_memory_state().set_canonical_head(head);
+        }
+    }
+
     /// Writes an account fixture to an existing production provider.
     pub fn set_account(
         provider: &BlockchainProvider,

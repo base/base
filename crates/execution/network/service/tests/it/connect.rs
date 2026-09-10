@@ -235,7 +235,9 @@ async fn test_connect_with_builder() {
             .await
             .unwrap()
             .into_builder()
-            .request_handler(client)
+            .request_handler(base_execution_state_provider::test_utils::ProviderTestUtils::empty(
+                base_common_chain_config::ChainSpecProvider::chain_spec(&client),
+            ))
             .split_with_handle();
 
     let mut events = handle.event_listener();
@@ -275,7 +277,9 @@ async fn test_connect_to_trusted_peer() {
             .await
             .unwrap()
             .into_builder()
-            .request_handler(client)
+            .request_handler(base_execution_state_provider::test_utils::ProviderTestUtils::empty(
+                base_common_chain_config::ChainSpecProvider::chain_spec(&client),
+            ))
             .transactions(NetworkTestData::pool(), transactions_manager_config)
             .split_with_handle();
 

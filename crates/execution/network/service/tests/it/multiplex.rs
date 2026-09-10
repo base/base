@@ -24,7 +24,9 @@ async fn unsupported_protocols_are_not_announced_and_eth_requests_work_both_dire
         .unwrap();
     }
     net.for_each_mut(|peer| {
-        peer.install_request_handler();
+        peer.install_request_handler(
+            base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&provider),
+        );
     });
     let net = net.spawn();
     net.connect_peers().await;

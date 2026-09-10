@@ -22,8 +22,9 @@ use base_execution_network_wire::{
     StorageRangesMessage,
 };
 use base_execution_state_types::{
-    BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
-    ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
+    BalProvider, BlockHashReader, BlockReader, BytecodeReader, GetBlockAccessListLimit,
+    HeaderProvider, ProviderResult, RangeEnd, RangeResponse, ReceiptProvider, StateProviderFactory,
+    StateRangeProviderFactory,
 };
 use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
@@ -79,9 +80,12 @@ pub const SOFT_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 /// This can be spawned to another task and is supposed to be run as background service.
 #[derive(Debug)]
 #[must_use = "Manager does nothing unless polled."]
-pub struct EthRequestHandler<C> {
+pub struct EthRequestHandler {
     /// The client type that can interact with the chain.
-    client: C,
+    client: base_execution_state_provider::BlockchainProvider,
+    /// Scripted range reads exercise partial storage failures only in unit tests.
+    #[cfg(test)]
+    pub snap_fixture: Option<base_execution_state_provider::test_utils::MockEthProvider>,
     /// Blob store used for serving blob cell requests.
     blob_store: Box<dyn BlobStore>,
     /// Used for reporting peers.
@@ -95,11 +99,17 @@ pub struct EthRequestHandler<C> {
 }
 
 // === impl EthRequestHandler ===
-impl<C> EthRequestHandler<C> {
+impl EthRequestHandler {
     /// Create a new instance
-    pub fn new(client: C, peers: PeersHandle, incoming: Receiver<IncomingEthRequest>) -> Self {
+    pub fn new(
+        client: base_execution_state_provider::BlockchainProvider,
+        peers: PeersHandle,
+        incoming: Receiver<IncomingEthRequest>,
+    ) -> Self {
         Self {
             client,
+            #[cfg(test)]
+            snap_fixture: None,
             blob_store: Box::<NoopBlobStore>::default(),
             peers,
             incoming_requests: ReceiverStream::new(incoming),
@@ -114,10 +124,7 @@ impl<C> EthRequestHandler<C> {
     }
 }
 
-impl<C> EthRequestHandler<C>
-where
-    C: BlockReader,
-{
+impl EthRequestHandler {
     /// Returns the list of requested headers
     fn get_headers_response(
         &self,
@@ -390,10 +397,7 @@ where
     }
 }
 
-impl<C> EthRequestHandler<C>
-where
-    C: BalProvider,
-{
+impl EthRequestHandler {
     /// Handles [`GetBlockAccessLists`] queries.
     ///
     /// EIP-8159 defines the final `BlockAccessLists` response semantics:
@@ -414,10 +418,7 @@ where
     }
 }
 
-impl<C> EthRequestHandler<C>
-where
-    C: BalProvider + StateProviderFactory + StateRangeProviderFactory,
-{
+impl EthRequestHandler {
     /// Handles `snap/2` (EIP-8189) requests.
     ///
     /// `GetAccountRange`/`GetStorageRanges` are hash-native throughout and served from retained
@@ -529,7 +530,13 @@ where
         };
 
         let response_bytes = (req.response_bytes as usize).min(SOFT_RESPONSE_LIMIT);
-        let Some(state) = self.client.state_range_provider(req.root_hash)? else {
+        let state = self.client.state_range_provider(req.root_hash);
+        #[cfg(test)]
+        let state = self
+            .snap_fixture
+            .as_ref()
+            .map_or_else(|| state, |fixture| fixture.state_range_provider(req.root_hash));
+        let Some(state) = state? else {
             return Ok(empty);
         };
         let RangeResponse { items: accounts, end } =
@@ -569,7 +576,13 @@ where
             slots: Vec::new(),
             proof: Vec::new(),
         };
-        let Some(state) = self.client.state_range_provider(req.root_hash)? else {
+        let state = self.client.state_range_provider(req.root_hash);
+        #[cfg(test)]
+        let state = self
+            .snap_fixture
+            .as_ref()
+            .map_or_else(|| state, |fixture| fixture.state_range_provider(req.root_hash));
+        let Some(state) = state? else {
             return Ok(empty);
         };
         let mut slots: Vec<Vec<StorageData>> = Vec::new();
@@ -634,15 +647,7 @@ fn boundary_proof_keys<T>(origin: B256, last: Option<&(B256, T)>) -> Vec<B256> {
 /// An endless future.
 ///
 /// This should be spawned or used as part of `tokio::select!`.
-impl<C> Future for EthRequestHandler<C>
-where
-    C: BalProvider
-        + StateProviderFactory
-        + StateRangeProviderFactory
-        + BlockReader
-        + HeaderProvider
-        + Unpin,
-{
+impl Future for EthRequestHandler {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -943,8 +948,10 @@ mod tests {
         let (_incoming_tx, incoming_rx) = mpsc::channel(1);
         let get_cells_calls = Arc::new(AtomicUsize::new(0));
         let blob_store = CountingBlobStore { get_cells_calls: Arc::clone(&get_cells_calls) };
-        let handler = EthRequestHandler::<NoopProvider>::new(
-            NoopProvider::default(),
+        let handler = EthRequestHandler::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::empty(Arc::new(
+                base_common_chain_config::BaseChainSpec::mainnet(),
+            )),
             PeersHandle::new(peers_tx),
             incoming_rx,
         )
@@ -964,8 +971,10 @@ mod tests {
     async fn get_node_data_responds_with_empty_payload() {
         let (peers_tx, _) = mpsc::unbounded_channel();
         let (_incoming_tx, incoming_rx) = mpsc::channel(1);
-        let handler = EthRequestHandler::<NoopProvider>::new(
-            NoopProvider::default(),
+        let handler = EthRequestHandler::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::empty(Arc::new(
+                base_common_chain_config::BaseChainSpec::mainnet(),
+            )),
             PeersHandle::new(peers_tx),
             incoming_rx,
         );
@@ -978,10 +987,14 @@ mod tests {
     }
 
     /// Creates a request handler backed by the mock provider for snap response tests.
-    fn snap_handler(provider: MockEthProvider) -> EthRequestHandler<MockEthProvider> {
+    fn snap_handler(provider: MockEthProvider) -> EthRequestHandler {
         let (peers_tx, _) = mpsc::unbounded_channel();
         let (_incoming_tx, incoming_rx) = mpsc::channel(1);
-        EthRequestHandler::new(provider, PeersHandle::new(peers_tx), incoming_rx)
+        let client =
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider);
+        let mut handler = EthRequestHandler::new(client, PeersHandle::new(peers_tx), incoming_rx);
+        handler.snap_fixture = Some(provider);
+        handler
     }
 
     #[test_case(

@@ -71,13 +71,10 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
     }
 
     /// Creates a new [`EthRequestHandler`] and wires it to the network.
-    pub fn request_handler<Client>(
+    pub fn request_handler(
         self,
-        client: Client,
-    ) -> NetworkBuilder<Tx, EthRequestHandler<Client>>
-    where
-        Client: BalProvider,
-    {
+        client: base_execution_state_provider::BlockchainProvider,
+    ) -> NetworkBuilder<Tx, EthRequestHandler> {
         let Self { mut network, transactions, .. } = self;
         let (tx, rx) = mpsc::channel(ETH_REQUEST_CHANNEL_CAPACITY);
         network.set_eth_request_handler(tx);
@@ -87,14 +84,11 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
     }
 
     /// Creates a new [`EthRequestHandler`] with access to a blob store and wires it to the network.
-    pub fn request_handler_with_blob_store<Client>(
+    pub fn request_handler_with_blob_store(
         self,
-        client: Client,
+        client: base_execution_state_provider::BlockchainProvider,
         blob_store: Box<dyn BlobStore>,
-    ) -> NetworkBuilder<Tx, EthRequestHandler<Client>>
-    where
-        Client: BalProvider,
-    {
+    ) -> NetworkBuilder<Tx, EthRequestHandler> {
         let NetworkBuilder { network, transactions, request_handler } =
             self.request_handler(client);
         let request_handler = request_handler.with_blob_store(blob_store);

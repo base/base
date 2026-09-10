@@ -36,7 +36,13 @@ async fn test_large_tx_req() {
     let mut net = Testnet::create_with(2, MockEthProvider::default()).await;
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    net.for_each_mut(|peer| {
+        peer.install_request_handler(
+            base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(
+                &MockEthProvider::default(),
+            ),
+        )
+    });
 
     // insert generated txs into responding peer's pool
     let pool1 = NetworkTestData::pool();

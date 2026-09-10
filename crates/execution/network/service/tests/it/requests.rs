@@ -35,7 +35,9 @@ async fn test_get_body() {
     let mut net = Testnet::create_with(2, mock_provider.clone()).await;
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -51,13 +53,21 @@ async fn test_get_body() {
     assert_eq!(connected, *handle1.peer_id());
 
     // request some blocks
-    for _ in 0..100 {
+    let mut parent_hash = B256::ZERO;
+    for number in 1..=100 {
         // Set a new random block to the mock storage and request it via the network
         let block_hash = rng.random();
         let mut block: Block = Block::default();
+        block.header.number = number;
+        block.header.parent_hash = parent_hash;
+        parent_hash = block_hash;
         block.body.transactions.push(tx_gen.gen_eip1559());
 
         mock_provider.add_block(block_hash, block.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
 
         let res = fetch0.get_block_bodies(vec![block_hash]).await;
         assert!(res.is_ok(), "{res:?}");
@@ -78,7 +88,9 @@ async fn test_get_body_range() {
     let mut net = Testnet::create_with(2, mock_provider.clone()).await;
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -96,12 +108,20 @@ async fn test_get_body_range() {
     let mut all_blocks = Vec::new();
     let mut block_hashes = Vec::new();
     // add some blocks
-    for _ in 0..100 {
+    let mut parent_hash = B256::ZERO;
+    for number in 1..=100 {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
+        block.header.number = number;
+        block.header.parent_hash = parent_hash;
+        parent_hash = block_hash;
         block.body.transactions.push(tx_gen.gen_eip1559());
 
         mock_provider.add_block(block_hash, block.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
         all_blocks.push(block);
         block_hashes.push(block_hash);
     }
@@ -131,7 +151,9 @@ async fn test_get_header() {
     let mut net = Testnet::create_with(2, mock_provider.clone()).await;
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -155,6 +177,10 @@ async fn test_get_header() {
         hash = rng.random();
 
         mock_provider.add_header(hash, header.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
 
         let req =
             HeadersRequest { start: hash.into(), limit: 1, direction: HeadersDirection::Falling };
@@ -177,7 +203,9 @@ async fn test_get_header_range() {
     let mut net = Testnet::create_with(2, mock_provider.clone()).await;
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -201,6 +229,10 @@ async fn test_get_header_range() {
         let header = Header { number: start + idx, parent_hash: hash, ..Default::default() };
         hash = rng.random();
         mock_provider.add_header(hash, header.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
         all_headers.push(header.seal(hash));
     }
 
@@ -235,7 +267,9 @@ async fn test_get_header_range_falling() {
     let mut net = Testnet::create_with(2, mock_provider.clone()).await;
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -259,6 +293,10 @@ async fn test_get_header_range_falling() {
         let header = Header { number: start + idx, parent_hash: hash, ..Default::default() };
         hash = rng.random();
         mock_provider.add_header(hash, header.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
         all_headers.push(header.seal(hash));
     }
 
@@ -302,7 +340,9 @@ async fn test_eth68_get_receipts() {
     net.add_peer_with_config(p1).await.unwrap();
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -335,7 +375,15 @@ async fn test_eth68_get_receipts() {
         ];
 
         mock_provider.add_header(block_hash, header.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
         mock_provider.add_receipts(header.number, receipts);
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
 
         // Test receipt request via low-level peer request
         let (tx, rx) = oneshot::channel();
@@ -373,7 +421,9 @@ async fn test_eth69_get_headers() {
     net.add_peer_with_config(p1).await.unwrap();
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -396,6 +446,10 @@ async fn test_eth69_get_headers() {
         hash = rng.random();
 
         mock_provider.add_header(hash, header.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
 
         let req =
             HeadersRequest { start: hash.into(), limit: 1, direction: HeadersDirection::Falling };
@@ -426,7 +480,9 @@ async fn test_eth69_get_bodies() {
     net.add_peer_with_config(p1).await.unwrap();
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -442,12 +498,20 @@ async fn test_eth69_get_bodies() {
     assert_eq!(connected, *handle1.peer_id());
 
     // request some blocks via eth69 connection
-    for _ in 0..50 {
+    let mut parent_hash = B256::ZERO;
+    for number in 1..=50 {
         let block_hash = rng.random();
         let mut block: Block = Block::default();
+        block.header.number = number;
+        block.header.parent_hash = parent_hash;
+        parent_hash = block_hash;
         block.body.transactions.push(tx_gen.gen_eip1559());
 
         mock_provider.add_block(block_hash, block.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
 
         let res = fetch0.get_block_bodies(vec![block_hash]).await;
         assert!(res.is_ok(), "{res:?}");
@@ -474,7 +538,9 @@ async fn test_eth69_get_receipts() {
     net.add_peer_with_config(p1).await.unwrap();
 
     // install request handlers
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let handle0 = net.peers()[0].handle();
     let mut events0 = NetworkEventStream::new(handle0.event_listener());
@@ -509,7 +575,15 @@ async fn test_eth69_get_receipts() {
         ];
 
         mock_provider.add_header(block_hash, header.clone());
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
         mock_provider.add_receipts(header.number, receipts);
+        base_execution_state_provider::test_utils::ProviderTestUtils::sync_requests(
+            &request_provider,
+            &mock_provider,
+        );
 
         let (tx, rx) = oneshot::channel();
         handle0.send_request(
@@ -697,7 +771,9 @@ async fn spawn_bal_testnet_with_store(
         net.add_peer_with_config(peer).await.unwrap();
     }
 
-    net.for_each_mut(|peer| peer.install_request_handler());
+    let request_provider =
+        base_execution_state_provider::test_utils::ProviderTestUtils::for_requests(&mock_provider);
+    net.for_each_mut(|peer| peer.install_request_handler(request_provider.clone()));
 
     let net = net.spawn();
     net.connect_peers().await;
