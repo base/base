@@ -26,8 +26,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
 
 use crate::{
-    AttestationPlanner, CertKind, CertPlan, DiscoveryResolution, P384Hints, PINNED_ROOT_CERT_HASH,
-    RegistrarError, RegistrarMetrics, RegistrationHints, RegistrationPlan, Result, crl,
+    AttestationPlanner, CertKind, CertPlan, CrlSource, DiscoveryResolution, P384Hints,
+    PINNED_ROOT_CERT_HASH, RegistrarError, RegistrarMetrics, RegistrationHints, RegistrationPlan,
+    Result,
 };
 
 /// Default maximum number of transaction submission retries for transient
@@ -38,8 +39,9 @@ pub const DEFAULT_MAX_TX_RETRIES: u32 = 3;
 pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
-const CRL_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
+const DEREG_REASON_REVOKED: &str = "revoked_certificate";
+const DEREG_REASON_ORPHAN: &str = "orphan";
 const DEBUG_MODE_PCR0_HASH: B256 =
     b256!("0xc980e59163ce244bb4bb6211f48c7b46f88a4f40943e84eb99bdc41e129bd293");
 
@@ -56,8 +58,6 @@ pub struct SignerManagerConfig {
     pub tx_retry_delay: Duration,
     /// Maximum attestation age accepted before onchain submission.
     pub max_attestation_age: Duration,
-    /// Whether AWS CRL checks and issuer/serial revocation transactions are enabled.
-    pub crl_checks_enabled: bool,
 }
 
 /// What one certificate-cache transaction attempt did onchain.
@@ -117,7 +117,7 @@ pub struct SignerManager<R, C, T> {
     tx_manager: T,
     hint_semaphore: Arc<Semaphore>,
     cert_locks: Mutex<HashMap<B256, Weak<AsyncMutex<()>>>>,
-    crl_http_client: Option<reqwest::Client>,
+    crl_source: Option<Box<dyn CrlSource>>,
     registry_address: Address,
     max_tx_retries: u32,
     tx_retry_delay: Duration,
@@ -126,34 +126,28 @@ pub struct SignerManager<R, C, T> {
 
 impl<R, C, T> SignerManager<R, C, T> {
     /// Creates a signer manager from the signer lifecycle dependencies.
+    ///
+    /// `crl_source` is `None` when AWS CRL checking is disabled, which leaves the onchain
+    /// `CertManager` sentinel as the only revocation check.
     pub fn new(
         registry: R,
         cert_manager: C,
         tx_manager: T,
+        crl_source: Option<Box<dyn CrlSource>>,
         config: SignerManagerConfig,
-    ) -> Result<Self> {
-        let crl_http_client = config
-            .crl_checks_enabled
-            .then(|| {
-                reqwest::Client::builder()
-                    .timeout(CRL_FETCH_TIMEOUT)
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-            })
-            .transpose()
-            .map_err(|e| RegistrarError::Config(format!("failed to build CRL HTTP client: {e}")))?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             registry,
             cert_manager,
             tx_manager,
             hint_semaphore: Arc::new(Semaphore::new(config.max_concurrency.max(1))),
             cert_locks: Mutex::new(HashMap::new()),
-            crl_http_client,
+            crl_source,
             registry_address: config.registry_address,
             max_tx_retries: config.max_tx_retries,
             tx_retry_delay: config.tx_retry_delay,
             max_attestation_age: config.max_attestation_age,
-        })
+        }
     }
 
     /// Derives the deterministic attestation nonce for a signer.
@@ -444,10 +438,7 @@ where
 
         // Keep revocation monitoring active for already-registered signers. Persisting a newly
         // observed CRL entry protects every future registration that shares this certificate chain.
-        if !self.check_revocations(&plan, signer_cancel).await? {
-            return Ok(());
-        }
-        if !self.check_crls(&plan, signer_cancel).await? {
+        if !self.check_revocation_state(&plan, signer_cancel).await? {
             return Ok(());
         }
 
@@ -551,6 +542,26 @@ where
         self.submit_registration(instance_id, signer_address, &plan, &hints, signer_cancel).await
     }
 
+    /// Runs the onchain sentinel and AWS CRL revocation checks for a plan.
+    ///
+    /// Returns `Ok(false)` when the signer task was cancelled mid-check.
+    async fn check_revocation_state(
+        &self,
+        plan: &RegistrationPlan,
+        signer_cancel: &CancellationToken,
+    ) -> Result<bool> {
+        let result = match self.check_revocations(plan, signer_cancel).await {
+            Ok(true) => self.check_crls(plan, signer_cancel).await,
+            cancelled_or_error => cancelled_or_error,
+        };
+        // `isValidSigner` does not consult certificate revocation state, so a signer that was
+        // registered before its chain was revoked stays valid until it is explicitly deregistered.
+        if matches!(result, Err(RegistrarError::RevokedCertificate { .. })) {
+            self.deregister_revoked_signer(plan.signer, signer_cancel).await;
+        }
+        result
+    }
+
     async fn check_revocations(
         &self,
         plan: &RegistrationPlan,
@@ -597,44 +608,138 @@ where
         }
     }
 
+    /// Checks every CA certificate in the plan against its AWS CRL distribution point.
+    ///
+    /// Fails closed: registration only proceeds when every applicable CRL was fetched and
+    /// parsed successfully and listed no certificate in the chain. A CRL that cannot be
+    /// fetched or parsed leaves that certificate's status unknown, which is reported as an
+    /// error rather than collapsed into a clean result.
     async fn check_crls(
         &self,
         plan: &RegistrationPlan,
         signer_cancel: &CancellationToken,
     ) -> Result<bool> {
-        let Some(http_client) = &self.crl_http_client else {
+        let Some(crl_source) = &self.crl_source else {
             return Ok(true);
         };
-        let cert_infos = crl::CertCrlInfo::from_cert_plans(&plan.certs)?;
         RegistrarMetrics::crl_checks_total().increment(1);
-        let Some(revoked) = signer_cancel
-            .run_until_cancelled(crl::check_chain_against_crls(&cert_infos, http_client))
-            .await
+        let Some(status) =
+            signer_cancel.run_until_cancelled(crl_source.check_chain(&plan.certs)).await
         else {
             return Ok(false);
         };
-        if revoked.is_empty() {
-            return Ok(true);
+        let status = match status {
+            Ok(status) => status,
+            Err(error) => {
+                RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_INDETERMINATE);
+                return Err(error.into());
+            }
+        };
+
+        if let Some(first) = status.revoked.first() {
+            RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_REVOKED);
+            RegistrarMetrics::crl_revocations_detected().increment(status.revoked.len() as u64);
+            for cert in &status.revoked {
+                if let Err(e) = self
+                    .submit_revocation(
+                        cert.revocation_id,
+                        plan.signer,
+                        plan.timestamp,
+                        signer_cancel,
+                    )
+                    .await
+                {
+                    warn!(
+                        error = %e,
+                        cert_id = %cert.revocation_id,
+                        "failed to persist CRL revocation"
+                    );
+                    RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+                }
+            }
+            return Err(RegistrarError::RevokedCertificate {
+                label: format!("CA certificate {}", first.index),
+                cert_id: first.revocation_id,
+            });
         }
-        RegistrarMetrics::crl_revocations_detected().increment(revoked.len() as u64);
-        for cert in &revoked {
-            if let Err(e) = self
-                .submit_revocation(cert.revocation_id, plan.signer, plan.timestamp, signer_cancel)
-                .await
-            {
-                warn!(
-                    error = %e,
-                    cert_id = %cert.revocation_id,
-                    "failed to persist CRL revocation"
+
+        if let Some(first) = status.indeterminate.first() {
+            RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_INDETERMINATE);
+            RegistrarMetrics::crl_indeterminate_certs_detected()
+                .increment(status.indeterminate.len() as u64);
+            warn!(
+                signer = %plan.signer,
+                indeterminate_certs = status.indeterminate.len(),
+                cert_index = first.index,
+                error = %first.error,
+                "CRL status is indeterminate, refusing to register"
+            );
+            return Err(RegistrarError::IndeterminateRevocation {
+                label: format!("CA certificate {}", first.index),
+                cert_id: first.revocation_id,
+                reason: first.error.to_string(),
+            });
+        }
+
+        RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_CLEAN);
+        Ok(true)
+    }
+
+    /// Deregisters a signer whose certificate chain is confirmed revoked.
+    ///
+    /// Best effort: a failure here is retried on the next discovery cycle, which re-runs the
+    /// same revocation checks for as long as the instance stays discoverable.
+    async fn deregister_revoked_signer(&self, signer: Address, signer_cancel: &CancellationToken) {
+        let Some(registered) =
+            signer_cancel.run_until_cancelled(self.registry.is_registered_signer(signer)).await
+        else {
+            return;
+        };
+        match registered {
+            Ok(false) => return,
+            Ok(true) => {}
+            // Submit anyway. `deregisterSigner` is idempotent, and skipping it whenever the
+            // registry read is the thing failing would leave a revoked signer valid onchain.
+            Err(error) => warn!(
+                error = %error,
+                signer = %signer,
+                "failed to read registration state for a revoked signer"
+            ),
+        }
+        self.submit_deregistration(signer, DEREG_REASON_REVOKED).await;
+    }
+
+    /// Submits one `deregisterSigner` transaction and records its outcome.
+    async fn submit_deregistration(&self, signer: Address, reason: &'static str) {
+        let candidate = TxCandidate {
+            tx_data: Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode()),
+            to: Some(self.registry_address),
+            ..Default::default()
+        };
+        match self.tx_manager.send(candidate).await {
+            Ok(receipt) if receipt.inner.status() => {
+                info!(
+                    signer = %signer,
+                    tx_hash = %receipt.transaction_hash,
+                    reason,
+                    "signer deregistered"
                 );
-                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+                RegistrarMetrics::deregistrations_total().increment(1);
+            }
+            Ok(receipt) => {
+                warn!(
+                    signer = %signer,
+                    tx_hash = %receipt.transaction_hash,
+                    reason,
+                    "deregistration transaction reverted"
+                );
+                RegistrarMetrics::processing_errors_total().increment(1);
+            }
+            Err(e) => {
+                warn!(error = %e, signer = %signer, reason, "failed to deregister signer");
+                RegistrarMetrics::processing_errors_total().increment(1);
             }
         }
-        let first = revoked[0];
-        Err(RegistrarError::RevokedCertificate {
-            label: format!("CA certificate {}", first.index),
-            cert_id: first.revocation_id,
-        })
     }
 
     async fn submit_revocation(
@@ -1109,31 +1214,7 @@ where
             if cancel.is_cancelled() {
                 break;
             }
-            let candidate = TxCandidate {
-                tx_data: Bytes::from(
-                    ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode(),
-                ),
-                to: Some(self.registry_address),
-                ..Default::default()
-            };
-            match self.tx_manager.send(candidate).await {
-                Ok(receipt) if receipt.inner.status() => {
-                    info!(signer = %signer, tx_hash = %receipt.transaction_hash, "signer deregistered");
-                    RegistrarMetrics::deregistrations_total().increment(1);
-                }
-                Ok(receipt) => {
-                    warn!(
-                        signer = %signer,
-                        tx_hash = %receipt.transaction_hash,
-                        "deregistration transaction reverted"
-                    );
-                    RegistrarMetrics::processing_errors_total().increment(1);
-                }
-                Err(e) => {
-                    warn!(error = %e, signer = %signer, "failed to deregister signer");
-                    RegistrarMetrics::processing_errors_total().increment(1);
-                }
-            }
+            self.submit_deregistration(signer, DEREG_REASON_ORPHAN).await;
         }
         Ok(())
     }
@@ -1215,18 +1296,25 @@ mod tests {
     use base_tx_manager::{SendHandle, TxManagerError};
     #[cfg(feature = "metrics")]
     use metrics_util::{
-        MetricKind,
+        CompositeKey, MetricKind,
         debugging::{DebugValue, DebuggingRecorder},
     };
 
     use super::*;
     use crate::{
-        DEFAULT_MAX_CONCURRENCY, RegisterableSigner,
+        CrlChainStatus, CrlError, DEFAULT_MAX_CONCURRENCY, IndeterminateCert, RegisterableSigner,
+        RevokedCert,
+        crl::MockCrlSource,
         test_utils::{
             EP1, EP2, HARDHAT_KEY_0, HARDHAT_KEY_1, TEST_REGISTRY_ADDRESS, healthy_prover_instance,
             signer_from_private_key, stub_receipt_with_status,
         },
     };
+
+    /// One drained `DebuggingRecorder` snapshot.
+    #[cfg(feature = "metrics")]
+    type MetricSnapshot =
+        Vec<(CompositeKey, Option<metrics::Unit>, Option<metrics::SharedString>, DebugValue)>;
 
     const TEST_INSTANCE: &str = "i-registrar-test";
     const TEST_CERT_MANAGER_ADDRESS: Address = Address::repeat_byte(0x22);
@@ -1595,7 +1683,20 @@ mod tests {
     }
 
     fn manager_with_plan(plan: &RegistrationPlan) -> (Arc<TestManager>, MockChain) {
-        manager_with_config(plan, DEFAULT_MAX_TX_RETRIES, TEST_RETRY_DELAY, TEST_MAX_AGE)
+        manager_with_config(plan, DEFAULT_MAX_TX_RETRIES, TEST_RETRY_DELAY, TEST_MAX_AGE, None)
+    }
+
+    fn manager_with_crl(
+        plan: &RegistrationPlan,
+        crl_source: Box<dyn CrlSource>,
+    ) -> (Arc<TestManager>, MockChain) {
+        manager_with_config(
+            plan,
+            DEFAULT_MAX_TX_RETRIES,
+            TEST_RETRY_DELAY,
+            TEST_MAX_AGE,
+            Some(crl_source),
+        )
     }
 
     fn manager_with_config(
@@ -1603,6 +1704,7 @@ mod tests {
         max_tx_retries: u32,
         tx_retry_delay: Duration,
         max_attestation_age: Duration,
+        crl_source: Option<Box<dyn CrlSource>>,
     ) -> (Arc<TestManager>, MockChain) {
         let chain = MockChain::with_plan(plan);
         let manager = SignerManager::new(
@@ -1612,17 +1714,42 @@ mod tests {
             },
             MockCertManager { chain: chain.clone() },
             MockTxManager { chain: chain.clone() },
+            crl_source,
             SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
                 max_concurrency: DEFAULT_MAX_CONCURRENCY,
                 max_tx_retries,
                 tx_retry_delay,
                 max_attestation_age,
-                crl_checks_enabled: false,
             },
-        )
-        .unwrap();
+        );
         (Arc::new(manager), chain)
+    }
+
+    /// Builds a CRL source that answers a single chain check with `result`.
+    fn crl_source(result: std::result::Result<CrlChainStatus, CrlError>) -> Box<dyn CrlSource> {
+        let mut source = MockCrlSource::new();
+        source.expect_check_chain().return_once(move |_| result);
+        Box::new(source)
+    }
+
+    fn revoked_chain(revocation_id: B256) -> CrlChainStatus {
+        CrlChainStatus {
+            revoked: vec![RevokedCert { index: 1, revocation_id }],
+            indeterminate: Vec::new(),
+        }
+    }
+
+    /// One unfetchable CA in a chain whose other CAs came back clean.
+    fn partially_indeterminate_chain(revocation_id: B256) -> CrlChainStatus {
+        CrlChainStatus {
+            revoked: Vec::new(),
+            indeterminate: vec![IndeterminateCert {
+                index: 1,
+                revocation_id,
+                error: CrlError("CRL fetch error: connection reset by peer".into()),
+            }],
+        }
     }
 
     async fn register_prepared(manager: &TestManager, plan: RegistrationPlan) -> Result<()> {
@@ -1783,8 +1910,10 @@ mod tests {
         }
     }
 
+    /// `isValidSigner` never consults certificate revocation, so a signer registered before its
+    /// chain was revoked has to be deregistered rather than left to age out of discovery.
     #[tokio::test]
-    async fn already_registered_signer_still_checks_revocation_state() {
+    async fn already_registered_signer_is_deregistered_when_its_certificate_is_revoked() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -1796,7 +1925,84 @@ mod tests {
         let result = register_prepared(&manager, plan).await;
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        let sent = chain.sent();
+        assert_eq!(sent.len(), 1);
+        let call = ITEEProverRegistry::deregisterSignerCall::abi_decode(&sent[0].1).unwrap();
+        assert_eq!(call.signer, SIGNER_A);
+    }
+
+    #[tokio::test]
+    async fn clean_crl_chain_registers_signer() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(CrlChainStatus::default())));
+
+        register_prepared(&manager, plan).await.unwrap();
+
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    /// A single unfetchable CRL leaves the chain's revocation status unknown, so registration
+    /// must fail closed even though every other certificate came back clean.
+    #[tokio::test]
+    async fn partial_crl_failure_blocks_registration() {
+        let plan = synthetic_plan(SIGNER_A);
+        let cert_id = plan.certs[0].revocation_id;
+        let (manager, chain) =
+            manager_with_crl(&plan, crl_source(Ok(partially_indeterminate_chain(cert_id))));
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(
+            matches!(result, Err(RegistrarError::IndeterminateRevocation { cert_id: id, .. }) if id == cert_id),
+            "expected an indeterminate revocation error, got: {result:?}"
+        );
         assert!(chain.sent().is_empty());
+    }
+
+    /// A chain the CRL source cannot even parse is indeterminate for every certificate in it.
+    #[tokio::test]
+    async fn unparseable_crl_chain_blocks_registration() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) =
+            manager_with_crl(&plan, crl_source(Err(CrlError("certificate parse error".into()))));
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::Crl(_))), "got: {result:?}");
+        assert!(chain.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn confirmed_crl_revocation_persists_revocation_and_deregisters_signer() {
+        let plan = synthetic_plan(SIGNER_A);
+        let cert_id = plan.certs[0].revocation_id;
+        let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
+        chain.0.lock().unwrap().registered.insert(SIGNER_A);
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        {
+            let state = chain.0.lock().unwrap();
+            assert!(state.revoked.contains(&cert_id), "CRL entry was not persisted onchain");
+            assert!(!state.registered.contains(&SIGNER_A));
+        }
+        assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    #[tokio::test]
+    async fn confirmed_crl_revocation_skips_deregistration_for_unregistered_signer() {
+        let plan = synthetic_plan(SIGNER_A);
+        let cert_id = plan.certs[0].revocation_id;
+        let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
     }
 
     #[tokio::test]
@@ -1867,7 +2073,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn retryable_cache_error_retries_same_calldata_with_backoff() {
         let plan = synthetic_plan(SIGNER_A);
-        let (manager, chain) = manager_with_config(&plan, 2, TEST_RETRY_DELAY, TEST_MAX_AGE);
+        let (manager, chain) = manager_with_config(&plan, 2, TEST_RETRY_DELAY, TEST_MAX_AGE, None);
         chain.set_outcomes([MockTxOutcome::Error(TxManagerError::Rpc("temporary".into()))]);
         let start = tokio::time::Instant::now();
 
@@ -1909,23 +2115,8 @@ mod tests {
         });
 
         let snapshot = snapshotter.snapshot().into_vec();
-        let count = |outcome: &str| -> u64 {
-            snapshot
-                .iter()
-                .filter(|(key, _, _, _)| {
-                    key.kind() == MetricKind::Counter
-                        && key.key().name() == "base_registrar.cert_cache_tx_total"
-                        && key
-                            .key()
-                            .labels()
-                            .any(|label| label.key() == "outcome" && label.value() == outcome)
-                })
-                .map(|(_, _, _, value)| match value {
-                    DebugValue::Counter(count) => *count,
-                    other => panic!("expected a counter, got {other:?}"),
-                })
-                .sum()
-        };
+        let count =
+            |outcome: &str| outcome_counter_total(&snapshot, "cert_cache_tx_total", outcome);
 
         let submitted = count(RegistrarMetrics::TX_OUTCOME_SUBMITTED);
         let terminal: u64 = [
@@ -1946,6 +2137,74 @@ mod tests {
             count(RegistrarMetrics::TX_OUTCOME_OBSERVED_CACHED) > 0,
             "ambiguous-receipt exit was not exercised"
         );
+    }
+
+    /// A CRL outage and a clean chain must not look the same on a dashboard, so each terminal
+    /// CRL status has to land on its own `outcome` label.
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn crl_outcomes_are_recorded_under_distinct_labels() {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+
+        metrics::with_local_recorder(&recorder, || {
+            let runtime =
+                tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            runtime.block_on(async {
+                for outcome in [
+                    RegistrarMetrics::CRL_OUTCOME_CLEAN,
+                    RegistrarMetrics::CRL_OUTCOME_REVOKED,
+                    RegistrarMetrics::CRL_OUTCOME_INDETERMINATE,
+                ] {
+                    let plan = synthetic_plan(SIGNER_A);
+                    let cert_id = plan.certs[0].revocation_id;
+                    let status = match outcome {
+                        RegistrarMetrics::CRL_OUTCOME_REVOKED => revoked_chain(cert_id),
+                        RegistrarMetrics::CRL_OUTCOME_INDETERMINATE => {
+                            partially_indeterminate_chain(cert_id)
+                        }
+                        _ => CrlChainStatus::default(),
+                    };
+                    let (manager, _) = manager_with_crl(&plan, crl_source(Ok(status)));
+                    let _ = register_prepared(&manager, plan).await;
+                }
+            });
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        for outcome in [
+            RegistrarMetrics::CRL_OUTCOME_CLEAN,
+            RegistrarMetrics::CRL_OUTCOME_REVOKED,
+            RegistrarMetrics::CRL_OUTCOME_INDETERMINATE,
+        ] {
+            assert_eq!(
+                outcome_counter_total(&snapshot, "crl_check_outcome_total", outcome),
+                1,
+                "expected exactly one {outcome} CRL check"
+            );
+        }
+    }
+
+    /// Sums a registrar counter across every series carrying `outcome`.
+    ///
+    /// Takes an already-drained snapshot because `Snapshotter::snapshot` clears the recorder.
+    #[cfg(feature = "metrics")]
+    fn outcome_counter_total(snapshot: &MetricSnapshot, metric: &str, outcome: &str) -> u64 {
+        snapshot
+            .iter()
+            .filter(|(key, _, _, _)| {
+                key.kind() == MetricKind::Counter
+                    && key.key().name() == format!("base_registrar.{metric}")
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "outcome" && label.value() == outcome)
+            })
+            .map(|(_, _, _, value)| match value {
+                DebugValue::Counter(count) => *count,
+                other => panic!("expected a counter, got {other:?}"),
+            })
+            .sum()
     }
 
     #[tokio::test(start_paused = true)]

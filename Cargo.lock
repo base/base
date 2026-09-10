@@ -5585,6 +5585,7 @@ dependencies = [
  "k256 0.13.4",
  "metrics",
  "metrics-util",
+ "mockall",
  "p384",
  "reqwest 0.13.4",
  "rustls 0.23.43",
