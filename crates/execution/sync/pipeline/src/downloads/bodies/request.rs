@@ -7,10 +7,10 @@ use std::{
 
 use alloy_primitives::B256;
 use base_common_types_chain::{BaseBlockBody, BlockHeader};
+use base_common_types_chain::{GotExpected, InMemorySize, SealedBlock, SealedHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_types::{PeerId, WithPeerId};
 use futures::{Future, FutureExt};
-use reth_primitives_traits::{GotExpected, InMemorySize, SealedBlock, SealedHeader};
 use {
     base_execution_network_service::BlockResponse, base_execution_network_service::DownloadError,
     base_execution_network_service::DownloadResult, base_execution_network_wire::BodiesClient,

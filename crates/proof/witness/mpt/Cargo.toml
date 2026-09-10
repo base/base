@@ -32,18 +32,6 @@ name = "trie_node"
 harness = false
 
 [features]
-default = [ "serde" ]
-std = [
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "alloy-trie/std",
-    "base-common-types-payload/std",
-    "serde?/std",
-    "thiserror/std",
-]
-serde = [
-	"alloy-primitives/serde",
-	"alloy-trie/serde",
-	"base-common-types-payload/serde",
-	"dep:serde",
-]
+default = ["serde"]
+std = ["alloy-primitives/std", "alloy-rlp/std", "alloy-trie/std", "base-common-types-payload/std", "serde?/std", "thiserror/std"]
+serde = ["alloy-primitives/serde", "alloy-trie/serde", "base-common-types-payload/serde", "dep:serde"]

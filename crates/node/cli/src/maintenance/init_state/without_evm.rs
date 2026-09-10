@@ -3,13 +3,13 @@ use std::path::Path;
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
 use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_common_types_chain::{SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
     providers::StaticFileProvider,
 };
 use base_execution_state_types::StaticFileSegment;
 use base_execution_sync_pipeline::{StageCheckpoint, StageId};
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 use tracing::info;
 
 /// Reads the header RLP from a file and returns the Header.
@@ -73,7 +73,7 @@ where
 /// height.
 fn append_first_block<Provider>(
     provider_rw: &Provider,
-    header: &reth_primitives_traits::SealedHeader,
+    header: &base_common_types_chain::SealedHeader,
 ) -> ProviderResult<()>
 where
     Provider: BlockWriter<Block = BaseBlock> + StaticFileProviderFactory,

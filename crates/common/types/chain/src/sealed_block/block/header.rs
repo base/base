@@ -3,10 +3,8 @@
 use core::{fmt, hash::Hash};
 
 use alloy_primitives::Sealable;
-/// Re-exported alias
-pub use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 
-use crate::{InMemorySize, MaybeSerde};
+use crate::sealed_block::{InMemorySize, MaybeSerde};
 
 /// Abstraction of a block header.
 pub trait BlockHeader:

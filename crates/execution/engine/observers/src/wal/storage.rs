@@ -251,7 +251,7 @@ mod tests {
     /// Helper function to generate deterministic test data for WAL tests
     fn get_test_notification_data() -> eyre::Result<ExExNotification> {
         use base_common_types_chain::BaseBlock as Block;
-        use reth_primitives_traits::Block as _;
+        use base_common_types_chain::BlockExt as _;
 
         // Create a block with a transaction
         let block = Block::default().seal_slow().try_recover()?;

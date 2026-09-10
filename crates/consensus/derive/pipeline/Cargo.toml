@@ -42,19 +42,5 @@ alloy-primitives = { workspace = true, features = ["rlp", "k256", "map", "arbitr
 [features]
 default = []
 metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]
-serde = [
-    "base-common-types-chain/serde",
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "base-common-types-payload/serde",
-    "base-common-chain-config/serde",
-    "base-consensus-batch-types/serde",
-    "dep:serde",
-    "tracing-subscriber?/serde",
-]
-test-utils = [
-    "base-common-chain-config/test-utils",
-    "base-consensus-batch-types/test-utils",
-    "dep:spin",
-    "dep:tracing-subscriber",
-]
+serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "base-common-types-payload/serde", "base-common-chain-config/serde", "base-consensus-batch-types/serde", "dep:serde", "tracing-subscriber?/serde"]
+test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils", "dep:spin", "dep:tracing-subscriber"]

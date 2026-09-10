@@ -20,8 +20,7 @@ thiserror = {workspace = true}
 alloy-eips = {workspace = true}
 fixed-map = { workspace = true }
 bytes = {workspace = true, optional = true}
-reth-primitives-traits = {workspace = true}
-base-common-types-chain = { workspace = true}
+base-common-types-chain = {features = ["k256"], workspace = true}
 rayon = { workspace = true, optional = true }
 arrayvec = { workspace = true, optional = true }
 base-execution-state-memory = {workspace = true}
@@ -65,88 +64,19 @@ plain_hasher = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true, features = [] }
 alloy-trie = { workspace = true, features = ["arbitrary", "serde"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
-base-common-types-chain = {features = ["arbitrary", "serde"], workspace = true}
-reth-primitives-traits = {features = ["arbitrary", "reth-codec", "serde", "test-utils"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["arbitrary", "k256", "reth-codec", "serde", "test-utils"]}
 alloy-primitives = {features = ["arbitrary", "getrandom", "map-foldhash", "rand", "serde"], workspace = true}
 base-execution-state-memory = {workspace = true, features = ["arbitrary", "reth-codec", "serde", "test-utils"]}
 
 [features]
 default = ["std"]
-std = [
-    "base-common-types-chain/std",
-    "alloy-genesis/std",
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "base-common-types-rpc?/std",
-    "alloy-serde?/std",
-    "alloy-trie/std",
-    "arrayvec?/std",
-    "bytes?/std",
-    "derive_more/std",
-    "nybbles/std",
-    "reth-primitives-traits/std",
-    "serde/std",
-    "serde_with?/std",
-    "serde_json/std",
-    "base-execution-state-memory/std",
-    "alloy-eips/std",
-    "thiserror/std",
-    "strum/std",
-    "tracing/std",
-    "fixed-map/std",
-]
+std = ["base-common-types-chain/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-rpc?/std", "alloy-serde?/std", "alloy-trie/std", "arrayvec?/std", "bytes?/std", "derive_more/std", "nybbles/std", "base-common-types-chain/std", "serde/std", "serde_with?/std", "serde_json/std", "base-execution-state-memory/std", "alloy-eips/std", "thiserror/std", "strum/std", "tracing/std", "fixed-map/std"]
 eip1186 = ["base-common-types-rpc/serde", "dep:alloy-serde"]
-serde = [
-    "arrayvec?/serde",
-    "bytes?/serde",
-    "nybbles/serde",
-    "alloy-primitives/serde",
-    "base-common-types-chain/serde",
-    "alloy-trie/serde",
-    "base-common-types-rpc?/serde",
-    "reth-primitives-traits/serde",
-    "base-execution-state-memory/serde",
-    "alloy-eips/serde",
-    "rand/serde",
-]
-reth-codec = [
-    "dep:bytes",
-    "dep:arrayvec",
-    "dep:modular-bitfield",
-    "reth-primitives-traits/reth-codec",
-    "base-execution-state-memory/reth-codec",
-]
-serde-bincode-compat = [
-    "serde",
-    "base-common-types-chain/serde-bincode-compat",
-    "dep:serde_with",
-    "alloy-genesis/serde-bincode-compat",
-    "base-common-types-rpc?/serde-bincode-compat",
-    "alloy-eips/serde-bincode-compat",
-]
-test-utils = [
-    "dep:plain_hasher",
-    "dep:hash-db",
-    "arbitrary",
-    "reth-primitives-traits/test-utils",
-    "base-common-types-chain/test-utils",
-    "std",
-    "dep:arbitrary",
-    "base-execution-state-memory/test-utils",
-]
-arbitrary = [
-    "std",
-    "alloy-trie/arbitrary",
-    "dep:arbitrary",
-    "alloy-serde?/arbitrary",
-    "reth-primitives-traits/arbitrary",
-    "base-common-types-chain/arbitrary",
-    "alloy-primitives/arbitrary",
-    "nybbles/arbitrary",
-    "base-common-types-rpc?/arbitrary",
-    "alloy-eips/arbitrary",
-    "base-execution-state-memory/arbitrary",
-]
+serde = ["arrayvec?/serde", "bytes?/serde", "nybbles/serde", "alloy-primitives/serde", "base-common-types-chain/serde", "alloy-trie/serde", "base-common-types-rpc?/serde", "base-common-types-chain/serde", "base-execution-state-memory/serde", "alloy-eips/serde", "rand/serde"]
+reth-codec = ["dep:bytes", "dep:arrayvec", "dep:modular-bitfield", "base-common-types-chain/reth-codec", "base-execution-state-memory/reth-codec"]
+serde-bincode-compat = ["serde", "base-common-types-chain/serde-bincode-compat", "dep:serde_with", "alloy-genesis/serde-bincode-compat", "base-common-types-rpc?/serde-bincode-compat", "alloy-eips/serde-bincode-compat"]
+test-utils = ["dep:plain_hasher", "dep:hash-db", "arbitrary", "base-common-types-chain/test-utils", "base-common-types-chain/test-utils", "std", "dep:arbitrary", "base-execution-state-memory/test-utils"]
+arbitrary = ["std", "alloy-trie/arbitrary", "dep:arbitrary", "alloy-serde?/arbitrary", "base-common-types-chain/arbitrary", "base-common-types-chain/arbitrary", "alloy-primitives/arbitrary", "nybbles/arbitrary", "base-common-types-rpc?/arbitrary", "alloy-eips/arbitrary", "base-execution-state-memory/arbitrary"]
 rayon = ["dep:rayon"]
 partial-persistence = []
 clap = ["dep:clap"]

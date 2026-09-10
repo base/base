@@ -34,11 +34,11 @@ impl<Provider> Stage<Provider> for FinishStage {
 
 #[cfg(test)]
 mod tests {
+    use base_common_types_chain::SealedHeader;
     use base_execution_state_provider::providers::StaticFileWriter;
     use base_testing_support::{
         generators, generators::random_header, generators::random_header_range,
     };
-    use reth_primitives_traits::SealedHeader;
 
     use super::*;
     use crate::test_utils::{

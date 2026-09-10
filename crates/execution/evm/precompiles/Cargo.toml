@@ -77,31 +77,8 @@ name = "b20_policy_v2_golden"
 required-features = ["test-utils"]
 
 [features]
-default = [
-    "blst",
-    "c-kzg",
-    "portable",
-    "secp256k1",
-    "std",
-]
-std = [
-    "alloy-primitives/std",
-    "alloy-sol-types/std",
-    "base-common-chain-config/std",
-    "base-execution-evm-machine/std",
-    "base-execution-state-memory/std",
-    "base-execution-evm-crypto/std",
-    "base-execution-evm-primitives/std",
-    "base-common-types-chain/std",
-    "derive_more/std",
-    "thiserror/std",
-    "tracing/std",
-    "dep:sha2",
-    "dep:base64",
-    "dep:k256",
-    "dep:p256",
-    "base-common-types-chain/k256",
-]
+default = ["blst", "c-kzg", "portable", "secp256k1", "std"]
+std = ["alloy-primitives/std", "alloy-sol-types/std", "base-common-chain-config/std", "base-execution-evm-machine/std", "base-execution-state-memory/std", "base-execution-evm-crypto/std", "base-execution-evm-primitives/std", "base-common-types-chain/std", "derive_more/std", "thiserror/std", "tracing/std", "dep:sha2", "dep:base64", "dep:k256", "dep:p256", "base-common-types-chain/k256"]
 bn = ["base-execution-evm-crypto/bn"]
 blst = ["base-execution-evm-crypto/blst"]
 c-kzg = ["base-execution-evm-crypto/c-kzg"]

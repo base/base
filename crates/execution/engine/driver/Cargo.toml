@@ -47,7 +47,7 @@ parking_lot = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "sync"] }
 tokio-stream = { workspace = true, features = ["default"] }
 crossbeam-channel = { workspace = true, features = ["default"] }
-base-common-types-chain = {workspace = true, features = ["reth"]}
+base-common-types-chain = {features = ["dashmap", "k256", "rayon", "reth"], workspace = true}
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 base-execution-engine-types = {workspace = true, features = ["std"]}
@@ -58,7 +58,6 @@ base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-provider = {workspace = true, features = ["rayon"]}
 base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-payload-types = {workspace = true, features = ["default"]}
-reth-primitives-traits = {workspace = true, features = ["dashmap", "rayon"]}
 base-execution-network-service = { workspace = true, features = ["default"] }
 base-execution-engine-observers = { workspace = true, features = ["witness"] }
 alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash"]}
@@ -89,5 +88,5 @@ base-execution-network-service = { workspace = true, features = ["default", "tes
 base-testing-support = { workspace = true }
 
 [features]
-test-utils = ["base-execution-state-provider/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-database/test-utils", "base-execution-network-service/test-utils", "base-execution-payload-builder/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-types/test-utils", "base-execution-sync-pipeline/test-utils", "base-common-observability-tracing", "base-execution-state-trie/test-utils", "base-execution-state-tasks/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-memory/test-utils"]
+test-utils = ["base-execution-state-provider/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-database/test-utils", "base-execution-network-service/test-utils", "base-execution-payload-builder/test-utils", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-execution-sync-pipeline/test-utils", "base-common-observability-tracing", "base-execution-state-trie/test-utils", "base-execution-state-tasks/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-memory/test-utils"]
 trie-debug = ["base-execution-state-trie/trie-debug", "base-execution-state-tasks/trie-debug", "base-execution-engine-types/trie-debug"]

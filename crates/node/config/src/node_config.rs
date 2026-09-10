@@ -11,6 +11,7 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber, U256};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_execution_engine_types::TreeConfig;
 pub use base_execution_engine_types::{
     DEFAULT_MEMORY_BLOCK_BUFFER_TARGET, DEFAULT_PERSISTENCE_THRESHOLD, DEFAULT_RESERVED_CPU_CORES,
@@ -24,7 +25,6 @@ use base_execution_state_types::ProviderResult;
 use base_execution_state_types::PruneConfig;
 use base_execution_state_types::StageId;
 use eyre::eyre;
-use reth_primitives_traits::SealedHeader;
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::*;
 

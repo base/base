@@ -4,11 +4,11 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use alloy_primitives::B256;
 use alloy_rlp::Encodable;
+use base_common_types_chain::{RecoveredBlock, SealedHeader};
 use base_common_types_payload::PayloadId;
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 use either::Either;
-use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 
 use crate::PayloadBuilderError;
 

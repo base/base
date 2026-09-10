@@ -7,11 +7,11 @@ use std::{fmt::Debug, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_node_config::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use base_node_service::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
-use reth_primitives_traits::AlloyBlockHeader;
 use tracing::{Instrument, Level, span};
 
 use crate::node_fixtures::{NodeHelperType, node::NodeTestContext, wallet::Wallet};

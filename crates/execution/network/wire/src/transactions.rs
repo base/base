@@ -6,9 +6,9 @@ use alloy_eips::eip7594::Cell;
 use alloy_primitives::{B128, B256};
 use alloy_rlp::{Decodable, RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
 use base_common_codec_macros::add_arbitrary_tests;
+use base_common_types_chain::InMemorySize;
 use base_common_types_chain::transaction::{PooledTransaction, TxHashRef};
 use derive_more::{Constructor, Deref, IntoIterator};
-use reth_primitives_traits::InMemorySize;
 
 use crate::broadcast::decode_list_with_memory_budget;
 

@@ -51,38 +51,7 @@ required-features = ["test-utils"]
 
 [features]
 default = []
-std = [
-    "alloy-chains/std",
-    "alloy-eips/std",
-    "alloy-genesis/std",
-    "alloy-primitives/std",
-    "alloy-sol-types/std",
-    "base-common-types-chain/std",
-    "base-common-types-rpc/std",
-    "derive_more/std",
-    "serde?/std",
-    "serde_json/std",
-    "spin/std",
-    "thiserror/std",
-    "tracing/std",
-]
-serde = [
-    "alloy-chains/serde",
-    "alloy-eips/serde",
-    "alloy-hardforks/serde",
-    "alloy-primitives/serde",
-    "base-common-types-chain/serde",
-    "base-common-types-rpc/serde",
-    "dep:serde",
-]
+std = ["alloy-chains/std", "alloy-eips/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-sol-types/std", "base-common-types-chain/std", "base-common-types-rpc/std", "derive_more/std", "serde?/std", "serde_json/std", "spin/std", "thiserror/std", "tracing/std"]
+serde = ["alloy-chains/serde", "alloy-eips/serde", "alloy-hardforks/serde", "alloy-primitives/serde", "base-common-types-chain/serde", "base-common-types-rpc/serde", "dep:serde"]
 test-utils = []
-arbitrary = [
-    "alloy-chains/arbitrary",
-    "alloy-eips/arbitrary",
-    "alloy-primitives/arbitrary",
-    "alloy-primitives/rand",
-    "alloy-sol-types/arbitrary",
-    "base-common-types-chain/arbitrary",
-    "dep:arbitrary",
-    "std",
-]
+arbitrary = ["alloy-chains/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "alloy-sol-types/arbitrary", "base-common-types-chain/arbitrary", "dep:arbitrary", "std"]

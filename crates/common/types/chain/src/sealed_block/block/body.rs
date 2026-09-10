@@ -9,8 +9,8 @@ use base_common_types_chain::{
     transaction::{Recovered, TxHashRef},
 };
 
-use crate::{
-    BlockHeader, InMemorySize, MaybeSerde, SignedTransaction, transaction::signed::RecoveryError,
+use crate::sealed_block::{
+    RecoveryError, BlockHeader, InMemorySize, MaybeSerde, SignedTransaction,
 };
 
 /// Abstraction for block's body.
@@ -163,7 +163,7 @@ pub trait BlockBody:
 
     /// Recover signer addresses for all transactions in the block body.
     fn recover_signers(&self) -> Result<Vec<Address>, RecoveryError> {
-        crate::transaction::recover::recover_signers(self.transactions())
+        crate::sealed_block::recover_signers(self.transactions())
     }
 
     /// Recover signer addresses for all transactions in the block body.
@@ -178,7 +178,7 @@ pub trait BlockBody:
     ///
     /// Returns `RecoveryError`, if some transaction's signature is invalid.
     fn recover_signers_unchecked(&self) -> Result<Vec<Address>, RecoveryError> {
-        crate::transaction::recover::recover_signers_unchecked(self.transactions())
+        crate::sealed_block::recover_signers_unchecked(self.transactions())
     }
 
     /// Recover signer addresses for all transactions in the block body _without ensuring that the
@@ -276,11 +276,3 @@ where
         Some(&self.ommers)
     }
 }
-
-/// This is a helper alias to make it easy to refer to the inner `Transaction` associated type of a
-/// given type that implements [`BlockBody`].
-pub type BodyTx<N> = <N as BlockBody>::Transaction;
-
-/// This is a helper alias to make it easy to refer to the inner `OmmerHeader` associated type of a
-/// given type that implements [`BlockBody`].
-pub type BodyOmmer<N> = <N as BlockBody>::OmmerHeader;

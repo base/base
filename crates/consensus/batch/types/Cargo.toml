@@ -67,47 +67,7 @@ harness = false
 
 [features]
 default = ["std"]
-test-utils = [
-    "base-common-chain-config/test-utils",
-    "dep:spin",
-    "dep:tracing",
-    "dep:tracing-subscriber",
-]
-std = [
-    "base-common-types-chain/std",
-    "alloy-eips/std",
-    "alloy-genesis/std",
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "base-common-types-payload/std",
-    "base-common-types-rpc/std",
-    "base-common-chain-config/std",
-    "brotli/std",
-    "miniz_oxide/std",
-    "serde?/std",
-    "spin?/std",
-    "thiserror/std",
-    "tracing?/std",
-]
-serde = [
-    "base-common-types-chain/serde",
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "base-common-types-payload/serde",
-    "base-common-types-rpc/serde",
-    "base-common-chain-config/serde",
-    "dep:serde",
-    "miniz_oxide/serde",
-    "tracing-subscriber?/serde",
-]
-arbitrary = [
-    "base-common-types-chain/arbitrary",
-    "alloy-eips/arbitrary",
-    "alloy-primitives/arbitrary",
-    "alloy-primitives/rand",
-    "base-common-types-payload/arbitrary",
-    "base-common-types-rpc/arbitrary",
-    "base-common-chain-config/arbitrary",
-    "dep:arbitrary",
-    "std",
-]
+test-utils = ["base-common-chain-config/test-utils", "dep:spin", "dep:tracing", "dep:tracing-subscriber"]
+std = ["base-common-types-chain/std", "alloy-eips/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-payload/std", "base-common-types-rpc/std", "base-common-chain-config/std", "brotli/std", "miniz_oxide/std", "serde?/std", "spin?/std", "thiserror/std", "tracing?/std"]
+serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "base-common-types-payload/serde", "base-common-types-rpc/serde", "base-common-chain-config/serde", "dep:serde", "miniz_oxide/serde", "tracing-subscriber?/serde"]
+arbitrary = ["base-common-types-chain/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "base-common-types-payload/arbitrary", "base-common-types-rpc/arbitrary", "base-common-chain-config/arbitrary", "dep:arbitrary", "std"]

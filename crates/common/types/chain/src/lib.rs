@@ -189,3 +189,32 @@ pub use output_root::OutputRoot;
 
 mod block_info;
 pub use block_info::{BlockInfo, L2BlockInfo};
+
+#[cfg(feature = "k256")]
+mod sealed_block;
+pub use alloy_eips::eip2718::WithEncoded;
+pub use alloy_primitives::{Log, LogData, logs_bloom};
+pub use crypto::RecoveryError;
+#[cfg(feature = "k256")]
+pub use sealed_block::{BlockRecoveryError, SealedBlockRecoveryError};
+#[cfg(all(feature = "k256", feature = "dashmap"))]
+pub use sealed_block::{DashMap, DashSet, Entry, mapref};
+#[cfg(all(feature = "k256", any(test, feature = "arbitrary", feature = "test-utils")))]
+pub mod primitive_header_test_utils;
+#[cfg(feature = "k256")]
+pub use sealed_block::gas_spent_by_transactions;
+#[cfg(feature = "k256")]
+pub use sealed_block::{
+    Block as BlockExt, BlockBody as BlockBodyExt, BlockHeader as BlockHeaderExt,
+    EthereumReceiptRoot, GotExpected, GotExpectedBoxed, IndexedTx, MaybeSerde, RecoveredBlock,
+    SealedBlock, SealedBlockWith, SealedOrRecoveredBlock, SignedTransaction,
+};
+#[cfg(feature = "k256")]
+pub use sealed_block::{
+    InvalidTransactionError, TransactionConversionError, TryFromRecoveredTransactionError,
+};
+#[cfg(feature = "k256")]
+pub use sealed_block::{LazyLock, OnceLock};
+#[cfg(feature = "k256")]
+pub use sealed_block::{recover_signers, recover_signers_unchecked, try_recover_signers};
+pub use transaction::{Recovered, SignerRecoverable, TransactionInfo, TransactionMeta, TxHashRef};

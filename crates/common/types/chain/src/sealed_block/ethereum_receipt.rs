@@ -2,7 +2,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::B256;
 use base_common_types_chain::{EthereumReceipt, TxTy};
 
-use crate::proofs::ordered_trie_root_with_encoder;
+use alloy_trie::root::ordered_trie_root_with_encoder;
 
 /// Calculates the receipt root for a header for the reference type of [`EthereumReceipt`].
 ///

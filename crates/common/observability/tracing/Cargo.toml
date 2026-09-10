@@ -39,37 +39,7 @@ opentelemetry-otlp = { workspace = true, features = ["default", "grpc-tonic", "r
 
 [features]
 default = ["std", "otlp"]
-std = [
-    "dep:tracing-subscriber",
-    "dep:tracing-appender",
-    "dep:tracing-chrome",
-    "dep:tracing-journald",
-    "dep:tracing-logfmt",
-    "dep:tracing-samply",
-    "dep:clap",
-    "dep:eyre",
-    "dep:rolling-file",
-    "tracing/std",
-    "tracing-subscriber?/std",
-]
-otlp = [
-    "std",
-    "dep:opentelemetry",
-    "dep:opentelemetry_sdk",
-    "dep:opentelemetry-otlp",
-    "dep:opentelemetry-semantic-conventions",
-    "dep:tracing-opentelemetry_0_33_0",
-    "dep:url",
-    "dep:tracing-subscriber",
-    "dep:eyre",
-    "dep:base64",
-    "dep:clap",
-]
-otlp-logs = [
-    "otlp",
-    "dep:opentelemetry-appender-tracing",
-    "opentelemetry-appender-tracing/experimental_span_attributes",
-    "opentelemetry-otlp/logs",
-    "opentelemetry_sdk/logs",
-]
+std = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:tracing-chrome", "dep:tracing-journald", "dep:tracing-logfmt", "dep:tracing-samply", "dep:clap", "dep:eyre", "dep:rolling-file", "tracing/std", "tracing-subscriber?/std"]
+otlp = ["std", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:tracing-opentelemetry_0_33_0", "dep:url", "dep:tracing-subscriber", "dep:eyre", "dep:base64", "dep:clap"]
+otlp-logs = ["otlp", "dep:opentelemetry-appender-tracing", "opentelemetry-appender-tracing/experimental_span_attributes", "opentelemetry-otlp/logs", "opentelemetry_sdk/logs"]
 tracy = ["dep:tracing-tracy", "dep:tracy-client"]

@@ -3,7 +3,7 @@
 //! This module provides the core block types and transformations:
 //!
 //! ```rust
-//! # use reth_primitives_traits::{Block, SealedBlock, RecoveredBlock};
+//! # use base_common_types_chain::{BlockExt, SealedBlock, RecoveredBlock};
 //! # fn example(block: base_common_types_chain::BaseBlock) -> Result<(), Box<dyn std::error::Error>> {
 //! // Basic block flow
 //!
@@ -20,32 +20,29 @@
 //! # }
 //! ```
 
-pub(crate) mod sealed;
+mod sealed;
 use base_common_types_chain::{BaseBlock, BaseBlockBody, BaseTxEnvelope, Header};
 pub use sealed::{SealedBlock, SealedBlockWith};
 
-pub(crate) mod sealed_or_recovered;
+mod sealed_or_recovered;
 pub use sealed_or_recovered::SealedOrRecoveredBlock;
 
-pub(crate) mod recovered;
-pub use recovered::RecoveredBlock;
+mod recovered;
+pub use recovered::{IndexedTx, RecoveredBlock};
 
-pub mod body;
-pub mod error;
-pub mod header;
+mod body;
+pub use body::BlockBody;
+mod error;
+pub use error::{BlockRecoveryError, SealedBlockRecoveryError};
+mod header;
+pub use header::BlockHeader;
 
 use alloc::{fmt, vec::Vec};
 
 use alloy_primitives::{Address, B256};
 use alloy_rlp::{Decodable, Encodable};
 
-use crate::{
-    BlockBody, InMemorySize, MaybeSerde, SealedHeader, block::error::BlockRecoveryError,
-    transaction::signed::RecoveryError,
-};
-
-/// Helper trait to access [`BlockBody::Transaction`] given a [`Block`].
-pub type BlockTx = BaseTxEnvelope;
+use crate::sealed_block::{InMemorySize, MaybeSerde, RecoveryError, SealedHeader};
 
 /// Abstraction of block data type.
 ///

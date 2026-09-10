@@ -10,6 +10,7 @@ use std::{
 
 use crate::{PeerRequest, RequestMessage};
 use alloy_primitives::{B256, Bytes};
+use base_common_types_chain::BlockExt as Block;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, EthereumTxEnvelope, ReceiptWithBloom,
     TxEip4844,
@@ -38,7 +39,6 @@ use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::Transactions;
 use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
 use futures::FutureExt;
-use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 
 use crate::types::{BlockAccessLists, Receipts69, Receipts70};

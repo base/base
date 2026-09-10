@@ -2,6 +2,7 @@ use std::pin::Pin;
 
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
+use base_common_types_chain::BlockExt as Block;
 use base_common_types_chain::BlockHeader;
 use base_common_types_payload::ForkchoiceState;
 use base_common_types_rpc::BlockNumberOrTag;
@@ -15,7 +16,6 @@ use base_node_service::FullNode;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
-use reth_primitives_traits::Block;
 use tokio_stream::StreamExt;
 use url::Url;
 

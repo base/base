@@ -6,8 +6,8 @@ use alloy_primitives::B256;
 use base_common_types_chain::{
     BaseTxEnvelope, EthereumTxEnvelope, TxEip4844, transaction::TxHashRef,
 };
+use base_common_types_chain::{Recovered, SignedTransaction};
 use base_common_types_rpc::TransactionInfo;
-use reth_primitives_traits::{Recovered, SignedTransaction};
 
 /// Represents from where a transaction was fetched.
 #[derive(Debug, Clone, Eq, PartialEq)]

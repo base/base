@@ -12,9 +12,9 @@ use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
 
 use {
     crate::MAXIMUM_GAS_LIMIT_BLOCK, crate::MINIMUM_GAS_LIMIT,
-    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR, reth_primitives_traits::GotExpected,
-    reth_primitives_traits::GotExpectedBoxed, reth_primitives_traits::SealedHeader,
-    reth_primitives_traits::transaction::error::InvalidTransactionError,
+    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR, base_common_types_chain::GotExpected,
+    base_common_types_chain::GotExpectedBoxed, base_common_types_chain::InvalidTransactionError,
+    base_common_types_chain::SealedHeader,
 };
 
 /// Pre-computed receipt root and logs bloom.

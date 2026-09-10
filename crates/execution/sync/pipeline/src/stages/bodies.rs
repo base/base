@@ -479,6 +479,7 @@ mod tests {
         use crate::{ExecInput, ExecOutput, UnwindInput};
         use alloy_primitives::{B256, BlockNumber, TxNumber, map::B256Map};
         use base_common_types_chain::{BaseBlockBody as BlockBody, BlockHeader, Header};
+        use base_common_types_chain::{SealedBlock, SealedHeader};
         use base_execution_state_database::{
             DbCursorRO, DbTx, DbTxMut, models::StoredBlockBodyIndices, models::StoredBlockOmmers,
         };
@@ -490,7 +491,6 @@ mod tests {
         use base_execution_state_types::StaticFileSegment;
         use base_testing_support::{generators, generators::BlockRangeParams};
         use futures_util::Stream;
-        use reth_primitives_traits::{SealedBlock, SealedHeader};
         use {
             base_execution_network_service::BlockResponse,
             base_execution_network_service::BodyDownloader,

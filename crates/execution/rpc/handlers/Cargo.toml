@@ -56,7 +56,6 @@ schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tokio-stream = {features = ["default"], workspace = true}
 parking_lot = { workspace = true, features = ["default"] }
-reth-primitives-traits = {features = [], workspace = true}
 tokio = {features = ["default", "sync"], workspace = true}
 jsonrpsee-core = {features = ["default"], workspace = true}
 opentelemetry = { workspace = true, features = ["default"] }
@@ -73,7 +72,7 @@ alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 alloy-rpc-client = {features = ["default", "reqwest"], workspace = true}
 base-execution-state-maintenance = { workspace = true, optional = true }
 base-common-client-ethereum = {features = ["mnemonic"], workspace = true}
-base-common-types-chain = {workspace = true, features = ["reth", "serde"]}
+base-common-types-chain = {features = ["k256", "reth", "serde"], workspace = true}
 base-execution-evm-inspectors = {features = ["default"], workspace = true}
 base-execution-payload-types = { workspace = true, features = ["default"]}
 base-common-types-rpc = {features = ["default", "serde"], workspace = true}

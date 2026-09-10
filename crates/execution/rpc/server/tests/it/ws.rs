@@ -4,9 +4,9 @@
 use std::time::Duration;
 
 use base_common_runtime_tasks::EventSender;
+use base_common_types_chain::SignedTransaction;
 use base_execution_rpc_server::{RpcServerConfig, TransportRpcModuleConfig};
 use jsonrpsee::core::client::{Subscription, SubscriptionClientT};
-use reth_primitives_traits::SignedTransaction;
 use serde_json::Value;
 
 use crate::utils::{launch_ws, test_rpc_registry};
@@ -171,7 +171,8 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
             alloy_primitives::U256::MAX,
         ),
     );
-    let tx = base_execution_txpool_pool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
+    let tx =
+        base_execution_txpool_pool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
     let context = base_execution_rpc_handlers::test_utils::RpcTestUtils::context(mock);
     let pool_clone = context.pool.clone();
     let eth_api =

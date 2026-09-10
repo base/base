@@ -69,10 +69,5 @@ name = "pause_resume"
 required-features = ["test-utils"]
 
 [features]
-metrics = [
-    "base-batcher-encoding-channel/metrics",
-    "base-common-observability-metrics/metrics",
-    "base-common-l1-transactions/metrics",
-    "dep:metrics",
-]
+metrics = ["base-batcher-encoding-channel/metrics", "base-common-observability-metrics/metrics", "base-common-l1-transactions/metrics", "dep:metrics"]
 test-utils = ["base-consensus-batch-types/test-utils", "base-common-runtime-tasks/test-utils"]

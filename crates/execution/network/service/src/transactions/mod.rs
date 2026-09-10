@@ -37,6 +37,7 @@ use alloy_rlp::Encodable;
 use base_common_observability_metrics::common::mpsc::MemoryBoundedReceiver;
 use base_common_runtime_tasks::EventStream;
 use base_common_types_chain::TxType;
+use base_common_types_chain::{InMemorySize, SignedTransaction};
 use base_execution_evm_blocks::SenderRecoveryCache;
 use base_execution_network_types::PeerId;
 use base_execution_network_types::ReputationChangeKind;
@@ -70,7 +71,6 @@ use constants::SOFT_LIMIT_COUNT_HASHES_IN_NEW_POOLED_TRANSACTIONS_BROADCAST_MESS
 pub(crate) use fetcher::{FetchEvent, TransactionFetcher};
 use futures::{Future, StreamExt, stream::FuturesUnordered};
 use policy::NetworkPolicies;
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};

@@ -3,9 +3,9 @@
 use crate::ConvertReceiptInput;
 use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::{Address, TxKind};
+use base_common_types_chain::TransactionMeta;
 use base_common_types_chain::{BaseReceipt, Transaction};
 use base_common_types_rpc::TransactionReceipt;
-use reth_primitives_traits::TransactionMeta;
 
 /// Builds an [`TransactionReceipt`] obtaining the inner receipt envelope from the given closure.
 pub fn build_receipt<E>(

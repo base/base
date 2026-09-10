@@ -11,6 +11,9 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock,
+};
 use base_execution_evm_runtime::database::PlainStorageRevert;
 use base_execution_state_api::{
     BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
@@ -25,7 +28,6 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_primitives_traits::{BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{
@@ -1470,6 +1472,7 @@ mod tests {
 
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
+    use base_common_types_chain::{RecoveredBlock, SealedBlock};
     use base_execution_evm_runtime::database::BundleState;
     use base_execution_state_api::{BlockReader, BlockSource, ChangeSetReader};
     use base_execution_state_database::models::AccountBeforeTx;
@@ -1482,7 +1485,6 @@ mod tests {
     };
     use itertools::Itertools;
     use rand::Rng;
-    use reth_primitives_traits::{RecoveredBlock, SealedBlock};
     use {crate::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
 
     use crate::{

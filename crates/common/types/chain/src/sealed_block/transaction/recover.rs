@@ -7,7 +7,7 @@ use base_common_types_chain::transaction::SignerRecoverable;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
-use crate::{Recovered, SignedTransaction, transaction::signed::RecoveryError};
+use crate::sealed_block::{RecoveryError, Recovered, SignedTransaction};
 
 /// Recovers a list of signers from a transaction list iterator.
 ///
@@ -62,34 +62,6 @@ where
 {
     txes.into_iter().map(|tx| tx.recover_signer_unchecked()).collect()
 }
-
-/// Trait for items that can be used with [`try_recover_signers`].
-#[cfg(feature = "rayon")]
-pub trait TryRecoverItems: IntoParallelIterator {}
-
-/// Trait for items that can be used with [`try_recover_signers`].
-#[cfg(not(feature = "rayon"))]
-pub trait TryRecoverItems: IntoIterator {}
-
-#[cfg(feature = "rayon")]
-impl<I: IntoParallelIterator> TryRecoverItems for I {}
-
-#[cfg(not(feature = "rayon"))]
-impl<I: IntoIterator> TryRecoverItems for I {}
-
-/// Trait for decode functions that can be used with [`try_recover_signers`].
-#[cfg(feature = "rayon")]
-pub trait TryRecoverFn<Item, T>: Fn(Item) -> Result<T, RecoveryError> + Sync {}
-
-/// Trait for decode functions that can be used with [`try_recover_signers`].
-#[cfg(not(feature = "rayon"))]
-pub trait TryRecoverFn<Item, T>: Fn(Item) -> Result<T, RecoveryError> {}
-
-#[cfg(feature = "rayon")]
-impl<Item, T, F: Fn(Item) -> Result<T, RecoveryError> + Sync> TryRecoverFn<Item, T> for F {}
-
-#[cfg(not(feature = "rayon"))]
-impl<Item, T, F: Fn(Item) -> Result<T, RecoveryError>> TryRecoverFn<Item, T> for F {}
 
 /// Decodes and recovers a list of [`Recovered`] transactions from an iterator.
 ///

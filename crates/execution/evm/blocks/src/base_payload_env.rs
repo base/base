@@ -3,10 +3,10 @@
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError,
 };
-use reth_primitives_traits::SealedHeader;
 
 use crate::BaseNextBlockEnvAttributes;
 

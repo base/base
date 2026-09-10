@@ -1,9 +1,9 @@
 use alloy_primitives::{B256, BlockNumber};
+use base_common_types_chain::{GotExpected, GotExpectedBoxed};
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_network_wire::RequestError;
 use base_execution_state_types::{DatabaseError, ProviderError};
 use derive_more::{Display, Error};
-use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 use std::ops::RangeInclusive;
 
 /// The download result type

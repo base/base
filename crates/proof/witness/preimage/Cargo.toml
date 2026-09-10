@@ -22,13 +22,6 @@ async-channel = { workspace = true, optional = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 [features]
 default = []
-std = [
-	"alloy-primitives/std",
-	"dep:async-channel",
-	"rkyv?/std",
-	"serde?/std",
-	"thiserror/std",
-	"tracing/std",
-]
-serde = [ "alloy-primitives/serde", "dep:serde" ]
-rkyv = [ "dep:rkyv" ]
+std = ["alloy-primitives/std", "dep:async-channel", "rkyv?/std", "serde?/std", "thiserror/std", "tracing/std"]
+serde = ["alloy-primitives/serde", "dep:serde"]
+rkyv = ["dep:rkyv"]

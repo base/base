@@ -3,6 +3,7 @@
 use crate::{ConvertReceiptInput, TransactionConversionError, TryIntoTxEnv};
 use alloy_primitives::{Signature, U256};
 use base_common_chain_config::ChainSpecProvider;
+use base_common_types_chain::SealedBlock;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, SignableTransaction, error::ValueError,
     transaction::Recovered,
@@ -12,7 +13,6 @@ use base_common_types_rpc::{
 };
 use base_execution_evm_blocks::{EvmEnvFor, TxEnvFor};
 use base_execution_state_api::BlockReader;
-use reth_primitives_traits::SealedBlock;
 
 use crate::eth_services::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
 
@@ -101,7 +101,7 @@ where
         &self,
         log: Log,
         receipt: &BaseReceipt,
-        header: &reth_primitives_traits::SealedHeader,
+        header: &base_common_types_chain::SealedHeader,
     ) -> Result<Log, BaseEthApiError> {
         self.receipt_converter.convert_log(log, receipt, header)
     }
@@ -126,7 +126,7 @@ where
     /// Converts a Base consensus header to its RPC representation.
     pub fn convert_header(
         &self,
-        header: reth_primitives_traits::SealedHeader,
+        header: base_common_types_chain::SealedHeader,
         block_size: usize,
     ) -> Result<Header, BaseEthApiError> {
         Ok(base_common_types_rpc::Header::from_consensus(

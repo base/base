@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, fmt::Debug, path::Path};
 
 use alloy_primitives::{Address, B256, BlockNumber, TxHash, TxNumber, keccak256};
 use base_common_types_chain::{BaseReceipt as Receipt, BaseTxEnvelope};
+use base_common_types_chain::{SealedBlock, SealedHeader};
 use base_execution_state_database::{
     Database, DatabaseError as DbError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut,
     KeyValue, Table, models::AccountBeforeTx, models::StorageBeforeTx,
@@ -23,7 +24,6 @@ use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_testing_support::generators::ChangeSet;
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 use tempfile::TempDir;
 
 /// Test database that is used for testing stage implementations.

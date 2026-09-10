@@ -1,6 +1,6 @@
 //! Consensus execution queue, local access, and fork-choice policy.
 
-pub use reth_primitives_traits::SealedBlock;
+pub use base_common_types_chain::SealedBlock;
 
 mod task_queue;
 pub use task_queue::{

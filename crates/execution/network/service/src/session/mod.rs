@@ -22,6 +22,7 @@ use alloy_eip2124::{ForkFilter, ForkId, ForkTransition, Head};
 use alloy_primitives::map::{FbBuildHasher, HashMap};
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::{GotExpected, GotExpectedBoxed};
 use base_execution_network_types::PeerId;
 use base_execution_network_types::SessionsConfig;
 use base_execution_network_wire::BlockRangeUpdate;
@@ -46,7 +47,6 @@ pub use handle::{
     ActiveSessionHandle, ActiveSessionMessage, PendingSessionEvent, PendingSessionHandle,
     SessionCommand,
 };
-use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 use rustc_hash::FxHashMap;
 use secp256k1::SecretKey;
 use tokio::{

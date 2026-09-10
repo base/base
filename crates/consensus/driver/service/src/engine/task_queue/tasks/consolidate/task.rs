@@ -45,7 +45,7 @@ impl ConsolidateInput {
     fn is_consistent_with_block(
         &self,
         cfg: &RollupConfig,
-        block: &reth_primitives_traits::SealedBlock,
+        block: &base_common_types_chain::SealedBlock,
     ) -> bool {
         match self {
             Self::Attributes(attributes) => {

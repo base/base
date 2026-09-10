@@ -4,6 +4,7 @@ use alloy_primitives::{B256, keccak256};
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{BlockHeader, Predeploys};
+use base_common_types_chain::{RecoveredBlock, SealedBlock, SealedHeader};
 use base_common_types_payload::ExecutionData;
 use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use base_execution_evm_blocks::InsertBlockErrorKind;
@@ -16,7 +17,6 @@ use base_execution_payload_types::{
 };
 use base_execution_state_api::{ProviderResult, StateProvider, StateProviderBox};
 use base_execution_state_types::HashedPostState;
-use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::BaseExecutionPayloadValidator;
 
@@ -268,6 +268,7 @@ mod tests {
     use alloy_primitives::{Address, B64, B256, U256, b64};
     use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
     use base_common_chain_config::{BaseUpgrade, ChainConfig};
+    use base_common_types_chain::WithEncoded;
     use base_common_types_chain::{
         BaseBlock, BaseTxEnvelope, BlockBody, EMPTY_ROOT_HASH, Header, Sealable, TxDeposit,
     };
@@ -277,7 +278,6 @@ mod tests {
     use base_execution_state_provider::{
         NoopProvider, test_utils::ExtendedAccount, test_utils::MockEthProvider,
     };
-    use reth_primitives_traits::WithEncoded;
 
     use super::*;
 

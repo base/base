@@ -44,17 +44,7 @@ path = "tests/miri_read_slice_oob.rs"
 
 [features]
 default = ["std"]
-dev = [
-    "memory_limit",
-    "optional_balance_check",
-    "optional_block_gas_limit",
-    "optional_eip3541",
-    "optional_eip3607",
-    "optional_eip7623",
-    "optional_no_base_fee",
-    "optional_priority_fee_check",
-    "optional_fee_charge",
-]
+dev = ["memory_limit", "optional_balance_check", "optional_block_gas_limit", "optional_eip3541", "optional_eip3607", "optional_eip7623", "optional_no_base_fee", "optional_priority_fee_check", "optional_fee_charge"]
 map-foldhash = ["base-execution-evm-primitives/map-foldhash", "base-execution-state-memory/map-foldhash"]
 memory_limit = []
 optional_balance_check = []
@@ -65,26 +55,8 @@ optional_eip7623 = []
 optional_fee_charge = []
 optional_no_base_fee = []
 optional_priority_fee_check = []
-serde = [
-    "dep:serde",
-    "base-execution-evm-primitives/serde",
-    "base-execution-state-memory/serde",
-    "derive-where/serde",
-    "bitvec/serde",
-    "alloy-eip7702/serde",
-    "alloy-eip2930/serde",
-    "either/serde",
-]
-std = [
-    "serde?/std",
-    "base-execution-evm-primitives/std",
-    "base-execution-state-memory/std",
-    "bitvec/std",
-    "alloy-eip7702/std",
-    "alloy-eip2930/std",
-    "either/std",
-    "serde_json/std",
-]
+serde = ["dep:serde", "base-execution-evm-primitives/serde", "base-execution-state-memory/serde", "derive-where/serde", "bitvec/serde", "alloy-eip7702/serde", "alloy-eip2930/serde", "either/serde"]
+std = ["serde?/std", "base-execution-evm-primitives/std", "base-execution-state-memory/std", "bitvec/std", "alloy-eip7702/std", "alloy-eip2930/std", "either/std", "serde_json/std"]
 serde-json = ["serde"]
 arbitrary = ["std", "base-execution-evm-primitives/arbitrary"]
 hashbrown = ["base-execution-evm-primitives/hashbrown"]

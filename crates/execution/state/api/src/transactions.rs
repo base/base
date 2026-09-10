@@ -3,9 +3,9 @@ use core::ops::{Range, RangeBounds, RangeInclusive};
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber};
+use base_common_types_chain::SignedTransaction;
 use base_common_types_chain::transaction::TransactionMeta;
 use base_execution_state_types::{ProviderError, ProviderResult};
-use reth_primitives_traits::SignedTransaction;
 
 use crate::{BlockNumReader, BlockReader};
 

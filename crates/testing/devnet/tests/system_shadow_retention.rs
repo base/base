@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use base_common_types_chain::RecoveredBlock;
 use base_execution_state_indexer::{
     PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockPayload, ShadowBlockRepo,
     ShadowBlockRow, ShadowDbConfig, ShadowRetentionRepo, ShadowWrite,
 };
 use chrono::Utc;
-use reth_primitives_traits::RecoveredBlock;
 use sqlx::{PgPool, query, query_scalar};
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;

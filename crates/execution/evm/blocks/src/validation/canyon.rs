@@ -2,7 +2,7 @@
 
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_types_chain::BlockHeader;
-use reth_primitives_traits::{BlockBody, GotExpected};
+use base_common_types_chain::{BlockBodyExt as BlockBody, GotExpected};
 
 use crate::{BaseConsensusError, ConsensusError};
 

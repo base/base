@@ -67,9 +67,8 @@ tempfile = {workspace = true, features = ["default"]}
 serde_json = { workspace = true, features = ["alloc"] }
 parking_lot = { workspace = true, features = ["default"] }
 rand = {workspace = true, features = ["default", "small_rng"]}
-base-common-types-chain = {workspace = true, features = ["test-utils"]}
+base-common-types-chain = {features = ["k256", "reth-codec", "serde", "test-utils"], workspace = true}
 base-execution-state-memory = {workspace = true, features = ["reth-codec"]}
-reth-primitives-traits = {workspace = true, features = ["reth-codec", "serde"]}
 alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash", "rand"]}
 base-execution-state-types = {workspace = true, features = ["arbitrary", "reth-codec"]}
 
@@ -90,42 +89,9 @@ required-features = ["mdbx"]
 
 [features]
 default = ["mdbx"]
-mdbx = [
-    "dep:eyre",
-    "dep:page_size",
-    "dep:quanta",
-    "base-common-observability-metrics",
-    "dep:strum",
-    "dep:rustc-hash",
-    "return-borrowed",
-    "read-tx-timeouts",
-    "dep:bitflags",
-    "dep:smallvec",
-    "dep:base-execution-state-mdbx-sys",
-    "dep:byteorder",
-    "dep:parking_lot",
-    "dep:crossbeam-queue",
-    "dep:libc",
-]
-test-utils = [
-    "dep:tempfile",
-    "mdbx",
-    "arbitrary",
-    "dep:parking_lot",
-    "reth-primitives-traits/test-utils",
-    "base-execution-state-types/test-utils",
-    "base-execution-state-memory/test-utils",
-    "base-common-types-chain/test-utils",
-]
-arbitrary = [
-    "alloy-primitives/arbitrary",
-    "base-common-types-chain/arbitrary",
-    "reth-primitives-traits/arbitrary",
-    "base-execution-state-types/arbitrary",
-    "base-execution-state-memory/arbitrary",
-    "dep:arbitrary",
-    "dep:proptest",
-]
+mdbx = ["dep:eyre", "dep:page_size", "dep:quanta", "base-common-observability-metrics", "dep:strum", "dep:rustc-hash", "return-borrowed", "read-tx-timeouts", "dep:bitflags", "dep:smallvec", "dep:base-execution-state-mdbx-sys", "dep:byteorder", "dep:parking_lot", "dep:crossbeam-queue", "dep:libc"]
+test-utils = ["dep:tempfile", "mdbx", "arbitrary", "dep:parking_lot", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-execution-state-memory/test-utils", "base-common-types-chain/test-utils"]
+arbitrary = ["alloy-primitives/arbitrary", "base-common-types-chain/arbitrary", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "base-execution-state-memory/arbitrary", "dep:arbitrary", "dep:proptest"]
 disable-lock = []
 return-borrowed = []
 read-tx-timeouts = ["dep:dashmap"]

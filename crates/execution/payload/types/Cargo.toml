@@ -19,7 +19,6 @@ sha2 = { workspace = true }
 either = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-execution-state-types = {workspace = true}
@@ -33,7 +32,7 @@ base-common-types-payload = {workspace = true, features = ["serde"]}
 tracing = { workspace = true, features = ["attributes"], optional = true}
 alloy-primitives = {features = ["map-foldhash", "serde"], workspace = true}
 tokio-stream = { workspace = true, features = ["default", "sync"], optional = true}
-base-common-types-chain = {features = ["k256", "reth", "serde", "std"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["k256", "reth", "serde", "std"]}
 base-common-types-rpc = { workspace = true, features = ["default", "std"], optional = true }
 
 [dev-dependencies]
@@ -45,21 +44,5 @@ base-common-types-rpc = { workspace = true, features = ["default", "std"] }
 
 [features]
 default = ["std"]
-std = [
-    "base-common-types-payload/std",
-    "base-execution-state-types/std",
-    "alloy-eips/std",
-    "alloy-primitives/std",
-    "serde/std",
-    "thiserror/std",
-    "reth-primitives-traits/std",
-    "either/std",
-    "base-common-types-chain/std",
-    "alloy-rlp/std",
-    "serde_json/std",
-    "sha2/std",
-    "dep:pin-project",
-    "dep:tracing",
-    "dep:tokio-stream",
-]
+std = ["base-common-types-payload/std", "base-execution-state-types/std", "alloy-eips/std", "alloy-primitives/std", "serde/std", "thiserror/std", "base-common-types-chain/std", "either/std", "base-common-types-chain/std", "alloy-rlp/std", "serde_json/std", "sha2/std", "dep:pin-project", "dep:tracing", "dep:tokio-stream"]
 test-utils = ["dep:base-common-client-ethereum", "dep:base-common-types-rpc"]

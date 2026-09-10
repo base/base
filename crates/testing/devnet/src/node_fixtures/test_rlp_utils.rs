@@ -11,7 +11,7 @@ use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
     constants::EMPTY_WITHDRAWALS,
 };
-use reth_primitives_traits::{Block as BlockTrait, SealedBlock};
+use base_common_types_chain::{BlockExt as BlockTrait, SealedBlock};
 use tracing::debug;
 
 /// Generate test blocks for a given chain spec

@@ -12,6 +12,10 @@ use base_common_types_chain::{
     BaseTypedTransaction as Transaction, Header, TxEip1559, TxReceipt,
     constants::{EMPTY_WITHDRAWALS, ETH_TO_WEI},
 };
+use base_common_types_chain::{
+    RecoveredBlock, SealedBlock, crypto::secp256k1::public_key_to_address,
+    proofs::calculate_receipt_root, proofs::calculate_transaction_root,
+};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{StorageChangeSetReader, StorageSettings, StorageSettingsCache};
@@ -34,11 +38,6 @@ use base_execution_sync_pipeline::{
 use base_execution_sync_pipeline::{ExecutionStages, FinishStage, HashingStages, OnlineStages};
 use base_execution_sync_pipeline::{Pipeline, StageSet};
 use base_testing_support::{generators, generators::generate_key};
-use reth_primitives_traits::{
-    RecoveredBlock, SealedBlock,
-    crypto::secp256k1::public_key_to_address,
-    proofs::{calculate_receipt_root, calculate_transaction_root},
-};
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,
@@ -1060,7 +1059,7 @@ fn setup_intra_block_and_intra_tx_selfdestruct_scenario()
 
 fn init_v2_pipeline_provider_factory(
     chain_spec: Arc<base_common_chain_config::BaseChainSpec>,
-) -> eyre::Result<(TestProviderFactory, reth_primitives_traits::SealedHeader)> {
+) -> eyre::Result<(TestProviderFactory, base_common_types_chain::SealedHeader)> {
     let pipeline_provider_factory = create_test_provider_factory_with_chain_spec(chain_spec);
     init_genesis_with_settings(&pipeline_provider_factory, StorageSettings::v2())?;
     pipeline_provider_factory.set_storage_settings_cache(StorageSettings::v2());
@@ -1330,7 +1329,7 @@ where
 async fn run_pipeline_range(
     provider_factory: TestProviderFactory,
     file_client: Arc<FileClient>,
-    local_head: reth_primitives_traits::SealedHeader,
+    local_head: base_common_types_chain::SealedHeader,
     download_range: std::ops::RangeInclusive<u64>,
     max_block: u64,
 ) -> eyre::Result<()> {

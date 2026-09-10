@@ -8,9 +8,9 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::BlockNumber;
+use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{BlockHeader, ChainInfo};
 use parking_lot::RwLock;
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::watch;
 
 /// Tracks the chain info: canonical head, safe block, finalized block.

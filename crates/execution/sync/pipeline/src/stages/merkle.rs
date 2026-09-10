@@ -6,6 +6,7 @@ use crate::{
 };
 use alloy_primitives::{B256, BlockNumber};
 use base_common_types_chain::{BlockHeader, Compact, constants::KECCAK_EMPTY};
+use base_common_types_chain::{GotExpected, SealedHeader};
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_database::{DbTx, DbTxMut, tables};
 use base_execution_state_provider::{
@@ -14,7 +15,6 @@ use base_execution_state_provider::{
 use base_execution_state_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot, StateRootProgress, StoredSubNode,
 };
-use reth_primitives_traits::{GotExpected, SealedHeader};
 
 type DbStateRoot<'a, TX, A> = StateRoot<
     base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
@@ -474,6 +474,7 @@ mod tests {
 
     use crate::StageUnitCheckpoint;
     use assert_matches::assert_matches;
+    use base_common_types_chain::SealedBlock;
     use base_execution_state_database::{DbCursorRO, DbDupCursorRO};
     use base_execution_state_provider::{
         DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,
@@ -485,7 +486,6 @@ mod tests {
         generators, generators::BlockParams, generators::BlockRangeParams,
         generators::random_changeset_range, generators::random_contract_account_range,
     };
-    use reth_primitives_traits::SealedBlock;
 
     use super::*;
     use crate::test_utils::{

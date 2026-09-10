@@ -7,6 +7,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::Address;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
+use base_common_types_chain::SealedBlock;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTransaction, BaseTxEnvelope, BlockHeader, Receipt,
     ReceiptWithBloom, TxReceipt,
@@ -16,7 +17,6 @@ use base_common_types_rpc::{
 };
 use base_execution_evm_fees::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_execution_state_api::BlockReader;
-use reth_primitives_traits::SealedBlock;
 
 use crate::eth_services::{BaseEthApiError, BaseTimeCache, EthApiError, receipt::build_receipt};
 
@@ -50,7 +50,7 @@ where
         &self,
         log: Log,
         _receipt: &BaseReceipt,
-        header: &reth_primitives_traits::SealedHeader,
+        header: &base_common_types_chain::SealedHeader,
     ) -> Result<Log, BaseEthApiError> {
         let block_timestamp_ms = self.base_time.get::<BaseTxEnvelope, _>(
             &self.provider,
@@ -393,11 +393,11 @@ mod tests {
     use alloy_primitives::{Address, Bytes, Signature, U256, hex};
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
+    use base_common_types_chain::Recovered;
     use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, Block, BlockBody, Eip658Value, TxEip7702,
         transaction::TransactionMeta,
     };
-    use reth_primitives_traits::Recovered;
 
     use super::*;
 

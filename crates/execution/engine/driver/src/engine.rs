@@ -6,12 +6,12 @@ use std::{
 };
 
 use alloy_primitives::{B256, map::B256Set};
+use base_common_types_chain::SealedBlock;
 use base_execution_engine_types::{BeaconEngineMessage, ConsensusEngineEvent};
 use base_execution_network_wire::BlockClient;
 use base_execution_payload_types::BuiltPayloadExecutedBlock;
 use crossbeam_channel::Sender;
 use futures::{Stream, StreamExt};
-use reth_primitives_traits::SealedBlock;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::{

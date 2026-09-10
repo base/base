@@ -6,7 +6,7 @@
 use alloc::sync::Arc;
 use core::fmt;
 
-use reth_primitives_traits::sync::OnceLock;
+use base_common_types_chain::OnceLock;
 
 use crate::{
     HashedPostState, HashedPostStateSorted,

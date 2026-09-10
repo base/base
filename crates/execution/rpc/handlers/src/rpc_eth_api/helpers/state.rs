@@ -7,6 +7,7 @@ use crate::{BaseEthApiError, EthApiError, PendingBlockEnv, RpcInvalidTransaction
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_serde::JsonStorageKey;
+use base_common_types_chain::RecoveredBlock;
 use base_common_types_chain::constants::KECCAK_EMPTY;
 use base_common_types_rpc::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 use base_common_types_rpc::{
@@ -19,7 +20,6 @@ use base_execution_state_api::{
 use base_execution_state_types::MultiProofTargets;
 use base_execution_txpool_pool::TransactionPool;
 use futures::Future;
-use reth_primitives_traits::RecoveredBlock;
 
 use crate::BaseEthApi;
 
@@ -314,7 +314,7 @@ impl BaseEthApi {
     /// Returns the EVM environment for the given sealed header.
     pub fn evm_env_for_header(
         &self,
-        header: &reth_primitives_traits::SealedHeader,
+        header: &base_common_types_chain::SealedHeader,
     ) -> Result<EvmEnvFor, BaseEthApiError> {
         self.evm_config()
             .evm_env(header)

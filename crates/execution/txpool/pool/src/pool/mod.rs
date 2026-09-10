@@ -79,10 +79,10 @@ use alloy_primitives::{
     Address, B256, TxHash,
     map::{AddressSet, HashSet},
 };
+use base_common_types_chain::Recovered;
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use reth_primitives_traits::Recovered;
 use rustc_hash::FxHashMap;
 pub use state::SubPool;
 use tokio::sync::mpsc;

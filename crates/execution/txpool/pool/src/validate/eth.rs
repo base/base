@@ -21,6 +21,7 @@ use base_common_types_chain::{
         KECCAK_EMPTY, LEGACY_TX_TYPE_ID,
     },
 };
+use base_common_types_chain::{GotExpected, InvalidTransactionError, SealedBlock};
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_machine::Cfg;
 use base_execution_state_api::{
@@ -28,9 +29,6 @@ use base_execution_state_api::{
     StateProviderFactory,
 };
 use base_execution_state_memory::StoredAccount as Account;
-use reth_primitives_traits::{
-    GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
-};
 
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;
 use crate::{
@@ -1396,9 +1394,9 @@ mod tests {
         eip2930::{AccessList, AccessListItem},
     };
     use alloy_primitives::{Address, B256, Bytes, U256, hex};
+    use base_common_types_chain::SignedTransaction;
     use base_common_types_chain::Transaction;
     use base_execution_evm_runtime::primitives::eip3860::MAX_INITCODE_SIZE;
-    use reth_primitives_traits::SignedTransaction;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;

@@ -10,6 +10,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_blocks::{BaseEvmConfig, ExecutionWitnessRecord, Executor};
 use base_execution_evm_runtime::database::State;
@@ -28,7 +29,6 @@ use base_execution_txpool_pool::BasePooledTransaction;
 use base_execution_txpool_pool::NoopPayloadTransactions;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
-use reth_primitives_traits::SealedHeader;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 

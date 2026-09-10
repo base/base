@@ -17,8 +17,8 @@ use base_execution_state_provider::{
 use base_execution_state_types::ExecutionStageThresholds;
 use base_execution_state_types::PruneModes;
 use {
-    base_common_observability_metrics::GasDisplay, reth_primitives_traits::Block as _,
-    reth_primitives_traits::BlockBody as _, reth_primitives_traits::RecoveredBlock,
+    base_common_observability_metrics::GasDisplay, base_common_types_chain::BlockBodyExt as _,
+    base_common_types_chain::BlockExt as _, base_common_types_chain::RecoveredBlock,
 };
 
 use crate::StreamBackfillJob;
@@ -228,13 +228,13 @@ impl<P> From<BackfillJob<P>> for SingleBlockBackfillJob<P> {
 #[cfg(test)]
 mod tests {
     use base_common_types_chain::BlockHeader;
+    use base_common_types_chain::crypto::secp256k1::public_key_to_address;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,
     };
     use base_testing_support::generators;
-    use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
 
     use crate::{
         BackfillJobFactory,

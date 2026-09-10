@@ -44,40 +44,10 @@ alloy-primitives = {workspace = true, features = ["arbitrary", "getrandom", "ran
 
 [features]
 default = ["serde", "std"]
-std = [
-    "base-common-types-chain/std",
-    "alloy-eips/std",
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "ssz",
-    "alloy-serde?/std",
-    "dep:ethereum_ssz",
-    "dep:ethereum_ssz_derive",
-    "dep:snap",
-    "serde?/std",
-    "sha2/std",
-    "thiserror/std",
-    "derive_more/std",
-]
-serde = [
-    "base-common-types-chain/serde",
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "dep:alloy-serde",
-    "dep:serde",
-    "rand_08?/serde",
-]
+std = ["base-common-types-chain/std", "alloy-eips/std", "alloy-primitives/std", "alloy-rlp/std", "ssz", "alloy-serde?/std", "dep:ethereum_ssz", "dep:ethereum_ssz_derive", "dep:snap", "serde?/std", "sha2/std", "thiserror/std", "derive_more/std"]
+serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "dep:alloy-serde", "dep:serde", "rand_08?/serde"]
 k256 = ["base-common-types-chain/k256"]
-arbitrary = [
-    "base-common-types-chain/arbitrary",
-    "alloy-eips/arbitrary",
-    "alloy-primitives/arbitrary",
-    "alloy-primitives/rand",
-    "alloy-serde?/arbitrary",
-    "dep:arbitrary",
-    "std",
-    "alloy-serde/arbitrary",
-]
+arbitrary = ["base-common-types-chain/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "alloy-serde?/arbitrary", "dep:arbitrary", "std", "alloy-serde/arbitrary"]
 jwt = ["std", "dep:jsonwebtoken", "dep:rand_08"]
 jwt-aws-lc-rs = ["jwt", "jsonwebtoken/aws_lc_rs"]
 kzg = ["base-common-types-chain/kzg", "alloy-eips/kzg"]

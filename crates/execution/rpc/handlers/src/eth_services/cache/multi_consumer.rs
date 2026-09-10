@@ -7,7 +7,7 @@ use std::{
     hash::Hash,
 };
 
-use reth_primitives_traits::InMemorySize;
+use base_common_types_chain::InMemorySize;
 use schnellru::{ByLength, Limiter, LruMap};
 
 use super::metrics::CacheMetrics;

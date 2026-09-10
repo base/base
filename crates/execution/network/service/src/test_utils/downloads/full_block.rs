@@ -3,11 +3,11 @@ use std::{ops::RangeInclusive, sync::Arc};
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, Bytes, map::B256Map};
 use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
+use base_common_types_chain::{SealedBlock, SealedHeader};
 use base_execution_network_types::{PeerId, WithPeerId};
 use base_execution_network_wire::BlockAccessLists;
 use base_execution_network_wire::HeadersDirection;
 use parking_lot::Mutex;
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 
 use base_execution_network_wire::{
     BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, DownloadClient,

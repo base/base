@@ -59,7 +59,7 @@ use base_execution_state_trie::{
 use base_execution_state_types::{DatabaseError, StateProofError};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use tracing::{debug, debug_span, error, instrument, trace};
-use {reth_primitives_traits::dashmap::DashMap, std::time::Instant};
+use {base_common_types_chain::DashMap, std::time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::proof_task_metrics::{ProofTaskCursorMetrics, ProofTaskTrieMetrics};

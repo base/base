@@ -153,7 +153,7 @@ async fn block_info_from_reth_or_checkpoint<
 >(
     cfg: &RollupConfig,
     label: ForkchoiceCheckpointLabel,
-    rpc_block: reth_primitives_traits::SealedBlock,
+    rpc_block: base_common_types_chain::SealedBlock,
     checkpoint_reader: &CheckpointReader,
 ) -> Result<L2BlockInfo, SyncStartError> {
     let block = rpc_block.into_block();

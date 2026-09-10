@@ -10,12 +10,12 @@ use alloy_primitives::{
     map::{B256Map, HashMap},
 };
 use base_common_types_chain::Eip8130Constants;
+use base_common_types_chain::InvalidTransactionError;
 use base_execution_txpool_pool::{
     AddedTransactionOutcome, AddedTransactionState, BestTransactions, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolResult, PriceBumpConfig, QueuedReason, SenderIdentifiers,
     TransactionId, ValidPoolTransaction,
 };
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 
 use crate::BestTransactionPriority;
 
@@ -217,7 +217,10 @@ impl TwoDNoncePool {
     }
 
     /// Returns or creates the sender id for the given address.
-    pub fn sender_id_or_create(&mut self, address: Address) -> base_execution_txpool_pool::SenderId {
+    pub fn sender_id_or_create(
+        &mut self,
+        address: Address,
+    ) -> base_execution_txpool_pool::SenderId {
         self.senders.sender_id_or_create(address)
     }
 

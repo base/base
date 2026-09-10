@@ -14,8 +14,8 @@ use base_testing_support::{
 use crate::downloads::{bodies::test_utils::create_raw_bodies, file_codec::BlockFileCodec};
 
 mod bodies_client;
+use base_common_types_chain::SealedHeader;
 pub use bodies_client::TestBodiesClient;
-use reth_primitives_traits::SealedHeader;
 
 /// Metrics scope used for testing.
 pub(crate) const TEST_SCOPE: &str = "downloaders.test";

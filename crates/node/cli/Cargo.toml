@@ -25,7 +25,6 @@ base-node-config = {workspace = true}
 alloy-hardforks = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-cli-support = {workspace = true}
-reth-primitives-traits = { workspace = true }
 base-consensus-batch-types = {workspace = true}
 base-execution-state-api = { workspace = true }
 base-execution-state-memory = {workspace = true}
@@ -73,7 +72,7 @@ base-execution-rpc-handlers = {features = ["default"], workspace = true}
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
 alloy-primitives = {features = ["map-foldhash", "std"], workspace = true}
 base-batcher-encoding-channel = { workspace = true, features = ["clap"] }
-base-common-types-chain = {features = ["reth", "serde"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["k256", "reth", "serde"]}
 base-consensus-network-service = {features = ["metrics"], workspace = true}
 base-execution-payload-builder = {features = ["default"], workspace = true}
 base-execution-state-types = {features = ["clap", "std"], workspace = true}
@@ -133,4 +132,4 @@ jemalloc-symbols = ["jemalloc-prof", "base-node-service/jemalloc-symbols"]
 dev = ["base-common-types-chain/arbitrary", "dep:proptest", "arbitrary"]
 
 serde = ["alloy-eips/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-network-service/serde", "secp256k1/serde", "url/serde"]
-arbitrary = ["dep:proptest", "dep:arbitrary", "dep:proptest-arbitrary-interop", "base-execution-state-database/arbitrary", "base-execution-network-wire/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "reth-primitives-traits/arbitrary", "base-execution-state-memory/arbitrary"]
+arbitrary = ["dep:proptest", "dep:arbitrary", "dep:proptest-arbitrary-interop", "base-execution-state-database/arbitrary", "base-execution-network-wire/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "base-common-types-chain/arbitrary", "base-execution-state-memory/arbitrary"]

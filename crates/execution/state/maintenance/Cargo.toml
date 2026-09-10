@@ -23,7 +23,6 @@ rustc-hash = { workspace = true }
 alloy-genesis = { workspace = true }
 base-common-io-files = { workspace = true }
 boyer-moore-magiclen = { workspace = true }
-reth-primitives-traits = {workspace = true}
 base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
@@ -39,7 +38,7 @@ blake3 = { workspace = true, features = ["default"] }
 serde_json = {workspace = true, features = ["alloc"]}
 tempfile = { workspace = true, features = ["default"] }
 tracing = {workspace = true, features = ["attributes"]}
-base-common-types-chain = {workspace = true, features = ["reth"]}
+base-common-types-chain = {features = ["k256", "reth"], workspace = true}
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
 base-execution-state-types = {workspace = true, features = ["std"]}
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
@@ -51,13 +50,13 @@ base-testing-support = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 tempfile = {workspace = true, features = ["default"]}
-reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-state-types = {workspace = true, features = ["arbitrary"]}
 base-execution-sync-pipeline = {workspace = true, features = ["test-utils"]}
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "k256"] }
 
 [lints]
 workspace = true

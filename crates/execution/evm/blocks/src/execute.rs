@@ -6,6 +6,7 @@ use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader};
+use base_common_types_chain::{Recovered, RecoveredBlock, SealedHeader};
 pub use base_execution_evm_runtime::{
     BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
     InternalBlockExecutionError,
@@ -22,7 +23,6 @@ use base_execution_state_types::BlockExecutionResult;
 pub use base_execution_state_types::ProviderError;
 pub use base_execution_state_types::{BlockExecutionOutput, ExecutionOutcome};
 use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
-use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 
 use crate::{Database, OnStateHook, TxEnvFor};
 

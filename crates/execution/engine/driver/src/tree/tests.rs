@@ -18,6 +18,7 @@ use assert_matches::assert_matches;
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::spawn_os_thread;
 use base_common_types_chain::BaseBlock;
+use base_common_types_chain::BlockExt as _;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
     ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
@@ -34,7 +35,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_provider::{BlockState, test_utils::TestBlockBuilder};
 use base_execution_state_types::ComputedTrieData;
-use reth_primitives_traits::Block as _;
 use tokio::sync::oneshot;
 
 use super::*;

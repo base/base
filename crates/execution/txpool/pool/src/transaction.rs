@@ -11,7 +11,7 @@ use base_common_types_chain::{
     BasePooledTransaction as BasePooledEnvelope, BaseTransactionSigned, Eip8130Constants,
     Eip8130Signed, Transaction, Typed2718, transaction::Recovered,
 };
-use reth_primitives_traits::{InMemorySize, SignedTransaction};
+use base_common_types_chain::{InMemorySize, SignedTransaction};
 
 use crate::{
     InvalidPoolTransactionError, RawPoolTransactionError, estimated_da_size::DataAvailabilitySized,
@@ -473,17 +473,17 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_chain_config::ChainConfig;
     use base_common_client_ethereum::PrivateKeySigner;
+    use base_common_types_chain::InMemorySize;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, EthereumTxEnvelope, SignableTransaction, TxDeposit,
         TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxEip8130, TxLegacy, transaction::Recovered,
     };
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use base_execution_txpool_pool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
-    use reth_primitives_traits::InMemorySize;
-    use base_execution_state_provider::test_utils::MockEthProvider;
 
     use crate::{
         BasePooledTransaction, BaseTransactionValidator, ConfigSlot, InvalidationKey,

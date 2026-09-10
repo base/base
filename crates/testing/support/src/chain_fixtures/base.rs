@@ -7,8 +7,8 @@ use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType, SignableTransaction,
     Transaction as _,
 };
+use base_common_types_chain::{SealedBlock, crypto::secp256k1::sign_message};
 use rand::Rng;
-use reth_primitives_traits::{SealedBlock, crypto::secp256k1::sign_message};
 use secp256k1::Keypair;
 
 use crate::chain_fixtures::generators::{self, BlockParams, BlockRangeParams};

@@ -11,6 +11,7 @@ use alloy_eips::merge::SLOT_DURATION;
 use alloy_primitives::{B256, U256};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::SealedHeader;
 use base_execution_evm_blocks::CancelOnDrop;
 use base_execution_payload_types::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, PayloadBuilderError, PayloadKind,
@@ -23,7 +24,6 @@ use base_execution_state_types::CanonStateNotification;
 use base_execution_txpool_pool::TransactionPool;
 use futures_core::ready;
 use futures_util::FutureExt;
-use reth_primitives_traits::SealedHeader;
 use tokio::{
     sync::{Semaphore, oneshot},
     time::{Interval, Sleep},
@@ -862,7 +862,7 @@ fn duration_until(unix_timestamp_secs: u64) -> Duration {
 #[cfg(test)]
 mod tests {
     use base_common_types_chain::BaseBlock;
-    use reth_primitives_traits::Block as _;
+    use base_common_types_chain::BlockExt as _;
 
     use super::*;
 

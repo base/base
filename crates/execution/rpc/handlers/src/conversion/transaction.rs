@@ -1,8 +1,8 @@
 //! Compatibility functions for rpc `Transaction` type.
 use std::fmt::Debug;
 
+use base_common_types_chain::TransactionMeta;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, transaction::Recovered};
-use reth_primitives_traits::TransactionMeta;
 
 /// Primitive receipt and transaction context used to construct a Base RPC receipt.
 #[derive(Debug, Clone)]

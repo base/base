@@ -111,7 +111,6 @@ members = [
   "crates/execution/network/service",
   "crates/execution/network/types",
   "crates/node/config",
-  "vendor/reth-primitives-traits",
   "crates/execution/state/provider",
   "crates/execution/rpc/server",
   "crates/execution/sync/pipeline",
@@ -387,7 +386,6 @@ base-execution-network-types = { path = "crates/execution/network/types", defaul
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }
 base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
-reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 base-execution-engine-types = { path = "crates/execution/engine/types", default-features = false }
 base-testing-debug-client = { path = "crates/testing/debug/client", default-features = false }
 

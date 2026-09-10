@@ -5,8 +5,10 @@ use std::sync::Arc;
 use crate::ConvertReceiptInput;
 use alloy_primitives::TxHash;
 use base_common_types_chain::{BaseReceipt, BlockHeader, TxReceipt, transaction::TransactionMeta};
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock,
+};
 use base_common_types_rpc::BaseTransactionReceipt;
-use reth_primitives_traits::{BlockBody, IndexedTx, Recovered, RecoveredBlock, SealedBlock};
 
 use crate::eth_services::{TransactionSource, utils::calculate_gas_used_and_next_log_index};
 

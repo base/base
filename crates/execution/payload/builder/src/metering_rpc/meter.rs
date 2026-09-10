@@ -7,6 +7,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_common_chain_config::BaseChainSpec;
+use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{BlockHeader, Transaction as _};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, Evm as _,
@@ -28,7 +29,6 @@ use base_execution_payload_types::{
 };
 use base_execution_state_memory::StoredAccount as Account;
 use eyre::{Result as EyreResult, eyre};
-use reth_primitives_traits::SealedHeader;
 
 use crate::metering_rpc::{inspector::MeteringInspector, transaction::validate_tx};
 

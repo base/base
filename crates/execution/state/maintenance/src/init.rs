@@ -8,6 +8,7 @@ use alloy_primitives::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, Compact};
+use base_common_types_chain::{GotExpected, SealedHeader};
 use base_execution_state_database::{
     DatabaseError, DbCursorRW, DbTxMut, models::AccountBeforeTx, models::IntegerList,
     models::ShardedKey, models::storage_sharded_key::StorageShardedKey, tables,
@@ -30,7 +31,6 @@ use base_execution_state_types::StateRootError;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_primitives_traits::{GotExpected, SealedHeader};
 
 type DbStateRoot<'a, TX, A> = StateRootComputer<
     base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,

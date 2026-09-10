@@ -10,9 +10,9 @@ use alloy_primitives::{
     B256, BlockNumber,
     map::{B256Map, B256Set},
 };
+use base_common_types_chain::{BlockHeader as AlloyBlockHeader, SealedHeader};
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_types::ExecutedBlock;
-use reth_primitives_traits::{AlloyBlockHeader, SealedHeader};
 use tracing::debug;
 
 use crate::engine::EngineApiKind;

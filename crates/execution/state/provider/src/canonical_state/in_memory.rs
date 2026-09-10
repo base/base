@@ -8,12 +8,12 @@ use base_common_observability_metrics::{Metrics, metrics::Gauge};
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
+use base_common_types_chain::{
+    BlockBodyExt as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
+};
 use base_execution_state_api::StateProviderBox;
 use base_execution_state_types::{Chain, ExecutionOutcome};
 use parking_lot::RwLock;
-use reth_primitives_traits::{
-    BlockBody as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
-};
 use tokio::sync::{broadcast, watch};
 
 use crate::canonical_state::{
@@ -845,13 +845,13 @@ mod tests {
         StateProofProvider, StateRootProvider, StorageRootProvider,
     };
     use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-    use base_execution_state_types::LazyTrieData;
-    use base_execution_state_types::ProviderResult;
-    use rand::Rng;
     use base_execution_state_trie::{
         AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets,
         StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
     };
+    use base_execution_state_types::LazyTrieData;
+    use base_execution_state_types::ProviderResult;
+    use rand::Rng;
 
     use super::*;
     use crate::canonical_state::test_utils::TestBlockBuilder;

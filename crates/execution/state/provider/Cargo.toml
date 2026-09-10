@@ -40,7 +40,7 @@ alloy-eip7928 = { workspace = true, features = ["rlp"] }
 parking_lot = {workspace = true, features = ["default"]}
 tokio = {workspace = true, features = ["macros", "sync"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
-base-common-types-chain = {workspace = true, features = ["reth"]}
+base-common-types-chain = {features = ["dashmap", "k256", "reth", "reth-codec", "secp256k1", "std"], workspace = true}
 base-common-client-ethereum = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
@@ -52,7 +52,6 @@ base-execution-state-api = {workspace = true, features = ["db-api", "std"]}
 base-common-observability-metrics = {workspace = true, features = ["metrics"]}
 base-execution-state-types = {workspace = true, features = ["reth-codec", "std"]}
 base-execution-state-memory = {workspace = true, features = ["reth-codec", "std"]}
-reth-primitives-traits = {workspace = true, features = ["dashmap", "reth-codec", "secp256k1", "std"]}
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
@@ -64,12 +63,11 @@ base-common-chain-config = { workspace = true }
 rand = {workspace = true, features = ["default"]}
 base-common-client-ethereum = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-base-common-types-chain = {workspace = true, features = ["serde"]}
+base-common-types-chain = {features = ["arbitrary", "k256", "serde", "test-utils"], workspace = true}
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 base-execution-state-trie = {workspace = true, features = ["test-utils"]}
 base-execution-state-database = {workspace = true, features = ["test-utils"]}
 tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
-reth-primitives-traits = {workspace = true, features = ["arbitrary", "test-utils"]}
 base-execution-state-types = {workspace = true, features = ["arbitrary", "test-utils"]}
 base-execution-state-memory = {workspace = true, features = ["arbitrary", "test-utils"]}
 base-testing-support = {workspace = true}
@@ -77,6 +75,6 @@ base-testing-support = {workspace = true}
 [features]
 jemalloc = ["rocksdb/jemalloc"]
 partial-persistence = ["base-execution-state-types/partial-persistence"]
-test-utils = ["base-execution-state-database/test-utils", "base-execution-state-trie/test-utils", "reth-primitives-traits/test-utils", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-memory/test-utils", "dep:alloy-hardforks", "alloy-primitives/getrandom", "alloy-signer", "base-common-client-ethereum", "rand"]
+test-utils = ["base-execution-state-database/test-utils", "base-execution-state-trie/test-utils", "base-common-types-chain/test-utils", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-memory/test-utils", "dep:alloy-hardforks", "alloy-primitives/getrandom", "alloy-signer", "base-common-client-ethereum", "rand"]
 rayon = []
-serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "parking_lot/serde", "rand?/serde", "base-execution-state-types/serde", "reth-primitives-traits/serde", "base-execution-state-trie/serde", "base-execution-evm-runtime/serde", "base-execution-state-api/serde", "base-execution-state-memory/serde"]
+serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "parking_lot/serde", "rand?/serde", "base-execution-state-types/serde", "base-common-types-chain/serde", "base-execution-state-trie/serde", "base-execution-evm-runtime/serde", "base-execution-state-api/serde", "base-execution-state-memory/serde"]

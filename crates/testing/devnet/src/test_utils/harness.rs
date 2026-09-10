@@ -10,6 +10,7 @@ use base_common_chain_config::Upgrades;
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Predeploys;
+use base_common_types_chain::{BlockExt as BlockT, RecoveredBlock};
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_consensus_batch_types::BaseTimeUpdateTx;
@@ -20,7 +21,6 @@ use base_execution_state_provider::{
 };
 use base_testing_support::build_test_genesis;
 use eyre::{Result, eyre};
-use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
 
 use crate::test_utils::{

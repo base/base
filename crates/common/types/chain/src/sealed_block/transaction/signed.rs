@@ -3,13 +3,13 @@
 use alloc::fmt;
 use core::hash::Hash;
 
+use crate::RecoveryError;
 use alloy_eips::eip2718::{Decodable2718, Encodable2718, IsTyped2718};
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_rlp::{Decodable, Encodable};
-pub use base_common_types_chain::crypto::RecoveryError;
 use base_common_types_chain::transaction::{Recovered, SignerRecoverable, TxHashRef};
 
-use crate::{InMemorySize, MaybeSerde};
+use crate::sealed_block::{InMemorySize, MaybeSerde};
 
 /// A signed transaction.
 ///

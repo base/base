@@ -146,14 +146,14 @@ use base_execution_state_trie::{
 use base_execution_state_types::ProviderResult;
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 use {
-    base_execution_state_provider::CanonicalInMemoryState,
-    base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
+    base_common_types_chain::BlockBodyExt as BlockBody, base_common_types_chain::BlockHeader,
+    base_common_types_chain::GotExpected, base_common_types_chain::RecoveredBlock,
+    base_common_types_chain::SealedBlock, base_common_types_chain::SealedHeader,
+    base_common_types_chain::SignerRecoverable, std::time::Instant,
 };
 use {
-    reth_primitives_traits::AlloyBlockHeader, reth_primitives_traits::BlockBody,
-    reth_primitives_traits::GotExpected, reth_primitives_traits::RecoveredBlock,
-    reth_primitives_traits::SealedBlock, reth_primitives_traits::SealedHeader,
-    reth_primitives_traits::SignerRecoverable, std::time::Instant,
+    base_execution_state_provider::CanonicalInMemoryState,
+    base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
 };
 
 pub use crate::tree::types::ValidationOutcome;

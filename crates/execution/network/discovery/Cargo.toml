@@ -62,19 +62,5 @@ secp256k1 = {features = ["global-context", "rand", "recovery", "std"], workspace
 
 [features]
 default = ["serde"]
-serde = [
-    "alloy-chains/serde",
-    "alloy-primitives/serde",
-    "dashmap/serde",
-    "dep:serde",
-    "dep:serde_with",
-    "base-execution-network-discv5/serde",
-    "enr/serde",
-    "hickory-resolver/serde",
-    "linked_hash_set/serde",
-    "parking_lot/serde",
-    "rand/serde",
-    "rand_08?/serde",
-    "secp256k1/serde",
-]
+serde = ["alloy-chains/serde", "alloy-primitives/serde", "dashmap/serde", "dep:serde", "dep:serde_with", "base-execution-network-discv5/serde", "enr/serde", "hickory-resolver/serde", "linked_hash_set/serde", "parking_lot/serde", "rand/serde", "rand_08?/serde", "secp256k1/serde"]
 test-utils = ["dep:rand_08"]

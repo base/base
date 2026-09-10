@@ -21,14 +21,13 @@ use base_common_types_chain::{
         LEGACY_TX_TYPE_ID,
     },
 };
+use base_common_types_chain::{
+    InMemorySize, Recovered, SignedTransaction, TryFromRecoveredTransactionError,
+};
 use paste::paste;
 use rand::{
     distr::{Uniform, weighted::WeightedIndex},
     prelude::Distribution,
-};
-use reth_primitives_traits::{
-    InMemorySize, Recovered, SignedTransaction,
-    transaction::error::TryFromRecoveredTransactionError,
 };
 
 use crate::{

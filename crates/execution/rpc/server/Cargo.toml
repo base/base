@@ -48,7 +48,6 @@ workspace = true
 [dev-dependencies]
 alloy-eips = { workspace = true }
 base-common-types-rpc = {workspace = true}
-reth-primitives-traits = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-network-types = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
@@ -56,7 +55,7 @@ jsonrpsee = { workspace = true, features = ["server"] }
 serde_json = { workspace = true, features = ["alloc"] }
 http-body-util = { workspace = true, features = ["default"] }
 reqwest = {workspace = true, features = ["rustls", "stream"]}
-base-common-types-chain = { workspace = true, features = ["serde"]}
+base-common-types-chain = {features = ["k256", "serde"], workspace = true}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-txpool-pool = { workspace = true, features = ["test-utils"] }
 base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }

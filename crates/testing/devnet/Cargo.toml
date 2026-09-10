@@ -23,7 +23,6 @@ futures-util = { workspace = true }
 alloy-hardforks = {workspace = true}
 alloy-transport = { workspace = true }
 base-testing-support = { workspace = true}
-reth-primitives-traits = { workspace = true}
 base-common-client-rollup = {workspace = true}
 base-execution-rpc-server = {workspace = true}
 rlimit = { workspace = true, optional = true }
@@ -94,7 +93,7 @@ testcontainers = { features = ["blocking", "host-port-exposure"], workspace = tr
 base-execution-state-indexer = { workspace = true, features = ["default", "service"] }
 base-execution-state-database = {features = ["default", "test-utils"], workspace = true}
 base-proof-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
-base-common-types-chain = {workspace = true,  features = ["kzg", "reth", "serde", "std"]}
+base-common-types-chain = {features = ["k256", "kzg", "reth", "serde", "std"], workspace = true}
 base-execution-payload-builder = {workspace = true,  features = ["default", "test-utils"]}
 tracing-subscriber = {workspace = true,  features = ["default", "env-filter", "fmt", "json"]}
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
@@ -108,8 +107,7 @@ serde_json = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-testing-support = {workspace = true}
-reth-primitives-traits = { workspace = true }
-base-common-types-chain = { workspace = true }
+base-common-types-chain = {features = ["k256"], workspace = true}
 base-common-client-rollup = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-rpc-handlers = {workspace = true}
@@ -153,6 +151,6 @@ path = "tests/system_upgrade_signal.rs"
 required-features = ["upgrade-signal"]
 
 [features]
-test-utils = ["base-node-service/test-utils", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "base-execution-payload-builder/test-utils", "base-execution-txpool-pool/test-utils", "rlimit"]
+test-utils = ["base-node-service/test-utils", "base-execution-state-database/test-utils", "base-common-types-chain/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "base-execution-payload-builder/test-utils", "base-execution-txpool-pool/test-utils", "rlimit"]
 default = ["test-utils"]
 upgrade-signal = ["base-testing-support/contracts"]

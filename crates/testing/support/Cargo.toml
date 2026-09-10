@@ -29,8 +29,7 @@ alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 alloy-primitives = {features = ["map-foldhash", "rand", "serde"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
-reth-primitives-traits = { workspace = true, features = ["secp256k1", "arbitrary"] }
-base-common-types-chain = {features = ["arbitrary", "reth", "serde", "std"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["arbitrary", "k256", "reth", "secp256k1", "serde", "std"]}
 
 [features]
 # The `contracts` module binds Solidity test fixtures with

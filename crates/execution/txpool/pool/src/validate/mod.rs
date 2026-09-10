@@ -4,9 +4,9 @@ use std::{fmt, fmt::Debug, future::Future, time::Instant};
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, B256, TxHash, U256};
+use base_common_types_chain::{BlockExt as Block, InMemorySize, Recovered, SealedBlock};
 use base_common_types_chain::{Transaction, Typed2718};
 use futures_util::future::Either;
-use reth_primitives_traits::{Block, InMemorySize, Recovered, SealedBlock};
 
 use crate::{
     PriceBumpConfig,
@@ -192,7 +192,7 @@ pub trait TransactionValidator: Debug + Send + Sync {
     ///    * nonce >= next nonce of the sender
     ///    * ...
     ///
-    /// See [`InvalidTransactionError`](reth_primitives_traits::transaction::error::InvalidTransactionError) for common
+    /// See [`InvalidTransactionError`](base_common_types_chain::InvalidTransactionError) for common
     /// errors variants.
     ///
     /// The transaction pool makes no additional assumptions about the validity of the transaction

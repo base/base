@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, BlockNumber};
+use base_common_types_chain::RecoveredBlock;
 use base_common_types_chain::{BlockHeader, Typed2718};
-use reth_primitives_traits::RecoveredBlock;
 
 /// The type that is used to track canonical blob transactions.
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -84,8 +84,8 @@ pub enum BlobStoreUpdates {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Signature;
+    use base_common_types_chain::RecoveredBlock;
     use base_common_types_chain::{Header, Signed};
-    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
 

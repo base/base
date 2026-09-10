@@ -93,7 +93,7 @@ pub trait EngineClient: Send + Sync {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError>;
+    ) -> Result<Option<base_common_types_chain::SealedBlock>, EngineClientError>;
 
     /// Reads the account storage root at a specific L2 block.
     async fn storage_root(
@@ -106,7 +106,7 @@ pub trait EngineClient: Send + Sync {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError>;
+    ) -> Result<Option<base_common_types_chain::SealedBlock>, EngineClientError>;
 
     /// Fetches the [`L2BlockInfo`] by [`BlockNumberOrTag`].
     async fn l2_block_info_by_label(

@@ -7,6 +7,7 @@ use alloy_primitives::B256;
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::SealedHeader;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_payload_builder::BasePayloadBuilder;
 use base_execution_state_api::{
@@ -15,7 +16,6 @@ use base_execution_state_api::{
 use base_execution_txpool_pool::TransactionPool;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]

@@ -1,6 +1,6 @@
+use base_common_types_chain::SealedHeader;
 use base_execution_evm_blocks::ConsensusError;
 use derive_more::{Display, Error};
-use reth_primitives_traits::SealedHeader;
 
 /// Header downloader result
 pub type HeadersDownloaderResult<T> = Result<T, HeadersDownloaderError>;

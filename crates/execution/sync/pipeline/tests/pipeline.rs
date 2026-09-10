@@ -10,6 +10,10 @@ use base_common_types_chain::{
     BaseBlock as Block, BaseBlockBody as BlockBody, BaseTypedTransaction as Transaction, Header,
     TxEip1559, TxReceipt, constants::ETH_TO_WEI,
 };
+use base_common_types_chain::{
+    RecoveredBlock, SealedBlock, crypto::secp256k1::public_key_to_address,
+    proofs::calculate_receipt_root, proofs::calculate_transaction_root,
+};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader};
@@ -29,11 +33,6 @@ use base_execution_sync_pipeline::{
 };
 use base_execution_sync_pipeline::{Pipeline, StageId};
 use base_testing_support::{generators, generators::generate_key};
-use reth_primitives_traits::{
-    RecoveredBlock, SealedBlock,
-    crypto::secp256k1::public_key_to_address,
-    proofs::{calculate_receipt_root, calculate_transaction_root},
-};
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,
@@ -97,7 +96,7 @@ fn assert_changesets_queryable(
 /// Builds downloaders from a `FileClient`.
 fn build_downloaders_from_file_client(
     file_client: Arc<FileClient>,
-    genesis: reth_primitives_traits::SealedHeader,
+    genesis: base_common_types_chain::SealedHeader,
     stages_config: StageConfig,
     consensus: Arc<BaseBeaconConsensus>,
     provider_factory: base_execution_state_provider::ProviderFactory,

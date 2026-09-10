@@ -556,6 +556,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use alloy_eips::BlockNumHash;
+    use base_common_types_chain::BlockExt as _;
     use base_common_types_chain::{BaseBlock, Header};
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
@@ -565,7 +566,6 @@ mod tests {
     use base_testing_support::{generators, generators::BlockParams};
     use eyre::OptionExt;
     use futures::StreamExt;
-    use reth_primitives_traits::Block as _;
     use tokio::sync::mpsc;
 
     use super::*;

@@ -26,7 +26,6 @@ aquamarine = { workspace = true }
 futures-util = {workspace = true}
 pin-project = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-primitives-traits = {workspace = true}
 base-execution-state-api = {workspace = true}
 base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
@@ -44,7 +43,7 @@ alloy-rlp = {workspace = true, features = ["core-net"] }
 num-traits = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 tokio = {workspace = true, features = ["fs", "io-util", "sync"]}
-base-common-types-chain = {workspace = true, features = ["reth"]}
+base-common-types-chain = {features = ["k256", "reth"], workspace = true}
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
 serde = {workspace = true, optional = true, features = ["derive"]}
 tokio-util = { workspace = true, features = ["default", "codec"] }
@@ -97,7 +96,7 @@ name = "preimage"
 required-features = ["file-client"]
 
 [features]
-test-utils = ["dep:base-execution-state-memory", "base-execution-state-memory/test-utils", "base-execution-network-service/test-utils", "base-execution-state-database/test-utils", "base-execution-state-provider/test-utils", "dep:base-testing-support", "dep:tempfile", "base-execution-evm-blocks/test-utils", "reth-primitives-traits/test-utils", "base-common-types-chain/test-utils", "base-execution-state-trie/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils"]
+test-utils = ["dep:base-execution-state-memory", "base-execution-state-memory/test-utils", "base-execution-network-service/test-utils", "base-execution-state-database/test-utils", "base-execution-state-provider/test-utils", "dep:base-testing-support", "dep:tempfile", "base-execution-evm-blocks/test-utils", "base-common-types-chain/test-utils", "base-common-types-chain/test-utils", "base-execution-state-trie/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils"]
 default = []
 file-client = ["dep:async-compression", "dep:itertools"]
 serde = ["dep:serde", "dep:humantime-serde", "base-execution-state-types/serde"]

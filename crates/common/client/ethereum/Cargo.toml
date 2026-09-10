@@ -154,10 +154,5 @@ ws-native-tls = ["ws-base", "alloy-rpc-client/ws-native-tls", "alloy-transport-w
 ws-ring = ["ws-base", "alloy-rpc-client/ws-ring", "alloy-transport-ws/ring"]
 mnemonic = ["dep:coins-bip32", "dep:coins-bip39", "zeroize"]
 zeroize = ["dep:zeroize"]
-k256 = [
-    "alloy-primitives/k256",
-    "base-common-types-chain/k256",
-    "alloy-eips/k256",
-    "base-common-types-rpc/k256",
-]
+k256 = ["alloy-primitives/k256", "base-common-types-chain/k256", "alloy-eips/k256", "base-common-types-rpc/k256"]
 jwt-client = ["dep:tower", "dep:http", "dep:base-common-types-payload"]

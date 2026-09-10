@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use alloy_primitives::{BlockHash, BlockNumber};
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedBlock;
 use indexmap::IndexSet;
-use reth_primitives_traits::SealedBlock;
 
 use crate::tree::metrics::BlockBufferMetrics;
 

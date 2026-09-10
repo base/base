@@ -22,7 +22,6 @@ rmp-serde = { workspace = true }
 thiserror = { workspace = true }
 base-common-io-files = { workspace = true }
 serde = { workspace = true, optional = true}
-reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 base-execution-state-trie = { workspace = true }
@@ -36,7 +35,7 @@ tracing = {features = ["attributes"], workspace = true}
 itertools = { workspace = true, features = ["use_std"] }
 parking_lot = { workspace = true, features = ["default"] }
 alloy-rpc-types-debug = { workspace = true, optional = true}
-base-common-types-chain = {features = ["reth"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["k256", "reth"]}
 base-execution-evm-runtime = { workspace = true, optional = true}
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -64,18 +63,17 @@ base-execution-network-service = { workspace = true }
 base-execution-state-maintenance = {workspace = true}
 tempfile = {workspace = true, features = ["default"]}
 base-common-chain-config = {features = ["std"], workspace = true}
-reth-primitives-traits = {features = ["test-utils"], workspace = true}
 base-execution-evm-blocks = {workspace = true, features = ["test-utils"]}
 base-execution-state-memory = {workspace = true, features = ["test-utils"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery"] }
 base-execution-state-provider = {workspace = true, features = ["test-utils"]}
-base-common-types-chain = {workspace = true, features = ["reth", "serde", "std"]}
+base-common-types-chain = {features = ["k256", "reth", "serde", "std", "test-utils"], workspace = true}
 base-execution-state-types = {features = ["serde-bincode-compat"], workspace = true}
 base-execution-state-database = {features = ["default", "test-utils"], workspace = true}
 base-testing-support = {workspace = true}
 
 [features]
-serde = ["base-execution-engine-types/serde", "base-execution-evm-blocks/serde", "base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "parking_lot/serde", "rand/serde", "secp256k1/serde", "reth-primitives-traits/serde", "base-execution-state-types/serde", "base-execution-state-provider/serde", "base-execution-state-memory/serde"]
-test-utils = ["base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-execution-state-trie/test-utils"]
+serde = ["base-execution-engine-types/serde", "base-execution-evm-blocks/serde", "base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "parking_lot/serde", "rand/serde", "secp256k1/serde", "base-common-types-chain/serde", "base-execution-state-types/serde", "base-execution-state-provider/serde", "base-execution-state-memory/serde"]
+test-utils = ["base-execution-state-database/test-utils", "base-common-types-chain/test-utils", "base-execution-state-provider/test-utils", "base-execution-state-trie/test-utils"]
 metrics = ["base-execution-state-tasks/metrics", "base-execution-state-trie/metrics"]
 witness = ["dep:serde", "dep:jsonrpsee", "dep:alloy-rpc-types-debug", "dep:base-execution-evm-runtime", "dep:serde_json", "dep:alloy-rlp", "dep:pretty_assertions", "base-execution-evm-blocks/serde", "dep:base-execution-rpc-handlers"]

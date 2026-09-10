@@ -3,8 +3,8 @@ use core::ops::RangeBounds;
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{BlockHash, BlockNumber};
+use base_common_types_chain::SealedHeader;
 use base_execution_state_types::ProviderResult;
-use reth_primitives_traits::SealedHeader;
 
 /// A helper type alias to access [`Headeralloy_consensus::Header`].
 pub type ProviderHeader = base_common_types_chain::Header;

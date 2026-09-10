@@ -11,6 +11,7 @@ use alloy_transport::{RpcError, TransportErrorKind};
 
 use crate::RpcErrorFactory;
 use crate::{CallFeesError, EthTxEnvError, TransactionConversionError};
+use base_common_types_chain::{InvalidTransactionError, RecoveryError};
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
 use base_execution_evm_machine::{
@@ -22,7 +23,6 @@ use base_execution_txpool_pool::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
 };
-use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
 use tokio::sync::oneshot::error::RecvError;
 use {
     crate::CallError, crate::StateOverrideError, base_execution_evm_runtime::BlockExecutionError,

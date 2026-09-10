@@ -55,11 +55,4 @@ workspace = true
 default = ["std"]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]
 serde = ["dep:serde", "base-execution-evm-runtime/serde"]
-std = [
-    "alloy-primitives/std",
-    "anstyle/std",
-    "serde/std",
-    "serde_json/std",
-    "base-execution-evm-runtime/std",
-    "thiserror/std",
-]
+std = ["alloy-primitives/std", "anstyle/std", "serde/std", "serde_json/std", "base-execution-evm-runtime/std", "thiserror/std"]

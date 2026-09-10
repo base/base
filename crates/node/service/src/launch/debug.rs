@@ -2,10 +2,10 @@
 use std::sync::Arc;
 
 use base_common_client_ethereum::Base;
+use base_common_types_chain::SealedBlock;
 use base_execution_engine_driver::{LocalMiner, MiningMode};
 use base_execution_payload_types::BaseBuiltPayload;
 use base_testing_debug_client::{DebugConsensusClient, EtherscanBlockProvider, RpcBlockProvider};
-use reth_primitives_traits::SealedBlock;
 use tracing::info;
 
 use crate::NodeHandle;

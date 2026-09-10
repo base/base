@@ -7,8 +7,8 @@ use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader as _, EMPTY_OMMER_ROOT_HASH, constants::MAXIMUM_EXTRA_DATA_SIZE,
 };
+use base_common_types_chain::{GotExpected, RecoveredBlock, SealedBlock, SealedHeader};
 use base_execution_state_types::BlockExecutionResult;
-use reth_primitives_traits::{GotExpected, RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::{
     ConsensusError, HeaderConsensusError, ReceiptRootBloom,
@@ -405,7 +405,7 @@ mod tests {
         BaseReceipt, BaseTransactionSigned, BaseTypedTransaction, BlockBody, Eip658Value, Header,
         HoloceneExtraData, JovianExtraData, Receipt, TxEip7702, TxReceipt,
     };
-    use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
+    use base_common_types_chain::{RecoveredBlock, SealedBlock, SealedHeader, proofs};
     use base_execution_state_provider::BlockExecutionResult;
 
     use crate::{BaseBeaconConsensus, ConsensusError};

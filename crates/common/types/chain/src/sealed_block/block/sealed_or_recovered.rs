@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 use core::ops::Deref;
 
-use crate::block::{RecoveredBlock, SealedBlock, error::SealedBlockRecoveryError};
+use crate::sealed_block::block::{RecoveredBlock, SealedBlock, error::SealedBlockRecoveryError};
 
 /// A block that is either sealed or sealed with recovered transaction senders.
 ///

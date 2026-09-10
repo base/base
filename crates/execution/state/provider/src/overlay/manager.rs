@@ -19,17 +19,16 @@ use base_common_observability_metrics::{
 };
 #[cfg(feature = "rayon")]
 use base_common_runtime_tasks::WorkerPool;
+use base_common_types_chain::{BlockHeader as AlloyBlockHeader, DashMap, mapref::entry::Entry};
 use base_execution_state_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
+use base_execution_state_trie::{
+    HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted,
+};
 use base_execution_state_types::ProviderResult;
 use parking_lot::Mutex;
-use reth_primitives_traits::{
-    AlloyBlockHeader,
-    dashmap::{DashMap, mapref::entry::Entry},
-};
-use base_execution_state_trie::{HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, trace};
 use {crate::PreservedSparseTrie, base_execution_state_types::ExecutedBlock};
 
@@ -663,7 +662,9 @@ mod tests {
 
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted};
+    use base_execution_state_trie::{
+        ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted,
+    };
     use {
         crate::SparseTrie, crate::test_utils::TestBlockBuilder,
         base_execution_state_types::ExecutedBlock,

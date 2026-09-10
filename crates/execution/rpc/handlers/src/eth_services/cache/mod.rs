@@ -12,6 +12,7 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader};
+use base_common_types_chain::{InMemorySize, RecoveredBlock};
 use base_execution_evm_runtime::{
     bytecode::Bytecode,
     primitives::{StorageKey, StorageValue},
@@ -25,7 +26,6 @@ use base_execution_state_types::CanonStateNotification;
 use base_execution_state_types::Chain;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use futures::{Stream, StreamExt, stream::FuturesOrdered};
-use reth_primitives_traits::{InMemorySize, RecoveredBlock};
 use schnellru::{ByLength, Limiter, LruMap};
 use tokio::sync::{
     Semaphore,
@@ -1013,13 +1013,13 @@ mod tests {
         BaseTxEnvelope as TransactionSigned, BaseTypedTransaction as Transaction, Header,
         transaction::TransactionMeta,
     };
+    use base_common_types_chain::{RecoveredBlock, SealedHeader};
     use base_execution_state_api::{
         BalProvider, BalStore, BalStoreHandle, BlockBodyIndicesProvider, BlockHashReader,
         BlockNumReader, BlockReader, BlockSource, HeaderProvider, NoopProvider, ReceiptProvider,
         TransactionVariant, TransactionsProvider,
     };
     use base_execution_state_types::StoredBlockBodyIndices;
-    use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 
     use super::*;
 

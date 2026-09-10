@@ -340,12 +340,12 @@ mod tests {
     use alloy_signer::SignerSync;
     use base_common_chain_config::ChainConfig;
     use base_common_client_ethereum::PrivateKeySigner;
+    use base_common_types_chain::Recovered;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
         TxEip8130,
     };
     use base_execution_txpool_pool::{TransactionId, TransactionOrigin};
-    use reth_primitives_traits::Recovered;
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};

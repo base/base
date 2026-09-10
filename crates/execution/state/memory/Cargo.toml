@@ -52,30 +52,8 @@ workspace = true
 
 [features]
 default = ["std"]
-serde = [
-    "dep:serde",
-    "base-execution-evm-primitives/serde",
-    "either/serde",
-    "alloy-primitives/serde",
-    "bitflags/serde",
-    "alloy-eip7928/serde",
-    "nonmax/serde",
-]
-std = [
-    "serde?/std",
-    "base-execution-evm-primitives/std",
-    "either/std",
-    "thiserror/std",
-    "base-common-types-chain/std",
-    "alloy-genesis/std",
-    "alloy-primitives/std",
-    "alloy-trie/std",
-    "derive_more/std",
-    "serde_json/std",
-    "bitflags/std",
-    "alloy-eip7928/std",
-    "nonmax/std",
-]
+serde = ["dep:serde", "base-execution-evm-primitives/serde", "either/serde", "alloy-primitives/serde", "bitflags/serde", "alloy-eip7928/serde", "nonmax/serde"]
+std = ["serde?/std", "base-execution-evm-primitives/std", "either/std", "thiserror/std", "base-common-types-chain/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-trie/std", "derive_more/std", "serde_json/std", "bitflags/std", "alloy-eip7928/std", "nonmax/std"]
 arbitrary = ["dep:arbitrary", "alloy-primitives/arbitrary"]
 reth-codec = ["dep:bytes", "dep:modular-bitfield", "base-common-types-chain/alloy"]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils"]

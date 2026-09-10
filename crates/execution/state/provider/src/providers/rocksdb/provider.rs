@@ -29,7 +29,7 @@ use rocksdb::{
     WriteBatchWithTransaction, WriteBufferManager, WriteOptions,
 };
 use tracing::instrument;
-use {reth_primitives_traits::BlockBody as _, std::time::Instant};
+use {base_common_types_chain::BlockBodyExt as _, std::time::Instant};
 
 use super::metrics::{ROCKSDB_TABLES, RocksDBMetrics, RocksDBOperation};
 use crate::{

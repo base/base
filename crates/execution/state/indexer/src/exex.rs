@@ -1,13 +1,13 @@
 use crate::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use alloy_eips::BlockNumHash;
 use base_common_types_chain::BaseReceipt;
+use base_common_types_chain::{BlockHeader as AlloyBlockHeader, RecoveredBlock};
 use base_execution_engine_observers::{ExExContext, ExExEvent, ExExNotification};
 use base_execution_network_service::NetworkInfo;
 use base_execution_state_types::Chain;
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
-use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 

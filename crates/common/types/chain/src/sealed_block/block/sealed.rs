@@ -9,10 +9,10 @@ use alloy_rlp::{Decodable, Encodable};
 use base_common_types_chain::{BaseBlock, BaseBlockBody, BlockHeader as _, Header};
 use bytes::BufMut;
 
-use crate::{
+use crate::sealed_block::{
+    RecoveryError,
     Block, BlockBody, GotExpected, InMemorySize, SealedHeader,
     block::{RecoveredBlock, error::BlockRecoveryError},
-    transaction::signed::RecoveryError,
 };
 
 /// Sealed full block composed of the block's header and body.
@@ -136,7 +136,7 @@ impl SealedBlock {
     /// Converts this block into a [`RecoveredBlock`] with the given senders if the number of
     /// senders is equal to the number of transactions in the block and recovers the senders from
     /// the transactions, if
-    /// not using [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer`](crate::SignedTransaction)
     /// to recover the senders.
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
@@ -150,7 +150,7 @@ impl SealedBlock {
     /// Converts this block into a [`RecoveredBlock`] with the given senders if the number of
     /// senders is equal to the number of transactions in the block and recovers the senders from
     /// the transactions, if
-    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction)
     /// to recover the senders.
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
@@ -162,7 +162,7 @@ impl SealedBlock {
     }
 
     /// Recovers the senders from the transactions in the block using
-    /// [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction).
+    /// [`SignedTransaction::recover_signer`](crate::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
     pub fn try_recover(self) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {
@@ -170,7 +170,7 @@ impl SealedBlock {
     }
 
     /// Recovers the senders from the transactions in the block using
-    /// [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction).
+    /// [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
     pub fn try_recover_unchecked(self) -> Result<RecoveredBlock, BlockRecoveryError<Self>> {

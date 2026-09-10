@@ -12,12 +12,12 @@ use std::{
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
 use base_common_types_chain::{BaseBlockBody, BlockHeader};
+use base_common_types_chain::{SealedBlock, SealedBlockWith, SealedHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_types::{PeerId, WithPeerId};
 use base_execution_network_wire::BlockAccessLists;
 use base_execution_network_wire::HeadersDirection;
 use futures::FutureExt;
-use reth_primitives_traits::{SealedBlock, SealedBlockWith, SealedHeader};
 use tracing::{debug, trace};
 
 use base_execution_network_wire::HeadersRequest;

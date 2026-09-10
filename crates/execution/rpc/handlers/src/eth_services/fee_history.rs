@@ -15,6 +15,7 @@ use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
 use base_common_types_chain::{BaseBlock, BlockHeader, Header, Transaction, TxReceipt};
+use base_common_types_chain::{BlockBodyExt as BlockBody, SealedBlock};
 use base_common_types_rpc::MAX_HEADER_HISTORY;
 use base_common_types_rpc::TxGasAndReward;
 use base_execution_state_api::BlockReaderIdExt;
@@ -24,7 +25,6 @@ use futures::{
     future::{Fuse, FusedFuture},
 };
 use metrics::atomics::AtomicU64;
-use reth_primitives_traits::{BlockBody, SealedBlock};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 

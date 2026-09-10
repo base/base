@@ -16,13 +16,13 @@ use alloy_eips::BlockNumHash;
 use base_common_observability_metrics::{Metrics, metrics::Counter};
 use base_common_observability_tracing::tracing::{debug, warn};
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::ForkChoiceStream;
 use base_execution_state_provider::HeaderProvider;
 use futures::StreamExt;
 use itertools::Itertools;
 use metrics::Gauge;
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::{
     mpsc::{self, UnboundedReceiver, UnboundedSender, error::SendError},
     watch,
@@ -673,6 +673,7 @@ impl Clone for ExExManagerHandle {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_common_types_chain::RecoveredBlock;
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
@@ -681,7 +682,6 @@ mod tests {
     use base_testing_support::{generators, generators::BlockParams};
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
-    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
     use crate::wal::WalResult;

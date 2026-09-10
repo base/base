@@ -7,9 +7,10 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
 use {
     crate::MAXIMUM_GAS_LIMIT_BLOCK, crate::MINIMUM_GAS_LIMIT,
-    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR, reth_primitives_traits::BlockBody,
-    reth_primitives_traits::BlockHeader, reth_primitives_traits::GotExpected,
-    reth_primitives_traits::SealedBlock, reth_primitives_traits::SealedHeader,
+    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR,
+    base_common_types_chain::BlockBodyExt as BlockBody,
+    base_common_types_chain::BlockHeaderExt as BlockHeader, base_common_types_chain::GotExpected,
+    base_common_types_chain::SealedBlock, base_common_types_chain::SealedHeader,
 };
 
 use crate::ConsensusError;
@@ -438,8 +439,8 @@ mod tests {
     use alloy_eips::eip4895::Withdrawals;
     use alloy_primitives::{Bytes, Signature, U256};
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_types_chain::proofs;
     use base_common_types_chain::{BlockBody, Header};
-    use reth_primitives_traits::proofs;
 
     use super::*;
 

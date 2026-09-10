@@ -7,6 +7,7 @@ use alloy_eips::{
     eip7594::BlobTransactionSidecarVariant,
 };
 use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use base_common_types_chain::Recovered;
 use base_common_types_chain::Transaction;
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
@@ -21,7 +22,6 @@ use base_execution_txpool_pool::{
 };
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
-use reth_primitives_traits::Recovered;
 use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
@@ -1417,7 +1417,10 @@ where
         self.protocol_pool.set_block_info(info)
     }
 
-    fn on_canonical_state_change(&self, update: base_execution_txpool_pool::CanonicalStateUpdate<'_>) {
+    fn on_canonical_state_change(
+        &self,
+        update: base_execution_txpool_pool::CanonicalStateUpdate<'_>,
+    ) {
         let block_hash = update.hash();
         let now = update.timestamp();
         let block_number = update.number();
@@ -1730,6 +1733,7 @@ mod tests {
     use base_common_chain_config::ChainConfig;
     use base_common_client_ethereum::PrivateKeySigner;
     use base_common_runtime_tasks::Runtime;
+    use base_common_types_chain::SealedBlock;
     use base_common_types_chain::{
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BaseTxEnvelope,
         Eip8130Constants, Eip8130Signed, SignableTransaction, Transaction, TxEip1559, TxEip8130,
@@ -1743,7 +1747,6 @@ mod tests {
     };
     use base_testing_support::build_test_genesis_zenith;
     use futures::{StreamExt, future::join_all};
-    use reth_primitives_traits::SealedBlock;
 
     use super::*;
     use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};

@@ -89,16 +89,16 @@ use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use tracing::{Span, debug, debug_span, instrument, warn};
 use {
+    base_common_types_chain::BlockHeader, base_common_types_chain::RecoveredBlock,
+    base_common_types_chain::SealedHeader, std::time::Instant,
+};
+use {
     base_execution_state_provider::PreservedSparseTrie, base_execution_state_types::ExecutedBlock,
 };
 use {
     base_execution_state_trie::ArenaParallelSparseTrie,
     base_execution_state_trie::RevealableSparseTrie, base_execution_state_trie::SparseStateTrie,
     base_execution_state_types::TrieNodeEpoch,
-};
-use {
-    reth_primitives_traits::AlloyBlockHeader, reth_primitives_traits::RecoveredBlock,
-    reth_primitives_traits::SealedHeader, std::time::Instant,
 };
 
 use self::sparse_trie::{SparseTrieCacheTask, SparseTrieTaskMetrics};

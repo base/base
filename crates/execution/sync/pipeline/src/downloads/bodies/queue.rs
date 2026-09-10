@@ -6,10 +6,10 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::{Stream, stream::FuturesUnordered};
 use futures_util::StreamExt;
-use reth_primitives_traits::SealedHeader;
 use {
     base_execution_network_service::BlockResponse, base_execution_network_service::DownloadResult,
     base_execution_network_wire::BodiesClient,

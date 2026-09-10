@@ -10,9 +10,9 @@ use std::{
 
 use alloy_primitives::{B256, map::B256Set};
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::FutureExt;
-use reth_primitives_traits::SealedBlock;
 use tracing::trace;
 use {
     base_execution_network_service::FetchFullBlockFuture,
@@ -291,9 +291,9 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
+    use base_common_types_chain::SealedHeader;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_network_service::test_utils::TestFullBlockClient;
-    use reth_primitives_traits::SealedHeader;
 
     use super::*;
     use crate::test_utils::insert_headers_into_client;

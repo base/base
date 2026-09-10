@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
+use base_common_types_chain::SealedHeader;
 use futures::Stream;
-use reth_primitives_traits::SealedHeader;
 use {
     base_execution_network_service::HeaderDownloader,
     base_execution_network_service::HeadersDownloaderError,

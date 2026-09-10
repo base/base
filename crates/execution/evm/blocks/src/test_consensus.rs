@@ -2,8 +2,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::B256;
 use base_common_types_chain::BaseReceipt;
+use base_common_types_chain::{RecoveredBlock, SealedBlock, SealedHeader};
 use base_execution_state_types::BlockExecutionResult;
-use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::{ConsensusError, ReceiptRootBloom};
 

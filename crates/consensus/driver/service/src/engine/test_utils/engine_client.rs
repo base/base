@@ -228,9 +228,9 @@ pub struct MockEngineClient {
 
 impl MockEngineClient {
     /// Converts an existing RPC fixture into a native sealed block for execution tests.
-    pub fn native_block(block: L2RpcBlock) -> reth_primitives_traits::SealedBlock {
+    pub fn native_block(block: L2RpcBlock) -> base_common_types_chain::SealedBlock {
         let hash = block.header.hash;
-        reth_primitives_traits::SealedBlock::new_unchecked(
+        base_common_types_chain::SealedBlock::new_unchecked(
             block.into_consensus().map_transactions(|tx| tx.inner.inner.into_inner()),
             hash,
         )
@@ -385,7 +385,7 @@ impl EngineClient for MockEngineClient {
     async fn get_l2_block(
         &self,
         block: BlockId,
-    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
+    ) -> Result<Option<base_common_types_chain::SealedBlock>, EngineClientError> {
         let block_key = block_id_to_key(&block);
         let storage = self.storage.read().await;
         if let Some(error) = storage.l2_block_errors_by_id.get(&block_key).cloned() {
@@ -423,7 +423,7 @@ impl EngineClient for MockEngineClient {
     async fn l2_block_by_label(
         &self,
         numtag: BlockNumberOrTag,
-    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
+    ) -> Result<Option<base_common_types_chain::SealedBlock>, EngineClientError> {
         let storage = self.storage.read().await;
         Ok(storage.l2_blocks_by_label.get(&numtag).cloned().map(Self::native_block))
     }

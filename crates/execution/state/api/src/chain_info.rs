@@ -1,5 +1,5 @@
+use base_common_types_chain::SealedHeader;
 use base_common_types_payload::ForkchoiceState;
-use reth_primitives_traits::SealedHeader;
 
 /// A type that can track updates related to fork choice updates.
 pub trait CanonChainTracker: Send + Sync {

@@ -1,4 +1,5 @@
 use alloy_primitives::TxNumber;
+use base_common_types_chain::SignedTransaction;
 use base_execution_state_api::StorageSettingsCache;
 use base_execution_state_database::{DbTxMut, tables};
 use base_execution_state_provider::{
@@ -9,7 +10,6 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
 };
-use reth_primitives_traits::SignedTransaction;
 use tracing::{debug, instrument, trace};
 
 use crate::pruning::{

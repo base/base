@@ -14,146 +14,78 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-bytes = { workspace = true }
+bytes = {workspace = true}
 either = { workspace = true }
-alloy-rlp = { workspace = true }
+thiserror = {workspace = true}
 auto_impl = { workspace = true }
-thiserror = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-tx-macros = { workspace = true }
 modular-bitfield = { workspace = true  }
+rayon = { workspace = true, optional = true }
 base-common-codec-macros = { workspace = true }
 visibility = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, optional = true }
-alloy-trie = { workspace = true,  features = ["ethereum"]}
-serde = { workspace = true, features = ["derive", "alloc"]  }
+alloy-rlp = {features = ["core-net"], workspace = true}
+alloy-trie = {features = ["ethereum"], workspace = true}
 base-common-codec-storage = { workspace = true, optional = true }
+proptest-arbitrary-interop = { workspace = true, optional = true }
 c-kzg = { workspace = true, features = ["serde"], optional = true }
+alloy-eips = {features = ["kzg-sidecar", "serde"], workspace = true}
 borsh = { workspace = true, features = ["derive"], optional = true }
-alloy-eips = { workspace = true, features = ["serde", "kzg-sidecar"]}
+arbitrary = {workspace = true, optional = true, features = ["derive"]}
+dashmap = { workspace = true, features = ["inline"], optional = true }
 rand_08 = { workspace = true, optional = true, features = ["default"] }
-arbitrary = { workspace = true, features = ["derive"], optional = true }
+proptest = { workspace = true, optional = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"], optional = true }
-once_cell = { workspace = true, features = [
-    "race",
-    "alloc",
-] }
-alloy-primitives = { workspace = true, features = ["rlp", "map-foldhash"] }
+serde = {features = ["alloc", "derive"], optional = false, workspace = true}
+once_cell = {features = ["alloc", "critical-section", "race"], workspace = true}
+alloy-primitives = {features = ["k256", "map-foldhash", "rlp"], workspace = true}
 serde_with = { workspace = true, optional = true, features = ["default", "macros"] }
 k256 = { workspace = true, features = [
     "ecdsa",
     "ecdsa",
 ], optional = true }
 parity-scale-codec = { workspace = true, features = ["default", "bytes"], optional = true }
-secp256k1 = { workspace = true, features = [
-    "recovery",
-    "global-context",
-    "std",
-], optional = true }
-derive_more = { workspace = true, features = [
-    "as_ref",
-    "display",
-    "from",
-    "deref",
-    "deref_mut",
-    "into_iterator",
-] }
+secp256k1 = {workspace = true, optional = true, features = ["global-context", "recovery", "std"]}
+derive_more = {features = ["as_ref", "deref", "deref_mut", "display", "from", "full", "into_iterator"], workspace = true}
 
 [dev-dependencies]
+serde = { workspace = true }
 test-fuzz = { workspace = true }
 alloy-signer = { workspace = true }
+alloy-genesis = { workspace = true }
+modular-bitfield = { workspace = true }
 assert_matches_1_5 = { workspace = true }
+proptest-arbitrary-interop = {workspace = true}
 k256 = { workspace = true, features = ["ecdsa"] }
-proptest-arbitrary-interop = { workspace = true }
+rand = {features = ["default", "serde"], workspace = true}
 base-common-client-ethereum = { workspace = true }
-rand = { workspace = true, features = ["default"] }
+rand_08 = {features = ["default", "serde"], workspace = true}
+arbitrary = {features = ["derive"], workspace = true}
+proptest = {features = ["default"], workspace = true}
 rstest = { workspace = true, features = ["default"] }
-rand_08 = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"]}
-arbitrary = { workspace = true, features = ["derive"] }
-proptest = { workspace = true, features = ["default"] }
+serde_json = {features = ["alloc"], workspace = true}
+byteorder = { workspace = true, features = ["default"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 alloy-eips = { workspace = true, features = ["arbitrary", "serde", "kzg"] }
-alloy-primitives = { workspace = true, features = ["rand", "arbitrary", "map-foldhash", "serde"] }
-secp256k1 = { workspace = true, features = [
-    "recovery",
-    "global-context",
-    "std",
-    "rand",
-] }
+secp256k1 = {features = ["global-context", "rand", "recovery", "std"], workspace = true}
+alloy-primitives = {features = ["arbitrary", "map-foldhash", "rand", "serde"], workspace = true}
 
 [features]
 default = ["std", "alloy"]
-std = [
-    "alloy-eips/std",
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "alloy-serde/std",
-    "alloy-sol-types/std",
-    "base-common-codec-storage?/std",
-    "serde/std",
-    "thiserror/std",
-    "bytes/std",
-    "alloy-genesis?/std",
-    "alloy-trie/std",
-    "dep:parity-scale-codec",
-    "c-kzg?/std",
-    "derive_more/std",
-    "k256?/std",
-    "serde_json?/std",
-    "serde_with?/std",
-    "either/std",
-    "once_cell/std",
-    "secp256k1?/std",
-    "borsh?/std",
-]
+std = ["alloy-eips/std", "alloy-primitives/std", "alloy-rlp/std", "alloy-serde/std", "alloy-sol-types/std", "base-common-codec-storage?/std", "serde/std", "thiserror/std", "bytes/std", "alloy-genesis?/std", "alloy-trie/std", "dep:parity-scale-codec", "c-kzg?/std", "derive_more/std", "k256?/std", "serde_json?/std", "serde_with?/std", "either/std", "once_cell/std", "secp256k1?/std", "borsh?/std"]
 k256 = ["alloy-primitives/k256", "dep:k256", "alloy-eips/k256"]
 kzg = ["alloy-eips/kzg", "std", "dep:c-kzg"]
-arbitrary = [
-    "k256",
-    "alloy-eips/arbitrary",
-    "alloy-primitives/arbitrary",
-    "alloy-primitives/rand",
-    "alloy-serde/arbitrary",
-    "dep:arbitrary",
-    "std",
-    "alloy-trie/arbitrary",
-    "dep:rand_08",
-    "c-kzg?/arbitrary",
-    "alloy-tx-macros/arbitrary",
-]
-serde = [
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "bytes/serde",
-    "dep:alloy-serde",
-    "alloy-trie/serde",
-    "dep:serde_json",
-    "c-kzg?/serde",
-    "either/serde",
-    "k256?/serde",
-    "rand_08?/serde",
-    "secp256k1?/serde",
-    "alloy-tx-macros/serde",
-]
+arbitrary = ["k256", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "alloy-serde/arbitrary", "dep:arbitrary", "std", "alloy-trie/arbitrary", "dep:rand_08", "c-kzg?/arbitrary", "alloy-tx-macros/arbitrary", "dep:proptest", "dep:proptest-arbitrary-interop", "secp256k1?/global-context", "secp256k1?/rand", "dashmap?/arbitrary"]
+serde = ["alloy-eips/serde", "alloy-primitives/serde", "bytes/serde", "dep:alloy-serde", "alloy-trie/serde", "dep:serde_json", "c-kzg?/serde", "either/serde", "k256?/serde", "rand_08?/serde", "secp256k1?/serde", "alloy-tx-macros/serde", "dashmap?/serde"]
 serde-bincode-compat = ["serde_with", "alloy-eips/serde-bincode-compat"]
-reth = [
-    "dep:base-common-codec-storage",
-    "k256",
-    "serde",
-    "serde-bincode-compat",
-    "std",
-    "alloy",
-]
+reth = ["dep:base-common-codec-storage", "k256", "serde", "serde-bincode-compat", "std", "alloy"]
 alloy = ["dep:alloy-genesis", "dep:base-common-codec-storage"]
-test-utils = [
-    "std",
-    "alloy",
-    "arbitrary",
-    "dep:visibility",
-    "dep:arbitrary",
-]
+test-utils = ["std", "alloy", "arbitrary", "dep:visibility", "dep:arbitrary"]
 borsh = ["dep:borsh", "alloy-primitives/borsh", "alloy-eips/borsh"]
 crypto-backend = []
 secp256k1 = ["dep:secp256k1", "alloy-primitives/secp256k1"]
+dashmap = ["dep:dashmap"]
+rayon = ["dep:rayon"]
+reth-codec = ["reth"]

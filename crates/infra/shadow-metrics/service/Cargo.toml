@@ -22,6 +22,6 @@ base-common-types-chain = { workspace = true, features = ["reth"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
 
 [dev-dependencies]
-reth-primitives-traits = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+base-common-types-chain = { workspace = true, features = ["k256"]}

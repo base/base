@@ -4,7 +4,7 @@ use std::any::Any;
 
 use alloy_eips::eip4844::BlobTransactionValidationError;
 use alloy_primitives::{Address, TxHash, U256};
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
+use base_common_types_chain::InvalidTransactionError;
 
 /// Transaction pool result type.
 pub type PoolResult<T> = Result<T, PoolError>;

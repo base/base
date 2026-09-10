@@ -4,7 +4,7 @@ use std::io;
 
 use crate::DisconnectReason;
 use crate::UnknownDisconnectReason;
-use reth_primitives_traits::GotExpected;
+use base_common_types_chain::GotExpected;
 
 use crate::ProtocolVersion;
 use crate::SharedCapabilityError;

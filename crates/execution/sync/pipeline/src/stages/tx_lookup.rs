@@ -279,12 +279,12 @@ mod tests {
     use crate::StageUnitCheckpoint;
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
+    use base_common_types_chain::SealedBlock;
     use base_execution_state_database::{DbCursorRO, DbTx};
     use base_execution_state_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,
     };
     use base_testing_support::{generators, generators::BlockParams, generators::BlockRangeParams};
-    use reth_primitives_traits::SealedBlock;
 
     use super::*;
     use crate::test_utils::{

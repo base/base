@@ -11,10 +11,10 @@ use std::{
 };
 
 use base_common_types_chain::Header;
+use base_common_types_chain::SealedHeader;
 use base_execution_network_types::{PeerId, WithPeerId};
 use base_execution_network_wire::HeadersDirection;
 use futures::{Future, FutureExt, Stream, StreamExt};
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::Mutex;
 
 use {

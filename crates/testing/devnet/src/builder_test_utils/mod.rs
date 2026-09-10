@@ -13,13 +13,13 @@ mod utils;
 use alloy_primitives::B256;
 pub use apis::*;
 use base_common_client_ethereum::{PrivateKeySigner, TxSignerSync};
+use base_common_types_chain::Recovered;
 use base_common_types_chain::{BaseTransactionSigned, BaseTypedTransaction};
 use base_node_service::NodeConfig;
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
 use k256::sha2::{Digest, Sha256};
-use reth_primitives_traits::Recovered;
 pub use txs::*;
 pub use utils::*;
 

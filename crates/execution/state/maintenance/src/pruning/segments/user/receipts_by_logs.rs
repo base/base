@@ -232,6 +232,7 @@ mod tests {
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseReceipt;
+    use base_common_types_chain::InMemorySize;
     use base_execution_state_database::{DbCursorRO, DbTx, tables};
     use base_execution_state_provider::{
         BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
@@ -242,7 +243,6 @@ mod tests {
         generators, generators::BlockRangeParams, generators::random_eoa_account,
         generators::random_log,
     };
-    use reth_primitives_traits::InMemorySize;
 
     use crate::pruning::segments::{PruneInput, PruneLimiter, Segment, user::ReceiptsByLogs};
 

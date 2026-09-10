@@ -154,7 +154,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-payload-primitives](../../vendor/reth-payload-primitives/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-txpool-pool](../../crates/execution/txpool/pool/Cargo.toml) | Consolidate; retain required code |
 | [reth-payload-validator](../../vendor/reth-payload-validator/Cargo.toml) | Retain shared infrastructure |
-| [reth-primitives-traits](../../vendor/reth-primitives-traits/Cargo.toml) | Retain shared infrastructure |
+| [base-common-types-chain](../../vendor/base-common-types-chain/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |

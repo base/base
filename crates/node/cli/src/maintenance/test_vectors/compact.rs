@@ -18,6 +18,7 @@ use base_common_types_chain::{
         withdrawal::Withdrawal,
     },
 };
+use base_common_types_chain::{Log, LogData};
 use base_execution_state_database::{
     ClientVersion, models::AccountBeforeTx, models::StaticFileBlockWithdrawals,
     models::StoredBlockBodyIndices, models::StoredBlockOmmers, models::StoredBlockWithdrawals,
@@ -39,7 +40,6 @@ use proptest::{
     prelude::{ProptestConfig, RngCore},
     test_runner::{TestRng, TestRunner},
 };
-use reth_primitives_traits::{Log, LogData};
 
 pub const VECTORS_FOLDER: &str = "testdata/micro/compact";
 pub const VECTOR_SIZE: usize = 100;

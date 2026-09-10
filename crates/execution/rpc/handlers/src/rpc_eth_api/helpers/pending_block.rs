@@ -12,6 +12,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, U256};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BlockHeader, Transaction};
+use base_common_types_chain::{InvalidTransactionError, SealedHeader};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_execution_evm_blocks::{
     BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, Evm,
@@ -28,7 +29,6 @@ use base_execution_txpool_pool::{
     BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
 };
 use futures::Future;
-use reth_primitives_traits::{SealedHeader, transaction::error::InvalidTransactionError};
 use tracing::debug;
 
 use crate::BaseEthApi;

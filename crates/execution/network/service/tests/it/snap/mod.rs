@@ -12,6 +12,7 @@ use alloy_eip7928::{
 use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
+use base_common_types_chain::BlockExt as _;
 use base_common_types_chain::{
     BaseBlock, Header,
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
@@ -45,7 +46,6 @@ use base_execution_state_trie::{HashedPostState, HashedStorage};
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
 use base_testing_support::{generators, generators::BlockParams};
-use reth_primitives_traits::Block as _;
 
 mod protocol;
 

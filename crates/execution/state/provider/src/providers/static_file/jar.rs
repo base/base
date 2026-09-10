@@ -6,6 +6,7 @@ use std::{
 
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
+use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
@@ -17,7 +18,6 @@ use base_execution_state_database::{
 };
 use base_execution_state_types::ChangesetOffset;
 use base_execution_state_types::{ProviderError, ProviderResult};
-use reth_primitives_traits::SealedHeader;
 
 use super::{
     LoadedJarRef,

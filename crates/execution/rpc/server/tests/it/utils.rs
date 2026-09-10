@@ -2,11 +2,11 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::SignedTransaction;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_rpc_server::{
     RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModuleConfig,
 };
-use reth_primitives_traits::SignedTransaction;
 
 /// Localhost with port 0 so a free port is used.
 pub const fn test_address() -> SocketAddr {

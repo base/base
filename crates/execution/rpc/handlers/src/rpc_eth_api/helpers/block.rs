@@ -6,15 +6,16 @@ use crate::BaseEthApiError;
 use crate::ConvertReceiptInput;
 use alloy_eips::BlockId;
 use alloy_rlp::Encodable;
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, BlockHeader as AlloyBlockHeader, RecoveredBlock, SealedHeader,
+    TransactionMeta,
+};
 use base_common_types_chain::{TxReceipt, transaction::TxHashRef};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionReceipt, Block, BlockTransactions, Index,
 };
 use base_execution_state_api::{BlockIdReader, BlockReader, ProviderHeader};
 use futures::Future;
-use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, RecoveredBlock, SealedHeader, TransactionMeta,
-};
 
 use crate::BaseEthApi;
 

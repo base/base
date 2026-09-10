@@ -6,6 +6,7 @@ use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
 use base_common_client_ethereum::{NetworkTransactionBuilder, TransactionBuilder};
 use base_common_types_chain::{BaseTxEnvelope, BlockHeader, Transaction as _};
+use base_common_types_chain::{Recovered, RecoveredBlock, SealedHeader};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, BlockOverrides, BlockTransactionsKind,
     simulate::{SimBlock, SimCallResult, SimulateError, SimulatedBlock},
@@ -22,7 +23,6 @@ use base_execution_evm_runtime::{
 use base_execution_evm_runtime::{PrecompilesMap, TxResult};
 use base_execution_state_api::{NoopProvider, StateProvider};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
-use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 
 use crate::eth_services::{EthApiError, error::ToRpcError};
 
@@ -590,6 +590,7 @@ mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::{U256, address};
     use base_common_types_chain::Header;
+    use base_common_types_chain::SealedHeader;
     use base_common_types_rpc::{
         BlockOverrides, TransactionRequest,
         simulate::SimBlock,
@@ -597,7 +598,6 @@ mod tests {
     };
     use base_execution_evm_runtime::PrecompilesMap;
     use base_execution_evm_runtime::precompile::Precompiles;
-    use reth_primitives_traits::SealedHeader;
 
     use super::{
         EthSimulateError, INTERNAL_ERROR_CODE, apply_precompile_overrides, sanitize_chain,

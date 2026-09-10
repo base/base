@@ -67,11 +67,11 @@ use alloy_primitives::{
     Address, B128, B256, TxHash,
     map::{AddressSet, B256Map},
 };
+use base_common_types_chain::{BlockExt as Block, Recovered, SealedBlock};
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
 use futures_util::{Stream, ready};
-use reth_primitives_traits::{Block, Recovered, SealedBlock};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;
 

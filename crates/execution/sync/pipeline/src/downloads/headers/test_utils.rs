@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use reth_primitives_traits::SealedHeader;
+use base_common_types_chain::SealedHeader;
 
 /// Returns a new [`SealedHeader`] that's the child header of the given `parent`.
 pub(crate) fn child_header(parent: &SealedHeader) -> SealedHeader {

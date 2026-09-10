@@ -13,6 +13,9 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use async_trait::async_trait;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, BlockExt as BlockTrait, ReceiptWithBloom, RecoveredBlock,
+};
 use base_common_types_chain::{BlockHeader, constants::KECCAK_EMPTY, transaction::TxHashRef};
 use base_common_types_rpc::BlockTransactionsKind;
 use base_common_types_rpc::{
@@ -42,7 +45,6 @@ use base_execution_txpool_pool::TransactionPool;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
-use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;

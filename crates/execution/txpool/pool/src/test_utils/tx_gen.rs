@@ -3,8 +3,8 @@ use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use base_common_types_chain::{
     BaseTxEnvelope, EthereumTxEnvelope, SignableTransaction, Signed, TxEip1559, TxEip4844, TxLegacy,
 };
+use base_common_types_chain::{SignedTransaction, crypto::secp256k1::sign_message};
 use rand::{Rng, RngCore};
-use reth_primitives_traits::{SignedTransaction, crypto::secp256k1::sign_message};
 
 use crate::BasePooledTransaction;
 

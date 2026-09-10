@@ -6,10 +6,10 @@ use alloy_primitives::{
     Address, Bytes,
     map::{DefaultHashBuilder, FbBuildHasher},
 };
+use base_common_types_chain::DashMap;
 use base_execution_evm_blocks::{DynPrecompile, Precompile, PrecompileInput};
 use base_execution_evm_runtime::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 use moka::policy::EvictionPolicy;
-use reth_primitives_traits::dashmap::DashMap;
 use tracing::error;
 
 /// Default max cache size for [`PrecompileCache`]

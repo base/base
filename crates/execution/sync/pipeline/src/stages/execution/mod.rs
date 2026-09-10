@@ -755,7 +755,7 @@ mod tests {
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
     use base_testing_support::generators;
-    use {reth_primitives_traits::Block as _, reth_primitives_traits::SealedBlock};
+    use {base_common_types_chain::BlockExt as _, base_common_types_chain::SealedBlock};
 
     use super::*;
     use crate::stages::MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD;

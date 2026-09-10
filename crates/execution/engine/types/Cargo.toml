@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 alloy-eips = {workspace = true}
 thiserror = { workspace = true }
-reth-primitives-traits = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true}
 tokio = { workspace = true, features = ["sync"], optional = true }
@@ -26,6 +25,7 @@ base-common-types-payload = {workspace = true, features = ["serde"]}
 futures = { workspace = true, optional = true, features = ["default"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 base-execution-payload-types = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["k256"]}
 
 [dev-dependencies]
 bincode_1_3_3 = { workspace = true }
@@ -36,20 +36,6 @@ alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] 
 test-utils = ["std"]
 default = ["std"]
 trie-debug = []
-std = [
-    "base-execution-state-types/std",
-    "reth-primitives-traits/std",
-    "alloy-primitives/std",
-    "base-common-types-payload/std",
-    "alloy-eips/std",
-    "futures/std",
-    "tokio",
-    "thiserror/std",
-]
-serde = [
-    "dep:serde",
-    "base-execution-state-types/serde",
-    "alloy-eips/serde",
-    "reth-primitives-traits/serde",
-]
+std = ["base-execution-state-types/std", "base-common-types-chain/std", "alloy-primitives/std", "base-common-types-payload/std", "alloy-eips/std", "futures/std", "tokio", "thiserror/std"]
+serde = ["dep:serde", "base-execution-state-types/serde", "alloy-eips/serde", "base-common-types-chain/serde"]
 serde-bincode-compat = ["base-execution-state-types/serde-bincode-compat", "serde_with", "alloy-eips/serde-bincode-compat"]

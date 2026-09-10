@@ -393,8 +393,8 @@ impl ShadowBlockRepo {
 
 #[cfg(test)]
 mod tests {
+    use base_common_types_chain::RecoveredBlock;
     use chrono::Utc;
-    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
     use crate::ShadowBlockPayload;

@@ -9,8 +9,8 @@ use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSe
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, TxReceipt, transaction::Recovered,
 };
-use reth_primitives_traits::{
-    BlockBody, IndexedTx, RecoveredBlock, SealedHeader, transaction::signed::SignedTransaction,
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, IndexedTx, RecoveredBlock, SealedHeader, SignedTransaction,
 };
 
 use crate::ExecutionOutcome;
@@ -506,7 +506,7 @@ pub(super) mod serde_bincode_compat {
     use alloy_primitives::{Address, BlockNumber, Bytes};
     use alloy_rlp::Decodable;
     use base_common_types_chain::BaseBlock;
-    use reth_primitives_traits::SealedBlock;
+    use base_common_types_chain::SealedBlock;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -578,7 +578,7 @@ pub(super) mod serde_bincode_compat {
     impl<'a> From<Chain<'a>> for super::Chain {
         fn from(value: Chain<'a>) -> Self {
             use crate::LazyTrieData;
-            use reth_primitives_traits::RecoveredBlock;
+            use base_common_types_chain::RecoveredBlock;
 
             let hashed_state_map: BTreeMap<_, _> =
                 value.hashed_state.into_iter().map(|(k, v)| (k, Arc::new(v.into()))).collect();
@@ -638,8 +638,8 @@ pub(super) mod serde_bincode_compat {
         use alloy_primitives::Address;
         use arbitrary::Arbitrary;
         use base_common_types_chain::BaseBlock;
+        use base_common_types_chain::RecoveredBlock;
         use rand::Rng;
-        use reth_primitives_traits::RecoveredBlock;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 

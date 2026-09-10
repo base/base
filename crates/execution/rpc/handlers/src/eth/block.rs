@@ -2,8 +2,8 @@
 
 use crate::RpcBlockConverter;
 use alloy_eips::BlockId;
+use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_common_types_rpc::{BaseBlockResponse, Header};
-use reth_primitives_traits::AlloyBlockHeader;
 
 use crate::{BaseEthApi, BaseEthApiError};
 

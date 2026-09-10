@@ -7,10 +7,10 @@ use std::{sync::Arc, time::Instant};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockHash, TxHash};
 use base_common_types_chain::{BaseReceipt, BlockHeader, EthereumReceipt as Receipt};
+use base_common_types_chain::{IndexedTx, RecoveredBlock, SealedHeader};
 use base_common_types_rpc::BaseTransactionReceipt;
 use base_execution_evm_blocks::EvmEnvFor;
 use derive_more::Constructor;
-use reth_primitives_traits::{IndexedTx, RecoveredBlock, SealedHeader};
 use {base_execution_state_provider::BlockState, base_execution_state_types::ExecutedBlock};
 
 use crate::eth_services::block::BlockAndReceipts;

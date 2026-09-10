@@ -24,7 +24,6 @@ alloy-transport = {workspace = true}
 libp2p-stream = { workspace = true }
 alloy-json-rpc = { workspace = true }
 metrics = {optional = true, workspace = true}
-reth-primitives-traits = { workspace = true }
 serde = {features = ["std"], workspace = true}
 base-execution-state-tasks = {workspace = true}
 tracing = {workspace = true, features = ["std"]}
@@ -56,7 +55,7 @@ http-body-util = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default", "rt"] }
 tower = { workspace = true, features = ["limit", "load-shed"] }
-base-common-types-chain = {features = ["std"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["k256", "std"]}
 base-common-client-rollup = {workspace = true, features = ["server"]}
 base-common-chain-activation = {workspace = true, features = ["default"]}
 base-consensus-batch-types = {workspace = true, features = ["serde", "std"]}

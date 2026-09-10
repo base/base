@@ -5,7 +5,6 @@ use base_common_types_chain::Header;
 use proptest::{arbitrary::any, prop_compose};
 use proptest_arbitrary_interop::arb;
 
-
 /// Generates a header which is valid __with respect to past and future forks__. This means, for
 /// example, that if the withdrawals root is present, the base fee per gas is also present.
 ///

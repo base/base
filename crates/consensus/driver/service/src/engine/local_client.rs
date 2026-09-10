@@ -48,11 +48,11 @@ impl EngineClient for LocalEngineClient {
     async fn get_l2_block(
         &self,
         id: BlockId,
-    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
+    ) -> Result<Option<base_common_types_chain::SealedBlock>, EngineClientError> {
         self.l2
             .block(id)
             .await
-            .map(|block| block.map(reth_primitives_traits::SealedBlock::seal_slow))
+            .map(|block| block.map(base_common_types_chain::SealedBlock::seal_slow))
             .map_err(EngineClientError::Local)
     }
 
@@ -67,7 +67,7 @@ impl EngineClient for LocalEngineClient {
     async fn l2_block_by_label(
         &self,
         tag: BlockNumberOrTag,
-    ) -> Result<Option<reth_primitives_traits::SealedBlock>, EngineClientError> {
+    ) -> Result<Option<base_common_types_chain::SealedBlock>, EngineClientError> {
         Ok(self.get_l2_block(tag.into()).await?)
     }
 

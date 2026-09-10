@@ -72,30 +72,10 @@ asm-keccak = ["base-execution-evm-primitives/asm-keccak"]
 blst = ["dep:blst"]
 bn = ["dep:substrate-bn"]
 c-kzg = ["dep:c-kzg"]
-default = [
-    "std",
-    "secp256k1",
-    "blst",
-    "c-kzg",
-    "portable",
-]
+default = ["std", "secp256k1", "blst", "c-kzg", "portable"]
 gmp = ["dep:gmp-mpfr-sys"]
 hashbrown = ["base-execution-evm-primitives/hashbrown"]
 p256-aws-lc-rs = ["dep:aws-lc-rs"]
 portable = ["c-kzg?/portable", "blst?/portable"]
 secp256k1 = ["dep:secp256k1_0_31_1"]
-std = [
-    "base-execution-evm-primitives/std",
-    "base-execution-evm-machine/std",
-    "k256/std",
-    "c-kzg?/std",
-    "secp256k1_0_31_1?/std",
-    "ark-bn254_0_6_0/std",
-    "ark-bls12-381/std",
-    "aurora-engine-modexp/std",
-    "ark-ec/std",
-    "ark-ff/std",
-    "ark-serialize/std",
-    "ark-std/std",
-    "p256/std",
-]
+std = ["base-execution-evm-primitives/std", "base-execution-evm-machine/std", "k256/std", "c-kzg?/std", "secp256k1_0_31_1?/std", "ark-bn254_0_6_0/std", "ark-bls12-381/std", "aurora-engine-modexp/std", "ark-ec/std", "ark-ff/std", "ark-serialize/std", "ark-std/std", "p256/std"]

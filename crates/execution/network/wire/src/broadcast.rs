@@ -14,9 +14,9 @@ use alloy_rlp::{
     RlpEncodableWrapper, decode_append,
 };
 use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
+use base_common_types_chain::{BlockExt as Block, InMemorySize, OnceLock, SignedTransaction};
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
 use derive_more::{Constructor, Deref, DerefMut, From, IntoIterator};
-use reth_primitives_traits::{Block, InMemorySize, SignedTransaction, sync::OnceLock};
 
 use crate::{EthMessage, EthVersion};
 

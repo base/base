@@ -28,7 +28,6 @@ rustc-hash = { workspace = true }
 alloy-eip2124 = {workspace = true}
 pin-project = { workspace = true }
 base-common-io-files = { workspace = true }
-reth-primitives-traits = {workspace = true}
 alloy-rpc-types-admin = { workspace = true }
 base-execution-txpool-pool = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
@@ -51,7 +50,7 @@ enr = {workspace = true, features = ["rust-secp256k1", "serde"]}
 serde = {workspace = true, optional = true, features = ["derive"]}
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
-base-common-types-chain = {features = ["reth", "serde"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["k256", "reth", "serde"]}
 base-execution-network-discovery = {features = ["default"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
@@ -86,7 +85,7 @@ base-execution-network-discovery = { workspace = true, features = ["default", "t
 base-testing-support = { workspace = true }
 
 [features]
-serde = ["dep:serde", "secp256k1/serde", "enr/serde", "base-execution-network-discovery/serde", "base-execution-network-wire/serde", "base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "alloy-trie/serde", "base-execution-network-discv5/serde", "parking_lot/serde", "rand/serde", "smallvec/serde", "url/serde", "reth-primitives-traits/serde", "base-execution-network-service/serde", "base-execution-txpool-pool/serde", "rand_08/serde", "base-execution-state-api/serde", "base-execution-network-types/serde", "base-execution-state-types/serde", "base-execution-state-trie/serde", "alloy-eip7928/serde", "base-execution-state-memory/serde"]
-test-utils = ["base-execution-txpool-pool/test-utils", "base-execution-network-types/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-network-discovery/test-utils", "base-execution-network-service/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-types/test-utils", "base-execution-state-trie/test-utils", "base-execution-state-memory/test-utils", "alloy-eip7928/std", "alloy-primitives/rand"]
+serde = ["dep:serde", "secp256k1/serde", "enr/serde", "base-execution-network-discovery/serde", "base-execution-network-wire/serde", "base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "alloy-trie/serde", "base-execution-network-discv5/serde", "parking_lot/serde", "rand/serde", "smallvec/serde", "url/serde", "base-common-types-chain/serde", "base-execution-network-service/serde", "base-execution-txpool-pool/serde", "rand_08/serde", "base-execution-state-api/serde", "base-execution-network-types/serde", "base-execution-state-types/serde", "base-execution-state-trie/serde", "alloy-eip7928/serde", "base-execution-state-memory/serde"]
+test-utils = ["base-execution-txpool-pool/test-utils", "base-execution-network-types/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-network-discovery/test-utils", "base-execution-network-service/test-utils", "base-common-types-chain/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-types/test-utils", "base-execution-state-trie/test-utils", "base-execution-state-memory/test-utils", "alloy-eip7928/std", "alloy-primitives/rand"]
 default = ["std"]
-std = ["base-common-types-chain/std", "base-execution-evm-blocks/std", "alloy-eip7928/std", "alloy-eips/std", "alloy-primitives/std", "reth-primitives-traits/std", "derive_more/std", "base-execution-network-types/std", "base-execution-state-types/std", "tracing/std"]
+std = ["base-common-types-chain/std", "base-execution-evm-blocks/std", "alloy-eip7928/std", "alloy-eips/std", "alloy-primitives/std", "base-common-types-chain/std", "derive_more/std", "base-execution-network-types/std", "base-execution-state-types/std", "tracing/std"]

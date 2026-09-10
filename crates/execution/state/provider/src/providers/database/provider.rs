@@ -51,8 +51,8 @@ use rayon::slice::ParallelSliceMut;
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
 use {
-    reth_primitives_traits::Block as _, reth_primitives_traits::BlockBody as _,
-    reth_primitives_traits::RecoveredBlock, reth_primitives_traits::SealedHeader,
+    base_common_types_chain::BlockBodyExt as _, base_common_types_chain::BlockExt as _,
+    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedHeader,
     std::time::Instant,
 };
 
@@ -3544,6 +3544,7 @@ mod tests {
     use alloy_primitives::{U256, map::B256Map};
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
+    use base_common_types_chain::SealedBlock;
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::{MetadataProvider, StateReadProvider};
     use base_execution_state_database::models::StorageSettings;
@@ -3553,7 +3554,6 @@ mod tests {
     use base_execution_state_types::ExecutedBlock;
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
     use base_testing_support::{generators, generators::BlockParams};
-    use reth_primitives_traits::SealedBlock;
 
     use super::*;
     use crate::{

@@ -6,17 +6,19 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
+use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_execution_state_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
+};
+use base_execution_state_trie::{
+    DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted,
 };
 use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::PruneSegment;
 use base_execution_state_types::StageId;
 use base_execution_state_types::{ProviderError, ProviderResult};
 use metrics::{Counter, Histogram};
-use reth_primitives_traits::AlloyBlockHeader;
-use base_execution_state_trie::{DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted};
 use tracing::{debug, debug_span, instrument};
 
 use crate::overlay::OverlayManager;
@@ -605,10 +607,12 @@ mod tests {
     use crate::{BlockWriter, ProviderFactory, test_utils::create_test_provider_factory};
     use alloy_primitives::U256;
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_trie::{
+        BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,
+    };
     #[cfg(feature = "partial-persistence")]
     #[cfg(feature = "partial-persistence")]
     use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
-    use base_execution_state_trie::{BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles};
     use {crate::test_utils::TestBlockBuilder, base_execution_state_types::ExecutedBlock};
 
     use super::*;

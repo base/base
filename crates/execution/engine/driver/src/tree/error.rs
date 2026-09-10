@@ -1,13 +1,13 @@
 //! Internal errors for the tree module.
 
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedBlock;
 use base_execution_evm_blocks::ConsensusError;
 pub use base_execution_evm_blocks::{
     InsertBlockErrorKind, InsertBlockFatalError, InsertBlockValidationError,
 };
 use base_execution_payload_types::NewPayloadError;
 use base_execution_state_types::ProviderError;
-use reth_primitives_traits::SealedBlock;
 
 use crate::tree::payload_processor::bal::BalExecutionError;
 

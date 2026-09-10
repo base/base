@@ -5,9 +5,9 @@ use std::{
 };
 
 use alloy_primitives::map::AddressSet;
+use base_common_types_chain::InvalidTransactionError;
 use base_common_types_chain::{Transaction, Typed2718};
 use imbl::OrdMap;
-use reth_primitives_traits::transaction::error::InvalidTransactionError;
 use rustc_hash::FxHashSet;
 use tokio::sync::broadcast::{Receiver, error::TryRecvError};
 use tracing::debug;

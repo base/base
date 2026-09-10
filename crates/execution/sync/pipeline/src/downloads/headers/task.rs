@@ -6,10 +6,10 @@ use std::{
 };
 
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::SealedHeader;
 use futures::Stream;
 use futures_util::StreamExt;
 use pin_project::pin_project;
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::{mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::{ReceiverStream, UnboundedReceiverStream};
 use tokio_util::sync::PollSender;

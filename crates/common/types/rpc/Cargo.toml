@@ -50,39 +50,8 @@ alloy-primitives = {workspace = true, features = ["arbitrary", "rand", "rlp", "s
 
 [features]
 default = ["std", "serde"]
-std = [
-    "base-common-types-chain/std",
-    "alloy-eips/std",
-    "alloy-primitives/std",
-    "alloy-serde/std",
-    "derive_more/std",
-    "serde/std",
-    "serde_json/std",
-    "alloy-rlp/std",
-    "alloy-sol-types/std",
-    "serde_with?/std",
-    "thiserror/std",
-    "ipnet/std",
-]
-arbitrary = [
-    "base-common-types-chain/arbitrary",
-    "alloy-eips/arbitrary",
-    "alloy-primitives/arbitrary",
-    "alloy-serde/arbitrary",
-    "dep:arbitrary",
-    "std",
-    "alloy-sol-types/arbitrary",
-]
+std = ["base-common-types-chain/std", "alloy-eips/std", "alloy-primitives/std", "alloy-serde/std", "derive_more/std", "serde/std", "serde_json/std", "alloy-rlp/std", "alloy-sol-types/std", "serde_with?/std", "thiserror/std", "ipnet/std"]
+arbitrary = ["base-common-types-chain/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-serde/arbitrary", "dep:arbitrary", "std", "alloy-sol-types/arbitrary"]
 k256 = ["base-common-types-chain/k256", "alloy-eips/k256", "alloy-primitives/k256"]
-serde = [
-    "base-common-types-chain/serde",
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "rand_08/serde",
-]
-serde-bincode-compat = [
-    "serde",
-    "dep:serde_with",
-    "alloy-eips/serde-bincode-compat",
-    "base-common-types-chain/serde-bincode-compat",
-]
+serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "rand_08/serde"]
+serde-bincode-compat = ["serde", "dep:serde_with", "alloy-eips/serde-bincode-compat", "base-common-types-chain/serde-bincode-compat"]

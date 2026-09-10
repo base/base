@@ -7,7 +7,7 @@ use crate::SnapProtocolError;
 use alloy_chains::Chain;
 use alloy_eip2124::ValidationError;
 use alloy_primitives::B256;
-use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
+use base_common_types_chain::{GotExpected, GotExpectedBoxed};
 
 use crate::DisconnectReason;
 use crate::MessageError;

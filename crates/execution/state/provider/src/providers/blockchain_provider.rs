@@ -18,6 +18,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
 };
+use base_common_types_chain::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 use base_common_types_payload::ForkchoiceState;
 use base_execution_state_api::{
     BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
@@ -40,7 +41,6 @@ use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_primitives_traits::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 use tracing::trace;
 
 use super::state::latest::LatestStateProvider;
@@ -1009,6 +1009,7 @@ mod tests {
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
+    use base_common_types_chain::{BlockExt as _, RecoveredBlock, SealedBlock, SignerRecoverable};
     use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
     use base_execution_state_api::{
         BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
@@ -1034,7 +1035,6 @@ mod tests {
     };
     use itertools::Itertools;
     use rand::Rng;
-    use reth_primitives_traits::{Block as _, RecoveredBlock, SealedBlock, SignerRecoverable};
     use {
         crate::CanonStateSubscriptions, crate::NewCanonicalChain,
         crate::test_utils::TestBlockBuilder, base_execution_state_types::CanonStateNotification,

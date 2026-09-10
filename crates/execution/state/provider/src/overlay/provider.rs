@@ -2,21 +2,21 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
+use base_common_types_chain::{self as dashmap, DashMap};
 use base_execution_state_api::{
     BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
     DatabaseProviderROFactory, DbTxProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
 use base_execution_state_database::{DatabaseError, DbTx};
-use base_execution_state_types::ProviderResult;
-use metrics::{Counter, Histogram};
-use reth_primitives_traits::dashmap::{self, DashMap};
 use base_execution_state_trie::{
     DatabaseAccountTrieCursor, DatabaseHashedCursorFactory, DatabaseStorageTrieCursor,
     HashedPostStateSorted, PackedAccountsTrie, PackedKeyAdapter, PackedStoragesTrie,
     hashed_cursor::{HashedCursorFactory, HashedPostStateCursorFactory},
     trie_cursor::{InMemoryTrieCursor, TrieCursor, TrieCursorFactory, TrieStorageCursor},
 };
+use base_execution_state_types::ProviderResult;
+use metrics::{Counter, Histogram};
 use tracing::instrument;
 
 use crate::overlay::{Overlay, OverlayBuilder, database_state_frontiers};

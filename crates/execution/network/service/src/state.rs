@@ -18,6 +18,7 @@ use alloy_primitives::{
     B256,
     map::{FbBuildHasher, HashMap},
 };
+use base_common_types_chain::BlockExt as Block;
 use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_execution_network_types::PeerAddr;
 use base_execution_network_types::PeerId;
@@ -31,7 +32,6 @@ use base_execution_network_wire::NewBlockPayload;
 use base_execution_network_wire::ReceiptsResponse;
 use base_execution_network_wire::UnifiedStatus;
 use rand::seq::SliceRandom;
-use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
 

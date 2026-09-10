@@ -12,6 +12,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_observability_tracing::tracing::{debug, info};
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_discv5::enr::IP_ENR_KEY;
@@ -32,7 +33,6 @@ use base_execution_txpool_pool::{
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
 use base_node_config::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
-use reth_primitives_traits::SealedHeader;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::{

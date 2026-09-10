@@ -1,7 +1,7 @@
 use alloc::{sync::Arc, vec::Vec};
 
 use base_common_types_chain::BaseReceipt;
-use reth_primitives_traits::RecoveredBlock;
+use base_common_types_chain::RecoveredBlock;
 
 use crate::{BlockReceipts, Chain};
 
@@ -111,7 +111,7 @@ mod tests {
     use base_common_types_chain::{
         BaseTxEnvelope as TransactionSigned, BlockBody, SignableTransaction, TxLegacy,
     };
-    use reth_primitives_traits::{SealedBlock, SealedHeader};
+    use base_common_types_chain::{SealedBlock, SealedHeader};
 
     use super::*;
 

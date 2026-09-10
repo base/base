@@ -22,6 +22,10 @@ use base_common_types_chain::{
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, BlockExt as Block, GotExpected, RecoveredBlock, SealedHeader,
+    SignerRecoverable,
+};
 use base_execution_state_api::{
     BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,
     HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
@@ -32,19 +36,16 @@ use base_execution_state_database::{
     TxMock, models::AccountBeforeTx, models::StorageSettings, models::StoredBlockBodyIndices,
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_state_trie::{
+    AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
+    StorageProof, TrieInput, updates::TrieUpdates,
+};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
 use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use parking_lot::Mutex;
-use reth_primitives_traits::{
-    Block, BlockBody, GotExpected, RecoveredBlock, SealedHeader, SignerRecoverable,
-};
-use base_execution_state_trie::{
-    AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
-    StorageProof, TrieInput, updates::TrieUpdates,
-};
 use tokio::sync::broadcast;
 
 use crate::{

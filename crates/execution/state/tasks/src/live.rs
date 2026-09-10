@@ -3,14 +3,14 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+use base_common_types_chain::{BlockHeader as AlloyBlockHeader, RecoveredBlock};
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
-use derive_more::Constructor;
-use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use base_execution_state_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,
 };
 use base_execution_state_types::{HashedPostStateSorted, updates::TrieUpdatesSorted};
+use derive_more::Constructor;
 use tracing::{info, warn};
 
 use crate::{

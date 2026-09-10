@@ -3,7 +3,7 @@
 
 Reads `etc/upstream-pins/reth.toml` and keeps every git-based `reth-*`
 workspace dependency on one repository and one ref. Crates.io Reth crates
-(`reth-codecs`, `reth-primitives-traits`, `base-common-codec-storage`, …) are
+(`reth-codecs`, `base-common-types-chain`, `base-common-codec-storage`, …) are
 left unchanged.
 
 See `etc/upstream-pins/README.md`.
@@ -409,7 +409,7 @@ def run_cargo(root: Path, args: list[str]) -> None:
 def update_lockfile(root: Path, deps: list[GitDep]) -> None:
     """Refresh Cargo.lock from any git-based Reth workspace crate."""
     names = {dep.name for dep in deps}
-    package = "reth-primitives-traits" if "reth-primitives-traits" in names else deps[0].name
+    package = "base-common-types-chain" if "base-common-types-chain" in names else deps[0].name
     run_cargo(root, ["cargo", "update", "-p", package])
 
 

@@ -12,6 +12,7 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes, U256};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_client_ethereum::TransactionBuilder;
+use base_common_types_chain::Recovered;
 use base_common_types_chain::{BlockHeader, transaction::TxHashRef};
 use base_common_types_rpc::{
     BaseBlockResponse, BaseTransactionRequest, BlockId, Bundle, EthCallResponse, StateContext,
@@ -35,7 +36,6 @@ use base_execution_state_api::{BlockIdReader, ProviderTx};
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderError;
 use futures::Future;
-use reth_primitives_traits::Recovered;
 use tracing::{trace, warn};
 use {crate::OverrideBlockHashes, crate::apply_block_overrides, crate::apply_state_overrides};
 

@@ -11,6 +11,7 @@ use crate::PeersHandle;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
+use base_common_types_chain::BlockExt as Block;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
 };
@@ -47,7 +48,6 @@ use base_execution_state_api::{
 };
 use base_execution_txpool_pool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
-use reth_primitives_traits::Block;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 

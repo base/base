@@ -39,7 +39,7 @@ pub struct ParkedPool<T: ParkedOrd> {
     sender_transaction_count: FxHashMap<SenderId, SenderTransactionCount>,
     /// Keeps track of the size of this pool.
     ///
-    /// See also [`reth_primitives_traits::InMemorySize::size`].
+    /// See also [`base_common_types_chain::InMemorySize::size`].
     size_of: SizeTracker,
 }
 

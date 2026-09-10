@@ -14,12 +14,12 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{GotExpected, SealedHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_types::PeerId;
 use futures::{FutureExt, stream::Stream};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use rayon::prelude::*;
-use reth_primitives_traits::{GotExpected, SealedHeader};
 use thiserror::Error;
 use tracing::{debug, error, trace};
 use {

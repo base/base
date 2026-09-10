@@ -18,6 +18,7 @@ use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, BlockHeader, Transaction,
     transaction::{SignerRecoverable, TransactionMeta},
 };
+use base_common_types_chain::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
 use base_common_types_rpc::{BaseTransactionRequest, TransactionInfo, state::EvmOverrides};
 use base_execution_state_api::{
     BlockNumReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
@@ -27,7 +28,6 @@ use base_execution_txpool_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
 };
 use futures::Future;
-use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
 
 use super::EthSigner;
 use crate::BaseEthApi;

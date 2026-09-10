@@ -308,12 +308,12 @@ mod tests {
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
         SystemAddresses, TxDeposit,
     };
+    use base_common_types_chain::{BlockExt as _, Recovered, SealedBlock};
     use base_execution_evm_runtime::L1BlockInfo;
     use base_execution_evm_runtime::{
         database::{BundleState, CacheDB, EmptyDB},
         state::{AccountInfo, Bytecode},
     };
-    use reth_primitives_traits::{Block as _, Recovered, SealedBlock};
 
     use super::*;
 
@@ -601,9 +601,9 @@ mod tests {
         //    `with_bal_builder`.
         // 4. Feed that BAL into `execute_block` and assert the deposit and user receipts.
         use alloy_primitives::TxKind;
+        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_testing_support::{generators::generate_key, generators::rng};
-        use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -839,9 +839,9 @@ mod tests {
         // Two senders → same recipient. Byte-equal across paths means: worker-produced
         // diffs commit identically to a directly-executed serial path.
         use alloy_primitives::TxKind;
+        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_testing_support::{generators::generate_key, generators::rng};
-        use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -885,10 +885,10 @@ mod tests {
         // commit loop must still reject tx2 because tx1's committed gas leaves too little
         // block gas for tx2's gas limit.
         use alloy_primitives::TxKind;
+        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_execution_evm_runtime::BlockValidationError;
         use base_testing_support::{generators::generate_key, generators::rng};
-        use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -965,9 +965,9 @@ mod tests {
         // Deploys `0x60006000fd` (PUSH1 0 PUSH1 0 REVERT) at `revert_contract`. Sender calls
         // it; the call reverts; fees + nonce still apply.
         use alloy_primitives::{Bytes, TxKind, keccak256};
+        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_testing_support::{generators::generate_key, generators::rng};
-        use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -1022,9 +1022,9 @@ mod tests {
         //
         // Bytecode: PUSH1 0x42, PUSH1 0x00, SSTORE, STOP → `0x60 0x42 0x60 0x00 0x55 0x00`.
         use alloy_primitives::{Bytes, TxKind, keccak256};
+        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_testing_support::{generators::generate_key, generators::rng};
-        use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),

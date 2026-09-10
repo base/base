@@ -19,7 +19,6 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-primitives-traits = {workspace = true}
 alloy-rpc-types-debug = { workspace = true }
 serde = {workspace = true, features = ["std"]}
 base-execution-evm-machine = {workspace = true}
@@ -44,7 +43,7 @@ base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-types = {features = ["default"], workspace = true}
 base-execution-txpool-pool = {workspace = true, features = ["default"]}
-base-common-types-chain = {workspace = true, features = ["reth", "std"]}
+base-common-types-chain = {features = ["k256", "reth", "std"], workspace = true}
 base-execution-payload-types = {workspace = true, features = ["default"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-common-chain-config = {workspace = true, features = ["default", "std"]}
@@ -80,4 +79,4 @@ base-execution-state-database = { workspace = true, features = ["default", "test
 [features]
 default = ["metrics"]
 metrics = ["base-execution-evm-runtime/metrics", "base-common-observability-metrics/metrics", "base-common-observability-events/metrics", "base-execution-evm-blocks/metrics"]
-test-utils = ["base-execution-state-types/test-utils", "reth-primitives-traits/test-utils", "tokio/rt", "base-execution-state-tasks/test-utils", "base-execution-state-memory/test-utils"]
+test-utils = ["base-execution-state-types/test-utils", "base-common-types-chain/test-utils", "tokio/rt", "base-execution-state-tasks/test-utils", "base-execution-state-memory/test-utils"]

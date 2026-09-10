@@ -1,8 +1,5 @@
 //! Signature types and helpers
 
-/// Re-exported signature type
-pub use alloy_primitives::Signature;
-
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use std::str::FromStr;

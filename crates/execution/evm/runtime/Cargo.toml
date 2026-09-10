@@ -52,51 +52,10 @@ base-execution-evm-precompiles = { workspace = true, features = ["test-utils"] }
 serde_json = {features = ["alloc", "default", "preserve_order"], workspace = true}
 
 [features]
-default = [
-    "blst",
-    "c-kzg",
-    "portable",
-    "secp256k1",
-    "std",
-]
-std = [
-    "alloy-eips/std",
-    "alloy-primitives/std",
-    "base-common-chain-config/std",
-    "base-execution-evm-fees/std",
-    "base-execution-evm-precompiles/std",
-    "base-common-types-chain/std",
-    "base-execution-evm-machine/std",
-    "base-common-observability-metrics?/std",
-    "base-execution-state-memory/std",
-    "derive_more/std",
-    "either/std",
-    "base-execution-evm-primitives/std",
-    "base-execution-evm-crypto/std",
-    "serde?/std",
-    "serde_json?/preserve_order",
-    "serde_json?/std",
-    "thiserror/std",
-    "tracing/std",
-    "base-execution-state-types/std",
-]
-serde = [
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "base-common-chain-config/serde",
-    "base-common-types-chain/serde",
-    "base-execution-evm-machine/serde",
-    "base-execution-state-memory/serde",
-    "dep:serde",
-    "either/serde",
-    "base-execution-evm-primitives/serde",
-]
-metrics = [
-    "base-common-observability-metrics/metrics",
-    "dep:base-common-observability-metrics",
-    "dep:metrics",
-    "std",
-]
+default = ["blst", "c-kzg", "portable", "secp256k1", "std"]
+std = ["alloy-eips/std", "alloy-primitives/std", "base-common-chain-config/std", "base-execution-evm-fees/std", "base-execution-evm-precompiles/std", "base-common-types-chain/std", "base-execution-evm-machine/std", "base-common-observability-metrics?/std", "base-execution-state-memory/std", "derive_more/std", "either/std", "base-execution-evm-primitives/std", "base-execution-evm-crypto/std", "serde?/std", "serde_json?/preserve_order", "serde_json?/std", "thiserror/std", "tracing/std", "base-execution-state-types/std"]
+serde = ["alloy-eips/serde", "alloy-primitives/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-evm-machine/serde", "base-execution-state-memory/serde", "dep:serde", "either/serde", "base-execution-evm-primitives/serde"]
+metrics = ["base-common-observability-metrics/metrics", "dep:base-common-observability-metrics", "dep:metrics", "std"]
 bn = ["base-execution-evm-precompiles/bn", "base-execution-evm-crypto/bn"]
 blst = ["base-execution-evm-precompiles/blst", "base-execution-evm-crypto/blst"]
 c-kzg = ["base-execution-evm-precompiles/c-kzg", "base-execution-evm-crypto/c-kzg"]
@@ -110,24 +69,11 @@ optional_fee_charge = ["base-execution-evm-precompiles/optional_fee_charge", "ba
 optional_balance_check = ["base-execution-evm-precompiles/optional_balance_check", "base-execution-evm-machine/optional_balance_check"]
 optional_block_gas_limit = ["base-execution-evm-precompiles/optional_block_gas_limit", "base-execution-evm-machine/optional_block_gas_limit"]
 serde-json = ["serde", "tracer"]
-tracer = [
-    "dep:serde",
-    "dep:serde_json",
-    "serde",
-    "std",
-]
+tracer = ["dep:serde", "dep:serde_json", "serde", "std"]
 asm-keccak = ["alloy-primitives/asm-keccak", "base-execution-evm-primitives/asm-keccak"]
 gmp = ["base-execution-evm-crypto/gmp"]
 arbitrary = ["base-execution-evm-primitives/arbitrary"]
-dev = [
-    "memory_limit",
-    "optional_balance_check",
-    "optional_block_gas_limit",
-    "optional_eip3541",
-    "optional_eip3607",
-    "optional_eip7623",
-    "optional_no_base_fee",
-]
+dev = ["memory_limit", "optional_balance_check", "optional_block_gas_limit", "optional_eip3541", "optional_eip3607", "optional_eip7623", "optional_no_base_fee"]
 hashbrown = ["base-execution-evm-machine/hashbrown", "base-execution-evm-crypto/hashbrown"]
 map-foldhash = ["base-execution-evm-primitives/map-foldhash"]
 optional_eip7623 = ["base-execution-evm-machine/optional_eip7623"]

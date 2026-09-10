@@ -18,6 +18,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
 };
+use base_common_types_chain::{RecoveredBlock, SealedHeader};
 use base_execution_state_api::{
     BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -32,7 +33,6 @@ use base_execution_state_types::{
 use base_execution_state_types::{PipelineTarget, StageCheckpoint, StageId};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
-use reth_primitives_traits::{RecoveredBlock, SealedHeader};
 use tracing::{info, instrument, trace, warn};
 
 use crate::{
@@ -1015,6 +1015,7 @@ mod tests {
     use alloy_primitives::{B256, TxNumber};
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
+    use base_common_types_chain::SignerRecoverable;
     use base_execution_state_database::{DbTxMut, tables};
     use base_execution_state_database::{
         mdbx::DatabaseArguments, test_utils::ERROR_TEMPDIR, test_utils::create_test_rocksdb_dir,
@@ -1023,7 +1024,6 @@ mod tests {
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::{PruneMode, PruneModes};
     use base_testing_support::{generators, generators::BlockParams, generators::random_header};
-    use reth_primitives_traits::SignerRecoverable;
 
     use super::*;
     use crate::{

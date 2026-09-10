@@ -38,6 +38,7 @@ use alloy_primitives::{
 };
 #[cfg(test)]
 use base_common_types_chain::EthereumTxEnvelope;
+use base_common_types_chain::SignedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
 use base_common_types_chain::transaction::PooledTransaction;
@@ -53,7 +54,6 @@ use base_execution_network_wire::{RequestError, RequestResult};
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;
-use reth_primitives_traits::SignedTransaction;
 use schnellru::ByLength;
 use tokio::sync::{mpsc::error::TrySendError, oneshot, oneshot::error::RecvError};
 use tracing::trace;

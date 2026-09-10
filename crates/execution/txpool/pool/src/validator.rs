@@ -19,6 +19,9 @@ use base_common_types_chain::{
     Eip8130Signed, Eip8130TimestampError, InitialActor, SignedChange, Transaction,
     constants::KECCAK_EMPTY,
 };
+use base_common_types_chain::{
+    BlockExt as Block, GotExpected, InvalidTransactionError, SealedBlock,
+};
 use base_execution_evm_machine::JournalCheckpoint;
 use base_execution_evm_precompiles::NonceManagerStorage;
 use base_execution_evm_precompiles::{
@@ -40,9 +43,6 @@ use base_execution_txpool_pool::{
 };
 use lru::LruCache;
 use parking_lot::RwLock;
-use reth_primitives_traits::{
-    Block, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
-};
 
 use crate::{
     BasePooledTransaction, ConfigSlot, DataAvailabilitySized, InvalidationKey, LimitClass,
@@ -2174,11 +2174,11 @@ mod tests {
     };
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_evm_precompiles::{AccountChangeApplier, ConfigChangeAuthorizer};
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use base_execution_txpool_pool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use base_testing_support::{Account, build_test_genesis_zenith};
-    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
 

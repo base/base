@@ -231,11 +231,11 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::Header;
+    use base_common_types_chain::SealedHeader;
     use base_execution_network_service::test_utils::TestFullBlockClient;
     use base_execution_sync_pipeline::ExecOutput;
     use base_execution_sync_pipeline::StageCheckpoint;
     use futures::poll;
-    use reth_primitives_traits::SealedHeader;
 
     use super::*;
     use crate::test_utils::{TestPipelineBuilder, insert_headers_into_client};

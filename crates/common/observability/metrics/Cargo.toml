@@ -39,16 +39,5 @@ required-features = ["metrics"]
 
 [features]
 std = ["dep:libc"]
-metrics = [
-    "dep:ctor",
-    "dep:metrics",
-    "std",
-    "dep:metrics-derive",
-]
-common = [
-    "tokio",
-    "futures",
-    "tokio-util",
-    "base-common-types-chain",
-    "metrics",
-]
+metrics = ["dep:ctor", "dep:metrics", "std", "dep:metrics-derive"]
+common = ["tokio", "futures", "tokio-util", "base-common-types-chain", "metrics"]

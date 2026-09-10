@@ -7,6 +7,7 @@ use crate::{
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use alloy_rlp::Decodable;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::SealedHeader;
 use base_execution_state_database::{
     DbCursorRO, DbCursorRW, DbTx, DbTxMut, DbTxUnwindExt, RawKey, RawTable, RawValue, tables,
 };
@@ -18,7 +19,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::EtlConfig;
 use base_execution_state_types::StaticFileSegment;
 use futures_util::StreamExt;
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::watch;
 use tracing::*;
 use {

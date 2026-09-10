@@ -7,7 +7,7 @@ use base_common_types_chain::EthereumTxEnvelope;
 use base_common_types_chain::EthereumTypedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
-use reth_primitives_traits::{SignedTransaction, transaction::signed::RecoveryError};
+use base_common_types_chain::{RecoveryError, SignedTransaction};
 
 /// Number of entries retained in the default sender recovery cache.
 const SENDER_RECOVERY_CACHE_CAPACITY: usize = 1 << 17;

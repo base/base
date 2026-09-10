@@ -1,8 +1,8 @@
 //! Error types for the `block` module.
 
-use crate::transaction::signed::RecoveryError;
+use crate::RecoveryError;
 
-/// Type alias for [`BlockRecoveryError`] with a [`SealedBlock`](crate::SealedBlock) value.
+/// Type alias for [`BlockRecoveryError`] with a [`SealedBlock`](crate::sealed_block::SealedBlock) value.
 ///
 /// This error type is specifically used when recovering a sealed block fails.
 /// It contains the original sealed block that could not be recovered, allowing
@@ -15,7 +15,7 @@ use crate::transaction::signed::RecoveryError;
 /// use base_common_types_chain::{Header, Signed, TxLegacy};
 /// use base_common_types_chain::{BaseBlock, BaseBlockBody, BaseTxEnvelope};
 /// use alloy_primitives::{Signature, B256};
-/// use reth_primitives_traits::{block::error::SealedBlockRecoveryError, SealedBlock};
+/// use base_common_types_chain::{SealedBlockRecoveryError, SealedBlock};
 ///
 /// // Create a simple block for demonstration
 /// let header = Header::default();
@@ -35,10 +35,10 @@ use crate::transaction::signed::RecoveryError;
 /// let failed_block = error.into_inner();
 /// // Now you can inspect the failed block or try recovery again
 /// ```
-pub type SealedBlockRecoveryError = BlockRecoveryError<crate::SealedBlock>;
+pub type SealedBlockRecoveryError = BlockRecoveryError<crate::sealed_block::SealedBlock>;
 
-/// Error when recovering a block from [`SealedBlock`](crate::SealedBlock) to
-/// [`RecoveredBlock`](crate::RecoveredBlock).
+/// Error when recovering a block from [`SealedBlock`](crate::sealed_block::SealedBlock) to
+/// [`RecoveredBlock`](crate::sealed_block::RecoveredBlock).
 ///
 /// This error is returned when the block recovery fails and contains the erroneous block, because
 /// recovering a block takes ownership of the block.

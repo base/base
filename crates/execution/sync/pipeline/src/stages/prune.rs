@@ -190,12 +190,12 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_common_types_chain::{SealedBlock, SignerRecoverable};
     use base_execution_state_maintenance::PruneMode;
     use base_execution_state_provider::{
         TransactionsProvider, TransactionsProviderExt, providers::StaticFileWriter,
     };
     use base_testing_support::{generators, generators::BlockRangeParams};
-    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
 
     use super::*;
     use crate::test_utils::{

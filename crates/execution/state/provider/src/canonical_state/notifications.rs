@@ -6,9 +6,9 @@ use std::{
 };
 
 use alloy_eips::BlockNumHash;
+use base_common_types_chain::SealedHeader;
 use base_execution_state_types::CanonStateNotification;
 use derive_more::{Deref, DerefMut};
-use reth_primitives_traits::SealedHeader;
 use tokio::sync::{broadcast, watch};
 use tokio_stream::{
     Stream,

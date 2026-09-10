@@ -139,7 +139,7 @@ pub struct LocalMiner<B, Pool: TransactionPool + Unpin> {
     /// The payload builder for the engine
     payload_builder: PayloadBuilderHandle,
     /// Latest block in the chain so far.
-    last_header: reth_primitives_traits::SealedHeader,
+    last_header: base_common_types_chain::SealedHeader,
     /// Stores latest mined blocks.
     last_block_hashes: VecDeque<B256>,
     /// Number of confirmations required before a block is finalized.

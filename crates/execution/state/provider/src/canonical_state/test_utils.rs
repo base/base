@@ -14,18 +14,18 @@ use base_common_types_chain::{
     BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559,
     TxReceipt,
 };
-use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{
-    BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
-};
-use rand::Rng;
-use reth_primitives_traits::{
+use base_common_types_chain::{
     Recovered, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction,
     proofs::calculate_receipt_root, proofs::calculate_transaction_root,
     proofs::calculate_withdrawals_root,
 };
+use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
+use base_execution_state_types::{
+    BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+};
+use rand::Rng;
 use tokio::sync::broadcast::{self, Sender};
 
 use crate::canonical_state::{
@@ -289,7 +289,8 @@ impl TestBlockBuilder {
             .build();
 
         let hashed_state =
-            base_execution_state_trie::HashedPostState::from_bundle_state(bundle.state.iter()).into_sorted();
+            base_execution_state_trie::HashedPostState::from_bundle_state(bundle.state.iter())
+                .into_sorted();
 
         let block_receipts = if receipts.is_empty() {
             recovered

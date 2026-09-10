@@ -12,11 +12,11 @@ use crate::BodiesConfig;
 use alloy_primitives::BlockNumber;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{InMemorySize, SealedHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_state_api::HeaderProvider;
 use futures::Stream;
 use futures_util::StreamExt;
-use reth_primitives_traits::{InMemorySize, SealedHeader};
 use tracing::info;
 use {
     base_execution_network_service::BlockResponse, base_execution_network_service::BodyDownloader,

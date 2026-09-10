@@ -15,6 +15,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::{EthGetBlock, ProviderCall};
 use base_common_client_ethereum::{Ethereum, Network};
 use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
+use base_common_types_chain::{SealedBlock, SealedHeader};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
@@ -42,7 +43,6 @@ use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::HashedStorage;
 use base_execution_txpool_pool::NoopTransactionPool;
 use base_testing_support::build_test_genesis;
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 
 use crate::action_fixtures::{SharedBlockHashRegistry, SharedL1Chain};
 

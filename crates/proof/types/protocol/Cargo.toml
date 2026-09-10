@@ -28,34 +28,7 @@ serde_json = { workspace = true, features = ["std"] }
 
 [features]
 default = []
-std = [
-	"alloy-chains/std",
-	"alloy-eips/std",
-	"alloy-primitives/std",
-	"base-common-chain-config/std",
-	"base-proof-witness-preimage/std",
-	"serde?/std",
-	"thiserror/std",
-]
-serde = [
-	"alloy-chains/serde",
-	"alloy-eips/serde",
-	"alloy-primitives/serde",
-	"base-common-chain-config/serde",
-	"base-proof-witness-preimage/serde",
-	"dep:serde",
-]
-rpc-server = [
-	"dep:jsonrpsee",
-	"jsonrpsee/macros",
-	"jsonrpsee/server",
-	"serde",
-	"std",
-]
-rpc-client = [
-	"dep:jsonrpsee",
-	"jsonrpsee/http-client",
-	"jsonrpsee/macros",
-	"serde",
-	"std",
-]
+std = ["alloy-chains/std", "alloy-eips/std", "alloy-primitives/std", "base-common-chain-config/std", "base-proof-witness-preimage/std", "serde?/std", "thiserror/std"]
+serde = ["alloy-chains/serde", "alloy-eips/serde", "alloy-primitives/serde", "base-common-chain-config/serde", "base-proof-witness-preimage/serde", "dep:serde"]
+rpc-server = ["dep:jsonrpsee", "jsonrpsee/macros", "jsonrpsee/server", "serde", "std"]
+rpc-client = ["dep:jsonrpsee", "jsonrpsee/http-client", "jsonrpsee/macros", "serde", "std"]

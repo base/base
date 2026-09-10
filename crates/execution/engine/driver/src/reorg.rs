@@ -10,6 +10,7 @@ use std::{
 use alloy_primitives::Bytes;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BlockHeader, Transaction};
+use base_common_types_chain::{BlockBodyExt as _, BlockExt as _, SealedBlock, SignedTransaction};
 use base_common_types_payload::{ForkchoiceState, PayloadStatus};
 use base_execution_engine_types::{
     BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated,
@@ -22,7 +23,6 @@ use base_execution_payload_types::BaseBuiltPayload;
 use base_execution_state_api::{BlockReader, ProviderError, StateProviderFactory};
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
-use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use tokio::sync::oneshot;
 use tracing::*;
 

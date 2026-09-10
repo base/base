@@ -4,8 +4,10 @@ use core::ops::RangeInclusive;
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{B256, BlockNumber, TxNumber};
 use base_common_types_chain::BaseReceipt;
+use base_common_types_chain::{
+    BlockExt as _, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock,
+};
 use base_execution_state_types::ProviderResult;
-use reth_primitives_traits::{Block as _, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
 
 use crate::{
     BlockBodyIndicesProvider, BlockNumReader, HeaderProvider, ReceiptProvider,
@@ -59,7 +61,7 @@ pub trait BlockReader:
     + Send
 {
     /// The block type this provider reads.
-    type Block: reth_primitives_traits::Block;
+    type Block: base_common_types_chain::BlockExt;
 
     /// Tries to find in the given block source.
     ///

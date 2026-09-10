@@ -39,8 +39,7 @@ base-execution-state-maintenance = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
-base-common-types-chain = { workspace = true, features = ["reth"] }
-reth-primitives-traits = { workspace = true, features = ["rayon"] }
+base-common-types-chain = {features = ["k256", "rayon", "reth"], workspace = true}
 toml_0_9_12_spec_1_1_0 = {workspace = true, features = ["default"]}
 base-execution-sync-pipeline = {workspace = true,features = ["serde"]}
 base-execution-network-wire = {workspace = true, features = ["requests"]}

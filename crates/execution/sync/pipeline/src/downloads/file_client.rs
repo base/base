@@ -4,6 +4,7 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, BlockHash, BlockNumber};
 use async_compression::tokio::bufread::GzipDecoder;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{SealedBlock, SealedHeader};
 use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
 use base_execution_network_types::PeerId;
 use base_execution_network_wire::{
@@ -12,7 +13,6 @@ use base_execution_network_wire::{
 };
 use futures::Future;
 use itertools::{Either, Itertools};
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 use thiserror::Error;
 use tokio::{
     fs::File,

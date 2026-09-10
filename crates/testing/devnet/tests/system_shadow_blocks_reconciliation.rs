@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, Signature};
 use anyhow::Result;
+use base_common_types_chain::RecoveredBlock;
 use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, Header, SignableTransaction, TxDeposit, TxEip1559,
 };
@@ -12,7 +13,6 @@ use base_execution_state_indexer::{
     ShadowDbConfig, ShadowWrite,
 };
 use chrono::Utc;
-use reth_primitives_traits::RecoveredBlock;
 use sqlx::PgPool;
 use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;

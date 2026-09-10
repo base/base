@@ -12,10 +12,10 @@ use base_common_types_chain::{
 };
 use derive_more::Deref;
 
-use crate::{
+use crate::sealed_block::{
     Block, BlockBody, InMemorySize, SealedHeader,
     block::{SealedBlock, error::SealedBlockRecoveryError},
-    transaction::signed::{RecoveryError, SignedTransaction},
+    RecoveryError, SignedTransaction,
 };
 
 /// A block with senders recovered from the block's transactions.
@@ -110,7 +110,7 @@ impl RecoveredBlock {
 
     /// A safer variant of [`Self::new`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
-    /// not using [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer`](crate::SignedTransaction)
     /// to recover the senders.
     pub fn try_new(
         block: BaseBlock,
@@ -130,7 +130,7 @@ impl RecoveredBlock {
 
     /// A safer variant of [`Self::new`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
-    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction)
     /// to recover the senders.
     pub fn try_new_unchecked(
         block: BaseBlock,
@@ -150,7 +150,7 @@ impl RecoveredBlock {
 
     /// A safer variant of [`Self::new_unhashed`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
-    /// not using [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer`](crate::SignedTransaction)
     /// to recover the senders.
     pub fn try_new_unhashed(
         block: BaseBlock,
@@ -166,7 +166,7 @@ impl RecoveredBlock {
 
     /// A safer variant of [`Self::new_unhashed`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
-    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction)
     /// to recover the senders.
     pub fn try_new_unhashed_unchecked(
         block: BaseBlock,
@@ -181,7 +181,7 @@ impl RecoveredBlock {
     }
 
     /// Recovers the senders from the transactions in the block using
-    /// [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction).
+    /// [`SignedTransaction::recover_signer`](crate::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
     pub fn try_recover(block: BaseBlock) -> Result<Self, RecoveryError> {
@@ -190,7 +190,7 @@ impl RecoveredBlock {
     }
 
     /// Recovers the senders from the transactions in the block using
-    /// [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction).
+    /// [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
     pub fn try_recover_unchecked(block: BaseBlock) -> Result<Self, RecoveryError> {
@@ -199,7 +199,7 @@ impl RecoveredBlock {
     }
 
     /// Recovers the senders from the transactions in the block using
-    /// [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction).
+    /// [`SignedTransaction::recover_signer`](crate::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
     pub fn try_recover_sealed(block: SealedBlock) -> Result<Self, SealedBlockRecoveryError> {
@@ -211,7 +211,7 @@ impl RecoveredBlock {
     }
 
     /// Recovers the senders from the transactions in the sealed block using
-    /// [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction).
+    /// [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction).
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
     pub fn try_recover_sealed_unchecked(
@@ -226,7 +226,7 @@ impl RecoveredBlock {
 
     /// A safer variant of [`Self::new_sealed`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
-    /// not using [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer`](crate::SignedTransaction)
     /// to recover the senders.
     ///
     /// Returns an error if any of the transactions fail to recover the sender.
@@ -240,7 +240,7 @@ impl RecoveredBlock {
 
     /// A safer variant of [`Self::new_sealed`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
-    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction)
+    /// not using [`SignedTransaction::recover_signer_unchecked`](crate::SignedTransaction)
     /// to recover the senders.
     pub fn try_recover_sealed_with_senders_unchecked(
         block: SealedBlock,

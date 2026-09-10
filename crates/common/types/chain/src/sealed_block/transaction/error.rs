@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 
-use crate::GotExpectedBoxed;
+use crate::sealed_block::GotExpectedBoxed;
 
 /// Represents error variants that can happen when trying to validate a transaction.
 #[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]

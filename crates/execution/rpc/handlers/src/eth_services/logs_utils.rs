@@ -8,11 +8,11 @@ use alloy_primitives::TxHash;
 use base_common_types_chain::{
     BaseReceipt, BlockHeader, ChainInfo, TxReceipt, transaction::TxHashRef,
 };
+use base_common_types_chain::{RecoveredBlock, SignedTransaction};
 use base_common_types_rpc::{Filter, Log};
 use base_execution_state_api::BlockReader;
 use base_execution_state_types::ProviderError;
 use jsonrpsee_types::ErrorObject;
-use reth_primitives_traits::{RecoveredBlock, SignedTransaction};
 use thiserror::Error;
 
 use crate::eth_services::EthApiError;
@@ -22,7 +22,7 @@ use crate::eth_services::EthApiError;
 pub fn matching_block_logs_with_tx_hashes<'a, I, C>(
     converter: &crate::eth_services::BaseRpcConverter<C>,
     filter: &Filter,
-    header: &reth_primitives_traits::SealedHeader,
+    header: &base_common_types_chain::SealedHeader,
     tx_hashes_and_receipts: I,
     removed: bool,
 ) -> Result<Vec<Log>, crate::eth_services::BaseEthApiError>
@@ -87,7 +87,7 @@ pub fn append_matching_block_logs<P, C>(
     converter: &crate::eth_services::BaseRpcConverter<C>,
     provider_or_block: ProviderOrBlock<'_, P>,
     filter: &Filter,
-    header: &reth_primitives_traits::SealedHeader,
+    header: &base_common_types_chain::SealedHeader,
     receipts: &[BaseReceipt],
     removed: bool,
 ) -> Result<(), EthApiError>

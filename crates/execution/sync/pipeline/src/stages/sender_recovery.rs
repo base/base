@@ -20,7 +20,7 @@ use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, Prune
 use thiserror::Error;
 use tracing::*;
 use {
-    reth_primitives_traits::GotExpected, reth_primitives_traits::SignedTransaction,
+    base_common_types_chain::GotExpected, base_common_types_chain::SignedTransaction,
     std::time::Instant,
 };
 
@@ -468,7 +468,7 @@ mod tests {
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode};
     use base_testing_support::{generators, generators::BlockParams, generators::BlockRangeParams};
-    use {reth_primitives_traits::SealedBlock, reth_primitives_traits::SignerRecoverable};
+    use {base_common_types_chain::SealedBlock, base_common_types_chain::SignerRecoverable};
 
     use super::*;
     use crate::test_utils::{

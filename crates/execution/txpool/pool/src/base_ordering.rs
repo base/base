@@ -199,13 +199,13 @@ mod tests {
     use alloy_sol_types::SolCall;
     use base_common_chain_config::ChainConfig;
     use base_common_client_ethereum::PrivateKeySigner;
+    use base_common_types_chain::Recovered;
     use base_common_types_chain::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
         Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
     };
     use base_execution_txpool_pool::{BaseOrdering, test_utils::TransactionBuilder};
     use base_testing_support::Account;
-    use reth_primitives_traits::Recovered;
 
     use super::*;
     use crate::{BasePooledTransaction, ValidityOperator, ValidityPredicate};

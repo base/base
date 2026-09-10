@@ -44,14 +44,14 @@ use tokio::sync::{
 };
 use tracing::*;
 use {
+    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedBlock,
+    base_common_types_chain::SealedHeader, std::time::Instant,
+};
+use {
     base_execution_state_provider::CanonicalInMemoryState,
     base_execution_state_provider::MemoryOverlayStateProvider,
     base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock,
     base_execution_state_types::ExecutionTimingStats,
-};
-use {
-    reth_primitives_traits::RecoveredBlock, reth_primitives_traits::SealedBlock,
-    reth_primitives_traits::SealedHeader, std::time::Instant,
 };
 
 use crate::{

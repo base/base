@@ -44,9 +44,4 @@ aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"]
 
 [features]
 default = ["metrics"]
-metrics = [
-    "base-common-observability-metrics/metrics",
-    "base-common-observability-events/metrics",
-    "dep:metrics",
-    "tower-http/metrics",
-]
+metrics = ["base-common-observability-metrics/metrics", "base-common-observability-events/metrics", "dep:metrics", "tower-http/metrics"]

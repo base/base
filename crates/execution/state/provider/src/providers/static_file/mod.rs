@@ -25,7 +25,7 @@ use base_execution_state_types::{SegmentHeader, StaticFileSegment};
 
 /// Alias type for each specific `NippyJar`.
 type LoadedJarRef<'a> =
-    reth_primitives_traits::dashmap::mapref::one::Ref<'a, (u64, StaticFileSegment), LoadedJar>;
+    base_common_types_chain::mapref::one::Ref<'a, (u64, StaticFileSegment), LoadedJar>;
 
 /// Helper type to reuse an associated static file mmap handle on created cursors.
 #[derive(Debug)]

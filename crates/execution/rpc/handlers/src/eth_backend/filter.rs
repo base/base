@@ -19,6 +19,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::TxHash;
 use async_trait::async_trait;
 use base_common_runtime_tasks::Runtime;
+use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{BaseReceipt, BlockHeader};
 use base_common_types_rpc::{
     Filter, FilterBlockOption, FilterChanges, FilterId, Log, PendingTransactionFilterKind,
@@ -36,7 +37,6 @@ use futures::{
 };
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
-use reth_primitives_traits::SealedHeader;
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,
@@ -998,7 +998,7 @@ struct ReceiptBlockResult {
     /// We always need the entire receipts for the matching block.
     receipts: Arc<Vec<BaseReceipt>>,
     /// Block can be optional and we can fetch it lazily when needed.
-    recovered_block: Option<Arc<reth_primitives_traits::RecoveredBlock>>,
+    recovered_block: Option<Arc<base_common_types_chain::RecoveredBlock>>,
     /// The header of the block.
     header: SealedHeader,
 }

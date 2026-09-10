@@ -26,7 +26,7 @@ use clap::Parser;
 use eyre::WrapErr;
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
-use {base_common_observability_metrics::GasDisplay, reth_primitives_traits::GotExpected};
+use {base_common_observability_metrics::GasDisplay, base_common_types_chain::GotExpected};
 
 use crate::{AccessRights, CliNodeComponents, Environment, EnvironmentArgs};
 

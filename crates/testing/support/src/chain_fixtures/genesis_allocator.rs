@@ -8,7 +8,7 @@ use alloy_primitives::{
     Address, B256, Bytes, U256,
     map::{AddressMap, Entry},
 };
-use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
+use base_common_types_chain::crypto::secp256k1::public_key_to_address;
 use secp256k1::{
     Keypair, Secp256k1,
     rand::{RngCore, thread_rng},

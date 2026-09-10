@@ -17,7 +17,6 @@ alloy-eips = {workspace = true}
 alloy-trie = { workspace = true }
 futures-util = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-primitives-traits = {workspace = true}
 rayon = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-consensus-batch-types = { workspace = true }
@@ -28,7 +27,7 @@ derive_more = { workspace = true, features = ["full"] }
 fixed-cache = { workspace = true, features = ["alloc"] }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 base-execution-state-memory = {workspace = true,optional = true}
-base-common-types-chain = {features = ["reth"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["k256", "reth"]}
 base-execution-state-trie = { workspace = true, optional = true }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 base-execution-evm-runtime = {features = ["std"], workspace = true}
@@ -63,65 +62,17 @@ required-features = ["test-utils"]
 
 [features]
 default = ["metrics", "std"]
-metrics = [
-    "base-execution-evm-runtime/metrics",
-    "std",
-    "dep:metrics",
-    "dep:base-common-observability-metrics",
-]
-std = [
-    "alloy-chains/std",
-    "alloy-eip7928/std",
-    "alloy-eips/std",
-    "alloy-primitives/std",
-    "alloy-rlp?/std",
-    "alloy-trie/std",
-    "base-common-chain-config/std",
-    "base-execution-evm-runtime/std",
-    "base-common-types-chain/std",
-    "base-execution-payload-types/std",
-    "base-consensus-batch-types/std",
-    "dep:rayon",
-    "derive_more/std",
-    "fixed-cache/std",
-    "futures-util/std",
-    "base-execution-state-types/std",
-    "reth-primitives-traits/std",
-    "base-execution-state-api/std",
-    "thiserror/std",
-    "tracing/std",
-    "base-execution-state-memory?/std",
-]
+metrics = ["base-execution-evm-runtime/metrics", "std", "dep:metrics", "dep:base-common-observability-metrics"]
+std = ["alloy-chains/std", "alloy-eip7928/std", "alloy-eips/std", "alloy-primitives/std", "alloy-rlp?/std", "alloy-trie/std", "base-common-chain-config/std", "base-execution-evm-runtime/std", "base-common-types-chain/std", "base-execution-payload-types/std", "base-consensus-batch-types/std", "dep:rayon", "derive_more/std", "fixed-cache/std", "futures-util/std", "base-execution-state-types/std", "base-common-types-chain/std", "base-execution-state-api/std", "thiserror/std", "tracing/std", "base-execution-state-memory?/std"]
 portable = ["base-execution-evm-runtime/portable"]
-test-utils = [
-    "dep:base-execution-state-trie",
-    "reth-primitives-traits/test-utils",
-    "base-execution-state-types/test-utils",
-    "base-execution-state-trie?/test-utils",
-    "std",
-    "base-execution-state-memory/test-utils",
-]
+test-utils = ["dep:base-execution-state-trie", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-execution-state-trie?/test-utils", "std", "base-execution-state-memory/test-utils"]
 witness = ["dep:base-execution-state-trie", "dep:alloy-rlp", "dep:alloy-rpc-types-debug"]
-serde = [
-    "base-execution-evm-runtime/serde",
-    "alloy-primitives/serde",
-    "base-common-types-chain/serde",
-    "base-execution-state-trie?/serde",
-    "reth-primitives-traits/serde",
-    "base-execution-state-api/serde",
-    "base-execution-state-memory?/serde",
-]
+serde = ["base-execution-evm-runtime/serde", "alloy-primitives/serde", "base-common-types-chain/serde", "base-execution-state-trie?/serde", "base-common-types-chain/serde", "base-execution-state-api/serde", "base-execution-state-memory?/serde"]
 gmp = ["base-execution-evm-runtime/gmp"]
 optional-balance-check = ["base-execution-evm-runtime/optional_balance_check"]
 optional-block-gas-limit = ["base-execution-evm-runtime/optional_block_gas_limit"]
 optional-eip3541 = ["base-execution-evm-runtime/optional_eip3541"]
 optional-eip3607 = ["base-execution-evm-runtime/optional_eip3607"]
 optional-no-base-fee = ["base-execution-evm-runtime/optional_no_base_fee"]
-optional-checks = [
-    "optional-balance-check",
-    "optional-block-gas-limit",
-    "optional-eip3541",
-    "optional-eip3607",
-    "optional-no-base-fee",
-]
+optional-checks = ["optional-balance-check", "optional-block-gas-limit", "optional-eip3541", "optional-eip3607", "optional-no-base-fee"]
 memory_limit = ["base-execution-evm-runtime/memory_limit"]

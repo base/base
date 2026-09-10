@@ -14,6 +14,7 @@ use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, Header,
     transaction::{TransactionMeta, TxHashRef},
 };
+use base_common_types_chain::{BlockHeader as _, DashMap, RecoveredBlock, SealedHeader};
 use base_execution_state_api::{
     BlockBodyIndicesProvider, ChangeSetReader, DBProvider, PruneCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
@@ -39,9 +40,6 @@ use base_execution_state_types::{
 };
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::RwLock;
-use reth_primitives_traits::{
-    AlloyBlockHeader as _, RecoveredBlock, SealedHeader, dashmap::DashMap,
-};
 use tracing::{debug, info, info_span, instrument, trace, warn};
 
 use super::{

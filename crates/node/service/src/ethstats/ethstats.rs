@@ -6,11 +6,11 @@ use std::{
 
 use alloy_primitives::U256;
 use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BlockBodyExt as BlockBody, BlockExt as Block};
 use base_execution_network_service::{NetworkInfo, Peers};
 use base_execution_state_api::{BlockReader, BlockReaderIdExt};
 use base_execution_txpool_pool::TransactionPool;
 use chrono::Local;
-use reth_primitives_traits::{Block, BlockBody};
 use serde_json::Value;
 use tokio::{
     sync::{Mutex, RwLock, mpsc},

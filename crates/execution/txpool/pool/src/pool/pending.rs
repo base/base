@@ -43,7 +43,7 @@ pub struct PendingPool {
     independent_transactions: FxHashMap<SenderId, PendingTransaction>,
     /// Keeps track of the size of this pool.
     ///
-    /// See also [`reth_primitives_traits::InMemorySize::size`].
+    /// See also [`base_common_types_chain::InMemorySize::size`].
     size_of: SizeTracker,
     /// Used to broadcast new transactions that have been added to the `PendingPool` to existing
     /// `static_files` of this pool.

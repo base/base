@@ -403,12 +403,12 @@ fn tx_type_str(tx: &BaseTxEnvelope) -> &'static str {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, TxKind, U256};
+    use base_common_types_chain::RecoveredBlock;
     use base_common_types_chain::{
         BaseReceipt, Block, BlockBody, Header, Receipt, Sealable, TxDeposit,
     };
     use base_execution_state_indexer::ShadowBlockPayload;
     use chrono::Utc;
-    use reth_primitives_traits::RecoveredBlock;
     use sqlx::types::Json;
 
     use super::*;

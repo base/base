@@ -1,6 +1,6 @@
 use base_common_types_chain::{BaseTxEnvelope, BlockBody, BlockHeader, transaction::Recovered};
+use base_common_types_chain::{BlockBodyExt as BlockBodyTrait, RecoveredBlock, SealedHeader};
 use base_common_types_rpc::{Block, BlockTransactions, BlockTransactionsKind, TransactionInfo};
-use reth_primitives_traits::{BlockBody as BlockBodyTrait, RecoveredBlock, SealedHeader};
 
 /// Builds RPC block responses from execution blocks with recovered senders.
 #[derive(Debug)]

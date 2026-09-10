@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::BaseBlock;
+use base_common_types_chain::RecoveredBlock;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_service::NetworkHandle;
 use base_execution_state_provider::{
@@ -16,7 +17,6 @@ use base_execution_txpool_pool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore,
     EthTransactionValidatorBuilder, Pool,
 };
-use reth_primitives_traits::RecoveredBlock;
 use {base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
 
 use crate::{BaseRpcContext, EthApiBuilder};

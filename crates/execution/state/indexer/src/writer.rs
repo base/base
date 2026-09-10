@@ -198,8 +198,8 @@ mod tests {
         ShadowFlushOutcome,
     };
     use anyhow::anyhow;
+    use base_common_types_chain::RecoveredBlock;
     use chrono::{DateTime, Utc};
-    use reth_primitives_traits::RecoveredBlock;
     use tokio::sync::mpsc;
 
     use super::{MAX_FLUSH_ATTEMPTS, MockBlockInserter, ShadowWrite, ShadowWriter};

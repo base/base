@@ -625,6 +625,7 @@ mod tests {
     use std::{collections::BTreeMap, default::Default, sync::Arc, time::Duration};
 
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
+    use base_common_types_chain::RecoveredBlock;
     use base_common_types_chain::private::alloy_primitives::B256;
     use base_execution_state_database::test_utils::tempdir_path;
     use base_execution_state_tasks::{
@@ -634,7 +635,6 @@ mod tests {
         ComputedTrieData, HashedPostStateSorted, LazyTrieData, updates::TrieUpdatesSorted,
     };
     use base_execution_state_types::{Chain, ExecutionOutcome};
-    use reth_primitives_traits::RecoveredBlock;
 
     use super::*;
 

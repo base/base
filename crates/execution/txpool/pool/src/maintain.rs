@@ -15,6 +15,7 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_io_files::FsPathError;
 use base_common_runtime_tasks::Runtime;
 use base_common_types_chain::{BaseBlock, BlockHeader, transaction::TxHashRef};
+use base_common_types_chain::{SealedHeader, SignedTransaction};
 use base_execution_state_api::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use base_execution_state_types::CanonStateNotification;
 use base_execution_state_types::ChangedAccount;
@@ -22,7 +23,6 @@ use futures_util::{
     FutureExt, Stream, StreamExt,
     future::{BoxFuture, Fuse, FusedFuture},
 };
-use reth_primitives_traits::{SealedHeader, transaction::signed::SignedTransaction};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::oneshot,

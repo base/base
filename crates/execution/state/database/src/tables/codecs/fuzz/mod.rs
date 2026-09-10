@@ -18,7 +18,7 @@ macro_rules! impl_fuzzer_with_input {
                 use crate::table;
 
                 #[expect(unused_imports)]
-                use reth_primitives_traits::*;
+                use base_common_types_chain::{*};
 
                 #[allow(unused_imports)]
                 use super::inputs::*;

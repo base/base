@@ -16,6 +16,7 @@ use base_common_observability_events::{
 use base_common_types_chain::{
     BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, Transaction, Typed2718,
 };
+use base_common_types_chain::{SealedHeader, SignedTransaction};
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder, BlockBuilderOutcome,
@@ -40,7 +41,6 @@ use base_execution_txpool_pool::{
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
 use base_execution_txpool_pool::{NoopPayloadTransactions, PayloadTransactions};
-use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
 use crate::{
@@ -593,7 +593,7 @@ pub struct BasePayloadBuilderCtx {
 
 impl BasePayloadBuilderCtx {
     /// Returns the parent block the payload will be build on.
-    pub fn parent(&self) -> &reth_primitives_traits::SealedHeader {
+    pub fn parent(&self) -> &base_common_types_chain::SealedHeader {
         self.config.parent_header.as_ref()
     }
 
@@ -1368,6 +1368,7 @@ mod tests {
     use base_common_types_chain::{
         BaseTxEnvelope, Header, Predeploys, SignableTransaction, TxEip1559,
     };
+    use base_common_types_chain::{SealedHeader, SignedTransaction, WithEncoded};
     use base_common_types_payload::PayloadId;
     use base_execution_evm_blocks::{
         BaseEvmConfig, BlockBuilder, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
@@ -1384,7 +1385,6 @@ mod tests {
     use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
     use base_execution_txpool_pool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use base_execution_txpool_pool::{NoopPayloadTransactions, PayloadTransactions};
-    use reth_primitives_traits::{SealedHeader, SignedTransaction, WithEncoded};
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

@@ -59,21 +59,9 @@ default = ["std", "parse"]
 hashbrown = ["alloy-primitives/map-hashbrown"]
 map-foldhash = ["alloy-primitives/map-foldhash"]
 rand = ["alloy-primitives/rand"]
-serde = [
-    "dep:serde",
-    "alloy-primitives/serde",
-    "bitvec/serde",
-    "phf?/serde",
-]
+serde = ["dep:serde", "alloy-primitives/serde", "bitvec/serde", "phf?/serde"]
 sha3-keccak = ["alloy-primitives/sha3-keccak"]
-std = [
-    "alloy-primitives/std",
-    "serde?/std",
-    "once_cell/std",
-    "serde_json/std",
-    "bitvec/std",
-    "phf?/std",
-]
+std = ["alloy-primitives/std", "serde?/std", "once_cell/std", "serde_json/std", "bitvec/std", "phf?/std"]
 parse = ["phf", "paste"]
 serde-json = ["serde"]
 
