@@ -36,20 +36,7 @@ impl TableObject for Cow<'_, [u8]> {
     ) -> Result<Self, Error> {
         let s = unsafe { slice::from_raw_parts(data_val.iov_base as *const u8, data_val.iov_len) };
 
-        #[cfg(feature = "return-borrowed")]
-        {
-            Ok(Cow::Borrowed(s))
-        }
-
-        #[cfg(not(feature = "return-borrowed"))]
-        {
-            let is_dirty = (!K::IS_READ_ONLY)
-                && crate::native_mdbx::error::mdbx_result(unsafe {
-                    ffi::mdbx_is_dirty(_txn, data_val.iov_base)
-                })?;
-
-            Ok(if is_dirty { Cow::Owned(s.to_vec()) } else { Cow::Borrowed(s) })
-        }
+        Ok(Cow::Borrowed(s))
     }
 }
 
