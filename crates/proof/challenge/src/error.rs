@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use base_common_l1_transactions::TxManagerError;
-use base_proof_submission::KnownRevert;
+use base_proof_l1_submission::KnownRevert;
 use thiserror::Error;
 
 /// Errors that can occur when submitting a challenge transaction.

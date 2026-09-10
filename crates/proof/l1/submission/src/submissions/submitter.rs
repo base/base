@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use base_common_l1_transactions::{TxCandidate, TxManager};
 use base_common_types_rpc::TransactionReceipt;
 
-use crate::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
+use crate::submissions::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
 
 /// Submits proof bytes to an existing aggregate verifier dispute game.
 #[derive(Debug)]
@@ -31,7 +31,7 @@ impl<'a, T: TxManager> AggregateProofSubmitter<'a, T> {
     ) -> Result<TransactionReceipt, ProofSubmissionError> {
         self.submit_calldata(
             game_address,
-            base_proof_l1_submission::encode_verify_proposal_proof_calldata(proof_bytes),
+            crate::encode_verify_proposal_proof_calldata(proof_bytes),
         )
         .await
     }
@@ -87,7 +87,9 @@ mod tests {
     use base_common_types_rpc::TransactionReceipt;
 
     use super::AggregateProofSubmitter;
-    use crate::{ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError};
+    use crate::submissions::{
+        ChallengeProofSubmission, NullifyProofSubmission, ProofSubmissionError,
+    };
 
     fn receipt_with_status(success: bool, tx_hash: B256) -> TransactionReceipt {
         let inner = ReceiptEnvelope::Legacy(ReceiptWithBloom {
@@ -163,10 +165,7 @@ mod tests {
         let candidate = tx_manager.take_candidate().unwrap();
         assert_eq!(candidate.to, Some(game_address));
         assert_eq!(candidate.value, U256::ZERO);
-        assert_eq!(
-            candidate.tx_data,
-            base_proof_l1_submission::encode_verify_proposal_proof_calldata(proof_bytes)
-        );
+        assert_eq!(candidate.tx_data, crate::encode_verify_proposal_proof_calldata(proof_bytes));
     }
 
     #[tokio::test]

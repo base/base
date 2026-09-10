@@ -44,4 +44,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 
 [features]
-metrics = [ "base-proof-host/metrics" ]
+metrics = ["base-proof-host/metrics"]

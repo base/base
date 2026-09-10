@@ -8,7 +8,7 @@ use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_l1_transactions::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
 };
-use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
+use base_proof_l1_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_proof_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use tokio::time::timeout;
 use url::Url;

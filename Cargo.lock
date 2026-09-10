@@ -2405,7 +2405,6 @@ dependencies = [
  "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
- "base-proof-submission",
  "base-proof-types-protocol",
  "clap",
  "eyre",
@@ -4796,10 +4795,14 @@ dependencies = [
  "async-trait",
  "base-common-client-contracts",
  "base-common-client-ethereum",
+ "base-common-l1-transactions",
+ "base-common-types-chain",
+ "base-common-types-rpc",
  "futures",
  "rstest",
  "serde_json",
  "thiserror 2.0.19",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -4832,19 +4835,6 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
-]
-
-[[package]]
-name = "base-proof-submission"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-l1-transactions",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-proof-l1-submission",
- "thiserror 2.0.19",
- "tokio",
 ]
 
 [[package]]
@@ -5075,7 +5065,6 @@ dependencies = [
  "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
- "base-proof-submission",
  "base-proof-types-protocol",
  "clap",
  "eyre",
@@ -5566,7 +5555,6 @@ dependencies = [
  "base-proof-l1-submission",
  "base-proof-service-client",
  "base-proof-service-protocol",
- "base-proof-submission",
  "chrono",
  "clap",
  "crossterm",

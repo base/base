@@ -7,9 +7,9 @@
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_common_l1_transactions::{TxCandidate, TxManager};
+use base_proof_l1_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use base_proof_l1_submission::{encode_create_calldata, encode_extra_data};
 use base_proof_types_protocol::{ProofEncoder, Proposal};
-use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use tracing::info;
 
 use crate::error::ProposerError;

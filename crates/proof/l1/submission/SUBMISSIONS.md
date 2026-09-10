@@ -1,4 +1,4 @@
-# `base-proof-submission`
+# `base-proof-l1-submission`
 
 Shared proof submission helpers for Base dispute games.
 

@@ -59,3 +59,6 @@ pub use nitro_enclave_verifier::{
 
 mod error;
 pub use error::ContractError;
+
+mod submissions;
+pub use submissions::*;

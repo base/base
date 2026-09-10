@@ -1,7 +1,7 @@
 //! Aggregate verifier proof transaction inputs.
 
+use crate::{encode_challenge_calldata, encode_nullify_calldata};
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_l1_submission::{encode_challenge_calldata, encode_nullify_calldata};
 
 /// Inputs for dispute-game `challenge(bytes,uint256,bytes32)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
