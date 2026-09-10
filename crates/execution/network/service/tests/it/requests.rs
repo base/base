@@ -8,9 +8,11 @@ use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_types_chain::{BaseBlock as Block, Header};
 use base_execution_network_service::{
     BlockDownloaderProvider, NetworkEventListenerProvider,
-    eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
-    test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
+    eth_requests::MAX_BLOCK_ACCESS_LISTS_SERVE, eth_requests::SOFT_RESPONSE_LIMIT,
+    test_utils::NetworkEventStream, test_utils::PeerConfig, test_utils::TestPool,
+    test_utils::Testnet, test_utils::TestnetHandle,
 };
+use base_execution_network_service::{NetworkInfo, Peers};
 use base_execution_network_wire::BlockAccessLists;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::GetBlockAccessLists;
@@ -24,7 +26,6 @@ use base_execution_state_provider::{
 };
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
-use reth_network_api::{NetworkInfo, Peers};
 use tokio::sync::oneshot;
 
 type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>, TestPool>;

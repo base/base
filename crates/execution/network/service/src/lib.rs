@@ -50,17 +50,12 @@ pub use flattened_response::FlattenedResponse;
 pub use manager::NetworkManager;
 pub use metrics::TxTypesCounter;
 pub use network::NetworkHandle;
-pub use reth_network_api::{
-    BlockDownloaderProvider, DiscoveredEvent, DiscoveryEvent, NetworkEvent,
-    NetworkEventListenerProvider, NetworkInfo, PeerRequest, PeerRequestSender, Peers, PeersInfo,
-    events,
-};
 /// re-export p2p interfaces
 pub use reth_network_p2p as p2p;
 pub use session::{
-    ActiveSessionHandle, ActiveSessionMessage, Direction, EthRlpxConnection, PeerInfo,
-    PendingSessionEvent, PendingSessionHandle, PendingSessionHandshakeError, SessionCommand,
-    SessionEvent, SessionId, SessionManager,
+    ActiveSessionHandle, ActiveSessionMessage, EthRlpxConnection, PendingSessionEvent,
+    PendingSessionHandle, PendingSessionHandshakeError, SessionCommand, SessionEvent, SessionId,
+    SessionManager,
 };
 pub use swarm::NetworkConnectionState;
 
@@ -73,3 +68,6 @@ pub mod types {
 
 use aquamarine as _;
 use smallvec as _;
+
+mod api;
+pub use api::*;

@@ -17,9 +17,8 @@ use base_common_types_chain::{
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };
 use base_execution_network_service::{
-    BlockDownloaderProvider,
-    eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
+    BlockDownloaderProvider, eth_requests::SOFT_RESPONSE_LIMIT, test_utils::PeerConfig,
+    test_utils::TestPool, test_utils::Testnet, test_utils::TestnetHandle,
 };
 use base_execution_network_wire::AccountData;
 use base_execution_network_wire::AccountRangeMessage;

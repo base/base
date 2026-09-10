@@ -8,6 +8,10 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::{
+    NetworkEvent, NetworkEventListenerProvider, NetworkInfo, PeerEvent, Peers, PeersHandle,
+    PeersHandleProvider, SessionInfo,
+};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
 use base_common_runtime_tasks::EventStream;
@@ -27,11 +31,6 @@ use base_execution_txpool::{
 };
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
-use reth_network_api::{
-    NetworkEvent, NetworkEventListenerProvider, NetworkInfo, Peers,
-    events::{PeerEvent, SessionInfo},
-    test_utils::{PeersHandle, PeersHandleProvider},
-};
 use secp256k1::SecretKey;
 use tokio::{
     sync::{mpsc::channel, oneshot},
@@ -626,7 +625,7 @@ impl<Pool> PeerHandle<Pool> {
     }
 
     /// Creates a new [`NetworkEvent`] listener channel.
-    pub fn event_listener(&self) -> EventStream<NetworkEvent<reth_network_api::PeerRequest>> {
+    pub fn event_listener(&self) -> EventStream<NetworkEvent<crate::PeerRequest>> {
         self.network.event_listener()
     }
 
@@ -728,14 +727,14 @@ impl Default for PeerConfig {
 /// This makes it easier to await established connections
 #[derive(Debug)]
 pub struct NetworkEventStream {
-    inner: EventStream<NetworkEvent<reth_network_api::PeerRequest>>,
+    inner: EventStream<NetworkEvent<crate::PeerRequest>>,
 }
 
 // === impl NetworkEventStream ===
 
 impl NetworkEventStream {
     /// Create a new [`NetworkEventStream`] from the given network event receiver stream.
-    pub const fn new(inner: EventStream<NetworkEvent<reth_network_api::PeerRequest>>) -> Self {
+    pub const fn new(inner: EventStream<NetworkEvent<crate::PeerRequest>>) -> Self {
         Self { inner }
     }
 

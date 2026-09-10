@@ -1,28 +1,4 @@
-//! Reth interface definitions and commonly used types for the base-execution-network-service crate.
-//!
-//! Provides abstractions for the base-execution-network-service crate.
-//!
-//! ## Feature Flags
-//!
-//! - `serde` (default): Enable serde support
-
-#![doc(
-    html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
-    html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
-    issue_tracker_base_url = "https://github.com/paradigmxyz/reth/issues/"
-)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-/// Shared blob cell custody state.
-pub mod custody;
-pub mod downloaders;
-/// Network Error
-pub mod error;
-pub mod events;
-/// Implementation of network traits for that does nothing.
-pub mod noop;
-
-pub mod test_utils;
+use crate::api::{CellCustody, NetworkError};
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Instant};
 
 pub use alloy_rpc_types_admin::EthProtocolInfo;
@@ -36,13 +12,6 @@ use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::UnifiedStatus;
 pub use base_execution_network_wire::{BlockClient, HeadersClient};
-pub use custody::CellCustody;
-pub use downloaders::BlockDownloaderProvider;
-pub use error::NetworkError;
-pub use events::{
-    DiscoveredEvent, DiscoveryEvent, NetworkEvent, NetworkEventListenerProvider, PeerRequest,
-    PeerRequestSender, RequestMessage,
-};
 
 /// The `PeerId` type.
 pub type PeerId = alloy_primitives::B512;

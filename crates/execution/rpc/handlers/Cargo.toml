@@ -29,7 +29,6 @@ alloy-transport = {workspace = true}
 jsonrpsee-types = {workspace = true}
 alloy-hardforks = { workspace = true }
 alloy-sol-types = { workspace = true }
-reth-network-api = { workspace = true }
 reth-payload-util = { workspace = true }
 opentelemetry-http = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
@@ -44,13 +43,13 @@ serde = {workspace = true, features = ["derive"]}
 base-execution-state-provider = {workspace = true}
 thiserror = {workspace = true, features = ["std"]}
 alloy-eips = {features = ["kzg"], workspace = true}
+base-execution-network-service = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 futures = {features = ["default"], workspace = true}
 base-common-observability-events = {workspace = true}
 base-execution-evm-precompiles = { workspace = true }
-base-execution-network-service = { workspace = true }
 alloy-eip7928 = {features = ["rlp"], workspace = true}
 derive_more = { workspace = true, features = ["full"] }
 serde_json = { workspace = true, features = ["alloc"] }

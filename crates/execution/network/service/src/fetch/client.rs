@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use crate::PeersHandle;
 use alloy_primitives::B256;
 use base_common_types_chain::{BaseBlock, BaseReceipt};
 use base_execution_network_types::PeerId;
@@ -24,7 +25,6 @@ use base_execution_network_wire::{
     RequestError, SnapClient, SnapResponse,
 };
 use futures::{future, future::Either};
-use reth_network_api::test_utils::PeersHandle;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{fetch::DownloadRequest, flattened_response::FlattenedResponse};

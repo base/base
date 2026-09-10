@@ -10,11 +10,11 @@ use alloy_rpc_types_admin::{
 };
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
+use base_execution_network_service::{NetworkInfo, Peers};
 use base_execution_network_types::PeerKind;
 use base_execution_network_types::{AnyNode, NodeRecord};
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::core::RpcResult;
-use reth_network_api::{NetworkInfo, Peers};
 
 /// `admin` API implementation.
 ///

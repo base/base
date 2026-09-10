@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use crate::PeersHandle;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
@@ -46,7 +47,6 @@ use base_execution_state_api::{
 };
 use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
-use reth_network_api::test_utils::PeersHandle;
 use reth_primitives_traits::Block;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -833,6 +833,7 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    use crate::PeersHandle;
     use alloy_eips::{
         eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
         eip7594::{BlobTransactionSidecarVariant, Cell},
@@ -843,7 +844,6 @@ mod tests {
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
-    use reth_network_api::test_utils::PeersHandle;
     use test_case::test_case;
     use tokio::sync::mpsc;
 

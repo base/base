@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{PeerRequest, RequestMessage};
 use alloy_eips::merge::EPOCH_SLOTS;
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
@@ -35,7 +36,6 @@ use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::{RequestError, SnapResponse};
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
-use reth_network_api::{PeerRequest, RequestMessage};
 use reth_primitives_traits::Block;
 use rustc_hash::FxHashMap;
 use tokio::{

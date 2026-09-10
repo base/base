@@ -1,6 +1,3 @@
-//! Interaction with `base_execution_network_service::PeersManager`, for integration testing. Otherwise
-//! `base_execution_network_service::NetworkManager` manages `base_execution_network_service::PeersManager`.
-
 use std::net::SocketAddr;
 
 use base_execution_network_types::Peer;

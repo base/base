@@ -1,11 +1,11 @@
-use futures_util::StreamExt;
-use reth_network_api::{
-    NetworkEvent, NetworkEventListenerProvider, PeerRequest, PeersInfo, events::PeerEvent,
-    test_utils::PeersHandleProvider,
+use base_common_observability_tracing::tracing::info;
+use base_common_runtime_tasks::EventStream;
+use base_execution_network_service::{
+    NetworkEvent, NetworkEventListenerProvider, PeerEvent, PeerRequest, PeersHandleProvider,
+    PeersInfo,
 };
 use base_execution_network_types::{NodeRecord, PeerId};
-use base_common_runtime_tasks::EventStream;
-use base_common_observability_tracing::tracing::info;
+use futures_util::StreamExt;
 
 /// Helper for network operations
 #[derive(Debug)]

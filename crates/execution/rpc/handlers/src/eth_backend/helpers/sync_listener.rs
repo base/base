@@ -6,9 +6,9 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use base_execution_network_service::NetworkInfo;
 use futures::Stream;
 use pin_project::pin_project;
-use reth_network_api::NetworkInfo;
 
 /// This future resolves once the node is no longer syncing: [`NetworkInfo::is_syncing`].
 #[must_use = "futures do nothing unless polled"]
@@ -67,8 +67,8 @@ mod tests {
     };
 
     use alloy_rpc_types_admin::EthProtocolInfo;
+    use base_execution_network_service::{CellCustody, NetworkError, NetworkStatus};
     use futures::stream;
-    use reth_network_api::{CellCustody, NetworkError, NetworkStatus};
 
     use super::*;
 

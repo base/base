@@ -4,12 +4,12 @@ use crate::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
 use alloy_primitives::{U64, U256};
 use base_common_types_chain::ChainInfo;
 use base_common_types_rpc::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus};
+use base_execution_network_service::NetworkInfo;
 use base_execution_state_api::{
     BlockNumReader, PruneCheckpointReader, StageCheckpointReader, TransactionsProvider,
 };
 use base_execution_state_types::{PruneMode, PruneSegment};
 use futures::Future;
-use reth_network_api::NetworkInfo;
 
 use crate::{BaseEthApi, EthSigner};
 
@@ -20,7 +20,8 @@ impl BaseEthApi {
     /// Returns the current ethereum protocol version.
     pub fn protocol_version(
         &self,
-    ) -> impl Future<Output = Result<U64, reth_network_api::NetworkError>> + Send {
+    ) -> impl Future<Output = Result<U64, base_execution_network_service::NetworkError>> + Send
+    {
         async move {
             let status = self.network().network_status().await?;
             Ok(U64::from(status.protocol_version))

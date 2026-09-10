@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 
+use crate::{PeerCommand, PeersHandle};
 use alloy_eip2124::ForkId;
 use alloy_primitives::map::{FbBuildHasher, HashMap, HashSet, hash_map::Entry};
 use base_execution_network_types::BanList;
@@ -33,7 +34,6 @@ use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::EthStreamError;
 use futures::StreamExt;
 use rand::Rng;
-use reth_network_api::test_utils::{PeerCommand, PeersHandle};
 use thiserror::Error;
 use tokio::{
     sync::mpsc,
@@ -1518,6 +1518,7 @@ mod tests {
         time::Duration,
     };
 
+    use crate::Direction;
     use alloy_eip2124::{ForkHash, ForkId};
     use alloy_primitives::B512;
     use base_execution_network_types::BackoffKind;
@@ -1531,7 +1532,6 @@ mod tests {
     use base_execution_network_wire::EthStreamError;
     use base_execution_network_wire::P2PHandshakeError;
     use base_execution_network_wire::P2PStreamError;
-    use reth_network_api::Direction;
     use url::Host;
 
     use super::PeersManager;

@@ -1,16 +1,13 @@
 //! Session tests
 
 use base_execution_network_service::{
-    NetworkEvent, NetworkEventListenerProvider,
-    test_utils::{NetworkEventStream, PeerConfig, Testnet},
+    NetworkEvent, NetworkEventListenerProvider, test_utils::NetworkEventStream,
+    test_utils::PeerConfig, test_utils::Testnet,
 };
+use base_execution_network_service::{NetworkInfo, PeerEvent, Peers, SessionInfo};
 use base_execution_network_wire::EthVersion;
 use base_execution_state_api::NoopProvider;
 use futures::StreamExt;
-use reth_network_api::{
-    NetworkInfo, Peers,
-    events::{PeerEvent, SessionInfo},
-};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_session_established_with_highest_version() {

@@ -4,9 +4,8 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use base_execution_network_service::{
-    BlockDownloaderProvider,
-    eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, TestPool, Testnet},
+    BlockDownloaderProvider, eth_requests::SOFT_RESPONSE_LIMIT, test_utils::PeerConfig,
+    test_utils::TestPool, test_utils::Testnet,
 };
 use base_execution_network_wire::Capability;
 use base_execution_network_wire::EthVersion;

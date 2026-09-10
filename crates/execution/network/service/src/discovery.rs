@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use crate::{DiscoveredEvent, DiscoveryEvent};
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use base_execution_network_discovery::DiscoveredPeer;
 use base_execution_network_discovery::Discv4;
@@ -23,7 +24,6 @@ use base_execution_network_types::PeerAddr;
 use base_execution_network_types::{NodeRecord, PeerId};
 use enr::Enr;
 use futures::StreamExt;
-use reth_network_api::{DiscoveredEvent, DiscoveryEvent};
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, sync::mpsc, task::JoinHandle};
 use tokio_stream::{Stream, wrappers::ReceiverStream};

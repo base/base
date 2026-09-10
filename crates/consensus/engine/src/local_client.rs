@@ -14,8 +14,8 @@ use base_common_types_payload::{
 use base_consensus_batch_types::L2BlockInfo;
 use base_consensus_source_providers::LocalL2Provider;
 use base_execution_network_service::NetworkHandle;
+use base_execution_network_service::NetworkInfo;
 use base_execution_payload_builder::{BaseExecutionHandle, BasePayloadBuilderAttributes};
-use reth_network_api::NetworkInfo;
 
 use crate::{EngineClient, EngineClientError, Metrics};
 

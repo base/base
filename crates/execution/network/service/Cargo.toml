@@ -17,21 +17,20 @@ workspace = true
 
 [dependencies]
 rayon = { workspace = true }
+auto_impl = {workspace = true}
 metrics = { workspace = true }
+thiserror = {workspace = true}
 smallvec = { workspace = true }
-auto_impl = { workspace = true }
 itertools = { workspace = true }
-thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 rustc-hash = { workspace = true }
+alloy-eip2124 = {workspace = true}
 pin-project = { workspace = true }
-alloy-eip2124 = { workspace = true }
-reth-network-api = { workspace = true }
 base-common-io-files = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
-serde = { workspace = true, optional = true }
 base-common-runtime-tasks = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
@@ -39,25 +38,26 @@ base-execution-state-api = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 base-execution-network-discv5 = { workspace = true }
-futures = { workspace = true, features = ["default"] }
+futures = {workspace = true, features = ["default"]}
+derive_more = {workspace = true, features = ["full"]}
 rand_08 = { workspace = true, features = ["default"] }
-derive_more = { workspace = true, features = ["full"] }
 schnellru = { workspace = true, features = ["default"] }
+tokio-stream = {workspace = true, features = ["default"]}
 tracing = { workspace = true, features = ["attributes"] }
 parking_lot = { workspace = true, features = ["default"] }
-tokio-stream = { workspace = true, features = ["default"] }
-reth-network-p2p = { workspace = true, features = ["default"] }
-enr = { workspace = true, features = ["serde", "rust-secp256k1"] }
+reth-network-p2p = {workspace = true, features = ["default"]}
+enr = {workspace = true, features = ["rust-secp256k1", "serde"]}
+serde = {workspace = true, optional = true, features = ["derive"]}
 tokio-util = { workspace = true, features = ["default", "codec"] }
 alloy-rlp = { workspace = true, features = ["core-net", "derive"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
-base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
+base-common-types-chain = {workspace = true, features = ["reth", "serde"]}
 base-execution-network-discovery = {features = ["default"], workspace = true}
+alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-types = {features = ["net", "serde", "std"], workspace = true}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
-tokio = { workspace = true, features = ["io-util", "net", "macros", "rt-multi-thread", "time"] }
-base-execution-network-wire = {workspace = true, features = ["default", "transport", "requests"]}
+base-execution-network-wire = {workspace = true, features = ["default", "requests", "transport"]}
+tokio = {workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"]}
 
 [dev-dependencies]
 url = { workspace = true }
@@ -101,7 +101,6 @@ serde = [
     "reth-primitives-traits/serde",
     "base-execution-network-service/serde",
     "base-execution-txpool/serde",
-    "reth-network-api/serde",
     "rand_08/serde",
     "base-execution-state-api/serde",
     "base-execution-network-types/serde",

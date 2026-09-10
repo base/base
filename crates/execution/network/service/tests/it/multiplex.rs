@@ -3,16 +3,15 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
+use base_execution_network_service::Peers;
 use base_execution_network_service::{
-    BlockDownloaderProvider,
-    test_utils::{PeerConfig, TestPool, Testnet},
+    BlockDownloaderProvider, test_utils::PeerConfig, test_utils::TestPool, test_utils::Testnet,
 };
 use base_execution_network_wire::BodiesClient;
 use base_execution_network_wire::Capability;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::Protocol;
 use base_execution_state_provider::test_utils::MockEthProvider;
-use reth_network_api::Peers;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unsupported_protocols_are_not_announced_and_eth_requests_work_both_directions() {

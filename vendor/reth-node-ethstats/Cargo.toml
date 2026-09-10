@@ -19,7 +19,6 @@ url = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
-reth-network-api = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
@@ -27,6 +26,7 @@ base-execution-state-api = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-execution-state-provider = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
+base-execution-network-service = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true, features = ["attributes"] }

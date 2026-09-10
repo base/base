@@ -13,6 +13,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::PeersHandle;
 use alloy_primitives::B256;
 use base_execution_network_types::PeerId;
 use base_execution_network_types::ReputationChangeKind;
@@ -30,7 +31,6 @@ use base_execution_network_wire::{
 };
 pub use client::FetchClient;
 use futures::StreamExt;
-use reth_network_api::test_utils::PeersHandle;
 use tokio::sync::{mpsc, mpsc::UnboundedSender, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 

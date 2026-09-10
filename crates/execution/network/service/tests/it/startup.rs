@@ -8,11 +8,10 @@ use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_D
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::NatResolver;
 use base_execution_network_service::{
-    Discovery, NetworkConfigBuilder, NetworkManager,
-    error::{NetworkError, ServiceKind},
+    Discovery, NetworkConfigBuilder, NetworkManager, error::NetworkError, error::ServiceKind,
 };
+use base_execution_network_service::{NetworkInfo, PeersInfo};
 use base_execution_state_api::NoopProvider;
-use reth_network_api::{NetworkInfo, PeersInfo};
 use secp256k1::SecretKey;
 use tokio::net::TcpListener;
 

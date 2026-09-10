@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub use crate::Direction;
+use crate::{PeerRequest, PeerRequestSender};
 use active::QueuedOutgoingMessages;
 use alloy_eip2124::{ForkFilter, ForkId, ForkTransition, Head};
 use alloy_primitives::map::{FbBuildHasher, HashMap};
@@ -44,8 +46,6 @@ pub use handle::{
     ActiveSessionHandle, ActiveSessionMessage, PendingSessionEvent, PendingSessionHandle,
     SessionCommand,
 };
-pub use reth_network_api::{Direction, PeerInfo};
-use reth_network_api::{PeerRequest, PeerRequestSender};
 use reth_primitives_traits::{GotExpected, GotExpectedBoxed};
 use rustc_hash::FxHashMap;
 use secp256k1::SecretKey;

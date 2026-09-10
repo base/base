@@ -12,6 +12,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use alloy_eip2124::ForkId;
 use alloy_primitives::{
     B256,
@@ -30,7 +31,6 @@ use base_execution_network_wire::NewBlockPayload;
 use base_execution_network_wire::ReceiptsResponse;
 use base_execution_network_wire::UnifiedStatus;
 use rand::seq::SliceRandom;
-use reth_network_api::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
@@ -695,6 +695,7 @@ mod tests {
         sync::{Arc, atomic::AtomicU64},
     };
 
+    use crate::PeerRequestSender;
     use alloy_primitives::B256;
     use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
     use base_execution_network_types::PeerId;
@@ -704,7 +705,6 @@ mod tests {
     use base_execution_network_wire::EthVersion;
     use base_execution_network_wire::{BodiesClient, RequestError};
     use base_execution_state_api::NoopProvider;
-    use reth_network_api::PeerRequestSender;
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 

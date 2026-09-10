@@ -3,13 +3,11 @@
 //! This module provides functionality to filter out peers that don't have
 //! specific required blocks (primarily used for shadowfork testing).
 
+use crate::{NetworkEvent, NetworkEventListenerProvider, PeerRequest, Peers, ReputationChangeKind};
 use alloy_eips::BlockNumHash;
 use base_execution_network_wire::GetBlockHeaders;
 use base_execution_network_wire::HeadersDirection;
 use futures::StreamExt;
-use reth_network_api::{
-    NetworkEvent, NetworkEventListenerProvider, PeerRequest, Peers, ReputationChangeKind,
-};
 use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
 
@@ -83,8 +81,8 @@ where
     /// Checks if a peer has the required blocks and bans them if not.
     async fn check_peer_blocks(
         network: N,
-        peer_id: reth_network_api::PeerId,
-        messages: reth_network_api::PeerRequestSender<PeerRequest>,
+        peer_id: crate::PeerId,
+        messages: crate::PeerRequestSender<PeerRequest>,
         block_num_hashes: Vec<BlockNumHash>,
         latest_peer_block: u64,
     ) {
@@ -159,9 +157,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::NoopNetwork;
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, b256};
-    use reth_network_api::noop::NoopNetwork;
 
     use super::*;
 

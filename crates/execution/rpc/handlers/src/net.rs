@@ -1,7 +1,7 @@
-use alloy_primitives::U64;
-use jsonrpsee::core::RpcResult as Result;
-use reth_network_api::PeersInfo;
 use crate::NetApiServer;
+use alloy_primitives::U64;
+use base_execution_network_service::PeersInfo;
+use jsonrpsee::core::RpcResult as Result;
 
 use crate::BaseEthApi;
 

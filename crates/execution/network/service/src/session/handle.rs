@@ -2,6 +2,7 @@
 
 use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
+use crate::PeerInfo;
 use base_execution_network_types::PeerKind;
 use base_execution_network_types::{NodeRecord, PeerId};
 use base_execution_network_wire::Capabilities;
@@ -10,7 +11,6 @@ use base_execution_network_wire::ECIESError;
 use base_execution_network_wire::EthStreamError;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::UnifiedStatus;
-use reth_network_api::PeerInfo;
 use tokio::sync::{
     mpsc::{self, error::SendError},
     oneshot,

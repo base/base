@@ -27,6 +27,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{
+    EthProtocolInfo, NetworkEvent, NetworkStatus, PeerEvent, PeerInfo, PeerRequest, PeersHandle,
+    SessionInfo,
+};
 use alloy_eip2124::EnrForkIdEntry;
 use base_common_io_files::{Files as fs, FsPathError};
 use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
@@ -39,11 +43,6 @@ use base_execution_network_wire::DisconnectReason;
 use base_execution_state_api::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
-use reth_network_api::{
-    EthProtocolInfo, NetworkEvent, NetworkStatus, PeerInfo, PeerRequest,
-    events::{PeerEvent, SessionInfo},
-    test_utils::PeersHandle,
-};
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;

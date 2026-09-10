@@ -1,8 +1,8 @@
 use crate::Web3ApiServer;
 use alloy_primitives::{B256, Bytes, keccak256};
 use async_trait::async_trait;
+use base_execution_network_service::NetworkInfo;
 use jsonrpsee::core::RpcResult;
-use reth_network_api::NetworkInfo;
 
 /// `web3` API implementation.
 ///

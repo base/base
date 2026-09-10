@@ -6,6 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::{PeerRequest, PeerRequestSender};
 use base_execution_network_types::PeerId;
 use base_execution_network_wire::Capabilities;
 use base_execution_network_wire::DisconnectReason;
@@ -13,7 +14,6 @@ use base_execution_network_wire::EthStreamError;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::UnifiedStatus;
 use futures::Stream;
-use reth_network_api::{PeerRequest, PeerRequestSender};
 use tracing::trace;
 
 use crate::{

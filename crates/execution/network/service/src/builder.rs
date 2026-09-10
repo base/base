@@ -1,9 +1,9 @@
 //! Builder support for configuring the entire setup.
 
+use crate::PeersHandleProvider;
 use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
 use base_execution_state_api::BalProvider;
 use base_execution_txpool::{BlobStore, TransactionPool};
-use reth_network_api::test_utils::PeersHandleProvider;
 use tokio::sync::mpsc;
 
 use crate::{

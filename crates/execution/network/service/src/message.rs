@@ -8,6 +8,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
+use crate::{PeerRequest, RequestMessage};
 use alloy_primitives::{B256, Bytes};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, EthereumTxEnvelope, ReceiptWithBloom,
@@ -37,7 +38,6 @@ use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::Transactions;
 use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
 use futures::FutureExt;
-use reth_network_api::{PeerRequest, RequestMessage};
 use reth_primitives_traits::Block;
 use tokio::sync::oneshot;
 

@@ -6,10 +6,10 @@ use std::{
 
 use alloy_primitives::U256;
 use base_common_types_chain::BlockHeader;
+use base_execution_network_service::{NetworkInfo, Peers};
 use base_execution_state_api::{BlockReader, BlockReaderIdExt};
 use base_execution_txpool::TransactionPool;
 use chrono::Local;
-use reth_network_api::{NetworkInfo, Peers};
 use reth_primitives_traits::{Block, BlockBody};
 use serde_json::Value;
 use tokio::{
@@ -757,10 +757,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use base_execution_network_service::NoopNetwork;
     use base_execution_state_api::NoopProvider;
     use base_execution_txpool::NoopTransactionPool;
     use futures_util::{SinkExt, StreamExt};
-    use reth_network_api::noop::NoopNetwork;
     use serde_json::json;
     use tokio::{net::TcpListener, sync::Notify};
     use tokio_tungstenite_0_29_0::tungstenite::protocol::{Message, frame::Utf8Bytes};

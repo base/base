@@ -6,6 +6,11 @@ use std::{
     },
 };
 
+use crate::{
+    BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
+    NetworkEventListenerProvider, NetworkInfo, NetworkPeersEvents, NetworkStatus, PeerEvent,
+    PeerEventStream, PeerInfo, PeerRequest, Peers, PeersHandle, PeersHandleProvider, PeersInfo,
+};
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::B256;
 use base_common_runtime_tasks::{EventSender, EventStream};
@@ -27,13 +32,6 @@ use base_execution_network_wire::{NetworkSyncUpdater, SyncState, SyncStateProvid
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
-use reth_network_api::{
-    BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
-    NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerInfo, PeerRequest, Peers,
-    PeersInfo,
-    events::{NetworkPeersEvents, PeerEvent, PeerEventStream},
-    test_utils::{PeersHandle, PeersHandleProvider},
-};
 use secp256k1::SecretKey;
 use tokio::sync::{
     mpsc::{self, UnboundedSender},

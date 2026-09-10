@@ -1,8 +1,8 @@
 use alloy_primitives::U256;
 use base_common_observability_tracing::init_test_tracing;
 use base_execution_network_service::{
-    test_utils::Testnet,
-    transactions::{TransactionPropagationMode::Max, TransactionsManagerConfig},
+    test_utils::Testnet, transactions::TransactionPropagationMode::Max,
+    transactions::TransactionsManagerConfig,
 };
 use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use base_execution_txpool::{TransactionPool, test_utils::TransactionGenerator};

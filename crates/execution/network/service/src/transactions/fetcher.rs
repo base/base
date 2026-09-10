@@ -31,6 +31,7 @@ use std::{
     time::Duration,
 };
 
+use crate::PeerRequest;
 use alloy_primitives::{
     TxHash,
     map::{FbBuildHasher, HashMap},
@@ -52,7 +53,6 @@ use base_execution_network_wire::{RequestError, RequestResult};
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;
-use reth_network_api::PeerRequest;
 use reth_primitives_traits::SignedTransaction;
 use schnellru::ByLength;
 use tokio::sync::{mpsc::error::TrySendError, oneshot, oneshot::error::RecvError};

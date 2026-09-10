@@ -23,6 +23,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{
+    NetworkEvent, NetworkEventListenerProvider, PeerEvent, PeerKind, PeerRequest,
+    PeerRequestSender, Peers, SessionInfo,
+};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{
     B256, TxHash,
@@ -66,10 +70,6 @@ use constants::SOFT_LIMIT_COUNT_HASHES_IN_NEW_POOLED_TRANSACTIONS_BROADCAST_MESS
 pub(crate) use fetcher::{FetchEvent, TransactionFetcher};
 use futures::{Future, StreamExt, stream::FuturesUnordered};
 use policy::NetworkPolicies;
-use reth_network_api::{
-    NetworkEvent, NetworkEventListenerProvider, PeerKind, PeerRequest, PeerRequestSender, Peers,
-    events::{PeerEvent, SessionInfo},
-};
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -2341,6 +2341,7 @@ mod tests {
         time::Instant,
     };
 
+    use crate::{NetworkInfo, PeerKind};
     use alloy_eips::{eip2718::Encodable2718, eip4844::BlobTransactionValidationError};
     use alloy_primitives::{B256, Signature, TxKind, U256, hex};
     use alloy_rlp::Decodable;
@@ -2361,7 +2362,6 @@ mod tests {
         },
     };
     use futures::FutureExt;
-    use reth_network_api::{NetworkInfo, PeerKind};
     use secp256k1::SecretKey;
     use tracing::error;
 

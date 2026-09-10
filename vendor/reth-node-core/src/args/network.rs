@@ -23,23 +23,17 @@ use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
 use base_execution_network_discv5::ListenConfig;
 use base_execution_network_service::{
     HelloMessageWithProtocols, NetworkConfigBuilder,
-    transactions::{
-        DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
-        SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE, TransactionFetcherConfig,
-        TransactionPropagationMode, TransactionsManagerConfig,
-        config::{TransactionIngressPolicy, TransactionPropagationKind},
-        constants::{
-            tx_fetcher::{
-                DEFAULT_MAX_CAPACITY_CACHE_PENDING_FETCH, DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS,
-                DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS_PER_PEER,
-            },
-            tx_manager::{
-                DEFAULT_MAX_COUNT_PENDING_POOL_IMPORTS,
-                DEFAULT_MAX_COUNT_TRANSACTIONS_SEEN_BY_PEER,
-                DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
-            },
-        },
-    },
+    transactions::DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
+    transactions::SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE,
+    transactions::TransactionFetcherConfig, transactions::TransactionPropagationMode,
+    transactions::TransactionsManagerConfig, transactions::config::TransactionIngressPolicy,
+    transactions::config::TransactionPropagationKind,
+    transactions::constants::tx_fetcher::DEFAULT_MAX_CAPACITY_CACHE_PENDING_FETCH,
+    transactions::constants::tx_fetcher::DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS,
+    transactions::constants::tx_fetcher::DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS_PER_PEER,
+    transactions::constants::tx_manager::DEFAULT_MAX_COUNT_PENDING_POOL_IMPORTS,
+    transactions::constants::tx_manager::DEFAULT_MAX_COUNT_TRANSACTIONS_SEEN_BY_PEER,
+    transactions::constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
 };
 use base_execution_network_types::IpFilter;
 use base_execution_network_types::NodeRecord;

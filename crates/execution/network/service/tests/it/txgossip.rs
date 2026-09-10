@@ -4,18 +4,17 @@ use std::sync::Arc;
 use alloy_primitives::{Signature, U256};
 use base_common_types_chain::TxLegacy;
 use base_execution_network_service::{
-    NetworkEvent, NetworkEventListenerProvider, Peers,
-    test_utils::{NetworkEventStream, Testnet},
-    transactions::config::{
-        TransactionIngressPolicy, TransactionPropagationKind, TransactionsManagerConfig,
-    },
+    NetworkEvent, NetworkEventListenerProvider, Peers, test_utils::NetworkEventStream,
+    test_utils::Testnet, transactions::config::TransactionIngressPolicy,
+    transactions::config::TransactionPropagationKind,
+    transactions::config::TransactionsManagerConfig,
 };
+use base_execution_network_service::{PeerEvent, PeerKind, PeersInfo};
 use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 use base_execution_txpool::{
     AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
 };
 use futures::StreamExt;
-use reth_network_api::{PeerKind, PeersInfo, events::PeerEvent};
 use tokio::join;
 
 #[tokio::test(flavor = "multi_thread")]

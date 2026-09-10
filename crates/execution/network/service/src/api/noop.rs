@@ -18,12 +18,12 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use {base_execution_network_wire::NetworkSyncUpdater, reth_network_p2p::NoopFullBlockClient};
 
-use crate::{
+use crate::api::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerId, PeerInfo, PeerRequest, Peers,
     PeersInfo,
     events::{NetworkPeersEvents, PeerEventStream},
-    test_utils::{PeersHandle, PeersHandleProvider},
+    peers_handle::{PeersHandle, PeersHandleProvider},
 };
 
 /// A type that implements all network trait that does nothing.

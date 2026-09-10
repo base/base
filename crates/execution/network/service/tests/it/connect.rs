@@ -8,8 +8,11 @@ use base_common_runtime_tasks::Runtime;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_service::{
     BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
-    NetworkManager, PeersConfig,
-    test_utils::{NetworkEventStream, NetworkTestData, PeerConfig, Testnet},
+    NetworkManager, PeersConfig, test_utils::NetworkEventStream, test_utils::NetworkTestData,
+    test_utils::PeerConfig, test_utils::Testnet,
+};
+use base_execution_network_service::{
+    NetworkInfo, PeerEvent, PeerKind, Peers, PeersInfo, SessionInfo,
 };
 use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use base_execution_network_wire::DisconnectReason;
@@ -18,10 +21,6 @@ use base_execution_network_wire::{HeadersClient, HeadersRequest, NetworkSyncUpda
 use base_execution_state_api::NoopProvider;
 use base_execution_state_provider::test_utils::MockEthProvider;
 use futures::StreamExt;
-use reth_network_api::{
-    NetworkInfo, PeerKind, Peers, PeersInfo,
-    events::{PeerEvent, SessionInfo},
-};
 use secp256k1::SecretKey;
 use tokio::task;
 use url::Host;
