@@ -900,7 +900,10 @@ mod tests {
         // `NetworkManager::new` awaits `Discv5::start`, so `discv5()` is live once it returns. The
         // manager future is never polled: the `opel` write goes straight to the discv5 handle's ENR
         // lock, independent of the manager loop. `network` is held to keep discovery alive.
-        let network = NetworkManager::new(config).await.expect("network manager should start");
+        let network =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .expect("network manager should start");
         let handle = network.handle().clone();
         let discv5 = handle.discv5().expect("discv5 must be enabled");
 

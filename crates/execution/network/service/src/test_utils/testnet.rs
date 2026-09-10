@@ -127,7 +127,7 @@ where
     ) -> Result<(), NetworkError> {
         let PeerConfig { config, client, secret_key } = config;
 
-        let network = NetworkManager::new(config).await?;
+        let network = NetworkManager::new(config, client.clone()).await?;
         let peer = Peer {
             network,
             client,
@@ -595,7 +595,7 @@ where
 /// A helper config for setting up the reth networking stack.
 #[derive(Debug)]
 pub struct PeerConfig<C = NoopProvider> {
-    config: NetworkConfig<C>,
+    config: NetworkConfig,
     client: C,
     secret_key: SecretKey,
 }
@@ -656,7 +656,7 @@ where
     /// Launches the network and returns the [Peer] that manages it
     pub async fn launch(self) -> Result<Peer<C>, NetworkError> {
         let Self { config, client, secret_key } = self;
-        let network = NetworkManager::new(config).await?;
+        let network = NetworkManager::new(config, client.clone()).await?;
         let peer = Peer {
             network,
             client,

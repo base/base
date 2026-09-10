@@ -153,7 +153,7 @@ impl Command {
                             runtime.clone(),
                         )
                         .build(BlockchainProvider::new(provider_factory.clone())?)
-                        .start_network()
+                        .start_network(BlockchainProvider::new(provider_factory.clone())?)
                         .await?;
                     let fetch_client = Arc::new(network.fetch_client().await?);
 
@@ -209,7 +209,7 @@ impl Command {
                             runtime.clone(),
                         )
                         .build(BlockchainProvider::new(provider_factory.clone())?)
-                        .start_network()
+                        .start_network(BlockchainProvider::new(provider_factory.clone())?)
                         .await?;
                     let fetch_client = Arc::new(network.fetch_client().await?);
 

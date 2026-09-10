@@ -155,13 +155,14 @@ impl NetworkManager {
     /// use base_common_runtime::Runtime;
     /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
     ///     .build_with_noop_provider(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
-    /// let manager = NetworkManager::eth(config).await;
+    /// let manager = NetworkManager::eth(config, base_execution_state_database::NoopProvider::default()).await;
     /// # }
     /// ```
     pub async fn eth<C: BlockNumReader + 'static>(
-        config: NetworkConfig<C>,
+        config: NetworkConfig,
+        client: C,
     ) -> Result<Self, NetworkError> {
-        Self::new(config).await
+        Self::new(config, client).await
     }
 }
 
@@ -222,10 +223,10 @@ impl NetworkManager {
     /// The [`NetworkManager`] is an endless future that needs to be polled in order to advance the
     /// state of the entire network.
     pub async fn new<C: BlockNumReader + 'static>(
-        config: NetworkConfig<C>,
+        config: NetworkConfig,
+        client: C,
     ) -> Result<Self, NetworkError> {
         let NetworkConfig {
-            client,
             secret_key,
             discovery_v4_addr,
             mut discovery_v4_config,
@@ -381,7 +382,7 @@ impl NetworkManager {
     ///     let transactions_manager_config = config.transactions_manager_config.clone();
     ///
     ///     // create the network instance
-    ///     let (handle, network, transactions, request_handler) = NetworkManager::builder(config)
+    ///     let (handle, network, transactions, request_handler) = NetworkManager::builder(config, client.clone())
     ///         .await
     ///         .unwrap()
     ///         .transactions(pool, transactions_manager_config)
@@ -390,9 +391,10 @@ impl NetworkManager {
     /// }
     /// ```
     pub async fn builder<C: BlockNumReader + 'static>(
-        config: NetworkConfig<C>,
+        config: NetworkConfig,
+        client: C,
     ) -> Result<NetworkBuilder<(), ()>, NetworkError> {
-        let network = Self::new(config).await?;
+        let network = Self::new(config, client).await?;
         Ok(network.into_builder())
     }
 

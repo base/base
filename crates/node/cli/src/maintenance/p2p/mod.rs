@@ -206,7 +206,7 @@ impl DownloadArgs {
                 self.network.discovery.apply_to_builder(builder, rlpx_socket, boot_nodes)
             })
             .build_with_noop_provider(self.chain.clone())
-            .manager()
+            .manager(base_execution_state_database::NoopProvider::default())
             .await?;
         let handle = net.handle().clone();
         tokio::task::spawn(net);

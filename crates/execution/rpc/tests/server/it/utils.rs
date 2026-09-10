@@ -84,7 +84,7 @@ pub async fn test_rpc_registry() -> RpcRegistryInner {
             .disable_discovery()
             .listener_addr(test_address())
             .build(context.provider.clone())
-            .manager()
+            .manager(context.provider.clone())
             .await
             .expect("local fixture network");
     context.network = manager.handle().clone();

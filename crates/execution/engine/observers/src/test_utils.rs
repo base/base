@@ -121,6 +121,7 @@ impl TestExExHandle {
                 .with_unused_discovery_port()
                 .with_unused_listener_port()
                 .build(provider_factory.clone()),
+            provider.clone(),
         )
         .await?;
         let network = network_manager.handle().clone();

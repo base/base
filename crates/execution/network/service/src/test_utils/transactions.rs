@@ -40,12 +40,13 @@ pub async fn new_tx_manager() -> (TransactionsManager<TestPool>, NetworkManager)
     let pool = NetworkTestData::pool();
 
     let transactions_manager_config = config.transactions_manager_config.clone();
-    let (_network_handle, network, transactions, _) = NetworkManager::new(config)
-        .await
-        .unwrap()
-        .into_builder()
-        .transactions(pool.clone(), transactions_manager_config)
-        .split_with_handle();
+    let (_network_handle, network, transactions, _) =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
 
     (transactions, network)
 }

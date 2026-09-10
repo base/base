@@ -165,10 +165,7 @@ impl BuilderContext {
     }
 
     /// Builds the [`NetworkConfig`].
-    pub fn build_network_config(
-        &self,
-        network_builder: NetworkConfigBuilder,
-    ) -> NetworkConfig<BlockchainProvider> {
+    pub fn build_network_config(&self, network_builder: NetworkConfigBuilder) -> NetworkConfig {
         network_builder.build(self.provider.clone())
     }
 }
@@ -177,12 +174,12 @@ impl BuilderContext {
     /// Creates the [`NetworkBuilder`] for the node.
     pub async fn network_builder(&self) -> eyre::Result<NetworkBuilder<(), ()>> {
         let network_config = self.network_config()?;
-        let builder = NetworkManager::builder(network_config).await?;
+        let builder = NetworkManager::builder(network_config, self.provider.clone()).await?;
         Ok(builder)
     }
 
     /// Returns the default network config for the node.
-    pub fn network_config(&self) -> eyre::Result<NetworkConfig<BlockchainProvider>> {
+    pub fn network_config(&self) -> eyre::Result<NetworkConfig> {
         let network_builder = self.network_config_builder();
         Ok(self.build_network_config(network_builder?))
     }

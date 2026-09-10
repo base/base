@@ -2377,12 +2377,13 @@ mod tests {
         );
 
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (_network_handle, network, transactions, _) = NetworkManager::new(config)
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+        let (_network_handle, network, transactions, _) =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .unwrap()
+                .into_builder()
+                .transactions(pool.clone(), transactions_manager_config)
+                .split_with_handle();
 
         (transactions, network)
     }
@@ -2438,12 +2439,13 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+        let (network_handle, network, mut transactions, _) =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .unwrap()
+                .into_builder()
+                .transactions(pool.clone(), transactions_manager_config)
+                .split_with_handle();
 
         tokio::task::spawn(network);
 
@@ -2508,12 +2510,13 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+        let (network_handle, network, mut transactions, _) =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .unwrap()
+                .into_builder()
+                .transactions(pool.clone(), transactions_manager_config)
+                .split_with_handle();
 
         tokio::task::spawn(network);
 
@@ -2578,12 +2581,13 @@ mod tests {
         let pool = NetworkTestData::pool();
 
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (_network_handle, _network, mut tx_manager, _) = NetworkManager::new(config)
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+        let (_network_handle, _network, mut tx_manager, _) =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .unwrap()
+                .into_builder()
+                .transactions(pool.clone(), transactions_manager_config)
+                .split_with_handle();
 
         let peer_id_1 = PeerId::new([1; 64]);
         let eth_version = EthVersion::Eth66;
@@ -2682,12 +2686,13 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+        let (network_handle, network, mut transactions, _) =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .unwrap()
+                .into_builder()
+                .transactions(pool.clone(), transactions_manager_config)
+                .split_with_handle();
         tokio::task::spawn(network);
 
         network_handle.update_sync_state(SyncState::Idle);
@@ -2863,12 +2868,13 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+        let (network_handle, network, mut transactions, _) =
+            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+                .await
+                .unwrap()
+                .into_builder()
+                .transactions(pool.clone(), transactions_manager_config)
+                .split_with_handle();
         tokio::task::spawn(network);
 
         network_handle.update_sync_state(SyncState::Idle);
@@ -3367,7 +3373,12 @@ mod tests {
             .disable_discovery()
             .build(client.clone());
 
-        let mut network_manager = NetworkManager::new(network_config).await.unwrap();
+        let mut network_manager = NetworkManager::new(
+            network_config,
+            base_execution_state_database::NoopProvider::default(),
+        )
+        .await
+        .unwrap();
         let (to_tx_manager_tx, from_network_rx) =
             base_common_observability_metrics::common::mpsc::memory_bounded_channel::<NetworkTransactionEvent>(
                 crate::transactions::constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,

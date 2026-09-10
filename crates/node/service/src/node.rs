@@ -482,10 +482,7 @@ impl BaseNode {
     /// Returns the [`NetworkConfig`] that contains the settings to launch the p2p network.
     ///
     /// Uses the node’s discovery and networking arguments.
-    pub fn network_config(
-        &self,
-        ctx: &BuilderContext,
-    ) -> eyre::Result<NetworkConfig<BlockchainProvider>> {
+    pub fn network_config(&self, ctx: &BuilderContext) -> eyre::Result<NetworkConfig> {
         let discovery_config = BaseDiscoveryConfig::new(!self.args.discovery_v4);
         let args = &ctx.config().network;
         let network_builder = ctx
@@ -529,7 +526,7 @@ impl BaseNode {
         pool: base_execution_txpool::BaseTransactionPool,
     ) -> eyre::Result<NetworkHandle> {
         let network_config = self.network_config(ctx)?;
-        let network = NetworkManager::builder(network_config).await?;
+        let network = NetworkManager::builder(network_config, ctx.provider().clone()).await?;
         let handle = ctx.start_network(network, pool);
         info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
 

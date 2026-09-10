@@ -40,12 +40,7 @@ pub fn rng_secret_key() -> SecretKey {
 
 /// All network related initialization settings.
 #[derive(Debug)]
-pub struct NetworkConfig<C> {
-    /// The client type that can interact with the chain.
-    ///
-    /// This type is used to fetch the block number after we established a session and received the
-    /// [`UnifiedStatus`] block hash.
-    pub client: C,
+pub struct NetworkConfig {
     /// The node's secret key, from which the node's identity is derived.
     pub secret_key: SecretKey,
     /// All boot nodes to start network discovery with.
@@ -103,7 +98,7 @@ pub struct NetworkConfig<C> {
 
 // === impl NetworkConfig ===
 
-impl NetworkConfig<()> {
+impl NetworkConfig {
     /// Convenience method for creating the corresponding builder type.
     pub fn builder(secret_key: SecretKey, executor: Runtime) -> NetworkConfigBuilder {
         NetworkConfigBuilder::new(secret_key, executor)
@@ -115,7 +110,7 @@ impl NetworkConfig<()> {
     }
 }
 
-impl<C> NetworkConfig<C> {
+impl NetworkConfig {
     /// Apply a function to the config.
     pub fn apply<F>(self, f: F) -> Self
     where
@@ -142,33 +137,25 @@ impl<C> NetworkConfig<C> {
     }
 }
 
-impl<C> NetworkConfig<C>
-where
-    C: BlockNumReader + 'static,
-{
+impl NetworkConfig {
     /// Convenience method for calling [`NetworkManager::new`].
-    pub async fn manager(self) -> Result<NetworkManager, NetworkError> {
-        NetworkManager::new(self).await
+    pub async fn manager(
+        self,
+        client: impl BlockNumReader + 'static,
+    ) -> Result<NetworkManager, NetworkError> {
+        NetworkManager::new(self, client).await
     }
 }
 
-impl<C> NetworkConfig<C>
-where
-    C: BalProvider
-        + StateProviderFactory
-        + StateRangeProviderFactory
-        + BlockReader
-        + HeaderProvider
-        + Clone
-        + Unpin
-        + 'static,
-{
+impl NetworkConfig {
     /// Starts the networking stack given a [`NetworkConfig`] and returns a handle to the network.
-    pub async fn start_network(self) -> Result<NetworkHandle, NetworkError> {
-        let client = self.client.clone();
-        let (handle, network, _txpool, eth) = NetworkManager::builder::<C>(self)
+    pub async fn start_network(
+        self,
+        client: base_execution_state_provider::BlockchainProvider,
+    ) -> Result<NetworkHandle, NetworkError> {
+        let (handle, network, _txpool, eth) = NetworkManager::builder(self, client.clone())
             .await?
-            .request_handler::<C>(client)
+            .request_handler(client)
             .split_with_handle();
 
         tokio::task::spawn(network);
@@ -559,10 +546,7 @@ impl NetworkConfigBuilder {
 
     /// Convenience function for creating a [`NetworkConfig`] with a noop provider that does
     /// nothing.
-    pub fn build_with_noop_provider(
-        self,
-        chain_spec: Arc<BaseChainSpec>,
-    ) -> NetworkConfig<NoopProvider> {
+    pub fn build_with_noop_provider(self, chain_spec: Arc<BaseChainSpec>) -> NetworkConfig {
         self.build(NoopProvider::eth(chain_spec))
     }
 
@@ -601,13 +585,9 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Consumes the type and creates the actual [`NetworkConfig`]
-    /// for the given client type that can interact with the chain.
-    ///
-    /// The given client is to be used for interacting with the chain, for example fetching the
-    /// corresponding block for a given block hash we receive from a peer in the status message when
-    /// establishing a connection.
-    pub fn build<C>(self, client: C) -> NetworkConfig<C>
+    /// Derives network settings from the client's chain specification.
+    /// The client is attached separately when the network starts.
+    pub fn build<C>(self, client: C) -> NetworkConfig
     where
         C: ChainSpecProvider,
     {
@@ -691,7 +671,6 @@ impl NetworkConfigBuilder {
         }
 
         NetworkConfig {
-            client,
             secret_key,
             boot_nodes,
             dns_discovery_config,

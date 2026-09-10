@@ -34,7 +34,10 @@ async fn test_is_default_syncing() {
         .disable_discovery()
         .listener_port(0)
         .build(NoopProvider::default());
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
     assert!(!network.handle().is_syncing());
 }
 
@@ -45,14 +48,18 @@ async fn test_listener_addr_in_use() {
         .disable_discovery()
         .listener_port(0)
         .build(NoopProvider::default());
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
     let listener_port = network.local_addr().port();
     let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .listener_port(listener_port)
         .disable_discovery()
         .build(NoopProvider::default());
     let addr = config.listener_addr;
-    let result = NetworkManager::new(config).await;
+    let result =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default()).await;
     let err = result.err().unwrap();
     assert!(is_addr_in_use_kind(&err, ServiceKind::Listener(addr)), "{err:?}");
 }
@@ -102,7 +109,10 @@ async fn test_discv5_and_discv4_same_socket_ok() {
         )
         .disable_dns_discovery()
         .build(NoopProvider::default());
-    let _network = NetworkManager::new(config).await.expect("shared port discovery should start");
+    let _network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .expect("shared port discovery should start");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -134,7 +144,10 @@ async fn test_discv5_and_rlpx_same_socket_ok_without_discv4() {
         )
         .disable_dns_discovery()
         .build(NoopProvider::default());
-    let _network = NetworkManager::new(config).await.expect("should build");
+    let _network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .expect("should build");
 }
 
 // <https://github.com/paradigmxyz/reth/issues/8851>
@@ -147,7 +160,10 @@ async fn test_tcp_port_node_record_no_discovery() {
         .build_with_noop_provider(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::mainnet(),
         ));
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let local_addr = network.local_addr();
     // ensure we retrieved the port the OS chose
@@ -168,7 +184,10 @@ async fn test_tcp_port_node_record_discovery() {
         .build_with_noop_provider(std::sync::Arc::new(
             base_common_chain_config::BaseChainSpec::mainnet(),
         ));
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let local_addr = network.local_addr();
     // ensure we retrieved the port the OS chose
@@ -191,7 +210,10 @@ async fn test_node_record_address_with_nat() {
             base_common_chain_config::BaseChainSpec::mainnet(),
         ));
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
     let record = network.handle().local_node_record();
 
     assert_eq!(record.address, IpAddr::V4(Ipv4Addr::new(10, 1, 1, 1)));
@@ -209,7 +231,10 @@ async fn test_node_record_address_with_nat_disable_discovery() {
             base_common_chain_config::BaseChainSpec::mainnet(),
         ));
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
     let record = network.handle().local_node_record();
 
     assert_eq!(record.address, IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));

@@ -204,7 +204,10 @@ async fn test_connect_with_boot_nodes() {
     let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .discovery(discv4)
         .build(NoopProvider::default());
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let handle = network.handle().clone();
     let mut events = handle.event_listener();
@@ -227,12 +230,13 @@ async fn test_connect_with_builder() {
     let config = NetworkConfigBuilder::new(secret_key, Runtime::test())
         .discovery(discv4)
         .build(client.clone());
-    let (handle, network, _, requests) = NetworkManager::new(config)
-        .await
-        .unwrap()
-        .into_builder()
-        .request_handler(client)
-        .split_with_handle();
+    let (handle, network, _, requests) =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap()
+            .into_builder()
+            .request_handler(client)
+            .split_with_handle();
 
     let mut events = handle.event_listener();
 
@@ -266,13 +270,14 @@ async fn test_connect_to_trusted_peer() {
         .discovery(discv4)
         .build(client.clone());
     let transactions_manager_config = config.transactions_manager_config.clone();
-    let (handle, network, transactions, requests) = NetworkManager::new(config)
-        .await
-        .unwrap()
-        .into_builder()
-        .request_handler(client)
-        .transactions(NetworkTestData::pool(), transactions_manager_config)
-        .split_with_handle();
+    let (handle, network, transactions, requests) =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap()
+            .into_builder()
+            .request_handler(client)
+            .transactions(NetworkTestData::pool(), transactions_manager_config)
+            .split_with_handle();
 
     let mut events = handle.event_listener();
 
@@ -386,7 +391,10 @@ async fn test_trusted_peer_only() {
         .peer_config(peers_config)
         .build(NoopProvider::default());
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let handle = network.handle().clone();
     tokio::task::spawn(network);
@@ -449,7 +457,10 @@ async fn test_network_state_change() {
         .peer_config(peers_config)
         .build(NoopProvider::default());
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let handle = network.handle().clone();
     tokio::task::spawn(network);
@@ -490,7 +501,10 @@ async fn test_exceed_outgoing_connections() {
         .peer_config(peers_config)
         .build(NoopProvider::default());
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let handle = network.handle().clone();
     tokio::task::spawn(network);
@@ -531,7 +545,10 @@ async fn test_disconnect_incoming_when_exceeded_incoming_connections() {
         .peer_config(peers_config)
         .build(NoopProvider::default());
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
 
     let other_peer_handle = net.handles().next().unwrap();
 
@@ -647,7 +664,9 @@ async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -
             base_common_chain_config::BaseChainSpec::mainnet(),
         ));
 
-    NetworkManager::new(config).await.unwrap()
+    NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+        .await
+        .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -723,7 +742,10 @@ async fn test_connect_peer_in_different_network_should_fail() {
             base_common_chain_config::BaseChainSpec::sepolia(),
         ));
 
-    let network = NetworkManager::new(config).await.unwrap();
+    let network =
+        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
+            .await
+            .unwrap();
     let handle = network.handle().clone();
     tokio::task::spawn(network);
 
