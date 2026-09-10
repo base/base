@@ -1,9 +1,9 @@
 use alloy_primitives::Address;
 use base_common_types_chain::Transaction;
 
-use crate::PayloadTransactions;
+use crate::payload_transactions::PayloadTransactions;
 
-/// An implementation of [`crate::traits::PayloadTransactions`] that yields
+/// An implementation of [`crate::payload_transactions::traits::PayloadTransactions`] that yields
 /// a pre-defined set of transactions.
 ///
 /// This is useful to put a sequencer-specified set of transactions into the block
@@ -40,7 +40,7 @@ impl<T: Clone> PayloadTransactions for PayloadTransactionsFixed<T> {
     fn mark_invalid(&mut self, _sender: Address, _nonce: u64) {}
 }
 
-/// Wrapper over [`crate::traits::PayloadTransactions`] that combines transactions from multiple
+/// Wrapper over [`crate::payload_transactions::traits::PayloadTransactions`] that combines transactions from multiple
 /// `PayloadTransactions` iterators and keeps track of the gas for both of iterators.
 ///
 /// We can't use [`Iterator::chain`], because:
@@ -91,7 +91,7 @@ impl<B: PayloadTransactions, A: PayloadTransactions> PayloadTransactionsChain<B,
 
 impl<A, B> PayloadTransactions for PayloadTransactionsChain<A, B>
 where
-    A: PayloadTransactions<Transaction = base_execution_txpool_pool::BasePooledTransaction>,
+    A: PayloadTransactions<Transaction = crate::BasePooledTransaction>,
     B: PayloadTransactions<Transaction = A::Transaction>,
 {
     type Transaction = A::Transaction;

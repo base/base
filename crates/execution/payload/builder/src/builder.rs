@@ -29,15 +29,17 @@ use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{CommitChanges, Evm as AlloyEvm, TxResult};
 use base_execution_payload_types::{BuildNextEnv, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use base_execution_state_api::{BlockReader, ProviderError, StateProvider, StateProviderFactory};
+use base_execution_state_tasks::PayloadStateRootHandle;
+use base_execution_state_tasks::{
+    CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
+};
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ExecutionWitnessMode;
-use base_execution_state_tasks::PayloadStateRootHandle;
 use base_execution_txpool_pool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
-use base_execution_state_tasks::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
-use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
+use base_execution_txpool_pool::{NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives_traits::{SealedHeader, SignedTransaction};
 use tracing::{debug, debug_span, info, instrument, trace, warn};
 
@@ -1374,15 +1376,15 @@ mod tests {
     use base_execution_evm_runtime::{database::State, state::EvmState};
     use base_execution_payload_types::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
+    use base_execution_state_provider::NoopProvider;
     use base_execution_state_tasks::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,
     };
+    use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
     use base_execution_txpool_pool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
-    use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
+    use base_execution_txpool_pool::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{SealedHeader, SignedTransaction, WithEncoded};
-    use base_execution_state_provider::NoopProvider;
 
     use super::{BasePayloadBuilderCtx, Builder, ExecutionInfo};
     use crate::{

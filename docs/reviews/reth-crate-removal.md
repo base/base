@@ -58,7 +58,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 | `reth-node-api`, `reth-node-types` | Consolidate node type bundles and adapters in a lower-level Base execution API crate; remove arbitrary-network type builders after concrete Base types are wired through. Do not move them into an upper-level node crate that already consumes provider/engine crates. |
 | `reth-chainspec`, `reth-ethereum-forks` | Deleted after consolidating configuration in `ChainConfig` and execution metadata in `BaseChainSpec`. Base upgrades use a typed schedule; fork IDs, Ethereum rule traits, and fee parameters come directly from Alloy. |
 | `reth-ethereum-primitives` | Replace wrapper aliases with direct Alloy types where appropriate and replace `EthPrimitives` defaults with Base primitives in execution code. Preserve ordinary Ethereum transaction compatibility and L1 use. This small crate is largely aliases, but many storage/network/default/test types still reference it. |
-| `reth-payload-builder-primitives`, `reth-payload-util` | Fold payload events and transaction iteration helpers into a compatible payload library. Base's payload builder and debug RPC use the iteration helpers. |
+| `reth-payload-builder-primitives`, `base-execution-txpool-pool` | Fold payload events and transaction iteration helpers into a compatible payload library. Base's payload builder and debug RPC use the iteration helpers. |
 | `reth-rpc-traits` | Fold conversion traits into an appropriate lower-level RPC conversion/types crate if its `no_std` consumers remain supported. |
 | `reth-errors` | Replace the facade's re-exports with direct imports; move its aggregate error/result types to a compatible lower-level error module if still needed. |
 | `base-execution-state-types` | Consider consolidating storage model types with a lower-level storage/codec package. Preserve persisted encodings and avoid database/provider dependency cycles. |
@@ -152,7 +152,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-payload-builder](../../vendor/reth-payload-builder/Cargo.toml) | Retain shared infrastructure |
 | [reth-payload-builder-primitives](../../vendor/reth-payload-builder-primitives/Cargo.toml) | Consolidate; retain required code |
 | [reth-payload-primitives](../../vendor/reth-payload-primitives/Cargo.toml) | Retain shared infrastructure |
-| [reth-payload-util](../../vendor/reth-payload-util/Cargo.toml) | Consolidate; retain required code |
+| [base-execution-txpool-pool](../../crates/execution/txpool/pool/Cargo.toml) | Consolidate; retain required code |
 | [reth-payload-validator](../../vendor/reth-payload-validator/Cargo.toml) | Retain shared infrastructure |
 | [reth-primitives-traits](../../vendor/reth-primitives-traits/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |

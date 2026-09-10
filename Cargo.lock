@@ -2357,7 +2357,6 @@ dependencies = [
  "parking_lot",
  "rand 0.9.5",
  "reth-cli-commands",
- "reth-payload-util",
  "reth-primitives-traits",
  "reth-testing-utils",
  "rlimit",
@@ -3794,7 +3793,6 @@ dependencies = [
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
- "reth-payload-util",
  "reth-primitives-traits",
  "serde",
  "serde_json",
@@ -3904,7 +3902,6 @@ dependencies = [
  "pin-project",
  "rand 0.9.5",
  "reqwest",
- "reth-payload-util",
  "reth-primitives-traits",
  "reth-testing-utils",
  "schnellru",
@@ -4658,7 +4655,6 @@ dependencies = [
  "reth-node-ethstats",
  "reth-node-events",
  "reth-node-metrics",
- "reth-payload-util",
  "reth-primitives-traits",
  "rstest",
  "secp256k1 0.30.0",
@@ -14138,15 +14134,6 @@ dependencies = [
  "tokio",
  "tower",
  "tracing",
-]
-
-[[package]]
-name = "reth-payload-util"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-types-chain",
- "base-execution-txpool-pool",
 ]
 
 [[package]]

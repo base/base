@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::ValidPoolTransaction;
 use alloy_primitives::{Address, map::AddressSet};
-use base_execution_txpool_pool::ValidPoolTransaction;
 
 /// Iterator that returns transactions for the block building process in the order they should be
 /// included in the block.
@@ -75,7 +75,7 @@ impl<I> PayloadTransactions for BestPayloadTransactions<I>
 where
     I: Iterator<Item = Arc<ValidPoolTransaction>>,
 {
-    type Transaction = base_execution_txpool_pool::BasePooledTransaction;
+    type Transaction = crate::BasePooledTransaction;
 
     fn next(&mut self, _ctx: ()) -> Option<Self::Transaction> {
         loop {
@@ -96,13 +96,13 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use alloy_primitives::{Address, map::AddressSet};
-    use base_execution_txpool_pool::{
+    use crate::{
         BestTransactionsWithPrioritizedSenders, PendingPool,
         test_utils::{MockOrdering, MockTransaction, MockTransactionFactory},
     };
+    use alloy_primitives::{Address, map::AddressSet};
 
-    use crate::{
+    use crate::payload_transactions::{
         BestPayloadTransactions, PayloadTransactions, PayloadTransactionsChain,
         PayloadTransactionsFixed,
     };
@@ -159,7 +159,7 @@ mod tests {
 
         let mut block = PayloadTransactionsChain::new(
             PayloadTransactionsFixed::single(
-                base_execution_txpool_pool::BasePooledTransaction::try_from(
+                crate::BasePooledTransaction::try_from(
                     MockTransaction::eip1559().with_sender(address_top_of_block),
                 )
                 .unwrap(),

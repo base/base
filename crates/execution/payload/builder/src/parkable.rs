@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
 use base_common_types_chain::Transaction;
+pub use base_execution_txpool_pool::NoopPayloadTransactions;
+use base_execution_txpool_pool::PayloadTransactions;
 use base_execution_txpool_pool::{
     BasePooledTransaction, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
     PoolTransactionError, ValidPoolTransaction,
 };
-pub use reth_payload_util::NoopPayloadTransactions;
-use reth_payload_util::PayloadTransactions;
 
 /// Indicates that the payload builder excluded a transaction from the current candidate iterator.
 #[derive(Debug, thiserror::Error)]
@@ -47,7 +47,7 @@ pub trait ParkablePayloadTransactions: PayloadTransactions {
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
 }
 
-impl<I> ParkablePayloadTransactions for reth_payload_util::BestPayloadTransactions<I>
+impl<I> ParkablePayloadTransactions for base_execution_txpool_pool::BestPayloadTransactions<I>
 where
     I: Iterator<Item = Arc<ValidPoolTransaction>>,
 {
@@ -67,7 +67,9 @@ where
 }
 
 impl ParkablePayloadTransactions
-    for reth_payload_util::NoopPayloadTransactions<base_execution_txpool_pool::BasePooledTransaction>
+    for base_execution_txpool_pool::NoopPayloadTransactions<
+        base_execution_txpool_pool::BasePooledTransaction,
+    >
 {
     fn park_current(&mut self) -> bool {
         false

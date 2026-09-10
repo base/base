@@ -26,7 +26,6 @@ jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
-reth-payload-util = { workspace = true }
 base-common-cli-support = {workspace = true}
 reth-primitives-traits = { workspace = true }
 base-execution-evm-fees = { workspace = true }
@@ -77,7 +76,7 @@ base-execution-engine-driver = {workspace = true, optional = true}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-execution-evm-runtime = {features = ["std"], workspace = true}
 tar = { workspace = true, optional = true, features = ["default"] }
-base-execution-txpool-pool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = {workspace = true, features = ["default"]}
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-api = { workspace = true, features = ["default"] }

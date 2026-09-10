@@ -75,7 +75,6 @@ base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256
 [dev-dependencies]
 alloy-genesis = { workspace = true  }
 alloy-hardforks = { workspace = true }
-reth-payload-util = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
@@ -97,6 +96,7 @@ base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "std", "test-utils"] }
 base-common-types-chain = { workspace = true, features = ["alloy", "test-utils", "serde", "std"] }
+base-execution-txpool-pool = { workspace = true }
 
 [[bench]]
 name = "provider"
@@ -126,23 +126,6 @@ default = ["reth-codec"]
 asm-keccak = ["alloy-primitives/asm-keccak", "base-node-config/asm-keccak", "base-execution-evm-runtime/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global", "base-node-config/keccak-cache-global"]
 js-tracer = ["base-execution-rpc-handlers/js-tracer"]
-test-utils = [
-    "base-common-chain-config/test-utils",
-    "base-common-types-chain/arbitrary",
-    "base-execution-engine-observers/test-utils",
-    "base-execution-state-provider/test-utils",
-    "reth-codec",
-    "base-execution-state-database/test-utils",
-    "base-execution-network-service/test-utils",
-    "base-execution-payload-builder/test-utils",
-    "reth-primitives-traits/test-utils",
-    "base-execution-evm-blocks/test-utils",
-    "base-execution-state-types/test-utils",
-    "base-common-runtime-tasks/test-utils",
-    "base-execution-txpool-pool/test-utils",
-    "base-execution-state-trie/test-utils",
-    "base-execution-engine-driver/test-utils",
-    "base-execution-sync-pipeline/test-utils",
-]
+test-utils = ["base-common-chain-config/test-utils", "base-common-types-chain/arbitrary", "base-execution-engine-observers/test-utils", "base-execution-state-provider/test-utils", "reth-codec", "base-execution-state-database/test-utils", "base-execution-network-service/test-utils", "base-execution-payload-builder/test-utils", "reth-primitives-traits/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool-pool/test-utils", "base-execution-state-trie/test-utils", "base-execution-engine-driver/test-utils", "base-execution-sync-pipeline/test-utils"]
 reth-codec = []
 trie-debug = ["base-execution-engine-driver/trie-debug", "base-execution-engine-types/trie-debug", "base-node-config/trie-debug"]

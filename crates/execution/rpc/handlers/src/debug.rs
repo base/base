@@ -25,9 +25,9 @@ use base_execution_state_provider::{
 use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
 use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_txpool_pool::BasePooledTransaction;
+use base_execution_txpool_pool::NoopPayloadTransactions;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
-use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};

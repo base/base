@@ -29,7 +29,6 @@ alloy-transport = {workspace = true}
 jsonrpsee-types = {workspace = true}
 alloy-hardforks = { workspace = true }
 alloy-sol-types = { workspace = true }
-reth-payload-util = { workspace = true }
 opentelemetry-http = { workspace = true }
 alloy-rpc-types-admin = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
@@ -126,17 +125,6 @@ base-common-observability-events = { workspace = true, features = ["test-utils"]
 [features]
 default = ["metrics"]
 client = ["base-execution-state-provider/serde", "jsonrpsee/async-client", "jsonrpsee/client"]
-metrics = [
-    "base-execution-payload-builder/metrics",
-    "base-execution-state-tasks/metrics",
-    "base-common-observability-metrics/metrics",
-    "base-common-observability-events/metrics",
-    "base-execution-evm-blocks/metrics",
-]
-test-utils = [
-    "base-execution-evm-blocks/test-utils",
-    "base-execution-state-provider/test-utils",
-    "base-execution-network-service/test-utils",
-    "dep:base-execution-state-maintenance",
-]
+metrics = ["base-execution-payload-builder/metrics", "base-execution-state-tasks/metrics", "base-common-observability-metrics/metrics", "base-common-observability-events/metrics", "base-execution-evm-blocks/metrics"]
+test-utils = ["base-execution-evm-blocks/test-utils", "base-execution-state-provider/test-utils", "base-execution-network-service/test-utils", "dep:base-execution-state-maintenance"]
 js-tracer = ["base-execution-evm-inspectors/js-tracer"]

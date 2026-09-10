@@ -126,3 +126,9 @@ pub use traits::BestTransactions;
 pub use validate::*;
 
 use aquamarine as _;
+
+mod payload_transactions;
+pub use payload_transactions::{
+    BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions,
+    PayloadTransactionsChain, PayloadTransactionsFixed,
+};
