@@ -382,7 +382,6 @@ where
                 Env = EvmEnv,
                 Spec = base_execution_evm_runtime::BaseSpecId,
                 HaltReason = base_execution_evm_runtime::BaseHaltReason,
-                BlockEnv = base_execution_evm_runtime::BlockEnv,
                 DB = &'a mut State<DB>,
             >,
             Transaction = BaseTxEnvelope,

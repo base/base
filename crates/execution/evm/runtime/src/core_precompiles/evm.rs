@@ -61,10 +61,10 @@ impl<'a> EvmPrecompileStorageProvider<'a> {
     ) -> Self {
         let PrecompileInput { gas, caller, value, is_static, internals, .. } = input;
 
-        let block_number = internals.block_env().number().to::<u64>();
-        let timestamp = internals.block_env().timestamp();
+        let block_number = internals.block_env().number.to::<u64>();
+        let timestamp = internals.block_env().timestamp;
         let chain_id = internals.chain_id();
-        let beneficiary = internals.block_env().beneficiary();
+        let beneficiary = internals.block_env().beneficiary;
         let origin = internals.tx_origin();
 
         Self {

@@ -11,7 +11,6 @@ where
             Error = L::Error,
             HaltReason = L::HaltReason,
             Spec = L::Spec,
-            BlockEnv = L::BlockEnv,
             Precompiles = L::Precompiles,
             Inspector = L::Inspector,
         >,
@@ -22,11 +21,11 @@ where
     type Error = L::Error;
     type HaltReason = L::HaltReason;
     type Spec = L::Spec;
-    type BlockEnv = L::BlockEnv;
+
     type Precompiles = L::Precompiles;
     type Inspector = L::Inspector;
 
-    fn block(&self) -> &Self::BlockEnv {
+    fn block(&self) -> &base_execution_evm_runtime::BlockEnv {
         either::for_both!(self, evm => evm.block())
     }
 

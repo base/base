@@ -6,7 +6,7 @@ use core::{error::Error, fmt};
 use alloy_primitives::{Address, B256, Bytes, Log, TxKind, U256};
 
 use crate::{
-    Account, AccountInfo, BlockEnvironment, Bytecode, Cfg, ContextTr, DBErrorMarker, Database,
+    Account, AccountInfo, Block, BlockEnv, Bytecode, Cfg, ContextTr, DBErrorMarker, Database,
     InvalidTransaction, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccountTr,
     SStoreResult, StateLoad, StorageKey, StorageValue, TransferError,
 };
@@ -463,7 +463,7 @@ where
 /// Helper type exposing hooks into EVM and access to evm internal settings.
 pub struct EvmInternals<'a> {
     internals: Box<dyn EvmInternalsTr + 'a>,
-    block_env: &'a dyn BlockEnvironment,
+    block_env: &'a BlockEnv,
     chain_id: u64,
     tx_origin: Address,
     tx_env: &'a dyn TransactionTr,
@@ -473,7 +473,7 @@ impl<'a> EvmInternals<'a> {
     /// Creates a new [`EvmInternals`] instance.
     pub fn new<T>(
         journal: &'a mut T,
-        block_env: &'a dyn BlockEnvironment,
+        block_env: &'a BlockEnv,
         cfg_env: &'a impl Cfg,
         tx_env: &'a dyn TransactionTr,
     ) -> Self
@@ -499,13 +499,8 @@ impl<'a> EvmInternals<'a> {
     }
 
     /// Returns the  evm's block information.
-    pub const fn block_env(&self) -> &dyn BlockEnvironment {
+    pub const fn block_env(&self) -> &BlockEnv {
         self.block_env
-    }
-
-    /// Attempts to downcast the block environment to a concrete type.
-    pub fn block_env_downcast_ref<T: BlockEnvironment>(&self) -> Option<&T> {
-        (self.block_env as &dyn core::any::Any).downcast_ref()
     }
 
     /// Returns the current block number.

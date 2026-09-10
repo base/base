@@ -163,7 +163,7 @@ where
     type Error = EVMError<DB::Error>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
-    type BlockEnv = BlockEnv;
+
     type Precompiles = PRECOMPILE;
     type Inspector = I;
 
@@ -235,7 +235,7 @@ impl ReferenceEvmFactory for EthEvmFactory {
     type Error<DBError: DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;
     type Spec = SpecId;
-    type BlockEnv = BlockEnv;
+
     type Precompiles = PrecompilesMap;
 
     fn create_evm<DB: Database>(
@@ -280,11 +280,11 @@ mod tests {
         type Error = EVMError<DB::Error>;
         type HaltReason = HaltReason;
         type Spec = SpecId;
-        type BlockEnv = BlockEnv;
+
         type Precompiles = PrecompilesMap;
         type Inspector = I;
 
-        fn block(&self) -> &Self::BlockEnv {
+        fn block(&self) -> &base_execution_evm_runtime::BlockEnv {
             self.inner.block()
         }
 
@@ -344,7 +344,7 @@ mod tests {
         type Error<DBError: DBErrorMarker> = EVMError<DBError>;
         type HaltReason = HaltReason;
         type Spec = SpecId;
-        type BlockEnv = BlockEnv;
+
         type Precompiles = PrecompilesMap;
 
         fn create_evm<DB: Database>(

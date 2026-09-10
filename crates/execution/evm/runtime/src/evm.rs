@@ -326,7 +326,7 @@ where
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;
     type Env = EvmEnv;
-    type BlockEnv = BlockEnv;
+
     type Precompiles = base_execution_evm_runtime::PrecompilesMap;
     type Inspector = I;
 

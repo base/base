@@ -6,7 +6,7 @@ use base_common_types_rpc::{
     BaseTransactionRequest, BlockId, CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO,
     state::EvmOverrides,
 };
-use base_execution_evm_blocks::{BlockEnvironment, Database, Evm, TransactionEnvMut};
+use base_execution_evm_blocks::{Database, Evm, TransactionEnvMut};
 use base_execution_evm_runtime::{
     Block, Cfg, EvmDatabaseError, ExecutionResult, KECCAK_EMPTY, State, Transaction,
 };
@@ -71,7 +71,7 @@ impl BaseEthApi {
         // Mirrors geth's behavior, see:
         // <https://github.com/ethereum/go-ethereum/pull/30695>
         if let Some(block_overrides) = overrides.block {
-            apply_block_overrides(*block_overrides, &mut db, evm_env.block_env.inner_mut());
+            apply_block_overrides(*block_overrides, &mut db, &mut evm_env.block_env);
         }
 
         // Apply any state overrides if specified.

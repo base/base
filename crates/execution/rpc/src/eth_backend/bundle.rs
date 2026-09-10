@@ -9,9 +9,7 @@ use base_common_runtime::pool::BlockingTaskGuard;
 use base_common_types_chain::{Transaction as _, transaction::TxHashRef};
 use base_common_types_rpc::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use base_execution_evm_blocks::Evm;
-use base_execution_evm_runtime::{
-    Block, BlockEnvironment, DatabaseCommit, DatabaseRef, ResultAndState,
-};
+use base_execution_evm_runtime::{Block, DatabaseCommit, DatabaseRef, ResultAndState};
 use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 
@@ -92,18 +90,18 @@ impl EthBundle {
         let (mut evm_env, at) = self.eth_api().evm_env_at(block_id).await?;
 
         if let Some(coinbase) = coinbase {
-            evm_env.block_env.inner_mut().beneficiary = coinbase;
+            evm_env.block_env.beneficiary = coinbase;
         }
 
         // need to adjust the timestamp for the next block
         if let Some(timestamp) = timestamp {
-            evm_env.block_env.inner_mut().timestamp = U256::from(timestamp);
+            evm_env.block_env.timestamp = U256::from(timestamp);
         } else {
-            evm_env.block_env.inner_mut().timestamp += uint!(12_U256);
+            evm_env.block_env.timestamp += uint!(12_U256);
         }
 
         if let Some(difficulty) = difficulty {
-            evm_env.block_env.inner_mut().difficulty = U256::from(difficulty);
+            evm_env.block_env.difficulty = U256::from(difficulty);
         }
 
         // Validate that the bundle does not contain more than MAX_BLOB_NUMBER_PER_BLOCK blob
@@ -126,15 +124,15 @@ impl EthBundle {
         }
 
         // Apply gas limit: default to call gas limit unless user requests a smaller limit
-        evm_env.block_env.inner_mut().gas_limit = gas_limit.unwrap_or(call_gas_limit);
+        evm_env.block_env.gas_limit = gas_limit.unwrap_or(call_gas_limit);
 
         if let Some(base_fee) = base_fee {
-            evm_env.block_env.inner_mut().basefee = base_fee.try_into().unwrap_or(u64::MAX);
+            evm_env.block_env.basefee = base_fee.try_into().unwrap_or(u64::MAX);
         }
 
         let state_block_number = evm_env.block_env.number();
         // use the block number of the request
-        evm_env.block_env.inner_mut().number = U256::from(block_number);
+        evm_env.block_env.number = U256::from(block_number);
 
         self.eth_api()
             .spawn_with_state_at_block(at, move |eth_api, db| {

@@ -1,6 +1,6 @@
 //! Configuration types for EVM environment.
 
-use core::{any::Any, fmt::Debug};
+use core::fmt::Debug;
 
 use crate::{
     BaseSpecId, U256,
@@ -75,7 +75,7 @@ impl EvmEnv {
 
     /// Overrides the configured block number
     pub fn with_block_number(mut self, number: U256) -> Self {
-        self.block_env.inner_mut().number = number;
+        self.block_env.number = number;
         self
     }
 
@@ -85,7 +85,7 @@ impl EvmEnv {
     /// This is intended for block overrides.
     pub fn with_block_number_opt(mut self, number: Option<U256>) -> Self {
         if let Some(number) = number {
-            self.block_env.inner_mut().number = number;
+            self.block_env.number = number;
         }
         self
     }
@@ -93,14 +93,14 @@ impl EvmEnv {
     /// Sets the block number if provided.
     pub fn set_block_number_opt(&mut self, number: Option<U256>) -> &mut Self {
         if let Some(number) = number {
-            self.block_env.inner_mut().number = number;
+            self.block_env.number = number;
         }
         self
     }
 
     /// Overrides the configured block timestamp.
     pub fn with_timestamp(mut self, timestamp: U256) -> Self {
-        self.block_env.inner_mut().timestamp = timestamp;
+        self.block_env.timestamp = timestamp;
         self
     }
 
@@ -110,7 +110,7 @@ impl EvmEnv {
     /// This is intended for block overrides.
     pub fn with_timestamp_opt(mut self, timestamp: Option<U256>) -> Self {
         if let Some(timestamp) = timestamp {
-            self.block_env.inner_mut().timestamp = timestamp;
+            self.block_env.timestamp = timestamp;
         }
         self
     }
@@ -118,14 +118,14 @@ impl EvmEnv {
     /// Sets the block timestamp if provided.
     pub fn set_timestamp_opt(&mut self, timestamp: Option<U256>) -> &mut Self {
         if let Some(timestamp) = timestamp {
-            self.block_env.inner_mut().timestamp = timestamp;
+            self.block_env.timestamp = timestamp;
         }
         self
     }
 
     /// Overrides the configured block base fee.
     pub fn with_base_fee(mut self, base_fee: u64) -> Self {
-        self.block_env.inner_mut().basefee = base_fee;
+        self.block_env.basefee = base_fee;
         self
     }
 
@@ -135,7 +135,7 @@ impl EvmEnv {
     /// This is intended for block overrides.
     pub fn with_base_fee_opt(mut self, base_fee: Option<u64>) -> Self {
         if let Some(base_fee) = base_fee {
-            self.block_env.inner_mut().basefee = base_fee;
+            self.block_env.basefee = base_fee;
         }
         self
     }
@@ -143,7 +143,7 @@ impl EvmEnv {
     /// Sets the block base fee if provided.
     pub fn set_base_fee_opt(&mut self, base_fee: Option<u64>) -> &mut Self {
         if let Some(base_fee) = base_fee {
-            self.block_env.inner_mut().basefee = base_fee;
+            self.block_env.basefee = base_fee;
         }
         self
     }
@@ -152,22 +152,6 @@ impl EvmEnv {
 impl From<(CfgEnv<BaseSpecId>, BlockEnv)> for EvmEnv {
     fn from((cfg_env, block_env): (CfgEnv<BaseSpecId>, BlockEnv)) -> Self {
         Self { cfg_env, block_env }
-    }
-}
-
-/// Trait for types that can be used as a block environment.
-///
-/// Assumes that the type wraps an inner [`crate::core_machine::BlockEnv`].
-pub trait BlockEnvironment:
-    crate::core_machine::Block + Any + Debug + Send + Sync + 'static
-{
-    /// Returns a mutable reference to the inner [`crate::core_machine::BlockEnv`].
-    fn inner_mut(&mut self) -> &mut crate::core_machine::BlockEnv;
-}
-
-impl BlockEnvironment for BlockEnv {
-    fn inner_mut(&mut self) -> &mut crate::core_machine::BlockEnv {
-        self
     }
 }
 
@@ -282,14 +266,6 @@ mod tests {
         assert_eq!(evm_env.cfg_env.max_code_size(), crate::eip170::MAX_CODE_SIZE);
         assert_eq!(evm_env.cfg_env.max_initcode_size(), crate::eip3860::MAX_INITCODE_SIZE);
         assert_eq!(evm_env.cfg_env.tx_gas_limit_cap(), crate::eip7825::TX_GAS_LIMIT_CAP);
-    }
-
-    #[test]
-    fn test_block_environment_is_dyn_compatible() {
-        let block_env = BlockEnv::default();
-        let dyn_block_env: &dyn BlockEnvironment = &block_env;
-
-        assert_eq!(dyn_block_env.number(), block_env.number());
     }
 
     #[test]

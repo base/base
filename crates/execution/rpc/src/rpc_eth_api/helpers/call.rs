@@ -16,7 +16,7 @@ use base_common_types_rpc::{
     state::{EvmOverrides, StateOverride},
 };
 use base_execution_evm_blocks::{
-    BlockBuilder, BlockEnvironment, BlockExecutor, CancelOnDrop, Evm, TransactionEnvMut,
+    BlockBuilder, BlockExecutor, CancelOnDrop, Evm, TransactionEnvMut,
 };
 use base_execution_evm_runtime::{
     Block, Cfg, Database, DatabaseCommit, EvmDatabaseError, ResultAndState, State, Transaction,
@@ -127,19 +127,19 @@ impl BaseEthApi {
                         // If not explicitly required, we disable nonce check <https://github.com/paradigmxyz/reth/issues/16108>
                         evm_env.cfg_env.disable_nonce_check = true;
                         evm_env.cfg_env.disable_base_fee = true;
-                        evm_env.block_env.inner_mut().basefee = 0;
+                        evm_env.block_env.basefee = 0;
                     }
 
                     // Set prevrandao to zero for simulated blocks by default,
                     // matching spec behavior where MixDigest is zero-initialized.
                     // If user provides an override, it will be applied by apply_block_overrides.
-                    evm_env.block_env.inner_mut().prevrandao = Some(B256::ZERO);
+                    evm_env.block_env.prevrandao = Some(B256::ZERO);
                     if !this
                         .provider()
                         .chain_spec()
                         .is_paris_active_at_block(evm_env.block_env.number().saturating_to())
                     {
-                        evm_env.block_env.inner_mut().difficulty = parent.difficulty();
+                        evm_env.block_env.difficulty = parent.difficulty();
                     }
 
                     if let Some(block_overrides) = block_overrides {
@@ -153,7 +153,7 @@ impl BaseEthApi {
                         apply_block_overrides(
                             block_overrides,
                             &mut db,
-                            evm_env.block_env.inner_mut(),
+                            &mut evm_env.block_env,
                         );
                     }
                     if let Some(ref state_overrides) = state_overrides {
@@ -794,7 +794,7 @@ impl BaseEthApi {
         request.as_mut().take_nonce();
 
         if let Some(block_overrides) = overrides.block {
-            apply_block_overrides(*block_overrides, db, evm_env.block_env.inner_mut());
+            apply_block_overrides(*block_overrides, db, &mut evm_env.block_env);
         }
         if let Some(state_overrides) = overrides.state {
             apply_state_overrides(state_overrides, db)
@@ -805,7 +805,7 @@ impl BaseEthApi {
 
         // lower the basefee to 0 to avoid breaking EVM invariants (basefee < gasprice): <https://github.com/ethereum/go-ethereum/blob/355228b011ef9a85ebc0f21e7196f892038d49f0/internal/ethapi/api.go#L700-L704>
         if tx_env.gas_price() == 0 {
-            evm_env.block_env.inner_mut().basefee = 0;
+            evm_env.block_env.basefee = 0;
         }
 
         if !request_has_gas_limit {

@@ -20,9 +20,7 @@ use base_common_types_rpc::{
     GethTraceResult as TraceResult, Index, StateContext, state::EvmOverrides,
 };
 use base_execution_evm_blocks::{BlockExecutor, ExecutionWitnessRecord, Executor};
-use base_execution_evm_runtime::{
-    BlockEnvironment, BundleRetention, Database, DatabaseCommit, Evm, State,
-};
+use base_execution_evm_runtime::{BundleRetention, Database, DatabaseCommit, Evm, State};
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::{
     BlockIdReader, BlockReaderIdExt, ExecutionWitnessMode, HashedPostState,
@@ -454,8 +452,8 @@ impl DebugApi {
                         results.push(trace);
                     }
                     // Increment block_env number and timestamp for the next bundle
-                    evm_env.block_env.inner_mut().number += uint!(1_U256);
-                    evm_env.block_env.inner_mut().timestamp += uint!(12_U256);
+                    evm_env.block_env.number += uint!(1_U256);
+                    evm_env.block_env.timestamp += uint!(12_U256);
 
                     all_bundles.push(results);
                 }

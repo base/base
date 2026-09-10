@@ -6,7 +6,7 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_common_types_chain::transaction::TxHashRef;
 pub(crate) use base_execution_evm_runtime::Database;
 use base_execution_evm_runtime::{
-    BlockEnvironment, CfgEnv, ContextTr, DatabaseCommit, EvmError, ExecutionResult, HaltReasonTr,
+    BlockEnv, CfgEnv, ContextTr, DatabaseCommit, EvmError, ExecutionResult, HaltReasonTr,
     Inspector, IntoTxEnv, ResultAndState,
 };
 
@@ -51,15 +51,13 @@ pub trait Evm {
     /// Identifier of the EVM specification. EVM is expected to use this identifier to determine
     /// which features are enabled.
     type Spec: Debug + Copy + Hash + Eq + Send + Sync + Default + 'static;
-    /// Block environment used by the EVM.
-    type BlockEnv: BlockEnvironment + Clone;
     /// Precompiles used by the EVM.
     type Precompiles;
     /// Evm inspector.
     type Inspector;
 
-    /// Reference to [`Evm::BlockEnv`].
-    fn block(&self) -> &Self::BlockEnv;
+    /// Reference to [`BlockEnv`].
+    fn block(&self) -> &base_execution_evm_runtime::BlockEnv;
 
     /// Reference to [`CfgEnv`].
     fn cfg_env(&self) -> &CfgEnv<Self::Spec>;
@@ -262,7 +260,6 @@ pub trait ReferenceEvmFactory {
             HaltReason = Self::HaltReason,
             Error = Self::Error<DB::Error>,
             Spec = Self::Spec,
-            BlockEnv = Self::BlockEnv,
             Precompiles = Self::Precompiles,
             Inspector = I,
         >;
@@ -280,8 +277,6 @@ pub trait ReferenceEvmFactory {
     type HaltReason: HaltReasonTr + Send + Sync + 'static;
     /// The EVM specification identifier, see [`Evm::Spec`].
     type Spec: Debug + Copy + Hash + Eq + Send + Sync + Default + 'static;
-    /// Block environment used by the EVM. See [`Evm::BlockEnv`].
-    type BlockEnv: BlockEnvironment + Clone;
     /// Precompiles used by the EVM.
     type Precompiles;
 

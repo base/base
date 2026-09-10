@@ -1067,8 +1067,6 @@ mod tests {
     fn test_evm_internals_downcasts_block_env() {
         let mut ctx = EthEvmContext::new(EmptyDB::default(), Default::default());
         let internals = EvmInternals::from_context(&mut ctx);
-
-        assert!(internals.block_env_downcast_ref::<BlockEnv>().is_some());
     }
 
     #[test]
@@ -1081,7 +1079,7 @@ mod tests {
 
         // define a closure that implements the precompile functionality
         let closure_precompile = |input: PrecompileInput<'_>| -> PrecompileResult {
-            let _timestamp = input.internals.block_env().timestamp();
+            let _timestamp = input.internals.block_env().timestamp;
             let mut output = b"processed: ".to_vec();
             output.extend_from_slice(input.data.as_ref());
             Ok(PrecompileOutput::new(15, Bytes::from(output), 0))

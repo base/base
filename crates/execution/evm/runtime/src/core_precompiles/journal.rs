@@ -56,10 +56,10 @@ impl<'a> JournalStorageProvider<'a> {
         // (Unlike the block *timestamp*, which the EIP-8130 executor converts with
         // a checked `try_into` because it feeds consensus-critical expiry checks,
         // the block number here only backs the `block_number()` getter.)
-        let block_number = internals.block_env().number().to::<u64>();
-        let timestamp = internals.block_env().timestamp();
+        let block_number = internals.block_env().number.to::<u64>();
+        let timestamp = internals.block_env().timestamp;
         let chain_id = internals.chain_id();
-        let beneficiary = internals.block_env().beneficiary();
+        let beneficiary = internals.block_env().beneficiary;
         let origin = internals.tx_origin();
 
         Self { internals, caller, block_number, timestamp, chain_id, beneficiary, origin }

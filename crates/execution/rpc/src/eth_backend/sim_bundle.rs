@@ -11,9 +11,7 @@ use base_common_types_rpc::{
     SimBundleRequest, SimBundleResponse, Validity,
 };
 use base_execution_evm_blocks::Evm;
-use base_execution_evm_runtime::{
-    Block, BlockEnvironment, DatabaseCommit, DatabaseRef, ResultAndState,
-};
+use base_execution_evm_runtime::{Block, DatabaseCommit, DatabaseRef, ResultAndState};
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderTx;
 use base_execution_txpool::PoolPooledTx;
@@ -300,7 +298,7 @@ impl EthSimBundle {
                 let basefee = evm_env.block_env.basefee();
 
                 // apply overrides
-                apply_block_overrides(block_overrides, &mut db, evm_env.block_env.inner_mut());
+                apply_block_overrides(block_overrides, &mut db, &mut evm_env.block_env);
 
                 let initial_coinbase_balance = DatabaseRef::basic_ref(&db, coinbase)
                     .map_err(EthApiError::from)?
