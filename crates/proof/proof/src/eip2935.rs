@@ -7,7 +7,7 @@ use alloy_primitives::{B256, U256, b256, keccak256};
 use alloy_rlp::Decodable;
 use alloy_trie::{Nibbles, TrieAccount};
 use base_common_types_chain::Header;
-use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError, TrieProvider};
+use base_proof_witness_mpt::{TrieHinter, TrieNode, TrieNodeError, TrieProvider};
 use base_proof_witness_preimage::errors::PreimageOracleError;
 
 use crate::errors::OracleProviderError;
@@ -69,7 +69,7 @@ mod tests {
     use alloy_primitives::{Bytes, map::HashMap};
     use alloy_rlp::Encodable;
     use alloy_trie::{HashBuilder, proof::ProofRetainer};
-    use base_proof_mpt::NoopTrieHinter;
+    use base_proof_witness_mpt::NoopTrieHinter;
     use rstest::rstest;
 
     use super::*;

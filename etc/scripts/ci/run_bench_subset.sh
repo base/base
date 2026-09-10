@@ -25,7 +25,7 @@ baseline="${1:-current}"
 
 run() { echo "::group::$*"; "$@"; echo "::endgroup::"; }
 
-run cargo bench -p base-proof-mpt --bench trie_node \
+run cargo bench -p base-proof-witness-mpt --bench trie_node \
   -- --save-baseline "$baseline" --noplot
 run cargo bench -p base-consensus-batch-types --bench batch_transaction \
   -- --save-baseline "$baseline" --noplot

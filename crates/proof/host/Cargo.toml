@@ -20,7 +20,7 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
-base-proof-mpt = { workspace = true }
+base-proof-witness-mpt = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }

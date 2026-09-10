@@ -190,7 +190,7 @@ jobs:
       - uses: ./.depot/actions/setup
         with:
           native-deps: "true"
-      - run: cargo bench --locked -p base-proof-mpt --bench trie_node -- --test
+      - run: cargo bench --locked -p base-proof-witness-mpt --bench trie_node -- --test
   docker:
     name: Docker
     runs-on: depot-ubuntu-latest # was: ubuntu-latest. Mapped standard GitHub runner to Depot equivalent.

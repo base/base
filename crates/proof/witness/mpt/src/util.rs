@@ -1,4 +1,4 @@
-//! Utilities for `base-proof-mpt`
+//! Utilities for `base-proof-witness-mpt`
 
 use alloc::vec::Vec;
 

@@ -18,7 +18,7 @@ serde_json = { workspace = true }
 alloy-primitives = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
-base-proof-mpt = { workspace = true, features = ["std"] }
+base-proof-witness-mpt = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = []}
 tokio = { workspace = true, features = ["default", "full"] }
 clap = { workspace = true, features = ["default", "derive"] }

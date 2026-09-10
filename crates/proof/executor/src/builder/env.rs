@@ -8,7 +8,7 @@ use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_machine::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_execution_evm_runtime::{BaseSpecId, BaseUpgrade};
 use base_execution_evm_runtime::{EvmEnv, EvmFactory};
-use base_proof_mpt::TrieHinter;
+use base_proof_witness_mpt::TrieHinter;
 
 use super::StatelessL2Builder;
 use crate::{
@@ -167,7 +167,7 @@ mod tests {
     use base_common_types_payload::BasePayloadAttributes;
     use base_execution_evm_machine::BlobExcessGasAndPrice;
     use base_execution_evm_runtime::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
-    use base_proof_mpt::NoopTrieHinter;
+    use base_proof_witness_mpt::NoopTrieHinter;
 
     use crate::{NoopTrieDBProvider, StatelessL2Builder};
 

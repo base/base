@@ -4703,7 +4703,7 @@ dependencies = [
  "base-execution-evm-runtime",
  "base-proof-driver",
  "base-proof-executor",
- "base-proof-mpt",
+ "base-proof-witness-mpt",
  "base-proof-witness-preimage",
  "c-kzg",
  "lru 0.16.4",
@@ -4795,7 +4795,7 @@ dependencies = [
  "base-consensus-batch-types",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
- "base-proof-mpt",
+ "base-proof-witness-mpt",
  "getrandom 0.2.17",
  "rand 0.9.5",
  "rocksdb",
@@ -4831,8 +4831,8 @@ dependencies = [
  "base-execution-evm-runtime",
  "base-proof",
  "base-proof-client",
- "base-proof-mpt",
  "base-proof-types-protocol",
+ "base-proof-witness-mpt",
  "base-proof-witness-preimage",
  "futures",
  "metrics",
@@ -4843,27 +4843,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-proof-mpt"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "alloy-transport-http",
- "alloy-trie",
- "base-common-client-ethereum",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-common-types-rpc",
- "criterion",
- "proptest",
- "rand 0.9.5",
- "reqwest",
- "serde",
- "thiserror 2.0.19",
- "tokio",
 ]
 
 [[package]]
@@ -5060,6 +5039,27 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-proof-witness-mpt"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-transport-http",
+ "alloy-trie",
+ "base-common-client-ethereum",
+ "base-common-types-chain",
+ "base-common-types-payload",
+ "base-common-types-rpc",
+ "criterion",
+ "proptest",
+ "rand 0.9.5",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -5529,7 +5529,7 @@ dependencies = [
  "alloy-trie",
  "base-common-client-ethereum",
  "base-common-types-rpc",
- "base-proof-mpt",
+ "base-proof-witness-mpt",
  "clap",
  "eyre",
  "hex",

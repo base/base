@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use alloy_trie::Nibbles;
-use base_proof_mpt::{NoopTrieProvider, TrieNode};
+use base_proof_witness_mpt::{NoopTrieProvider, TrieNode};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::IteratorRandom};
 

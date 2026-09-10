@@ -11,7 +11,7 @@ use base_common_client_ethereum::{Provider, RootProvider, primitives::BlockTrans
 use base_common_types_chain::Header;
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_execution_evm_runtime::BaseEvmFactory;
-use base_proof_mpt::{NoopTrieHinter, TrieNode, TrieProvider};
+use base_proof_witness_mpt::{NoopTrieHinter, TrieNode, TrieProvider};
 use rocksdb::{DB, Options};
 use serde::{Deserialize, Serialize};
 use tokio::{fs, runtime::Handle, sync::Mutex};

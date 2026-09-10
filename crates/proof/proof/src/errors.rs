@@ -7,7 +7,7 @@
 use alloc::string::{String, ToString};
 
 use base_consensus_derive_pipeline::{PipelineError, PipelineErrorKind};
-use base_proof_mpt::{OrderedListWalkerError, TrieNodeError};
+use base_proof_witness_mpt::{OrderedListWalkerError, TrieNodeError};
 use base_proof_witness_preimage::errors::PreimageOracleError;
 use base_consensus_batch_types::{BaseBlockConversionError, FromBlockError};
 use thiserror::Error;

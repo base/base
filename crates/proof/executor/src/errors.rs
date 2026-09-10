@@ -9,7 +9,7 @@ use alloc::string::String;
 use base_common_types_chain::EIP1559ParamError;
 use base_execution_evm_machine::DBErrorMarker;
 use base_execution_evm_runtime::BlockExecutionError;
-use base_proof_mpt::TrieNodeError;
+use base_proof_witness_mpt::TrieNodeError;
 use thiserror::Error;
 
 /// Errors that can occur when validating EIP-1559 parameters from block header extra data.

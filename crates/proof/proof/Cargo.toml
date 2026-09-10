@@ -21,7 +21,7 @@ alloy-trie = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
-base-proof-mpt = { workspace = true }
+base-proof-witness-mpt = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-driver = { workspace = true }
 base-proof-executor = { workspace = true }
@@ -63,7 +63,7 @@ std = [
     "base-common-types-payload/std",
     "base-proof-driver/std",
     "base-proof-executor/std",
-    "base-proof-mpt/std",
+    "base-proof-witness-mpt/std",
     "base-proof-witness-preimage/std",
     "base-consensus-batch-types/std",
     "c-kzg?/std",

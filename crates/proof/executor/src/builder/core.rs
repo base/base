@@ -18,7 +18,7 @@ use base_execution_evm_runtime::{
 use base_execution_evm_runtime::{
     BlockExecutionResult, BlockExecutor, BlockExecutorFactory, EvmFactory,
 };
-use base_proof_mpt::TrieHinter;
+use base_proof_witness_mpt::TrieHinter;
 
 use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 

@@ -19,7 +19,7 @@ alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
-base-proof-mpt = { workspace = true }
+base-proof-witness-mpt = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
@@ -49,7 +49,7 @@ std = [
     "base-common-types-payload/std",
     "alloy-trie/std",
     "base-common-chain-config/std",
-    "base-proof-mpt/std",
+    "base-proof-witness-mpt/std",
     "base-consensus-batch-types/std",
     "getrandom_0_2_17/std",
     "serde?/std",

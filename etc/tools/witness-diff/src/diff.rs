@@ -11,7 +11,7 @@ use alloy_transport_http::{Client, Http};
 use alloy_trie::{Nibbles, TrieAccount};
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
-use base_proof_mpt::TrieNode;
+use base_proof_witness_mpt::TrieNode;
 use eyre::Result;
 use serde::{Deserialize, Deserializer};
 

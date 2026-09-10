@@ -13,7 +13,7 @@ use base_execution_evm_runtime::{
     primitives::{BLOCK_HASH_HISTORY, HashMap},
     state::{AccountInfo, Bytecode},
 };
-use base_proof_mpt::{TrieHinter, TrieNode, TrieNodeError};
+use base_proof_witness_mpt::{TrieHinter, TrieNode, TrieNodeError};
 
 use crate::errors::{TrieDBError, TrieDBResult};
 
@@ -364,7 +364,7 @@ mod tests {
     use base_execution_evm_runtime::database::{
         AccountStatus, BundleAccount, StorageSlot as RvmStorageSlot,
     };
-    use base_proof_mpt::NoopTrieHinter;
+    use base_proof_witness_mpt::NoopTrieHinter;
 
     use super::*;
 

@@ -188,7 +188,7 @@ benches:
 
 # Runs MPT trie node benchmarks
 bench-proof-mpt:
-    cargo bench -p base-proof-mpt --bench trie_node
+    cargo bench -p base-proof-witness-mpt --bench trie_node
 
 # Runs consensus protocol batch transaction benchmarks
 bench-protocol:

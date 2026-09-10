@@ -24,7 +24,7 @@ proof_packages=(
   base-proof-client
   base-proof-driver
   base-proof-executor
-  base-proof-mpt
+  base-proof-witness-mpt
   base-proof-witness-preimage
   base-proof-types-protocol
 )

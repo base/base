@@ -13,7 +13,7 @@ use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
 use base_proof_driver::Executor;
 use base_proof_executor::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
-use base_proof_mpt::TrieHinter;
+use base_proof_witness_mpt::TrieHinter;
 
 /// An executor wrapper type.
 #[derive(Debug)]

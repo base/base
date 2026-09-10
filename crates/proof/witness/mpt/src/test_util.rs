@@ -1,4 +1,4 @@
-//! Testing utilities for `base-proof-mpt`
+//! Testing utilities for `base-proof-witness-mpt`
 
 use alloc::{collections::BTreeMap, vec::Vec};
 

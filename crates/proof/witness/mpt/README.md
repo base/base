@@ -1,4 +1,4 @@
-# `base-proof-mpt`
+# `base-proof-witness-mpt`
 
 A recursive, in-memory implementation of Ethereum's hexary Merkle Patricia Trie (MPT).
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-mpt = { workspace = true }
+base-proof-witness-mpt = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_mpt::{TrieNode, TrieProvider};
+use base_proof_witness_mpt::{TrieNode, TrieProvider};
 
 let root = TrieNode::from_hash(state_root);
 let value = root.get(key, &provider)?;
