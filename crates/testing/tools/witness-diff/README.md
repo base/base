@@ -26,7 +26,7 @@ The block number in the `params` array must be hex. The `.result` field of the r
 ## Running the tool
 
 ```sh
-cargo run -p base-testing-tools-witness-diff -- \
+cargo run -p base-bin-witness-diff -- \
   --local <PATH>    path to the local witness JSON file
   --rpc-url <URL>   HTTP(S) URL of the reference L2 node to compare against
   --block <NUMBER>  decimal block number to fetch from the reference node
@@ -37,7 +37,7 @@ cargo run -p base-testing-tools-witness-diff -- \
 Example:
 
 ```sh
-cargo run -p base-testing-tools-witness-diff -- \
+cargo run -p base-bin-witness-diff -- \
   --local ~/witnesses/43127830_witness.json \
   --rpc-url https://reference-node:8545 \
   --block 43127830

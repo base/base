@@ -1,10 +1,16 @@
 [package]
 name = "base-testing-tools-witness-diff"
+
 version.workspace = true
+
 edition.workspace = true
+
 rust-version.workspace = true
+
 license.workspace = true
+
 homepage.workspace = true
+
 repository.workspace = true
 
 [lints]
@@ -18,15 +24,9 @@ serde_json = { workspace = true }
 alloy-primitives = { workspace = true }
 hex = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
-base-proof-witness-mpt = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = []}
-tokio = { workspace = true, features = ["default", "full"] }
-clap = { workspace = true, features = ["default", "derive"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
+base-proof-witness-mpt = { workspace = true, features = ["std"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-client-ethereum = {workspace = true, features = ["default"]}
-
-[[bin]]
-name = "base-witness-diff"
-path = "src/main.rs"
 

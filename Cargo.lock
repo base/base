@@ -2196,6 +2196,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-bin-witness-diff"
+version = "0.0.0"
+dependencies = [
+ "base-testing-tools-witness-diff",
+ "clap",
+ "eyre",
+ "tokio",
+]
+
+[[package]]
 name = "base-challenger-bin"
 version = "0.0.0"
 dependencies = [
@@ -5356,12 +5366,10 @@ dependencies = [
  "base-common-client-ethereum",
  "base-common-types-rpc",
  "base-proof-witness-mpt",
- "clap",
  "eyre",
  "hex",
  "serde",
  "serde_json",
- "tokio",
 ]
 
 [[package]]

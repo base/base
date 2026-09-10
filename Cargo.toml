@@ -31,6 +31,7 @@ members = [
   "bin/sidecrush",
   "bin/snapshotter",
   "bin/websocket-proxy",
+  "bin/witness-diff",
   "crates/batcher/encoding/channel",
   "crates/batcher/service/driver",
   "crates/common/chain/config",
@@ -139,6 +140,7 @@ default-members = [
   "bin/sidecrush",
   "bin/snapshotter",
   "bin/websocket-proxy",
+  "bin/witness-diff",
 ]
 
 [workspace.metadata.cargo-udeps.ignore]
@@ -274,6 +276,7 @@ base-node-service = { path = "crates/node/service", default-features = false }
 base-node-cli = { path = "crates/node/cli", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
+base-testing-tools-witness-diff = { path = "crates/testing/tools/witness-diff", default-features = false }
 base-testing-devnet = { path = "crates/testing/devnet", default-features = false }
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-txpool-pool = { path = "crates/execution/txpool/pool", default-features = false }

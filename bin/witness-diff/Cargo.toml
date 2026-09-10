@@ -1,0 +1,22 @@
+[package]
+name = "base-bin-witness-diff"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-witness-diff"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre = { workspace = true, features = ["default"] }
+base-testing-tools-witness-diff = {workspace = true}
+tokio = { workspace = true, features = ["default", "full"] }
+clap = { workspace = true, features = ["default", "derive"] }

@@ -12,7 +12,7 @@ use eyre::Result;
 /// codes, and keys differ — including a detailed breakdown of affected accounts.
 #[derive(Parser, Debug)]
 #[command(name = "witness-diff")]
-struct Args {
+pub struct Args {
     /// Path to the local witness JSON file (from re-execution).
     #[arg(long)]
     local: PathBuf,
