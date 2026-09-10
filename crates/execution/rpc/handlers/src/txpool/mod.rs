@@ -176,3 +176,22 @@ impl<Pool, Eth> fmt::Debug for TxPoolApi<Pool, Eth> {
         f.debug_struct("TxpoolApi").finish_non_exhaustive()
     }
 }
+
+mod extensions;
+pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+pub use extensions::{
+    AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
+    SendRawTransactionValidityApiServer, SendRawTransactionValidityOptions, Status,
+    TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
+    VALIDITY_TX_PRE_ZENITH_RPC_ERROR,
+};
+
+mod builder_config;
+pub use builder_config::BuilderApiConfig;
+mod shadow_validity;
+pub use shadow_validity::{
+    InjectionOutcome, MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS, ShadowValidityBuilderApi,
+    ShadowValidityConfig, ShadowValidityConfigError,
+};
+mod metrics;
+pub use metrics::ValidityMetrics;

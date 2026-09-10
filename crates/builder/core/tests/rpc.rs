@@ -10,13 +10,13 @@ use base_common_types_chain::{
     BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
 };
 use base_common_types_rpc::BaseTransactionRequest;
+use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
 use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,
     ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
 use base_testing_support::Account;
-use base_txpool_rpc::SendRawTransactionValidityOptions;
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(

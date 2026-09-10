@@ -14,6 +14,7 @@ use base_execution_payload_builder::{
     REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache, ResourceMeteringConfig,
     SharedMeteringStore,
 };
+use base_execution_rpc_handlers::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_execution_state_indexer::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
@@ -23,7 +24,6 @@ use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
 };
-use base_txpool_rpc::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_txpool_tracing::TxpoolConfig;
 use tracing::warn;
 use url::Url;

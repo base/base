@@ -25,7 +25,6 @@ base-cli-utils = { workspace = true }
 reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
-base-txpool-rpc = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-node-context = { workspace = true }
@@ -99,7 +98,7 @@ base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
-base-execution-rpc-handlers = {features = ["client", "default"], workspace = true}
+base-execution-rpc-handlers = {workspace = true, features = ["client", "default"]}
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "json"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -108,10 +107,10 @@ tikv-jemallocator = { workspace = true, optional = true, features = ["default"] 
 [dev-dependencies]
 nanoid = { workspace = true }
 rlimit = { workspace = true }
-base-txpool-rpc = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-testing-support = { workspace = true }
 base-execution-state-tasks = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 ctor = { workspace = true, features = ["default"] }
 hyper = { workspace = true, features = ["default"] }
@@ -128,7 +127,7 @@ base-common-client-ethereum = { workspace = true, features = ["default", "txpool
 [features]
 default = ["jemalloc", "metrics"]
 metrics = [
-    "base-txpool-rpc/metrics",
+    "base-execution-rpc-handlers/metrics",
     "base-execution-evm-runtime/metrics",
     "base-execution-payload-builder/metrics",
     "base-common-observability-metrics/metrics",

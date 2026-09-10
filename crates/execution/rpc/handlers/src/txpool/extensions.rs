@@ -1,5 +1,6 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
+use crate::error::RpcPoolError;
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
@@ -7,7 +8,6 @@ use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
-use base_execution_rpc_handlers::error::RpcPoolError;
 use base_execution_state_api::BlockReaderIdExt;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,

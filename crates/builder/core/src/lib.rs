@@ -17,7 +17,7 @@ mod traits;
 pub use traits::{ClientBounds, PayloadTxsBounds, PoolBounds};
 
 mod service;
-pub use base_txpool_rpc::{
+pub use base_execution_rpc_handlers::{
     BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS,
     ShadowValidityBuilderApi, ShadowValidityConfig, ShadowValidityConfigError,
 };

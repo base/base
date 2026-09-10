@@ -86,11 +86,11 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "
 
 [dev-dependencies]
 alloy-json-rpc = { workspace = true }
-base-txpool-rpc = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-client-rollup = { workspace = true }
 base-common-types-payload = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
 base-execution-state-indexer = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 base-consensus-derive-pipeline = { workspace = true }

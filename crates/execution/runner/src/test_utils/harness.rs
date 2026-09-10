@@ -12,15 +12,15 @@ use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::Predeploys;
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_common_types_rpc::BlockNumberOrTag;
+use base_consensus_batch_types::BaseTimeUpdateTx;
 use base_execution_evm_runtime::BaseTime;
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_consensus_batch_types::BaseTimeUpdateTx;
-use base_testing_support::build_test_genesis;
-use eyre::{Result, eyre};
-use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider, StateProviderFactory,
 };
+use base_testing_support::build_test_genesis;
+use eyre::{Result, eyre};
+use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
 
 use crate::test_utils::{
@@ -63,7 +63,10 @@ impl TestHarnessBuilder {
     /// Prefer [`with_ext`](Self::with_ext) for simpler configuration.
 
     /// Configures sequencer transaction ingress.
-    pub fn with_builder_rpc(mut self, config: base_txpool_rpc::BuilderApiConfig) -> Self {
+    pub fn with_builder_rpc(
+        mut self,
+        config: base_execution_rpc_handlers::BuilderApiConfig,
+    ) -> Self {
         self.rpc.builder = Some(config);
         self
     }

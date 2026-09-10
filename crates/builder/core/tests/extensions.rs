@@ -1,9 +1,9 @@
 //! Verifies that sequencer RPC services are ready when node startup returns.
 
 use alloy_primitives::B256;
-use base_common_client_ethereum::Provider;
 use base_builder_core::{BuilderConfig, test_utils::LocalInstanceBuilder};
-use base_txpool_rpc::{Status, TransactionStatusResponse};
+use base_common_client_ethereum::Provider;
+use base_execution_rpc_handlers::{Status, TransactionStatusResponse};
 
 #[tokio::test]
 async fn built_in_transaction_status_is_ready_after_launch() -> eyre::Result<()> {

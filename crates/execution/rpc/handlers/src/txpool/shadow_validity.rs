@@ -7,7 +7,7 @@ use base_execution_txpool::{
 };
 use jsonrpsee::core::RpcResult;
 
-use crate::{BuilderApiConfig, ValidityMetrics};
+use crate::txpool::{BuilderApiConfig, ValidityMetrics};
 
 /// Number of basis points representing a 100% sampling rate.
 pub const MAX_SHADOW_VALIDITY_SAMPLE_RATE_BPS: u16 = 10_000;

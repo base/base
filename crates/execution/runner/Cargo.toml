@@ -17,7 +17,6 @@ base-execution-state-provider = { workspace = true }
 reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
-base-txpool-rpc = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 base-tx-forwarding = { workspace = true, optional = true }
 base-testing-support = { workspace = true, optional = true }
@@ -28,6 +27,7 @@ base-common-runtime-tasks = { workspace = true, optional = true }
 base-consensus-batch-types = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true, optional = true}
+base-execution-rpc-handlers = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
@@ -55,7 +55,7 @@ harness = false
 [features]
 test-utils = [
     "dep:base-tx-forwarding",
-    "dep:base-txpool-rpc",
+    "dep:base-execution-rpc-handlers",
     "dep:base-metering",
     "dep:base-common-chain-config",
     "dep:base-common-types-chain",

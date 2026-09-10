@@ -2,7 +2,7 @@
 
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 
-use crate::{ShadowValidityConfig, ShadowValidityConfigError};
+use crate::txpool::{ShadowValidityConfig, ShadowValidityConfigError};
 
 /// Builder RPC configuration for experimental validity-bearing transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -24,7 +24,6 @@ reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
 reth-node-core = { workspace = true }
-base-txpool-rpc = { workspace = true }
 reth-engine-tree = { workspace = true }
 reth-engine-util = { workspace = true }
 reth-network-api = { workspace = true }
@@ -74,7 +73,7 @@ base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
-base-execution-rpc-handlers = {features = ["client", "default"], workspace = true}
+base-execution-rpc-handlers = {workspace = true, features = ["client", "default"]}
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-tracing = { workspace = true, features = ["default", "std"] }

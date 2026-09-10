@@ -21,7 +21,6 @@ base-reth-cli = { workspace = true }
 reth-cli-util = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-node-core = { workspace = true }
-base-txpool-rpc = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-node-metrics = { workspace = true }
 reth-rpc-server-types = { workspace = true }
@@ -29,6 +28,7 @@ base-common-runtime-tasks = { workspace = true }
 base-execution-state-tasks = { workspace = true }
 base-execution-state-types = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
+base-execution-rpc-handlers = { workspace = true }
 tar = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }

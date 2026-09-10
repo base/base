@@ -31,9 +31,9 @@ tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 
 [dev-dependencies]
 alloy-signer = { workspace = true }
-base-txpool-rpc = { workspace = true }
 base-testing-support = { workspace = true }
 base-common-types-chain = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 jsonrpsee = { workspace = true, features = ["server"] }
