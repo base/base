@@ -124,7 +124,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::PrivateKeySigner;
-    use alloy_node_bindings::Anvil;
+    use base_common_process_nodes::Anvil;
     use alloy_primitives::{U256, address, b256};
     use base_common_types_rpc::TransactionRequest;
 

@@ -5,7 +5,7 @@ mod common;
 use std::sync::Arc;
 
 use alloy_eips::{eip4844::Blob, eip7594::CELLS_PER_EXT_BLOB};
-use alloy_node_bindings::Anvil;
+use base_common_process_nodes::Anvil;
 use alloy_primitives::{Bytes, TxKind, U256};
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_ethereum::RootProvider;
@@ -18,7 +18,7 @@ use common::{
     TEST_RECIPIENT, setup_anvil, setup_with_config, setup_with_failing_signer, value_transfer,
 };
 
-async fn setup() -> (SimpleTxManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
+async fn setup() -> (SimpleTxManager<RootProvider>, base_common_process_nodes::AnvilInstance) {
     setup_with_config(TxManagerConfig::default()).await
 }
 

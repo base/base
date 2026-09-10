@@ -1882,7 +1882,7 @@ impl<N: Network> Provider<N> for RootProvider<N> {
 mod tests {
     use std::{io::Read, str::FromStr, time::Duration};
 
-    use alloy_node_bindings::{Anvil, Reth, utils::run_with_tempdir};
+    use base_common_process_nodes::{Anvil, Reth, utils::run_with_tempdir};
     use alloy_primitives::{address, b256, bytes, keccak256};
     use alloy_rlp::Decodable;
     use alloy_rpc_client::{BuiltInConnectionString, RpcClient};

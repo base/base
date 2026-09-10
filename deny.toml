@@ -264,7 +264,7 @@ skip = [
 
     # Alloy and other upstream transitive dependency mismatches
     "alloy-eips",
-    # alloy-node-bindings (anvil harness for base-challenger-e2e) pins an older
+    # base-common-process-nodes (anvil harness for base-challenger-e2e) pins an older
     # alloy-hardforks than the rest of the workspace.
     "alloy-hardforks",
     "alloy-json-rpc",

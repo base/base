@@ -166,7 +166,7 @@ where
 mod test {
     use crate::{EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder};
     use alloy_eips::{BlockNumberOrTag, Encodable2718};
-    use alloy_node_bindings::{Reth, utils::run_with_tempdir};
+    use base_common_process_nodes::{Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
     use base_common_types_rpc::TransactionRequest;
 

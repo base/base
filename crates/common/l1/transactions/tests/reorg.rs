@@ -22,7 +22,7 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 /// Creates a [`SimpleTxManager`] from an existing Anvil instance, needed
 /// for tests that customize Anvil flags (e.g. `--no-mining`).
 async fn manager_from_anvil(
-    anvil: &alloy_node_bindings::AnvilInstance,
+    anvil: &base_common_process_nodes::AnvilInstance,
     config: TxManagerConfig,
 ) -> SimpleTxManager<RootProvider> {
     let provider = RootProvider::new_http(anvil.endpoint_url());
@@ -108,7 +108,7 @@ async fn query_receipt_returns_none_after_reorg_removes_tx() {
 #[tokio::test]
 async fn query_receipt_returns_receipt_after_reorg_reinclusion() {
     let config = TxManagerConfig { num_confirmations: 1, ..TxManagerConfig::default() };
-    let anvil = alloy_node_bindings::Anvil::new().arg("--no-mining").spawn();
+    let anvil = base_common_process_nodes::Anvil::new().arg("--no-mining").spawn();
     let manager = manager_from_anvil(&anvil, config).await;
 
     // Tx sits in mempool since automine is off.

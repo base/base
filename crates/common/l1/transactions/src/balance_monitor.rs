@@ -142,7 +142,7 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_balance_on_first_tick() {
-        let anvil = alloy_node_bindings::Anvil::new().spawn();
+        let anvil = base_common_process_nodes::Anvil::new().spawn();
         let address: Address = anvil.addresses()[0];
         let cancel = CancellationToken::new();
 
@@ -163,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_closes_channel() {
-        let anvil = alloy_node_bindings::Anvil::new().spawn();
+        let anvil = base_common_process_nodes::Anvil::new().spawn();
         let address: Address = anvil.addresses()[0];
         let cancel = CancellationToken::new();
 

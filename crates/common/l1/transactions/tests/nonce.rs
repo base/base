@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use alloy_node_bindings::Anvil;
+use base_common_process_nodes::Anvil;
 use alloy_primitives::{Address, U256};
 use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner};
 use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
@@ -12,7 +12,7 @@ use rayon::prelude::*;
 
 /// Helper: spawns an Anvil instance and returns a [`NonceManager`] wired to
 /// the first default account.
-fn setup() -> (NonceManager<RootProvider>, alloy_node_bindings::AnvilInstance) {
+fn setup() -> (NonceManager<RootProvider>, base_common_process_nodes::AnvilInstance) {
     let anvil = Anvil::new().spawn();
     let url = anvil.endpoint_url();
     let provider = RootProvider::new_http(url);

@@ -236,7 +236,7 @@ impl<N: Network> NewBlocks<N> {
 mod tests {
     use std::{future::Future, time::Duration};
 
-    use alloy_node_bindings::Anvil;
+    use base_common_process_nodes::Anvil;
 
     use super::*;
     use crate::{Provider, ProviderBuilder, ext::AnvilApi};

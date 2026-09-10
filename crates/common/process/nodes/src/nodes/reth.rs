@@ -145,9 +145,9 @@ impl Drop for RethInstance {
 /// # Example
 ///
 /// ```no_run
-/// use alloy_node_bindings::Reth;
+/// use base_common_process_nodes::Reth;
 ///
-/// # fn main() -> Result<(), alloy_node_bindings::NodeError> {
+/// # fn main() -> Result<(), base_common_process_nodes::NodeError> {
 /// let reth = Reth::new().dev().block_time("12s").try_spawn()?;
 /// println!("Reth is listening at {}", reth.endpoint());
 ///
@@ -216,8 +216,8 @@ impl Reth {
     /// # Example
     ///
     /// ```no_run
-    /// use alloy_node_bindings::Reth;
-    /// # fn main() -> Result<(), alloy_node_bindings::NodeError> {
+    /// use base_common_process_nodes::Reth;
+    /// # fn main() -> Result<(), base_common_process_nodes::NodeError> {
     /// let reth = Reth::at("/path/to/reth").dev().try_spawn()?;
     ///
     /// println!("Reth running at `{}`", reth.endpoint());

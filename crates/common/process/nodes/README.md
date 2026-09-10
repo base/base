@@ -1,4 +1,4 @@
-# alloy-node-bindings
+# base-common-process-nodes
 
 Builders for launching local [Anvil], [Geth], and [Reth] child processes.
 
@@ -10,9 +10,9 @@ Readiness output is consumed synchronously, so a live child that emits no newlin
 configured startup timeout.
 
 ```no_run
-use alloy_node_bindings::Anvil;
+use base_common_process_nodes::Anvil;
 
-# fn main() -> Result<(), alloy_node_bindings::NodeError> {
+# fn main() -> Result<(), base_common_process_nodes::NodeError> {
 let anvil = Anvil::new().try_spawn()?;
 println!("Anvil is listening at {}", anvil.endpoint());
 
@@ -26,6 +26,6 @@ Keep the returned instance alive for as long as the node is needed. Anvil and Ge
 HTTP port to zero; use the returned instance's `port` or `endpoint` method to read the OS-assigned
 port.
 
-[Anvil]: https://docs.rs/alloy-node-bindings/latest/alloy_node_bindings/struct.Anvil.html
-[Geth]: https://docs.rs/alloy-node-bindings/latest/alloy_node_bindings/struct.Geth.html
-[Reth]: https://docs.rs/alloy-node-bindings/latest/alloy_node_bindings/struct.Reth.html
+[Anvil]: https://docs.rs/base-common-process-nodes/latest/base_common_process_nodes/struct.Anvil.html
+[Geth]: https://docs.rs/base-common-process-nodes/latest/base_common_process_nodes/struct.Geth.html
+[Reth]: https://docs.rs/base-common-process-nodes/latest/base_common_process_nodes/struct.Reth.html

@@ -83,7 +83,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use alloy_node_bindings::{Geth, utils::run_with_tempdir};
+    use base_common_process_nodes::{Geth, utils::run_with_tempdir};
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

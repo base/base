@@ -56,7 +56,7 @@ serde_json = { workspace = true, features = ["alloc"] }
 alloy-primitives = {workspace = true, features = ["map"]}
 lru_0_18_2 = { workspace = true, features = ["default"] }
 alloy-transport-ws = { workspace = true, optional = true }
-alloy-node-bindings = { workspace = true, optional = true }
+base-common-process-nodes = { workspace = true, optional = true }
 tracing = {workspace = true, features = ["default", "std"]}
 alloy-eips = {workspace = true, features = ["serde", "std"]}
 alloy-transport-http = { workspace = true, optional = true }
@@ -97,7 +97,7 @@ reqwest = { workspace = true }
 alloy-rlp = { workspace = true }
 itertools = { workspace = true }
 alloy-signer = { workspace = true }
-alloy-node-bindings = {workspace = true}
+base-common-process-nodes = {workspace = true}
 tower = { workspace = true, features = ["util"] }
 http = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
@@ -130,7 +130,7 @@ workspace = true
 [features]
 admin-api = ["dep:alloy-rpc-types-admin"]
 anvil-api = ["dep:alloy-serde"]
-anvil-node = ["anvil-api", "reqwest", "dep:alloy-node-bindings"]
+anvil-node = ["anvil-api", "reqwest", "dep:base-common-process-nodes"]
 debug-api = ["dep:alloy-rpc-types-debug"]
 default = ["reqwest", "reqwest-default-tls"]
 erc4337-api = []

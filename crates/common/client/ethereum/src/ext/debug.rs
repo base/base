@@ -611,7 +611,7 @@ where
 #[cfg(test)]
 mod test {
     use crate::TransactionBuilder;
-    use alloy_node_bindings::{Geth, Reth, utils::run_with_tempdir};
+    use base_common_process_nodes::{Geth, Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
     use base_common_types_rpc::TransactionRequest;
 

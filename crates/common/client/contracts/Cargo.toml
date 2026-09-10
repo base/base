@@ -51,7 +51,7 @@ serde_json = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
-alloy-node-bindings = { workspace = true }
+base-common-process-nodes = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
 base-common-client-ethereum = {workspace = true, features = ["anvil-node", "ws"]}

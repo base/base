@@ -599,7 +599,7 @@ impl SharedCache {
 #[cfg(test)]
 mod tests {
     use crate::TransactionBuilder;
-    use alloy_node_bindings::{Anvil, utils::run_with_tempdir};
+    use base_common_process_nodes::{Anvil, utils::run_with_tempdir};
     use alloy_primitives::{Bytes, FixedBytes, b256, bytes, hex, utils::Unit};
     use alloy_transport::mock::Asserter;
     use base_common_types_rpc::{BlockId, Transaction, TransactionReceipt, TransactionRequest};

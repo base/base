@@ -1,5 +1,5 @@
 [package]
-name = "alloy-node-bindings"
+name = "base-common-process-nodes"
 description = "Ethereum execution-layer client bindings"
 version.workspace = true
 edition.workspace = true
@@ -28,7 +28,7 @@ rustdoc-args = [
 ]
 
 [lib]
-name = "alloy_node_bindings"
+name = "base_common_process_nodes"
 path = "src/lib.rs"
 
 [dependencies]

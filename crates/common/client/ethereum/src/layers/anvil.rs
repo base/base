@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{Ethereum, EthereumWallet, Network, PrivateKeySigner};
-use alloy_node_bindings::{Anvil, AnvilInstance};
+use base_common_process_nodes::{Anvil, AnvilInstance};
 use alloy_signer::Signer;
 use reqwest::Url;
 

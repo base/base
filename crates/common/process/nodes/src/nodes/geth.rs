@@ -193,9 +193,9 @@ impl Drop for GethInstance {
 /// # Example
 ///
 /// ```no_run
-/// use alloy_node_bindings::Geth;
+/// use base_common_process_nodes::Geth;
 ///
-/// # fn main() -> Result<(), alloy_node_bindings::NodeError> {
+/// # fn main() -> Result<(), base_common_process_nodes::NodeError> {
 /// let geth = Geth::new().block_time(1).try_spawn()?;
 /// println!("Geth is listening at {}", geth.endpoint());
 ///
@@ -233,7 +233,7 @@ impl Geth {
     /// # Example
     ///
     /// ```
-    /// use alloy_node_bindings::Geth;
+    /// use base_common_process_nodes::Geth;
     /// # fn a() {
     /// let geth = Geth::at("../go-ethereum/build/bin/geth").spawn();
     ///

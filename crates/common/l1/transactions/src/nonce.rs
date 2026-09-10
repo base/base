@@ -397,7 +397,7 @@ mod tests {
         task::Poll,
     };
 
-    use alloy_node_bindings::Anvil;
+    use base_common_process_nodes::Anvil;
     use base_common_client_ethereum::RootProvider;
 
     use super::*;
