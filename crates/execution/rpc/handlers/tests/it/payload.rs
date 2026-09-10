@@ -9,10 +9,11 @@ use base_common_types_payload::{
     ExecutionPayload, ExecutionPayloadBodyV1, ExecutionPayloadSidecar, ExecutionPayloadV1,
     PayloadError,
 };
-use reth_primitives_traits::{SealedBlock, proofs};
-use reth_testing_utils::generators::{
-    self, BlockParams, BlockRangeParams, Rng, random_block, random_block_range,
+use base_testing_support::{
+    generators, generators::BlockParams, generators::BlockRangeParams, generators::Rng,
+    generators::random_block, generators::random_block_range,
 };
+use reth_primitives_traits::{SealedBlock, proofs};
 
 fn transform_block<F: FnOnce(Block) -> Block>(src: SealedBlock, f: F) -> ExecutionPayload {
     let unsealed = src.into_block();

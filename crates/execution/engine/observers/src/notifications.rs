@@ -562,10 +562,10 @@ mod tests {
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,
         test_utils::create_test_provider_factory,
     };
+    use base_testing_support::{generators, generators::BlockParams};
     use eyre::OptionExt;
     use futures::StreamExt;
     use reth_primitives_traits::Block as _;
-    use reth_testing_utils::generators::{self, BlockParams};
     use tokio::sync::mpsc;
 
     use super::*;
@@ -586,7 +586,7 @@ mod tests {
 
         let provider = BlockchainProvider::new(provider_factory.clone())?;
 
-        let node_head_block = reth_testing_utils::BaseTestData::random_block(
+        let node_head_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -602,7 +602,7 @@ mod tests {
         let notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    reth_testing_utils::BaseTestData::random_block(
+                    base_testing_support::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -679,7 +679,7 @@ mod tests {
         notifications.set_with_head(exex_head);
 
         // Block 1 is delivered live and consumed, but the ExEx fails to durably process it.
-        let node_head_block = reth_testing_utils::BaseTestData::random_block(
+        let node_head_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -712,7 +712,7 @@ mod tests {
         let block_2_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    reth_testing_utils::BaseTestData::random_block(
+                    base_testing_support::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -812,7 +812,7 @@ mod tests {
 
         let provider = BlockchainProvider::new(provider_factory)?;
 
-        let node_head_block = reth_testing_utils::BaseTestData::random_block(
+        let node_head_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -831,7 +831,7 @@ mod tests {
             ),
         };
 
-        let exex_head_block = reth_testing_utils::BaseTestData::random_block(
+        let exex_head_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -849,7 +849,7 @@ mod tests {
         let new_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    reth_testing_utils::BaseTestData::random_block(
+                    base_testing_support::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -905,7 +905,7 @@ mod tests {
 
         let provider = BlockchainProvider::new(provider_factory)?;
 
-        let exex_head_block = reth_testing_utils::BaseTestData::random_block(
+        let exex_head_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -927,7 +927,7 @@ mod tests {
         let new_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    reth_testing_utils::BaseTestData::random_block(
+                    base_testing_support::BaseTestData::random_block(
                         &mut rng,
                         genesis_block.number + 1,
                         BlockParams { parent: Some(genesis_hash), ..Default::default() },
@@ -993,7 +993,7 @@ mod tests {
         let provider = BlockchainProvider::new(provider_factory.clone())?;
 
         // Insert block 1 into the DB so there's something to backfill
-        let node_head_block = reth_testing_utils::BaseTestData::random_block(
+        let node_head_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -1012,7 +1012,7 @@ mod tests {
         let post_backfill_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    reth_testing_utils::BaseTestData::random_block(
+                    base_testing_support::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 1,
                         BlockParams { parent: Some(node_head.hash), ..Default::default() },
@@ -1028,7 +1028,7 @@ mod tests {
         let probe_notification = ExExNotification::ChainCommitted {
             new: Arc::new(Chain::new(
                 vec![
-                    reth_testing_utils::BaseTestData::random_block(
+                    base_testing_support::BaseTestData::random_block(
                         &mut rng,
                         node_head.number + 2,
                         BlockParams { parent: None, ..Default::default() },

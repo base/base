@@ -631,7 +631,7 @@ mod tests {
     use base_execution_state_maintenance::PruneModes;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
     use base_execution_state_types::ProviderError;
-    use reth_testing_utils::generators::{self, random_block_with_parent};
+    use base_testing_support::{generators, generators::random_block_with_parent};
     use tokio_stream::StreamExt;
 
     use super::*;

@@ -1476,12 +1476,13 @@ mod tests {
     use base_execution_state_types::{
         BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome,
     };
+    use base_testing_support::{
+        generators, generators::BlockRangeParams, generators::random_changeset_range,
+        generators::random_eoa_accounts,
+    };
     use itertools::Itertools;
     use rand::Rng;
     use reth_primitives_traits::{RecoveredBlock, SealedBlock};
-    use reth_testing_utils::generators::{
-        self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
-    };
     use {crate::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
 
     use crate::{
@@ -1510,7 +1511,7 @@ mod tests {
             Bound::Unbounded => u8::MAX,
         };
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             rng,
             0..=block_range,
             BlockRangeParams {
@@ -1531,7 +1532,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks and split into database and in-memory blocks
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1679,7 +1680,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks and split into database and in-memory blocks
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },

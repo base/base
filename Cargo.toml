@@ -122,7 +122,6 @@ members = [
   "crates/execution/rpc/server",
   "crates/execution/sync/pipeline",
   "crates/execution/state/api",
-  "vendor/reth-testing-utils",
   "crates/common/observability/tracing",
   "crates/execution/state/trie",
   "crates/execution/state/types",
@@ -396,7 +395,6 @@ base-execution-rpc-server = { path = "crates/execution/rpc/server", default-feat
 base-execution-engine-driver = { path = "crates/execution/engine/driver", default-features = false }
 reth-cli-commands = { path = "vendor/reth-cli-commands", default-features = false }
 base-execution-network-types = { path = "crates/execution/network/types", default-features = false }
-reth-testing-utils = { path = "vendor/reth-testing-utils", default-features = false }
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
 base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }

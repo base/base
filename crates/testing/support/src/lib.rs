@@ -24,3 +24,6 @@ pub use contracts::{
     MockERC20, MockProtocolVersions, ParentBlockhashGuard, Proxy, SimpleStorage,
     TransparentUpgradeableProxy,
 };
+
+mod chain_fixtures;
+pub use chain_fixtures::*;

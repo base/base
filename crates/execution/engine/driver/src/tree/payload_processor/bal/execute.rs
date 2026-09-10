@@ -602,8 +602,8 @@ mod tests {
         // 4. Feed that BAL into `execute_block` and assert the deposit and user receipts.
         use alloy_primitives::TxKind;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_testing_support::{generators::generate_key, generators::rng};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -625,7 +625,7 @@ mod tests {
         // Sign txs.
         let chain_id = evm_config.chain_spec().chain().id();
         let gas_price = 1u128; // flat low price; block has no base fee in our test header.
-        let tx1 = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+        let tx1 = base_testing_support::BaseTestData::sign_tx_with_key_pair(
             alice_kp,
             Transaction::Legacy(TxLegacy {
                 chain_id: Some(chain_id),
@@ -637,7 +637,7 @@ mod tests {
                 input: Default::default(),
             }),
         );
-        let tx2 = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+        let tx2 = base_testing_support::BaseTestData::sign_tx_with_key_pair(
             bob_kp,
             Transaction::Legacy(TxLegacy {
                 chain_id: Some(chain_id),
@@ -840,8 +840,8 @@ mod tests {
         // diffs commit identically to a directly-executed serial path.
         use alloy_primitives::TxKind;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_testing_support::{generators::generate_key, generators::rng};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -860,7 +860,7 @@ mod tests {
 
         let chain_id = evm_config.chain_spec().chain().id();
         let make_tx = |kp, to, value, nonce: u64| {
-            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+            base_testing_support::BaseTestData::sign_tx_with_key_pair(
                 kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(chain_id),
@@ -887,8 +887,8 @@ mod tests {
         use alloy_primitives::TxKind;
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
         use base_execution_evm_runtime::BlockValidationError;
+        use base_testing_support::{generators::generate_key, generators::rng};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -909,7 +909,7 @@ mod tests {
 
         let chain_id = evm_config.chain_spec().chain().id();
         let make_tx = |kp, value| {
-            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+            base_testing_support::BaseTestData::sign_tx_with_key_pair(
                 kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(chain_id),
@@ -966,8 +966,8 @@ mod tests {
         // it; the call reverts; fees + nonce still apply.
         use alloy_primitives::{Bytes, TxKind, keccak256};
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_testing_support::{generators::generate_key, generators::rng};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -996,7 +996,7 @@ mod tests {
         );
 
         let tx = Recovered::new_unchecked(
-            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+            base_testing_support::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(evm_config.chain_spec().chain().id()),
@@ -1023,8 +1023,8 @@ mod tests {
         // Bytecode: PUSH1 0x42, PUSH1 0x00, SSTORE, STOP → `0x60 0x42 0x60 0x00 0x55 0x00`.
         use alloy_primitives::{Bytes, TxKind, keccak256};
         use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_testing_support::{generators::generate_key, generators::rng};
         use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-        use reth_testing_utils::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -1053,7 +1053,7 @@ mod tests {
         );
 
         let tx = Recovered::new_unchecked(
-            reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+            base_testing_support::BaseTestData::sign_tx_with_key_pair(
                 alice_kp,
                 Transaction::Legacy(TxLegacy {
                     chain_id: Some(evm_config.chain_spec().chain().id()),

@@ -283,8 +283,8 @@ mod tests {
     use base_execution_state_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, providers::StaticFileWriter,
     };
+    use base_testing_support::{generators, generators::BlockParams, generators::BlockRangeParams};
     use reth_primitives_traits::SealedBlock;
-    use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{
@@ -311,7 +311,7 @@ mod tests {
         let non_empty_block_number = stage_progress + 10;
         let blocks = (stage_progress..=input.target())
             .map(|number| {
-                reth_testing_utils::BaseTestData::random_block(
+                base_testing_support::BaseTestData::random_block(
                     &mut rng,
                     number,
                     BlockParams {
@@ -360,7 +360,7 @@ mod tests {
         };
 
         // Seed only once with full input range
-        let seed = reth_testing_utils::BaseTestData::random_block_range(
+        let seed = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             stage_progress + 1..=previous_stage,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..2, ..Default::default() },
@@ -398,7 +398,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=100,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..10, ..Default::default() },
@@ -528,7 +528,7 @@ mod tests {
             let end = input.target();
             let mut rng = generators::rng();
 
-            let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            let blocks = base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress + 1..=end,
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..2, ..Default::default() },
@@ -621,7 +621,7 @@ mod tests {
             };
 
             // Insert blocks with transactions
-            let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            let blocks = base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress + 1..=previous_stage,
                 BlockRangeParams {
@@ -682,7 +682,7 @@ mod tests {
             runner.db.factory.set_storage_settings_cache(StorageSettings::v2());
 
             // Insert blocks with transactions
-            let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            let blocks = base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress + 1..=previous_stage,
                 BlockRangeParams {

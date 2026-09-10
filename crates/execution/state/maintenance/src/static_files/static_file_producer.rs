@@ -218,7 +218,7 @@ mod tests {
     use base_execution_state_types::PruneModes;
     use base_execution_state_types::{HighestStaticFiles, StaticFileSegment};
     use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
-    use reth_testing_utils::generators::{self, BlockRangeParams};
+    use base_testing_support::{generators, generators::BlockRangeParams};
     use tempfile::TempDir;
 
     use crate::static_files::static_file_producer::{
@@ -229,7 +229,7 @@ mod tests {
         let mut rng = generators::rng();
         let db = TestStageDB::default();
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=3,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -252,7 +252,7 @@ mod tests {
             for transaction in &block.body().transactions {
                 receipts.push((
                     receipts.len() as u64,
-                    reth_testing_utils::BaseTestData::random_receipt(
+                    base_testing_support::BaseTestData::random_receipt(
                         &mut rng,
                         transaction,
                         Some(0),

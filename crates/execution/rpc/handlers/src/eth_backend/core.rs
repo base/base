@@ -314,7 +314,8 @@ impl BaseEthApiInner {
         transaction: base_execution_txpool_pool::BasePooledTransaction,
     ) -> Result<AddedTransactionOutcome, EthApiError> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        let request = base_execution_txpool_pool::BatchTxRequest::new(origin, transaction, response_tx);
+        let request =
+            base_execution_txpool_pool::BatchTxRequest::new(origin, transaction, response_tx);
 
         self.tx_batch_sender().send(request).map_err(|_| crate::EthApiError::BatchTxSendError)?;
 
@@ -373,9 +374,9 @@ mod tests {
     use base_common_types_rpc::FeeHistory;
     use base_common_types_rpc::{Bundle, StateContext, TransactionRequest};
     use base_execution_state_provider::test_utils::MockEthProvider;
+    use base_testing_support::generators;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
-    use reth_testing_utils::generators;
 
     use crate::{BaseEthApi, EthApiServer};
 

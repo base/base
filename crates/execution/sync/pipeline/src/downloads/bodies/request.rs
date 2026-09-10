@@ -252,7 +252,7 @@ where
 #[cfg(test)]
 mod tests {
     use base_execution_evm_blocks::BaseBeaconConsensus;
-    use reth_testing_utils::{generators, generators::random_header_range};
+    use base_testing_support::{generators, generators::random_header_range};
 
     use super::*;
     use crate::downloads::{

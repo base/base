@@ -209,7 +209,7 @@ mod tests {
     use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
     use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
-    use reth_testing_utils::generators::{self, BlockRangeParams};
+    use base_testing_support::{generators, generators::BlockRangeParams};
 
     use crate::pruning::segments::{
         PruneInput, PruneLimiter, Segment, SegmentOutput, TransactionLookup,
@@ -224,7 +224,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             1..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -324,7 +324,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             1..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },

@@ -11,7 +11,6 @@ use base_execution_state_database::{
     BlockNumberList, DbCursorRO, DbDupCursorRO, DbTx, Table, tables,
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::ProviderResult;
 use base_execution_state_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
@@ -22,6 +21,7 @@ use base_execution_state_trie::{
     updates::TrieUpdates,
     witness::TrieWitness,
 };
+use base_execution_state_types::ProviderResult;
 
 use crate::{
     AccountReader, BlockHashReader, ChangeSetReader, EitherReader, HashedPostStateProvider,
@@ -1311,7 +1311,7 @@ mod tests {
         use base_execution_evm_runtime::database::BundleState;
         use base_execution_state_database::models::StorageSettings;
         use base_execution_state_types::ExecutionOutcome;
-        use reth_testing_utils::generators::{self, BlockRangeParams};
+        use base_testing_support::{generators, generators::BlockRangeParams};
 
         use crate::BlockWriter;
 
@@ -1325,7 +1325,7 @@ mod tests {
             Account { nonce: 1, balance: U256::from(2000), bytecode_hash: None }.into();
 
         let mut rng = generators::rng();
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=15,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1462,7 +1462,7 @@ mod tests {
         use base_execution_state_api::HashedPostStateProvider;
         use base_execution_state_types::ExecutionOutcome;
         use base_execution_state_types::{StageCheckpoint, StageId};
-        use reth_testing_utils::generators::{self, BlockRangeParams};
+        use base_testing_support::{generators, generators::BlockRangeParams};
 
         use crate::BlockWriter;
 
@@ -1470,7 +1470,7 @@ mod tests {
         let slot = U256::from(1);
         let old_value = U256::from(2);
         let account = AccountInfo::default();
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut generators::rng(),
             0..=1,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },

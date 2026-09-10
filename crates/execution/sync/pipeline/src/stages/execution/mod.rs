@@ -754,7 +754,7 @@ mod tests {
     };
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{PruneMode, ReceiptsLogPruneConfig};
-    use reth_testing_utils::generators;
+    use base_testing_support::generators;
     use {reth_primitives_traits::Block as _, reth_primitives_traits::SealedBlock};
 
     use super::*;
@@ -1249,7 +1249,7 @@ mod tests {
         let provider = factory.database_provider_rw().unwrap();
 
         let mut rng = generators::rng();
-        let mut genesis = reth_testing_utils::BaseTestData::random_block(
+        let mut genesis = base_testing_support::BaseTestData::random_block(
             &mut rng,
             0,
             generators::BlockParams { tx_count: Some(0), ..Default::default() },
@@ -1258,7 +1258,7 @@ mod tests {
         genesis.header.timestamp = 0;
         let genesis = genesis.seal_slow();
 
-        let mut block_1 = reth_testing_utils::BaseTestData::random_block(
+        let mut block_1 = base_testing_support::BaseTestData::random_block(
             &mut rng,
             1,
             generators::BlockParams {
@@ -1271,7 +1271,7 @@ mod tests {
         block_1.header.timestamp = 10;
         let block_1 = block_1.seal_slow();
 
-        let mut block_2 = reth_testing_utils::BaseTestData::random_block(
+        let mut block_2 = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2,
             generators::BlockParams {
@@ -1319,11 +1319,11 @@ mod tests {
         let provider_rw = factory.database_provider_rw().unwrap();
         let mut rng = generators::rng();
         let genesis =
-            reth_testing_utils::BaseTestData::random_block(&mut rng, 0, Default::default());
+            base_testing_support::BaseTestData::random_block(&mut rng, 0, Default::default());
         provider_rw
             .insert_block(&genesis.try_recover().unwrap())
             .expect("failed to insert genesis");
-        let block = reth_testing_utils::BaseTestData::random_block(
+        let block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             1,
             generators::BlockParams { tx_count: Some(2), ..Default::default() },

@@ -57,7 +57,6 @@ thiserror = { workspace = true }
 futures-util = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-testing-utils = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
@@ -73,37 +72,10 @@ base-execution-state-provider = {workspace = true, features = ["test-utils"]}
 base-common-types-chain = {workspace = true, features = ["reth", "serde", "std"]}
 base-execution-state-types = {features = ["serde-bincode-compat"], workspace = true}
 base-execution-state-database = {features = ["default", "test-utils"], workspace = true}
+base-testing-support = {workspace = true}
 
 [features]
-serde = [
-    "base-execution-engine-types/serde",
-    "base-execution-evm-blocks/serde",
-    "base-common-types-chain/serde",
-    "alloy-eips/serde",
-    "alloy-primitives/serde",
-    "parking_lot/serde",
-    "rand/serde",
-    "secp256k1/serde",
-    "reth-primitives-traits/serde",
-    "base-execution-state-types/serde",
-    "base-execution-state-provider/serde",
-    "base-execution-state-memory/serde",
-]
-test-utils = [
-    "base-execution-state-database/test-utils",
-    "reth-primitives-traits/test-utils",
-    "base-execution-state-provider/test-utils",
-    "base-execution-state-trie/test-utils",
-]
+serde = ["base-execution-engine-types/serde", "base-execution-evm-blocks/serde", "base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "parking_lot/serde", "rand/serde", "secp256k1/serde", "reth-primitives-traits/serde", "base-execution-state-types/serde", "base-execution-state-provider/serde", "base-execution-state-memory/serde"]
+test-utils = ["base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-execution-state-trie/test-utils"]
 metrics = ["base-execution-state-tasks/metrics", "base-execution-state-trie/metrics"]
-witness = [
-    "dep:serde",
-    "dep:jsonrpsee",
-    "dep:alloy-rpc-types-debug",
-    "dep:base-execution-evm-runtime",
-    "dep:serde_json",
-    "dep:alloy-rlp",
-    "dep:pretty_assertions",
-    "base-execution-evm-blocks/serde",
-    "dep:base-execution-rpc-handlers",
-]
+witness = ["dep:serde", "dep:jsonrpsee", "dep:alloy-rpc-types-debug", "dep:base-execution-evm-runtime", "dep:serde_json", "dep:alloy-rlp", "dep:pretty_assertions", "base-execution-evm-blocks/serde", "dep:base-execution-rpc-handlers"]

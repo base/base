@@ -238,8 +238,11 @@ mod tests {
     };
     use base_execution_state_types::{PruneMode, PruneSegment, ReceiptsLogPruneConfig};
     use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
+    use base_testing_support::{
+        generators, generators::BlockRangeParams, generators::random_eoa_account,
+        generators::random_log,
+    };
     use reth_primitives_traits::InMemorySize;
-    use reth_testing_utils::generators::{self, BlockRangeParams, random_eoa_account, random_log};
 
     use crate::pruning::segments::{PruneInput, PruneLimiter, Segment, user::ReceiptsByLogs};
 
@@ -252,17 +255,17 @@ mod tests {
 
         let tip = 20000;
         let blocks = [
-            reth_testing_utils::BaseTestData::random_block_range(
+            base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 0..=100,
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 1..5, ..Default::default() },
             ),
-            reth_testing_utils::BaseTestData::random_block_range(
+            base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 (100 + 1)..=(tip - 100),
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
             ),
-            reth_testing_utils::BaseTestData::random_block_range(
+            base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 (tip - 100 + 1)..=tip,
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 1..5, ..Default::default() },
@@ -277,7 +280,7 @@ mod tests {
         for block in &blocks {
             receipts.reserve_exact(block.body().size());
             for (txi, transaction) in block.body().transactions.iter().enumerate() {
-                let mut receipt = reth_testing_utils::BaseTestData::random_receipt(
+                let mut receipt = base_testing_support::BaseTestData::random_receipt(
                     &mut rng,
                     transaction,
                     Some(1),

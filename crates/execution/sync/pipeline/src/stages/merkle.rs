@@ -481,10 +481,11 @@ mod tests {
     };
     use base_execution_state_trie::test_utils::{state_root, state_root_prehashed};
     use base_execution_state_types::StaticFileSegment;
-    use reth_primitives_traits::SealedBlock;
-    use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_changeset_range, random_contract_account_range,
+    use base_testing_support::{
+        generators, generators::BlockParams, generators::BlockRangeParams,
+        generators::random_changeset_range, generators::random_contract_account_range,
     };
+    use reth_primitives_traits::SealedBlock;
 
     use super::*;
     use crate::test_utils::{
@@ -681,7 +682,7 @@ mod tests {
 
             let mut preblocks = vec![];
             if stage_progress > 0 {
-                preblocks.append(&mut reth_testing_utils::BaseTestData::random_block_range(
+                preblocks.append(&mut base_testing_support::BaseTestData::random_block_range(
                     &mut rng,
                     0..=stage_progress - 1,
                     BlockRangeParams {
@@ -702,7 +703,7 @@ mod tests {
                 accounts.iter().map(|(addr, acc)| (*addr, (*acc, std::iter::empty()))),
             )?;
 
-            let (header, body) = reth_testing_utils::BaseTestData::random_block(
+            let (header, body) = base_testing_support::BaseTestData::random_block(
                 &mut rng,
                 stage_progress,
                 BlockParams { parent: preblocks.last().map(|b| b.hash()), ..Default::default() },
@@ -720,7 +721,7 @@ mod tests {
 
             let head_hash = sealed_head.hash();
             let mut blocks = vec![sealed_head];
-            blocks.extend(reth_testing_utils::BaseTestData::random_block_range(
+            blocks.extend(base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 start..=end,
                 BlockRangeParams { parent: Some(head_hash), tx_count: 0..3, ..Default::default() },

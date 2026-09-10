@@ -11,7 +11,7 @@ use rand::Rng;
 use reth_primitives_traits::{SealedBlock, crypto::secp256k1::sign_message};
 use secp256k1::Keypair;
 
-use crate::generators::{self, BlockParams, BlockRangeParams};
+use crate::chain_fixtures::generators::{self, BlockParams, BlockRangeParams};
 
 /// Generates signed Base transactions and blocks for tests.
 #[derive(Debug)]

@@ -35,11 +35,10 @@ impl<Provider> Stage<Provider> for FinishStage {
 #[cfg(test)]
 mod tests {
     use base_execution_state_provider::providers::StaticFileWriter;
-    use reth_primitives_traits::SealedHeader;
-    use reth_testing_utils::{
-        generators,
-        generators::{random_header, random_header_range},
+    use base_testing_support::{
+        generators, generators::random_header, generators::random_header_range,
     };
+    use reth_primitives_traits::SealedHeader;
 
     use super::*;
     use crate::test_utils::{

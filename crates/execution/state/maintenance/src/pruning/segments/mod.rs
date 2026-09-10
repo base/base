@@ -245,7 +245,7 @@ mod tests {
         providers::BlockchainProvider,
         test_utils::{MockEthProvider, create_test_provider_factory},
     };
-    use reth_testing_utils::generators::{self, BlockRangeParams};
+    use base_testing_support::{generators, generators::BlockRangeParams};
 
     use super::*;
 
@@ -277,7 +277,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks with no transactions
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -315,7 +315,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks with some transactions
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..5, ..Default::default() },
@@ -361,7 +361,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..5, ..Default::default() },
@@ -397,7 +397,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..5, ..Default::default() },

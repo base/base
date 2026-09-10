@@ -190,13 +190,13 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::BlockHash;
-    use reth_testing_utils::generators::{self, BlockParams, Rng};
+    use base_testing_support::{generators, generators::BlockParams, generators::Rng};
 
     use super::*;
 
     /// Create random block with specified number and parent hash.
     fn create_block<R: Rng>(rng: &mut R, number: u64, parent: BlockHash) -> SealedBlock {
-        reth_testing_utils::BaseTestData::random_block(
+        base_testing_support::BaseTestData::random_block(
             rng,
             number,
             BlockParams { parent: Some(parent), ..Default::default() },

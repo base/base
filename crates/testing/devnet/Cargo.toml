@@ -63,8 +63,7 @@ nanoid = { workspace = true }
 rlimit = { workspace = true }
 serde_json = { workspace = true }
 alloy-signer = { workspace = true }
-reth-testing-utils = { workspace = true }
-base-testing-support = { workspace = true }
+base-testing-support = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 base-execution-engine-driver = {workspace = true}
 base-execution-state-tasks = { workspace = true }
@@ -91,7 +90,7 @@ name = "fcu_unsafe"
 harness = false
 
 [features]
-test-utils = ["dep:base-consensus-batch-types", "dep:base-execution-network-service", "base-node-service/test-utils", "dep:alloy-genesis", "dep:base-testing-support", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "dep:base-execution-engine-driver", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "nanoid", "base-execution-payload-builder/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool-pool/test-utils", "rlimit", "testcontainers"]
+test-utils = ["dep:base-consensus-batch-types", "dep:base-execution-network-service", "base-node-service/test-utils", "dep:alloy-genesis", "dep:base-testing-support", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "dep:base-execution-engine-driver", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "nanoid", "base-execution-payload-builder/test-utils", "base-execution-txpool-pool/test-utils", "rlimit", "testcontainers"]
 default = ["test-utils"]
 
 [target."cfg(unix)".dependencies]

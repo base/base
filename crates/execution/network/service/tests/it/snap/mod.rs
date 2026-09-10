@@ -44,8 +44,8 @@ use base_execution_state_provider::{
 use base_execution_state_trie::{HashedPostState, HashedStorage};
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
+use base_testing_support::{generators, generators::BlockParams};
 use reth_primitives_traits::Block as _;
-use reth_testing_utils::generators::{self, BlockParams};
 
 mod protocol;
 
@@ -116,7 +116,7 @@ fn genesis_provider_factory() -> ProviderFactory {
     let factory = create_test_provider_factory();
     let provider_rw = factory.provider_rw().unwrap();
     let mut rng = generators::rng();
-    let genesis = reth_testing_utils::BaseTestData::random_block(
+    let genesis = base_testing_support::BaseTestData::random_block(
         &mut rng,
         0,
         BlockParams { tx_count: Some(0), ..Default::default() },
@@ -135,7 +135,7 @@ fn genesis_provider_factory() -> ProviderFactory {
 fn persist_fixture_state_root(factory: &ProviderFactory) -> B256 {
     let state_root = factory.latest().unwrap().state_root(HashedPostState::default()).unwrap();
     let genesis_hash = factory.sealed_header(0).unwrap().unwrap().hash();
-    let mut block = reth_testing_utils::BaseTestData::random_block(
+    let mut block = base_testing_support::BaseTestData::random_block(
         &mut generators::rng(),
         1,
         BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -630,7 +630,7 @@ async fn retained_and_expired_account_range_requests_resolve_without_hanging() {
     let mut parent = B256::ZERO;
     let provider_rw = factory.provider_rw().unwrap();
     for number in 0..=SNAPSHOT_STATE_RETENTION {
-        let mut block = reth_testing_utils::BaseTestData::random_block(
+        let mut block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             number,
             BlockParams { parent: Some(parent), tx_count: Some(0), ..Default::default() },

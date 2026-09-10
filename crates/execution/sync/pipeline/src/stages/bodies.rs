@@ -488,9 +488,9 @@ mod tests {
             providers::StaticFileWriter,
         };
         use base_execution_state_types::StaticFileSegment;
+        use base_testing_support::{generators, generators::BlockRangeParams};
         use futures_util::Stream;
         use reth_primitives_traits::{SealedBlock, SealedHeader};
-        use reth_testing_utils::generators::{self, BlockRangeParams};
         use {
             base_execution_network_service::BlockResponse,
             base_execution_network_service::BodyDownloader,
@@ -565,7 +565,7 @@ mod tests {
                 let mut rng = generators::rng();
 
                 // Static files do not support gaps in headers, so we need to generate 0 to end
-                let blocks = reth_testing_utils::BaseTestData::random_block_range(
+                let blocks = base_testing_support::BaseTestData::random_block_range(
                     &mut rng,
                     0..=end,
                     BlockRangeParams {
@@ -591,7 +591,7 @@ mod tests {
 
                         body.tx_num_range().try_for_each(|tx_num| {
                             let transaction =
-                                reth_testing_utils::BaseTestData::random_signed_tx(&mut rng);
+                                base_testing_support::BaseTestData::random_signed_tx(&mut rng);
                             static_file_producer.append_transaction(tx_num, &transaction).map(drop)
                         })?;
 

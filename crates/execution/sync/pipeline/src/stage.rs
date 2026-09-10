@@ -338,7 +338,7 @@ mod tests {
         providers::RocksDBProvider,
     };
     use base_execution_state_types::StageCheckpoint;
-    use reth_testing_utils::{BaseTestData, generators};
+    use base_testing_support::{BaseTestData, generators};
 
     use crate::ExecInput;
 

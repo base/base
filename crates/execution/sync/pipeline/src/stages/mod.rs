@@ -71,8 +71,8 @@ mod tests {
     };
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
+    use base_testing_support::{generators, generators::BlockRangeParams};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
-    use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{StorageKind, TestStageDB};
@@ -96,7 +96,7 @@ mod tests {
         // Fill with bogus blocks to respect PruneMode distance.
         let mut rng = generators::rng();
         for block_number in 2..=tip {
-            let nblock = reth_testing_utils::BaseTestData::random_block(
+            let nblock = base_testing_support::BaseTestData::random_block(
                 &mut rng,
                 block_number,
                 generators::BlockParams { parent: Some(head), ..Default::default() },
@@ -264,7 +264,7 @@ mod tests {
         let genesis_hash = B256::ZERO;
         let tip = (num_blocks - 1) as u64;
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=tip,
             BlockRangeParams { parent: Some(genesis_hash), tx_count: 2..3, ..Default::default() },
@@ -278,7 +278,7 @@ mod tests {
             for transaction in &block.body().transactions {
                 block_receipts.push((
                     tx_num,
-                    reth_testing_utils::BaseTestData::random_receipt(
+                    base_testing_support::BaseTestData::random_receipt(
                         &mut rng,
                         transaction,
                         Some(0),

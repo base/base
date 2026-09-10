@@ -678,10 +678,10 @@ mod tests {
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
         providers::BlockchainProvider, test_utils::create_test_provider_factory,
     };
+    use base_testing_support::{generators, generators::BlockParams};
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
     use reth_primitives_traits::RecoveredBlock;
-    use reth_testing_utils::generators::{self, BlockParams};
 
     use super::*;
     use crate::wal::WalResult;
@@ -1312,7 +1312,7 @@ mod tests {
             .unwrap()
             .ok_or_else(|| eyre::eyre!("genesis block not found"))?;
 
-        let block = reth_testing_utils::BaseTestData::random_block(
+        let block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis_block.number + 1,
             BlockParams { parent: Some(genesis_hash), ..Default::default() },
@@ -1454,7 +1454,7 @@ mod tests {
         // Helper to create notifications
         let mut rng = generators::rng();
         let mut make_notif = |id: u64| {
-            let block = reth_testing_utils::BaseTestData::random_block(
+            let block = base_testing_support::BaseTestData::random_block(
                 &mut rng,
                 id,
                 BlockParams::default(),

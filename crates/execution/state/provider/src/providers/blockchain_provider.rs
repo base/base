@@ -28,6 +28,12 @@ use base_execution_state_database::{
     models::AccountBeforeTx, models::BlockNumberAddress, models::StoredBlockBodyIndices,
 };
 use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_trie::{
+    MultiProofTargets, StorageRoot, TrieInput, TrieInputSorted, TrieType,
+    hashed_cursor::{HashedCursor, HashedCursorFactory},
+    metrics::TrieRootMetrics,
+    proof::{Proof, StorageProof},
+};
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
@@ -35,12 +41,6 @@ use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 use base_execution_state_types::{StageCheckpoint, StageId};
 use reth_primitives_traits::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
-use base_execution_state_trie::{
-    MultiProofTargets, StorageRoot, TrieInput, TrieInputSorted, TrieType,
-    hashed_cursor::{HashedCursor, HashedCursorFactory},
-    metrics::TrieRootMetrics,
-    proof::{Proof, StorageProof},
-};
 use tracing::trace;
 
 use super::state::latest::LatestStateProvider;
@@ -1020,18 +1020,21 @@ mod tests {
     };
     use base_execution_state_database::{models::AccountBeforeTx, models::StoredBlockBodyIndices};
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_trie::{
+        ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates,
+    };
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{
         BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
     };
     use base_execution_state_types::{StageCheckpoint, StageId};
+    use base_testing_support::{
+        generators, generators::BlockParams, generators::BlockRangeParams,
+        generators::random_changeset_range, generators::random_eoa_accounts,
+    };
     use itertools::Itertools;
     use rand::Rng;
     use reth_primitives_traits::{Block as _, RecoveredBlock, SealedBlock, SignerRecoverable};
-    use reth_testing_utils::generators::{
-        self, BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts,
-    };
-    use base_execution_state_trie::{ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates};
     use {
         crate::CanonStateSubscriptions, crate::NewCanonicalChain,
         crate::test_utils::TestBlockBuilder, base_execution_state_types::CanonStateNotification,
@@ -1069,7 +1072,7 @@ mod tests {
             Bound::Unbounded => u8::MAX,
         };
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             rng,
             0..=block_range,
             BlockRangeParams {
@@ -1107,7 +1110,7 @@ mod tests {
             .map(|block| block.body().transactions.iter())
             .map(|tx| {
                 tx.map(|tx| {
-                    reth_testing_utils::BaseTestData::random_receipt(rng, tx, Some(2), None)
+                    base_testing_support::BaseTestData::random_receipt(rng, tx, Some(2), None)
                 })
                 .collect()
             })
@@ -1256,7 +1259,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks and split into database and in-memory blocks
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1355,7 +1358,7 @@ mod tests {
         let factory = create_test_provider_factory();
 
         // Generate 10 random blocks and split into database and in-memory blocks
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=10,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..1, ..Default::default() },
@@ -1432,7 +1435,7 @@ mod tests {
 
         // Generate a random block
         let mut rng = generators::rng();
-        let block = reth_testing_utils::BaseTestData::random_block(
+        let block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             0,
             BlockParams { parent: Some(B256::ZERO), ..Default::default() },
@@ -2783,7 +2786,7 @@ mod tests {
         let factory = create_test_provider_factory();
         let provider_rw = factory.provider_rw()?;
         let mut rng = generators::rng();
-        let genesis = reth_testing_utils::BaseTestData::random_block(
+        let genesis = base_testing_support::BaseTestData::random_block(
             &mut rng,
             0,
             BlockParams { tx_count: Some(0), ..Default::default() },
@@ -2943,7 +2946,7 @@ mod tests {
         let mut parent = B256::ZERO;
 
         for number in 0..=SNAPSHOT_STATE_RETENTION {
-            let mut block = reth_testing_utils::BaseTestData::random_block(
+            let mut block = base_testing_support::BaseTestData::random_block(
                 &mut rng,
                 number,
                 BlockParams { parent: Some(parent), tx_count: Some(0), ..Default::default() },
@@ -3009,7 +3012,7 @@ mod tests {
         // persisted history, which has no block with this root) resolved it.
         let unique_root = B256::repeat_byte(0x77);
         let parent = provider.canonical_in_memory_state.get_canonical_head();
-        let mut block = reth_testing_utils::BaseTestData::random_block(
+        let mut block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             parent.number + 1,
             BlockParams { parent: Some(parent.hash()), tx_count: Some(0), ..Default::default() },
@@ -3058,7 +3061,7 @@ mod tests {
         target_state.accounts.insert(target_hashed, Some(target_account));
 
         let unique_root = B256::repeat_byte(0x77);
-        let mut block = reth_testing_utils::BaseTestData::random_block(
+        let mut block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis.number + 1,
             BlockParams { parent: Some(genesis.hash()), tx_count: Some(0), ..Default::default() },
@@ -3088,7 +3091,7 @@ mod tests {
         // the database on top of the same genesis anchor while the in-memory chain above still
         // references genesis as its anchor.
         let (noise_address, noise_account) = random_account(2);
-        let noise_block = reth_testing_utils::BaseTestData::random_block(
+        let noise_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             genesis.number + 1,
             BlockParams { parent: Some(genesis.hash()), tx_count: Some(0), ..Default::default() },
@@ -3149,7 +3152,7 @@ mod tests {
         let anchor_root = factory.latest()?.state_root(HashedPostState::default())?;
 
         let genesis_hash = factory.sealed_header(0)?.unwrap().hash();
-        let mut anchor_block = reth_testing_utils::BaseTestData::random_block(
+        let mut anchor_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             1,
             BlockParams { parent: Some(genesis_hash), tx_count: Some(0), ..Default::default() },
@@ -3187,7 +3190,7 @@ mod tests {
         state_b.storages.insert(hashed_address, HashedStorage::from_iter([(hashed_slot, value_b)]));
 
         let state_b_root = factory.latest()?.state_root(state_b.clone())?;
-        let mut later_block = reth_testing_utils::BaseTestData::random_block(
+        let mut later_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams { parent: Some(anchor_hash), tx_count: Some(0), ..Default::default() },

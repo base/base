@@ -3552,8 +3552,8 @@ mod tests {
     };
     use base_execution_state_types::ExecutedBlock;
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
+    use base_testing_support::{generators, generators::BlockParams};
     use reth_primitives_traits::SealedBlock;
-    use reth_testing_utils::generators::{self, BlockParams};
 
     use super::*;
     use crate::{
@@ -3591,7 +3591,7 @@ mod tests {
         let mut blocks = Vec::new();
         let provider = factory.provider_rw().unwrap();
         for (number, timestamp) in [(0, 99), (1, 100), (2, 101)] {
-            let mut block = reth_testing_utils::BaseTestData::random_block(
+            let mut block = base_testing_support::BaseTestData::random_block(
                 &mut rng,
                 number,
                 BlockParams {
@@ -3868,7 +3868,7 @@ mod tests {
         // create blocks with no transactions
         let mut blocks = Vec::new();
         for i in 0..3 {
-            let block = reth_testing_utils::BaseTestData::random_block(
+            let block = base_testing_support::BaseTestData::random_block(
                 &mut rng,
                 i,
                 BlockParams { tx_count: Some(0), ..Default::default() },

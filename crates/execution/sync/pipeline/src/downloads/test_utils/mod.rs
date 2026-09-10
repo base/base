@@ -6,7 +6,9 @@ use std::ops::RangeInclusive;
 
 use alloy_primitives::{B256, map::B256Map};
 use base_common_types_chain::BaseBlockBody as BlockBody;
-use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
+use base_testing_support::{
+    generators, generators::BlockRangeParams, generators::random_block_range,
+};
 
 #[cfg(any(test, feature = "file-client"))]
 use crate::downloads::{bodies::test_utils::create_raw_bodies, file_codec::BlockFileCodec};

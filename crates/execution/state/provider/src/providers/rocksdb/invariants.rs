@@ -475,7 +475,7 @@ mod tests {
         tables::BlockNumberList,
     };
     use base_execution_state_types::StageCheckpoint;
-    use reth_testing_utils::generators::{self, BlockRangeParams};
+    use base_testing_support::{generators, generators::BlockRangeParams};
     use tempfile::TempDir;
 
     use super::*;
@@ -603,7 +603,7 @@ mod tests {
 
         // Generate blocks with real transactions and insert them
         let mut rng = generators::rng();
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=2,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -732,7 +732,7 @@ mod tests {
 
         // Generate blocks with real transactions (blocks 0-2, 6 transactions total)
         let mut rng = generators::rng();
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=2,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -791,7 +791,7 @@ mod tests {
         // Generate blocks with real transactions:
         // Blocks 0-5, each with 2 transactions = 12 total transactions (0-11)
         let mut rng = generators::rng();
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=5,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },
@@ -978,7 +978,7 @@ mod tests {
         // Block 0 (genesis) has no transactions
         // Blocks 1-5 each have 2 transactions = 10 transactions total
         let mut rng = generators::rng();
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=5,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 2..3, ..Default::default() },

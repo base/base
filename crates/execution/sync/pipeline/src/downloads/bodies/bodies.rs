@@ -601,7 +601,9 @@ mod tests {
     use assert_matches::assert_matches;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
-    use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
+    use base_testing_support::{
+        generators, generators::BlockRangeParams, generators::random_block_range,
+    };
 
     use super::*;
     use crate::downloads::{

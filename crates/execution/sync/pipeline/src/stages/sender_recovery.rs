@@ -467,7 +467,7 @@ mod tests {
     };
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode};
-    use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
+    use base_testing_support::{generators, generators::BlockParams, generators::BlockRangeParams};
     use {reth_primitives_traits::SealedBlock, reth_primitives_traits::SignerRecoverable};
 
     use super::*;
@@ -495,7 +495,7 @@ mod tests {
         let non_empty_block_number = stage_progress + 10;
         let blocks = (stage_progress..=input.target())
             .map(|number| {
-                reth_testing_utils::BaseTestData::random_block(
+                base_testing_support::BaseTestData::random_block(
                     &mut rng,
                     number,
                     BlockParams {
@@ -545,7 +545,7 @@ mod tests {
         let non_empty_block_number = stage_progress + 1;
         let blocks = (stage_progress..=input.target())
             .map(|number| {
-                reth_testing_utils::BaseTestData::random_block(
+                base_testing_support::BaseTestData::random_block(
                     &mut rng,
                     number,
                     BlockParams {
@@ -582,7 +582,7 @@ mod tests {
         let (stage_progress, previous_stage) = (1000, 1100); // input exceeds threshold
 
         // Manually seed once with full input range
-        let seed = reth_testing_utils::BaseTestData::random_block_range(
+        let seed = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             stage_progress + 1..=previous_stage,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..4, ..Default::default() },
@@ -656,7 +656,7 @@ mod tests {
         let db = TestStageDB::default();
         let mut rng = generators::rng();
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=100,
             BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..10, ..Default::default() },
@@ -773,7 +773,7 @@ mod tests {
             let stage_progress = input.checkpoint().block_number;
             let end = input.target();
 
-            let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            let blocks = base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 stage_progress..=end,
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 0..2, ..Default::default() },

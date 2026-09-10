@@ -1285,8 +1285,8 @@ mod tests {
     use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{BaseBlock, BaseReceipt};
     use base_execution_state_provider::test_utils::MockEthProvider;
+    use base_testing_support::generators;
     use rand::Rng;
-    use reth_testing_utils::generators;
 
     use super::*;
 

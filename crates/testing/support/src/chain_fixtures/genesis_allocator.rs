@@ -20,7 +20,7 @@ use secp256k1::{
 /// # Example
 /// ```
 /// # use alloy_primitives::{Address, U256, hex, Bytes};
-/// # use reth_testing_utils::GenesisAllocator;
+/// # use base_testing_support::GenesisAllocator;
 /// # use std::str::FromStr;
 /// let mut allocator = GenesisAllocator::default();
 ///

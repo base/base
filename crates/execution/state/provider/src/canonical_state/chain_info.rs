@@ -184,7 +184,7 @@ struct ChainInfoInner {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-    use reth_testing_utils::{generators, generators::random_header};
+    use base_testing_support::{generators, generators::random_header};
 
     use super::*;
 

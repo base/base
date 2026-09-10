@@ -92,7 +92,6 @@ alloy-genesis = { workspace = true }
 alloy-primitives = {workspace = true}
 assert_matches = { workspace = true }
 base-testing-support = {workspace = true}
-reth-testing-utils = { workspace = true }
 base-execution-state-types = { workspace = true }
 eyre = {workspace = true, features = ["default"]}
 rand = { workspace = true, features = ["default"] }

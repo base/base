@@ -228,8 +228,8 @@ mod tests {
     use alloy_primitives::B256;
     use base_execution_engine_types::ExExNotification;
     use base_execution_state_provider::Chain;
+    use base_testing_support::{generators, generators::BlockParams, generators::BlockRangeParams};
     use itertools::Itertools;
-    use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use crate::wal::{Wal, cache::CachedBlock, error::WalResult};
 
@@ -262,7 +262,7 @@ mod tests {
         assert!(wal.inner.block_cache().is_empty());
 
         // Create 4 canonical blocks and one reorged block with number 2
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=3,
             BlockRangeParams::default(),
@@ -270,13 +270,13 @@ mod tests {
         .into_iter()
         .map(|block| block.try_recover())
         .collect::<Result<Vec<_>, _>>()?;
-        let block_1_reorged = reth_testing_utils::BaseTestData::random_block(
+        let block_1_reorged = base_testing_support::BaseTestData::random_block(
             &mut rng,
             1,
             BlockParams { parent: Some(blocks[0].hash()), ..Default::default() },
         )
         .try_recover()?;
-        let block_2_reorged = reth_testing_utils::BaseTestData::random_block(
+        let block_2_reorged = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams { parent: Some(blocks[1].hash()), ..Default::default() },
@@ -520,7 +520,7 @@ mod tests {
         let temp_dir = tempfile::tempdir()?;
         let wal = Wal::new(&temp_dir)?;
 
-        let blocks = reth_testing_utils::BaseTestData::random_block_range(
+        let blocks = base_testing_support::BaseTestData::random_block_range(
             &mut rng,
             0..=5,
             BlockRangeParams::default(),

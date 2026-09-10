@@ -233,8 +233,8 @@ mod tests {
     use base_execution_state_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,
     };
+    use base_testing_support::generators;
     use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
-    use reth_testing_utils::generators;
 
     use crate::{
         BackfillJobFactory,

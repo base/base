@@ -89,7 +89,7 @@ fn blocks(
             ..Default::default()
         },
         body: BaseBlockBody {
-            transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+            transactions: vec![base_testing_support::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 BaseTypedTransaction::Eip2930(TxEip2930 {
                     chain_id: chain_spec.chain().id(),
@@ -119,7 +119,7 @@ fn blocks(
             ..Default::default()
         },
         body: BaseBlockBody {
-            transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+            transactions: vec![base_testing_support::BaseTestData::sign_tx_with_key_pair(
                 key_pair,
                 BaseTypedTransaction::Eip2930(TxEip2930 {
                     chain_id: chain_spec.chain().id(),

@@ -28,12 +28,12 @@ use base_execution_sync_pipeline::{
     BodiesDownloaderBuilder, FileClient, ReverseHeadersDownloaderBuilder,
 };
 use base_execution_sync_pipeline::{Pipeline, StageId};
+use base_testing_support::{generators, generators::generate_key};
 use reth_primitives_traits::{
     RecoveredBlock, SealedBlock,
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use reth_testing_utils::generators::{self, generate_key};
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,
@@ -233,7 +233,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         let base_nonce = (block_num - 1) * 2;
 
         // Transaction 1: ETH transfer
-        let eth_transfer_tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+        let eth_transfer_tx = base_testing_support::BaseTestData::sign_tx_with_key_pair(
             key_pair,
             Transaction::Eip1559(TxEip1559 {
                 chain_id: chain_spec.chain().id(),
@@ -249,7 +249,7 @@ async fn run_pipeline_forward_and_unwind(num_blocks: u64, unwind_target: u64) ->
         );
 
         // Transaction 2: Counter increment
-        let counter_tx = reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+        let counter_tx = base_testing_support::BaseTestData::sign_tx_with_key_pair(
             key_pair,
             Transaction::Eip1559(TxEip1559 {
                 chain_id: chain_spec.chain().id(),

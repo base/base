@@ -390,7 +390,9 @@ mod tests {
     use base_execution_state_provider::{
         DatabaseProviderFactory, ProviderFactory, StaticFileProviderFactory,
     };
-    use reth_testing_utils::generators::{self, random_header, random_header_range};
+    use base_testing_support::{
+        generators, generators::random_header, generators::random_header_range,
+    };
     use test_runner::HeadersTestRunner;
 
     use super::*;

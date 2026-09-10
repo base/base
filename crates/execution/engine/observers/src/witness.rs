@@ -399,7 +399,9 @@ mod tests {
         database::{AccountRevert, BundleAccount, BundleState},
     };
     use base_execution_state_provider::test_utils::MockEthProvider;
-    use reth_testing_utils::generators::{self, BlockParams, random_eoa_accounts};
+    use base_testing_support::{
+        generators, generators::BlockParams, generators::random_eoa_accounts,
+    };
     use tempfile::TempDir;
 
     use super::*;
@@ -553,7 +555,7 @@ mod tests {
         let parent_header = generators::random_header(&mut rng, 1, None);
 
         // Create a random block that inherits from the parent header
-        let recovered_block = reth_testing_utils::BaseTestData::random_block(
+        let recovered_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2, // block number
             BlockParams {
@@ -764,7 +766,7 @@ mod tests {
         // Generate test data
         let mut rng = generators::rng();
         let parent_header = generators::random_header(&mut rng, 1, None);
-        let recovered_block = reth_testing_utils::BaseTestData::random_block(
+        let recovered_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams {
@@ -799,7 +801,7 @@ mod tests {
         // Generate test data
         let mut rng = generators::rng();
         let parent_header = generators::random_header(&mut rng, 1, None);
-        let recovered_block = reth_testing_utils::BaseTestData::random_block(
+        let recovered_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams {
@@ -945,7 +947,7 @@ mod tests {
 
         let mut rng = generators::rng();
         let parent_header = generators::random_header(&mut rng, 1, None);
-        let recovered_block = reth_testing_utils::BaseTestData::random_block(
+        let recovered_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             2,
             BlockParams {
@@ -977,7 +979,7 @@ mod tests {
 
         // Create a realistic block scenario
         let parent_header = generators::random_header(&mut rng, 100, None);
-        let invalid_block = reth_testing_utils::BaseTestData::random_block(
+        let invalid_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             101,
             BlockParams {
@@ -1014,7 +1016,7 @@ mod tests {
 
         // Create test data
         let parent_header = generators::random_header(&mut rng, 50, None);
-        let _invalid_block = reth_testing_utils::BaseTestData::random_block(
+        let _invalid_block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             51,
             BlockParams {

@@ -194,8 +194,8 @@ mod tests {
     use base_execution_state_provider::{
         TransactionsProvider, TransactionsProviderExt, providers::StaticFileWriter,
     };
+    use base_testing_support::{generators, generators::BlockRangeParams};
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
-    use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use super::*;
     use crate::test_utils::{
@@ -233,7 +233,7 @@ mod tests {
 
         fn seed_execution(&mut self, input: ExecInput) -> Result<Self::Seed, TestRunnerError> {
             let mut rng = generators::rng();
-            let blocks = reth_testing_utils::BaseTestData::random_block_range(
+            let blocks = base_testing_support::BaseTestData::random_block_range(
                 &mut rng,
                 input.checkpoint().block_number..=input.target(),
                 BlockRangeParams { parent: Some(B256::ZERO), tx_count: 1..3, ..Default::default() },

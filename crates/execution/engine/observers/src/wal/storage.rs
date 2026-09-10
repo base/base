@@ -180,7 +180,7 @@ mod tests {
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, LazyTrieData, Nibbles,
         updates::{StorageTrieUpdates, TrieUpdates},
     };
-    use reth_testing_utils::generators::{self};
+    use base_testing_support::generators;
 
     use super::Storage;
 
@@ -192,10 +192,10 @@ mod tests {
         let storage: Storage = Storage::new(&temp_dir)?;
 
         let old_block =
-            reth_testing_utils::BaseTestData::random_block(&mut rng, 0, Default::default())
+            base_testing_support::BaseTestData::random_block(&mut rng, 0, Default::default())
                 .try_recover()?;
         let new_block =
-            reth_testing_utils::BaseTestData::random_block(&mut rng, 0, Default::default())
+            base_testing_support::BaseTestData::random_block(&mut rng, 0, Default::default())
                 .try_recover()?;
 
         let notification = ExExNotification::ChainReorged {

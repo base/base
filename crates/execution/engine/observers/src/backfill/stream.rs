@@ -242,10 +242,10 @@ mod tests {
         test_utils::create_test_provider_factory_with_chain_spec,
     };
     use base_execution_state_types::ExecutionStageThresholds;
+    use base_testing_support::generators;
     use eyre::Result;
     use futures::StreamExt;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
-    use reth_testing_utils::generators;
     use secp256k1::Keypair;
 
     use super::*;
@@ -352,7 +352,7 @@ mod tests {
                     ..Default::default()
                 },
                 body: BaseBlockBody {
-                    transactions: vec![reth_testing_utils::BaseTestData::sign_tx_with_key_pair(
+                    transactions: vec![base_testing_support::BaseTestData::sign_tx_with_key_pair(
                         key_pair,
                         BaseTypedTransaction::Eip2930(TxEip2930 {
                             chain_id: chain_spec.chain().id(),

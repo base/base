@@ -1022,8 +1022,8 @@ mod tests {
     };
     use base_execution_state_types::ProviderError;
     use base_execution_state_types::{PruneMode, PruneModes};
+    use base_testing_support::{generators, generators::BlockParams, generators::random_header};
     use reth_primitives_traits::SignerRecoverable;
-    use reth_testing_utils::generators::{self, BlockParams, random_header};
 
     use super::*;
     use crate::{
@@ -1160,7 +1160,7 @@ mod tests {
     #[test]
     fn take_block_transaction_range_recover_senders() {
         let mut rng = generators::rng();
-        let block = reth_testing_utils::BaseTestData::random_block(
+        let block = base_testing_support::BaseTestData::random_block(
             &mut rng,
             0,
             BlockParams { tx_count: Some(3), ..Default::default() },

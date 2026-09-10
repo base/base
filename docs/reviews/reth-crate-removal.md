@@ -6,7 +6,7 @@ Initial review against `8425d3a07`; updated after the authorized ERA and Ethereu
 
 Inventoried all **109 vendored `reth-*` crates** using workspace manifests, Cargo metadata, and the resolved Base dependency tree. Inspected source consumers for removal candidates and the shared functionality that blocks deletion. This is a crate/dependency architecture review, not a line-by-line correctness audit of every Reth implementation.
 
-`cargo tree --offline -p base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `reth-e2e-test-utils`, `reth-exex-test-utils`, and `reth-testing-utils`.
+`cargo tree --offline -p base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `reth-e2e-test-utils`, `reth-exex-test-utils`, and `base-testing-support`.
 
 “Base only” is interpreted as a Base execution implementation, preserving Base mainnet, Base Sepolia, Base Zeronet, and local Base development/testing. It does not make Ethereum-compatible transactions, hardfork rules, execution-layer networking, database maintenance, or L1 interaction obsolete.
 
@@ -178,7 +178,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |
 | [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
-| [reth-testing-utils](../../vendor/reth-testing-utils/Cargo.toml) | Test support; retain or migrate |
+| [base-testing-support](../../crates/testing/support/Cargo.toml) | Test support; retain or migrate |
 | [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
 | [base-common-observability-tracing](../../crates/common/observability/tracing/Cargo.toml) | Retain shared infrastructure |
 | [base-common-observability-tracing](../../crates/common/observability/tracing/Cargo.toml) | Retain shared infrastructure |

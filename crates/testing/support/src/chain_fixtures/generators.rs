@@ -215,7 +215,7 @@ pub fn random_block<R: Rng>(rng: &mut R, number: u64, block_params: BlockParams)
     // Generate transactions
     let tx_count = block_params.tx_count.unwrap_or_else(|| rng.random::<u8>());
     let transactions: Vec<base_common_types_chain::BaseTxEnvelope> =
-        (0..tx_count).map(|_| crate::BaseTestData::random_signed_tx(rng)).collect();
+        (0..tx_count).map(|_| crate::chain_fixtures::BaseTestData::random_signed_tx(rng)).collect();
     let total_gas = transactions.iter().fold(0, |sum, tx| sum + tx.gas_limit());
 
     // Generate ommers

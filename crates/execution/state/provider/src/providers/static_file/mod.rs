@@ -105,8 +105,8 @@ mod tests {
     use base_execution_state_types::{
         DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentRangeInclusive, find_fixed_range,
     };
+    use base_testing_support::{generators, generators::random_header_range};
     use rand::seq::SliceRandom;
-    use reth_testing_utils::generators::{self, random_header_range};
 
     use super::*;
     use crate::{

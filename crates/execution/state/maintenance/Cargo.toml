@@ -41,7 +41,6 @@ parking_lot = { workspace = true, features = ["default", "send_guard", "arc_lock
 
 [dev-dependencies]
 assert_matches = {workspace = true}
-reth-testing-utils = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
@@ -52,6 +51,7 @@ base-execution-sync-pipeline = {workspace = true, features = ["test-utils"]}
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
+base-testing-support = {workspace = true}
 
 [lints]
 workspace = true

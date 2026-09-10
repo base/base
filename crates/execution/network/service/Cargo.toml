@@ -67,7 +67,6 @@ alloy-trie = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
@@ -84,6 +83,7 @@ base-execution-network-service = { workspace = true, features = ["test-utils"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 base-execution-network-types = { workspace = true, features = ["std", "test-utils"] }
 base-execution-network-discovery = { workspace = true, features = ["default", "test-utils"] }
+base-testing-support = { workspace = true }
 
 [features]
 serde = ["dep:serde", "secp256k1/serde", "enr/serde", "base-execution-network-discovery/serde", "base-execution-network-wire/serde", "base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "alloy-trie/serde", "base-execution-network-discv5/serde", "parking_lot/serde", "rand/serde", "smallvec/serde", "url/serde", "reth-primitives-traits/serde", "base-execution-network-service/serde", "base-execution-txpool-pool/serde", "rand_08/serde", "base-execution-state-api/serde", "base-execution-network-types/serde", "base-execution-state-types/serde", "base-execution-state-trie/serde", "alloy-eip7928/serde", "base-execution-state-memory/serde"]
