@@ -30,7 +30,7 @@ use base_execution_state_memory::StoredAccount as Account;
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::SealedHeader;
 
-use crate::{inspector::MeteringInspector, transaction::validate_tx};
+use crate::metering_rpc::{inspector::MeteringInspector, transaction::validate_tx};
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 // Static floor from the current minimum base fee for metering simulation.
@@ -877,13 +877,13 @@ mod tests {
         Account as RevmAccount, EvmStorageSlot, TransactionId,
     };
     use base_execution_payload_types::{Bundle, ParsedBundle};
+    use base_execution_state_provider::StateProviderFactory;
     use base_execution_txpool_pool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_testing_support::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
     };
     use eyre::Context;
-    use base_execution_state_provider::StateProviderFactory;
 
     use super::*;
 

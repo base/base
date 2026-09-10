@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use base_execution_payload_types::{Bundle, MeterBundleResponse};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::MeterBlockResponse;
+use crate::metering_rpc::MeterBlockResponse;
 
 /// RPC API for transaction metering.
 ///

@@ -54,7 +54,6 @@ members = [
   "crates/consensus/driver/service",
   "crates/execution/cli",
   "crates/execution/evm/blocks",
-  "crates/execution/metering",
   "crates/execution/node",
   "crates/execution/node-context",
   "crates/execution/payload/builder",
@@ -297,7 +296,6 @@ base-node-core = { path = "crates/execution/node", default-features = false }
 base-execution-cli = { path = "crates/execution/cli", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
-base-metering = { path = "crates/execution/metering", default-features = false }
 base-node-runner = { path = "crates/execution/runner", default-features = false }
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-txpool-pool = { path = "crates/execution/txpool/pool", default-features = false }

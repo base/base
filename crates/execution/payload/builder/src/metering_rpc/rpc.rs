@@ -8,13 +8,13 @@ use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::extract_l1_info_from_tx;
 use base_execution_evm_runtime::L1BlockInfo;
 use base_execution_payload_types::{Bundle, MeterBundleResponse, ParsedBundle};
-use jsonrpsee::core::{RpcResult, async_trait};
 use base_execution_state_provider::{
     BlockReader, BlockReaderIdExt, ChainSpecProvider, HeaderProvider, StateProviderFactory,
 };
+use jsonrpsee::core::{RpcResult, async_trait};
 use tracing::{debug, error, info};
 
-use crate::{
+use crate::metering_rpc::{
     MeterBlockResponse,
     block::meter_block,
     meter::{MeterBundleInput, meter_bundle},
@@ -26,7 +26,7 @@ pub struct MeteringApiImpl<Provider> {
     provider: Provider,
     /// Opcodes and precompiles to track for gas metering. When non-empty, a
     /// `MeteringInspector` is attached during bundle execution.
-    metered_opcodes: Arc<crate::MeteredOpcodes>,
+    metered_opcodes: Arc<crate::metering_rpc::MeteredOpcodes>,
 }
 
 impl<Provider> std::fmt::Debug for MeteringApiImpl<Provider> {
@@ -45,7 +45,10 @@ where
         + Clone,
 {
     /// Creates a new instance of `MeteringApi`.
-    pub const fn new(provider: Provider, metered_opcodes: Arc<crate::MeteredOpcodes>) -> Self {
+    pub const fn new(
+        provider: Provider,
+        metered_opcodes: Arc<crate::metering_rpc::MeteredOpcodes>,
+    ) -> Self {
         Self { provider, metered_opcodes }
     }
 }

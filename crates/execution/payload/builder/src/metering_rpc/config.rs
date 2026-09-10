@@ -1,6 +1,6 @@
 //! Metering RPC settings.
 
-use crate::MeteredOpcodes;
+use crate::metering_rpc::MeteredOpcodes;
 
 /// Configuration for metering RPC.
 #[derive(Debug)]

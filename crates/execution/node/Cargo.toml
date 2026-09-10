@@ -18,7 +18,6 @@ humantime = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
-base-metering = { workspace = true }
 base-node-config = {workspace = true}
 reth-node-events = { workspace = true }
 base-node-context = { workspace = true }
@@ -60,7 +59,7 @@ base-execution-network-service = {features = ["default"], workspace = true}
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
-base-execution-payload-builder = { workspace = true, features = ["default"] }
+base-execution-payload-builder = {workspace = true, features = ["default"]}
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 base-execution-rpc-handlers = {workspace = true, features = ["client", "default"]}
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}

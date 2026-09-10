@@ -77,3 +77,10 @@ pub use job_metrics::PayloadBuilderMetrics;
 mod basic;
 pub use base_common_types_payload::PayloadId;
 pub use basic::*;
+
+mod metering_rpc;
+pub use metering_rpc::{
+    BaseApiExtServer, MeterBlockResponse, MeterBlockTransactions, MeterBundleInput,
+    MeterBundleOutput, MeteredOpcodes, MeteringApiImpl, MeteringApiServer, MeteringConfig,
+    MeteringStoreExt, PseudoOpcode, TxValidationError, meter_block, meter_bundle, validate_tx,
+};

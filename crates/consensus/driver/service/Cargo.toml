@@ -95,14 +95,5 @@ tokio = {features = ["default", "macros", "rt", "sync", "test-util"], workspace 
 
 [features]
 default = []
-metrics = [
-    "base-consensus-derive-pipeline/metrics",
-    "base-consensus-network-service/metrics",
-    "base-consensus-source-providers/metrics",
-    "base-common-observability-metrics/metrics",
-    "base-common-chain-activation/metrics",
-    "dep:metrics",
-    "libp2p/metrics",
-    "tower-http/metrics",
-]
+metrics = ["base-consensus-derive-pipeline/metrics", "base-consensus-network-service/metrics", "base-consensus-source-providers/metrics", "base-common-observability-metrics/metrics", "base-common-chain-activation/metrics", "dep:metrics", "libp2p/metrics", "tower-http/metrics"]
 test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils"]

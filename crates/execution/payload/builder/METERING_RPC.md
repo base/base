@@ -1,4 +1,4 @@
-# `base-metering`
+# `base-execution-payload-builder`
 
 Metering RPC for Base node. Provides RPC methods for measuring transaction and block execution timing.
 
@@ -16,7 +16,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-metering = { workspace = true }
+base-execution-payload-builder = { workspace = true }
 ```
 
 ## RPC Methods

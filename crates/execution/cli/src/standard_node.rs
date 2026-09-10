@@ -10,6 +10,7 @@ use base_common_observability_events::{
 use base_execution_payload_builder::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
 };
+use base_execution_payload_builder::{MeteredOpcodes, MeteringConfig};
 use base_execution_payload_builder::{
     REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache, ResourceMeteringConfig,
     SharedMeteringStore,
@@ -23,7 +24,6 @@ use base_execution_txpool_pool::TransactionTracingConfig as TxpoolConfig;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
 };
-use base_metering::{MeteredOpcodes, MeteringConfig};
 use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
 use tracing::warn;
 use url::Url;

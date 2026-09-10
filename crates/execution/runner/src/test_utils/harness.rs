@@ -79,7 +79,7 @@ impl TestHarnessBuilder {
 
     /// Configures bundle metering.
     pub fn with_metering(mut self) -> Self {
-        self.rpc.metering = Some(base_metering::MeteringConfig::enabled());
+        self.rpc.metering = Some(base_execution_payload_builder::MeteringConfig::enabled());
         self
     }
 

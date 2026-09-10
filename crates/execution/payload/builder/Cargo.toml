@@ -12,48 +12,70 @@ description = "A payload builder for base-reth that builds Base payloads."
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
 metrics = { workspace = true  }
 alloy-rlp = { workspace = true }
+jsonrpsee = { workspace = true }
 thiserror = { workspace = true }
-alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
 alloy-hardforks = { workspace = true }
+reth-primitives-traits = {workspace = true}
 alloy-rpc-types-debug = { workspace = true }
-reth-primitives-traits = { workspace = true }
+serde = {workspace = true, features = ["std"]}
+base-execution-evm-machine = {workspace = true}
 base-execution-evm-runtime = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 moka = { workspace = true, features = ["sync"] }
 base-consensus-batch-types = { workspace = true }
-base-execution-evm-machine = { workspace = true }
-derive_more = { workspace = true, features = ["full"]}
+alloy-eips = {workspace = true, features = ["std"]}
+eyre = { workspace = true, features = ["default"] }
+base-execution-evm-primitives = { workspace = true }
+base-execution-state-provider = { workspace = true }
+derive_more = {workspace = true, features = ["full"]}
 base-common-observability-events = { workspace = true }
-tracing = { workspace = true, features = ["attributes"]}
 tokio = { workspace = true, features = ["sync", "time"] }
 futures-core = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"]}
-base-common-types-chain = { workspace = true, features = ["reth"] }
-base-execution-txpool-pool = {workspace = true, features = ["default"]}
-base-common-chain-config = {features = ["default"], workspace = true}
+tracing = {workspace = true, features = ["attributes", "std"]}
+alloy-primitives = {workspace = true, features = ["map-foldhash"]}
+base-execution-evm-precompiles = {workspace = true, features = ["std"]}
 base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-types = {features = ["default"], workspace = true}
-base-execution-evm-precompiles = { workspace = true, features = ["std"]}
-base-execution-payload-types = {features = ["default"], workspace = true}
+base-execution-txpool-pool = {workspace = true, features = ["default"]}
+base-common-types-chain = {workspace = true, features = ["reth", "std"]}
+base-execution-payload-types = {workspace = true, features = ["default"]}
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
+base-common-chain-config = {workspace = true, features = ["default", "std"]}
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
-base-execution-evm-blocks = {features = ["default", "std", "witness"], workspace = true}
+base-execution-evm-blocks = {workspace = true, features = ["default", "std", "witness"]}
 
 [dev-dependencies]
+serde_json = { workspace = true }
+alloy-sol-types = { workspace = true }
+base-common-types-payload = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-tokio = { workspace = true, features = ["sync", "rt"] }
+url = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+base-execution-evm-primitives = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
+alloy-genesis = { workspace = true, features = ["std"] }
+base-node-core = { workspace = true, features = ["default"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+tokio = {workspace = true, features = ["default", "rt", "sync"]}
+base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["reth"] }
+base-testing-support = { workspace = true, features = ["contracts"] }
+base-common-types-rpc = {workspace = true, features = ["default", "std"]}
+base-execution-txpool-pool = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-events = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["default", "test-utils"] }
+base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
 
 [features]
 default = ["metrics"]

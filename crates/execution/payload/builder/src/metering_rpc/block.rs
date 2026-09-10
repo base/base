@@ -7,11 +7,11 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseBlock, BlockHeader, transaction::SignerRecoverable};
 use base_execution_evm_blocks::{BaseEvmConfig, BaseNextBlockEnvAttributes, BlockBuilder};
 use base_execution_evm_runtime::database::State;
+use base_execution_state_provider::{HeaderProvider, StateProviderFactory};
 use eyre::{Result as EyreResult, eyre};
 use reth_primitives_traits::Block as BlockT;
-use base_execution_state_provider::{HeaderProvider, StateProviderFactory};
 
-use crate::types::{MeterBlockResponse, MeterBlockTransactions};
+use crate::metering_rpc::types::{MeterBlockResponse, MeterBlockTransactions};
 
 /// Re-executes a block and meters execution and timing information.
 ///

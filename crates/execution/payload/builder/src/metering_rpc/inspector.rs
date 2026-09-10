@@ -12,7 +12,7 @@ use base_execution_evm_runtime::{
     },
 };
 
-use crate::meter::MeteredOpcodes;
+use crate::metering_rpc::meter::MeteredOpcodes;
 
 /// Accumulated gas data for a single opcode executed by one contract.
 #[derive(Debug, Default, Clone, Copy)]
