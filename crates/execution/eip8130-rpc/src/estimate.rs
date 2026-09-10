@@ -7,10 +7,13 @@ use base_common_types_rpc::state::EvmOverrides;
 use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
 use base_execution_evm_machine::{Block, BlockEnv, ExecutionResult};
 use base_execution_evm_runtime::BaseTransaction as BaseRevm;
-use base_execution_evm_runtime::{EvmFactory, apply_block_overrides, apply_state_overrides};
 use base_execution_rpc::BaseEthApi;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_types::BaseEthApiError;
+use {
+    base_execution_evm_runtime::EvmFactory, reth_rpc_convert::apply_block_overrides,
+    reth_rpc_convert::apply_state_overrides,
+};
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
 /// read-only [`base_execution_evm_runtime::Eip8130Executor::simulate`] at the block state.
@@ -72,17 +75,19 @@ impl Eip8130GasEstimator {
         // Bound execution by the block gas limit when the request omits `gas`.
         let gas_cap = Block::gas_limit(&evm_env.block_env);
 
-        let sim_tx =
-            BaseRevm::from_eip8130_rpc_request(&request, chain_id, gas_cap).ok_or_else(|| {
-                ErrorObjectOwned::owned(
-                    INVALID_PARAMS_CODE,
-                    "invalid EIP-8130 estimate request: missing EIP-8130 fields, no sender account \
+        let sim_tx = reth_rpc_convert::Eip8130TransactionConverter::convert(
+            &request, chain_id, gas_cap,
+        )
+        .ok_or_else(|| {
+            ErrorObjectOwned::owned(
+                INVALID_PARAMS_CODE,
+                "invalid EIP-8130 estimate request: missing EIP-8130 fields, no sender account \
                  (neither `sender` nor `from`), a `sender`/`from` mismatch, a \
                  `sender_auth`/`payer_auth` blob whose data exceeds the maximum size, or a \
                  `payer_auth` with an unrecognized authenticator selector",
-                    None::<()>,
-                )
-            })?;
+                None::<()>,
+            )
+        })?;
 
         let EvmOverrides { state, block } = overrides;
 

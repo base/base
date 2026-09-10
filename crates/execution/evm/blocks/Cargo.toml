@@ -44,10 +44,10 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = {workspace = true}
-base-execution-state-maintenance = { workspace = true }
 base-execution-state-trie = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 base-common-chain-config = {features = ["std"], workspace = true}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }

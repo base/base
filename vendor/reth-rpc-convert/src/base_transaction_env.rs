@@ -1,10 +1,11 @@
 //! Reth compatibility implementations for RPC types.
 
+use crate::{EthTxEnvError, TryIntoTxEnv};
 use alloy_primitives::Bytes;
 use base_common_types_rpc::BaseTransactionRequest;
-use base_execution_evm_runtime::{BlockEnvironment, EthTxEnvError, EvmEnv, TryIntoTxEnv};
+use base_execution_evm_runtime::{BlockEnvironment, EvmEnv};
 
-use crate::BaseTransaction as BaseRevm;
+use base_execution_evm_runtime::BaseTransaction as BaseRevm;
 
 impl<Spec, Block: BlockEnvironment> TryIntoTxEnv<BaseRevm, Spec, Block> for BaseTransactionRequest {
     type Err = EthTxEnvError;
@@ -27,7 +28,8 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{Eip8130ExecutionMode, MAX_AUTH_SIZE, STUB_AUTH_FILL};
+    use crate::{MAX_AUTH_SIZE, STUB_AUTH_FILL};
+    use base_execution_evm_runtime::Eip8130ExecutionMode;
 
     const CHAIN_ID: u64 = 8453;
     const GAS_CAP: u64 = 30_000_000;
@@ -36,7 +38,7 @@ mod tests {
 
     fn sim_tx(request: serde_json::Value) -> BaseRevm {
         let req: BaseTransactionRequest = serde_json::from_value(request).expect("valid request");
-        BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).expect("simulation tx")
+        crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).expect("simulation tx")
     }
 
     fn signed(tx: &BaseRevm) -> &Eip8130Signed {
@@ -241,7 +243,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
+            crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).is_none(),
             "a `from`/`sender` mismatch is rejected rather than guessing the account",
         );
     }
@@ -267,7 +269,7 @@ mod tests {
         let req: BaseTransactionRequest =
             serde_json::from_value(json!({ "calls": [] })).expect("valid request");
         assert!(
-            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
+            crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an 8130 request with no account is rejected",
         );
     }
@@ -318,7 +320,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
+            crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an over-cap sender auth blob is rejected rather than priced",
         );
     }
@@ -333,7 +335,7 @@ mod tests {
             "senderAuth": blob(None, MAX_AUTH_SIZE as usize + 1),
         }))
         .expect("valid request");
-        assert!(BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none());
+        assert!(crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).is_none());
     }
 
     #[test]
@@ -347,7 +349,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
+            crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an over-cap payer auth blob is rejected rather than priced",
         );
     }
@@ -383,7 +385,7 @@ mod tests {
         }))
         .expect("valid request");
         assert!(
-            BaseRevm::from_eip8130_rpc_request(&req, CHAIN_ID, GAS_CAP).is_none(),
+            crate::Eip8130TransactionConverter::convert(&req, CHAIN_ID, GAS_CAP).is_none(),
             "an unrecognized payer authenticator selector is rejected rather than priced",
         );
     }

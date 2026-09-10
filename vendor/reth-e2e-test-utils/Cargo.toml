@@ -23,7 +23,6 @@ alloy-genesis = {workspace = true}
 alloy-signer = { workspace = true }
 futures-util = { workspace = true }
 reth-network = { workspace = true }
-base-execution-state-provider = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-network-api = { workspace = true }
@@ -39,6 +38,7 @@ base-execution-evm-runtime = { workspace = true }
 base-execution-state-types = { workspace = true }
 base-execution-network-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }

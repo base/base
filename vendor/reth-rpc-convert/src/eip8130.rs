@@ -9,7 +9,7 @@ use base_common_types_chain::{
 use base_common_types_rpc::{BaseTransactionRequest, Eip8130AuthScheme};
 use base_execution_evm_runtime::FromRecoveredTx;
 
-use crate::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
+use base_execution_evm_runtime::{BaseTransaction as BaseRevm, Eip8130ExecutionMode};
 
 /// Filler byte for synthesized authentication stubs.
 pub const STUB_AUTH_FILL: u8 = 0xff;
@@ -20,18 +20,22 @@ pub const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
 /// Maximum caller-supplied authentication payload length.
 pub const MAX_AUTH_SIZE: u32 = 8_192;
 
-impl BaseRevm {
+/// Converts EIP-8130 RPC requests into unsigned simulation transactions.
+#[derive(Debug)]
+pub struct Eip8130TransactionConverter;
+
+impl Eip8130TransactionConverter {
     /// Builds an unsigned EIP-8130 simulation transaction.
     ///
     /// Returns `None` when the request carries no EIP-8130 fields, does not resolve a sender,
     /// contains conflicting `sender` and `from` values, or supplies an invalid authentication
     /// blob. The returned transaction uses [`Eip8130ExecutionMode::Simulate`] so callers can run
     /// `eth_call` and `eth_estimateGas` without signature verification or committed state.
-    pub fn from_eip8130_rpc_request(
+    pub fn convert(
         request: &BaseTransactionRequest,
         chain_id: u64,
         gas_limit_cap: u64,
-    ) -> Option<Self> {
+    ) -> Option<BaseRevm> {
         let aa = request.as_eip8130()?;
         let req = request.as_ref();
 
@@ -96,7 +100,7 @@ impl BaseRevm {
         };
 
         let envelope = BaseTxEnvelope::Eip8130(Eip8130Signed::new(tx, sender_auth, payer_auth));
-        let mut simulation = Self::from_recovered_tx(&envelope, account);
+        let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
         if let Some(parts) = simulation.eip8130.as_mut() {
             parts.mode = Eip8130ExecutionMode::Simulate;
             parts.simulation_sender_actor_id = aa.sender_actor_id;
@@ -104,10 +108,12 @@ impl BaseRevm {
         Some(simulation)
     }
 
+    /// Builds the default bare authentication stub.
     pub fn default_bare_auth() -> Bytes {
         Bytes::from(vec![STUB_AUTH_FILL; Eip8130AuthScheme::Secp256k1.default_data_len()])
     }
 
+    /// Validates the caller-supplied authentication payload length.
     pub fn check_auth_len(blob: &Bytes, prefixed: bool) -> Option<()> {
         let data_len = if prefixed {
             blob.len().saturating_sub(AUTHENTICATOR_SELECTOR_LEN)
@@ -117,6 +123,7 @@ impl BaseRevm {
         (data_len as u64 <= u64::from(MAX_AUTH_SIZE)).then_some(())
     }
 
+    /// Returns whether the blob begins with a recognized authenticator selector.
     pub fn is_prefixed_auth(blob: &Bytes) -> bool {
         if blob.len() < AUTHENTICATOR_SELECTOR_LEN {
             return false;
@@ -126,6 +133,7 @@ impl BaseRevm {
             || Eip8130Contracts::is_canonical_authenticator(&selector)
     }
 
+    /// Builds a prefixed authentication stub for the selected scheme.
     pub fn stub_prefixed_auth(scheme: Eip8130AuthScheme, data_len: usize) -> Bytes {
         let mut blob = scheme.authenticator().to_vec();
         blob.resize(blob.len() + data_len, STUB_AUTH_FILL);
@@ -149,7 +157,7 @@ mod tests {
 
     fn simulation(request: serde_json::Value) -> BaseRevm {
         let request = serde_json::from_value::<BaseTransactionRequest>(request).unwrap();
-        BaseRevm::from_eip8130_rpc_request(&request, CHAIN_ID, GAS_CAP).unwrap()
+        crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).unwrap()
     }
 
     fn signed(tx: &BaseRevm) -> &Eip8130Signed {
@@ -181,14 +189,14 @@ mod tests {
             "calls": []
         }))
         .unwrap();
-        assert!(BaseRevm::from_eip8130_rpc_request(&request, CHAIN_ID, GAS_CAP).is_none());
+        assert!(crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).is_none());
     }
 
     #[test]
     fn missing_sender_is_rejected() {
         let request =
             serde_json::from_value::<BaseTransactionRequest>(json!({ "calls": [] })).unwrap();
-        assert!(BaseRevm::from_eip8130_rpc_request(&request, CHAIN_ID, GAS_CAP).is_none());
+        assert!(crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).is_none());
     }
 
     #[test]
@@ -209,7 +217,7 @@ mod tests {
             "senderAuth": auth
         }))
         .unwrap();
-        assert!(BaseRevm::from_eip8130_rpc_request(&request, CHAIN_ID, GAS_CAP).is_none());
+        assert!(crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).is_none());
     }
 
     #[test]

@@ -14,9 +14,6 @@ use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
 use base_execution_evm_machine::{
     EVMError, HaltReason, InvalidHeader, InvalidTransaction, OutOfGasError,
 };
-use base_execution_evm_runtime::{
-    BlockExecutionError, BlockValidationError, CallError, StateOverrideError,
-};
 use base_execution_evm_runtime::{database::EvmDatabaseError, state::bal::BalError};
 use base_execution_state_types::ProviderError;
 use base_execution_txpool::{
@@ -29,6 +26,11 @@ use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
 use tokio::sync::oneshot::error::RecvError;
+use {
+    base_execution_evm_runtime::BlockExecutionError,
+    base_execution_evm_runtime::BlockValidationError, reth_rpc_convert::CallError,
+    reth_rpc_convert::StateOverrideError,
+};
 
 /// A trait to convert an error to an RPC error.
 pub trait ToRpcError: core::error::Error + Send + Sync + 'static {

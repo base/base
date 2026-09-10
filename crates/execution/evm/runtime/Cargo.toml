@@ -20,7 +20,6 @@ tracing = { workspace = true }
 alloy-eips = {workspace = true}
 alloy-primitives = {workspace = true}
 alloy-hardforks = { workspace = true }
-base-common-types-rpc = { workspace = true}
 base-execution-evm-fees = {workspace = true}
 base-execution-evm-machine = {workspace = true}
 base-execution-state-types = {workspace = true}
@@ -44,7 +43,6 @@ sha2 = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-common-types-rpc = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
 alloy-primitives = {features = ["serde"], workspace = true}
@@ -68,7 +66,6 @@ std = [
     "base-execution-evm-fees/std",
     "base-execution-evm-precompiles/std",
     "base-common-types-chain/std",
-    "base-common-types-rpc/std",
     "base-execution-evm-machine/std",
     "base-common-observability-metrics?/std",
     "base-execution-state-memory/std",
@@ -120,9 +117,7 @@ tracer = [
     "std",
 ]
 asm-keccak = ["alloy-primitives/asm-keccak", "base-execution-evm-primitives/asm-keccak"]
-call-util = ["overrides"]
 gmp = ["base-execution-evm-crypto/gmp"]
-overrides = []
 arbitrary = ["base-execution-evm-primitives/arbitrary"]
 dev = [
     "memory_limit",

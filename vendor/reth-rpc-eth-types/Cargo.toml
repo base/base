@@ -51,6 +51,7 @@ tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = [] }
 jsonrpsee-core = { workspace = true, features = ["default"] }
+base-execution-evm-runtime = {features = [], workspace = true}
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 reth-rpc-convert = { workspace = true, features = ["default"] }
@@ -59,7 +60,6 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-evm-inspectors = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
-base-execution-evm-runtime = {features = ["call-util", "overrides"], workspace = true}
 
 [dev-dependencies]
 base-execution-state-types = { workspace = true }

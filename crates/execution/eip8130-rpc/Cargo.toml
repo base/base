@@ -16,7 +16,7 @@ workspace = true
 [dependencies]
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
-base-execution-state-provider = { workspace = true }
+reth-rpc-convert = {workspace = true}
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-execution-rpc = { workspace = true }
@@ -25,6 +25,7 @@ base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+base-execution-state-provider = { workspace = true }
 base-execution-evm-precompiles = { workspace = true }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}

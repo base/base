@@ -78,7 +78,7 @@ base-common-types-payload = {workspace = true, features = ["serde", "std", "kzg"
 base-execution-network-types = {features = ["secp256k1", "std"], workspace = true}
 base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
 base-execution-state-types = {features = ["default", "eip1186", "serde"], workspace = true}
-base-execution-evm-runtime = { workspace = true, features = ["overrides", "call-util", "optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
+base-execution-evm-runtime = { workspace = true, features = ["optional_block_gas_limit", "optional_eip3607", "optional_no_base_fee", "memory_limit", "optional_fee_charge"] }
 
 [dev-dependencies]
 assert_matches = { workspace = true }

@@ -69,47 +69,33 @@ pub fn apply_block_overrides<DB>(overrides: BlockOverrides, db: &mut DB, env: &m
 where
     DB: OverrideBlockHashes,
 {
-    #[allow(clippy::needless_update)]
-    let BlockOverrides {
-        number,
-        difficulty,
-        time,
-        gas_limit,
-        coinbase,
-        random,
-        base_fee,
-        blob_base_fee,
-        block_hash,
-        ..
-    } = BlockOverrides { ..overrides };
-
-    if let Some(block_hashes) = block_hash {
+    if let Some(block_hashes) = overrides.block_hash {
         // override block hashes
         db.override_block_hashes(block_hashes);
     }
 
-    if let Some(number) = number {
+    if let Some(number) = overrides.number {
         env.number = number.saturating_to();
     }
-    if let Some(difficulty) = difficulty {
+    if let Some(difficulty) = overrides.difficulty {
         env.difficulty = difficulty;
     }
-    if let Some(time) = time {
+    if let Some(time) = overrides.time {
         env.timestamp = U256::from(time);
     }
-    if let Some(gas_limit) = gas_limit {
+    if let Some(gas_limit) = overrides.gas_limit {
         env.gas_limit = gas_limit;
     }
-    if let Some(coinbase) = coinbase {
+    if let Some(coinbase) = overrides.coinbase {
         env.beneficiary = coinbase;
     }
-    if let Some(random) = random {
+    if let Some(random) = overrides.random {
         env.prevrandao = Some(random);
     }
-    if let Some(base_fee) = base_fee {
+    if let Some(base_fee) = overrides.base_fee {
         env.basefee = base_fee.saturating_to();
     }
-    if let Some(blob_base_fee) = blob_base_fee {
+    if let Some(blob_base_fee) = overrides.blob_base_fee {
         let excess_blob_gas =
             env.blob_excess_gas_and_price.map(|blob| blob.excess_blob_gas).unwrap_or_default();
         env.blob_excess_gas_and_price = Some(BlobExcessGasAndPrice {
@@ -657,7 +643,7 @@ mod tests {
             state::AccountInfo,
         };
 
-        use crate::{Evm, EvmEnv, eth::EthEvmFactory, evm_api::EvmFactory};
+        use base_execution_evm_runtime::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
 
         type TestDb = State<CacheDB<EmptyDB>>;
 
@@ -732,7 +718,7 @@ mod tests {
         let env =
             EvmEnv { block_env: base_execution_evm_machine::BlockEnv::default(), cfg_env: cfg };
 
-        let factory = EthEvmFactory;
+        let factory = EthEvmFactory::default();
 
         // Test 1: transact without inspector via EthEvmFactory
         let transact_value = {

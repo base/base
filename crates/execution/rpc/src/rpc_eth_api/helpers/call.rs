@@ -27,19 +27,20 @@ use base_execution_evm_runtime::{
     Database, DatabaseCommit,
     database::{EvmDatabaseError, State},
 };
-use base_execution_evm_runtime::{
-    OverrideBlockHashes, apply_block_overrides, apply_state_overrides,
-};
 use base_execution_state_api::{BlockIdReader, ProviderTx};
+use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_primitives_traits::Recovered;
-use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     BaseEthApiError, EthApiError, StateCacheDb,
     simulate::{self, EthSimulateError},
 };
 use tracing::{trace, warn};
+use {
+    reth_rpc_convert::OverrideBlockHashes, reth_rpc_convert::apply_block_overrides,
+    reth_rpc_convert::apply_state_overrides,
+};
 
 use crate::BaseEthApi;
 
@@ -478,7 +479,7 @@ impl BaseEthApi {
         _evm_env: &EvmEnvFor,
         tx_env: &TxEnvFor,
     ) -> Result<u64, BaseEthApiError> {
-        base_execution_evm_runtime::caller_gas_allowance(&mut db, tx_env)
+        reth_rpc_convert::caller_gas_allowance(&mut db, tx_env)
             .map_err(BaseEthApiError::from_eth_err)
     }
 

@@ -50,7 +50,6 @@ base-common-observability-metrics = {features = ["common", "metrics"], workspace
 mockall = { workspace = true }
 test-case = { workspace = true }
 alloy-genesis = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -61,6 +60,7 @@ base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 serial_test = { workspace = true, features = ["default"] }
 secp256k1 = { workspace = true, features = ["default", "rand", "std"] }

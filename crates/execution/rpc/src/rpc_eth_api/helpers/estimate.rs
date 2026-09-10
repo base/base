@@ -7,7 +7,6 @@ use base_execution_evm_blocks::{
     BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
 };
 use base_execution_evm_machine::{Block, Cfg, ExecutionResult, Transaction};
-use base_execution_evm_runtime::{apply_block_overrides, apply_state_overrides};
 use base_execution_evm_runtime::{
     database::{EvmDatabaseError, State},
     primitives::KECCAK_EMPTY,
@@ -18,6 +17,7 @@ use futures::Future;
 use reth_rpc_eth_types::{BaseEthApiError, EthApiError, RpcInvalidTransactionError};
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use tracing::trace;
+use {reth_rpc_convert::apply_block_overrides, reth_rpc_convert::apply_state_overrides};
 
 use crate::BaseEthApi;
 
