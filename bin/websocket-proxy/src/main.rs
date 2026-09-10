@@ -4,6 +4,10 @@ use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{extract::ws::Message, http::Uri};
 use base_common_cli_support::LogConfig;
+use base_infra_websocket_proxy_service::{
+    Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
+    TrustedProxyConfig, WebsocketSubscriber,
+};
 use clap::Parser;
 use dotenvy::dotenv;
 use ipnet::IpNet;
@@ -15,15 +19,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
-use base_infra_websocket_proxy_service::{
-    Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
-    TrustedProxyConfig, WebsocketSubscriber,
-};
 
 base_common_cli_support::define_log_args!("WEBSOCKET_PROXY");
 
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(name = "websocket-proxy-bin", author, version, about)]
 struct Args {
     #[arg(
         long,

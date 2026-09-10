@@ -13,6 +13,7 @@ base_common_cli_support::define_metrics_args!("BASE_NODE", 9090);
 /// The `base` CLI.
 #[derive(Parser, Debug)]
 #[command(
+    name = "base",
     author,
     version = env!("CARGO_PKG_VERSION"),
     styles = base_common_cli_support::CliStyles::init(),

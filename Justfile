@@ -216,4 +216,4 @@ bench-execution-trie-deep-history-reads:
 
 # Run basectl TUI dashboard
 basectl:
-    cargo run -p basectl --release -- monitor
+    cargo run -p base-bin-basectl --release -- monitor

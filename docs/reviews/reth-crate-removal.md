@@ -6,7 +6,7 @@ Initial review against `8425d3a07`; updated after the authorized ERA and Ethereu
 
 Inventoried all **109 vendored `reth-*` crates** using workspace manifests, Cargo metadata, and the resolved Base dependency tree. Inspected source consumers for removal candidates and the shared functionality that blocks deletion. This is a crate/dependency architecture review, not a line-by-line correctness audit of every Reth implementation.
 
-`cargo tree --offline -p base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `base-testing-devnet`, `reth-exex-test-utils`, and `base-testing-support`.
+`cargo tree --offline -p base-bin-base -e normal,build` originally reached **106 Reth crates**, fell to **100** after the ERA/unused dependency cleanup, and now reaches **98**. Eight original crates have been deleted, leaving **101** vendored Reth crates in the workspace. The three crates originally outside that production graph were `base-testing-devnet`, `reth-exex-test-utils`, and `base-testing-support`.
 
 “Base only” is interpreted as a Base execution implementation, preserving Base mainnet, Base Sepolia, Base Zeronet, and local Base development/testing. It does not make Ethereum-compatible transactions, hardfork rules, execution-layer networking, database maintenance, or L1 interaction obsolete.
 
@@ -196,7 +196,7 @@ The dependency counts use the host/default Base build. All eight removed crates 
 
 Initial ERA cleanup passed:
 
-- `cargo check --offline --locked -p base --all-targets`
+- `cargo check --offline --locked -p base-bin-base --all-targets`
 - `cargo test --offline -p reth-config --features serde --lib` — 16 tests, including loading and saving old ERA configuration.
 - `cargo test --offline -p base-execution-state-types --features reth-codecs/alloy --lib` — 17 tests. The explicit codec feature supplies the Alloy codec implementations needed by this isolated test build.
 - `cargo test --offline -p base-execution-sync-pipeline --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
@@ -217,6 +217,6 @@ Follow-up removals:
 - The final Base node run passed 70 unit tests, two existing mining scenarios, and all 29 migrated engine/RocksDB/harness scenarios (one existing ignored P2P scenario).
 - RPC-builder integration tests passed (68), as did live-trie integration tests (five). Test targets for Base shadow-indexer/trie, RPC builder, and stages compile.
 - `reth-evm` checks passed with `--no-default-features` and with `--no-default-features --features test-utils`.
-- `cargo build --offline -p base` passed, and the built binary responds to `--version`.
+- `cargo build --offline -p base-bin-base` passed, and the built binary responds to `--version`.
 - Base trie unit tests (169) and shadow-indexer unit tests (13) passed with `--test-threads=1`. The parallel trie run hit MDBX database-allocation errors; the serial run passed without code changes.
 - RPC and stages documentation examples passed (three). Final EVM-batch selected unit/integration total: **970 passed**, plus those three documentation examples.

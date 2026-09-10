@@ -1434,27 +1434,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "audit-archiver"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "aws-config",
- "aws-credential-types",
- "aws-sdk-s3",
- "axum",
- "base-common-cli-support",
- "base-infra-audit-service",
- "clap",
- "dotenvy",
- "jsonrpsee",
- "moka",
- "serde",
- "tokio",
- "tower",
- "tracing",
-]
-
-[[package]]
 name = "aurora-engine-modexp"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2064,30 +2043,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "base-common-chain-activation",
- "base-common-chain-config",
- "base-common-cli-support",
- "base-consensus-driver-service",
- "base-consensus-source-providers",
- "base-execution-evm-blocks",
- "base-execution-payload-builder",
- "base-node-cli",
- "base-node-service",
- "clap",
- "eyre",
- "figment",
- "serde",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-batcher-encoding-channel"
 version = "0.0.0"
 dependencies = [
@@ -2142,6 +2097,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-bin-audit-archiver"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws-sdk-s3",
+ "axum",
+ "base-common-cli-support",
+ "base-infra-audit-service",
+ "clap",
+ "dotenvy",
+ "jsonrpsee",
+ "moka",
+ "serde",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "base-bin-base"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "base-common-chain-activation",
+ "base-common-chain-config",
+ "base-common-cli-support",
+ "base-consensus-driver-service",
+ "base-consensus-source-providers",
+ "base-execution-evm-blocks",
+ "base-execution-payload-builder",
+ "base-node-cli",
+ "base-node-service",
+ "clap",
+ "eyre",
+ "figment",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "base-bin-basectl"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "base-infra-basectl-service",
+ "clap",
+ "rustls 0.23.43",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "base-bin-benchmark"
 version = "0.0.0"
 dependencies = [
@@ -2160,6 +2172,27 @@ dependencies = [
  "eyre",
  "tokio",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "base-bin-websocket-proxy"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "base-common-cli-support",
+ "base-common-observability-metrics",
+ "base-infra-websocket-proxy-service",
+ "brotli",
+ "clap",
+ "dotenvy",
+ "futures",
+ "hostname",
+ "ipnet",
+ "metrics-exporter-prometheus",
+ "serde",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -5386,18 +5419,6 @@ name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
-
-[[package]]
-name = "basectl"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-infra-basectl-service",
- "clap",
- "rustls 0.23.43",
- "tokio",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "bcrypt-pbkdf"
@@ -17098,27 +17119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "websocket-proxy-bin"
-version = "0.0.0"
-dependencies = [
- "axum",
- "base-common-cli-support",
- "base-common-observability-metrics",
- "base-infra-websocket-proxy-service",
- "brotli",
- "clap",
- "dotenvy",
- "futures",
- "hostname",
- "ipnet",
- "metrics-exporter-prometheus",
- "serde",
- "tokio",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]

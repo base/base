@@ -248,7 +248,7 @@ To exercise the shipped `base` executable as a sequencer and an integrated proof
 follower, build it and run the Docker-backed smoke test explicitly:
 
 ```bash
-cargo build -p base --bin base
+cargo build -p base-bin-base --bin base
 BASE_BINARY="$PWD/target/debug/base" RUST_MIN_STACK=33554432 \
   cargo test -p base-testing-devnet --test system_smoke \
   smoke_test_unified_binary_produces_and_follows_blocks -- --ignored --nocapture

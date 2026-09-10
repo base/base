@@ -68,7 +68,7 @@ struct HealthState {
 }
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(name = "audit-archiver", author, version, about, long_about = None)]
 struct Args {
     #[arg(value_enum, default_value_t = Command::Serve)]
     command: Command,

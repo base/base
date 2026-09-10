@@ -63,8 +63,8 @@ target "base" {
   inherits = ["_rust-service-common"]
   target = "base"
   args = {
-    CARGO_CHEF_ARGS = "--package base --package base-snapshotter-bin"
-    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base/jemalloc-prof" : ""
+    CARGO_CHEF_ARGS = "--package base-bin-base --package base-snapshotter-bin"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=base-bin-base/jemalloc-prof" : ""
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
@@ -74,7 +74,7 @@ target "basectl" {
   inherits = ["_rust-service-common"]
   target = "basectl"
   args = {
-    CARGO_CHEF_ARGS = "--package basectl"
+    CARGO_CHEF_ARGS = "--package base-bin-basectl"
     SCCACHE_CACHE_ID = "rust-services-basectl-sccache"
   }
   tags = ["base-basectl:local"]
@@ -104,7 +104,7 @@ target "websocket-proxy" {
   inherits = ["_rust-service-common"]
   target = "websocket-proxy"
   args = {
-    CARGO_CHEF_ARGS = "--package websocket-proxy-bin"
+    CARGO_CHEF_ARGS = "--package base-bin-websocket-proxy"
     SCCACHE_CACHE_ID = "rust-services-websocket-proxy-sccache"
   }
   tags = ["websocket-proxy:local"]
@@ -115,7 +115,7 @@ target "audit-archiver" {
   inherits = ["_rust-service-common"]
   target = "audit-archiver"
   args = {
-    CARGO_CHEF_ARGS = "--package audit-archiver"
+    CARGO_CHEF_ARGS = "--package base-bin-audit-archiver"
     SCCACHE_CACHE_ID = "rust-services-audit-archiver-sccache"
   }
   tags = ["audit-archiver:local"]

@@ -1,5 +1,5 @@
 [package]
-name = "audit-archiver"
+name = "base-bin-audit-archiver"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
