@@ -324,9 +324,9 @@ pub trait BlockBuilder {
 
 /// A type that constructs a block from transactions and execution results.
 #[derive(Debug)]
-pub struct BasicBlockBuilder<'a, Executor> {
+pub struct BasicBlockBuilder<'a, DB: Database, I> {
     /// The block executor used to execute transactions.
-    pub executor: Executor,
+    pub executor: base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>,
     /// The transactions executed in this block.
     pub transactions: Vec<Recovered<BaseTxEnvelope>>,
     /// The parent block execution context.
@@ -375,21 +375,14 @@ where
     }
 }
 
-impl<'a, DB, Executor> BlockBuilder for BasicBlockBuilder<'a, Executor>
+impl<'a, DB, I> BlockBuilder for BasicBlockBuilder<'a, DB, I>
 where
-    Executor: BlockExecutor<
-            Evm: Evm<
-                Env = EvmEnv,
-                Spec = base_execution_evm_runtime::BaseSpecId,
-                HaltReason = base_execution_evm_runtime::BaseHaltReason,
-                DB = &'a mut State<DB>,
-            >,
-            Transaction = BaseTxEnvelope,
-            Receipt = BaseReceipt,
-        >,
     DB: Database + 'a,
+    I: base_execution_evm_runtime::Inspector<
+            base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
+        >,
 {
-    type Executor = Executor;
+    type Executor = base_execution_evm_runtime::BaseBlockExecutor<&'a mut State<DB>, I>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.executor.apply_pre_execution_changes()?;
