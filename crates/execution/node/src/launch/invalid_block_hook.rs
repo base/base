@@ -1,10 +1,10 @@
 //! Invalid block hook helpers for the node builder.
 
+use base_execution_engine_observers::InvalidBlockWitnessHook;
 use base_execution_engine_types::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc_handlers::EthApiClient;
 use eyre::OptionExt;
-use reth_invalid_block_hooks::InvalidBlockWitnessHook;
 use reth_node_core::{
     args::InvalidBlockHookType,
     dirs::{ChainPath, DataDirPath},

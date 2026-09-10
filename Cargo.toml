@@ -128,7 +128,6 @@ members = [
   "crates/execution/network/wire",
   "crates/execution/engine/observers",
   "crates/common/io/files",
-  "vendor/reth-invalid-block-hooks",
   "crates/execution/state/mdbx-sys",
   "crates/execution/network/discovery",
   "crates/execution/network/service",
@@ -443,7 +442,6 @@ base-execution-network-wire = { path = "crates/execution/network/wire", default-
 base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 base-execution-engine-types = { path = "crates/execution/engine/types", default-features = false }
-reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
 
 # tokio

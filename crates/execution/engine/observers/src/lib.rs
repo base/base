@@ -36,3 +36,8 @@ pub use proof_history::{
 /// Fixtures for observer unit tests.
 #[cfg(test)]
 pub mod test_utils;
+
+#[cfg(feature = "witness")]
+mod witness;
+#[cfg(feature = "witness")]
+pub use witness::InvalidBlockWitnessHook;

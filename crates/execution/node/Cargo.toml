@@ -32,7 +32,6 @@ reth-node-ethstats = { workspace = true }
 base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
-reth-invalid-block-hooks = { workspace = true }
 base-common-client-ethereum = {workspace = true}
 base-execution-rpc-server = { workspace = true }
 base-execution-payload-types = {workspace = true}
@@ -65,7 +64,6 @@ base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-network-service = {features = ["default"], workspace = true}
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
-base-execution-engine-observers = {features = ["metrics"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
@@ -73,6 +71,7 @@ base-execution-rpc-handlers = {workspace = true, features = ["client", "default"
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-tracing = { workspace = true, features = ["default", "std"] }
+base-execution-engine-observers = {workspace = true, features = ["metrics", "witness"]}
 tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt-multi-thread"] }
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256-aws-lc-rs", "secp256k1"], workspace = true}
 

@@ -7,7 +7,6 @@ use base_common_types_chain::BlockHeader;
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
 };
-#[cfg(feature = "metrics")]
 use base_execution_state_tasks::BaseProofsStore;
 use base_execution_state_tasks::{
     BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage,
@@ -159,7 +158,8 @@ where
         // If storage is behind tip, start syncing immediately rather than waiting
         // for the first notification.
         let best_block = self.ctx.provider.best_block_number()?;
-        let latest_stored = self.storage.get_latest_block_number()?.map(|(n, _)| n).unwrap_or(0);
+        let latest_stored =
+            BaseProofsStore::get_latest_block_number(&self.storage)?.map(|(n, _)| n).unwrap_or(0);
         if latest_stored < best_block {
             info!(
                 target: "base::exex",
@@ -192,7 +192,8 @@ where
     /// Ensure proofs storage is initialized
     fn ensure_initialized(&self) -> eyre::Result<()> {
         // Check if proofs storage is initialized
-        let earliest_block_number = match self.storage.get_earliest_block_number()? {
+        let earliest_block_number = match BaseProofsStore::get_earliest_block_number(&self.storage)?
+        {
             Some((n, _)) => n,
             None => {
                 return Err(eyre::eyre!(
@@ -201,7 +202,7 @@ where
             }
         };
 
-        let latest_block_number = match self.storage.get_latest_block_number()? {
+        let latest_block_number = match BaseProofsStore::get_latest_block_number(&self.storage)? {
             Some((n, _)) => n,
             None => {
                 return Err(eyre::eyre!(
@@ -322,7 +323,7 @@ where
         collector: &LiveTrieCollector<'_, BlockchainProvider, Storage>,
         revert_to: BlockWithParent,
     ) {
-        let latest = match storage.get_latest_block_number() {
+        let latest = match BaseProofsStore::get_latest_block_number(storage) {
             Ok(Some((n, _))) => n,
             Ok(None) => return,
             Err(e) => {
@@ -365,7 +366,7 @@ where
                 return;
             }
 
-            let latest = match storage.get_latest_block_number() {
+            let latest = match BaseProofsStore::get_latest_block_number(storage) {
                 Ok(Some((n, _))) => n,
                 Ok(None) => {
                     error!(target: "base::exex", "No blocks stored in proofs storage during sync");
