@@ -6,13 +6,12 @@ use std::{
     sync::Arc,
 };
 
-use crate::{Database, DatabaseMetrics};
-use base_common_io_files;
+use base_common_io;
 use parking_lot::RwLock;
 use tempfile::TempDir;
 
 use super::*;
-use crate::mdbx::DatabaseArguments;
+use crate::{Database, DatabaseMetrics, mdbx::DatabaseArguments};
 
 /// Error during database open
 pub const ERROR_DB_OPEN: &str = "could not open the database file";
@@ -45,7 +44,7 @@ impl<DB> Drop for TempDatabase<DB> {
     fn drop(&mut self) {
         if let Some(db) = self.db.take() {
             drop(db);
-            let _ = base_common_io_files::Files::remove_dir_all(&self.path);
+            let _ = base_common_io::Files::remove_dir_all(&self.path);
         }
     }
 }

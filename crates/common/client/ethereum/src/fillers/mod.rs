@@ -46,7 +46,6 @@ pub use gas::{
 mod join_fill;
 use std::marker::PhantomData;
 
-use crate::{Ethereum, Network};
 use alloy_json_rpc::RpcError;
 use alloy_primitives::{Bytes, U64};
 use alloy_transport::{TransportError, TransportResult};
@@ -65,9 +64,10 @@ use tracing::error;
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;
 use crate::{
-    EthCall, EthCallMany, EthGetBlock, FilterPollerBuilder, Identity, PendingTransaction,
-    PendingTransactionBuilder, PendingTransactionConfig, PendingTransactionError, Provider,
-    ProviderCall, ProviderLayer, RootProvider, RpcWithBlock, SendableTxErr, provider::SendableTx,
+    EthCall, EthCallMany, EthGetBlock, Ethereum, FilterPollerBuilder, Identity, Network,
+    PendingTransaction, PendingTransactionBuilder, PendingTransactionConfig,
+    PendingTransactionError, Provider, ProviderCall, ProviderLayer, RootProvider, RpcWithBlock,
+    SendableTxErr, provider::SendableTx,
 };
 
 /// The recommended filler, a preconfigured set of layers handling gas estimation, nonce

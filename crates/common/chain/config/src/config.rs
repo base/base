@@ -1,14 +1,14 @@
 //! Base Chain configuration.
 
-use crate::{
-    BaseUpgradeConfig, ChainGenesis, FeeConfig, RollupConfig, SystemConfig, UpgradeConfig,
-};
 use alloy_chains::Chain;
 use alloy_eips::eip1898::BlockNumHash;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::{Address, B256, U256, address, b256, uint};
 
-use crate::{BaseUpgrade, ChainUpgrades, Upgrades};
+use crate::{
+    BaseUpgrade, BaseUpgradeConfig, ChainGenesis, ChainUpgrades, FeeConfig, RollupConfig,
+    SystemConfig, UpgradeConfig, Upgrades,
+};
 
 /// Complete configuration for a Base chain
 #[derive(Debug, Clone, PartialEq, Eq)]

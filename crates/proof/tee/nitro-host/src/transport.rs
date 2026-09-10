@@ -3,10 +3,10 @@ use std::sync::Arc;
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
 #[cfg(feature = "metrics")]
-use base_proof_host_service::Metrics;
-use base_proof_witness_preimage::PreimageKey;
-use base_proof_types_protocol::ProofResult;
+use base_proof_host::Metrics;
 use base_proof_tee_nitro_enclave::Server;
+use base_proof_types::ProofResult;
+use base_proof_witness_preimage::PreimageKey;
 use k256::ecdsa::VerifyingKey;
 
 #[cfg(target_os = "linux")]

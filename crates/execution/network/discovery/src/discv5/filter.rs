@@ -32,8 +32,8 @@ pub struct MustIncludeKey {
 }
 
 impl MustIncludeKey {
-    /// Returns [`FilterOutcome::Ok`] if [`Enr`](base_execution_network_discv5::Enr) contains the configured kv-pair key.
-    pub fn filter(&self, enr: &base_execution_network_discv5::Enr) -> FilterOutcome {
+    /// Returns [`FilterOutcome::Ok`] if [`Enr`](crate::Enr) contains the configured kv-pair key.
+    pub fn filter(&self, enr: &crate::Enr) -> FilterOutcome {
         if enr.get_raw_rlp(self.key).is_none() {
             return FilterOutcome::Ignore {
                 reason: format!("{} fork required", String::from_utf8_lossy(self.key)),
@@ -63,8 +63,8 @@ impl MustNotIncludeKeys {
 }
 
 impl MustNotIncludeKeys {
-    /// Returns `true` if [`Enr`](base_execution_network_discv5::Enr) passes filtering rules.
-    pub fn filter(&self, enr: &base_execution_network_discv5::Enr) -> FilterOutcome {
+    /// Returns `true` if [`Enr`](crate::Enr) passes filtering rules.
+    pub fn filter(&self, enr: &crate::Enr) -> FilterOutcome {
         for key in &self.keys {
             if matches!(key.filter(enr), FilterOutcome::Ok) {
                 return FilterOutcome::Ignore {
@@ -90,11 +90,12 @@ impl MustNotIncludeKeys {
 #[cfg(test)]
 mod tests {
     use alloy_rlp::Bytes;
-    use base_execution_network_discv5::enr::CombinedKey;
-    use base_execution_network_discv5::enr::Enr;
 
     use super::*;
-    use crate::discv5::NetworkStackId;
+    use crate::{
+        discv5::NetworkStackId,
+        enr::{CombinedKey, Enr},
+    };
 
     #[test]
     fn must_not_include_key_filter() {

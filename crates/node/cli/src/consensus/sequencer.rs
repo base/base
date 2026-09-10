@@ -9,8 +9,8 @@ use alloy_primitives::{
     Address, U256,
     utils::{Unit, parse_ether},
 };
-use base_consensus_batch_types::DEFAULT_SEAL_OFFSET;
-use base_consensus_driver_service::{SequencerConfig, ShadowFunding};
+use base_consensus_batch::DEFAULT_SEAL_OFFSET;
+use base_consensus_driver::{SequencerConfig, ShadowFunding};
 use clap::Parser;
 use url::Url;
 
@@ -143,7 +143,7 @@ mod tests {
         Address, U256, address,
         utils::{Unit, parse_ether},
     };
-    use base_consensus_driver_service::ShadowFunding;
+    use base_consensus_driver::ShadowFunding;
     use clap::Parser;
 
     use super::{SequencerArgs, SequencerConfig};

@@ -7,9 +7,8 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{Address, B64, B256, U256};
 use alloy_rlp::Encodable;
 use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::SealedBlock;
 use base_common_types_chain::{
-    BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header,
+    BaseBlock as Block, BaseBlockBody as BlockBody, BlockHeader, Header, SealedBlock,
     constants::EMPTY_WITHDRAWALS,
 };
 use tracing::debug;

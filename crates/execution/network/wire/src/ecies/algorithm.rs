@@ -6,7 +6,6 @@ use alloy_primitives::{
     bytes::{BufMut, Bytes, BytesMut},
 };
 use alloy_rlp::{Encodable, Rlp, RlpEncodable, RlpMaxEncodedLen};
-use base_execution_network_types::{id2pk, pk2id};
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt};
 use ctr::Ctr64BE;
 use digest::crypto_common::KeyIvInit;
@@ -16,10 +15,7 @@ use secp256k1::{
     ecdsa::{RecoverableSignature, RecoveryId},
 };
 
-use crate::ECIESError;
-use crate::ECIESErrorImpl;
-use crate::EciesCrypto;
-use crate::MAC;
+use crate::{ECIESError, ECIESErrorImpl, EciesCrypto, MAC, id2pk, pk2id};
 
 const PROTOCOL_VERSION: usize = 4;
 

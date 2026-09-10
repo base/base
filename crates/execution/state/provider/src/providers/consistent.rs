@@ -1,40 +1,33 @@
-use base_execution_state_api::DatabaseProviderROFactory;
 use std::{
     ops::{Add, Bound, RangeBounds, RangeInclusive, Sub},
     sync::Arc,
 };
 
-use crate::{BlockState, CanonicalInMemoryState};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, ChainInfo,
+    RecoveredBlock, SealedHeader, SealedOrRecoveredBlock, transaction::TransactionMeta,
 };
-use base_common_types_chain::{
-    BlockBodyExt as BlockBody, RecoveredBlock, SealedHeader, SealedOrRecoveredBlock,
-};
-use base_execution_evm_runtime::database::PlainStorageRevert;
-use base_execution_state_api::{
-    BlockBodyIndicesProvider, StateProviderBox, StorageChangeSetReader,
-    TryIntoHistoricalStateProvider,
-};
+use base_execution_evm_runtime::PlainStorageRevert;
 use base_execution_state_database::{
-    models::AccountBeforeTx, models::BlockNumberAddress, models::StoredBlockBodyIndices,
+    DatabaseProviderROFactory,
+    models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices},
 };
-use base_execution_state_types::ExecutionOutcome;
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{PruneCheckpoint, PruneSegment};
-use base_execution_state_types::{StageCheckpoint, StageId};
+use base_execution_state_types::{
+    BlockBodyIndicesProvider, ExecutionOutcome, ProviderResult, PruneCheckpoint, PruneSegment,
+    StageCheckpoint, StageId, StateProviderBox, StaticFileSegment, StorageChangeSetReader,
+    StorageEntry, TryIntoHistoricalStateProvider,
+};
 
 use super::{DatabaseProviderRO, ProviderFactory};
 use crate::{
     BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource,
-    ChainSpecProvider, ChangeSetReader, HeaderProvider, ProviderError, ProviderRange,
-    PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt, StageCheckpointReader,
-    StateReader, StaticFileProviderFactory, TransactionVariant, TransactionsProvider,
+    BlockState, CanonicalInMemoryState, ChainSpecProvider, ChangeSetReader, HeaderProvider,
+    ProviderError, ProviderRange, PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt,
+    StageCheckpointReader, StateReader, StaticFileProviderFactory, TransactionVariant,
+    TransactionsProvider,
     providers::{StaticFileProvider, StaticFileProviderRWRefMut},
 };
 
@@ -49,7 +42,7 @@ use crate::{
 pub struct ConsistentProvider {
     /// Storage provider.
     storage_provider:
-        <ProviderFactory as base_execution_state_api::DatabaseProviderROFactory>::Provider,
+        <ProviderFactory as base_execution_state_database::DatabaseProviderROFactory>::Provider,
     /// Head block at time of [`Self`] creation
     head_block: Option<Arc<BlockState>>,
     /// In-memory canonical state. This is not a snapshot, and can change! Use with caution.
@@ -1471,22 +1464,21 @@ mod tests {
     use alloy_eips::BlockHashOrNumber;
     use alloy_primitives::B256;
     use base_common_types_chain::{RecoveredBlock, SealedBlock};
-    use base_execution_evm_runtime::database::BundleState;
-    use base_execution_state_api::{BlockReader, BlockSource, ChangeSetReader};
+    use base_execution_evm_runtime::BundleState;
     use base_execution_state_database::models::AccountBeforeTx;
     use base_execution_state_types::{
-        BlockExecutionOutput, BlockExecutionResult, ExecutionOutcome,
+        BlockExecutionOutput, BlockExecutionResult, BlockReader, BlockSource, ChangeSetReader,
+        ExecutedBlock, ExecutionOutcome,
     };
     use base_testing_support::{
-        generators, generators::BlockRangeParams, generators::random_changeset_range,
-        generators::random_eoa_accounts,
+        generators,
+        generators::{BlockRangeParams, random_changeset_range, random_eoa_accounts},
     };
     use itertools::Itertools;
     use rand::Rng;
-    use {crate::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
 
     use crate::{
-        BlockWriter, providers::blockchain_provider::BlockchainProvider,
+        BlockWriter, NewCanonicalChain, providers::blockchain_provider::BlockchainProvider,
         test_utils::create_test_provider_factory,
     };
 

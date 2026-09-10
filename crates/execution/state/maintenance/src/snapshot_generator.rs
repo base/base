@@ -13,13 +13,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
-};
 use anyhow::{Context, Result, bail};
 use humantime::{FormattedDuration, format_duration};
 use rayon::prelude::*;
 use tracing::info;
+
+use crate::{
+    ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
+};
 
 /// Default blocks per static file segment.
 const DEFAULT_BLOCKS_PER_FILE: u64 = 500_000;

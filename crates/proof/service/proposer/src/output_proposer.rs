@@ -6,10 +6,11 @@
 
 use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
-use base_common_l1_transactions::{TxCandidate, TxManager};
-use base_proof_l1_submission::{AggregateProofSubmitter, ProofSubmissionError};
-use base_proof_l1_submission::{encode_create_calldata, encode_extra_data};
-use base_proof_types_protocol::{ProofEncoder, Proposal};
+use base_common_l1::{TxCandidate, TxManager};
+use base_proof_l1::{
+    AggregateProofSubmitter, ProofSubmissionError, encode_create_calldata, encode_extra_data,
+};
+use base_proof_types::{ProofEncoder, Proposal};
 use tracing::info;
 
 use crate::error::ProposerError;
@@ -171,7 +172,7 @@ impl<T: TxManager + 'static> OutputProposer for ProposalSubmitter<T> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bloom};
-    use base_common_l1_transactions::{SendHandle, SendResponse, TxManagerError};
+    use base_common_l1::{SendHandle, SendResponse, TxManagerError};
     use base_common_types_chain::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use base_common_types_rpc::TransactionReceipt;
 

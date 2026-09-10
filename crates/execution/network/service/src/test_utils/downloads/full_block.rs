@@ -2,17 +2,13 @@ use std::{ops::RangeInclusive, sync::Arc};
 
 use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, Bytes, map::B256Map};
-use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
-use base_common_types_chain::{SealedBlock, SealedHeader};
-use base_execution_network_types::{PeerId, WithPeerId};
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::HeadersDirection;
-use parking_lot::Mutex;
-
+use base_common_types_chain::{BaseBlockBody as BlockBody, Header, SealedBlock, SealedHeader};
 use base_execution_network_wire::{
-    BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, DownloadClient,
-    HeadersClient, HeadersRequest, PeerRequestResult, Priority,
+    BalRequirement, BlockAccessLists, BlockAccessListsClient, BlockClient, BodiesClient,
+    DownloadClient, HeadersClient, HeadersDirection, HeadersRequest, PeerId, PeerRequestResult,
+    Priority, WithPeerId,
 };
+use parking_lot::Mutex;
 
 /// A headers+bodies client that stores the headers and bodies in memory, with an artificial soft
 /// bodies response limit that is set to 20 by default.

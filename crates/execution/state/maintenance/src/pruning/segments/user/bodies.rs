@@ -2,10 +2,9 @@ use alloy_primitives::BlockNumber;
 use base_execution_state_provider::{
     BlockReader, PruneCheckpointReader, StaticFileProviderFactory,
 };
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneInterruptReason, PruneMode, PrunePurpose, PruneSegment, SegmentOutput,
-    SegmentOutputCheckpoint,
+    SegmentOutputCheckpoint, StaticFileSegment,
 };
 use tracing::{debug, instrument};
 
@@ -137,11 +136,10 @@ mod tests {
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
         StaticFileWriter, test_utils::create_test_provider_factory,
     };
-    use base_execution_state_types::FinishedExExHeight;
     use base_execution_state_types::{
-        DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
+        DEFAULT_BLOCKS_PER_STATIC_FILE, FinishedExExHeight, PruneMode, PruneProgress, PruneSegment,
+        SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
     };
-    use base_execution_state_types::{PruneMode, PruneProgress, PruneSegment};
 
     use super::*;
     use crate::pruning::Pruner;

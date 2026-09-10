@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use base_common_observability_metrics::{Metrics, metrics::Histogram};
-use base_execution_state_trie::{TrieType, hashed_cursor::HashedCursorMetrics, trie_cursor::TrieCursorMetrics};
+use base_execution_state_trie::{
+    TrieType, hashed_cursor::HashedCursorMetrics, trie_cursor::TrieCursorMetrics,
+};
 
 use crate::{ProofTaskCursorMetricsCache, ValueEncoderStats};
 

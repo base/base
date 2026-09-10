@@ -1,12 +1,10 @@
 #![allow(missing_docs)]
 
 use base_node_config::TxPoolArgs;
-use base_node_service::BuilderConfig;
-use base_node_service::NodeConfig;
-use base_testing_devnet::{
-    builder_test_utils::BlockTransactionsExt, builder_test_utils::ChainDriverExt,
-    builder_test_utils::ONE_ETH, builder_test_utils::default_node_config,
-    builder_test_utils::setup_test_instance_with_node_config,
+use base_node_service::{BuilderConfig, NodeConfig};
+use base_testing_devnet::builder_test_utils::{
+    BlockTransactionsExt, ChainDriverExt, ONE_ETH, default_node_config,
+    setup_test_instance_with_node_config,
 };
 
 #[tokio::test]

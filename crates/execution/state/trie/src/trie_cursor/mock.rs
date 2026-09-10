@@ -1,8 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use alloy_primitives::{B256, map::B256Map};
-use base_execution_state_types::DatabaseError;
-use base_execution_state_types::updates::TrieUpdates;
+use base_execution_state_types::{DatabaseError, updates::TrieUpdates};
 use parking_lot::{Mutex, MutexGuard};
 use tracing::instrument;
 

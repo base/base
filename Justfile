@@ -13,7 +13,7 @@ mod actions 'actions'
 # Docker-based local devnet management
 mod devnet 'etc/docker'
 # Load testing for networks
-mod load-test 'crates/testing/load/service'
+mod load-test 'crates/testing/load'
 # Formatting, clippy, udeps, and deny checks
 mod check 'etc/just/check.just'
 # Cargo build targets and contract compilation
@@ -192,15 +192,15 @@ bench-proof-mpt:
 
 # Runs consensus protocol batch transaction benchmarks
 bench-protocol:
-    cargo bench -p base-consensus-batch-types --bench batch_transaction
+    cargo bench -p base-consensus-batch --bench batch_transaction
 
 # Runs consensus derive batch queue benchmarks
 bench-consensus-derive:
-    cargo bench -p base-consensus-derive-pipeline --bench batch_queue --features test-utils
+    cargo bench -p base-consensus-derive --bench batch_queue --features test-utils
 
 # Runs precompile benchmarks
 bench-precompiles:
-    cargo bench -p base-execution-evm-precompiles --bench base_precompiles --features test-utils
+    cargo bench -p base-execution-evm-runtime --bench core_precompiles_base_precompiles --features test-utils
 
 # Runs node runner forkchoice update benchmarks
 bench-node-runner:

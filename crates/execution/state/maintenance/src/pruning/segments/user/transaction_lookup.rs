@@ -1,14 +1,13 @@
 use alloy_primitives::TxNumber;
 use base_common_types_chain::SignedTransaction;
-use base_execution_state_api::StorageSettingsCache;
 use base_execution_state_database::{DbTxMut, tables};
 use base_execution_state_provider::{
     BlockReader, DBProvider, PruneCheckpointReader, RocksDBProviderFactory,
     StaticFileProviderFactory, TransactionsProviderExt,
 };
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutputCheckpoint,
+    StaticFileSegment, StorageSettingsCache,
 };
 use tracing::{debug, instrument, trace};
 
@@ -208,7 +207,7 @@ mod tests {
     use base_execution_state_database::tables;
     use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
-    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
+    use base_execution_sync::test_utils::{StorageKind, TestStageDB};
     use base_testing_support::{generators, generators::BlockRangeParams};
 
     use crate::pruning::segments::{
@@ -217,9 +216,9 @@ mod tests {
 
     #[test]
     fn prune_rocksdb() {
-        use base_execution_state_api::StorageSettingsCache;
         use base_execution_state_database::models::StorageSettings;
         use base_execution_state_provider::RocksDBProviderFactory;
+        use base_execution_state_types::StorageSettingsCache;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();
@@ -317,9 +316,9 @@ mod tests {
     /// 3. The checkpoint should NOT advance to the next start position
     #[test]
     fn prune_rocksdb_zero_deleted_checkpoint() {
-        use base_execution_state_api::StorageSettingsCache;
         use base_execution_state_database::models::StorageSettings;
         use base_execution_state_provider::RocksDBProviderFactory;
+        use base_execution_state_types::StorageSettingsCache;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

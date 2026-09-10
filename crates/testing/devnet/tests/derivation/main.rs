@@ -5,13 +5,13 @@ use std::sync::Arc;
 use alloy_eips::BlockNumHash;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::{Address, B256, Bytes, Log, LogData, U256};
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_chain_config::SystemConfigUpdate;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_consensus_batch_types::{
+use base_consensus_batch::{
     BlockInfo, DERIVATION_VERSION_0, DepositDecodeError, Deposits, L2BlockInfo,
 };
-use base_consensus_derive_pipeline::{
+use base_consensus_derive::{
     EthereumDataSource, PipelineBuilder, PipelineEncodingError, PipelineError, PipelineErrorKind,
     StatefulAttributesBuilder, StepResult,
 };

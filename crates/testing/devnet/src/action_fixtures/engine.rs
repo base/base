@@ -10,38 +10,39 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, StorageKey, U256, hex};
 use alloy_transport::{TransportError, TransportErrorKind, TransportResult};
 use async_trait::async_trait;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::RollupConfig;
-use base_common_client_ethereum::{EthGetBlock, ProviderCall};
-use base_common_client_ethereum::{Ethereum, Network};
-use base_common_types_chain::{BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed};
-use base_common_types_chain::{SealedBlock, SealedHeader};
+use base_common_chain_config::{BaseChainSpec, RollupConfig};
+use base_common_client_ethereum::{EthGetBlock, Ethereum, Network, ProviderCall};
+use base_common_types_chain::{
+    BaseBlock, BaseReceipt, BlockHeader, Header, Predeploys, Sealed, SealedBlock, SealedHeader,
+};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes, ExecutionPayloadV1,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus, PayloadStatusEnum,
 };
 use base_common_types_rpc::{Block, BlockTransactions, Transaction as EthTransaction};
-use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
-use base_consensus_driver_service::{EngineClient, ExecutionClientError as EngineClientError};
-use base_consensus_driver_service::{
-    EngineClientError as NodeEngineClientError, ResetReason, SequencerEngineClient,
+use base_consensus_batch::{AttributesWithParent, L2BlockInfo};
+use base_consensus_driver::{
+    EngineClient, EngineClientError as NodeEngineClientError,
+    ExecutionClientError as EngineClientError, ResetReason, SequencerEngineClient,
 };
 use base_execution_evm_blocks::{BaseEvmConfig, CancelOnDrop};
-use base_execution_payload_builder::{
+use base_execution_evm_runtime::CachedReads;
+use base_execution_payload::{
     BaseBuiltPayload, BasePayloadBuilder, BasePayloadBuilderAttributes, BuildArguments,
     PayloadConfig,
 };
 use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use base_execution_state_maintenance::init::init_genesis;
-use base_execution_state_memory::CachedReads;
 use base_execution_state_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,
     test_utils::create_test_provider_factory_with_chain_spec,
 };
-use base_execution_state_types::ExecutionOutcome;
-use base_execution_state_types::HashedStorage;
-use base_execution_txpool_pool::NoopTransactionPool;
+use base_execution_state_types::{ExecutionOutcome, HashedStorage};
+use base_execution_txpool::{
+    BaseOrdering, BaseTransactionPool, BaseTransactionValidator, BaseTransactionValidatorBuilder,
+    DiskFileBlobStore, Pool, TransactionValidationTaskExecutor,
+};
 use base_testing_support::build_test_genesis;
 
 use crate::action_fixtures::{SharedBlockHashRegistry, SharedL1Chain};
@@ -55,8 +56,8 @@ pub type TestProviderFactory = ProviderFactory;
 /// Type alias for the test blockchain provider used by the engine client.
 pub type TestBlockchainProvider = BlockchainProvider;
 
-/// Type alias for the noop pool used by the engine client.
-pub type TestPool = NoopTransactionPool;
+/// Base transaction pool used by the engine client.
+pub type TestPool = BaseTransactionPool<BlockchainProvider>;
 
 /// Minimal `L2ToL1MessagePasser` stand-in for Isthmus withdrawals-root tests.
 ///
@@ -344,7 +345,7 @@ impl ActionEngineClient {
         provider
             .account_code(&address)
             .expect("failed to read account code")
-            .is_some_and(|c: base_execution_state_memory::StoredBytecode| !c.is_empty())
+            .is_some_and(|c: base_execution_evm_runtime::StoredBytecode| !c.is_empty())
     }
 
     /// Build a block from the given `BasePayloadAttributes`, returning the `BaseBuiltPayload`.
@@ -394,7 +395,22 @@ impl ActionEngineClient {
             None,
         );
 
-        let pool = TestPool::new();
+        let validator = BaseTransactionValidatorBuilder::new(
+            inner.blockchain_provider.clone(),
+            inner.evm_config.clone(),
+        )
+        .no_eip4844()
+        .build()
+        .require_l1_data_gas_fee(false);
+        let (validator, _validation_task) = TransactionValidationTaskExecutor::new(validator);
+        let blob_dir = tempfile::tempdir().expect("temporary blob directory");
+        let blob_store =
+            DiskFileBlobStore::open(blob_dir.path(), Default::default()).expect("empty blob store");
+        let ordering = BaseOrdering::default();
+        let pool = BaseTransactionPool::new(
+            Pool::new(validator, ordering.clone(), blob_store, Default::default()),
+            ordering,
+        );
         let payload_builder = BasePayloadBuilder::new(
             pool,
             inner.blockchain_provider.clone(),
@@ -502,7 +518,7 @@ impl ActionEngineClient {
 
         registry.insert(block_number, block_hash, Some(state_root));
 
-        let l2_info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
+        let l2_info = base_consensus_batch::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &rollup_config.genesis,
         )

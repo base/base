@@ -5,8 +5,9 @@ use std::{
 };
 
 use alloy_primitives::BlockNumber;
+use base_common_observability_metrics::GasDisplay;
 use base_common_observability_tracing::tracing::{debug, trace};
-use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BlockBodyExt as _, BlockHeader, RecoveredBlock};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor,
 };
@@ -14,12 +15,7 @@ use base_execution_state_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,
 };
-use base_execution_state_types::ExecutionStageThresholds;
-use base_execution_state_types::PruneModes;
-use {
-    base_common_observability_metrics::GasDisplay, base_common_types_chain::BlockBodyExt as _,
-    base_common_types_chain::RecoveredBlock,
-};
+use base_execution_state_types::{ExecutionStageThresholds, PruneModes};
 
 use crate::StreamBackfillJob;
 
@@ -228,8 +224,7 @@ impl<P> From<BackfillJob<P>> for SingleBlockBackfillJob<P> {
 
 #[cfg(test)]
 mod tests {
-    use base_common_types_chain::BlockHeader;
-    use base_common_types_chain::crypto::secp256k1::public_key_to_address;
+    use base_common_types_chain::{BlockHeader, crypto::secp256k1::public_key_to_address};
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{

@@ -4,7 +4,7 @@ use alloc::string::String;
 use core::{fmt, str::FromStr};
 
 use alloy_rlp::{Decodable, Encodable, Error as RlpError};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 use bytes::BufMut;
 use derive_more::Display;
 
@@ -124,7 +124,7 @@ impl Decodable for EthVersion {
 ///
 /// # Example
 /// ```
-/// use base_execution_network_wire::EthVersion;
+/// use crate::EthVersion;
 ///
 /// let version = EthVersion::try_from("67").unwrap();
 /// assert_eq!(version, EthVersion::Eth67);
@@ -151,7 +151,7 @@ impl TryFrom<&str> for EthVersion {
 ///
 /// # Example
 /// ```
-/// use base_execution_network_wire::EthVersion;
+/// use crate::EthVersion;
 ///
 /// let version = EthVersion::try_from(67).unwrap();
 /// assert_eq!(version, EthVersion::Eth67);

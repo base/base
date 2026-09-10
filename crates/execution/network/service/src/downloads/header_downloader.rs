@@ -2,13 +2,11 @@ use std::fmt::Debug;
 
 use alloy_eips::{BlockHashOrNumber, eip1898::BlockWithParent};
 use alloy_primitives::B256;
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::SealedHeader;
+use base_common_types_chain::{BlockHeader, SealedHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use futures::Stream;
 
-use crate::HeadersDownloaderResult;
-use crate::{DownloadError, DownloadResult};
+use crate::{DownloadError, DownloadResult, HeadersDownloaderResult};
 
 /// A downloader capable of fetching and yielding block headers.
 ///

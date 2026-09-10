@@ -3,8 +3,8 @@
 use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
-use base_common_cli_support::{LogConfig, MetricsConfig};
-use base_common_runtime_tasks::RetryConfig;
+use base_common_cli::{LogConfig, MetricsConfig};
+use base_common_runtime::RetryConfig;
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -49,10 +49,10 @@ pub struct ProposerConfig {
     pub retry: RetryConfig,
     /// Signing configuration for L1 transaction submission.
     /// `None` when running in dry-run mode.
-    pub signing: Option<base_common_l1_transactions::SignerConfig>,
+    pub signing: Option<base_common_l1::SignerConfig>,
     /// Transaction manager configuration.
     /// `None` when running in dry-run mode.
-    pub tx_manager: Option<base_common_l1_transactions::TxManagerConfig>,
+    pub tx_manager: Option<base_common_l1::TxManagerConfig>,
     /// Maximum number of concurrent RPC calls during the recovery scan.
     pub recovery_scan_concurrency: usize,
 }
@@ -104,11 +104,11 @@ impl ProposerConfig {
         } else {
             (
                 Some(
-                    base_common_l1_transactions::SignerConfig::try_from(proposer.signer)
+                    base_common_l1::SignerConfig::try_from(proposer.signer)
                         .wrap_err("invalid signing config")?,
                 ),
                 Some(
-                    base_common_l1_transactions::TxManagerConfig::try_from(proposer.tx_manager)
+                    base_common_l1::TxManagerConfig::try_from(proposer.tx_manager)
                         .wrap_err("invalid tx manager config")?,
                 ),
             )
@@ -197,10 +197,7 @@ mod tests {
         assert_eq!(config.retry.max_attempts, Some(7));
         assert_eq!(config.recovery_scan_concurrency, 4);
         assert_eq!(config.admin_addr.unwrap().port(), 8545);
-        assert!(matches!(
-            config.signing,
-            Some(base_common_l1_transactions::SignerConfig::Local { .. })
-        ));
+        assert!(matches!(config.signing, Some(base_common_l1::SignerConfig::Local { .. })));
         assert!(config.tx_manager.is_some());
     }
 

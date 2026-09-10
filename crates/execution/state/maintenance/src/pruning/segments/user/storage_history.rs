@@ -1,12 +1,11 @@
 use alloy_primitives::BlockNumber;
-use base_execution_state_api::{StorageChangeSetReader, StorageSettingsCache};
 use base_execution_state_database::DbTxMut;
 use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory,
 };
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
+    StaticFileSegment, StorageChangeSetReader, StorageSettingsCache,
 };
 use rustc_hash::FxHashMap;
 use tracing::{instrument, trace};
@@ -182,16 +181,17 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
-    use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_database::{BlockNumberList, tables};
     use base_execution_state_provider::{
         DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
     };
-    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
-    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
+    use base_execution_state_types::{
+        PruneCheckpoint, PruneMode, PruneProgress, PruneSegment, StorageSettingsCache,
+    };
+    use base_execution_sync::test_utils::{StorageKind, TestStageDB};
     use base_testing_support::{
-        generators, generators::BlockRangeParams, generators::random_changeset_range,
-        generators::random_eoa_accounts,
+        generators,
+        generators::{BlockRangeParams, random_changeset_range, random_eoa_accounts},
     };
 
     use crate::pruning::segments::{
@@ -200,9 +200,9 @@ mod tests {
 
     #[test]
     fn prune_rocksdb() {
-        use base_execution_state_api::StorageSettings;
         use base_execution_state_database::models::storage_sharded_key::StorageShardedKey;
         use base_execution_state_provider::RocksDBProviderFactory;
+        use base_execution_state_types::StorageSettings;
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();
@@ -310,10 +310,9 @@ mod tests {
     #[test]
     fn dense_block_advances_rocksdb_checkpoint() {
         use alloy_primitives::U256;
-        use base_execution_state_api::StorageSettings;
         use base_execution_state_database::models::storage_sharded_key::StorageShardedKey;
         use base_execution_state_provider::RocksDBProviderFactory;
-        use base_execution_state_types::StorageEntry;
+        use base_execution_state_types::{StorageEntry, StorageSettings};
 
         let db = TestStageDB::default();
         let mut rng = generators::rng();

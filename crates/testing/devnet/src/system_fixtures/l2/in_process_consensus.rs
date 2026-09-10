@@ -1,6 +1,6 @@
 //! In-process consensus node for L2 system test stacks.
 //!
-//! Runs `base-consensus-driver-service` directly in the test process, eliminating the Docker
+//! Runs `base-consensus-driver` directly in the test process, eliminating the Docker
 //! dependency for the consensus layer. Mirrors the pattern used by
 //! [`InProcessBuilder`](super::InProcessBuilder) and [`InProcessClient`](super::InProcessClient).
 
@@ -11,7 +11,6 @@ use std::{
     time::Duration,
 };
 
-use crate::builder_test_utils::get_available_port;
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
 use base_common_chain_activation::{
@@ -20,18 +19,13 @@ use base_common_chain_activation::{
 };
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_common_client_rollup::AdminApiClient;
-use base_common_client_rollup::BaseP2PApiClient;
-use base_common_client_rollup::RollupNodeApiClient;
-use base_consensus_driver_service::RpcBuilder;
-use base_consensus_driver_service::{
-    EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
-    UpgradeSignalBuilderConfig,
+use base_common_client_rollup::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient};
+use base_consensus_driver::{
+    EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, RpcBuilder,
+    SequencerConfig, UpgradeSignalBuilderConfig,
 };
-use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::PeerScoreLevel;
-use base_consensus_network_service::SecretKeyLoader;
-use base_consensus_source_providers::BlockSigner;
+use base_consensus_network::{LocalNode, PeerScoreLevel, SecretKeyLoader};
+use base_consensus_source::BlockSigner;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tempfile::TempDir;
@@ -41,6 +35,8 @@ use tokio::{
 };
 use tracing::info;
 use url::Url;
+
+use crate::builder_test_utils::get_available_port;
 
 const SEQUENCER_UNSAFE_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 const SEQUENCER_UNSAFE_HEAD_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -57,7 +53,7 @@ pub struct InProcessConsensusConfig {
     /// L1 beacon API endpoint URL.
     pub l1_beacon_url: Url,
     /// Native execution client for the co-located execution node.
-    pub execution: base_consensus_driver_service::LocalEngineClient,
+    pub execution: base_consensus_driver::LocalEngineClient,
     /// Node mode (Sequencer or Validator).
     pub mode: NodeMode,
     /// Sequencer signing key (required for Sequencer mode).
@@ -179,7 +175,7 @@ impl InProcessConsensus {
         net_config.scoring = PeerScoreLevel::Off;
         net_config.keypair = keypair;
         // Use flood_publish since the mesh may not fully form with only two peers.
-        net_config.gossip_config = base_consensus_network_service::default_config_builder()
+        net_config.gossip_config = base_consensus_network::default_config_builder()
             .flood_publish(true)
             .build()
             .expect("valid gossip config");
@@ -199,7 +195,7 @@ impl InProcessConsensus {
             trust_rpc: true,
             beacon: config.l1_beacon_url,
             rpc_url: config.l1_rpc_url.clone(),
-            rpc_timeout: base_consensus_source_providers::L1_RPC_TIMEOUT,
+            rpc_timeout: base_consensus_source::L1_RPC_TIMEOUT,
             slot_duration_override: config.l1_slot_duration_override,
             verifier_l1_confs: config.verifier_l1_confs,
             da_batcher_sender_override: None,
@@ -207,7 +203,7 @@ impl InProcessConsensus {
 
         let mut engine_client = config.execution;
         engine_client.l1 =
-            base_consensus_source_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
+            base_consensus_source::L1RpcProvider::new_http(config.l1_rpc_url.clone());
         engine_client.l2.rollup_config = Arc::new(rollup_config.clone());
 
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
@@ -245,7 +241,7 @@ impl InProcessConsensus {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
                 shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
-                l1_rpc_timeout: base_consensus_source_providers::L1_RPC_TIMEOUT,
+                l1_rpc_timeout: base_consensus_source::L1_RPC_TIMEOUT,
                 ..Default::default()
             });
         }

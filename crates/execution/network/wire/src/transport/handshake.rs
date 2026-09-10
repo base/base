@@ -1,10 +1,5 @@
 use std::{fmt::Debug, future::Future, pin::Pin, time::Duration};
 
-use crate::DisconnectReason;
-use crate::EthMessage;
-use crate::ProtocolMessage;
-use crate::StatusMessage;
-use crate::UnifiedStatus;
 use alloy_eip2124::ForkFilter;
 use base_common_types_chain::GotExpected;
 use bytes::{Bytes, BytesMut};
@@ -13,11 +8,10 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, trace};
 
-use crate::CanDisconnect;
-use crate::EthHandshakeError;
-use crate::EthStreamError;
-use crate::MAX_MESSAGE_SIZE;
-use crate::P2PStreamError;
+use crate::{
+    CanDisconnect, DisconnectReason, EthHandshakeError, EthMessage, EthStreamError,
+    MAX_MESSAGE_SIZE, P2PStreamError, ProtocolMessage, StatusMessage, UnifiedStatus,
+};
 
 /// A trait that knows how to perform the P2P handshake.
 pub trait EthRlpxHandshake: Debug + Send + Sync + 'static {

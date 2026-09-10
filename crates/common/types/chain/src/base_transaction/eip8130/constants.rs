@@ -258,7 +258,7 @@ impl Eip8130Constants {
     /// fork-level** change: the on-chain `NONCE_FREE_EXPIRY_WINDOW` must be raised
     /// too, and `NonceManagerStorage::REPLAY_BUFFER_CAPACITY` resized to keep
     /// `peak nonce-free throughput x window` within capacity (see the buffer-sizing
-    /// invariant test in `base-execution-evm-precompiles`).
+    /// invariant test in `base-execution-evm-runtime`).
     pub const NONCE_FREE_MAX_EXPIRY_WINDOW: u64 = 20_000;
 
     /// Maximum number of actor entries the mempool accepts in a single

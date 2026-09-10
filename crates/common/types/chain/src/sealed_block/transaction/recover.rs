@@ -7,7 +7,7 @@ use base_common_types_chain::transaction::SignerRecoverable;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
-use crate::sealed_block::{RecoveryError, Recovered, SignedTransaction};
+use crate::sealed_block::{Recovered, RecoveryError, SignedTransaction};
 
 /// Recovers a list of signers from a transaction list iterator.
 ///

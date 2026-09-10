@@ -32,54 +32,49 @@ members = [
   "bin/snapshotter",
   "bin/websocket-proxy",
   "bin/witness-diff",
-  "crates/batcher/encoding/channel",
-  "crates/batcher/service/driver",
+  "crates/batcher/encoding",
+  "crates/batcher/service",
   "crates/common/chain/config",
   "crates/common/types/chain",
   "crates/execution/evm/runtime",
-  "crates/execution/evm/machine",
-  "crates/execution/evm/fees",
   "crates/common/observability/events",
   "crates/execution/evm/macros",
-  "crates/execution/evm/precompiles",
   "crates/common/types/rpc",
   "crates/common/types/payload",
-  "crates/execution/state/memory",
-  "crates/consensus/derive/pipeline",
-  "crates/consensus/network/service",
-  "crates/consensus/batch/types",
-  "crates/consensus/source/providers",
-  "crates/consensus/driver/service",
+  "crates/consensus/derive",
+  "crates/consensus/network",
+  "crates/consensus/batch",
+  "crates/consensus/source",
+  "crates/consensus/driver",
   "crates/node/cli",
   "crates/execution/evm/blocks",
   "crates/node/service",
-  "crates/execution/payload/builder",
-  "crates/execution/payload/types",
-  "crates/execution/rpc/handlers",
+  "crates/execution/payload",
+  "crates/execution/rpc",
   "crates/testing/devnet",
   "crates/execution/state/indexer",
   "crates/execution/state/tasks",
-  "crates/execution/txpool/pool",
-  "crates/infra/audit/service",
-  "crates/infra/basectl/service",
-  "crates/testing/load/service",
-  "crates/infra/shadow-metrics/service",
-  "crates/infra/sidecrush/service",
-  "crates/infra/snapshotter/service",
-  "crates/infra/telemetry/service",
-  "crates/infra/websocket-proxy/service",
+  "crates/execution/txpool",
+  "crates/infra/audit",
+  "crates/infra/basectl",
+  "crates/testing/load",
+  "crates/infra/shadow-metrics",
+  "crates/infra/sidecrush",
+  "crates/infra/snapshotter",
+  "crates/infra/telemetry",
+  "crates/infra/websocket-proxy",
   "crates/proof/service/challenger",
-  "crates/proof/l1/submission",
-  "crates/proof/execution/client",
-  "crates/proof/host/service",
+  "crates/proof/l1",
+  "crates/proof/execution",
+  "crates/proof/host",
   "crates/proof/witness/mpt",
   "crates/proof/witness/preimage",
-  "crates/proof/types/protocol",
+  "crates/proof/types",
   "crates/proof/service/proposer",
   "crates/proof/service/server",
   "crates/proof/service/client",
   "crates/proof/service/protocol",
-  "crates/proof/client/providers",
+  "crates/proof/client",
   "crates/proof/tee/nitro-enclave",
   "crates/proof/tee/nitro-host",
   "crates/proof/tee/nitro-verifier",
@@ -87,42 +82,32 @@ members = [
   "crates/common/observability/health",
   "crates/common/observability/metrics",
   "crates/common/client/rollup",
-  "crates/common/runtime/tasks",
+  "crates/common/runtime",
   "crates/testing/support",
-  "crates/common/http/proxy",
-  "crates/common/l1/transactions",
+  "crates/common/http",
+  "crates/common/l1",
   "crates/common/chain/activation",
-  "crates/testing/tools/witness-diff",
+  "crates/testing/tools",
   "crates/common/client/contracts",
-  "crates/common/process/nodes",
+  "crates/common/process",
   "crates/common/client/ethereum",
-  "crates/execution/network/discv5",
-  "crates/common/cli/support",
-  "crates/common/codec/macros",
-  "crates/testing/debug/client",
+  "crates/common/cli",
+  "crates/common/codec",
   "crates/execution/state/database",
   "crates/execution/state/maintenance",
-  "crates/execution/engine/types",
   "crates/execution/engine/driver",
   "crates/execution/network/wire",
   "crates/execution/engine/observers",
-  "crates/common/io/files",
+  "crates/common/io",
   "crates/execution/state/mdbx-sys",
   "crates/execution/network/discovery",
   "crates/execution/network/service",
-  "crates/execution/network/types",
   "crates/node/config",
   "crates/execution/state/provider",
-  "crates/execution/rpc/server",
-  "crates/execution/sync/pipeline",
-  "crates/execution/state/api",
+  "crates/execution/sync",
   "crates/common/observability/tracing",
   "crates/execution/state/trie",
   "crates/execution/state/types",
-  "crates/common/codec/storage",
-  "crates/execution/evm/inspectors",
-  "crates/execution/evm/crypto",
-  "crates/execution/evm/primitives",
 ]
 default-members = [
   "bin/audit-archiver",
@@ -252,85 +237,78 @@ incremental = false
 
 [workspace.dependencies]
 # Base Primitives
-base-execution-evm-runtime = { path = "crates/execution/evm/runtime", default-features = false }
-base-common-chain-config = { path = "crates/common/chain/config", default-features = false }
-base-execution-evm-fees = { path = "crates/execution/evm/fees", default-features = false }
 base-common-types-rpc = { path = "crates/common/types/rpc", default-features = false }
 base-common-types-chain = { path = "crates/common/types/chain", default-features = false }
-base-execution-evm-precompiles = { path = "crates/execution/evm/precompiles", default-features = false }
+base-common-chain-config = { path = "crates/common/chain/config", default-features = false }
 base-execution-evm-macros = { path = "crates/execution/evm/macros", default-features = false }
 base-common-types-payload = { path = "crates/common/types/payload", default-features = false }
+base-execution-evm-runtime = { path = "crates/execution/evm/runtime", default-features = false }
 base-common-observability-events = { path = "crates/common/observability/events", default-features = false }
 
 # Builder
 
 # Consensus
-base-consensus-batch-types = { path = "crates/consensus/batch/types", default-features = false }
-base-consensus-network-service = { path = "crates/consensus/network/service", default-features = false }
-base-consensus-driver-service = { path = "crates/consensus/driver/service", default-features = false }
-base-consensus-derive-pipeline = { path = "crates/consensus/derive/pipeline", default-features = false }
-base-consensus-source-providers = { path = "crates/consensus/source/providers", default-features = false }
+base-consensus-batch = { path = "crates/consensus/batch", default-features = false }
+base-consensus-driver = { path = "crates/consensus/driver", default-features = false }
+base-consensus-derive = { path = "crates/consensus/derive", default-features = false }
+base-consensus-source = { path = "crates/consensus/source", default-features = false }
+base-consensus-network = { path = "crates/consensus/network", default-features = false }
 
 # Execution
-base-node-service = { path = "crates/node/service", default-features = false }
 base-node-cli = { path = "crates/node/cli", default-features = false }
-base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
-base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
-base-testing-tools-witness-diff = { path = "crates/testing/tools/witness-diff", default-features = false }
+base-node-service = { path = "crates/node/service", default-features = false }
+base-execution-rpc = { path = "crates/execution/rpc", default-features = false }
+base-testing-tools = { path = "crates/testing/tools", default-features = false }
 base-testing-devnet = { path = "crates/testing/devnet", default-features = false }
+base-execution-txpool = { path = "crates/execution/txpool", default-features = false }
+base-execution-payload = { path = "crates/execution/payload", default-features = false }
+base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
-base-execution-txpool-pool = { path = "crates/execution/txpool/pool", default-features = false }
 base-execution-state-indexer = { path = "crates/execution/state/indexer", default-features = false }
-base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }
 
 # Infra
-base-infra-basectl-service = { path = "crates/infra/basectl/service", default-features = false }
-base-infra-sidecrush-service = { path = "crates/infra/sidecrush/service", default-features = false }
-base-infra-audit-service = { path = "crates/infra/audit/service", default-features = false }
-base-testing-load-service = { path = "crates/testing/load/service", default-features = false }
-base-infra-snapshotter-service = { path = "crates/infra/snapshotter/service", default-features = false }
-base-infra-websocket-proxy-service = { path = "crates/infra/websocket-proxy/service", default-features = false }
-base-infra-telemetry-service = { path = "crates/infra/telemetry/service", default-features = false }
-base-infra-shadow-metrics-service = { path = "crates/infra/shadow-metrics/service", default-features = false }
+base-infra-audit = { path = "crates/infra/audit", default-features = false }
+base-testing-load = { path = "crates/testing/load", default-features = false }
+base-infra-basectl = { path = "crates/infra/basectl", default-features = false }
+base-infra-sidecrush = { path = "crates/infra/sidecrush", default-features = false }
+base-infra-telemetry = { path = "crates/infra/telemetry", default-features = false }
+base-infra-snapshotter = { path = "crates/infra/snapshotter", default-features = false }
+base-infra-shadow-metrics = { path = "crates/infra/shadow-metrics", default-features = false }
+base-infra-websocket-proxy = { path = "crates/infra/websocket-proxy", default-features = false }
 
 # Proof
-base-proof-client-providers = { path = "crates/proof/client/providers", default-features = false }
+base-proof-l1 = { path = "crates/proof/l1", default-features = false }
+base-proof-host = { path = "crates/proof/host", default-features = false }
+base-proof-types = { path = "crates/proof/types", default-features = false }
+base-proof-client = { path = "crates/proof/client", default-features = false }
+base-proof-execution = { path = "crates/proof/execution", default-features = false }
 base-proof-witness-mpt = { path = "crates/proof/witness/mpt", default-features = false }
-base-proof-host-service = { path = "crates/proof/host/service", default-features = false }
-base-proof-service-proposer = { path = "crates/proof/service/proposer", default-features = false }
-base-proof-service-challenger = { path = "crates/proof/service/challenger", default-features = false }
-base-proof-execution-client = { path = "crates/proof/execution/client", default-features = false }
-base-proof-witness-preimage = { path = "crates/proof/witness/preimage", default-features = false }
-base-proof-l1-submission = { path = "crates/proof/l1/submission", default-features = false }
-base-proof-types-protocol = { path = "crates/proof/types/protocol", default-features = false }
-base-proof-service-server = { path = "crates/proof/service/server", default-features = false }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar", default-features = false }
+base-proof-service-server = { path = "crates/proof/service/server", default-features = false }
 base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host", default-features = false }
-base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave", default-features = false }
 base-proof-service-client = { path = "crates/proof/service/client", default-features = false }
-base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier", default-features = false }
+base-proof-service-proposer = { path = "crates/proof/service/proposer", default-features = false }
+base-proof-witness-preimage = { path = "crates/proof/witness/preimage", default-features = false }
 base-proof-service-protocol = { path = "crates/proof/service/protocol", default-features = false }
+base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave", default-features = false }
+base-proof-service-challenger = { path = "crates/proof/service/challenger", default-features = false }
+base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier", default-features = false }
 
 # Batcher
-base-batcher-encoding-channel = { path = "crates/batcher/encoding/channel", default-features = false }
-base-batcher-service-driver = { path = "crates/batcher/service/driver", default-features = false }
+base-batcher-service = { path = "crates/batcher/service", default-features = false }
+base-batcher-encoding = { path = "crates/batcher/encoding", default-features = false }
 
 # Utilities
+base-common-l1 = { path = "crates/common/l1", default-features = false }
+base-common-http = { path = "crates/common/http", default-features = false }
+base-common-runtime = { path = "crates/common/runtime", default-features = false }
+base-testing-support = { path = "crates/testing/support", default-features = false }
+base-common-client-rollup = { path = "crates/common/client/rollup", default-features = false }
+base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
 base-common-observability-health = { path = "crates/common/observability/health", default-features = false }
 base-common-observability-metrics = { path = "crates/common/observability/metrics", default-features = false }
-base-common-runtime-tasks = { path = "crates/common/runtime/tasks", default-features = false }
-base-testing-support = { path = "crates/testing/support", default-features = false }
-base-common-l1-transactions = { path = "crates/common/l1/transactions", default-features = false }
-base-common-client-rollup = { path = "crates/common/client/rollup", default-features = false }
-base-common-http-proxy = { path = "crates/common/http/proxy", default-features = false }
-base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
 
 # revm
-base-execution-evm-machine = { path = "crates/execution/evm/machine", default-features = false }
-base-execution-evm-crypto = { path = "crates/execution/evm/crypto", default-features = false }
-base-execution-evm-inspectors = { path = "crates/execution/evm/inspectors", default-features = false }
-base-execution-evm-primitives = { path = "crates/execution/evm/primitives", default-features = false }
-base-execution-state-memory = { path = "crates/execution/state/memory", default-features = false }
 
 # alloy
 alloy-rlp = { version = "=0.3.16", default-features = false }
@@ -362,35 +340,29 @@ alloy-sol-macro-input = { version = "=1.6.1", default-features = false }
 alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
 alloy-rpc-types-admin = { version = "=2.4.1", default-features = false }
 alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
+base-common-process = { path = "crates/common/process", default-features = false }
 base-common-client-ethereum = { path = "crates/common/client/ethereum", default-features = false }
 base-common-client-contracts = { path = "crates/common/client/contracts", default-features = false }
-base-common-process-nodes = { path = "crates/common/process/nodes", default-features = false }
 alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }
 
 # reth
-base-execution-state-database = { path = "crates/execution/state/database", default-features = false }
+base-common-io = { path = "crates/common/io", default-features = false }
+base-common-cli = { path = "crates/common/cli", default-features = false }
+base-node-config = { path = "crates/node/config", default-features = false }
+base-common-codec = { path = "crates/common/codec", default-features = false }
+base-execution-sync = { path = "crates/execution/sync", default-features = false }
 base-execution-state-trie = { path = "crates/execution/state/trie", default-features = false }
-base-execution-engine-observers = { path = "crates/execution/engine/observers", default-features = false }
-base-execution-sync-pipeline = { path = "crates/execution/sync/pipeline", default-features = false }
-base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
-base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
-base-execution-network-service = { path = "crates/execution/network/service", default-features = false }
-base-common-io-files = { path = "crates/common/io/files", default-features = false }
-base-common-cli-support = { path = "crates/common/cli/support", default-features = false }
+base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
+base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }
+base-execution-engine-driver = { path = "crates/execution/engine/driver", default-features = false }
+base-execution-state-database = { path = "crates/execution/state/database", default-features = false }
 base-execution-state-provider = { path = "crates/execution/state/provider", default-features = false }
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
-base-node-config = { path = "crates/node/config", default-features = false }
+base-execution-network-service = { path = "crates/execution/network/service", default-features = false }
+base-execution-engine-observers = { path = "crates/execution/engine/observers", default-features = false }
+base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
 base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
-base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
-base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
-base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }
-base-execution-engine-driver = { path = "crates/execution/engine/driver", default-features = false }
-base-execution-network-types = { path = "crates/execution/network/types", default-features = false }
-base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
-base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }
-base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
-base-execution-engine-types = { path = "crates/execution/engine/types", default-features = false }
-base-testing-debug-client = { path = "crates/testing/debug/client", default-features = false }
+base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 
 # tokio
 tokio = { version = "1.53.1", default-features = false }
@@ -495,8 +467,8 @@ serde_bytes = { version = "0.11", default-features = false }
 serde_with = { version = "3.8.1", default-features = false }
 serde_yaml = { version = "0.9.34", default-features = false }
 serde_json = { version = "1.0.151", default-features = false }
-ethereum_ssz_derive = { version = "0.10", default-features = false }
 ethereum_ssz = { version = "=0.10.4", default-features = false }
+ethereum_ssz_derive = { version = "0.10", default-features = false }
 
 # testing
 arbtest = { version = "0.3", default-features = false }
@@ -607,7 +579,6 @@ enr = { version = "=0.13.0", default-features = false }
 nybbles = { version = "=0.4.8", default-features = false }
 tree_hash = { version = "=0.12.1", default-features = false }
 ethereum_serde_utils = { version = "=0.8.1", default-features = false }
-base-execution-network-discv5 = { path = "crates/execution/network/discv5", default-features = false }
 
 # Additional shared dependencies
 fnv = { version = "1", default-features = false }
@@ -622,7 +593,6 @@ typenum = { version = "1", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 uint = { version = "0.10", default-features = false }
 paste = { version = "1.0", default-features = false }
-borsh = { version = "1.5", default-features = false }
 ethabi = { version = "18", default-features = false }
 bimap = { version = "0.6", default-features = false }
 slotmap = { version = "1", default-features = false }
@@ -699,8 +669,6 @@ coins-bip39 = { version = "0.12", default-features = false }
 more-asserts = { version = "0.3", default-features = false }
 dyn-clone = { version = "1.0.17", default-features = false }
 aws-lc-rs = { version = "1.16.2", default-features = false }
-substrate-bn = { version = "0.6", default-features = false }
-gmp-mpfr-sys = { version = "1.6", default-features = false }
 futures-core = { version = "0.3", default-features = false }
 derive-where = { version = "1.6", default-features = false }
 plain_hasher = { version = "0.2", default-features = false }
@@ -709,20 +677,17 @@ ringbuffer = { version = "0.16.0", default-features = false }
 rand_xorshift = { version = "0.3", default-features = false }
 num-traits = { version = "0.2.16", default-features = false }
 ark-serialize = { version = "0.6", default-features = false }
-snmalloc-rs = { version = "0.3.7", default-features = false }
 serde_derive = { version = "1.0.0", default-features = false }
 pin-project = { version = "1.1.12", default-features = false }
 syn-solidity = { version = "1.6.1", default-features = false }
 fixed-cache = { version = "0.1.10", default-features = false }
 jemalloc_pprof = { version = "0.8", default-features = false }
 tracing-samply = { version = "0.1", default-features = false }
-tracing-tracy = { version = "0.11", default-features = false }
 rolling-file = { version = "0.2.0", default-features = false }
 jsonwebtoken = { version = "10.3.0", default-features = false }
 crossbeam-queue = { version = "0.3", default-features = false }
 humantime-serde = { version = "1.1", default-features = false }
 crossbeam-utils = { version = "0.8", default-features = false }
-tracy-client = { version = "0.18.0", default-features = false }
 tracing-futures = { version = "0.2", default-features = false }
 linked_hash_set = { version = "0.1", default-features = false }
 assert_matches = { version = "1.5.0", default-features = false }
@@ -774,4 +739,3 @@ tokio-tungstenite_0_29_0 = { version = "0.29", package = "tokio-tungstenite", de
 opentelemetry-http_0_31_0 = { version = "0.31.0", package = "opentelemetry-http", default-features = false }
 tracing-opentelemetry_0_33_0 = { version = "0.33", package = "tracing-opentelemetry", default-features = false }
 codspeed-criterion-compat_5_0 = { version = "5.0", package = "codspeed-criterion-compat", default-features = false }
-base-execution-payload-types = {path = "crates/execution/payload/types", default-features = false}

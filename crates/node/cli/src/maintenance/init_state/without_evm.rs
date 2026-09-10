@@ -2,14 +2,13 @@ use std::path::Path;
 
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::{SealedBlock, SealedHeader};
+use base_common_types_chain::{BlockHeader, SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
     providers::StaticFileProvider,
 };
 use base_execution_state_types::StaticFileSegment;
-use base_execution_sync_pipeline::{StageCheckpoint, StageId};
+use base_execution_sync::{StageCheckpoint, StageId};
 use tracing::info;
 
 /// Reads the header RLP from a file and returns the Header.
@@ -19,11 +18,11 @@ pub(crate) fn read_header_from_file<H>(path: &Path) -> Result<H, eyre::Error>
 where
     H: Decodable,
 {
-    let buf = if let Ok(content) = base_common_io_files::Files::read_to_string(path) {
+    let buf = if let Ok(content) = base_common_io::Files::read_to_string(path) {
         alloy_primitives::hex::decode(content.trim())?
     } else {
         // If UTF-8 decoding fails, read as raw bytes
-        base_common_io_files::Files::read(path)?
+        base_common_io::Files::read(path)?
     };
 
     let header = H::decode(&mut &buf[..])?;
@@ -124,7 +123,7 @@ where
             StaticFileSegment::TransactionSenders => "init-state-senders",
             _ => "init-state-segment",
         };
-        base_common_runtime_tasks::spawn_os_thread(thread_name, move || {
+        base_common_runtime::spawn_os_thread(thread_name, move || {
             let result = provider.latest_writer(segment).and_then(|mut writer| {
                 for block_num in 1..=target_height {
                     writer.increment_block(block_num)?;
@@ -138,7 +137,7 @@ where
 
     // Spawn job for appending empty headers
     let provider = sf_provider.clone();
-    base_common_runtime_tasks::spawn_os_thread("init-state-headers", move || {
+    base_common_runtime::spawn_os_thread("init-state-headers", move || {
         let result = provider.latest_writer(StaticFileSegment::Headers).and_then(|mut writer| {
             for block_num in 1..=target_height {
                 // TODO: should we fill with real parent_hash?

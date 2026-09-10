@@ -10,9 +10,7 @@ use std::{
 
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::ChainConfig;
-use base_common_chain_config::RollupConfig;
+use base_common_chain_config::{BaseChainSpec, ChainConfig, RollupConfig};
 use clap::ValueEnum;
 use eyre::{Result, WrapErr, bail, ensure};
 use serde::{Deserialize, Serialize};

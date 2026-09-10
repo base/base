@@ -4,20 +4,19 @@ use std::sync::Arc;
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_observability_tracing::tracing::debug;
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use base_execution_engine_observers::ExExManagerHandle;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
+use base_execution_network_service::{BodyDownloader, HeaderDownloader};
+use base_execution_network_wire::BlockClient;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::ProviderFactory;
-use base_execution_sync_pipeline::{BodiesDownloaderBuilder, ReverseHeadersDownloaderBuilder};
-use base_execution_sync_pipeline::{DefaultStages, ExecutionStage, Pipeline, StageId, StageSet};
-use tokio::sync::watch;
-use {
-    base_execution_network_service::BodyDownloader,
-    base_execution_network_service::HeaderDownloader, base_execution_network_wire::BlockClient,
+use base_execution_state_types::PruneConfig;
+use base_execution_sync::{
+    BodiesDownloaderBuilder, DefaultStages, ExecutionStage, Pipeline,
+    ReverseHeadersDownloaderBuilder, StageConfig, StageId, StageSet,
 };
-use {base_execution_state_types::PruneConfig, base_execution_sync_pipeline::StageConfig};
+use tokio::sync::watch;
 
 /// Constructs a [Pipeline] that's wired to the network
 #[expect(clippy::too_many_arguments)]
@@ -27,7 +26,7 @@ pub fn build_networked_pipeline<Client>(
     consensus: Arc<BaseBeaconConsensus>,
     provider_factory: ProviderFactory,
     task_executor: &TaskExecutor,
-    metrics_tx: base_execution_sync_pipeline::MetricEventsSender,
+    metrics_tx: base_execution_sync::MetricEventsSender,
     prune_config: PruneConfig,
     max_block: Option<BlockNumber>,
     static_file_producer: StaticFileProducer<ProviderFactory>,
@@ -74,7 +73,7 @@ pub fn build_pipeline<H, B>(
     body_downloader: B,
     consensus: Arc<BaseBeaconConsensus>,
     max_block: Option<u64>,
-    metrics_tx: base_execution_sync_pipeline::MetricEventsSender,
+    metrics_tx: base_execution_sync::MetricEventsSender,
     prune_config: PruneConfig,
     static_file_producer: StaticFileProducer<ProviderFactory>,
     evm_config: BaseEvmConfig,

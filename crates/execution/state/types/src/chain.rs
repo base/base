@@ -3,17 +3,14 @@
 use alloc::{borrow::Cow, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{fmt, ops::RangeInclusive};
 
-use crate::LazyTrieData;
 use alloy_eips::{BlockNumHash, eip1898::ForkBlock};
 use alloy_primitives::{Address, BlockHash, BlockNumber, Log, TxHash, map::HashSet};
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, BlockHeader, TxReceipt, transaction::Recovered,
-};
-use base_common_types_chain::{
-    BlockBodyExt as BlockBody, IndexedTx, RecoveredBlock, SealedHeader, SignedTransaction,
+    BaseReceipt, BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, IndexedTx, RecoveredBlock,
+    SealedHeader, SignedTransaction, TxReceipt, transaction::Recovered,
 };
 
-use crate::ExecutionOutcome;
+use crate::{ExecutionOutcome, LazyTrieData};
 
 /// A chain of blocks and their final state.
 ///
@@ -502,15 +499,13 @@ pub struct BlockReceipts<T = base_common_types_chain::EthereumReceipt> {
 pub(super) mod serde_bincode_compat {
     use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 
-    use crate::ComputedTrieData;
     use alloy_primitives::{Address, BlockNumber, Bytes};
     use alloy_rlp::Decodable;
-    use base_common_types_chain::BaseBlock;
-    use base_common_types_chain::SealedBlock;
+    use base_common_types_chain::{BaseBlock, SealedBlock};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
-    use crate::serde_bincode_compat;
+    use crate::{ComputedTrieData, serde_bincode_compat};
 
     /// Bincode-compatible [`super::Chain`] serde implementation.
     ///
@@ -577,8 +572,9 @@ pub(super) mod serde_bincode_compat {
 
     impl<'a> From<Chain<'a>> for super::Chain {
         fn from(value: Chain<'a>) -> Self {
-            use crate::LazyTrieData;
             use base_common_types_chain::RecoveredBlock;
+
+            use crate::LazyTrieData;
 
             let hashed_state_map: BTreeMap<_, _> =
                 value.hashed_state.into_iter().map(|(k, v)| (k, Arc::new(v.into()))).collect();
@@ -637,8 +633,7 @@ pub(super) mod serde_bincode_compat {
 
         use alloy_primitives::Address;
         use arbitrary::Arbitrary;
-        use base_common_types_chain::BaseBlock;
-        use base_common_types_chain::RecoveredBlock;
+        use base_common_types_chain::{BaseBlock, RecoveredBlock};
         use rand::Rng;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
@@ -679,8 +674,7 @@ pub(super) mod serde_bincode_compat {
 mod tests {
     use alloy_primitives::{Address, B256, map::HashMap};
     use base_common_types_chain::BaseReceipt;
-    use base_execution_state_memory::AccountInfo;
-    use base_execution_state_memory::BundleState;
+    use base_execution_evm_runtime::{AccountInfo, BundleState};
 
     use super::*;
 

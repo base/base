@@ -8,7 +8,7 @@ use std::{
 };
 
 use base_common_types_chain::Header;
-use base_execution_state_api::CanonChainTracker;
+use base_execution_state_types::CanonChainTracker;
 use futures::Stream;
 use tokio::time::{Instant, Interval};
 

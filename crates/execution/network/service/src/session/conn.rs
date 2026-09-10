@@ -5,18 +5,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_execution_network_wire::ECIESStream;
-use base_execution_network_wire::EthBroadcastMessage;
-use base_execution_network_wire::EthMessage;
-use base_execution_network_wire::EthSnapMessage;
-use base_execution_network_wire::EthSnapStream;
-use base_execution_network_wire::EthStream;
-use base_execution_network_wire::EthStreamError;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::P2PStream;
-use base_execution_network_wire::P2PStreamError;
-use base_execution_network_wire::RawCapabilityMessage;
-use base_execution_network_wire::SnapProtocolMessage;
+use base_execution_network_wire::{
+    ECIESStream, EthBroadcastMessage, EthMessage, EthSnapMessage, EthSnapStream, EthStream,
+    EthStreamError, EthVersion, P2PStream, P2PStreamError, RawCapabilityMessage,
+    SnapProtocolMessage,
+};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use tokio::net::TcpStream;
 

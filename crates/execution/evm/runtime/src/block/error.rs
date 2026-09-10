@@ -5,8 +5,7 @@ use alloc::{
 use core::error::Error;
 
 use alloy_primitives::B256;
-
-use crate::{EvmError, InvalidTxError};
+use base_execution_evm_runtime::{EvmError, InvalidTxError};
 
 /// Block validation error.
 #[derive(Debug, thiserror::Error)]
@@ -291,7 +290,7 @@ impl InternalBlockExecutionError {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::{DBErrorMarker, EVMError, InvalidTransaction};
+    use base_execution_evm_runtime::{DBErrorMarker, EVMError, InvalidTransaction};
 
     use super::*;
 

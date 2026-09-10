@@ -1,8 +1,6 @@
 //! CountInspector - Inspector that counts all opcodes that were called.
 
-use base_execution_evm_primitives::Log;
-
-use crate::inspector::Inspector;
+use base_execution_evm_runtime::{Log, inspector::Inspector};
 
 /// Inspector that counts all opcodes that were called during execution.
 #[derive(Clone, Debug)]
@@ -135,13 +133,13 @@ impl CountInspector {
 impl<CTX> Inspector<CTX> for CountInspector {
     fn initialize_interp(
         &mut self,
-        _interp: &mut base_execution_evm_machine::Interpreter,
+        _interp: &mut base_execution_evm_runtime::Interpreter,
         _context: &mut CTX,
     ) {
         self.initialize_interp_count += 1;
     }
 
-    fn step(&mut self, interp: &mut base_execution_evm_machine::Interpreter, _context: &mut CTX) {
+    fn step(&mut self, interp: &mut base_execution_evm_runtime::Interpreter, _context: &mut CTX) {
         self.step_count += 1;
         let opcode = interp.bytecode.opcode();
         self.opcode_counts[opcode as usize] += 1;
@@ -149,7 +147,7 @@ impl<CTX> Inspector<CTX> for CountInspector {
 
     fn step_end(
         &mut self,
-        _interp: &mut base_execution_evm_machine::Interpreter,
+        _interp: &mut base_execution_evm_runtime::Interpreter,
         _context: &mut CTX,
     ) {
         self.step_end_count += 1;
@@ -162,8 +160,8 @@ impl<CTX> Inspector<CTX> for CountInspector {
     fn call(
         &mut self,
         _context: &mut CTX,
-        _inputs: &mut base_execution_evm_machine::CallInputs,
-    ) -> Option<base_execution_evm_machine::CallOutcome> {
+        _inputs: &mut base_execution_evm_runtime::CallInputs,
+    ) -> Option<base_execution_evm_runtime::CallOutcome> {
         self.call_count += 1;
         None
     }
@@ -171,8 +169,8 @@ impl<CTX> Inspector<CTX> for CountInspector {
     fn call_end(
         &mut self,
         _context: &mut CTX,
-        _inputs: &base_execution_evm_machine::CallInputs,
-        _outcome: &mut base_execution_evm_machine::CallOutcome,
+        _inputs: &base_execution_evm_runtime::CallInputs,
+        _outcome: &mut base_execution_evm_runtime::CallOutcome,
     ) {
         self.call_end_count += 1;
     }
@@ -180,8 +178,8 @@ impl<CTX> Inspector<CTX> for CountInspector {
     fn create(
         &mut self,
         _context: &mut CTX,
-        _inputs: &mut base_execution_evm_machine::CreateInputs,
-    ) -> Option<base_execution_evm_machine::CreateOutcome> {
+        _inputs: &mut base_execution_evm_runtime::CreateInputs,
+    ) -> Option<base_execution_evm_runtime::CreateOutcome> {
         self.create_count += 1;
         None
     }
@@ -189,17 +187,17 @@ impl<CTX> Inspector<CTX> for CountInspector {
     fn create_end(
         &mut self,
         _context: &mut CTX,
-        _inputs: &base_execution_evm_machine::CreateInputs,
-        _outcome: &mut base_execution_evm_machine::CreateOutcome,
+        _inputs: &base_execution_evm_runtime::CreateInputs,
+        _outcome: &mut base_execution_evm_runtime::CreateOutcome,
     ) {
         self.create_end_count += 1;
     }
 
     fn selfdestruct(
         &mut self,
-        _contract: base_execution_evm_primitives::Address,
-        _target: base_execution_evm_primitives::Address,
-        _value: base_execution_evm_primitives::U256,
+        _contract: base_execution_evm_runtime::Address,
+        _target: base_execution_evm_runtime::Address,
+        _value: base_execution_evm_runtime::U256,
     ) {
         self.selfdestruct_count += 1;
     }
@@ -207,14 +205,11 @@ impl<CTX> Inspector<CTX> for CountInspector {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::Context;
-    use base_execution_evm_primitives::{Bytes, TxKind};
-    use base_execution_evm_runtime::{MainBuilder, MainContext};
-    use base_execution_state_memory::BenchmarkDB;
-    use base_execution_state_memory::bytecode::{Bytecode, opcode};
+    use base_execution_evm_runtime::{
+        BenchmarkDB, Bytecode, Bytes, InspectEvm, MainBuilder, MainContext, TxKind, opcode,
+    };
 
     use super::*;
-    use crate::InspectEvm;
 
     #[test]
     fn test_count_inspector() {
@@ -233,15 +228,16 @@ mod tests {
         ]);
         let bytecode = Bytecode::new_raw(contract_data);
 
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode.clone()));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode.clone()));
         let mut count_inspector = CountInspector::new();
 
         let mut evm = ctx.build_mainnet_with_inspector(&mut count_inspector);
 
         // Execute the contract
         evm.inspect_one_tx(
-            base_execution_evm_machine::TxEnv::builder()
-                .kind(TxKind::Call(base_execution_state_memory::BENCH_TARGET))
+            base_execution_evm_runtime::TxEnv::builder()
+                .kind(TxKind::Call(base_execution_evm_runtime::BENCH_TARGET))
                 .gas_limit(30000)
                 .build()
                 .unwrap(),
@@ -322,15 +318,16 @@ mod tests {
         ]);
         let bytecode = Bytecode::new_raw(contract_data);
 
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode.clone()));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode.clone()));
         let mut count_inspector = CountInspector::new();
 
         let mut evm = ctx.build_mainnet_with_inspector(&mut count_inspector);
 
         // Execute the contract
         evm.inspect_one_tx(
-            base_execution_evm_machine::TxEnv::builder()
-                .kind(TxKind::Call(base_execution_state_memory::BENCH_TARGET))
+            base_execution_evm_runtime::TxEnv::builder()
+                .kind(TxKind::Call(base_execution_evm_runtime::BENCH_TARGET))
                 .gas_limit(30000)
                 .build()
                 .unwrap(),

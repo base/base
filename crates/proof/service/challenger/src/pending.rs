@@ -439,10 +439,8 @@ mod tests {
     #[cfg(feature = "metrics")]
     mod metrics_emission {
         use alloy_primitives::Bytes;
-        use base_proof_types_protocol::Proposal;
-        use base_proof_service_protocol::{
-            ProofResult as ApiProofResult, TeeKind, TeeProofResult,
-        };
+        use base_proof_service_protocol::{ProofResult as ApiProofResult, TeeKind, TeeProofResult};
+        use base_proof_types::Proposal;
         use metrics_util::{
             MetricKind,
             debugging::{DebugValue, DebuggingRecorder},
@@ -472,7 +470,8 @@ mod tests {
                 let snapshot = snapshotter.snapshot().into_vec();
                 let count = snapshot.iter().find_map(|(key, _, _, value)| {
                     if key.kind() != MetricKind::Counter
-                        || key.key().name() != "base_proof_service_challenger.proof_session_failures_total"
+                        || key.key().name()
+                            != "base_proof_service_challenger.proof_session_failures_total"
                         || !key.key().labels().any(|label| {
                             label.key() == "reason" && label.value() == expected_reason
                         })

@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Bytes, U256};
-use base_batcher_encoding_channel::BlobEncoder;
-use base_batcher_encoding_channel::{
-    BatchEncoder, BatchPipeline, BatchSubmission, DaType, EncoderConfig, SubmissionPayload,
+use base_batcher_encoding::{
+    BatchEncoder, BatchPipeline, BatchSubmission, BlobEncoder, DaType, EncoderConfig,
+    SubmissionPayload,
 };
-use base_common_l1_transactions::TxCandidate;
-use base_consensus_batch_types::Frame;
+use base_common_l1::TxCandidate;
+use base_consensus_batch::Frame;
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L1MinerTxManager,
     SharedL1Chain, TestRollupConfigBuilder,

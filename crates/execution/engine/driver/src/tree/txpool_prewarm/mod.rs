@@ -9,7 +9,6 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_primitives::{Address, B256};
 use base_common_types_chain::transaction::Recovered;
-use base_execution_evm_blocks::EvmEnvFor;
 use base_execution_state_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -19,30 +18,21 @@ use self::control::Control;
 use crate::tree::{StateProviderBuilder, TxPoolPrewarmCacheSnapshot};
 
 /// Coordinates a long-lived worker and the latest completed immutable snapshot.
-pub(crate) struct Handle<P> {
-    control: Arc<Control<Job<P>>>,
+pub(crate) struct Handle {
+    control: Arc<Control<Job>>,
 }
 
-impl<P> Debug for Handle<P> {
+impl Debug for Handle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Handle").field("control", &self.control).finish()
     }
 }
 
-impl<P> Handle<P>
-where
-    P: DatabaseProviderFactory + 'static,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-{
+impl Handle {
     /// Spawns the long-lived worker, which owns its mutable read cache and starts a fresh one for
     /// each new head.
     pub(crate) fn spawn(
-        runtime: &base_common_runtime_tasks::Runtime,
+        runtime: &base_common_runtime::Runtime,
         source: Arc<dyn Source>,
         evm_config: BaseEvmConfig,
     ) -> Self {
@@ -76,8 +66,11 @@ where
     pub(crate) fn start(
         &self,
         parent_hash: B256,
-        evm_env: EvmEnvFor,
-        provider_builder: StateProviderBuilder<P>,
+        evm_env: base_execution_evm_runtime::EvmEnv<
+            base_execution_evm_runtime::BaseSpecId,
+            base_execution_evm_runtime::BlockEnv,
+        >,
+        provider_builder: StateProviderBuilder,
     ) {
         self.control.start(parent_hash, Job { evm_env, provider_builder });
     }
@@ -111,7 +104,10 @@ pub trait Source: Send + Sync + Debug {
 }
 
 /// A request to warm txpool transactions against one fully validated parent state.
-struct Job<P> {
-    evm_env: EvmEnvFor,
-    provider_builder: StateProviderBuilder<P>,
+struct Job {
+    evm_env: base_execution_evm_runtime::EvmEnv<
+        base_execution_evm_runtime::BaseSpecId,
+        base_execution_evm_runtime::BlockEnv,
+    >,
+    provider_builder: StateProviderBuilder,
 }

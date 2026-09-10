@@ -7,19 +7,14 @@ use alloy_primitives::B256;
 use base_common_chain_activation::{UpgradeReadiness, UpgradeSignalApplySummary};
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::BaseExecutionPayloadEnvelope;
-use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
-use base_common_types_rpc::PeerCount;
-use base_common_types_rpc::PeerDump;
-use base_common_types_rpc::PeerStats;
-use base_common_types_rpc::RollupSyncStatus as SyncStatus;
-use base_common_types_rpc::SafeHeadResponse;
-use base_common_types_rpc::{ClusterMembership, HealthzResponse};
+use base_common_types_rpc::{
+    ClusterMembership, ConsensusPeerInfo as PeerInfo, HealthzResponse, OutputResponse, PeerCount,
+    PeerDump, PeerStats, RollupSyncStatus as SyncStatus, SafeHeadResponse,
+};
 use ipnet::IpNet;
 #[cfg(feature = "server")]
 use jsonrpsee::core::{RpcResult, SubscriptionResult};
 use jsonrpsee::proc_macros::rpc;
-
-use base_common_types_rpc::OutputResponse;
 
 /// Base rollup node RPC interface.
 ///
@@ -322,12 +317,10 @@ mod tests {
     use base_common_chain_activation::UpgradeSignalApplySummary;
     use base_common_chain_config::RollupConfig;
     use base_common_types_payload::BaseExecutionPayloadEnvelope;
-    use base_common_types_rpc::ConsensusPeerInfo as PeerInfo;
-    use base_common_types_rpc::PeerCount;
-    use base_common_types_rpc::PeerDump;
-    use base_common_types_rpc::PeerStats;
-    use base_common_types_rpc::RollupSyncStatus as SyncStatus;
-    use base_common_types_rpc::SafeHeadResponse;
+    use base_common_types_rpc::{
+        ConsensusPeerInfo as PeerInfo, OutputResponse, PeerCount, PeerDump, PeerStats,
+        RollupSyncStatus as SyncStatus, SafeHeadResponse,
+    };
     use ipnet::IpNet;
     use jsonrpsee::{
         PendingSubscriptionSink,
@@ -340,7 +333,6 @@ mod tests {
         DevEngineApiServer, HealthzApiServer, HealthzResponse, RollupNodeApiServer,
         UpgradeReadiness, WsServer,
     };
-    use base_common_types_rpc::OutputResponse;
 
     struct StubRollupNodeApi;
 

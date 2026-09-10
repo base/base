@@ -4,9 +4,9 @@
 //! the production Brotli singular batcher does not emit.
 
 use alloy_rlp::Encodable;
-use base_batcher_encoding_channel::{BatchComposer, FrameEncoder, test_utils::ChannelFramer};
+use base_batcher_encoding::{BatchComposer, FrameEncoder, test_utils::ChannelFramer};
 use base_common_types_chain::BaseBlock;
-use base_consensus_batch_types::SingleBatch;
+use base_consensus_batch::SingleBatch;
 use miniz_oxide::deflate::compress_to_vec_zlib;
 
 use crate::action_fixtures::{ActionTestHarness, BatcherConfig};

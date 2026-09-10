@@ -2,9 +2,8 @@
 
 use alloy_primitives::{Address, Bytes};
 use base_node_service::BuilderConfig;
-use base_testing_devnet::{
-    builder_test_utils::BlockTransactionsExt,
-    builder_test_utils::setup_test_instance_with_builder_config,
+use base_testing_devnet::builder_test_utils::{
+    BlockTransactionsExt, setup_test_instance_with_builder_config,
 };
 
 /// Test that the uncompressed block size limit is enforced: only the highest priority fee

@@ -16,23 +16,23 @@ tower = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-base-common-observability-health = { workspace = true }
 alloy-signer = { workspace = true }
-base-proof-host-service = {workspace = true}
+base-proof-l1 = { workspace = true }
+base-proof-host = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-witness-preimage = { workspace = true }
-base-proof-l1-submission = { workspace = true }
 base-proof-service-client = { workspace = true }
+base-proof-witness-preimage = { workspace = true }
 url = { workspace = true, features = ["default"] }
 base-proof-tee-nitro-enclave = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
+base-common-observability-health = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 base-proof-service-protocol = { workspace = true, features = ["default"] }
+base-proof-types = { workspace = true, features = ["std", "serde", "rpc-server"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "io-util", "net"] }
-base-proof-types-protocol = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock = { workspace = true }
@@ -43,4 +43,4 @@ tokio = { workspace = true, features = ["default", "macros", "rt"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 
 [features]
-metrics = ["base-proof-host-service/metrics"]
+metrics = ["base-proof-host/metrics"]

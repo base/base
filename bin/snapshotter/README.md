@@ -2,6 +2,6 @@
 
 Reth snapshot generation and upload sidecar binary for Base.
 
-Parses CLI arguments and delegates to the `base-infra-snapshotter-service` library, which
+Parses CLI arguments and delegates to the `base-infra-snapshotter` library, which
 orchestrates periodic snapshot creation and upload to S3-compatible storage
 alongside a Base execution-layer node.

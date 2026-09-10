@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use base_common_client_ethereum::Provider;
-use base_execution_rpc_handlers::{Status, TransactionStatusResponse};
+use base_execution_rpc::{Status, TransactionStatusResponse};
 use base_node_service::BuilderConfig;
 use base_testing_devnet::builder_test_utils::LocalInstanceBuilder;
 

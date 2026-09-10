@@ -1,6 +1,6 @@
 //! Contains Deposit transaction parts.
 pub use base_common_types_chain::DEPOSIT_TX_TYPE_ID as DEPOSIT_TRANSACTION_TYPE;
-use base_execution_evm_runtime::primitives::B256;
+use base_execution_evm_runtime::B256;
 
 /// Deposit transaction parts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl DepositTransactionParts {
 
 #[cfg(all(test, feature = "serde"))]
 mod tests {
-    use base_execution_evm_runtime::primitives::b256;
+    use base_execution_evm_runtime::b256;
 
     use super::*;
 

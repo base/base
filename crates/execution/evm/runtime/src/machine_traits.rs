@@ -1,11 +1,7 @@
 use auto_impl::auto_impl;
-use base_execution_evm_machine::{ContextError, ContextTr, FrameStack};
-use base_execution_evm_machine::{InterpreterResult, interpreter_action::FrameInit};
-use base_execution_evm_runtime::EthInstructions;
-use base_execution_evm_runtime::EvmMachine;
-
-use crate::{
-    ContextTrDbError, EthFrame, FrameResult, ItemOrResult, PrecompileProvider,
+use base_execution_evm_runtime::{
+    ContextError, ContextTr, ContextTrDbError, EthFrame, EthInstructions, EvmMachine, FrameResult,
+    FrameStack, InterpreterResult, ItemOrResult, PrecompileProvider, interpreter_action::FrameInit,
     item_or_result::FrameInitOrResult,
 };
 

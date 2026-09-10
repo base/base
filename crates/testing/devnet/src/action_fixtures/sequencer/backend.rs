@@ -7,17 +7,15 @@
 
 use async_trait::async_trait;
 use base_common_types_chain::BaseTxEnvelope;
-use base_consensus_driver_service::EngineClientResult;
+use base_consensus_driver::EngineClientResult;
 
 use crate::action_fixtures::SharedBlockHashRegistry;
 
-/// A sequencer engine backend: a [`SequencerEngineClient`](base_consensus_driver_service::SequencerEngineClient)
+/// A sequencer engine backend: a [`SequencerEngineClient`](base_consensus_driver::SequencerEngineClient)
 /// that also exposes the shared block-hash registry used for sequencer↔verifier state-root
 /// cross-checks, plus how harness-supplied transactions reach a produced block.
 #[async_trait]
-pub trait SequencerEngineBackend:
-    base_consensus_driver_service::SequencerEngineClient + 'static
-{
+pub trait SequencerEngineBackend: base_consensus_driver::SequencerEngineClient + 'static {
     /// Return the shared block-hash registry this backend writes produced blocks into.
     fn block_hash_registry(&self) -> SharedBlockHashRegistry;
 

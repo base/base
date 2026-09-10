@@ -6,7 +6,7 @@
 //! `BlockServiceBuilder`. It proves the harness's production sequencer actor can build blocks
 //! through the real builder over the Engine API, against the harness's rollup-derived genesis.
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, BuilderBackedEngineClient,
     L1MinerConfig, L2Sequencer, SharedL1Chain, TestRollupConfigBuilder,

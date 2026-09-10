@@ -1,7 +1,7 @@
 //! Shared helpers for proposal target blocks.
 
 use alloy_primitives::B256;
-use base_proof_client_providers::RollupProvider;
+use base_proof_client::RollupProvider;
 use tracing::{error, warn};
 
 /// Shared proposal target helpers.

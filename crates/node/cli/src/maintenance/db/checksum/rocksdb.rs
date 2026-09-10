@@ -1,13 +1,11 @@
 //! RocksDB checksum implementation.
 
-use std::hash::Hasher;
+use std::{hash::Hasher, time::Instant};
 
-use base_execution_state_database::Table;
-use base_execution_state_database::tables;
+use base_execution_state_database::{Table, tables};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::RocksDBProviderFactory;
 use clap::ValueEnum;
-use std::time::Instant;
 use tracing::info;
 
 use super::{PROGRESS_LOG_INTERVAL, checksum_hasher};

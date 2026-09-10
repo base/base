@@ -3,20 +3,19 @@
 use std::{
     ops::{Deref, RangeInclusive},
     sync::Arc,
+    time::Instant,
 };
 
 use alloy_primitives::BlockNumber;
-use base_common_runtime_tasks::{EventSender, EventStream};
+use base_common_runtime::{EventSender, EventStream};
 use base_execution_state_provider::{
     BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileWriter,
 };
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::PruneModes;
-use base_execution_state_types::{HighestStaticFiles, StaticFileTargets};
-use base_execution_state_types::{StageId, StaticFileSegment};
+use base_execution_state_types::{
+    HighestStaticFiles, ProviderResult, PruneModes, StageId, StaticFileSegment, StaticFileTargets,
+};
 use parking_lot::Mutex;
-use std::time::Instant;
 use tracing::{debug, trace};
 
 use crate::static_files::{StaticFileProducerEvent, segments::Receipts};
@@ -215,9 +214,8 @@ mod tests {
     use base_execution_state_provider::{
         ProviderError, ProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
     };
-    use base_execution_state_types::PruneModes;
-    use base_execution_state_types::{HighestStaticFiles, StaticFileSegment};
-    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
+    use base_execution_state_types::{HighestStaticFiles, PruneModes, StaticFileSegment};
+    use base_execution_sync::test_utils::{StorageKind, TestStageDB};
     use base_testing_support::{generators, generators::BlockRangeParams};
     use tempfile::TempDir;
 

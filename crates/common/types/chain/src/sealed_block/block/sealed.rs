@@ -9,11 +9,9 @@ use alloy_rlp::{Decodable, Encodable};
 use base_common_types_chain::{BaseBlock, BaseBlockBody, BlockHeader as _, Header};
 use bytes::BufMut;
 
-use {
-    crate::sealed_block::BlockBody, crate::sealed_block::GotExpected,
-    crate::sealed_block::InMemorySize, crate::sealed_block::RecoveryError,
-    crate::sealed_block::SealedHeader, crate::sealed_block::block::RecoveredBlock,
-    crate::sealed_block::block::error::BlockRecoveryError,
+use crate::sealed_block::{
+    BlockBody, GotExpected, InMemorySize, RecoveryError, SealedHeader,
+    block::{RecoveredBlock, error::BlockRecoveryError},
 };
 
 /// Sealed full block composed of the block's header and body.
@@ -502,6 +500,7 @@ impl<T> Deref for SealedBlockWith<T> {
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+
     use alloy_rlp::{Decodable, Encodable};
     use base_common_types_chain::{BaseTxEnvelope, Header};
 

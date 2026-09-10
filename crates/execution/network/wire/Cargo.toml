@@ -16,62 +16,70 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+url = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
 alloy-hardforks = { workspace = true }
-aes = { workspace = true, optional = true}
-bytes = {workspace = true, features = [] }
-ctr = { workspace = true, optional = true}
-hmac = { workspace = true, optional = true}
-sha2 = { workspace = true, optional = true}
-snap = { workspace = true, optional = true}
-cipher = { workspace = true, optional = true}
-thiserror = {workspace = true, features = [] }
-auto_impl = {workspace = true, optional = true}
-base-common-codec-macros = { workspace = true }
-concat-kdf = { workspace = true, optional = true}
-alloy-eip2124 = { workspace = true, optional = true}
-alloy-chains = {workspace = true, features = ["rlp"] }
-derive_more = {workspace = true, features = ["full"] }
-serde = {workspace = true, features = [], optional = true}
-pin-project = {workspace = true, features = [], optional = true}
-tokio = {workspace = true, features = ["time"], optional = true}
-alloy-rlp = {workspace = true, features = ["core-net", "derive"] }
+base-common-codec = { workspace = true }
+aes = { workspace = true, optional = true }
+bytes = { workspace = true, features = [] }
+ctr = { workspace = true, optional = true }
+enr = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+snap = { workspace = true, optional = true }
+cipher = { workspace = true, optional = true }
+thiserror = { workspace = true, features = [] }
+auto_impl = { workspace = true, optional = true }
+concat-kdf = { workspace = true, optional = true }
+alloy-eip2124 = { workspace = true, optional = true }
+alloy-chains = { workspace = true, features = ["rlp"] }
+derive_more = { workspace = true, features = ["full"] }
+humantime-serde = { workspace = true, optional = true }
+serde_with = { workspace = true, features = ["macros"] }
+serde = { workspace = true, features = [], optional = true }
+pin-project = { workspace = true, features = [], optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
 proptest-arbitrary-interop = { workspace = true, optional = true }
-base-common-types-chain = {features = ["k256", "serde"], workspace = true}
-digest = { workspace = true, features = ["default"], optional = true}
-futures = {workspace = true, features = ["default"], optional = true}
-arbitrary = {workspace = true, features = ["derive"], optional = true}
-rand_08 = { workspace = true, features = ["default"], optional = true}
-byteorder = { workspace = true, features = ["default"], optional = true}
+ipnet = { workspace = true, features = ["default"], optional = true }
+digest = { workspace = true, features = ["default"], optional = true }
+futures = { workspace = true, features = ["default"], optional = true }
+rand_08 = { workspace = true, features = ["default"], optional = true }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
-tracing = {workspace = true, features = ["attributes"], optional = true}
+byteorder = { workspace = true, features = ["default"], optional = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"], optional = true }
-alloy-primitives = {workspace = true, features = ["map", "map-foldhash"] }
-tokio-stream = {workspace = true, features = ["default"], optional = true}
-tokio-util = {workspace = true, features = ["codec", "default"], optional = true}
-base-execution-network-types = {workspace = true, features = ["secp256k1"], optional = true}
-base-common-observability-metrics = { workspace = true, features = ["metrics"],optional = true}
-secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "rand"], optional = true}
+tracing = { workspace = true, features = ["attributes"], optional = true }
+base-common-types-chain = { features = ["k256", "serde"], workspace = true }
+tokio-stream = { workspace = true, features = ["default"], optional = true }
+serde_json = { workspace = true, features = ["alloc", "std"], optional = true }
+alloy-rlp = { workspace = true, features = ["core-net", "derive", "core-error"] }
+alloy-primitives = { workspace = true, features = ["map", "map-foldhash", "rlp"] }
+tokio-util = { workspace = true, features = ["codec", "default"], optional = true }
+base-common-observability-metrics = { workspace = true, features = ["metrics"], optional = true }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "rand"], optional = true }
 
 [dev-dependencies]
+enr = { workspace = true }
 serde = { workspace = true }
-test-case = {workspace = true}
+test-case = { workspace = true }
 test-fuzz = { workspace = true }
 async-stream = { workspace = true }
-proptest-arbitrary-interop = {workspace = true}
-rand = {workspace = true, features = ["default"]}
-arbitrary = {workspace = true, features = ["derive"]}
-proptest = {workspace = true, features = ["default"]}
+base-common-chain-config = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-alloy-eips = {workspace = true, features = ["arbitrary"]}
+arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-eips = { workspace = true, features = ["arbitrary"] }
 alloy-chains = { workspace = true, features = ["arbitrary"] }
 alloy-eip7928 = { workspace = true, features = ["rlp", "arbitrary"] }
-base-common-types-chain = {features = ["arbitrary", "k256", "serde"], workspace = true}
 base-common-observability-tracing = { workspace = true, features = ["default"] }
-tokio = {workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"]}
-secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread"] }
+base-common-types-chain = { features = ["arbitrary", "k256", "serde"], workspace = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "arbitrary", "rand"] }
+secp256k1 = { workspace = true, features = ["global-context", "recovery", "std", "rand"] }
 
 [[test]]
 name = "fuzz_roundtrip"
@@ -93,8 +101,87 @@ required-features = ["transport"]
 
 [features]
 default = ["std"]
-std = ["base-common-types-chain/std", "alloy-chains/std", "alloy-eip7928?/std", "alloy-eips/std", "alloy-primitives/std", "alloy-rlp/std", "bytes/std", "derive_more/std", "base-common-types-chain/std", "serde?/std", "thiserror/std", "alloy-trie/std"]
-arbitrary = ["alloy-chains/arbitrary", "alloy-eip7928/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-trie/arbitrary", "base-common-types-chain/arbitrary", "dep:alloy-eip7928", "dep:arbitrary", "dep:proptest", "dep:proptest-arbitrary-interop", "base-common-types-chain/arbitrary"]
-serde = ["alloy-chains/serde", "alloy-eip7928?/serde", "alloy-eips/serde", "alloy-hardforks/serde", "alloy-primitives/serde", "alloy-trie/serde", "base-common-types-chain/serde", "bytes/serde", "dep:serde", "rand/serde", "rand_08?/serde", "base-common-types-chain/serde", "secp256k1?/serde"]
-transport = ["alloy-primitives/rand", "alloy-primitives/rlp", "alloy-rlp/arrayvec", "dep:aes", "dep:alloy-eip2124", "dep:base-common-observability-metrics", "dep:base-execution-network-types", "dep:byteorder", "dep:cipher", "dep:concat-kdf", "dep:ctr", "dep:digest", "dep:futures", "dep:hmac", "dep:pin-project", "dep:rand_08", "dep:secp256k1", "dep:sha2", "dep:snap", "dep:tokio", "dep:tokio-stream", "dep:tokio-util", "dep:tracing", "std", "tokio-util/io", "tokio/macros", "tokio/net", "tokio/sync"]
-requests = ["std", "dep:auto_impl", "dep:futures", "dep:tokio", "tokio/sync", "dep:base-execution-network-types", "base-execution-network-types/std"]
+std = [
+    "base-common-types-chain/std",
+    "alloy-chains/std",
+    "alloy-eip7928?/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "bytes/std",
+    "derive_more/std",
+    "serde?/std",
+    "thiserror/std",
+    "alloy-trie/std",
+    "secp256k1?/std",
+    "serde_with/std",
+    "url/std",
+    "serde_json?/std",
+    "dep:ipnet",
+    "dep:alloy-eip2124",
+    "dep:tracing",
+]
+arbitrary = [
+    "alloy-chains/arbitrary",
+    "alloy-eip7928/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-trie/arbitrary",
+    "base-common-types-chain/arbitrary",
+    "dep:alloy-eip7928",
+    "dep:arbitrary",
+    "dep:proptest",
+    "dep:proptest-arbitrary-interop",
+]
+serde = [
+    "alloy-chains/serde",
+    "alloy-eip7928?/serde",
+    "alloy-eips/serde",
+    "alloy-hardforks/serde",
+    "alloy-primitives/serde",
+    "alloy-trie/serde",
+    "base-common-types-chain/serde",
+    "bytes/serde",
+    "dep:serde",
+    "rand/serde",
+    "rand_08?/serde",
+    "secp256k1?/serde",
+    "dep:humantime-serde",
+    "dep:serde_json",
+    "alloy-eip2124/serde",
+    "std",
+]
+transport = [
+    "alloy-primitives/rand",
+    "alloy-primitives/rlp",
+    "alloy-rlp/arrayvec",
+    "dep:aes",
+    "dep:alloy-eip2124",
+    "dep:base-common-observability-metrics",
+    "dep:byteorder",
+    "dep:cipher",
+    "dep:concat-kdf",
+    "dep:ctr",
+    "dep:digest",
+    "dep:futures",
+    "dep:hmac",
+    "dep:pin-project",
+    "dep:rand_08",
+    "dep:secp256k1",
+    "dep:sha2",
+    "dep:snap",
+    "dep:tokio",
+    "dep:tokio-stream",
+    "dep:tokio-util",
+    "dep:tracing",
+    "std",
+    "tokio-util/io",
+    "tokio/macros",
+    "tokio/net",
+    "tokio/sync",
+    "secp256k1",
+]
+requests = ["std", "dep:auto_impl", "dep:futures", "dep:tokio", "tokio/sync", "secp256k1"]
+secp256k1 = ["dep:secp256k1", "enr/secp256k1", "alloy-primitives/secp256k1"]
+net = ["std", "dep:tokio", "tokio?/net"]
+test-utils = []

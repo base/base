@@ -1,15 +1,17 @@
 use std::{collections::HashSet, time::Duration};
 
-use crate::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite};
 use async_trait::async_trait;
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use tokio::{
     sync::mpsc,
     time::{MissedTickBehavior, interval, sleep},
 };
 use tracing::{error, info};
 
-use crate::ShadowWriterMetrics;
+use crate::{
+    ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite,
+    ShadowWriterMetrics,
+};
 
 const BATCH_SIZE: usize = 100;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
@@ -193,16 +195,16 @@ impl ShadowWriter {
 mod tests {
     use std::time::Duration;
 
-    use crate::{
-        PgConnectionParams, ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig,
-        ShadowFlushOutcome,
-    };
     use anyhow::anyhow;
     use base_common_types_chain::RecoveredBlock;
     use chrono::{DateTime, Utc};
     use tokio::sync::mpsc;
 
     use super::{MAX_FLUSH_ATTEMPTS, MockBlockInserter, ShadowWrite, ShadowWriter};
+    use crate::{
+        PgConnectionParams, ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig,
+        ShadowFlushOutcome,
+    };
 
     fn test_writer() -> ShadowWriter {
         let (_tx, rx) = mpsc::channel(1);

@@ -1,0 +1,39 @@
+[package]
+name = "base-infra-websocket-proxy"
+description = "WebSocket Proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "base_infra_websocket_proxy"
+
+[lints]
+workspace = true
+
+[dependencies]
+base-common-http = { workspace = true }
+metrics = { workspace = true, optional = true }
+brotli = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
+backoff = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive", "std"] }
+tokio = { workspace = true, features = ["default", "full"] }
+tokio-tungstenite = { workspace = true, features = ["default"] }
+axum = { workspace = true, features = ["ws", "query", "tokio", "http1"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"] }
+
+[dev-dependencies]
+reqwest = { workspace = true, features = ["default"] }
+
+[features]
+default = ["metrics"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]

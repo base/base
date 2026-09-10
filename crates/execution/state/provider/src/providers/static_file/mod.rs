@@ -18,10 +18,10 @@ mod writer_tests;
 
 use std::{io, ops::Deref, sync::Arc};
 
-use crate::ChangesetOffsetReader;
 use base_execution_state_database::NippyJar;
-use base_execution_state_types::{ProviderError, ProviderResult};
-use base_execution_state_types::{SegmentHeader, StaticFileSegment};
+use base_execution_state_types::{ProviderError, ProviderResult, SegmentHeader, StaticFileSegment};
+
+use crate::ChangesetOffsetReader;
 
 /// Alias type for each specific `NippyJar`.
 type LoadedJarRef<'a> =
@@ -94,16 +94,15 @@ mod tests {
     use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, Header, SignableTransaction, Transaction, TxLegacy,
     };
-    use base_execution_state_api::{
-        ChangeSetReader, ReceiptProvider, StorageChangeSetReader, TransactionsProvider,
-    };
-    use base_execution_state_database::{CanonicalHeaders, DbTxMut, HeaderNumbers, Headers};
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_database::{
-        models::AccountBeforeTx, models::StorageBeforeTx, test_utils::create_test_static_files_dir,
+        CanonicalHeaders, DbTxMut, HeaderNumbers, Headers,
+        models::{AccountBeforeTx, StorageBeforeTx},
+        test_utils::create_test_static_files_dir,
     };
-    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{
-        DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentRangeInclusive, find_fixed_range,
+        ChangeSetReader, DEFAULT_BLOCKS_PER_STATIC_FILE, ReceiptProvider, SegmentRangeInclusive,
+        StorageChangeSetReader, TransactionsProvider, find_fixed_range,
     };
     use base_testing_support::{generators, generators::random_header_range};
     use rand::seq::SliceRandom;

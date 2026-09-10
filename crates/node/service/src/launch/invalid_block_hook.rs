@@ -2,7 +2,7 @@
 
 use base_execution_engine_observers::InvalidBlockWitnessHook;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_rpc_handlers::EthApiClient;
+use base_execution_rpc::EthApiClient;
 use base_node_config::{ChainPath, DataDirPath, InvalidBlockHookType, NodeConfig};
 use eyre::OptionExt;
 

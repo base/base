@@ -7,9 +7,8 @@ use alloy_primitives::{Address, U256};
 use alloy_signer::SignerSync;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::{
-    Base, Ethereum, PrivateKeySigner, ReceiptResponse, TransactionBuilder,
+    Base, Ethereum, PrivateKeySigner, Provider, ReceiptResponse, RootProvider, TransactionBuilder,
 };
-use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
 use base_testing_devnet::{ANVIL_ACCOUNT_1, SEQUENCER, SetupImage, SystemTestStackBuilder};

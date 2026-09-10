@@ -4,13 +4,10 @@ use alloc::vec;
 
 use alloy_eips::Encodable2718;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
-use base_execution_evm_machine::{Transaction, TxEnv};
-use base_execution_evm_runtime::primitives::{Address, B256, Bytes, TxKind, U256};
-use base_execution_evm_runtime::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, SystemCallTx};
-
-use crate::{
-    BaseTransactionBuilder, DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts,
-    EIP8130_TRANSACTION_TYPE, Eip8130TransactionParts,
+use base_execution_evm_runtime::{
+    Address, B256, BaseTransactionBuilder, Bytes, DEPOSIT_TRANSACTION_TYPE,
+    DepositTransactionParts, EIP8130_TRANSACTION_TYPE, Eip8130TransactionParts, FromRecoveredTx,
+    FromTxWithEncoded, IntoTxEnv, SystemCallTx, Transaction, TxEnv, TxKind, U256,
 };
 
 /// Base transaction.
@@ -261,7 +258,7 @@ impl base_execution_evm_runtime::TransactionEnvMut for BaseTransaction {
         self.base.set_nonce(nonce);
     }
 
-    fn set_access_list(&mut self, access_list: base_execution_evm_machine::AccessList) {
+    fn set_access_list(&mut self, access_list: base_execution_evm_runtime::AccessList) {
         self.base.set_access_list(access_list);
     }
 }
@@ -365,8 +362,7 @@ impl FromTxWithEncoded<TxDeposit> for BaseTransaction {
 mod tests {
     use alloy_eips::Encodable2718;
     use base_common_types_chain::{BaseTxEnvelope, Eip8130Signed, TxEip8130};
-    use base_execution_evm_machine::Transaction;
-    use base_execution_evm_runtime::primitives::{Address, B256, Bytes};
+    use base_execution_evm_runtime::{Address, B256, Bytes, Transaction};
 
     use super::*;
 
@@ -386,10 +382,7 @@ mod tests {
         // The tx_type is derived from the transaction structure, not set manually
         // Verify common fields access
         assert_eq!(base_tx.gas_limit(), 10);
-        assert_eq!(
-            base_tx.kind(),
-            base_execution_evm_runtime::primitives::TxKind::Call(Address::ZERO)
-        );
+        assert_eq!(base_tx.kind(), base_execution_evm_runtime::TxKind::Call(Address::ZERO));
         // Verify gas related calculations - deposit transactions use gas_price for effective gas price
         assert_eq!(base_tx.effective_gas_price(90), 100);
         assert_eq!(base_tx.max_fee_per_gas(), 100);

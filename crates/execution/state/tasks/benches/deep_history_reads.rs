@@ -17,16 +17,15 @@ use std::{hint::black_box, sync::Arc};
 
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_execution_evm_runtime::{Database, database::State};
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
+use base_execution_evm_runtime::{Database, State, StoredAccount as Account};
+use base_execution_state_provider::{AccountReader, NoopProvider};
 use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, BlockStateDiff,
     RocksdbProofsStorage, provider::BaseProofsStateProviderRef,
 };
+use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
-use base_execution_state_provider::{AccountReader, NoopProvider};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 1_000;

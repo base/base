@@ -3,9 +3,8 @@
 use alloy_primitives::B256;
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_types_chain::{BlockHeader, Predeploys};
-use base_execution_evm_runtime::database::BundleState;
-use base_execution_state_api::{ProviderResult, StorageRootProvider};
-use base_execution_state_types::HashedStorage;
+use base_execution_evm_runtime::BundleState;
+use base_execution_state_types::{HashedStorage, ProviderResult, StorageRootProvider};
 use tracing::warn;
 
 use crate::BaseConsensusError;
@@ -132,15 +131,14 @@ mod tests {
     use alloy_primitives::{B256, U256, keccak256};
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
-    use base_execution_evm_runtime::database::BundleState;
-    use base_execution_state_api::StateProviderFactory;
-    use base_execution_state_types::HashedPostState;
+    use base_execution_evm_runtime::BundleState;
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         StateWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,
     };
     use base_execution_state_trie::{HashedStorage, test_utils::storage_root_prehashed};
+    use base_execution_state_types::{HashedPostState, StateProviderFactory};
 
     use super::*;
 

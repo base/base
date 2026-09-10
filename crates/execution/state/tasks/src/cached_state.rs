@@ -14,12 +14,9 @@ use alloy_primitives::{
     map::{DefaultHashBuilder, FbBuildHasher},
 };
 use base_common_observability_metrics::Metrics;
-use base_execution_evm_runtime::database::BundleState;
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::ProviderResult;
-use fixed_cache::{AnyRef, CacheConfig, Stats, StatsHandler};
-use metrics::{Counter, Gauge, Histogram};
-use parking_lot::Once;
+use base_execution_evm_runtime::{
+    BundleState, StoredAccount as Account, StoredBytecode as Bytecode,
+};
 use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateRootProvider, StorageRootProvider,
@@ -28,6 +25,10 @@ use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
+use base_execution_state_types::ProviderResult;
+use fixed_cache::{AnyRef, CacheConfig, Stats, StatsHandler};
+use metrics::{Counter, Gauge, Histogram};
+use parking_lot::Once;
 use tracing::{debug_span, instrument, trace, warn};
 
 use crate::TxPoolPrewarmCacheSnapshot;
@@ -884,9 +885,9 @@ fn nonzero_storage_value(value: StorageValue) -> Option<StorageValue> {
     if value.is_zero() { None } else { Some(value) }
 }
 
-base_execution_state_api::impl_state_database!([S: base_execution_state_api::StateReadProvider] CachedStateProvider<S> where []);
+base_execution_state_types::impl_state_database!([S: base_execution_state_types::StateReadProvider] CachedStateProvider<S> where []);
 
-impl<S: base_execution_state_api::StateReadProvider> base_execution_state_api::StateReadProvider
+impl<S: base_execution_state_types::StateReadProvider> base_execution_state_types::StateReadProvider
     for CachedStateProvider<S>
 {
     fn storage(
@@ -1055,7 +1056,7 @@ impl<S: BlockHashReader> BlockHashReader for CachedStateProvider<S> {
 impl<S: HashedPostStateProvider> HashedPostStateProvider for CachedStateProvider<S> {
     fn hashed_post_state(
         &self,
-        bundle_state: &base_execution_evm_runtime::database::BundleState,
+        bundle_state: &base_execution_evm_runtime::BundleState,
     ) -> ProviderResult<HashedPostState> {
         self.state_provider.hashed_post_state(bundle_state)
     }
@@ -1402,12 +1403,9 @@ impl SavedCache {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, map::HashMap};
-    use base_execution_evm_runtime::{
-        database::{AccountStatus, BundleAccount},
-        state::AccountInfo,
-    };
-    use base_execution_state_api::StateReadProvider;
+    use base_execution_evm_runtime::{AccountInfo, AccountStatus, BundleAccount};
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_types::StateReadProvider;
 
     use super::*;
 

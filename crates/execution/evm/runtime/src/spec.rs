@@ -1,9 +1,8 @@
 //! Contains the `[BaseSpecId]` type and its implementation.
 
-use base_common_chain_config::BaseUpgrade;
-use base_common_chain_config::Upgrades;
+use base_common_chain_config::{BaseUpgrade, Upgrades};
 use base_common_types_chain::BlockHeader;
-use base_execution_evm_runtime::primitives::hardfork::SpecId;
+use base_execution_evm_runtime::hardfork::SpecId;
 
 /// EVM-facing Base spec id.
 ///

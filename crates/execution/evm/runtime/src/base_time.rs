@@ -4,10 +4,7 @@ use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::Predeploys;
 use base_execution_evm_runtime::{
-    DatabaseCommit,
-    database::Database,
-    primitives::{HashMap, U256, uint},
-    state::{Bytecode, EvmStorageSlot, TransactionId},
+    Bytecode, Database, DatabaseCommit, EvmStorageSlot, HashMap, TransactionId, U256, uint,
 };
 
 /// Read-only `BaseTime` predeploy data.
@@ -129,13 +126,13 @@ impl BaseTime {
         let code = Bytecode::new_raw(Self::implementation_bytecode());
         // Preserve the loaded pre-state before changing code: state-root hooks compare the
         // committed account with its original info to detect this deployment.
-        let mut implementation_account: base_execution_evm_runtime::state::Account =
+        let mut implementation_account: base_execution_evm_runtime::Account =
             db.basic(Self::IMPLEMENTATION_ADDRESS)?.unwrap_or_default().into();
         implementation_account.info.code_hash = code.hash_slow();
         implementation_account.info.code = Some(code);
         implementation_account.mark_touch();
 
-        let mut proxy_account: base_execution_evm_runtime::state::Account = proxy_info.into();
+        let mut proxy_account: base_execution_evm_runtime::Account = proxy_info.into();
         proxy_account.storage.insert(
             Self::IMPLEMENTATION_SLOT,
             EvmStorageSlot::new_changed(
@@ -183,12 +180,12 @@ impl BaseTime {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
     use alloy_primitives::{address, keccak256};
     use base_common_chain_config::BaseUpgrade;
-    use base_execution_evm_runtime::{database::InMemoryDB, state::AccountInfo};
-    use base_execution_evm_runtime::{database::State, state::EvmState};
-    use std::sync::{Arc, Mutex};
+    use base_execution_evm_runtime::{AccountInfo, EvmState, InMemoryDB, State};
 
     use super::*;
 

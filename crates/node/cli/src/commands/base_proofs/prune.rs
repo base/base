@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{AccessRights, Environment, EnvironmentArgs};
 use base_common_chain_config::BaseChainSpec;
 use base_execution_state_tasks::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
@@ -15,6 +14,8 @@ use base_node_service::{
 };
 use clap::Parser;
 use tracing::info;
+
+use crate::{AccessRights, Environment, EnvironmentArgs};
 
 /// Prunes the proofs storage by removing old proof history and state updates.
 #[derive(Debug, Parser)]
@@ -74,7 +75,7 @@ pub struct PruneCommand {
 
 impl PruneCommand {
     /// Execute [`PruneCommand`].
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         let Self {
             env,
             storage_path,

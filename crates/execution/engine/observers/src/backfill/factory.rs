@@ -2,8 +2,7 @@ use std::{ops::RangeInclusive, time::Duration};
 
 use alloy_primitives::BlockNumber;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_state_types::ExecutionStageThresholds;
-use base_execution_state_types::PruneModes;
+use base_execution_state_types::{ExecutionStageThresholds, PruneModes};
 
 use super::stream::DEFAULT_PARALLELISM;
 use crate::BackfillJob;

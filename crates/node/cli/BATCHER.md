@@ -2,7 +2,7 @@
 
 Arguments and startup for `base batcher`.
 
-Submits L2 batch data to the L1 DA layer. Wraps `base-batcher-service-driver` with
+Submits L2 batch data to the L1 DA layer. Wraps `base-batcher-service` with
 CLI argument parsing and signal handling.
 
 Logging and metrics use the shared `base` flags and `BASE_NODE_LOG_*` /

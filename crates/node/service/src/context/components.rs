@@ -1,9 +1,9 @@
 //! Shared components of a running Base node.
 
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool_pool::BaseTransactionPool;
+use base_execution_txpool::BaseTransactionPool;
 
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
@@ -18,7 +18,7 @@ pub struct BaseNodeContext {
     /// The network handle.
     pub network: base_execution_network_service::NetworkHandle,
     /// The payload service handle.
-    pub payload_builder_handle: base_execution_payload_builder::PayloadBuilderHandle,
+    pub payload_builder_handle: base_execution_payload::PayloadBuilderHandle,
     /// The task executor for the node.
     pub task_executor: TaskExecutor,
     /// The provider of the node.
@@ -47,7 +47,7 @@ impl BaseNodeContext {
     }
 
     /// Returns the payload service handle.
-    pub fn payload_builder_handle(&self) -> &base_execution_payload_builder::PayloadBuilderHandle {
+    pub fn payload_builder_handle(&self) -> &base_execution_payload::PayloadBuilderHandle {
         &self.payload_builder_handle
     }
 

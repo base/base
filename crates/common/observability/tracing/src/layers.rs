@@ -4,15 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[cfg(feature = "otlp")]
-use crate::{OtlpConfig, span_layer};
-#[cfg(feature = "otlp-logs")]
-use crate::{OtlpLogsConfig, log_layer};
 use rolling_file::{RollingConditionBasic, RollingFileAppender};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, Layer, Registry, filter::Directive, reload};
 
 use crate::{LayerInfo, LogFilterReloadHandle, formatter::LogFormat};
+#[cfg(feature = "otlp")]
+use crate::{OtlpConfig, span_layer};
+#[cfg(feature = "otlp-logs")]
+use crate::{OtlpLogsConfig, log_layer};
 
 /// A worker guard returned by the file layer.
 ///
@@ -217,42 +217,6 @@ impl Layers {
             &config.filters,
         )?));
         Ok(guard)
-    }
-
-    #[cfg(feature = "tracy")]
-    pub(crate) fn tracy(&mut self, config: LayerInfo) -> eyre::Result<()> {
-        // Newtype wrapper around `DefaultFields` so that `FormattedFields<TracyFields>` uses a
-        // distinct extension key from the fmt layer's `FormattedFields<DefaultFields>`. Without
-        // this, when both layers are active the fmt layer may insert ANSI-colored fields first,
-        // and the Tracy layer reuses them — leaking escape codes into Tracy zone text.
-        struct TracyFields(tracing_subscriber::fmt::format::DefaultFields);
-        impl<'writer> tracing_subscriber::fmt::FormatFields<'writer> for TracyFields {
-            fn format_fields<R: tracing_subscriber::field::RecordFields>(
-                &self,
-                writer: tracing_subscriber::fmt::format::Writer<'writer>,
-                fields: R,
-            ) -> core::fmt::Result {
-                self.0.format_fields(writer, fields)
-            }
-        }
-
-        struct Config(TracyFields);
-        impl tracing_tracy::Config for Config {
-            type Formatter = TracyFields;
-            fn formatter(&self) -> &Self::Formatter {
-                &self.0
-            }
-            fn format_fields_in_zone_name(&self) -> bool {
-                false
-            }
-        }
-
-        self.add_layer(
-            tracing_tracy::TracyLayer::new(Config(TracyFields(Default::default()))).with_filter(
-                build_env_filter(Some(config.default_directive.parse()?), &config.filters)?,
-            ),
-        );
-        Ok(())
     }
 
     /// Add OTLP spans layer to the layer collection

@@ -15,6 +15,6 @@ eif*.bin
 /etc/scripts/local/__pycache__/
 /.tmp/
 
-crates/testing/load/service/examples/*.yaml
+crates/testing/load/examples/*.yaml
 
 /profiling-results/

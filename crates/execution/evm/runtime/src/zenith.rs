@@ -1,8 +1,8 @@
 use alloy_primitives::{Address, Bytes};
 use base_common_chain_config::Upgrades;
-use base_execution_evm_precompiles::NonceManagerStorage;
-use base_execution_evm_runtime::Database;
-use base_execution_evm_runtime::{DatabaseCommit, primitives::HashMap, state::Bytecode};
+use base_execution_evm_runtime::{
+    Bytecode, Database, DatabaseCommit, HashMap, NonceManagerStorage,
+};
 
 /// Single-byte code stub planted on otherwise code-less EIP-8130 system accounts.
 ///
@@ -66,7 +66,7 @@ where
         }
 
         // Preserve the code-less pre-state for incremental state-root hooks.
-        let mut revm_acc: base_execution_evm_runtime::state::Account = acc_info.into();
+        let mut revm_acc: base_execution_evm_runtime::Account = acc_info.into();
         revm_acc.info.code_hash = stub_hash;
         revm_acc.info.code = Some(stub.clone());
         revm_acc.mark_touch();
@@ -83,7 +83,7 @@ where
 #[cfg(test)]
 mod tests {
     use base_common_chain_config::{BaseUpgrade, RollupConfig};
-    use base_execution_evm_runtime::{database::InMemoryDB, state::AccountInfo};
+    use base_execution_evm_runtime::{AccountInfo, InMemoryDB};
 
     use super::*;
 

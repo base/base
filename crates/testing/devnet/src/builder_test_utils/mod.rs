@@ -4,8 +4,9 @@ mod apis;
 mod driver;
 mod external;
 mod external_engine;
-pub use crate::test_utils::EngineApi;
 pub use external_engine::ExternalEngineApi;
+
+pub use crate::test_utils::EngineApi;
 mod instance;
 mod txs;
 mod utils;
@@ -13,17 +14,14 @@ mod utils;
 use alloy_primitives::B256;
 pub use apis::*;
 use base_common_client_ethereum::{PrivateKeySigner, TxSignerSync};
-use base_common_types_chain::Recovered;
-use base_common_types_chain::{BaseTransactionSigned, BaseTypedTransaction};
-use base_node_service::NodeConfig;
+use base_common_types_chain::{BaseTransactionSigned, BaseTypedTransaction, Recovered};
+use base_node_service::{BuilderConfig, NodeConfig};
 pub use driver::*;
 pub use external::*;
 pub use instance::*;
 use k256::sha2::{Digest, Sha256};
 pub use txs::*;
 pub use utils::*;
-
-use base_node_service::BuilderConfig;
 
 /// Signs a Base transaction and returns the recovered signed transaction.
 pub fn sign_base_tx(

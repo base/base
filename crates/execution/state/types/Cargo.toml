@@ -16,67 +16,144 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-thiserror = {workspace = true}
-alloy-eips = {workspace = true}
+thiserror = { workspace = true }
 fixed-map = { workspace = true }
-bytes = {workspace = true, optional = true}
-base-common-types-chain = {features = ["k256"], workspace = true}
+auto_impl = { workspace = true }
+alloy-eips = { workspace = true }
+bytes = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
+base-common-chain-config = { workspace = true }
 arrayvec = { workspace = true, optional = true }
-base-execution-state-memory = {workspace = true}
-strum = {workspace = true, features = ["derive"]}
+base-execution-evm-runtime = { workspace = true }
 nybbles = { workspace = true, features = ["rlp"] }
+strum = { workspace = true, features = ["derive"] }
 alloy-serde = { workspace = true, optional = true }
-derive_more = {features = ["full"], workspace = true}
-modular-bitfield = {workspace = true, optional = true}
-tracing = {workspace = true,  features = ["attributes"]}
+derive_more = { features = ["full"], workspace = true }
+alloy-hardforks = { workspace = true, optional = true }
+modular-bitfield = { workspace = true, optional = true }
+alloy-eip7928 = { workspace = true, features = ["rlp"] }
+tracing = { workspace = true, features = ["attributes"] }
 alloy-trie = { workspace = true, features = ["ethereum"] }
 itertools = { workspace = true, features = ["use_alloc"] }
-serde = {features = ["alloc", "derive"],  workspace = true}
+base-common-runtime = { workspace = true, optional = true }
+serde = { features = ["alloc", "derive"], workspace = true }
 base-common-types-rpc = { workspace = true, optional = true }
-alloy-primitives = {features = ["map-foldhash"], workspace = true}
-alloy-rlp = {features = ["arrayvec", "core-net"],  workspace = true}
-arbitrary = {features = ["derive"], optional = true, workspace = true}
+base-common-types-chain = { features = ["k256"], workspace = true }
+alloy-primitives = { features = ["map-foldhash"], workspace = true }
+alloy-rlp = { features = ["arrayvec", "core-net"], workspace = true }
 hash-db = { workspace = true, optional = true, features = ["default"] }
-serde_with = {features = ["macros"], optional = true, workspace = true}
+arbitrary = { features = ["derive"], optional = true, workspace = true }
+serde_json = { workspace = true, features = ["alloc"], optional = true }
+serde_with = { features = ["macros"], optional = true, workspace = true }
 plain_hasher = { workspace = true, optional = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive"], optional = true }
 
 [dev-dependencies]
-bytes = {workspace = true}
-serde = {workspace = true}
+bytes = { workspace = true }
+serde = { workspace = true }
+mockall = { workspace = true }
 arrayvec = { workspace = true }
-bincode_1_3_3 = {workspace = true}
+bincode_1_3_3 = { workspace = true }
 alloy-genesis = { workspace = true }
 assert_matches = { workspace = true }
 modular-bitfield = { workspace = true }
-proptest-arbitrary-interop = {workspace = true}
-rand = {features = ["default"], workspace = true}
+proptest-arbitrary-interop = { workspace = true }
+rand = { features = ["default"], workspace = true }
 insta = { workspace = true, features = ["default"] }
-arbitrary = {features = ["derive"], workspace = true}
-proptest = {features = ["default"], workspace = true}
-serde_json = {features = ["alloc"], workspace = true}
 hash-db = { workspace = true, features = ["default"] }
+arbitrary = { features = ["derive"], workspace = true }
+proptest = { features = ["default"], workspace = true }
+serde_json = { features = ["alloc"], workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 serde_with = { workspace = true, features = ["macros"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
 plain_hasher = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true, features = [] }
 alloy-trie = { workspace = true, features = ["arbitrary", "serde"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
-base-common-types-chain = {workspace = true, features = ["arbitrary", "k256", "reth-codec", "serde", "test-utils"]}
-alloy-primitives = {features = ["arbitrary", "getrandom", "map-foldhash", "rand", "serde"], workspace = true}
-base-execution-state-memory = {workspace = true, features = ["arbitrary", "reth-codec", "serde", "test-utils"]}
+alloy-primitives = { features = ["arbitrary", "getrandom", "map-foldhash", "rand", "serde"], workspace = true }
+base-execution-evm-runtime = { workspace = true, features = ["arbitrary", "reth-codec", "serde", "test-utils"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "reth-codec", "serde", "test-utils"] }
 
 [features]
 default = ["std"]
-std = ["base-common-types-chain/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-rpc?/std", "alloy-serde?/std", "alloy-trie/std", "arrayvec?/std", "bytes?/std", "derive_more/std", "nybbles/std", "base-common-types-chain/std", "serde/std", "serde_with?/std", "serde_json/std", "base-execution-state-memory/std", "alloy-eips/std", "thiserror/std", "strum/std", "tracing/std", "fixed-map/std"]
+std = [
+    "base-common-types-chain/std",
+    "alloy-genesis/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "base-common-types-rpc?/std",
+    "alloy-serde/std",
+    "alloy-trie/std",
+    "arrayvec?/std",
+    "bytes?/std",
+    "derive_more/std",
+    "nybbles/std",
+    "serde/std",
+    "serde_with?/std",
+    "serde_json/std",
+    "base-execution-evm-runtime/std",
+    "alloy-eips/std",
+    "thiserror/std",
+    "strum/std",
+    "tracing/std",
+    "fixed-map/std",
+    "serde_json?/std",
+    "dep:base-common-runtime",
+    "alloy-eip7928/std",
+]
 eip1186 = ["base-common-types-rpc/serde", "dep:alloy-serde"]
-serde = ["arrayvec?/serde", "bytes?/serde", "nybbles/serde", "alloy-primitives/serde", "base-common-types-chain/serde", "alloy-trie/serde", "base-common-types-rpc?/serde", "base-common-types-chain/serde", "base-execution-state-memory/serde", "alloy-eips/serde", "rand/serde"]
-reth-codec = ["dep:bytes", "dep:arrayvec", "dep:modular-bitfield", "base-common-types-chain/reth-codec", "base-execution-state-memory/reth-codec"]
-serde-bincode-compat = ["serde", "base-common-types-chain/serde-bincode-compat", "dep:serde_with", "alloy-genesis/serde-bincode-compat", "base-common-types-rpc?/serde-bincode-compat", "alloy-eips/serde-bincode-compat"]
-test-utils = ["dep:plain_hasher", "dep:hash-db", "arbitrary", "base-common-types-chain/test-utils", "base-common-types-chain/test-utils", "std", "dep:arbitrary", "base-execution-state-memory/test-utils"]
-arbitrary = ["std", "alloy-trie/arbitrary", "dep:arbitrary", "alloy-serde?/arbitrary", "base-common-types-chain/arbitrary", "base-common-types-chain/arbitrary", "alloy-primitives/arbitrary", "nybbles/arbitrary", "base-common-types-rpc?/arbitrary", "alloy-eips/arbitrary", "base-execution-state-memory/arbitrary"]
+serde = [
+    "arrayvec?/serde",
+    "bytes?/serde",
+    "nybbles/serde",
+    "alloy-primitives/serde",
+    "base-common-types-chain/serde",
+    "alloy-trie/serde",
+    "base-common-types-rpc?/serde",
+    "base-execution-evm-runtime/serde",
+    "alloy-eips/serde",
+    "rand/serde",
+    "alloy-eip7928/serde",
+]
+reth-codec = [
+    "dep:bytes",
+    "dep:arrayvec",
+    "dep:modular-bitfield",
+    "base-common-types-chain/reth-codec",
+    "base-execution-evm-runtime/reth-codec",
+]
+serde-bincode-compat = [
+    "serde",
+    "base-common-types-chain/serde-bincode-compat",
+    "dep:serde_with",
+    "alloy-genesis/serde-bincode-compat",
+    "base-common-types-rpc?/serde-bincode-compat",
+    "alloy-eips/serde-bincode-compat",
+]
+test-utils = [
+    "dep:plain_hasher",
+    "dep:hash-db",
+    "arbitrary",
+    "base-common-types-chain/test-utils",
+    "std",
+    "dep:arbitrary",
+    "base-execution-evm-runtime/test-utils",
+]
+arbitrary = [
+    "std",
+    "alloy-trie/arbitrary",
+    "dep:arbitrary",
+    "alloy-serde/arbitrary",
+    "base-common-types-chain/arbitrary",
+    "alloy-primitives/arbitrary",
+    "nybbles/arbitrary",
+    "base-common-types-rpc?/arbitrary",
+    "alloy-eips/arbitrary",
+    "base-execution-evm-runtime/arbitrary",
+]
 rayon = ["dep:rayon"]
-partial-persistence = []
 clap = ["dep:clap"]
+db-api = ["dep:alloy-hardforks", "dep:serde_json"]

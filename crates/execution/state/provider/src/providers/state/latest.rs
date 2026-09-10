@@ -1,10 +1,6 @@
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, StorageKey, StorageValue};
-use base_execution_state_api::{
-    BytecodeReader, DBProvider, StateProofProvider, StorageRootProvider, StorageSettingsCache,
-};
-use base_execution_state_database::{DbDupCursorRO, DbTx, tables};
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::{ProviderError, ProviderResult};
+use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_state_database::{DBProvider, DbDupCursorRO, DbTx, tables};
 use base_execution_state_trie::{
     AccountProof, DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
     ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StateRoot,
@@ -14,6 +10,10 @@ use base_execution_state_trie::{
     trie_cursor::InMemoryTrieCursorFactory,
     updates::TrieUpdates,
     witness::TrieWitness,
+};
+use base_execution_state_types::{
+    BytecodeReader, ProviderError, ProviderResult, StateProofProvider, StorageRootProvider,
+    StorageSettingsCache,
 };
 
 use crate::{AccountReader, BlockHashReader, HashedPostStateProvider, StateRootProvider};
@@ -266,7 +266,7 @@ impl<Provider: DBProvider + StorageSettingsCache> StateProofProvider
 impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_, Provider> {
     fn hashed_post_state(
         &self,
-        bundle_state: &base_execution_evm_runtime::database::BundleState,
+        bundle_state: &base_execution_evm_runtime::BundleState,
     ) -> ProviderResult<HashedPostState> {
         let mut hashed_state = HashedPostState::from_bundle_state(bundle_state.state());
         zero_destroyed_account_storage(
@@ -278,10 +278,10 @@ impl<Provider: DBProvider> HashedPostStateProvider for LatestStateProviderRef<'_
     }
 }
 
-base_execution_state_api::impl_state_database!(['__state, Provider: DBProvider + BlockHashReader + StorageSettingsCache] LatestStateProviderRef<'__state, Provider> where []);
+base_execution_state_types::impl_state_database!(['__state, Provider: DBProvider + BlockHashReader + StorageSettingsCache] LatestStateProviderRef<'__state, Provider> where []);
 
 impl<Provider: DBProvider + BlockHashReader + StorageSettingsCache>
-    base_execution_state_api::StateReadProvider for LatestStateProviderRef<'_, Provider>
+    base_execution_state_types::StateReadProvider for LatestStateProviderRef<'_, Provider>
 {
     /// Get storage by plain (unhashed) storage key slot.
     fn storage(
@@ -323,19 +323,18 @@ impl<Provider: DBProvider> LatestStateProvider<Provider> {
 }
 
 // Delegates all provider impls to [LatestStateProviderRef]
-base_execution_state_api::delegate_provider_impls!(LatestStateProvider<Provider> where [Provider: DBProvider + BlockHashReader + StorageSettingsCache]);
+base_execution_state_types::delegate_provider_impls!(LatestStateProvider<Provider> where [Provider: DBProvider + BlockHashReader + StorageSettingsCache]);
 
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, address, b256, keccak256};
-    use base_execution_state_api::{StateReadProvider, StorageSettingsCache};
     use base_execution_state_database::{DbTx, DbTxMut, models::StorageSettings, tables};
-    use base_execution_state_types::StorageEntry;
+    use base_execution_state_types::{StateReadProvider, StorageEntry, StorageSettingsCache};
 
     use super::*;
     use crate::test_utils::create_test_provider_factory;
 
-    const fn assert_state_provider<T: base_execution_state_api::StateProvider>() {}
+    const fn assert_state_provider<T: base_execution_state_types::StateProvider>() {}
     #[expect(dead_code)]
     const fn assert_latest_state_provider<
         T: DBProvider + BlockHashReader + StorageSettingsCache,

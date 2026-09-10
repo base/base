@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
-use crate::{ShadowDbConfig, ShadowRetentionRepo};
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
+
+use crate::{ShadowDbConfig, ShadowRetentionRepo};
 
 /// Sweeps run one statement at a time, so a single connection is enough.
 const RETENTION_MAX_CONNECTIONS: u32 = 1;

@@ -10,7 +10,7 @@
 //! [`ActionEngineClient`]: base_testing_devnet::ActionEngineClient
 //! [`TestGossipTransport`]: base_testing_devnet::TestGossipTransport
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,

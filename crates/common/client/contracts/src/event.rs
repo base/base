@@ -3,8 +3,7 @@ use std::{fmt, marker::PhantomData};
 use alloy_primitives::{Address, B256, LogData};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
-use base_common_client_ethereum::Ethereum;
-use base_common_client_ethereum::{FilterPollerBuilder, Network, Provider};
+use base_common_client_ethereum::{Ethereum, FilterPollerBuilder, Network, Provider};
 use base_common_types_rpc::{
     BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray,
 };
@@ -529,7 +528,7 @@ mod tests {
     async fn event_filters() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let anvil = base_common_process_nodes::Anvil::new().spawn();
+        let anvil = base_common_process::Anvil::new().spawn();
 
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
@@ -638,7 +637,7 @@ mod tests {
     async fn event_builder_filters() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let anvil = base_common_process_nodes::Anvil::new().spawn();
+        let anvil = base_common_process::Anvil::new().spawn();
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(pk);
@@ -749,7 +748,7 @@ mod tests {
 
         let _ = tracing_subscriber::fmt::try_init();
 
-        let anvil = base_common_process_nodes::Anvil::new().spawn();
+        let anvil = base_common_process::Anvil::new().spawn();
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let provider = base_common_client_ethereum::ProviderBuilder::new()

@@ -1,7 +1,7 @@
 //! Shared test environment for Base Azul action tests.
 
 use alloy_primitives::{Address, Bytes, TxKind, U256};
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,

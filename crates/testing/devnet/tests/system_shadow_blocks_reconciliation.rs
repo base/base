@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use alloy_primitives::{Address, Signature};
 use anyhow::Result;
-use base_common_types_chain::RecoveredBlock;
 use base_common_types_chain::{
-    BaseTxEnvelope, Block, BlockBody, Header, SignableTransaction, TxDeposit, TxEip1559,
+    BaseTxEnvelope, Block, BlockBody, Header, RecoveredBlock, SignableTransaction, TxDeposit,
+    TxEip1559,
 };
 use base_execution_state_indexer::{
     PgConnectionParams, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowCanonicalRef,

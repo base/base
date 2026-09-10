@@ -10,9 +10,8 @@ use alloy_primitives::TxHash;
 use base_node_service::BuilderConfig;
 #[cfg(target_os = "linux")]
 use base_testing_devnet::builder_test_utils::ExternalNode;
-use base_testing_devnet::{
-    builder_test_utils::TransactionBuilderExt, builder_test_utils::setup_test_instance,
-    builder_test_utils::setup_test_instance_with_builder_config,
+use base_testing_devnet::builder_test_utils::{
+    TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
 };
 use tokio::{join, task::yield_now};
 use tracing::info;

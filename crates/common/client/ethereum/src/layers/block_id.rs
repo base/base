@@ -1,6 +1,5 @@
 use std::marker::PhantomData;
 
-use crate::Network;
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, Bytes, StorageKey, StorageValue, U64, U256};
 use base_common_types_rpc::{
@@ -8,7 +7,7 @@ use base_common_types_rpc::{
     simulate::{SimulatePayload, SimulatedBlock},
 };
 
-use crate::{EthCall, Provider, ProviderLayer, RootProvider, RpcWithBlock};
+use crate::{EthCall, Network, Provider, ProviderLayer, RootProvider, RpcWithBlock};
 
 /// A layer that sets a default [`BlockId`] for RPC methods that support block parameters.
 ///

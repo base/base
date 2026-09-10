@@ -1,5 +1,4 @@
 //! This module extends the Ethereum JSON-RPC provider with the Debug namespace's RPC methods.
-use crate::{Ethereum, Network};
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{B256, Bytes, TxHash, hex};
 use alloy_rpc_types_debug::ExecutionWitness;
@@ -10,7 +9,7 @@ use base_common_types_rpc::{
     GethTraceResult as TraceResult, PreStateFrame, StateContext,
 };
 
-use crate::Provider;
+use crate::{Ethereum, Network, Provider};
 
 /// Debug namespace rpc interface that gives access to several non-standard RPC methods.
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
@@ -610,13 +609,12 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::TransactionBuilder;
-    use base_common_process_nodes::{Geth, Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
+    use base_common_process::{Geth, Reth, utils::run_with_tempdir};
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;
-    use crate::{ProviderBuilder, WalletProvider, ext::test::async_ci_only};
+    use crate::{ProviderBuilder, TransactionBuilder, WalletProvider, ext::test::async_ci_only};
 
     #[tokio::test]
     async fn test_debug_trace_transaction() {

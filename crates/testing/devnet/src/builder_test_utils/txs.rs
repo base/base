@@ -3,11 +3,9 @@ use std::{collections::VecDeque, sync::Arc};
 
 use alloy_eips::{BlockNumberOrTag, eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256, hex};
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{PendingTransactionBuilder, Provider, RootProvider};
-use base_common_types_chain::Recovered;
-use base_common_types_chain::{BaseTxEnvelope, BaseTypedTransaction, TxEip1559};
-use base_execution_txpool_pool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
+use base_common_client_ethereum::{Base, PendingTransactionBuilder, Provider, RootProvider};
+use base_common_types_chain::{BaseTxEnvelope, BaseTypedTransaction, Recovered, TxEip1559};
+use base_execution_txpool::{AllTransactionsEvents, FullTransactionEvent, TransactionEvent};
 use dashmap::DashMap;
 use futures::StreamExt;
 use tokio::sync::watch;

@@ -3,7 +3,8 @@
 use std::{fmt, str::FromStr, time::Duration};
 
 use base_execution_state_database::{
-    ClientVersion, mdbx::MaxReadTransactionDuration, mdbx::SyncMode,
+    ClientVersion,
+    mdbx::{MaxReadTransactionDuration, SyncMode},
 };
 use base_execution_state_types::LogLevel;
 use clap::{
@@ -226,9 +227,7 @@ fn parse_byte_size(s: &str) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_state_database::{
-        mdbx::GIGABYTE, mdbx::KILOBYTE, mdbx::MEGABYTE, mdbx::TERABYTE,
-    };
+    use base_execution_state_database::mdbx::{GIGABYTE, KILOBYTE, MEGABYTE, TERABYTE};
     use clap::Parser;
 
     use super::*;

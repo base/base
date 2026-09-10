@@ -1,0 +1,37 @@
+[package]
+name = "base-common-codec"
+description = "Derive macro for the Compact codec."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[lib]
+name = "base_common_codec"
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true, features = ["default"] }
+quote = { workspace = true, features = ["default"] }
+proc-macro2 = { workspace = true, features = ["default"] }
+
+[dev-dependencies]
+similar-asserts = { workspace = true, features = ["default", "serde"] }
+syn = { workspace = true, features = ["default", "full", "extra-traits"] }
+
+[lints]
+workspace = true

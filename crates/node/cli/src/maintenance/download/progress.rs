@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use base_common_cli_support::CancellationToken;
+use base_common_cli::CancellationToken;
 use eyre::Result;
 use tracing::info;
 

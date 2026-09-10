@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use alloy_eips::{eip4844::Blob, eip7594::BlobTransactionSidecarVariant};
 use alloy_primitives::{Address, B256, TxKind};
 use alloy_signer::SignerSync;
-use base_batcher_service_driver::L1HeadEvent;
+use base_batcher_service::L1HeadEvent;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_common_l1_transactions::{
+use base_common_l1::{
     BlobTxBuilder, SendHandle, SendResponse, TxCandidate, TxManager, TxManagerError,
     TxManagerResult,
 };
@@ -62,15 +62,15 @@ pub struct Inner {
     /// by a stuck transaction. The [`BatchDriver`] classifies this as
     /// [`TxOutcome::TxpoolBlocked`] and must clear it via [`cancel_tx`].
     ///
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
-    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service::TxOutcome::TxpoolBlocked
+    /// [`cancel_tx`]: base_common_l1::TxManager::cancel_tx
     blocked_remaining: usize,
     /// Number of times [`cancel_tx`] has been invoked by the driver's txpool
     /// recovery path. Tests assert on this to prove the blockage was cleared
     /// through the production recovery flow rather than by chance.
     ///
-    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+    /// [`cancel_tx`]: base_common_l1::TxManager::cancel_tx
     cancellations: usize,
 }
 
@@ -92,8 +92,8 @@ pub struct Inner {
 /// [`send_async`]: L1MinerTxManager::send_async
 /// [`mine_block`]: L1MinerTxManager::mine_block
 /// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
-/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
+/// [`BatchDriver`]: base_batcher_service::BatchDriver
+/// [`ChannelL1HeadSource`]: base_batcher_service::ChannelL1HeadSource
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
     inner: Arc<Mutex<Inner>>,
@@ -105,7 +105,7 @@ pub struct L1MinerTxManager {
     /// can advance the driver's L1 head.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
+    /// [`ChannelL1HeadSource`]: base_batcher_service::ChannelL1HeadSource
     l1_head_tx: Option<mpsc::UnboundedSender<L1HeadEvent>>,
 }
 
@@ -129,8 +129,8 @@ impl L1MinerTxManager {
     /// its pipeline's L1 head accordingly.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
+    /// [`ChannelL1HeadSource`]: base_batcher_service::ChannelL1HeadSource
     pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<L1HeadEvent>) -> Self {
         self.l1_head_tx = Some(tx);
         self
@@ -155,7 +155,7 @@ impl L1MinerTxManager {
     /// carry the same or different frames.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
     pub fn fail_next_n(&self, n: usize) {
         self.inner.lock().unwrap().fail_remaining += n;
     }
@@ -171,9 +171,9 @@ impl L1MinerTxManager {
     /// `n = 2` blocks the next two separate `send_async` calls.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
-    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service::TxOutcome::TxpoolBlocked
+    /// [`cancel_tx`]: base_common_l1::TxManager::cancel_tx
     pub fn block_next_n(&self, n: usize) {
         self.inner.lock().unwrap().blocked_remaining += n;
     }
@@ -181,7 +181,7 @@ impl L1MinerTxManager {
     /// Returns how many times the driver has called [`cancel_tx`] to recover
     /// from a txpool blockage.
     ///
-    /// [`cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+    /// [`cancel_tx`]: base_common_l1::TxManager::cancel_tx
     pub fn cancellation_count(&self) -> usize {
         self.inner.lock().unwrap().cancellations
     }
@@ -222,7 +222,7 @@ impl L1MinerTxManager {
     /// production transaction manager's receipt polling: RPC submission can succeed
     /// before the transaction is included by L1.
     ///
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
     pub fn confirm_block(&self, block: &L1Block) {
         let responses = {
             let mut inner = self.inner.lock().unwrap();
@@ -281,8 +281,8 @@ impl L1MinerTxManager {
     /// yield has let the driver drain `in_flight`) to avoid leaving the
     /// driver in an inconsistent state.
     ///
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`SendHandle`]: base_common_l1_transactions::SendHandle
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
+    /// [`SendHandle`]: base_common_l1::SendHandle
     /// [`confirm_block`]: L1MinerTxManager::confirm_block
     pub fn reorg_to(&self, block_number: u64, l1: &mut L1Miner) {
         l1.reorg_to(block_number).expect("reorg_to should not fail");
@@ -320,7 +320,7 @@ impl L1MinerTxManager {
     /// `in_flight.next().await`.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`InMemoryBlockSource::next`]: base_batcher_service_driver::test_utils::InMemoryBlockSource
+    /// [`InMemoryBlockSource::next`]: base_batcher_service::test_utils::InMemoryBlockSource
     pub fn mine_block(&self, l1: &mut L1Miner) -> u64 {
         self.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();
@@ -457,7 +457,7 @@ impl TxManager for L1MinerTxManager {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256};
     use base_common_client_ethereum::PrivateKeySigner;
-    use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
+    use base_common_l1::{TxCandidate, TxManager, TxManagerError};
 
     use super::L1MinerTxManager;
     use crate::action_fixtures::L1Miner;

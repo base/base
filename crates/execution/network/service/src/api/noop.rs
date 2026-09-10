@@ -6,24 +6,24 @@
 use std::net::{IpAddr, SocketAddr};
 
 use alloy_rpc_types_admin::EthProtocolInfo;
-use base_common_runtime_tasks::{EventSender, EventStream};
-use base_execution_network_types::NodeRecord;
-use base_execution_network_types::PeerKind;
-use base_execution_network_types::Reputation;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::ProtocolVersion;
+use base_common_runtime::{EventSender, EventStream};
+use base_execution_network_wire::{
+    DisconnectReason, NetworkSyncUpdater, NodeRecord, PeerKind, ProtocolVersion, Reputation,
+    ReputationChangeKind,
+};
 use enr::{Enr, secp256k1::SecretKey};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use {crate::NoopFullBlockClient, base_execution_network_wire::NetworkSyncUpdater};
 
-use crate::api::{
-    BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
-    NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerId, PeerInfo, PeerRequest, Peers,
-    PeersInfo,
-    events::{NetworkPeersEvents, PeerEventStream},
-    peers_handle::{PeersHandle, PeersHandleProvider},
+use crate::{
+    NoopFullBlockClient,
+    api::{
+        BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
+        NetworkEventListenerProvider, NetworkInfo, NetworkStatus, PeerId, PeerInfo, PeerRequest,
+        Peers, PeersInfo,
+        events::{NetworkPeersEvents, PeerEventStream},
+        peers_handle::{PeersHandle, PeersHandleProvider},
+    },
 };
 
 /// A type that implements all network trait that does nothing.

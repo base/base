@@ -1,6 +1,6 @@
 //! Noop impls for testing.
 
-use base_execution_state_api::NoopProvider;
+use base_execution_state_database::NoopProvider;
 use tokio::sync::{broadcast, watch};
 
 use crate::canonical_state::{

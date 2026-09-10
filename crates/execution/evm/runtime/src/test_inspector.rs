@@ -4,12 +4,10 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec::Vec};
 
-use base_execution_evm_machine::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+use base_execution_evm_runtime::{
+    Address, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Inspector, Interpreter, Log,
+    U256,
 };
-use base_execution_evm_primitives::{Address, Log, U256};
-
-use crate::Inspector;
 
 /// Interpreter state at a specific point in execution.
 #[derive(Debug, Clone)]
@@ -107,12 +105,12 @@ impl<CTX> Inspector<CTX> for TestInspector {
 
         let state = Self::capture_interpreter_state(interp);
         let opcode = interp.bytecode.opcode();
-        let opcode_name =
-            if let Some(op) = base_execution_state_memory::bytecode::opcode::OpCode::new(opcode) {
-                format!("{op}")
-            } else {
-                format!("Unknown(0x{opcode:02x})")
-            };
+        let opcode_name = if let Some(op) = base_execution_evm_runtime::opcode::OpCode::new(opcode)
+        {
+            format!("{op}")
+        } else {
+            format!("Unknown(0x{opcode:02x})")
+        };
 
         self.events.push(InspectorEvent::Step(StepRecord {
             before: state,
@@ -177,8 +175,7 @@ impl<CTX> Inspector<CTX> for TestInspector {
 pub mod default_tests {
     use alloc::{string::ToString, vec, vec::Vec};
 
-    use base_execution_evm_primitives::Bytes;
-    use base_execution_state_memory::bytecode::opcode;
+    use base_execution_evm_runtime::{Bytes, opcode};
 
     use super::*;
 
@@ -256,18 +253,13 @@ pub mod default_tests {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
-    use base_execution_evm_primitives::{
-        Address, B256, Bytes, TxKind, U256, address,
+    use base_execution_evm_runtime::{
+        AccountInfo, Address, B256, BENCH_CALLER, BENCH_TARGET, BenchmarkDB, Bytecode, Bytes,
+        CfgEnv, ExecuteEvm, InspectCommitEvm, InspectEvm, InspectSystemCallEvm, InspectorEvent,
+        MainBuilder, MainContext, TestInspector, TxEnv, TxKind, U256, address,
         eip7708::{ETH_TRANSFER_LOG_ADDRESS, ETH_TRANSFER_LOG_TOPIC},
         hardfork::SpecId,
-    };
-    use base_execution_evm_runtime::{ExecuteEvm, MainBuilder, MainContext};
-    use base_execution_state_memory::{AccountInfo, Bytecode, bytecode::opcode};
-    use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-
-    use crate::{
-        InspectCommitEvm, InspectEvm, InspectSystemCallEvm, InspectorEvent, TestInspector,
+        opcode,
     };
 
     #[test]
@@ -287,7 +279,8 @@ mod tests {
         ]);
 
         let bytecode = Bytecode::new_raw(code);
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -353,7 +346,8 @@ mod tests {
         ]);
 
         let bytecode = Bytecode::new_raw(code);
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -445,7 +439,7 @@ mod tests {
         ]);
 
         // Create a custom database with two contracts
-        let mut db = base_execution_state_memory::InMemoryDB::default();
+        let mut db = base_execution_evm_runtime::InMemoryDB::default();
 
         // Add caller contract at BENCH_TARGET
         db.insert_account_info(
@@ -453,7 +447,7 @@ mod tests {
             AccountInfo {
                 balance: U256::from(1_000_000_000_000_000_000u64),
                 nonce: 0,
-                code_hash: base_execution_evm_primitives::keccak256(&caller_code),
+                code_hash: base_execution_evm_runtime::keccak256(&caller_code),
                 code: Some(Bytecode::new_raw(caller_code)),
                 ..Default::default()
             },
@@ -469,13 +463,13 @@ mod tests {
             AccountInfo {
                 balance: U256::ZERO,
                 nonce: 0,
-                code_hash: base_execution_evm_primitives::keccak256(&callee_code),
+                code_hash: base_execution_evm_runtime::keccak256(&callee_code),
                 code: Some(Bytecode::new_raw(callee_code)),
                 ..Default::default()
             },
         );
 
-        let ctx = Context::mainnet().with_db(db);
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet().with_db(db);
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -551,7 +545,8 @@ mod tests {
         full_code.extend_from_slice(&init_code);
 
         let bytecode = Bytecode::new_raw(Bytes::from(full_code));
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -604,7 +599,8 @@ mod tests {
         ];
 
         let bytecode = Bytecode::new_raw(Bytes::from(code));
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -638,7 +634,7 @@ mod tests {
         let recipient = address!("4000000000000000000000000000000000000000");
         let value = U256::from(1_000_000_000_000_000u128);
 
-        let ctx = Context::mainnet()
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_cfg(CfgEnv::new_with_spec(SpecId::AMSTERDAM))
             .with_db(BenchmarkDB::new_bytecode(Bytecode::new()));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
@@ -677,7 +673,7 @@ mod tests {
     #[test]
     fn test_eip7708_selfdestruct_transfer_log_is_inspected() {
         let code = Bytes::from(vec![opcode::CALLER, opcode::SELFDESTRUCT, opcode::STOP]);
-        let ctx = Context::mainnet()
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_cfg(CfgEnv::new_with_spec(SpecId::AMSTERDAM))
             .with_db(BenchmarkDB::new_bytecode(Bytecode::new_legacy(code)));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
@@ -715,7 +711,8 @@ mod tests {
         code.push(opcode::SELFDESTRUCT);
 
         let bytecode = Bytecode::new_raw(Bytes::from(code));
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -751,7 +748,7 @@ mod tests {
     #[test]
     fn cancun_selfdestruct_to_self_does_not_reuse_prior_journal_entry() {
         let code = Bytes::from(vec![opcode::ADDRESS, opcode::SELFDESTRUCT]);
-        let ctx = Context::mainnet()
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_cfg(CfgEnv::new_with_spec(SpecId::CANCUN))
             .with_db(BenchmarkDB::new_bytecode(Bytecode::new_legacy(code)));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
@@ -826,7 +823,8 @@ mod tests {
         ];
 
         let bytecode = Bytecode::new_raw(Bytes::from(code));
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Run transaction
@@ -882,7 +880,8 @@ mod tests {
         ]);
 
         let bytecode = Bytecode::new_raw(code);
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         let result = evm.inspect_system_call(BENCH_TARGET, Bytes::default()).unwrap();
@@ -907,7 +906,8 @@ mod tests {
         ];
 
         let bytecode = Bytecode::new_raw(Bytes::from(code));
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Test inspect_one_system_call
@@ -951,9 +951,7 @@ mod tests {
     /// is non-zero and triggers the divergence.
     #[test]
     fn test_system_call_gas_consistency_with_reservoir() {
-        use base_execution_evm_primitives::hardfork::SpecId;
-        use base_execution_evm_runtime::SystemCallEvm;
-        use base_execution_state_memory::{CacheDB, EmptyDB};
+        use base_execution_evm_runtime::{CacheDB, EmptyDB, SystemCallEvm, hardfork::SpecId};
 
         let child_addr = address!("0x000000000000000000000000000000000000c0de");
 
@@ -1021,7 +1019,7 @@ mod tests {
                 AccountInfo {
                     balance: U256::ZERO,
                     nonce: 0,
-                    code_hash: base_execution_evm_primitives::keccak256(&system_code),
+                    code_hash: base_execution_evm_runtime::keccak256(&system_code),
                     code: Some(Bytecode::new_raw(system_code.clone())),
                     ..Default::default()
                 },
@@ -1031,7 +1029,7 @@ mod tests {
                 AccountInfo {
                     balance: U256::ZERO,
                     nonce: 0,
-                    code_hash: base_execution_evm_primitives::keccak256(&child_code),
+                    code_hash: base_execution_evm_runtime::keccak256(&child_code),
                     code: Some(Bytecode::new_raw(child_code.clone())),
                     ..Default::default()
                 },
@@ -1040,7 +1038,7 @@ mod tests {
         };
 
         let make_ctx = || {
-            Context::mainnet()
+            base_execution_evm_runtime::ReferenceContext::mainnet()
                 .modify_cfg_chained(|c| c.set_spec_and_mainnet_gas_params(SpecId::AMSTERDAM))
                 .with_db(make_db())
         };
@@ -1093,7 +1091,7 @@ mod tests {
     /// i.e. the drained state must be empty.
     #[test]
     fn test_inspect_tx_finalizes_journal_on_error() {
-        use base_execution_state_memory::{CacheDB, EmptyDB};
+        use base_execution_evm_runtime::{CacheDB, EmptyDB};
 
         // Caller account exists in the DB with nonce = 1.
         let mut db = CacheDB::<EmptyDB>::default();
@@ -1105,7 +1103,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let ctx = Context::mainnet().with_db(db);
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet().with_db(db);
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         // Send a tx with nonce = 0 -> InvalidTransaction::NonceTooLow, raised
@@ -1137,7 +1135,7 @@ mod tests {
     /// committed), so a subsequent drain yields an empty state.
     #[test]
     fn test_inspect_tx_commit_finalizes_journal_on_error() {
-        use base_execution_state_memory::{CacheDB, EmptyDB};
+        use base_execution_evm_runtime::{CacheDB, EmptyDB};
 
         let mut db = CacheDB::<EmptyDB>::default();
         db.insert_account_info(
@@ -1148,7 +1146,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let ctx = Context::mainnet().with_db(db);
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet().with_db(db);
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
 
         let result = evm.inspect_tx_commit(
@@ -1198,7 +1196,7 @@ mod tests {
         callee_code: Option<Bytecode>,
     ) -> Vec<(Address, Address, U256)> {
         let mut db =
-            base_execution_state_memory::CacheDB::<base_execution_state_memory::EmptyDB>::default();
+            base_execution_evm_runtime::CacheDB::<base_execution_evm_runtime::EmptyDB>::default();
         db.insert_account_info(
             BENCH_CALLER,
             AccountInfo { balance: U256::from(1_000_000_000u64), ..Default::default() },
@@ -1223,7 +1221,9 @@ mod tests {
             );
         }
 
-        let ctx = Context::mainnet().with_cfg(CfgEnv::new_with_spec(SpecId::AMSTERDAM)).with_db(db);
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_cfg(CfgEnv::new_with_spec(SpecId::AMSTERDAM))
+            .with_db(db);
         let mut evm = ctx.build_mainnet_with_inspector(TestInspector::new());
         let result = evm
             .inspect_one_tx(

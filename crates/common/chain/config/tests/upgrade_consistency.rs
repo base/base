@@ -1,9 +1,8 @@
 //! Integration tests verifying that the derived rollup configs agree with chain upgrade
 //! schedules for every [`BaseUpgrade`] variant.
 
-use base_common_chain_config::BaseUpgrade;
 use base_common_chain_config::{
-    Upgrades,
+    BaseUpgrade, Upgrades,
     test_utils::{BASE_MAINNET_ROLLUP_CONFIG, BASE_SEPOLIA_ROLLUP_CONFIG},
 };
 

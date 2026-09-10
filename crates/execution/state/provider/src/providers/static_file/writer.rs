@@ -4,26 +4,29 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
+    time::Instant,
 };
 
-use crate::{ChangesetOffsetReader, ChangesetOffsetWriter};
 use alloy_primitives::{BlockHash, BlockNumber, TxNumber, U256};
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader, Compact};
-use base_execution_state_database::models::CompactU256;
-use base_execution_state_database::{NippyJar, NippyJarError, NippyJarWriter};
-use base_execution_state_database::{models::AccountBeforeTx, models::StorageBeforeTx};
-use base_execution_state_types::{
-    ChangesetOffset, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
+use base_execution_state_database::{
+    NippyJar, NippyJarError, NippyJarWriter,
+    models::{AccountBeforeTx, CompactU256, StorageBeforeTx},
 };
-use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
+use base_execution_state_types::{
+    ChangesetOffset, ProviderError, ProviderResult, SegmentHeader, SegmentRangeInclusive,
+    StaticFileSegment, StaticFileWriterError,
+};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
-use std::time::Instant;
 use tracing::{debug, instrument};
 
 use super::{
     StaticFileProvider, manager::StaticFileProviderInner, metrics::StaticFileProviderMetrics,
 };
-use crate::providers::static_file::metrics::StaticFileProviderOperation;
+use crate::{
+    ChangesetOffsetReader, ChangesetOffsetWriter,
+    providers::static_file::metrics::StaticFileProviderOperation,
+};
 
 /// Represents different pruning strategies for various static file segments.
 #[derive(Debug, Clone, Copy)]
@@ -397,9 +400,8 @@ impl StaticFileProviderRW {
 
         // Get actual sidecar file size (may differ from header after crash)
         let actual_sidecar_blocks = if csoff_path.exists() {
-            let file_len = base_common_io_files::Files::metadata(&csoff_path)
-                .map_err(ProviderError::other)?
-                .len();
+            let file_len =
+                base_common_io::Files::metadata(&csoff_path).map_err(ProviderError::other)?.len();
             // Remove partial records from crash mid-write
             let aligned_len = file_len - (file_len % 16);
             aligned_len / 16

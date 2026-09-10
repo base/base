@@ -2,11 +2,9 @@ use std::pin::Pin;
 
 use alloy_eips::BlockId;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
-
 use base_common_types_chain::BlockHeader;
-use base_common_types_payload::ForkchoiceState;
+use base_common_types_payload::{BaseBuiltPayload, BasePayloadBuilderAttributes, ForkchoiceState};
 use base_common_types_rpc::BlockNumberOrTag;
-use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
 use base_execution_state_provider::{
     BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
     StageCheckpointReader,

@@ -25,7 +25,7 @@ pub use notifications::*;
 mod wal;
 // Re-export exex types
 #[doc(inline)]
-pub use base_execution_engine_types::{ExExHead, ExExNotification, ExExNotificationBincode};
+pub use base_common_types_payload::{ExExHead, ExExNotification, ExExNotificationBincode};
 pub use wal::*;
 
 mod proof_history;

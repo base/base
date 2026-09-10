@@ -1,8 +1,9 @@
 //! Application log layers and tracing initialization.
 
-use crate::{FileInfo, Layers, LogFormat, TestTracer, TracingGuards, install_log_handle};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::{FileInfo, Layers, LogFormat, TestTracer, TracingGuards, install_log_handle};
 
 ///  Tracer for application logging.
 ///
@@ -16,8 +17,7 @@ pub struct RethTracer {
     file: Option<(LayerInfo, FileInfo)>,
     samply: Option<LayerInfo>,
     chrome: Option<(LayerInfo, std::path::PathBuf)>,
-    #[cfg(feature = "tracy")]
-    tracy: Option<LayerInfo>,
+
     /// When true, the stdout filter is wrapped in a reload layer so log levels
     /// can be changed at runtime.
     enable_reload: bool,
@@ -36,8 +36,6 @@ impl RethTracer {
             file: None,
             samply: None,
             chrome: None,
-            #[cfg(feature = "tracy")]
-            tracy: None,
             enable_reload: false,
         }
     }
@@ -79,13 +77,6 @@ impl RethTracer {
     /// Sets the Chrome trace layer configuration.
     pub fn with_chrome(mut self, config: LayerInfo, file: std::path::PathBuf) -> Self {
         self.chrome = Some((config, file));
-        self
-    }
-
-    /// Sets the tracy layer configuration.
-    #[cfg(feature = "tracy")]
-    pub fn with_tracy(mut self, config: LayerInfo) -> Self {
-        self.tracy = Some(config);
         self
     }
 
@@ -228,11 +219,6 @@ impl Tracer for RethTracer {
         } else {
             None
         };
-
-        #[cfg(feature = "tracy")]
-        if let Some(config) = self.tracy {
-            layers.tracy(config)?;
-        }
 
         // The error is returned if the global default subscriber is already set,
         // so it's safe to ignore it

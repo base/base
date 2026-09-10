@@ -2,17 +2,16 @@
 
 use std::{collections::BTreeMap, ops::Not, sync::OnceLock};
 
-use alloy_hardforks::EthereumHardforks;
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::{Address, BlockNumber};
 use base_common_chain_config::BaseChainSpec;
-use base_execution_state_types::PruneConfig;
 use base_execution_state_types::{
-    MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE, PruneMode, PruneModes, ReceiptsLogPruneConfig,
+    MINIMUM_DISTANCE, MINIMUM_UNWIND_SAFE_DISTANCE, PruneConfig, PruneMode, PruneModes,
+    ReceiptsLogPruneConfig,
 };
 use clap::{Args, builder::RangedU64ValueParser};
 
 use crate::args::error::ReceiptsLogError;
-use alloy_hardforks::EthereumHardfork;
 
 /// Global static pruning defaults
 static PRUNING_DEFAULTS: OnceLock<DefaultPruningValues> = OnceLock::new();

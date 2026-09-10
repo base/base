@@ -12,8 +12,8 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_common_l1_transactions::TxManager;
-use base_proof_l1_submission::{CertManagerClient, TEEProverRegistryClient};
+use base_common_l1::TxManager;
+use base_proof_l1::{CertManagerClient, TEEProverRegistryClient};
 use futures::stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, info, warn};

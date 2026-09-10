@@ -1,10 +1,10 @@
 //! Production-mode L1 data-availability action tests.
 
 use alloy_primitives::B256;
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{Transaction, transaction::SignerRecoverable};
-use base_consensus_derive_pipeline::{DataAvailabilityProvider, EthereumDataSource};
+use base_consensus_derive::{DataAvailabilityProvider, EthereumDataSource};
 use base_testing_devnet::{
     ActionBlobProvider, ActionL1ChainProvider, ActionL2Source, ActionTestHarness, Batcher,
     BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder, block_info_from,

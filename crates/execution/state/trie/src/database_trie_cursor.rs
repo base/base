@@ -3,7 +3,8 @@ use std::marker::PhantomData;
 use alloy_primitives::B256;
 use base_execution_state_database::{
     DatabaseError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, DbTx, DupSort, Key, Table,
-    Value, tables::PackedAccountsTrie, tables::PackedStoragesTrie,
+    Value,
+    tables::{PackedAccountsTrie, PackedStoragesTrie},
 };
 
 use crate::{

@@ -19,13 +19,11 @@
 //! ```
 //!
 //! See the book section on [External State Transitions](../../book/src/external_state_transitions.md) for more details.
-use base_execution_evm_machine::InterpreterResult;
-use base_execution_evm_machine::{ContextSetters, ContextTr, ExecResultAndState, TxEnv};
-use base_execution_evm_primitives::{Address, Bytes, TxKind, address, eip8037};
-use base_execution_evm_runtime::EvmMachine;
-use base_execution_state_memory::DatabaseCommit;
-
-use crate::{ExecuteCommitEvm, ExecuteEvm, Handler, MainnetHandler, PrecompileProvider};
+use base_execution_evm_runtime::{
+    Address, Bytes, ContextSetters, ContextTr, DatabaseCommit, EvmMachine, ExecResultAndState,
+    ExecuteCommitEvm, ExecuteEvm, Handler, InterpreterResult, MainnetHandler, PrecompileProvider,
+    TxEnv, TxKind, address, eip8037,
+};
 
 /// The system address used for system calls.
 pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
@@ -263,15 +261,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::{
-        Context, ExecutionResult, Output, ResultGas, SuccessReason, Transaction,
+    use base_execution_evm_runtime::{
+        AccountInfo, Bytecode, ExecutionResult, InMemoryDB, MainBuilder, MainContext, Output,
+        ResultGas, StorageKey, SuccessReason, Transaction, U256, b256, bytes,
     };
-    use base_execution_evm_primitives::{StorageKey, U256, b256, bytes};
-    use base_execution_state_memory::InMemoryDB;
-    use base_execution_state_memory::{AccountInfo, Bytecode};
 
     use super::*;
-    use crate::{MainBuilder, MainContext};
 
     const HISTORY_STORAGE_ADDRESS: Address = address!("0x0000F90827F1C53a10cb7A02335B175320002935");
     static HISTORY_STORAGE_CODE: Bytes = bytes!(
@@ -289,7 +284,7 @@ mod tests {
         let block_hash =
             b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
 
-        let mut evm = Context::mainnet()
+        let mut evm = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_db(db)
             // block with number 1 will set storage at slot 0.
             .modify_block_chained(|b| b.number = U256::ONE)

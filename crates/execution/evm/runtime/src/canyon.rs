@@ -1,7 +1,6 @@
 use alloy_primitives::{Address, B256, Bytes, address, b256, hex};
 use base_common_chain_config::Upgrades;
-use base_execution_evm_runtime::Database;
-use base_execution_evm_runtime::{DatabaseCommit, primitives::HashMap, state::Bytecode};
+use base_execution_evm_runtime::{Bytecode, Database, DatabaseCommit, HashMap};
 
 /// The address of the create2 deployer
 const CREATE_2_DEPLOYER_ADDR: Address = address!("0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2");
@@ -34,7 +33,7 @@ where
     {
         // Capture the pre-state before installing code so incremental state-root hooks
         // observe the deployment as an account change.
-        let mut revm_acc: base_execution_evm_runtime::state::Account =
+        let mut revm_acc: base_execution_evm_runtime::Account =
             db.basic(CREATE_2_DEPLOYER_ADDR)?.unwrap_or_default().into();
         revm_acc.info.code_hash = CREATE_2_DEPLOYER_CODEHASH;
         revm_acc.info.code =

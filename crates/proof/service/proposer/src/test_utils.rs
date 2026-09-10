@@ -9,16 +9,15 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_common_types_rpc::{EIP1186AccountProofResponse, Header};
 use base_common_client_rollup::{L1BlockId, L1BlockRef, L2BlockRef, OutputAtBlock, SyncStatus};
-use base_proof_l1_submission::{
+use base_common_types_rpc::{EIP1186AccountProofResponse, Header};
+use base_proof_client::{
+    BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
+};
+use base_proof_l1::{
     AggregateVerifierClient, AnchorPreflight, AnchorRoot, AnchorSnapshot,
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
-};
-use base_proof_types_protocol::Proposal;
-use base_proof_client_providers::{
-    BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
 };
 use base_proof_service_client::{ProofRequesterProvider, ProverServiceClientError};
 use base_proof_service_protocol::{
@@ -28,6 +27,7 @@ use base_proof_service_protocol::{
     ProofResult as ApiProofResult, ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse,
     TeeKind, TeeProofResult,
 };
+use base_proof_types::Proposal;
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorObjectOwned};
 
 use crate::{error::ProposerError, output_proposer::OutputProposer};

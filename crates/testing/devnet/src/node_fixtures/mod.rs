@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
-use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_common_types_payload::BasePayloadBuilderAttributes;
 use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_node_service::BaseNodeContext;
@@ -59,7 +59,7 @@ pub async fn setup_engine(
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
-    tree_config: base_execution_engine_types::TreeConfig,
+    tree_config: base_common_types_payload::TreeConfig,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
 ) -> eyre::Result<(Vec<NodeHelperType>, Wallet)> {
     setup_engine_with_connection(
@@ -80,7 +80,7 @@ pub async fn setup_engine_with_connection(
     num_nodes: usize,
     chain_spec: Arc<BaseChainSpec>,
     is_dev: bool,
-    tree_config: base_execution_engine_types::TreeConfig,
+    tree_config: base_common_types_payload::TreeConfig,
     attributes_generator: impl Fn(u64) -> BasePayloadBuilderAttributes + Send + Sync + Copy + 'static,
     connect_nodes: bool,
 ) -> eyre::Result<(Vec<NodeHelperType>, Wallet)> {

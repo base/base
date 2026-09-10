@@ -7,15 +7,13 @@ use std::{
     time::Duration,
 };
 
-use crate::builder_test_utils::get_available_port;
 use base_common_chain_activation::{
     UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
     UpgradeSignalPollOutcome, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
 };
 use base_common_chain_config::RollupConfig;
-use base_consensus_driver_service::RpcBuilder;
-use base_consensus_driver_service::{FollowNode, FollowNodeConfig, RemoteL2Client};
-use base_consensus_source_providers::L1RpcProvider;
+use base_consensus_driver::{FollowNode, FollowNodeConfig, RemoteL2Client, RpcBuilder};
+use base_consensus_source::L1RpcProvider;
 use eyre::{Result, WrapErr};
 use tokio::{
     task::{AbortHandle, JoinHandle},
@@ -25,6 +23,7 @@ use tracing::{error, info};
 use url::Url;
 
 use super::in_process_consensus::wait_for_rpc;
+use crate::builder_test_utils::get_available_port;
 
 /// Configuration for starting an in-process follow-mode consensus node.
 #[derive(Debug)]
@@ -36,7 +35,7 @@ pub struct InProcessFollowConsensusConfig {
     /// Source L2 execution RPC endpoint URL to follow.
     pub source_l2_rpc_url: Url,
     /// Native execution client for the co-located execution node.
-    pub execution: base_consensus_driver_service::LocalEngineClient,
+    pub execution: base_consensus_driver::LocalEngineClient,
     /// Optional L1 upgrade signal configuration.
     ///
     /// When the mode applies at startup, the schedule is applied to the follow node's rollup
@@ -100,7 +99,7 @@ impl InProcessFollowConsensus {
 
         let mut engine_client = config.execution;
         engine_client.l1 =
-            base_consensus_source_providers::L1RpcProvider::new_http(config.l1_rpc_url.clone());
+            base_consensus_source::L1RpcProvider::new_http(config.l1_rpc_url.clone());
         engine_client.l2.rollup_config = Arc::clone(&rollup_config);
 
         let engine_client = Arc::new(engine_client);

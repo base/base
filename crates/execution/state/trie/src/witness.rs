@@ -5,17 +5,13 @@ use alloy_primitives::{
 use alloy_rlp::{EMPTY_STRING_CODE, Encodable};
 use alloy_trie::{EMPTY_ROOT_HASH, nodes::BranchNodeRef};
 use base_execution_state_types::{
-    DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState, MultiProofTargetsV2, ProofV2Target,
-    SparseStateTrieErrorKind, TrieNodeV2,
-};
-use base_execution_state_types::{StateProofError, TrieWitnessError};
-use {
-    crate::SparseStateTrie, base_execution_state_types::LeafUpdate,
-    base_execution_state_types::TrieNodeEpoch,
+    DecodedMultiProofV2, ExecutionWitnessMode, HashedPostState, LeafUpdate, MultiProofTargetsV2,
+    ProofV2Target, SparseStateTrieErrorKind, StateProofError, TrieNodeEpoch, TrieNodeV2,
+    TrieWitnessError,
 };
 
 use crate::{
-    TRIE_ACCOUNT_RLP_MAX_SIZE,
+    SparseStateTrie, TRIE_ACCOUNT_RLP_MAX_SIZE,
     hashed_cursor::{HashedCursor, HashedCursorFactory},
     prefix_set::TriePrefixSetsMut,
     proof::Proof,

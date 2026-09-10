@@ -8,8 +8,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::BlockNumber;
-use base_common_types_chain::SealedHeader;
-use base_common_types_chain::{BlockHeader, ChainInfo};
+use base_common_types_chain::{BlockHeader, ChainInfo, SealedHeader};
 use parking_lot::RwLock;
 use tokio::sync::watch;
 

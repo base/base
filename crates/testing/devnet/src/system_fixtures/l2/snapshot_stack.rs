@@ -6,12 +6,10 @@ use std::{
 };
 
 use alloy_hardforks::ForkCondition;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::{BaseUpgrade, RollupConfig};
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Provider, RootProvider};
+use base_common_chain_config::{BaseChainSpec, BaseUpgrade, RollupConfig};
+use base_common_client_ethereum::{Base, Provider, RootProvider};
 use base_common_types_rpc::SyncStatus as EthSyncStatus;
-use base_consensus_driver_service::StandalonePrefund;
+use base_consensus_driver::StandalonePrefund;
 use eyre::{Result, WrapErr, ensure};
 use url::Url;
 
@@ -409,9 +407,7 @@ impl SnapshotL2Stack {
 #[cfg(test)]
 mod tests {
     use alloy_hardforks::ForkCondition;
-    use base_common_chain_config::BaseChainSpec;
-    use base_common_chain_config::BaseUpgrade;
-    use base_common_chain_config::{ChainConfig, Upgrades};
+    use base_common_chain_config::{BaseChainSpec, BaseUpgrade, ChainConfig, Upgrades};
 
     use super::{
         SNAPSHOT_STARTUP_LEAD, SnapshotL2Stack, snapshot_persistence_backpressure_threshold,

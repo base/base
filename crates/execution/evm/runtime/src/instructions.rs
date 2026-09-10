@@ -1,10 +1,10 @@
 use std::boxed::Box;
 
-use base_execution_evm_machine::{
+use base_execution_evm_runtime::{
     Host, Instruction,
+    hardfork::SpecId,
     instructions::{GasTable, InstructionTable, gas_table_spec},
 };
-use base_execution_evm_primitives::hardfork::SpecId;
 
 /// Ethereum instruction contains list of mainnet instructions that is used for Interpreter execution.
 #[derive(Debug)]
@@ -42,7 +42,7 @@ where
 {
     /// Returns `EthInstructions` with mainnet spec.
     pub fn new_mainnet_with_spec(spec: SpecId) -> Self {
-        Self::new(base_execution_evm_machine::instruction_table(), gas_table_spec(spec), spec)
+        Self::new(base_execution_evm_runtime::instruction_table(), gas_table_spec(spec), spec)
     }
 
     /// Returns a new instance of `EthInstructions` with custom instruction and gas tables.

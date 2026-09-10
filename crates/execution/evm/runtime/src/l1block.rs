@@ -1,14 +1,7 @@
 //! Contains the `[L1BlockInfo]` type and its implementation.
-use base_common_chain_config::BaseUpgrade;
-use base_execution_evm_fees::L1FeeParams;
+use base_common_chain_config::{BaseUpgrade, L1FeeParams};
 use base_common_types_chain::Predeploys;
-use base_execution_evm_runtime::{
-    database::Database,
-    interpreter::Gas,
-    primitives::{U256, uint},
-};
-
-use crate::{BaseSpecId, BaseTransaction};
+use base_execution_evm_runtime::{BaseSpecId, BaseTransaction, Database, Gas, U256, uint};
 
 /// L1 block info
 ///
@@ -68,10 +61,11 @@ impl L1BlockInfo {
     pub const DA_FOOTPRINT_GAS_SCALAR_OFFSET: usize = 18;
     /// Fixed point decimal scaling factor for the operator fee scalar (6 decimal points of
     /// precision).
-    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 = base_execution_evm_fees::OPERATOR_FEE_SCALAR_DECIMAL;
+    pub const OPERATOR_FEE_SCALAR_DECIMAL: u64 =
+        base_common_chain_config::OPERATOR_FEE_SCALAR_DECIMAL;
     /// Jovian multiplier applied to the operator fee scalar component.
     pub const OPERATOR_FEE_JOVIAN_MULTIPLIER: u64 =
-        base_execution_evm_fees::OPERATOR_FEE_JOVIAN_MULTIPLIER;
+        base_common_chain_config::OPERATOR_FEE_JOVIAN_MULTIPLIER;
     /// The L1 base fee storage slot.
     pub const L1_BASE_FEE_SLOT: U256 = uint!(1_U256);
     /// The L1 overhead storage slot.
@@ -344,7 +338,7 @@ impl L1BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_runtime::primitives::{bytes, hex};
+    use base_execution_evm_runtime::{bytes, hex};
 
     use super::*;
 

@@ -72,9 +72,9 @@ let bal = wallet.account.balance();
 - Test observable behavior through public APIs. Do not create tautological or change-detector tests that duplicate production logic or assert incidental implementation details.
   - Tests should fail for behavior regressions and survive behavior-preserving refactors.
   - Interaction assertions are appropriate only when the interaction itself is part of the contract.
-- For test doubles of internal traits, default to `#[cfg_attr(test, mockall::automock)]` rather than hand-rolling a fake. See `crates/consensus/driver/service/src/actors/*/client.rs`, `crates/consensus/driver/service/src/actors/network/gossip.rs`, `crates/consensus/driver/service/src/follow/local.rs`, and `crates/consensus/driver/service/src/follow/source.rs`.
+- For test doubles of internal traits, default to `#[cfg_attr(test, mockall::automock)]` rather than hand-rolling a fake. See `crates/consensus/driver/src/actors/*/client.rs`, `crates/consensus/driver/src/actors/network/gossip.rs`, `crates/consensus/driver/src/follow/local.rs`, and `crates/consensus/driver/src/follow/source.rs`.
 - Hand-roll a fake only when `automock` cannot express the required behavior, such as:
   - A trait method returns a non-constructible builder type like Alloy's `ProviderCall` or `EthGetBlock`.
   - The double needs one call log ordered across multiple trait methods.
   - Tests must mutate scripted responses while calls are in flight.
-- Document the specific reason for a hand-rolled fake in its module doc comment. Examples live in `crates/consensus/driver/service/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, and `fake_gossip.rs`.
+- Document the specific reason for a hand-rolled fake in its module doc comment. Examples live in `crates/consensus/driver/src/test_utils/fake_engine_client.rs`, `fake_l1.rs`, and `fake_gossip.rs`.

@@ -5,13 +5,13 @@ use std::sync::Arc;
 use alloy_eip2124::Head;
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use base_execution_network_service::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
     transactions::config::StrictEthAnnouncementFilter,
 };
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
-use base_execution_txpool_pool::{PoolConfig, TransactionPool};
+use base_execution_txpool::{PoolConfig, TransactionPool};
 use base_node_config::{ChainPath, DataDirPath, NodeConfig};
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
@@ -111,7 +111,7 @@ impl BuilderContext {
     pub fn start_network(
         &self,
         builder: NetworkBuilder<(), ()>,
-        pool: base_execution_txpool_pool::BaseTransactionPool<BlockchainProvider>,
+        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     ) -> NetworkHandle {
         let (handle, network, txpool, eth) = builder
             .transactions_with_policies(

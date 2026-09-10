@@ -1,9 +1,10 @@
 //! `reth db prune-checkpoints` command for viewing and setting prune checkpoint values.
 
-use base_execution_state_api::{PruneCheckpointReader, PruneCheckpointWriter};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
-use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
+use base_execution_state_types::{
+    PruneCheckpoint, PruneCheckpointReader, PruneCheckpointWriter, PruneMode, PruneSegment,
+};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::AccessRights;

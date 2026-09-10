@@ -1,0 +1,193 @@
+//! Error types for the proof program.
+//!
+//! This module defines error types used throughout the proof system, including
+//! oracle provider errors and hint parsing errors. These errors provide detailed
+//! context about failures during proof generation and data retrieval.
+
+use alloc::string::{String, ToString};
+
+use base_consensus_batch::{BaseBlockConversionError, FromBlockError};
+use base_consensus_derive::{PipelineError, PipelineErrorKind};
+use base_proof_witness_mpt::{OrderedListWalkerError, TrieNodeError};
+use base_proof_witness_preimage::errors::PreimageOracleError;
+use thiserror::Error;
+
+/// Error from an oracle-backed provider.
+///
+/// [`OracleProviderError`] represents various failure modes when interacting with
+/// oracle-backed data providers. These errors can occur during preimage retrieval,
+/// data parsing, or when validating oracle responses.
+///
+/// # Error Categories
+/// - **Data Availability**: Block numbers beyond chain head, missing preimages
+/// - **Communication**: Oracle communication failures, timeouts
+/// - **Data Integrity**: Malformed trie data, invalid RLP encoding
+/// - **Conversion**: Type conversion failures, slice length mismatches
+/// - **Network**: Unknown chain IDs, unsupported configurations
+#[derive(Error, Debug)]
+pub enum OracleProviderError {
+    /// Requested block number is past the current chain head.
+    ///
+    /// This error occurs when attempting to access block data for a block number
+    /// that exceeds the highest block available in the chain. It typically indicates
+    /// that the requested block has not been produced yet or the chain data is stale.
+    ///
+    /// # Arguments
+    /// * `0` - The requested block number
+    /// * `1` - The current chain head block number
+    #[error("Block number ({0}) past chain head ({_1})")]
+    BlockNumberPastHead(u64, u64),
+    /// Preimage oracle communication or data retrieval error.
+    ///
+    /// This error wraps underlying oracle communication failures, including
+    /// network timeouts, missing preimage keys, or invalid preimage data.
+    /// It's the most common error type when oracle operations fail.
+    #[error("Preimage oracle error: {0}")]
+    Preimage(#[from] PreimageOracleError),
+    /// Ordered list walker error during trie traversal.
+    ///
+    /// This error occurs when walking through ordered lists in Merkle Patricia
+    /// tries fails due to malformed data, incorrect proofs, or missing nodes.
+    /// It typically indicates corrupted trie data or invalid proof structures.
+    #[error("Trie walker error: {0}")]
+    TrieWalker(#[from] OrderedListWalkerError),
+    /// Trie node parsing or validation error.
+    ///
+    /// This error occurs when processing individual trie nodes fails due to
+    /// invalid node structure, incorrect hashing, or malformed node data.
+    /// It indicates fundamental issues with the trie data integrity.
+    #[error("Trie node error: {0}")]
+    TrieNode(#[from] TrieNodeError),
+    /// Block information extraction or conversion error.
+    ///
+    /// This error occurs when converting raw block data into structured
+    /// [`base_consensus_batch::BlockInfo`] objects fails due to missing fields, invalid data
+    /// formats, or unsupported block versions.
+    #[error("From block error: {0}")]
+    BlockInfo(FromBlockError),
+    /// Base-specific block conversion error.
+    ///
+    /// This error occurs when converting between different Base block
+    /// formats fails due to incompatible data structures, missing rollup-specific
+    /// fields, or version mismatches between block formats.
+    #[error("Block conversion error: {0}")]
+    BaseBlockConversion(BaseBlockConversionError),
+    /// RLP (Recursive Length Prefix) encoding or decoding error.
+    ///
+    /// This error occurs when parsing or encoding RLP data fails due to
+    /// malformed input, invalid length prefixes, or unsupported data types.
+    /// RLP is used extensively for Ethereum data serialization.
+    #[error("RLP error: {0}")]
+    Rlp(alloy_rlp::Error),
+    /// Slice to array conversion error.
+    ///
+    /// This error occurs when attempting to convert a byte slice to a fixed-size
+    /// array fails due to length mismatches. It typically happens when parsing
+    /// hash values or other fixed-length data from variable-length sources.
+    #[error("Slice conversion error: {0}")]
+    SliceConversion(core::array::TryFromSliceError),
+    /// JSON serialization or deserialization error.
+    ///
+    /// This error occurs when parsing JSON data (e.g., rollup configurations)
+    /// fails due to invalid JSON syntax, missing required fields, or type
+    /// mismatches between expected and actual data structures.
+    #[error("Serde error: {0}")]
+    Serde(serde_json::Error),
+    /// The output root preimage is invalid or specifies an unsupported version.
+    ///
+    /// This error occurs when the preimage fetched for an agreed L2 output root
+    /// cannot be decoded—either because it has the wrong length or specifies an
+    /// output root version that is not supported.
+    #[error("Invalid output root preimage")]
+    InvalidOutputRootPreimage,
+    /// Unknown or unsupported chain ID.
+    ///
+    /// This error occurs when encountering a chain ID that is not recognized
+    /// by the system. It typically happens when trying to load rollup
+    /// configurations for networks that are not supported or configured.
+    ///
+    /// # Argument
+    /// * `0` - The unknown chain ID that was encountered
+    #[error("Unknown chain ID: {0}")]
+    UnknownChainId(u64),
+    /// Rollup config L2 chain ID does not match the boot chain ID.
+    ///
+    /// This error occurs when an oracle-provided rollup config claims to be for
+    /// a different L2 chain than the local chain ID used to select it.
+    #[error(
+        "Rollup config chain ID mismatch: boot chain ID {boot_chain_id}, rollup config L2 chain ID {rollup_config_chain_id}"
+    )]
+    RollupConfigChainIdMismatch {
+        /// The chain ID loaded from local boot input.
+        boot_chain_id: u64,
+        /// The L2 chain ID claimed by the loaded rollup config.
+        rollup_config_chain_id: u64,
+    },
+    /// The claimed L2 block precedes the rollup genesis block.
+    #[error("L2 claim block {claim_block} precedes rollup genesis block {genesis_block}")]
+    L2ClaimBeforeGenesis {
+        /// The claimed L2 block number.
+        claim_block: u64,
+        /// The configured rollup genesis L2 block number.
+        genesis_block: u64,
+    },
+    /// The rollup config has a zero L2 block time.
+    #[error("L2 block time must be non-zero")]
+    InvalidL2BlockTime,
+    /// The rollup config has a zero L2 genesis timestamp.
+    ///
+    /// Genesis-active upgrades in legacy configs may be stored as `Some(0)` and are normalized to
+    /// the genesis timestamp before hashing, while unscheduled entries inside the pinned prefix
+    /// hash as 0. Those two cases are only distinguishable while the genesis timestamp is non-zero
+    /// — with a zero genesis, `{regolith: None, canyon: Some(0)}` and
+    /// `{regolith: Some(0), canyon: Some(0)}` collide onto one schedule ID. Rejecting here keeps the
+    /// schedule ID injective.
+    #[error("L2 genesis timestamp must be non-zero")]
+    InvalidL2GenesisTimestamp,
+    /// The schedule block precedes the claimed L2 block.
+    #[error("Schedule L2 block {schedule_block} precedes claimed L2 block {claim_block}")]
+    ScheduleBlockBeforeClaim {
+        /// The L2 block number used to pin the upgrade schedule.
+        schedule_block: u64,
+        /// The claimed L2 block number.
+        claim_block: u64,
+    },
+    /// An active Zenith upgrade is not committed by the proof schedule ID.
+    #[error("Active Zenith upgrade is not committed by the proof schedule ID")]
+    UncommittedZenithUpgrade,
+    /// A Beryl-enabled chain is missing a trusted activation registry admin address.
+    ///
+    /// This error occurs when proof boot data resolves a rollup config with Beryl scheduled but no
+    /// activation admin address from a built-in chain config. The admin affects precompile execution;
+    /// oracle-only Beryl configs are rejected until the admin has an explicit committed source.
+    #[error("Missing activation admin address for Beryl-enabled chain ID: {chain_id}")]
+    MissingActivationAdminAddress {
+        /// The chain ID whose Beryl-enabled config lacks a trusted activation admin address.
+        chain_id: u64,
+    },
+    /// Blob KZG commitment verification failed.
+    ///
+    /// This error occurs when the KZG commitment computed from a reconstructed
+    /// blob does not match the commitment fetched from the oracle. This indicates
+    /// that the blob field elements were tampered with or corrupted.
+    #[error("Blob verification failed: {0}")]
+    BlobVerification(String),
+}
+
+impl From<OracleProviderError> for PipelineErrorKind {
+    fn from(val: OracleProviderError) -> Self {
+        match val {
+            OracleProviderError::BlockNumberPastHead(_, _) => PipelineError::EndOfSource.crit(),
+            _ => PipelineError::Provider(val.to_string()).crit(),
+        }
+    }
+}
+
+/// Error parsing a hint from string format.
+///
+/// [`HintParsingError`] occurs when attempting to parse a hint string fails due to
+/// invalid format, unknown hint types, or malformed hint data. Hints are expected
+/// to follow the format `<hint_type> <hint_data>` where data is hex-encoded.
+#[derive(Error, Debug)]
+#[error("Hint parsing error: {_0}")]
+pub struct HintParsingError(pub String);

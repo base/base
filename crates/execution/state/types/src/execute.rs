@@ -1,9 +1,10 @@
-use crate::BlockExecutionResult;
 use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::BaseReceipt;
-use base_execution_state_memory::BundleAccount;
-use base_execution_state_memory::BundleState;
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_evm_runtime::{
+    BundleAccount, BundleState, StoredAccount as Account, StoredBytecode as Bytecode,
+};
+
+use crate::BlockExecutionResult;
 
 /// [`BlockExecutionResult`] combined with state.
 #[derive(

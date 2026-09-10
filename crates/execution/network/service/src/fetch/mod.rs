@@ -13,28 +13,19 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::PeersHandle;
 use alloy_primitives::B256;
-use base_execution_network_types::PeerId;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::Capabilities;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::GetBlockAccessLists;
-use base_execution_network_wire::GetBlockBodies;
-use base_execution_network_wire::GetBlockHeaders;
-use base_execution_network_wire::GetReceipts;
-use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::{
-    BalRequirement, EthResponseValidator, HeadersRequest, PeerRequestResult, Priority,
-    ReceiptsResponse, RequestError, RequestResult, SnapResponse,
+    BalRequirement, BlockAccessLists, Capabilities, EthResponseValidator, EthVersion,
+    GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetReceipts, HeadersRequest, PeerId,
+    PeerRequestResult, Priority, ReceiptsResponse, ReputationChangeKind, RequestError,
+    RequestResult, SnapProtocolMessage, SnapResponse,
 };
 pub use client::FetchClient;
 use futures::StreamExt;
 use tokio::sync::{mpsc, mpsc::UnboundedSender, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use crate::{message::BlockRequest, session::BlockRangeInfo};
+use crate::{PeersHandle, message::BlockRequest, session::BlockRangeInfo};
 
 type InflightHeadersRequest<H> = Request<HeadersRequest, PeerRequestResult<Vec<H>>>;
 type InflightBodiesRequest<B> = Request<(), PeerRequestResult<Vec<B>>>;
@@ -854,9 +845,7 @@ mod tests {
 
     use alloy_primitives::B512;
     use base_common_types_chain::Header;
-    use base_execution_network_wire::AccountRangeMessage;
-    use base_execution_network_wire::Capability;
-    use base_execution_network_wire::GetAccountRangeMessage;
+    use base_execution_network_wire::{AccountRangeMessage, Capability, GetAccountRangeMessage};
 
     use super::*;
     use crate::{PeersConfig, peers::PeersManager};

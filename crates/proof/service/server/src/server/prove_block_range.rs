@@ -1,7 +1,3 @@
-use crate::{
-    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
-    canonical_session_id,
-};
 use base_proof_service_protocol::{
     ProofRequestIdCollisionMessage, ProofRequestKind, ProveBlockRangeRequest,
     ProveBlockRangeResponse,
@@ -9,9 +5,13 @@ use base_proof_service_protocol::{
 use jsonrpsee::core::RpcResult;
 use tracing::{info, warn};
 
-use crate::server::{
-    ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
-    resource_exhausted, unavailable,
+use crate::{
+    ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
+    canonical_session_id,
+    server::{
+        ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
+        resource_exhausted, unavailable,
+    },
 };
 
 impl ProverServiceServer {
@@ -167,7 +167,6 @@ fn validate_intermediate_root_interval(
 
 #[cfg(test)]
 mod tests {
-    use crate::{ApiProofType, ProofRequestRepo, ProofType};
     use base_proof_service_protocol::{
         ProofRequest, ProofRequestKind, ProveBlockRangeRequest, SnarkPlonkProofRequest, ZkBackend,
         ZkProofRequest, ZkVm,
@@ -176,7 +175,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::{parse_session_id, validate_intermediate_root_interval};
-    use crate::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig, metrics};
+    use crate::{
+        ApiProofType, ProofRequestRepo, ProofType, ProverServiceServer, ServerConfig,
+        WorkerApiConfig, WorkerQueueConfig, metrics,
+    };
 
     #[tokio::test]
     async fn rejects_zk_requests_before_accessing_the_database() {

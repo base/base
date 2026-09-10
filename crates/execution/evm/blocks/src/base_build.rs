@@ -1,19 +1,16 @@
 use alloc::sync::Arc;
 
-use crate::{calculate_receipt_root_no_memo, withdrawals_root};
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::logs_bloom;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::Upgrades;
+use base_common_chain_config::{BaseChainSpec, Upgrades};
 use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
     constants::EMPTY_WITHDRAWALS, proofs,
 };
-use base_execution_evm_machine::Block as _;
-use base_execution_evm_runtime::BlockExecutionError;
+use base_execution_evm_runtime::{Block as _, BlockExecutionError};
 use base_execution_state_types::BlockExecutionResult;
 
-use crate::execute::BlockAssemblerInput;
+use crate::{calculate_receipt_root_no_memo, execute::BlockAssemblerInput, withdrawals_root};
 
 /// Block builder for Base.
 #[derive(Debug)]

@@ -12,8 +12,8 @@ use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_payload::{
     BaseExecutionPayloadEnvelope, NetworkPayloadEnvelope, PayloadHash,
 };
-use base_consensus_driver_service::GossipTransport;
-use base_consensus_network_service::P2pRpcRequest;
+use base_consensus_driver::GossipTransport;
+use base_consensus_network::P2pRpcRequest;
 use tokio::sync::mpsc;
 
 /// Handle for injecting blocks into a [`TestGossipTransport`].
@@ -77,7 +77,7 @@ impl SupervisedP2P {
 /// [`set_signing_key`]: TestGossipTransport::set_signing_key
 /// [`try_next_unsafe_block`]: TestGossipTransport::try_next_unsafe_block
 /// [`next_unsafe_block`]: GossipTransport::next_unsafe_block
-/// [`BlockHandler`]: base_consensus_network_service::BlockHandler
+/// [`BlockHandler`]: base_consensus_network::BlockHandler
 /// [`ActionTestHarness::create_signing_p2p`]: crate::action_fixtures::ActionTestHarness::create_signing_p2p
 #[derive(Debug)]
 pub struct TestGossipTransport {

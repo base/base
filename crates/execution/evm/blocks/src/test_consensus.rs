@@ -1,8 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloy_primitives::B256;
-use base_common_types_chain::BaseReceipt;
-use base_common_types_chain::{RecoveredBlock, SealedBlock, SealedHeader};
+use base_common_types_chain::{BaseReceipt, RecoveredBlock, SealedBlock, SealedHeader};
 use base_execution_state_types::BlockExecutionResult;
 
 use crate::{ConsensusError, ReceiptRootBloom};

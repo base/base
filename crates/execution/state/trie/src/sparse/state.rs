@@ -8,9 +8,7 @@ use base_execution_state_types::{
 };
 use either::Either;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
-
-use tracing::debug;
-use tracing::instrument;
+use tracing::{debug, instrument};
 
 #[cfg(feature = "trie-debug")]
 use crate::sparse::debug_recorder::TrieDebugRecorder;
@@ -555,13 +553,12 @@ impl StorageTries {
 
 #[cfg(test)]
 mod tests {
-    use crate::{EMPTY_ROOT_HASH, HashBuilder, MultiProof, updates::StorageTrieUpdates};
     use alloy_primitives::{
         U256, b256,
         map::{HashMap, HashSet},
     };
     use arbitrary::Arbitrary;
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_types::{
         BranchNodeMasks, BranchNodeMasksMap, BranchNodeV2, LeafNode, RlpNode,
         SparseStateTrieErrorKind, SparseTrieErrorKind, StorageMultiProof, TrieAccount, TrieMask,
@@ -571,7 +568,10 @@ mod tests {
     use rand::{Rng, SeedableRng, rngs::StdRng};
 
     use super::*;
-    use crate::{LeafLookup, LeafUpdate};
+    use crate::{
+        EMPTY_ROOT_HASH, HashBuilder, LeafLookup, LeafUpdate, MultiProof,
+        updates::StorageTrieUpdates,
+    };
 
     const fn epoch(value: u64) -> TrieNodeEpoch {
         TrieNodeEpoch::new(value)

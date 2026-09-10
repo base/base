@@ -4,7 +4,6 @@
 
 use std::borrow::Cow;
 
-use crate::{Ethereum, Network};
 use alloy_eips::{eip2718::Encodable2718, eip7928::BlockAccessList};
 use alloy_json_rpc::{RpcError, RpcRecv, RpcSend};
 use alloy_primitives::{
@@ -17,13 +16,13 @@ use base_common_types_chain::BlockHeader;
 #[cfg(feature = "pubsub")]
 use base_common_types_rpc::pubsub::{Params, SubscriptionKind};
 use base_common_types_rpc::{
-    AccessListResult, BlockId, BlockNumberOrTag, Bundle, EIP1186AccountProofResponse,
-    EthCallResponse, FeeHistory, FillTransaction, Filter, FilterChanges, Index, Log,
-    StorageValuesRequest, StorageValuesResponse, SyncStatus,
+    AccessListResult, BlockId, BlockNumberOrTag, BlockResponse, Bundle,
+    EIP1186AccountProofResponse, EthCallResponse, FeeHistory, FillTransaction, Filter,
+    FilterChanges, Index, Log, ReceiptResponse, StorageValuesRequest, StorageValuesResponse,
+    SyncStatus,
     erc4337::TransactionConditional,
     simulate::{SimulatePayload, SimulatedBlock},
 };
-use base_common_types_rpc::{BlockResponse, ReceiptResponse};
 use serde_json::value::RawValue;
 
 #[cfg(feature = "pubsub")]
@@ -35,9 +34,9 @@ use super::{
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;
 use crate::{
-    EthCall, EthGetBlock, Identity, PendingTransaction, PendingTransactionBuilder,
-    PendingTransactionConfig, ProviderBuilder, ProviderCall, RootProvider, RpcWithBlock,
-    SendableTx,
+    EthCall, EthGetBlock, Ethereum, Identity, Network, PendingTransaction,
+    PendingTransactionBuilder, PendingTransactionConfig, ProviderBuilder, ProviderCall,
+    RootProvider, RpcWithBlock, SendableTx,
     heart::PendingTransactionError,
     utils::{self, Eip1559Estimation, Eip1559Estimator},
 };
@@ -1882,7 +1881,6 @@ impl<N: Network> Provider<N> for RootProvider<N> {
 mod tests {
     use std::{io::Read, str::FromStr, time::Duration};
 
-    use base_common_process_nodes::{Anvil, Reth, utils::run_with_tempdir};
     use alloy_primitives::{address, b256, bytes, keccak256};
     use alloy_rlp::Decodable;
     use alloy_rpc_client::{BuiltInConnectionString, RpcClient};
@@ -1896,14 +1894,10 @@ mod tests {
             rt::TokioExecutor,
         },
     };
+    use base_common_process::{Anvil, Reth, utils::run_with_tempdir};
+    use base_common_types_chain::{Transaction, TxEnvelope, transaction::SignerRecoverable};
     #[cfg(feature = "hyper")]
     use base_common_types_payload::{Claims, JwtSecret};
-    // For layer transport tests
-    use crate::{
-        Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
-    };
-    use base_common_types_chain::transaction::SignerRecoverable;
-    use base_common_types_chain::{Transaction, TxEnvelope};
     use base_common_types_rpc::{Block, request::TransactionRequest};
     #[cfg(feature = "hyper")]
     use http_body_util::Full;
@@ -1911,6 +1905,10 @@ mod tests {
     use tower::{Layer, Service};
 
     use super::*;
+    // For layer transport tests
+    use crate::{
+        Ethereum, EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder,
+    };
     use crate::{ProviderBuilder, WalletProvider, builder, ext::test::async_ci_only};
 
     #[tokio::test]
@@ -2671,8 +2669,9 @@ mod tests {
     ))]
     #[ignore = "ignore until <https://github.com/paradigmxyz/reth/pull/14727> is in"]
     async fn call_mainnet() {
-        use crate::TransactionBuilder;
         use alloy_sol_types::SolValue;
+
+        use crate::TransactionBuilder;
 
         let url = "https://docs-demo.quiknode.pro/";
         let provider = ProviderBuilder::new().connect_http(url.parse().unwrap());
@@ -2899,8 +2898,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_sync() {
-        use crate::TransactionBuilder;
         use alloy_primitives::{U256, address};
+
+        use crate::TransactionBuilder;
 
         let anvil = Anvil::new().spawn();
         let provider = ProviderBuilder::new().connect_http(anvil.endpoint_url());
@@ -2922,8 +2922,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_transaction_sync_with_fillers() {
-        use crate::TransactionBuilder;
         use alloy_primitives::{U256, address};
+
+        use crate::TransactionBuilder;
 
         let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 
@@ -2949,8 +2950,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_fill_transaction() {
-        use crate::TransactionBuilder;
         use alloy_primitives::{U256, address};
+
+        use crate::TransactionBuilder;
 
         let provider = ProviderBuilder::new().connect_anvil_with_wallet();
 

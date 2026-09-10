@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::{Network, TransactionBuilder, TransactionBuilder4844};
 use alloy_eips::eip4844::BLOB_TX_MIN_BLOB_GASPRICE;
 use alloy_json_rpc::RpcError;
 use alloy_transport::TransportResult;
@@ -12,7 +11,7 @@ use base_common_types_rpc::BlockNumberOrTag;
 use futures::FutureExt;
 
 use crate::{
-    Provider,
+    Network, Provider, TransactionBuilder, TransactionBuilder4844,
     fillers::{FillerControlFlow, TxFiller},
     provider::SendableTx,
     utils::{Eip1559Estimation, Eip1559Estimator},
@@ -343,14 +342,13 @@ where
 #[cfg(feature = "reqwest")]
 #[cfg(test)]
 mod tests {
-    use crate::Ethereum;
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
     use alloy_primitives::{U256, address};
     use base_common_types_chain::{SidecarBuilder, SimpleCoder, Transaction};
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;
-    use crate::ProviderBuilder;
+    use crate::{Ethereum, ProviderBuilder};
 
     #[tokio::test]
     async fn no_gas_price_or_limit() {

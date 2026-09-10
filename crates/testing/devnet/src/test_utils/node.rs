@@ -4,9 +4,8 @@ use std::{any::Any, fmt, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::RootProvider;
-use base_common_runtime_tasks::Runtime;
+use base_common_client_ethereum::{Base, RootProvider};
+use base_common_runtime::Runtime;
 use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
@@ -166,11 +165,11 @@ mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::B256;
     use base_common_chain_config::BaseChainSpec;
-    use base_common_runtime_tasks::Runtime;
+    use base_common_runtime::Runtime;
     use base_common_types_payload::{
-        BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, ForkchoiceState, PayloadAttributes,
+        BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, BasePayloadBuilderAttributes,
+        ForkchoiceState, PayloadAttributes,
     };
-    use base_execution_payload_types::BasePayloadBuilderAttributes;
     use base_execution_state_provider::{DatabaseProviderROFactory, HeaderProvider};
     use base_node_config::{
         DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, NetworkArgs,

@@ -1,5 +1,6 @@
-use crate::ChainUpgrades;
 use alloy_hardforks::ForkCondition;
+
+use crate::ChainUpgrades;
 
 /// Displays the Base upgrade schedule without derived Ethereum duplicates.
 #[derive(Debug)]

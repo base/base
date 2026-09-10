@@ -5,13 +5,11 @@ use std::{
 
 use alloy_primitives::B256;
 use base_common_types_chain::BaseBlockBody as BlockBody;
-use base_execution_network_types::PeerId;
+use base_execution_network_wire::{
+    BodiesClient, BodiesFut, DownloadClient, PeerId, PeerRequestResult, Priority,
+};
 use futures::FutureExt;
 use tokio::sync::oneshot;
-
-use base_execution_network_wire::{
-    BodiesClient, BodiesFut, DownloadClient, PeerRequestResult, Priority,
-};
 
 /// A test client for fetching bodies
 pub struct TestBodiesClient<F> {

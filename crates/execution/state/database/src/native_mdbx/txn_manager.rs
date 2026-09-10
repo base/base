@@ -1,4 +1,3 @@
-use crate::native_mdbx::ffi;
 use std::{
     fmt, ptr,
     sync::mpsc::{Receiver, SyncSender, sync_channel},
@@ -8,6 +7,7 @@ use crate::native_mdbx::{
     CommitLatency,
     environment::EnvPtr,
     error::{Result, mdbx_result},
+    ffi,
 };
 
 #[derive(Copy, Clone, Debug)]
@@ -123,7 +123,6 @@ impl TxnManager {
 
 #[cfg(feature = "read-tx-timeouts")]
 mod read_transactions {
-    use crate::native_mdbx::ffi;
     use std::{
         backtrace::Backtrace,
         sync::{Arc, mpsc::sync_channel},
@@ -134,7 +133,7 @@ mod read_transactions {
     use tracing::{error, trace, warn};
 
     use crate::native_mdbx::{
-        environment::EnvPtr, error::mdbx_result, transaction::TransactionPtr,
+        environment::EnvPtr, error::mdbx_result, ffi, transaction::TransactionPtr,
         txn_manager::TxnManager,
     };
 

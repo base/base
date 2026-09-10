@@ -1,6 +1,5 @@
-use base_execution_state_types::SparseTrieError;
-use base_execution_state_types::StateProofError;
 use base_execution_state_provider::ProviderError;
+use base_execution_state_types::{SparseTrieError, StateProofError};
 use thiserror::Error;
 
 /// Error returned by the state-root task and the parallel proof workers.

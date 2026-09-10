@@ -108,8 +108,7 @@ struct InvalidHeaderCacheMetrics {
 
 #[cfg(test)]
 mod tests {
-    use base_common_types_chain::Header;
-    use base_common_types_chain::SealedHeader;
+    use base_common_types_chain::{Header, SealedHeader};
 
     use super::*;
 

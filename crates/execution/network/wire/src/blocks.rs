@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodable, RlpDecodableWrapper, RlpEncodable, RlpEncodableWrapper};
-use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
+use base_common_codec::{add_arbitrary_tests, generate_tests};
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
 use derive_more::{Deref, IntoIterator};
 

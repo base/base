@@ -5,8 +5,7 @@
 //! This module is not public API.
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
-use base_common_client_ethereum::{MulticallItem, Provider};
-use base_common_client_ethereum::{Network, TransactionBuilder};
+use base_common_client_ethereum::{MulticallItem, Network, Provider, TransactionBuilder};
 
 use super::SolCallBuilder;
 

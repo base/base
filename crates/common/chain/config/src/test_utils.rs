@@ -1,9 +1,8 @@
 //! Test-only module providing rollup configs derived from [`ChainConfig`].
 
-use crate::RollupConfig;
 use spin::Lazy;
 
-use crate::{ChainConfig, rollup_config};
+use crate::{ChainConfig, RollupConfig, rollup_config};
 
 /// The [`RollupConfig`] for Base Mainnet, derived from [`ChainConfig::mainnet`].
 pub static BASE_MAINNET_ROLLUP_CONFIG: Lazy<RollupConfig> =

@@ -37,7 +37,7 @@ alloy-json-abi = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 base-common-types-chain = { workspace = true }
-base-common-client-ethereum = {workspace = true}
+base-common-client-ethereum = { workspace = true }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["default"] }
@@ -45,17 +45,14 @@ alloy-dyn-abi = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["map"] }
 futures-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["serde"] }
-serde_json = { workspace = true, features = [
-    "alloc",
-    "raw_value",
-] }
+serde_json = { workspace = true, features = ["alloc", "raw_value"] }
 
 [dev-dependencies]
-base-common-process-nodes = { workspace = true }
+base-common-process = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 tracing-subscriber = { workspace = true, features = ["default"] }
-base-common-client-ethereum = {workspace = true, features = ["anvil-node", "ws"]}
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+base-common-client-ethereum = { workspace = true, features = ["anvil-node", "ws"] }
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasmtimer = { workspace = true, features = ["default"] }

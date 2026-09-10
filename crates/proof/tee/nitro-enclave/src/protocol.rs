@@ -1,7 +1,7 @@
 //! Typed request/response protocol for host ↔ enclave communication over vsock.
 
+use base_proof_types::ProofResult;
 use base_proof_witness_preimage::PreimageKey;
-use base_proof_types_protocol::ProofResult;
 use serde::{Deserialize, Serialize};
 
 /// Typed request sent from the host to the enclave over vsock.

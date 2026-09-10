@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use crate::Decompress;
-use crate::{DataReader, NippyJar, NippyJarCursor};
 use alloy_primitives::B256;
-use base_execution_state_types::SegmentHeader;
-use base_execution_state_types::{ProviderError, ProviderResult};
+use base_execution_state_types::{ProviderError, ProviderResult, SegmentHeader};
 use derive_more::{Deref, DerefMut};
 
 use super::mask::{ColumnSelectorOne, ColumnSelectorThree, ColumnSelectorTwo};
+use crate::{DataReader, Decompress, NippyJar, NippyJarCursor};
 
 /// Cursor of a static file segment.
 #[derive(Debug, Deref, DerefMut)]

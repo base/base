@@ -1,0 +1,80 @@
+//! A mock implementation of the [`NextBatchProvider`] stage for testing.
+
+use alloc::{boxed::Box, vec::Vec};
+
+use alloy_eips::BlockNumHash;
+use async_trait::async_trait;
+use base_common_chain_config::SystemConfig;
+use base_consensus_batch::{BlockInfo, SingleBatch};
+
+use crate::{
+    errors::PipelineError,
+    stages::NextBatchProvider,
+    traits::{OriginAdvancer, OriginProvider, StageReset},
+    types::PipelineResult,
+};
+
+/// A mock provider for the [`NextBatchProvider`] stage.
+#[derive(Debug, Default)]
+pub struct TestNextBatchProvider {
+    /// The origin of the L1 block.
+    pub origin: Option<BlockInfo>,
+    /// A list of batches to return.
+    pub batches: Vec<PipelineResult<SingleBatch>>,
+    /// Tracks if the provider has been flushed.
+    pub flushed: bool,
+    /// Tracks if the reset method was called.
+    pub reset: bool,
+}
+
+impl TestNextBatchProvider {
+    /// Creates a new [`TestNextBatchProvider`] with the given origin and batches.
+    pub fn new(batches: Vec<PipelineResult<SingleBatch>>) -> Self {
+        Self { origin: Some(BlockInfo::default()), batches, flushed: false, reset: false }
+    }
+}
+
+impl OriginProvider for TestNextBatchProvider {
+    fn origin(&self) -> Option<BlockInfo> {
+        self.origin
+    }
+}
+
+#[async_trait]
+impl NextBatchProvider for TestNextBatchProvider {
+    fn flush(&mut self) {
+        self.flushed = true;
+    }
+
+    async fn next_batch(&mut self) -> PipelineResult<SingleBatch> {
+        self.batches.pop().ok_or(PipelineError::Eof.temp())?
+    }
+}
+
+#[async_trait]
+impl OriginAdvancer for TestNextBatchProvider {
+    async fn advance_origin(&mut self) -> PipelineResult<()> {
+        self.origin = self.origin.map(|mut origin| {
+            origin.number += 1;
+            origin
+        });
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StageReset for TestNextBatchProvider {
+    async fn reset(&mut self, _: BlockNumHash, _: SystemConfig) -> PipelineResult<()> {
+        self.reset = true;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.flushed = true;
+        Ok(())
+    }
+}

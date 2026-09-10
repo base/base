@@ -3,7 +3,7 @@
 //! This benchmark seeds a `RocksDB` proofs-history store with deterministic
 //! account and storage data, then repeatedly performs the DB-bound reads that
 //! `debug_executionWitness` drives through the shared database interface and
-//! `base_execution_evm_runtime::database::State` while EVM execution records touched state.
+//! `base_execution_evm_runtime::State` while EVM execution records touched state.
 
 use std::{hint::black_box, sync::Arc};
 
@@ -11,16 +11,15 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_execution_evm_blocks::ExecutionWitnessRecord;
-use base_execution_evm_runtime::{Database, database::State};
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::ExecutionWitnessMode;
+use base_execution_evm_runtime::{Database, State, StoredAccount as Account};
+use base_execution_state_provider::{AccountReader, NoopProvider, StateReadProvider};
 use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, RocksdbProofsStorage,
     provider::BaseProofsStateProviderRef,
 };
+use base_execution_state_types::ExecutionWitnessMode;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand_08::{RngCore, SeedableRng, rngs::StdRng};
-use base_execution_state_provider::{AccountReader, NoopProvider, StateReadProvider};
 use tempfile::TempDir;
 
 const BASE_ACCOUNTS: usize = 10_000;

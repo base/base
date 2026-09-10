@@ -1,16 +1,15 @@
 //! Interface between node identification on protocol version 5 and 4. Specifically, between types
-//! [`base_execution_network_discv5::enr::NodeId`] and [`PeerId`].
+//! [`crate::enr::NodeId`] and [`PeerId`].
 
-use base_execution_network_discv5::enr::CombinedPublicKey;
-use base_execution_network_discv5::enr::EnrPublicKey;
-use base_execution_network_discv5::enr::NodeId;
-use base_execution_network_types::{PeerId, id2pk, pk2id};
+use base_execution_network_wire::{PeerId, id2pk, pk2id};
 use enr::Enr;
 use secp256k1::{PublicKey, SecretKey};
 
-/// Extracts a [`CombinedPublicKey::Secp256k1`] from a [`base_execution_network_discv5::Enr`] and converts it to a
+use crate::enr::{CombinedPublicKey, EnrPublicKey, NodeId};
+
+/// Extracts a [`CombinedPublicKey::Secp256k1`] from a [`crate::Enr`] and converts it to a
 /// [`PeerId`]. Note: conversion from discv5 ID to discv4 ID is not possible.
-pub fn enr_to_discv4_id(enr: &base_execution_network_discv5::Enr) -> Option<PeerId> {
+pub fn enr_to_discv4_id(enr: &crate::Enr) -> Option<PeerId> {
     let pk = enr.public_key();
     if !matches!(pk, CombinedPublicKey::Secp256k1(_)) {
         return None;
@@ -21,27 +20,25 @@ pub fn enr_to_discv4_id(enr: &base_execution_network_discv5::Enr) -> Option<Peer
     Some(pk2id(&pk))
 }
 
-/// Converts a [`PeerId`] to a [`base_execution_network_discv5::enr::NodeId`].
+/// Converts a [`PeerId`] to a [`crate::enr::NodeId`].
 pub fn discv4_id_to_discv5_id(peer_id: PeerId) -> Result<NodeId, secp256k1::Error> {
     Ok(id2pk(peer_id)?.into())
 }
 
-/// Converts a [`PeerId`] to a [`base_execution_network_discv5::libp2p_identity::PeerId`].
+/// Converts a [`PeerId`] to a [`crate::libp2p_identity::PeerId`].
 pub fn discv4_id_to_multiaddr_id(
     peer_id: PeerId,
-) -> Result<base_execution_network_discv5::libp2p_identity::PeerId, secp256k1::Error> {
+) -> Result<crate::libp2p_identity::PeerId, secp256k1::Error> {
     let pk = id2pk(peer_id)?.encode();
-    let pk: base_execution_network_discv5::libp2p_identity::PublicKey =
-        base_execution_network_discv5::libp2p_identity::secp256k1::PublicKey::try_from_bytes(&pk)
-            .unwrap()
-            .into();
+    let pk: crate::libp2p_identity::PublicKey =
+        crate::libp2p_identity::secp256k1::PublicKey::try_from_bytes(&pk).unwrap().into();
 
     Ok(pk.to_peer_id())
 }
 
-/// Wrapper around [`base_execution_network_discv5::Enr`] ([`Enr<CombinedKey>`]).
+/// Wrapper around [`crate::Enr`] ([`Enr<CombinedKey>`]).
 #[derive(Debug, Clone)]
-pub struct EnrCombinedKeyWrapper(pub base_execution_network_discv5::Enr);
+pub struct EnrCombinedKeyWrapper(pub crate::Enr);
 
 impl From<Enr<SecretKey>> for EnrCombinedKeyWrapper {
     fn from(value: Enr<SecretKey>) -> Self {
@@ -61,11 +58,10 @@ impl From<EnrCombinedKeyWrapper> for Enr<SecretKey> {
 mod tests {
     use alloy_hardforks::EthereumHardfork;
     use alloy_rlp::Encodable;
-    use base_execution_network_discv5::enr::CombinedKey;
-    use base_execution_network_discv5::enr::EnrKey;
-    use base_execution_network_types::NodeRecord;
+    use base_execution_network_wire::NodeRecord;
 
     use super::*;
+    use crate::enr::{CombinedKey, EnrKey};
 
     #[test]
     fn discv5_discv4_id_conversion() {

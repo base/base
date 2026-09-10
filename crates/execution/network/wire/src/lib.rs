@@ -85,3 +85,6 @@ pub use tokio_util::codec::{
 mod requests;
 #[cfg(feature = "requests")]
 pub use requests::*;
+
+mod peer_types;
+pub use peer_types::*;

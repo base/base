@@ -1,0 +1,78 @@
+[package]
+name = "base-batcher-service"
+description = "Batcher service: config, CLI arguments, and service startup"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+auto_impl = { workspace = true }
+async-trait = { workspace = true }
+base-common-l1 = { workspace = true }
+base-batcher-encoding = { workspace = true }
+metrics = { workspace = true, optional = true }
+base-common-client-rollup = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+url = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
+backon = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true }
+tokio-util = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive", "std"] }
+base-consensus-batch = { workspace = true, features = ["std"] }
+base-common-types-rpc = { workspace = true, features = ["std"] }
+base-common-runtime = { workspace = true, features = ["tokio"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+alloy-primitives = { features = ["serde", "std"], workspace = true }
+derive_more = { workspace = true, features = ["debug", "display", "from_str"] }
+jsonrpsee = { workspace = true, features = ["http-client", "macros", "server"] }
+tokio = { workspace = true, features = ["default", "macros", "rt", "sync", "time"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "pubsub", "ws"] }
+
+[dev-dependencies]
+mockall = { workspace = true }
+async-trait = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+httpmock = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["std"] }
+base-common-types-rpc = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-runtime = { workspace = true, features = ["test-utils"] }
+tokio = { workspace = true, features = ["default", "macros", "rt", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "reorg"
+required-features = ["test-utils"]
+
+[[test]]
+name = "throttle"
+required-features = ["test-utils"]
+
+[[test]]
+name = "heads"
+required-features = ["test-utils"]
+
+[[test]]
+name = "lifecycle"
+required-features = ["test-utils"]
+
+[[test]]
+name = "pause_resume"
+required-features = ["test-utils"]
+
+[features]
+metrics = [
+    "base-batcher-encoding/metrics",
+    "base-common-observability-metrics/metrics",
+    "base-common-l1/metrics",
+    "dep:metrics",
+]
+test-utils = ["base-consensus-batch/test-utils", "base-common-runtime/test-utils"]

@@ -4,12 +4,12 @@ use std::{
         Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{Address, B256, StorageKey, StorageValue};
 use base_common_observability_metrics::Metrics;
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateRootProvider, StorageRootProvider,
@@ -20,7 +20,6 @@ use base_execution_state_trie::{
 };
 use base_execution_state_types::ProviderResult;
 use metrics::{Gauge, Histogram};
-use std::time::Instant;
 
 /// Nanoseconds per second
 const NANOS_PER_SEC: u32 = 1_000_000_000;
@@ -169,9 +168,9 @@ impl<S: AccountReader> AccountReader for InstrumentedStateProvider<S> {
     }
 }
 
-base_execution_state_api::impl_state_database!([S: base_execution_state_api::StateReadProvider] InstrumentedStateProvider<S> where []);
+base_execution_state_types::impl_state_database!([S: base_execution_state_types::StateReadProvider] InstrumentedStateProvider<S> where []);
 
-impl<S: base_execution_state_api::StateReadProvider> base_execution_state_api::StateReadProvider
+impl<S: base_execution_state_types::StateReadProvider> base_execution_state_types::StateReadProvider
     for InstrumentedStateProvider<S>
 {
     fn storage(
@@ -305,7 +304,7 @@ impl<S: BlockHashReader> BlockHashReader for InstrumentedStateProvider<S> {
 impl<S: HashedPostStateProvider> HashedPostStateProvider for InstrumentedStateProvider<S> {
     fn hashed_post_state(
         &self,
-        bundle_state: &base_execution_evm_runtime::database::BundleState,
+        bundle_state: &base_execution_evm_runtime::BundleState,
     ) -> ProviderResult<HashedPostState> {
         self.state_provider.hashed_post_state(bundle_state)
     }

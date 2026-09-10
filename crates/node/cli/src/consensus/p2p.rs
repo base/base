@@ -12,22 +12,16 @@ use std::{
 use alloy_primitives::{B256, b256};
 use backon::Retryable;
 use base_common_chain_config::RollupConfig;
-use base_common_client_ethereum::PrivateKeySigner;
-use base_common_client_ethereum::Provider;
-use base_common_runtime_tasks::RetryConfig;
-use base_consensus_derive_pipeline::ChainProvider;
-use base_consensus_driver_service::NetworkConfig;
-use base_consensus_network_service::BootNode;
-use base_consensus_network_service::BootStoreFile;
-use base_consensus_network_service::ConnectionLimitsConfig;
-use base_consensus_network_service::DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS;
-use base_consensus_network_service::DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS;
-use base_consensus_network_service::DEFAULT_PENDING_DIAL_TIMEOUT;
-use base_consensus_network_service::GaterConfig;
-use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::PeerMonitoring;
-use base_consensus_network_service::PeerScoreLevel;
-use base_consensus_source_providers::{AlloyChainProvider, L1RpcProvider};
+use base_common_client_ethereum::{PrivateKeySigner, Provider};
+use base_common_runtime::RetryConfig;
+use base_consensus_derive::ChainProvider;
+use base_consensus_driver::NetworkConfig;
+use base_consensus_network::{
+    BootNode, BootStoreFile, ConnectionLimitsConfig, DEFAULT_MAX_IDENTIFY_PEERSTORE_PEERS,
+    DEFAULT_MAX_PENDING_OUTGOING_CONNECTIONS, DEFAULT_PENDING_DIAL_TIMEOUT, GaterConfig, LocalNode,
+    PeerMonitoring, PeerScoreLevel,
+};
+use base_consensus_source::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;
 use eyre::{Result, WrapErr};
@@ -286,7 +280,7 @@ pub struct P2PNetworkArgs {
     #[arg(
         long = "p2p.unsafe-block-signer.retry-max-attempts",
         env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_MAX_ATTEMPTS",
-        default_value_t = base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_ATTEMPTS
+        default_value_t = base_common_runtime::DEFAULT_BOUNDED_MAX_ATTEMPTS
     )]
     pub unsafe_block_signer_retry_max_attempts: u32,
 
@@ -295,7 +289,7 @@ pub struct P2PNetworkArgs {
     #[arg(
         long = "p2p.unsafe-block-signer.retry-initial-delay",
         env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_INITIAL_DELAY",
-        default_value_t = base_common_runtime_tasks::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
+        default_value_t = base_common_runtime::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
     )]
     pub unsafe_block_signer_retry_initial_delay: u64,
 
@@ -304,7 +298,7 @@ pub struct P2PNetworkArgs {
     #[arg(
         long = "p2p.unsafe-block-signer.retry-max-delay",
         env = "BASE_NODE_P2P_UNSAFE_BLOCK_SIGNER_RETRY_MAX_DELAY",
-        default_value_t = base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
+        default_value_t = base_common_runtime::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
     )]
     pub unsafe_block_signer_retry_max_delay: u64,
 
@@ -683,7 +677,7 @@ impl P2PArgs {
 
         let discovery_address =
             LocalNode::new(local_node_key, advertise_ip, advertise_tcp_port, advertise_udp_port);
-        let gossip_config = base_consensus_network_service::default_config_builder()
+        let gossip_config = base_consensus_network::default_config_builder()
             .mesh_n(self.gossip_mesh_d)
             .mesh_n_low(self.gossip_mesh_dlo)
             .mesh_n_high(self.gossip_mesh_dhi)
@@ -768,9 +762,8 @@ impl P2PArgs {
     pub fn keypair(&self) -> Result<Keypair> {
         // Attempt the parse the private key if specified.
         if let Some(mut private_key) = self.private_key {
-            let keypair =
-                base_consensus_network_service::SecretKeyLoader::parse(&mut private_key.0)
-                    .map_err(|e| eyre::eyre!(e))?;
+            let keypair = base_consensus_network::SecretKeyLoader::parse(&mut private_key.0)
+                .map_err(|e| eyre::eyre!(e))?;
             info!(
                 target: "p2p::config",
                 peer_id = %keypair.public().to_peer_id(),
@@ -783,7 +776,7 @@ impl P2PArgs {
             eyre::bail!("Neither a raw private key nor a private key file path was provided.");
         };
 
-        base_consensus_network_service::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
+        base_consensus_network::SecretKeyLoader::load(key_path).map_err(|e| eyre::eyre!(e))
     }
 
     fn bootnode_strings(&self) -> Result<Vec<String>> {
@@ -814,8 +807,8 @@ mod tests {
 
     use alloy_primitives::{Address, b256};
     use base_common_chain_config::RollupConfig;
-    use base_consensus_network_service::NodeRecord;
-    use base_consensus_source_providers::L1_RPC_TIMEOUT;
+    use base_consensus_network::NodeRecord;
+    use base_consensus_source::L1_RPC_TIMEOUT;
     use clap::Parser;
     use httpmock::{HttpMockRequest, HttpMockResponse, Method::POST, MockServer};
     use rstest::rstest;
@@ -1097,15 +1090,15 @@ mod tests {
         let args = MockCommand::parse_from(["test"]).p2p;
         assert_eq!(
             args.unsafe_block_signer_retry_max_attempts,
-            base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_ATTEMPTS
+            base_common_runtime::DEFAULT_BOUNDED_MAX_ATTEMPTS
         );
         assert_eq!(
             args.unsafe_block_signer_retry_initial_delay,
-            base_common_runtime_tasks::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
+            base_common_runtime::DEFAULT_BOUNDED_INITIAL_DELAY.as_millis() as u64
         );
         assert_eq!(
             args.unsafe_block_signer_retry_max_delay,
-            base_common_runtime_tasks::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
+            base_common_runtime::DEFAULT_BOUNDED_MAX_DELAY.as_millis() as u64
         );
     }
 

@@ -5,11 +5,11 @@ use std::{
 };
 
 use alloy_primitives::U256;
-use base_common_types_chain::BlockBodyExt as BlockBody;
-use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BlockBodyExt as BlockBody, BlockHeader};
 use base_execution_network_service::{NetworkInfo, Peers};
-use base_execution_state_api::BlockReaderIdExt;
-use base_execution_txpool_pool::TransactionPool;
+use base_execution_state_provider::CanonStateSubscriptions;
+use base_execution_state_types::{BlockReaderIdExt, CanonStateNotification};
+use base_execution_txpool::TransactionPool;
 use chrono::Local;
 use serde_json::Value;
 use tokio::{
@@ -20,10 +20,6 @@ use tokio_stream::StreamExt;
 use tokio_tungstenite_0_29_0::connect_async;
 use tracing::{debug, info};
 use url::Url;
-use {
-    base_execution_state_provider::CanonStateSubscriptions,
-    base_execution_state_types::CanonStateNotification,
-};
 
 use crate::ethstats::{
     connection::ConnWrapper,
@@ -758,8 +754,8 @@ where
 #[cfg(test)]
 mod tests {
     use base_execution_network_service::NoopNetwork;
-    use base_execution_state_api::NoopProvider;
-    use base_execution_txpool_pool::NoopTransactionPool;
+    use base_execution_state_database::NoopProvider;
+    use base_execution_txpool::NoopTransactionPool;
     use futures_util::{SinkExt, StreamExt};
     use serde_json::json;
     use tokio::{net::TcpListener, sync::Notify};

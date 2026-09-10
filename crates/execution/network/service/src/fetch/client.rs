@@ -8,26 +8,19 @@ use std::{
     },
 };
 
-use crate::PeersHandle;
 use alloy_primitives::B256;
 use base_common_types_chain::BaseReceipt;
-use base_execution_network_types::PeerId;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::GetAccountRangeMessage;
-use base_execution_network_wire::GetBlockAccessListsMessage;
-use base_execution_network_wire::GetByteCodesMessage;
-use base_execution_network_wire::GetStorageRangesMessage;
-use base_execution_network_wire::SnapProtocolMessage;
 use base_execution_network_wire::{
-    BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, BodiesFut, DownloadClient,
-    HeadersClient, HeadersRequest, PeerRequestResult, Priority, ReceiptsClient, ReceiptsFut,
-    RequestError, SnapClient, SnapResponse,
+    BalRequirement, BlockAccessLists, BlockAccessListsClient, BlockClient, BodiesClient, BodiesFut,
+    DownloadClient, GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
+    GetStorageRangesMessage, HeadersClient, HeadersRequest, PeerId, PeerRequestResult, Priority,
+    ReceiptsClient, ReceiptsFut, ReputationChangeKind, RequestError, SnapClient,
+    SnapProtocolMessage, SnapResponse,
 };
 use futures::{future, future::Either};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
-use crate::{fetch::DownloadRequest, flattened_response::FlattenedResponse};
+use crate::{PeersHandle, fetch::DownloadRequest, flattened_response::FlattenedResponse};
 
 #[cfg_attr(doc, aquamarine::aquamarine)]
 /// Front-end API for fetching data from the network.

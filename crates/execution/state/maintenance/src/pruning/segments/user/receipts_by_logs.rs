@@ -231,17 +231,16 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
-    use base_common_types_chain::BaseReceipt;
-    use base_common_types_chain::InMemorySize;
+    use base_common_types_chain::{BaseReceipt, InMemorySize};
     use base_execution_state_database::{DbCursorRO, DbTx, tables};
     use base_execution_state_provider::{
         BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
     };
     use base_execution_state_types::{PruneMode, PruneSegment, ReceiptsLogPruneConfig};
-    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
+    use base_execution_sync::test_utils::{StorageKind, TestStageDB};
     use base_testing_support::{
-        generators, generators::BlockRangeParams, generators::random_eoa_account,
-        generators::random_log,
+        generators,
+        generators::{BlockRangeParams, random_eoa_account, random_log},
     };
 
     use crate::pruning::segments::{PruneInput, PruneLimiter, Segment, user::ReceiptsByLogs};

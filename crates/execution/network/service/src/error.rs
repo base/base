@@ -3,13 +3,10 @@
 use std::{fmt, io, io::ErrorKind, net::SocketAddr};
 
 use base_execution_network_discovery::NetError;
-use base_execution_network_types::BackoffKind;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::ECIESErrorImpl;
-use base_execution_network_wire::EthHandshakeError;
-use base_execution_network_wire::EthStreamError;
-use base_execution_network_wire::P2PHandshakeError;
-use base_execution_network_wire::P2PStreamError;
+use base_execution_network_wire::{
+    BackoffKind, DisconnectReason, ECIESErrorImpl, EthHandshakeError, EthStreamError,
+    P2PHandshakeError, P2PStreamError,
+};
 
 use crate::session::PendingSessionHandshakeError;
 

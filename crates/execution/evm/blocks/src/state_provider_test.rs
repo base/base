@@ -4,15 +4,14 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, U256, keccak256,
     map::{AddressMap, B256Map, HashMap},
 };
-use base_execution_state_api::{
-    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
-    StateRootProvider, StorageRootProvider,
-};
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::ProviderResult;
+use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
+};
+use base_execution_state_types::{
+    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderResult,
+    StateProofProvider, StateRootProvider, StorageRootProvider,
 };
 
 /// Mock state for testing
@@ -154,15 +153,15 @@ impl StateProofProvider for StateProviderTest {
 impl HashedPostStateProvider for StateProviderTest {
     fn hashed_post_state(
         &self,
-        bundle_state: &base_execution_evm_runtime::database::BundleState,
+        bundle_state: &base_execution_evm_runtime::BundleState,
     ) -> ProviderResult<HashedPostState> {
         Ok(HashedPostState::from_bundle_state(bundle_state.state()))
     }
 }
 
-base_execution_state_api::impl_state_database!([] StateProviderTest where []);
+base_execution_state_types::impl_state_database!([] StateProviderTest where []);
 
-impl base_execution_state_api::StateReadProvider for StateProviderTest {
+impl base_execution_state_types::StateReadProvider for StateProviderTest {
     fn storage(
         &self,
         account: Address,

@@ -1,17 +1,13 @@
 use alloc::{boxed::Box, string::String};
 
-use crate::PruneSegmentError;
-use crate::StaticFileSegment;
 use alloy_eips::{BlockHashOrNumber, HashOrNumber};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxNumber};
-use base_common_types_chain::DecompressError;
-use base_common_types_chain::{GotExpected, RecoveryError};
-use base_execution_state_memory::DBErrorMarker;
-use base_execution_state_memory::EvmDatabaseError;
-use base_execution_state_memory::bal::BalError;
+use base_common_types_chain::{DecompressError, GotExpected, RecoveryError};
+use base_execution_evm_runtime::{DBErrorMarker, EvmDatabaseError, bal::BalError};
 use derive_more::Display;
 
 use super::{any::AnyError, db::DatabaseError};
+use crate::{PruneSegmentError, StaticFileSegment};
 
 /// Provider result type.
 pub type ProviderResult<Ok> = Result<Ok, ProviderError>;

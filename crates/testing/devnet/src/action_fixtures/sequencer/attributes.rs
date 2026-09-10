@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use base_common_chain_config::SystemConfig;
 use base_common_types_chain::BaseTxEnvelope;
 use base_common_types_payload::BasePayloadAttributes;
-use base_consensus_batch_types::L2BlockInfo;
-use base_consensus_derive_pipeline::{
+use base_consensus_batch::L2BlockInfo;
+use base_consensus_derive::{
     AttributesBuilder, PipelineError, PipelineResult, StatefulAttributesBuilder,
 };
 

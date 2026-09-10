@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use base_proof_witness_preimage::PreimageKey;
-use base_proof_types_protocol::ProofResult;
 use base_proof_tee_nitro_enclave::{EnclaveRequest, EnclaveResponse, Frame};
+use base_proof_types::ProofResult;
+use base_proof_witness_preimage::PreimageKey;
 use tokio_vsock::{VsockAddr, VsockStream};
 use tracing::info;
 

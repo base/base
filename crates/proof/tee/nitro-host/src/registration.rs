@@ -19,7 +19,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_l1_submission::{TEEProverRegistryClient, TEEProverRegistryContractClient};
+use base_proof_l1::{TEEProverRegistryClient, TEEProverRegistryContractClient};
 use thiserror::Error;
 use tokio::sync::OnceCell;
 use tracing::warn;
@@ -261,7 +261,7 @@ mod tests {
         sync::{Arc, atomic::Ordering},
     };
 
-    use base_proof_l1_submission::TEEProverRegistryClient;
+    use base_proof_l1::TEEProverRegistryClient;
 
     use super::*;
     use crate::test_utils::{AddressBasedMockRegistry, MockRegistry};
@@ -278,7 +278,7 @@ mod tests {
         let server = Arc::new(base_proof_tee_nitro_enclave::Server::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
         let dummy_url = url::Url::parse("http://localhost:1").unwrap();
-        let registry = base_proof_l1_submission::TEEProverRegistryContractClient::new(
+        let registry = base_proof_l1::TEEProverRegistryContractClient::new(
             alloy_primitives::Address::ZERO,
             dummy_url,
         );

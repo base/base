@@ -1,0 +1,73 @@
+use std::time::Duration;
+
+use alloy_eips::BlockNumberOrTag;
+use alloy_rpc_client::PollerBuilder;
+use async_stream::stream;
+use base_common_client_ethereum::Provider;
+use base_common_types_rpc::Block;
+use base_consensus_batch::BlockInfo;
+use futures::{Stream, StreamExt};
+
+/// A wrapper around a [`PollerBuilder`] that observes [`BlockInfo`] updates on a [`Provider`].
+///
+/// Note that this stream is not guaranteed to be contiguous. It may miss certain blocks, and
+/// yielded items should only be considered to be the latest block matching the given
+/// [`BlockNumberOrTag`].
+#[derive(Debug, Clone)]
+pub struct BlockStream<L1P>
+where
+    L1P: Provider,
+{
+    /// The inner [`Provider`].
+    l1_provider: L1P,
+    /// The block tag to poll for.
+    tag: BlockNumberOrTag,
+    /// The poll interval (in seconds).
+    poll_interval: Duration,
+}
+
+impl<L1P: Provider> BlockStream<L1P> {
+    /// Creates a new [`Stream<Item = BlockInfo>`] instance.
+    ///
+    /// # Returns
+    /// Returns error if the passed [`BlockNumberOrTag`] is of the [`BlockNumberOrTag::Number`]
+    /// variant.
+    pub fn new_as_stream(
+        l1_provider: L1P,
+        tag: BlockNumberOrTag,
+        poll_interval: Duration,
+    ) -> Result<impl Stream<Item = BlockInfo> + Unpin + Send, String> {
+        if matches!(tag, BlockNumberOrTag::Number(_)) {
+            error!("Invalid BlockNumberOrTag variant - Must be a tag");
+        }
+        Ok(Self { l1_provider, tag, poll_interval }.into_stream())
+    }
+
+    /// Creates a [`Stream`] of [`BlockInfo`].
+    ///
+    /// Null responses (e.g. `eth_getBlockByNumber("finalized")` before the CL has communicated
+    /// a finalized checkpoint, or `"latest"` before the L1 node has synced any blocks) are
+    /// silently skipped rather than causing a deserialization error.
+    pub fn into_stream(self) -> impl Stream<Item = BlockInfo> + Unpin + Send {
+        let mut poll_stream = PollerBuilder::<(BlockNumberOrTag, bool), Option<Block>>::new(
+            self.l1_provider.weak_client(),
+            "eth_getBlockByNumber",
+            (self.tag, false),
+        )
+        .with_poll_interval(self.poll_interval)
+        .into_stream();
+
+        Box::pin(stream! {
+            let mut last_block = None;
+            while let Some(next) = poll_stream.next().await {
+                let Some(block) = next else { continue };
+                let info: BlockInfo = block.into_consensus().into();
+
+                if last_block.map(|b| b != info).unwrap_or(true) {
+                    last_block = Some(info);
+                    yield info;
+                }
+            }
+        })
+    }
+}

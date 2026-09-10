@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use base_common_types_payload::{ExecutionPayloadV3, PayloadStatusEnum};
-use base_execution_rpc_handlers::EthApiClient;
+use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;

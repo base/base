@@ -1,6 +1,6 @@
 //! Computes proposal checkpoint block intervals shared by recovery and submission.
 
-use base_proof_l1_submission::game_lookup_blocks;
+use base_proof_l1::game_lookup_blocks;
 
 use crate::error::ProposerError;
 

@@ -109,20 +109,6 @@ pub struct LogArgs {
     )]
     pub tracing_chrome_filter: String,
 
-    /// Emit traces to tracy. Only useful when profiling.
-    #[arg(long = "log.tracy", global = true, hide = true, default_value_t = DefaultLogArgs::get_global().tracy)]
-    pub tracy: bool,
-
-    /// The filter to use for traces emitted to tracy.
-    #[arg(
-        long = "log.tracy.filter",
-        value_name = "FILTER",
-        global = true,
-        default_value_t = DefaultLogArgs::get_global().tracy_filter.clone(),
-        hide = true
-    )]
-    pub tracy_filter: String,
-
     /// Sets whether or not the formatter emits ANSI terminal escape codes for colors and other
     /// text formatting.
     #[arg(
@@ -229,18 +215,6 @@ impl LogArgs {
             tracer = tracer.with_chrome(config, self.tracing_chrome_file.clone());
         }
 
-        if self.tracy {
-            #[cfg(feature = "tracy")]
-            {
-                let config = self.layer_info(LogFormat::Terminal, self.tracy_filter.clone(), false);
-                tracer = tracer.with_tracy(config);
-            }
-            #[cfg(not(feature = "tracy"))]
-            {
-                tracing::warn!("`--log.tracy` requested but `tracy` feature was not compiled in");
-            }
-        }
-
         tracer.with_reload(enable_reload).init_with_layers(layers)
     }
 }
@@ -262,8 +236,7 @@ pub struct DefaultLogArgs {
     samply_filter: String,
     tracing_chrome: bool,
     tracing_chrome_filter: String,
-    tracy: bool,
-    tracy_filter: String,
+
     color: ColorMode,
 }
 
@@ -350,18 +323,6 @@ impl DefaultLogArgs {
         self
     }
 
-    /// Set whether tracy tracing is enabled by default.
-    pub const fn with_tracy(mut self, v: bool) -> Self {
-        self.tracy = v;
-        self
-    }
-
-    /// Set the default tracy filter.
-    pub fn with_tracy_filter(mut self, v: String) -> Self {
-        self.tracy_filter = v;
-        self
-    }
-
     /// Set the default color mode.
     pub const fn with_color(mut self, v: ColorMode) -> Self {
         self.color = v;
@@ -384,8 +345,7 @@ impl Default for DefaultLogArgs {
             samply_filter: PROFILER_TRACING_FILTER.to_string(),
             tracing_chrome: false,
             tracing_chrome_filter: PROFILER_TRACING_FILTER.to_string(),
-            tracy: false,
-            tracy_filter: PROFILER_TRACING_FILTER.to_string(),
+
             color: ColorMode::Always,
         }
     }

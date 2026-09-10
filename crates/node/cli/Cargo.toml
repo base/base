@@ -13,108 +13,103 @@ workspace = true
 [dependencies]
 lz4 = { workspace = true }
 dirs = { workspace = true }
-metrics = {workspace = true}
 strum = { workspace = true }
+metrics = { workspace = true }
 fdlimit = { workspace = true }
-humantime = {workspace = true}
-alloy-eips = {workspace = true}
+humantime = { workspace = true }
 itertools = { workspace = true }
+alloy-eips = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
-base-node-config = {workspace = true}
+base-common-io = { workspace = true }
+base-common-l1 = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-io-files = { workspace = true }
-base-common-cli-support = {workspace = true}
-base-consensus-batch-types = {workspace = true}
-base-execution-state-api = { workspace = true }
-base-execution-state-memory = {workspace = true}
-tar = {features = ["default"], workspace = true}
-url = {features = ["default"], workspace = true}
+base-common-cli = { workspace = true }
+base-node-config = { workspace = true }
+base-consensus-batch = { workspace = true }
+base-consensus-derive = { workspace = true }
 arbitrary = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-tasks = { workspace = true }
-eyre = {features = ["default"], workspace = true}
-zstd = {features = ["default"], workspace = true}
-base-common-l1-transactions = { workspace = true }
-base-execution-network-discv5 = {workspace = true}
-base-execution-state-provider = {workspace = true}
+tar = { features = ["default"], workspace = true }
+url = { features = ["default"], workspace = true }
 socket2 = { workspace = true, features = ["all"] }
+eyre = { features = ["default"], workspace = true }
+zstd = { features = ["default"], workspace = true }
+base-execution-state-provider = { workspace = true }
 discv5 = { workspace = true, features = ["libp2p"] }
-futures = {features = ["default"], workspace = true}
 thiserror = { workspace = true, features = ["std"] }
-alloy-chains = {features = ["std"], workspace = true}
-base-common-observability-events = {workspace = true}
-base-consensus-derive-pipeline = { workspace = true }
-base-execution-state-maintenance = {workspace = true}
 blake3 = { workspace = true, features = ["default"] }
-base-common-observability-metrics = {workspace = true}
+futures = { features = ["default"], workspace = true }
 base-execution-engine-observers = { workspace = true }
+alloy-chains = { features = ["std"], workspace = true }
+base-common-observability-events = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
+base-common-observability-metrics = { workspace = true }
 crossterm = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["crossterm"] }
-serde = {features = ["derive", "std"], workspace = true}
 alloy-rlp = { workspace = true, features = ["core-net"] }
-tokio-stream = {features = ["default"], workspace = true}
 tokio-util = { workspace = true, features = ["default"] }
+serde = { features = ["derive", "std"], workspace = true }
 comfy-table = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
-serde_json = {features = ["alloc", "std"], workspace = true}
-base-node-service = {features = ["default"], workspace = true}
-tracing = {features = ["attributes", "std"], workspace = true}
-base-execution-evm-blocks = {features = ["std"], workspace = true}
-clap = {features = ["default", "derive", "env"], workspace = true}
+tokio-stream = { features = ["default"], workspace = true }
+serde_json = { features = ["alloc", "std"], workspace = true }
+base-node-service = { features = ["default"], workspace = true }
+tracing = { features = ["attributes", "std"], workspace = true }
+base-common-runtime = { features = ["tokio"], workspace = true }
+base-batcher-encoding = { workspace = true, features = ["clap"] }
+base-execution-rpc = { features = ["default"], workspace = true }
 proptest-arbitrary-interop = { workspace = true, optional = true }
-base-common-runtime-tasks = {features = ["tokio"], workspace = true}
-proptest = {optional = true, features = ["default"], workspace = true}
-base-execution-txpool-pool = {features = ["default"], workspace = true}
-base-batcher-service-driver = {features = ["metrics"], workspace = true}
-base-common-client-ethereum = {workspace = true, features = ["default"]}
-base-execution-rpc-handlers = {features = ["default"], workspace = true}
+base-batcher-service = { features = ["metrics"], workspace = true }
+base-execution-evm-blocks = { features = ["std"], workspace = true }
+clap = { features = ["default", "derive", "env"], workspace = true }
+base-execution-txpool = { features = ["default"], workspace = true }
+base-consensus-source = { workspace = true, features = ["metrics"] }
+base-consensus-network = { features = ["metrics"], workspace = true }
+base-execution-payload = { features = ["default"], workspace = true }
+proptest = { optional = true, features = ["default"], workspace = true }
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
-alloy-primitives = {features = ["map-foldhash", "std"], workspace = true}
-base-batcher-encoding-channel = { workspace = true, features = ["clap"] }
-base-common-types-chain = {workspace = true, features = ["k256", "reth", "serde"]}
-base-consensus-network-service = {features = ["metrics"], workspace = true}
-base-execution-payload-builder = {features = ["default"], workspace = true}
-base-execution-state-types = {features = ["clap", "std"], workspace = true}
-base-common-chain-config = {features = ["default", "std"], workspace = true}
-base-consensus-source-providers = {workspace = true, features = ["metrics"]}
-base-execution-network-discovery = {features = ["default"], workspace = true}
+base-common-client-ethereum = { workspace = true, features = ["default"] }
+alloy-primitives = { features = ["map-foldhash", "std"], workspace = true }
+base-execution-state-types = { features = ["clap", "std"], workspace = true }
+base-common-chain-config = { features = ["default", "std"], workspace = true }
+base-execution-network-discovery = { features = ["default"], workspace = true }
+base-consensus-driver = { features = ["default", "metrics"], workspace = true }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default", "display"] }
-base-execution-state-database = {features = ["default", "mdbx"], workspace = true}
-tokio = {features = ["default", "macros", "net", "sync", "time"], workspace = true}
-base-common-chain-activation = {workspace = true, features = ["default", "metrics"]}
-base-execution-network-service = {features = ["default", "serde"], workspace = true}
-base-execution-state-indexer = {features = ["default", "service"], workspace = true}
-base-consensus-driver-service = {features = ["default", "metrics"], workspace = true}
-base-execution-network-types = {features = ["default", "secp256k1"], workspace = true}
-base-execution-network-wire = {features = ["requests", "transport"], workspace = true}
-backon = {features = ["default", "std-blocking-sleep", "tokio-sleep"], workspace = true}
-base-execution-sync-pipeline = {workspace = true, features = ["default", "file-client"]}
-secp256k1 = {features = ["default", "global-context", "recovery", "std"], workspace = true}
-reqwest = {features = ["blocking", "default", "json", "rustls", "stream"], workspace = true}
+base-execution-sync = { workspace = true, features = ["default", "file-client"] }
+base-common-types-chain = { workspace = true, features = ["k256", "reth", "serde"] }
+base-execution-state-database = { features = ["default", "mdbx"], workspace = true }
+tokio = { features = ["default", "macros", "net", "sync", "time"], workspace = true }
+base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
+base-execution-network-service = { features = ["default", "serde"], workspace = true }
+base-execution-state-indexer = { features = ["default", "service"], workspace = true }
+backon = { features = ["default", "std-blocking-sleep", "tokio-sleep"], workspace = true }
+secp256k1 = { features = ["default", "global-context", "recovery", "std"], workspace = true }
+reqwest = { features = ["blocking", "default", "json", "rustls", "stream"], workspace = true }
+base-execution-network-wire = { features = ["requests", "transport", "default", "secp256k1"], workspace = true }
 libp2p = { workspace = true, features = ["secp256k1", "macros", "tokio", "tcp", "noise", "gossipsub", "ping", "yamux", "identify"] }
 
 [dev-dependencies]
 alloy-chains = { workspace = true }
-alloy-primitives = {workspace = true}
 alloy-hardforks = { workspace = true }
+alloy-primitives = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-execution-payload-types = { workspace = true }
-rstest = {workspace = true, features = ["default"]}
-tempfile = {features = ["default"], workspace = true}
+base-common-types-payload = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
+tempfile = { features = ["default"], workspace = true }
 httpmock = { workspace = true, features = ["default"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
 base-node-service = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
-tokio = {features = ["default", "macros", "rt-multi-thread", "test-util"], workspace = true}
+tokio = { features = ["default", "macros", "rt-multi-thread", "test-util"], workspace = true }
 
 [build-dependencies]
-base-common-chain-config = { workspace = true, features = ["std", "std"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
 
 [features]
-otlp = ["base-node-config/otlp", "base-common-cli-support/otlp"]
+otlp = ["base-node-config/otlp", "base-common-cli/otlp"]
 otlp-logs = ["base-node-config/otlp-logs"]
-tracy = ["base-node-config/tracy"]
 default = ["otlp"]
 
 # Opentelemetry feature to activate tracing and logs export
@@ -131,5 +126,25 @@ jemalloc-symbols = ["jemalloc-prof", "base-node-service/jemalloc-symbols"]
 
 dev = ["base-common-types-chain/arbitrary", "dep:proptest", "arbitrary"]
 
-serde = ["alloy-eips/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-network-service/serde", "secp256k1/serde", "url/serde"]
-arbitrary = ["dep:proptest", "dep:arbitrary", "dep:proptest-arbitrary-interop", "base-execution-state-database/arbitrary", "base-execution-network-wire/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "base-common-types-chain/arbitrary", "base-execution-state-memory/arbitrary"]
+serde = [
+    "alloy-eips/serde",
+    "base-common-chain-config/serde",
+    "base-common-types-chain/serde",
+    "base-execution-network-service/serde",
+    "secp256k1/serde",
+    "url/serde",
+]
+arbitrary = [
+    "dep:proptest",
+    "dep:arbitrary",
+    "dep:proptest-arbitrary-interop",
+    "base-execution-state-database/arbitrary",
+    "base-execution-network-wire/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "base-common-types-chain/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-common-types-chain/arbitrary",
+    "base-execution-state-types/arbitrary",
+    "base-execution-evm-runtime/arbitrary",
+]

@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
+use base_execution_network_wire::{NodeRecord, PeerId, TrustedPeer};
 use futures::{FutureExt, StreamExt, future::BoxFuture, ready, stream::FuturesUnordered};
 use tokio::time::Interval;
 use tracing::warn;

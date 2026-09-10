@@ -10,21 +10,22 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use crate::test_utils::init_silenced_tracing;
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Identity, ProviderBuilder, RootProvider};
-use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
-use base_execution_payload_builder::SharedMeteringStore;
-use base_execution_txpool_pool::{BasePooledTransaction, TransactionPool};
+use base_common_client_ethereum::{Base, Identity, ProviderBuilder, RootProvider};
+use base_common_runtime::{Runtime, RuntimeBuilder, RuntimeConfig};
+use base_execution_payload::SharedMeteringStore;
+use base_execution_txpool::{BasePooledTransaction, TransactionPool};
 use base_node_config::{DatadirArgs, NetworkArgs, NodeExitFuture, RpcServerArgs};
 use base_node_service::{BaseNode, BuilderConfig, NodeConfig, RollupArgs};
 use futures::FutureExt;
 use nanoid::nanoid;
 
-use crate::builder_test_utils::{
-    EngineApi, TransactionPoolObserver, create_test_db_env, driver::ChainDriver,
+use crate::{
+    builder_test_utils::{
+        EngineApi, TransactionPoolObserver, create_test_db_env, driver::ChainDriver,
+    },
+    test_utils::init_silenced_tracing,
 };
 
 /// Clears OTEL-related environment variables that can interfere with CLI argument parsing.
@@ -135,10 +136,7 @@ impl LocalInstanceBuilder {
     }
 
     /// Sets the sequencer ingress limits used by the production RPC handler.
-    pub fn with_builder_rpc(
-        mut self,
-        config: base_execution_rpc_handlers::BuilderApiConfig,
-    ) -> Self {
+    pub fn with_builder_rpc(mut self, config: base_execution_rpc::BuilderApiConfig) -> Self {
         self.rpc.builder = Some(config);
         self
     }

@@ -2,8 +2,8 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 
 use alloy_signer::utils::public_key_to_address;
 use base_common_observability_health::{HealthzApiServer, HealthzRpc};
-use base_proof_host_service::ProverConfig;
-use base_proof_types_protocol::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
+use base_proof_host::ProverConfig;
+use base_proof_types::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
     RpcModule,
     core::{RpcResult, async_trait},
@@ -257,8 +257,8 @@ impl EnclaveApiServer for NitroSignerRpc {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use base_proof_types_protocol::EnclaveApiServer;
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
+    use base_proof_types::EnclaveApiServer;
     use jsonrpsee::core::client::ClientT as _;
 
     use super::*;

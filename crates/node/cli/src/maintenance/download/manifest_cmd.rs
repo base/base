@@ -1,12 +1,11 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
-use base_execution_state_database::DbTx;
-use base_execution_state_database::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
-use base_execution_state_types::DEFAULT_BLOCKS_PER_STATIC_FILE;
-use base_execution_state_types::StageId;
+use base_execution_state_database::{
+    Database, DbTx, mdbx::DatabaseArguments, open_db_read_only, tables,
+};
+use base_execution_state_types::{DEFAULT_BLOCKS_PER_STATIC_FILE, StageId};
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::maintenance::download::manifest::generate_manifest;
@@ -79,7 +78,7 @@ impl SnapshotManifestCommand {
         let num_components = manifest.components.len();
         let json = serde_json::to_string_pretty(&manifest)?;
         let output = self.output_dir.join("manifest.json");
-        base_common_io_files::Files::write(&output, &json)?;
+        base_common_io::Files::write(&output, &json)?;
         info!(target: "reth::cli",
             path = ?output,
             components = num_components,

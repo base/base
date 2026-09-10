@@ -3,15 +3,14 @@ use std::sync::Arc;
 
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
-use base_common_cli_support::CliRunner;
-use base_consensus_driver_service::LocalEngineClient;
-use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
-use base_node_cli::BuilderArgs;
+use base_common_cli::CliRunner;
+use base_consensus_driver::LocalEngineClient;
+use base_consensus_source::{L1RpcProvider, LocalL2Provider};
 use base_node_cli::{
-    CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
+    BuilderArgs, CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
+    ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs, ExecutionNodeConfigArgs,
+    StandardBaseRethNode, chainspec::chain_value_parser,
 };
-use base_node_cli::{ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser};
 use base_node_service::BaseNode;
 use clap::Args;
 use tokio_util::sync::CancellationToken;
@@ -61,7 +60,7 @@ impl SequencerCommand {
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         let rollup_args = builder.rollup_args.clone();
-        let metering_provider: base_execution_payload_builder::SharedMeteringStore =
+        let metering_provider: base_execution_payload::SharedMeteringStore =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config()?;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
-use base_common_cli_support::CliContext;
+use base_common_cli::CliContext;
 use clap::{Parser, Subcommand};
 
 use crate::CliNodeComponents;

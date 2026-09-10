@@ -1,7 +1,7 @@
 //! Concrete inputs for launching a Base execution node.
 
-use base_common_runtime_tasks::TaskExecutor;
-use base_execution_engine_types::TreeConfig;
+use base_common_runtime::TaskExecutor;
+use base_common_types_payload::TreeConfig;
 use base_execution_state_database::DatabaseEnv;
 
 use crate::{BaseNode, BasePayloadServiceConfig, BaseRpcServices, NodeConfig, NodeServices};

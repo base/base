@@ -1,14 +1,11 @@
 use std::io::Write;
 
-use base_execution_evm_machine::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, InterpreterResult,
+use base_execution_evm_runtime::{
+    B256, CallInputs, CallOutcome, Cfg, ContextTr, CreateInputs, CreateOutcome, GasInspector,
+    HashMap, Inspector, Interpreter, InterpreterResult, JournalTr, Transaction, U256, hex,
+    opcode::OpCode,
 };
-use base_execution_evm_machine::{Cfg, ContextTr, JournalTr, Transaction};
-use base_execution_evm_primitives::{B256, HashMap, U256, hex};
-use base_execution_state_memory::bytecode::opcode::OpCode;
 use serde::Serialize;
-
-use crate::{GasInspector, Inspector};
 
 /// [EIP-3155](https://eips.ethereum.org/EIPS/eip-3155) tracer [Inspector].
 pub struct TracerEip3155 {

@@ -4,25 +4,25 @@ use std::{path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_state_database::{DatabaseEnv, init_db, open_db_read_only};
-use base_execution_state_maintenance::StaticFileProducer;
-use base_execution_state_maintenance::init::init_genesis_with_settings;
+use base_execution_state_maintenance::{StaticFileProducer, init::init_genesis_with_settings};
 use base_execution_state_provider::{
     BalConfig, BalStoreHandle, InMemoryBalStore, ProviderFactory, StaticFileProviderFactory,
     StorageSettings,
     providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
 };
-use base_execution_sync_pipeline::{DefaultStages, Pipeline, PipelineTarget};
-use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
+use base_execution_state_types::EtlConfig;
+use base_execution_sync::{
+    DefaultStages, NoopBodiesDownloader, NoopHeaderDownloader, Pipeline, PipelineTarget,
+};
 use base_node_config::{
-    ChainPath, DataDirPath, DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs,
+    ChainPath, DataDirPath, DatabaseArgs, DatadirArgs, NodeFileConfig as Config, StaticFilesArgs,
+    StorageArgs,
 };
 use clap::Parser;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
-use {base_execution_state_types::EtlConfig, base_node_config::NodeFileConfig as Config};
 
 /// Struct to hold config and datadir paths
 #[derive(Debug, Parser)]
@@ -78,7 +78,7 @@ impl EnvironmentArgs {
     pub fn init(
         &self,
         access: AccessRights,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<Environment> {
         let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain());
         let db_path = data_dir.db();
@@ -86,9 +86,9 @@ impl EnvironmentArgs {
         let rocksdb_path = data_dir.rocksdb();
 
         if access.is_read_write() {
-            base_common_io_files::Files::create_dir_all(&db_path)?;
-            base_common_io_files::Files::create_dir_all(&sf_path)?;
-            base_common_io_files::Files::create_dir_all(&rocksdb_path)?;
+            base_common_io::Files::create_dir_all(&db_path)?;
+            base_common_io::Files::create_dir_all(&sf_path)?;
+            base_common_io::Files::create_dir_all(&rocksdb_path)?;
         }
 
         let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());
@@ -128,7 +128,7 @@ impl EnvironmentArgs {
             // or created before RocksDB storage). Create an empty one so read-only
             // commands can proceed.
             debug!(target: "reth::cli", ?rocksdb_path, "RocksDB not found, initializing empty database");
-            base_common_io_files::Files::create_dir_all(&rocksdb_path)?;
+            base_common_io::Files::create_dir_all(&rocksdb_path)?;
             let mut builder = RocksDBProvider::builder(data_dir.rocksdb())
                 .with_default_tables()
                 .with_database_log_level(self.db.log_level);
@@ -169,7 +169,7 @@ impl EnvironmentArgs {
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
         access: AccessRights,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<ProviderFactory> {
         let balstore_cache_size =
             self.db.balstore_cache_size.unwrap_or(BalConfig::DEFAULT_IN_MEMORY_RETENTION_DISTANCE);

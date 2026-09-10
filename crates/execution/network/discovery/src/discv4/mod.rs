@@ -14,17 +14,7 @@ use std::{
 
 use alloy_eip2124::ForkId;
 use alloy_primitives::{B256, bytes::Bytes, hex};
-use base_execution_network_discv5 as kbucket;
-use base_execution_network_discv5::BucketInsertResult;
-use base_execution_network_discv5::ConnectionDirection;
-use base_execution_network_discv5::ConnectionState;
-use base_execution_network_discv5::Distance;
-use base_execution_network_discv5::Entry as BucketEntry;
-use base_execution_network_discv5::InsertResult;
-use base_execution_network_discv5::KBucketsTable;
-use base_execution_network_discv5::MAX_NODES_PER_BUCKET;
-use base_execution_network_discv5::NodeStatus;
-use base_execution_network_types::{PeerId, pk2id};
+use base_execution_network_wire::{PeerId, pk2id};
 use enr::Enr;
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -37,6 +27,12 @@ use tokio::{
 };
 use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
 use tracing::{debug, trace};
+
+use crate as kbucket;
+use crate::{
+    BucketInsertResult, ConnectionDirection, ConnectionState, Distance, Entry as BucketEntry,
+    InsertResult, KBucketsTable, MAX_NODES_PER_BUCKET, NodeStatus,
+};
 
 mod error;
 pub use error::*;
@@ -52,15 +48,14 @@ pub use node::NodeKey;
 mod table;
 
 // reexport NodeRecord primitive
-use base_execution_network_types::NodeRecord;
+use base_execution_network_wire::NodeRecord;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
-use crate::ResolveNatInterval;
+pub use table::{NodeKey as PongNodeKey, PongTable};
 
-pub use table::NodeKey as PongNodeKey;
-pub use table::PongTable;
+use crate::ResolveNatInterval;
 
 /// The default address for discv4 via UDP
 ///
@@ -187,8 +182,8 @@ impl Discv4 {
     /// Binds a new `UdpSocket` and creates the service
     ///
     /// ```
-    /// use base_execution_network_discovery::{Discv4, Discv4Config};
-    /// use base_execution_network_types::{pk2id, NodeRecord, PeerId};
+    /// use crate::{Discv4, Discv4Config};
+    /// use base_execution_network_wire::{pk2id, NodeRecord, PeerId};
     /// use secp256k1::SECP256K1;
     /// use std::{net::SocketAddr, str::FromStr};
     /// # async fn t() -> std:: io::Result<()> {
@@ -933,11 +928,7 @@ impl Discv4Service {
         self.remove_key(node_id, key)
     }
 
-    fn remove_key(
-        &mut self,
-        node_id: PeerId,
-        key: base_execution_network_discv5::Key<NodeKey>,
-    ) -> bool {
+    fn remove_key(&mut self, node_id: PeerId, key: crate::Key<NodeKey>) -> bool {
         let removed = self.kbuckets.remove(&key);
         if removed {
             trace!(target: "discv4", ?node_id, "removed node");
@@ -2240,7 +2231,7 @@ pub struct LookupContext {
 impl LookupContext {
     /// Create new context for a recursive lookup
     fn new(
-        target: base_execution_network_discv5::Key<NodeKey>,
+        target: crate::Key<NodeKey>,
         nearest_nodes: impl IntoIterator<Item = (Distance, NodeRecord)>,
         listener: Option<NodeRecordSender>,
     ) -> Self {
@@ -2338,7 +2329,7 @@ unsafe impl Send for LookupContext {}
 #[derive(Debug)]
 struct LookupContextInner {
     /// The target to lookup.
-    target: base_execution_network_discv5::Key<NodeKey>,
+    target: crate::Key<NodeKey>,
     /// The closest nodes
     closest_nodes: RefCell<BTreeMap<Distance, QueryNode>>,
     /// A listener for all the nodes retrieved in this lookup
@@ -2555,7 +2546,7 @@ mod tests {
     use alloy_eip2124::{EnrForkIdEntry, ForkHash};
     use alloy_primitives::hex;
     use alloy_rlp::{Decodable, Encodable};
-    use base_execution_network_types::mainnet_nodes;
+    use base_execution_network_wire::mainnet_nodes;
     use rand_08::Rng;
 
     use super::*;

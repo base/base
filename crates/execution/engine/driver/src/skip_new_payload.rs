@@ -5,8 +5,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
-use base_execution_engine_types::BeaconEngineMessage;
+use base_common_types_payload::{BeaconEngineMessage, PayloadStatus, PayloadStatusEnum};
 use futures::{Stream, StreamExt};
 
 /// Engine API stream wrapper that skips the specified number of new payload messages.

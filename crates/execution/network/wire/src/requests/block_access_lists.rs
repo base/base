@@ -1,9 +1,8 @@
-use crate::BlockAccessLists;
 use alloy_primitives::B256;
 use auto_impl::auto_impl;
 use futures::Future;
 
-use crate::{DownloadClient, PeerRequestResult, Priority};
+use crate::{BlockAccessLists, DownloadClient, PeerRequestResult, Priority};
 
 /// Controls whether a BAL request must wait for a capable peer or may complete early when none are
 /// available.

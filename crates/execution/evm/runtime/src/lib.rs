@@ -33,7 +33,6 @@ mod handler;
 pub use handler::BaseHandler;
 
 mod precompiles;
-pub use base_execution_evm_precompiles::BasePrecompiles;
 
 mod beryl_metrics;
 pub use beryl_metrics::BerylPrecompileMetricsObserver;
@@ -69,16 +68,6 @@ pub use executor::{
     BaseBlockExecutionCtx, BaseBlockExecutor, BaseBlockExecutorFactory, BaseTxResult,
 };
 
-pub use base_execution_evm_crypto as precompile;
-pub use base_execution_evm_crypto::install_crypto;
-pub use base_execution_evm_machine as interpreter;
-pub use base_execution_evm_machine::{Context, Journal, JournalEntry};
-pub use base_execution_evm_primitives as bytecode;
-pub use base_execution_evm_primitives as primitives;
-pub use base_execution_state_memory as database;
-pub use base_execution_state_memory as state;
-pub use base_execution_state_memory::{DatabaseCommit, DatabaseRef, NoopHook, OnStateHook};
-
 mod execution_api;
 pub use execution_api::*;
 
@@ -90,7 +79,8 @@ mod eip3155;
 #[cfg(feature = "tracer")]
 pub use eip3155::*;
 
-mod either;
+#[path = "either.rs"]
+mod either_impl;
 
 mod machine;
 pub use machine::EvmMachine;
@@ -107,8 +97,9 @@ pub use frame::*;
 mod frame_data;
 pub use frame_data::*;
 
-mod gas;
-pub use gas::*;
+#[path = "gas.rs"]
+mod execution_gas;
+pub use execution_gas::*;
 
 mod execution_handler;
 pub use execution_handler::*;
@@ -122,13 +113,16 @@ pub use inspector::*;
 mod inspector_handler;
 pub use inspector_handler::*;
 
-mod instructions;
-pub use instructions::*;
+#[path = "instructions.rs"]
+mod execution_instructions;
+pub use execution_instructions::*;
 
 mod item_or_result;
 pub use item_or_result::*;
 
+#[cfg(any(test, feature = "test-utils"))]
 mod mainnet_builder;
+#[cfg(any(test, feature = "test-utils"))]
 pub use mainnet_builder::*;
 
 mod mainnet_handler;
@@ -163,10 +157,10 @@ pub use block::*;
 mod evm_api;
 pub use evm_api::*;
 
+#[cfg(any(test, feature = "test-utils"))]
 mod eth;
+#[cfg(any(test, feature = "test-utils"))]
 pub use eth::*;
-
-pub use base_execution_evm_machine::{BlockEnvironment, EvmEnv, EvmLimitParams, TransactionEnvMut};
 
 mod execution_error;
 pub use execution_error::*;
@@ -181,8 +175,34 @@ mod either_evm;
 
 mod base_transactions;
 
-pub use base_execution_evm_precompiles::{
-    DynPrecompile, DynPrecompiles, ErasedError, EthPrecompiles, EvmInternals, EvmInternalsError,
-    MovePrecompileError, Precompile, PrecompileInput, PrecompileLookup, PrecompileProvider,
-    PrecompilesMap, TransactionTr, precompile_output_to_interpreter_result,
+mod eth_tx_result;
+pub use eth_tx_result::*;
+
+mod core_primitives;
+pub use core_primitives::*;
+
+mod core_memory;
+pub use core_memory::*;
+
+mod core_machine;
+pub use core_machine::*;
+
+mod core_crypto;
+pub use core_crypto::*;
+
+mod core_precompiles;
+pub use core_crypto::{
+    Precompile as CryptoPrecompile, PrecompileError as CryptoPrecompileError,
+    PrecompileHalt as CryptoPrecompileHalt, PrecompileOutput as CryptoPrecompileOutput,
+    PrecompileResult as CryptoPrecompileResult, PrecompileStatus as CryptoPrecompileStatus,
 };
+pub use core_memory::{AccountInfo, AccountState, ErasedError as DatabaseError};
+#[cfg(feature = "std")]
+pub use core_precompiles::AccountState as AccountConfigState;
+pub use core_precompiles::{
+    AccountInfo as PrecompileAccountInfo, ErasedError, Handler as StorageHandler, Precompile,
+    PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult, PrecompileStatus,
+    Result as PrecompileExecutionResult, StorageKey as PrecompileStorageKey, *,
+};
+pub use core_primitives::{STACK_LIMIT, StorageKey};
+pub use execution_handler::Handler;

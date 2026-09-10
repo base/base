@@ -1,5 +1,6 @@
-use crate::native_mdbx::ffi;
 use std::{ffi::c_int, result};
+
+use crate::native_mdbx::ffi;
 
 /// An MDBX result.
 pub type Result<T> = result::Result<T, Error>;

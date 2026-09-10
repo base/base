@@ -7,12 +7,11 @@ use alloy_primitives::{
     map::HashMap,
 };
 use base_common_types_chain::{
-    BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header, TxLegacy,
+    BaseBlockBody, BaseTxEnvelope, BaseTypedTransaction, EMPTY_OMMER_ROOT_HASH, Header,
+    RecoveredBlock, SealedBlock, SealedHeader, TxLegacy,
 };
-use base_common_types_chain::{RecoveredBlock, SealedBlock, SealedHeader};
-use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+use base_execution_evm_runtime::{AccountInfo, BundleState, StoredAccount as Account};
 use base_execution_state_database::{Database, models::StoredBlockBodyIndices, tables};
-use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_trie::root::{state_root_unhashed, storage_root_unhashed};
 
 use crate::{DBProvider, DatabaseProviderRW, ExecutionOutcome};

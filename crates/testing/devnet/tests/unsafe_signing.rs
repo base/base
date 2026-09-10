@@ -3,7 +3,7 @@
 use alloy_primitives::{B256, Signature, U256};
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_payload::{BaseExecutionPayload, NetworkPayloadEnvelope, PayloadHash};
-use base_consensus_driver_service::GossipTransport as _;
+use base_consensus_driver::GossipTransport as _;
 use base_testing_devnet::{ActionTestHarness, SharedL1Chain, TestGossipTransport};
 
 /// End-to-end: a sequencer with a real signing key produces blocks whose

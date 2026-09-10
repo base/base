@@ -3,10 +3,6 @@ use alloy_primitives::{
     B256, U256,
     map::{B256Map, B256Set},
 };
-use codspeed_criterion_compat::{
-    BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main,
-};
-use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
 use base_execution_state_trie::{
     hashed_cursor::{HashedCursorFactory, mock::MockHashedCursorFactory},
     proof::StorageProof,
@@ -14,6 +10,10 @@ use base_execution_state_trie::{
     trie_cursor::{TrieCursorFactory, mock::MockTrieCursorFactory},
 };
 use base_execution_state_types::{HashedPostState, HashedStorage};
+use codspeed_criterion_compat::{
+    BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main,
+};
+use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
 
 /// Generate test data for benchmarking.
 ///
@@ -97,11 +97,12 @@ fn create_cursor_factories(
         .map(|addr| (addr, StorageTrieUpdates::default()))
         .collect();
 
-    let empty_trie_cursor_factory =
-        MockTrieCursorFactory::from_trie_updates(base_execution_state_types::updates::TrieUpdates {
+    let empty_trie_cursor_factory = MockTrieCursorFactory::from_trie_updates(
+        base_execution_state_types::updates::TrieUpdates {
             storage_tries: storage_tries.clone(),
             ..Default::default()
-        });
+        },
+    );
 
     // Create mock hashed cursor factory from the post state
     let hashed_cursor_factory = MockHashedCursorFactory::from_hashed_post_state(post_state.clone());

@@ -5,20 +5,14 @@ use std::net::SocketAddr;
 use alloy_chains::Chain;
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::{B256, U256};
-use base_execution_network_types::pk2id;
 use secp256k1::{SECP256K1, SecretKey};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Decoder, Framed, LengthDelimitedCodec};
 
-use crate::DEFAULT_TCP_PORT;
-use crate::EthVersion;
-use crate::HelloMessageWithProtocols;
-use crate::P2PStream;
-use crate::ProtocolVersion;
-use crate::Status;
-use crate::StatusMessage;
-use crate::UnauthedP2PStream;
-use crate::UnifiedStatus;
+use crate::{
+    DEFAULT_TCP_PORT, EthVersion, HelloMessageWithProtocols, P2PStream, ProtocolVersion, Status,
+    StatusMessage, UnauthedP2PStream, UnifiedStatus, pk2id,
+};
 
 /// A TCP protocol stream with length-delimited framing for tests.
 pub type P2pPassthroughTcpStream = P2PStream<Framed<TcpStream, LengthDelimitedCodec>>;
@@ -73,8 +67,7 @@ pub mod proto {
     use bytes::{Buf, BufMut, BytesMut};
 
     use super::*;
-    use crate::Capability;
-    use crate::Protocol;
+    use crate::{Capability, Protocol};
 
     /// Returns a new testing `HelloMessage` with eth and the test protocol
     pub fn test_hello() -> (HelloMessageWithProtocols, SecretKey) {

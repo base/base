@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{
     DatabaseEnv, mdbx::DatabaseArguments, test_utils::TempDatabase,
 };
-use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_trie::{DatabaseStateRoot, StateRoot};
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StorageEntry;
+use base_execution_state_types::{ProviderResult, StorageEntry};
 
 use crate::{
     ChainSpecProvider, HashingWriter, ProviderFactory, TrieWriter,
@@ -26,9 +25,10 @@ pub mod blocks;
 mod mock;
 mod noop;
 
-pub use crate::canonical_state::{TestBlockBuilder, TestCanonStateSubscriptions};
 pub use mock::{ExtendedAccount, MockEthProvider};
 pub use noop::NoopProvider;
+
+pub use crate::canonical_state::{TestBlockBuilder, TestCanonStateSubscriptions};
 
 /// Temporary database retained for the lifetime of provider tests.
 pub type MockNodeDatabase = Arc<TempDatabase<DatabaseEnv>>;
@@ -87,7 +87,7 @@ fn create_test_provider_factory_with_genesis(
             .with_default_tables()
             .build()
             .expect("failed to create test RocksDB provider"),
-        base_common_runtime_tasks::Runtime::test(),
+        base_common_runtime::Runtime::test(),
     )
     .expect("failed to create test provider factory")
 }
@@ -119,7 +119,7 @@ pub fn create_test_provider_factory_with_chain_spec_and_db_args(
             .with_default_tables()
             .build()
             .expect("failed to create test RocksDB provider"),
-        base_common_runtime_tasks::Runtime::test(),
+        base_common_runtime::Runtime::test(),
     )
     .expect("failed to create test provider factory")
 }
@@ -159,3 +159,6 @@ pub fn insert_genesis(provider_factory: &ProviderFactory) -> ProviderResult<B256
 
 mod changesets;
 pub use changesets::TestChangesets;
+
+mod blockchain;
+pub use blockchain::ProviderTestUtils;

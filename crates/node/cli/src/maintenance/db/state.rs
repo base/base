@@ -4,10 +4,10 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, BlockNumber, U256, keccak256};
-use base_execution_state_api::BlockNumReader;
 use base_execution_state_database::{Database, DbDupCursorRO, DbTx, tables};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::StaticFileProviderFactory;
+use base_execution_state_types::BlockNumReader;
 use clap::Parser;
 use tracing::info;
 
@@ -211,7 +211,7 @@ impl Command {
         &self,
         address: Address,
         block: Option<BlockNumber>,
-        account: Option<base_execution_state_memory::StoredAccount>,
+        account: Option<base_execution_evm_runtime::StoredAccount>,
         storage: &[(alloy_primitives::B256, U256)],
     ) {
         match self.format {

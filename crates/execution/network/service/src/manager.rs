@@ -27,20 +27,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    EthProtocolInfo, NetworkEvent, NetworkStatus, PeerEvent, PeerInfo, PeerRequest, PeersHandle,
-    SessionInfo,
-};
 use alloy_eip2124::EnrForkIdEntry;
-use base_common_io_files::{Files as fs, FsPathError};
+use base_common_io::{Files as fs, FsPathError};
 use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
-use base_common_runtime_tasks::EventSender;
-use base_common_runtime_tasks::shutdown::GracefulShutdown;
+use base_common_runtime::{EventSender, shutdown::GracefulShutdown};
 use base_common_types_chain::BaseBlock;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_types::{NodeRecord, PeerId};
-use base_execution_network_wire::DisconnectReason;
-use base_execution_state_api::BlockNumReader;
+use base_execution_network_wire::{DisconnectReason, NodeRecord, PeerId, ReputationChangeKind};
+use base_execution_state_types::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use secp256k1::SecretKey;
@@ -49,7 +42,8 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    FetchClient, NetworkBuilder,
+    EthProtocolInfo, FetchClient, NetworkBuilder, NetworkEvent, NetworkStatus, PeerEvent, PeerInfo,
+    PeerRequest, PeersHandle, SessionInfo,
     budget::{DEFAULT_BUDGET_TRY_DRAIN_NETWORK_HANDLE_CHANNEL, DEFAULT_BUDGET_TRY_DRAIN_SWARM},
     config::NetworkConfig,
     discovery::Discovery,
@@ -158,7 +152,7 @@ impl NetworkManager {
     /// # async fn f() {
     ///
     /// use base_execution_network_service::{NetworkConfig, NetworkManager};
-    /// use base_common_runtime_tasks::Runtime;
+    /// use base_common_runtime::Runtime;
     /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
     ///     .build_with_noop_provider(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
     /// let manager = NetworkManager::eth(config).await;
@@ -370,10 +364,10 @@ impl NetworkManager {
     /// use base_execution_network_service::{
     ///     config::rng_secret_key, NetworkConfig, NetworkManager,
     /// };
-    /// use base_execution_network_types::mainnet_nodes;
-    /// use base_execution_state_api::{NoopProvider};
-    /// use base_common_runtime_tasks::Runtime;
-    /// use base_execution_txpool_pool::TransactionPool;
+    /// use base_execution_network_wire::mainnet_nodes;
+    /// use base_execution_state_types::{NoopProvider};
+    /// use base_common_runtime::Runtime;
+    /// use base_execution_txpool::TransactionPool;
     /// async fn launch<Pool: TransactionPool>(pool: Pool) {
     ///     // This block provider implementation is used for testing purposes.
     ///     let client = NoopProvider::default();
@@ -447,7 +441,7 @@ impl NetworkManager {
     pub fn write_peers_to_file(&self, persistent_peers_file: &Path) -> Result<(), FsPathError> {
         let peers = self.swarm.peers().persistable_peers().collect::<Vec<_>>();
         persistent_peers_file.parent().map(fs::create_dir_all).transpose()?;
-        base_common_io_files::Files::write_json_file(persistent_peers_file, &peers)?;
+        base_common_io::Files::write_json_file(persistent_peers_file, &peers)?;
         Ok(())
     }
 

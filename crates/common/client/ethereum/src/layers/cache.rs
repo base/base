@@ -1,23 +1,22 @@
 use std::{io::BufReader, marker::PhantomData, num::NonZero, path::PathBuf, sync::Arc};
 
-use crate::Network;
 use alloy_eips::BlockId;
 use alloy_json_rpc::{RpcError, RpcSend};
 use alloy_primitives::{
     Address, B256, Bytes, StorageKey, StorageValue, TxHash, U64, U256, keccak256,
 };
 use alloy_transport::{TransportErrorKind, TransportResult};
-use base_common_types_rpc::TransactionResponse;
 use base_common_types_rpc::{
     BlockNumberOrTag, EIP1186AccountProofResponse, Filter, Log, StorageValuesRequest,
-    StorageValuesResponse,
+    StorageValuesResponse, TransactionResponse,
 };
 use lru_0_18_2::LruCache;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ParamsWithBlock, Provider, ProviderCall, ProviderLayer, RootProvider, RpcWithBlock, utils,
+    Network, ParamsWithBlock, Provider, ProviderCall, ProviderLayer, RootProvider, RpcWithBlock,
+    utils,
 };
 /// A provider layer that caches RPC responses and serves them on subsequent requests.
 ///
@@ -598,14 +597,13 @@ impl SharedCache {
 
 #[cfg(test)]
 mod tests {
-    use crate::TransactionBuilder;
-    use base_common_process_nodes::{Anvil, utils::run_with_tempdir};
     use alloy_primitives::{Bytes, FixedBytes, b256, bytes, hex, utils::Unit};
     use alloy_transport::mock::Asserter;
+    use base_common_process::{Anvil, utils::run_with_tempdir};
     use base_common_types_rpc::{BlockId, Transaction, TransactionReceipt, TransactionRequest};
 
     use super::*;
-    use crate::ProviderBuilder;
+    use crate::{ProviderBuilder, TransactionBuilder};
 
     #[tokio::test]
     async fn test_get_proof() {

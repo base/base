@@ -17,8 +17,8 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 dotenvy = { workspace = true }
+base-common-cli = { workspace = true }
 axum = { workspace = true, features = ["ws"] }
-base-common-cli-support = { workspace = true }
 brotli = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
@@ -26,7 +26,7 @@ futures = { workspace = true, features = ["default"] }
 hostname = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
-base-infra-websocket-proxy-service = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-infra-websocket-proxy = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 metrics-exporter-prometheus = { workspace = true, features = ["http-listener"] }

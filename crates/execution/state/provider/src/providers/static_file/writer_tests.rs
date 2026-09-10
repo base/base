@@ -11,17 +11,19 @@
 mod tests {
     use std::{fs::OpenOptions, io::Write as _, path::PathBuf};
 
-    use crate::ChangesetOffsetReader;
     use alloy_primitives::{Address, U256};
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_database::{
         models::AccountBeforeTx, test_utils::create_test_static_files_dir,
     };
-    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 
-    use crate::providers::{
-        StaticFileProvider,
-        static_file::manager::{StaticFileProviderBuilder, StaticFileWriter},
+    use crate::{
+        ChangesetOffsetReader,
+        providers::{
+            StaticFileProvider,
+            static_file::manager::{StaticFileProviderBuilder, StaticFileWriter},
+        },
     };
 
     // ==================== HELPER FUNCTIONS ====================

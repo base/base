@@ -8,14 +8,13 @@ use alloc::{
 use core::{error::Error, fmt::Display};
 
 use alloy_eip7928::BlockAccessListGasError;
+use alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
-
-use {
-    crate::MAXIMUM_GAS_LIMIT_BLOCK, crate::MINIMUM_GAS_LIMIT,
-    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR, base_common_types_chain::GotExpected,
-    base_common_types_chain::GotExpectedBoxed, base_common_types_chain::InvalidTransactionError,
-    base_common_types_chain::SealedHeader,
+use base_common_types_chain::{
+    GotExpected, GotExpectedBoxed, InvalidTransactionError, SealedHeader,
 };
+
+use crate::{MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT};
 
 /// Pre-computed receipt root and logs bloom.
 ///

@@ -1,8 +1,8 @@
-use crate::native_mdbx::ffi;
 use std::str::FromStr;
 
-use crate::native_mdbx::ffi::*;
 use bitflags::bitflags;
+
+use crate::native_mdbx::{ffi, ffi::*};
 
 /// MDBX sync mode
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Default)]

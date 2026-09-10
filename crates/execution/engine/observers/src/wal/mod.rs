@@ -19,7 +19,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_observability_tracing::tracing::{debug, instrument};
-use base_execution_engine_types::ExExNotification;
+use base_common_types_payload::ExExNotification;
 pub use error::{WalError, WalResult};
 use parking_lot::{RwLock, RwLockReadGuard};
 
@@ -226,9 +226,12 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use alloy_primitives::B256;
-    use base_execution_engine_types::ExExNotification;
+    use base_common_types_payload::ExExNotification;
     use base_execution_state_provider::Chain;
-    use base_testing_support::{generators, generators::BlockParams, generators::BlockRangeParams};
+    use base_testing_support::{
+        generators,
+        generators::{BlockParams, BlockRangeParams},
+    };
     use itertools::Itertools;
 
     use crate::wal::{Wal, cache::CachedBlock, error::WalResult};

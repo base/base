@@ -2,7 +2,6 @@
 
 use std::fmt;
 
-use crate::ProofRequestRepo;
 use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
@@ -13,7 +12,7 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObjectOwned},
 };
 
-use crate::WorkerQueueConfig;
+use crate::{ProofRequestRepo, WorkerQueueConfig};
 
 mod delete_proof_request;
 mod get_proof;

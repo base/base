@@ -3,9 +3,8 @@
 use std::{cell::Cell, hint::black_box, time::Duration};
 
 use alloy_primitives::{Address, B256, U256, map::HashMap};
-use base_common_types_chain::RecoveredBlock;
-use base_common_types_chain::{BaseBlock as Block, Header};
-use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+use base_common_types_chain::{BaseBlock as Block, Header, RecoveredBlock};
+use base_execution_evm_runtime::{AccountInfo, BundleState};
 use base_execution_state_database::models::StorageSettings;
 use base_execution_state_maintenance::init::init_genesis_with_settings;
 use base_execution_state_provider::{

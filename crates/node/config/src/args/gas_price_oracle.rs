@@ -1,8 +1,7 @@
 use alloy_primitives::U256;
-use base_common_types_rpc::GasPriceOracleConfig;
 use base_common_types_rpc::{
     DEFAULT_GAS_PRICE_BLOCKS, DEFAULT_GAS_PRICE_PERCENTILE, DEFAULT_IGNORE_GAS_PRICE,
-    DEFAULT_MAX_GAS_PRICE,
+    DEFAULT_MAX_GAS_PRICE, GasPriceOracleConfig,
 };
 use clap::Args;
 

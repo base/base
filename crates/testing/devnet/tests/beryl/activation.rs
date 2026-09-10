@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_types_chain::TxReceipt;
-use base_execution_evm_precompiles::{
+use base_execution_evm_runtime::{
     ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
 };
 

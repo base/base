@@ -12,7 +12,7 @@ repository.workspace = true
 tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
+base-common-runtime = { workspace = true }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }

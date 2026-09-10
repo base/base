@@ -1,8 +1,7 @@
 //! Helper type that represents one of two possible executor types
 
 // re-export Either
-use base_common_types_chain::BaseReceipt;
-use base_common_types_chain::RecoveredBlock;
+use base_common_types_chain::{BaseReceipt, RecoveredBlock};
 use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
 pub use futures_util::future::Either;
 
@@ -53,7 +52,7 @@ where
         state: F,
     ) -> Result<BlockExecutionOutput, Self::Error>
     where
-        F: FnMut(&base_execution_evm_runtime::database::State<DB>),
+        F: FnMut(&base_execution_evm_runtime::State<DB>),
     {
         match self {
             Self::Left(a) => a.execute_with_state_closure(block, state),
@@ -61,7 +60,7 @@ where
         }
     }
 
-    fn into_state(self) -> base_execution_evm_runtime::database::State<DB> {
+    fn into_state(self) -> base_execution_evm_runtime::State<DB> {
         match self {
             Self::Left(a) => a.into_state(),
             Self::Right(b) => b.into_state(),

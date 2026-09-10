@@ -1,12 +1,10 @@
 //! Configuration files.
 use std::path::Path;
 
-use base_execution_network_types::PeersConfig;
-use base_execution_network_types::SessionsConfig;
-use base_execution_network_types::TrustedPeer;
+use base_execution_network_wire::{PeersConfig, SessionsConfig, TrustedPeer};
 use base_execution_state_maintenance::StaticFilesConfig;
 use base_execution_state_types::PruneConfig;
-use base_execution_sync_pipeline::StageConfig;
+use base_execution_sync::StageConfig;
 
 const EXTENSION: &str = "toml";
 
@@ -99,7 +97,7 @@ impl Config {
 mod tests {
     use std::{path::Path, str::FromStr, time::Duration};
 
-    use base_execution_network_types::TrustedPeer;
+    use base_execution_network_wire::TrustedPeer;
 
     use super::{Config, EXTENSION};
 

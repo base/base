@@ -1,6 +1,6 @@
 //! Sparse Trie task related functionality.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use alloy_primitives::{
     B256,
@@ -8,29 +8,24 @@ use alloy_primitives::{
 };
 use alloy_rlp::{Decodable, Encodable};
 use base_common_observability_metrics::Metrics;
-use base_common_runtime_tasks::Runtime;
-use base_execution_state_memory::StoredAccount as Account;
+use base_common_runtime::Runtime;
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_tasks::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
     ProofWorkerHandle, StateRootTaskError,
 };
 use base_execution_state_trie::{
-    DecodedMultiProofV2, EMPTY_ROOT_HASH, HashedPostState, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount,
-    updates::TrieUpdates,
+    DecodedMultiProofV2, DeferredDrops, EMPTY_ROOT_HASH, HashedPostState, RevealableSparseTrie,
+    SparseStateTrie, TRIE_ACCOUNT_RLP_MAX_SIZE, TrieAccount, updates::TrieUpdates,
 };
-use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent};
+use base_execution_state_types::{
+    LeafUpdate, MultiProofTargetsV2, ProofV2Target, ProofV2TargetParent, SparseStateTrieErrorKind,
+    SparseTrieErrorKind, SparseTrieResult, TrieNodeEpoch,
+};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::time::Instant;
 use tracing::{debug, debug_span, error, instrument, trace_span};
-use {
-    base_execution_state_trie::DeferredDrops, base_execution_state_trie::RevealableSparseTrie,
-    base_execution_state_trie::SparseStateTrie, base_execution_state_types::LeafUpdate,
-    base_execution_state_types::SparseStateTrieErrorKind,
-    base_execution_state_types::SparseTrieErrorKind, base_execution_state_types::SparseTrieResult,
-    base_execution_state_types::TrieNodeEpoch,
-};
 
 use super::{StateRootComputeOutcome, StateRootMessage, evm_state_to_hashed_post_state};
 
@@ -1117,8 +1112,9 @@ enum SparseTrieTaskMessage {
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
     use base_execution_state_maintenance::init::init_genesis;
-    use base_execution_state_provider::test_utils::create_test_provider_factory;
-    use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
+    use base_execution_state_provider::{
+        OverlayManager, OverlayStateProviderFactory, test_utils::create_test_provider_factory,
+    };
     use base_execution_state_tasks::ProofTaskCtx;
     use base_execution_state_trie::ArenaParallelSparseTrie;
 
@@ -1225,7 +1221,7 @@ mod tests {
 
     #[test]
     fn run_returns_parent_root_without_revealing_blind_trie_when_no_state_updates() {
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
@@ -1279,7 +1275,7 @@ mod tests {
 
     #[test]
     fn stall_check_waits_for_in_flight_proofs_then_reports_pending_updates() {
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
@@ -1366,7 +1362,7 @@ mod tests {
 
     #[test]
     fn run_errors_when_cancel_guard_drops_before_updates_finish() {
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(
@@ -1418,7 +1414,7 @@ mod tests {
 
     #[test]
     fn run_ignores_hints_queued_after_updates_finish() {
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let provider_factory = create_test_provider_factory();
         let anchor_hash = init_genesis(&provider_factory).expect("failed to initialize genesis");
         let overlay_factory = OverlayStateProviderFactory::new(

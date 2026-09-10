@@ -9,9 +9,8 @@ use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, ProviderResult, PruneCheckpointWriter,
     StaticFileProviderFactory, StorageSettingsCache, TransactionsProvider,
 };
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
-    PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
+    PruneCheckpoint, PruneSegment, SegmentOutput, SegmentOutputCheckpoint, StaticFileSegment,
 };
 use tracing::{debug, trace};
 

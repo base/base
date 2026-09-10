@@ -31,26 +31,20 @@ use std::{
     time::Duration,
 };
 
-use crate::PeerRequest;
 use alloy_primitives::{
     TxHash,
     map::{FbBuildHasher, HashMap},
 };
 #[cfg(test)]
 use base_common_types_chain::EthereumTxEnvelope;
-use base_common_types_chain::SignedTransaction;
 #[cfg(test)]
 use base_common_types_chain::TxEip4844;
-use base_common_types_chain::transaction::PooledTransaction;
-use base_execution_network_types::PeerId;
-use base_execution_network_wire::DedupPayload;
-use base_execution_network_wire::GetPooledTransactions;
-use base_execution_network_wire::HandleMempoolData;
-use base_execution_network_wire::HandleVersionedMempoolData;
-use base_execution_network_wire::PartiallyValidData;
-use base_execution_network_wire::RequestTxHashes;
-use base_execution_network_wire::ValidAnnouncementData;
-use base_execution_network_wire::{RequestError, RequestResult};
+use base_common_types_chain::{SignedTransaction, transaction::PooledTransaction};
+use base_execution_network_wire::{
+    DedupPayload, GetPooledTransactions, HandleMempoolData, HandleVersionedMempoolData,
+    PartiallyValidData, PeerId, RequestError, RequestResult, RequestTxHashes,
+    ValidAnnouncementData,
+};
 use derive_more::{Constructor, Deref};
 use futures::{Future, FutureExt, Stream, StreamExt, stream::FuturesUnordered};
 use pin_project::pin_project;
@@ -64,6 +58,7 @@ use super::{
     constants::{SOFT_LIMIT_COUNT_HASHES_IN_GET_POOLED_TRANSACTIONS_REQUEST, tx_fetcher::*},
 };
 use crate::{
+    PeerRequest,
     cache::{LruCache, LruMap},
     duration_metered_exec,
     metrics::TransactionFetcherMetrics,
@@ -786,7 +781,7 @@ impl TransactionFetcher {
     /// Returns the limit to enforce when looking for any pending hash with an idle fallback peer.
     ///
     /// Returns `Some(limit)` if [`TransactionFetcher`] and the
-    /// [`TransactionPool`](base_execution_txpool_pool::TransactionPool) are operating close to full
+    /// [`TransactionPool`](base_execution_txpool::TransactionPool) are operating close to full
     /// capacity. Returns `None`, unlimited, if they are not that busy.
     pub fn search_breadth_budget_find_idle_fallback_peer(
         &self,
@@ -825,7 +820,7 @@ impl TransactionFetcher {
     /// peer and hashes pending fetch.
     ///
     /// Returns `Some(limit)` if [`TransactionFetcher`] and the
-    /// [`TransactionPool`](base_execution_txpool_pool::TransactionPool) are operating close to full
+    /// [`TransactionPool`](base_execution_txpool::TransactionPool) are operating close to full
     /// capacity. Returns `None`, unlimited, if they are not that busy.
     pub fn search_breadth_budget_find_intersection_pending_hashes_and_hashes_seen_by_peer(
         &self,

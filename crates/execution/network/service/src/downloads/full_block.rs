@@ -11,20 +11,17 @@ use std::{
 
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
-use base_common_types_chain::{BaseBlockBody, BlockHeader};
-use base_common_types_chain::{SealedBlock, SealedBlockWith, SealedHeader};
+use base_common_types_chain::{
+    BaseBlockBody, BlockHeader, SealedBlock, SealedBlockWith, SealedHeader,
+};
 use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_network_types::{PeerId, WithPeerId};
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::HeadersDirection;
+use base_execution_network_wire::{
+    BalRequirement, BlockAccessLists, BlockAccessListsClient, BlockClient, BodiesClient,
+    DownloadClient, HeadersClient, HeadersDirection, HeadersRequest, PeerId, PeerRequestResult,
+    Priority, SingleBodyRequest, SingleHeaderRequest, WithPeerId,
+};
 use futures::FutureExt;
 use tracing::{debug, trace};
-
-use base_execution_network_wire::HeadersRequest;
-use base_execution_network_wire::{
-    BalRequirement, BlockAccessListsClient, BlockClient, BodiesClient, DownloadClient,
-    HeadersClient, PeerRequestResult, Priority, SingleBodyRequest, SingleHeaderRequest,
-};
 
 /// A sealed block with optional validated raw block access-list data.
 pub type SealedBlockWithAccessList = SealedBlockWith<Option<RawBal>>;
@@ -1206,10 +1203,11 @@ mod tests {
 
     use alloy_primitives::{Bytes, keccak256, map::B256Map};
     use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
+    use base_execution_network_wire::RequestError;
     use parking_lot::Mutex;
 
     use super::*;
-    use {crate::test_utils::TestFullBlockClient, base_execution_network_wire::RequestError};
+    use crate::test_utils::TestFullBlockClient;
 
     const EMPTY_LIST_CODE: u8 = 0xc0;
     use tokio::time::{Duration, timeout};

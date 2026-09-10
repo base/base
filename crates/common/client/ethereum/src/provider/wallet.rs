@@ -1,8 +1,7 @@
-use crate::{Ethereum, Network, NetworkWallet};
 use alloy_primitives::Address;
 
 use crate::{
-    Provider,
+    Ethereum, Network, NetworkWallet, Provider,
     fillers::{FillProvider, JoinFill, TxFiller, WalletFiller},
 };
 

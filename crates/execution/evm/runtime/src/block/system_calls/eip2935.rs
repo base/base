@@ -5,9 +5,10 @@ use alloc::string::ToString;
 use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::B256;
-use base_execution_evm_machine::{Block, ResultAndState};
-
-use crate::{Evm, block::BlockExecutionError, block::BlockValidationError};
+use base_execution_evm_runtime::{
+    Block, Evm, ResultAndState,
+    block::{BlockExecutionError, BlockValidationError},
+};
 
 /// Applies the pre-block call to the [EIP-2935] blockhashes contract, using the given block,
 /// chain specification, and EVM.

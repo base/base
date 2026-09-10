@@ -1,0 +1,43 @@
+[package]
+name = "base-testing-load"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Core library for Base network load testing and benchmarking"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+tracing = { workspace = true }
+humantime = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+async-trait = { workspace = true }
+alloy-signer = { workspace = true }
+base-common-l1 = { workspace = true }
+alloy-sol-types = { workspace = true }
+base-common-cli = { workspace = true }
+alloy-primitives = { workspace = true }
+tracing-indicatif = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
+url = { workspace = true, features = ["default"] }
+eyre = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+indicatif = { workspace = true, features = ["default"] }
+tokio-util = { workspace = true, features = ["default"] }
+parking_lot = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default", "json"] }
+tokio = { workspace = true, features = ["default", "signal"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
+base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
+tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "mnemonic", "pubsub", "ws"] }

@@ -1,39 +1,38 @@
-use base_execution_evm_machine::{Cfg, CfgEnv, Context, Database, FrameStack, Transaction, TxEnv};
-use base_execution_evm_runtime::EvmMachine;
-use base_execution_state_memory::EmptyDB;
-
-use base_execution_evm_primitives::hardfork::SpecId;
-
-use crate::{EthPrecompiles, instructions::EthInstructions};
+use base_execution_evm_runtime::{
+    Cfg, CfgEnv, Database, EmptyDB, EthInstructions, EthPrecompiles, EvmMachine, FrameStack,
+    ReferenceContext, Transaction, TxEnv, hardfork::SpecId,
+};
 
 /// Type alias for a mainnet EVM instance with standard Ethereum components.
 pub type MainnetEvm<CTX, INSP = ()> = EvmMachine<CTX, INSP, EthPrecompiles>;
 
 /// Type alias for a mainnet context with standard Ethereum environment types.
-pub type MainnetContext<DB> = Context<TxEnv, CfgEnv, DB, ()>;
+pub type MainnetContext<DB> = base_execution_evm_runtime::ReferenceContext<TxEnv, CfgEnv, DB, ()>;
 
 /// Trait for building mainnet EVM instances from contexts.
 pub trait MainBuilder: Sized {
     /// The context type that will be used in the EVM.
-    type Context;
+    type ReferenceContext;
 
     /// Builds a mainnet EVM instance without an inspector.
-    fn build_mainnet(self) -> MainnetEvm<Self::Context>;
+    fn build_mainnet(self) -> MainnetEvm<Self::ReferenceContext>;
 
     /// Builds a mainnet EVM instance with the provided inspector.
-    fn build_mainnet_with_inspector<INSP>(self, inspector: INSP)
-    -> MainnetEvm<Self::Context, INSP>;
+    fn build_mainnet_with_inspector<INSP>(
+        self,
+        inspector: INSP,
+    ) -> MainnetEvm<Self::ReferenceContext, INSP>;
 }
 
-impl<TX, CFG, DB, CHAIN> MainBuilder for Context<TX, CFG, DB, CHAIN>
+impl<TX, CFG, DB, CHAIN> MainBuilder for ReferenceContext<TX, CFG, DB, CHAIN>
 where
     TX: Transaction,
     CFG: Cfg,
     DB: Database,
 {
-    type Context = Self;
+    type ReferenceContext = Self;
 
-    fn build_mainnet(self) -> MainnetEvm<Self::Context> {
+    fn build_mainnet(self) -> MainnetEvm<Self::ReferenceContext> {
         let spec = self.cfg.spec().into();
         EvmMachine {
             ctx: self,
@@ -47,7 +46,7 @@ where
     fn build_mainnet_with_inspector<INSP>(
         self,
         inspector: INSP,
-    ) -> MainnetEvm<Self::Context, INSP> {
+    ) -> MainnetEvm<Self::ReferenceContext, INSP> {
         let spec = self.cfg.spec().into();
         EvmMachine {
             ctx: self,
@@ -59,15 +58,15 @@ where
     }
 }
 
-/// Trait used to initialize Context with default mainnet types.
+/// Trait used to initialize ReferenceContext with default mainnet types.
 pub trait MainContext {
     /// Creates a new mainnet context with default configuration.
     fn mainnet() -> Self;
 }
 
-impl MainContext for Context<TxEnv, CfgEnv, EmptyDB, ()> {
+impl MainContext for base_execution_evm_runtime::ReferenceContext<TxEnv, CfgEnv, EmptyDB, ()> {
     fn mainnet() -> Self {
-        Context::new(EmptyDB::new(), SpecId::default())
+        ReferenceContext::new(EmptyDB::new(), SpecId::default())
     }
 }
 
@@ -75,15 +74,12 @@ impl MainContext for Context<TxEnv, CfgEnv, EmptyDB, ()> {
 mod test {
     use alloy_signer::{Either, SignerSync};
     use base_common_client_ethereum::PrivateKeySigner;
-    use base_execution_evm_machine::{Authorization, Context, TxEnv};
-    use base_execution_evm_primitives::{
-        Bytecode,
+    use base_execution_evm_runtime::{
+        Authorization, BenchmarkDB, Bytecode, EEADDRESS, ExecuteEvm, FFADDRESS, MainBuilder,
+        MainContext, ReferenceContext, StorageKey, StorageValue, TxEnv, TxKind, U256,
+        hardfork::SpecId,
         opcode::{PUSH1, SSTORE},
     };
-    use base_execution_evm_primitives::{StorageKey, StorageValue, TxKind, U256, hardfork::SpecId};
-    use base_execution_state_memory::{BenchmarkDB, EEADDRESS, FFADDRESS};
-
-    use crate::{ExecuteEvm, MainBuilder, MainContext};
 
     #[test]
     fn sanity_eip7702_tx() {
@@ -94,7 +90,7 @@ mod test {
 
         let bytecode = Bytecode::new_legacy([PUSH1, 0x01, PUSH1, 0x01, SSTORE].into());
 
-        let ctx = Context::mainnet()
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
             .modify_cfg_chained(|cfg| cfg.set_spec_and_mainnet_gas_params(SpecId::PRAGUE))
             .with_db(BenchmarkDB::new_bytecode(bytecode));
 

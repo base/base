@@ -1,10 +1,12 @@
-use crate::{DeleteProofRequestOutcome, canonical_session_id};
 use base_proof_service_protocol::{DeleteProofRequest, DeleteProofsByTeeSignerRequest};
 use jsonrpsee::core::RpcResult;
 use tracing::info;
 
-use crate::server::{
-    ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
+use crate::{
+    DeleteProofRequestOutcome, canonical_session_id,
+    server::{
+        ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
+    },
 };
 
 impl ProverServiceServer {

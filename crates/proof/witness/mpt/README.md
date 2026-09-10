@@ -7,7 +7,7 @@ A recursive, in-memory implementation of Ethereum's hexary Merkle Patricia Trie 
 Implements Ethereum's Merkle Patricia Trie with support for retrieval, insertion, deletion, and
 root computation via RLP-encoded trie node encoding. Starting from a trie root hash, `TrieNode`
 lazily fetches and caches node preimages via `TrieProvider`, enabling stateless block execution
-without storing the full state. Designed as the trie backend for [`base-proof-execution-client`](../executor).
+without storing the full state. Designed as the trie backend for [`base-proof-execution`](../executor).
 
 ## Usage
 

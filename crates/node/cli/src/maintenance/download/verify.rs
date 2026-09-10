@@ -1,6 +1,6 @@
 use std::{io::Read, path::Path};
 
-use base_common_io_files as fs;
+use base_common_io as fs;
 use blake3::Hasher;
 use eyre::Result;
 

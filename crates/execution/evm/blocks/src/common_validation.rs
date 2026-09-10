@@ -1,19 +1,17 @@
 //! Collection of methods for block validation.
 
-use alloy_eips::{eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams};
+use alloy_eips::{
+    eip1559::GAS_LIMIT_BOUND_DIVISOR, eip4844::DATA_GAS_PER_BLOB, eip7840::BlobParams,
+};
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
-use {
-    crate::MAXIMUM_GAS_LIMIT_BLOCK, crate::MINIMUM_GAS_LIMIT,
-    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR,
-    base_common_types_chain::BlockBodyExt as BlockBody,
-    base_common_types_chain::BlockHeaderExt as BlockHeader, base_common_types_chain::GotExpected,
-    base_common_types_chain::SealedBlock, base_common_types_chain::SealedHeader,
+use base_common_types_chain::{
+    BlockBodyExt as BlockBody, BlockHeader as _, BlockHeaderExt as BlockHeader,
+    EMPTY_OMMER_ROOT_HASH, GotExpected, SealedBlock, SealedHeader,
 };
 
-use crate::ConsensusError;
+use crate::{ConsensusError, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT};
 
 /// The maximum RLP length of a block, defined in [EIP-7934](https://eips.ethereum.org/EIPS/eip-7934).
 ///
@@ -439,8 +437,7 @@ mod tests {
     use alloy_eips::eip4895::Withdrawals;
     use alloy_primitives::{Bytes, Signature, U256};
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_types_chain::proofs;
-    use base_common_types_chain::{BlockBody, Header};
+    use base_common_types_chain::{BlockBody, Header, proofs};
 
     use super::*;
 

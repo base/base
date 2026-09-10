@@ -2,12 +2,11 @@
 
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, uint};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope, TxReceipt};
-use base_execution_evm_precompiles::StorageKey;
-use base_execution_evm_precompiles::{
+use base_execution_evm_runtime::{
     ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
-    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry,
+    IActivationRegistry, IB20, IB20Factory, IPolicyRegistry, PrecompileStorageKey,
 };
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, L2Sequencer,

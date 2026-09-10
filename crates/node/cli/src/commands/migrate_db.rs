@@ -15,7 +15,7 @@ pub struct Command {
 
 impl Command {
     /// Executes the migration command.
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         self.inner.execute(runtime).await
     }
 }

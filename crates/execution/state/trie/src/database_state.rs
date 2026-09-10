@@ -4,11 +4,13 @@ use std::{
 };
 
 use alloy_primitives::{B256, BlockNumber, keccak256, map::B256Map};
-use base_execution_state_api::{
-    ChangeSetReader, DBProvider, StorageChangeSetReader, StorageSettingsCache,
+use base_execution_state_database::{
+    DBProvider, DbTx,
+    models::{AccountBeforeTx, BlockNumberAddress},
 };
-use base_execution_state_database::{DbTx, models::AccountBeforeTx, models::BlockNumberAddress};
-use base_execution_state_types::{ProviderError, StateRootError};
+use base_execution_state_types::{
+    ChangeSetReader, ProviderError, StateRootError, StorageChangeSetReader, StorageSettingsCache,
+};
 use tracing::{debug, instrument};
 
 use crate::{
@@ -99,7 +101,7 @@ pub trait DatabaseStateRoot<'a, TX>: Sized {
     /// use alloy_primitives::U256;
     /// use base_execution_state_database::{test_utils::create_test_rw_db};
     /// use base_execution_state_database::{Database};
-    /// use base_execution_state_memory::StoredAccount;
+    /// use base_execution_evm_runtime::StoredAccount;
     /// use base_execution_state_trie::{HashedPostState, StateRoot};
     /// use base_execution_state_trie::{DatabaseStateRoot, PackedKeyAdapter};
     ///
@@ -352,15 +354,16 @@ impl DatabaseHashedPostState for HashedPostStateSorted {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, hex, keccak256, map::HashMap};
-    use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
-    use base_execution_state_api::StorageSettingsCache;
+    use base_execution_evm_runtime::{AccountInfo, BundleState, StoredAccount as Account};
     use base_execution_state_database::{
-        DbTxMut, models::AccountBeforeTx, models::BlockNumberAddress, tables,
+        DbTxMut,
+        models::{AccountBeforeTx, BlockNumberAddress},
+        tables,
     };
-    use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_types::StateRootError;
-    use base_execution_state_types::StorageEntry;
-    use base_execution_state_provider::{StaticFileProviderFactory, test_utils::create_test_provider_factory};
+    use base_execution_state_provider::{
+        StaticFileProviderFactory, test_utils::create_test_provider_factory,
+    };
+    use base_execution_state_types::{StateRootError, StorageEntry, StorageSettingsCache};
 
     use super::*;
     use crate::{HashedPostState, HashedPostStateSorted, HashedStorage, StateRoot};
@@ -543,8 +546,10 @@ mod tests {
 
     #[test]
     fn from_reverts_with_hashed_state() {
-        use base_execution_state_database::{models::StorageBeforeTx, models::StorageSettings};
-        use base_execution_state_provider::{StaticFileProviderFactory, StaticFileSegment, StaticFileWriter};
+        use base_execution_state_database::models::{StorageBeforeTx, StorageSettings};
+        use base_execution_state_provider::{
+            StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
+        };
 
         let factory = create_test_provider_factory();
 

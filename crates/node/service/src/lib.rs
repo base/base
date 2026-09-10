@@ -35,7 +35,7 @@ pub use version::CLIENT_NAME;
 
 mod proof_history;
 #[cfg(feature = "test-utils")]
-use base_common_runtime_tasks as _;
+use base_common_runtime as _;
 use base_execution_evm_runtime as _;
 pub use proof_history::*;
 
@@ -101,3 +101,6 @@ pub use builder_config::BuilderConfig;
 
 mod rpc_config;
 pub use rpc_config::RpcConfig;
+
+mod debug_client;
+pub use debug_client::*;

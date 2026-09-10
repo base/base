@@ -7,7 +7,6 @@ use std::{
     time::Duration,
 };
 
-use crate::{BlockResponse, Network};
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::{RpcError, RpcRecv};
 use alloy_primitives::U64;
@@ -25,6 +24,7 @@ use wasmtimer::{
 };
 
 use super::WatchCanonicalBlocksFrom;
+use crate::{BlockResponse, Network};
 
 pub(super) const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 

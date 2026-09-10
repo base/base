@@ -2,10 +2,9 @@
 
 use core::{fmt::Debug, iter::Peekable};
 
-use base_execution_evm_machine::{ExecutionResult, ResultAndState};
-use base_execution_evm_runtime::{DatabaseCommit, state::EvmState};
-
-use crate::{Evm, IntoTxEnv};
+use base_execution_evm_runtime::{
+    DatabaseCommit, Evm, EvmState, ExecutionResult, IntoTxEnv, ResultAndState,
+};
 
 /// A helper type for tracing transactions.
 #[derive(Debug, Clone)]

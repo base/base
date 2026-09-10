@@ -10,20 +10,15 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use base_common_types_chain::Header;
-use base_common_types_chain::SealedHeader;
-use base_execution_network_types::{PeerId, WithPeerId};
-use base_execution_network_wire::HeadersDirection;
+use base_common_types_chain::{Header, SealedHeader};
+use base_execution_network_wire::{
+    DownloadClient, HeadersClient, HeadersDirection, HeadersRequest, PeerId, PeerRequestResult,
+    Priority, RequestError, WithPeerId,
+};
 use futures::{Future, FutureExt, Stream, StreamExt};
 use tokio::sync::Mutex;
 
-use {
-    crate::DownloadError, crate::DownloadResult, crate::HeaderDownloader,
-    crate::HeadersDownloaderResult, crate::SyncTarget, base_execution_network_wire::DownloadClient,
-    base_execution_network_wire::HeadersClient, base_execution_network_wire::HeadersRequest,
-    base_execution_network_wire::PeerRequestResult, base_execution_network_wire::Priority,
-    base_execution_network_wire::RequestError,
-};
+use crate::{DownloadError, DownloadResult, HeaderDownloader, HeadersDownloaderResult, SyncTarget};
 
 /// A test downloader which just returns the values that have been pushed to it.
 #[derive(Debug)]

@@ -1,11 +1,13 @@
 //! Implementation of the `ListProofs` JSON-RPC endpoint.
 
-use crate::{ProofRequestPage, ProofStatus as DbProofStatus};
 use base_proof_service_protocol::{ListProofsRequest, ListProofsResponse, ProofSummary};
 use jsonrpsee::core::RpcResult;
 use tracing::debug;
 
-use crate::server::{ProverServiceServer, internal, invalid_argument, record_rpc_result};
+use crate::{
+    ProofRequestPage, ProofStatus as DbProofStatus,
+    server::{ProverServiceServer, internal, invalid_argument, record_rpc_result},
+};
 
 const MAX_LIMIT: u64 = 1000;
 const DEFAULT_LIMIT: u64 = 50;

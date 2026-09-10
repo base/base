@@ -11,8 +11,8 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes, b256, keccak256};
 use alloy_sol_types::SolCall;
-use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
-use base_proof_l1_submission::{
+use base_common_l1::{TxCandidate, TxManager, TxManagerError};
+use base_proof_l1::{
     CertManagerAuthorizationError, CertManagerClient, ContractError, ITEEProverRegistry,
     TEEProverRegistryClient, decode_cert_manager_authorization_error,
     encode_register_signer_calldata, encode_revoke_cert_calldata,
@@ -1200,8 +1200,8 @@ mod tests {
 
     use alloy_primitives::Address;
     use async_trait::async_trait;
-    use base_common_l1_transactions::{SendHandle, TxManagerError};
-    use base_proof_l1_submission::{ContractError, ICertManager, VerifiedCert};
+    use base_common_l1::{SendHandle, TxManagerError};
+    use base_proof_l1::{ContractError, ICertManager, VerifiedCert};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         MetricKind,
@@ -1482,7 +1482,7 @@ mod tests {
     }
 
     impl TxManager for MockTxManager {
-        async fn send(&self, candidate: TxCandidate) -> base_common_l1_transactions::SendResponse {
+        async fn send(&self, candidate: TxCandidate) -> base_common_l1::SendResponse {
             let outcome = {
                 let mut state = self.chain.0.lock().unwrap();
                 state.sent.push((candidate.to, candidate.tx_data.clone()));

@@ -81,7 +81,7 @@ pub use database_state::{DatabaseHashedPostState, DatabaseStateRoot};
 mod database_storage;
 pub use database_storage::{DatabaseStorageRoot, hashed_storage_from_reverts_with_provider};
 mod database_trie_cursor;
-pub use base_execution_state_database::{tables::PackedAccountsTrie, tables::PackedStoragesTrie};
+pub use base_execution_state_database::tables::{PackedAccountsTrie, PackedStoragesTrie};
 pub use database_trie_cursor::{
     DatabaseAccountTrieCursor, DatabaseStorageTrieCursor, DatabaseTrieCursorFactory,
     PackedKeyAdapter, StorageTrieEntryLike, TrieKeyAdapter, TrieTableAdapter,

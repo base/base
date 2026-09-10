@@ -1,0 +1,179 @@
+use std::{fmt, sync::OnceLock};
+
+use base_proof_types::{ProofRequest, ProofResult, ProverBackend};
+use tracing::{Instrument, info, info_span};
+
+use crate::{
+    Host, HostConfig, HostError, Metrics, ProverConfig, handler::L1HeaderCache,
+    metrics::proof_guard,
+};
+
+/// Orchestrates witness generation ([`Host`]) and proving ([`ProverBackend`]).
+///
+/// Long-lived — holds static config and a backend instance.
+/// Receives per-proof [`ProofRequest`]s via [`prove_block`](Self::prove_block).
+pub struct ProverService<B> {
+    config: ProverConfig,
+    backend: B,
+    l1_header_cache: OnceLock<L1HeaderCache>,
+}
+
+impl<B: ProverBackend> fmt::Debug for ProverService<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProverService").field("config", &self.config).finish_non_exhaustive()
+    }
+}
+
+impl<B: ProverBackend> ProverService<B> {
+    /// Creates a new prover service.
+    pub const fn new(config: ProverConfig, backend: B) -> Self {
+        Self { config, backend, l1_header_cache: OnceLock::new() }
+    }
+
+    /// Returns a reference to the prover configuration.
+    pub const fn config(&self) -> &ProverConfig {
+        &self.config
+    }
+
+    /// Prove a single block.
+    ///
+    /// 1. Assembles [`HostConfig`] from static config + per-proof request
+    /// 2. Creates a fresh [`Host`] (connects RPCs internally)
+    /// 3. Creates a backend-specific oracle via [`ProverBackend::create_oracle`]
+    /// 4. Runs witness generation with a shared L1 header cache
+    /// 5. Hands the populated oracle to [`ProverBackend::prove`]
+    pub async fn prove_block(&self, request: ProofRequest) -> Result<ProofResult, ProverError<B>> {
+        Metrics::requests_total(Metrics::MODE_ONLINE).increment(1);
+        let mut guard = proof_guard!();
+        let _proof_timer =
+            base_common_observability_metrics::timed!(Metrics::proof_duration_seconds());
+
+        let l2_block = request.claimed_l2_block_number;
+        let result = Box::pin(
+            self.prove_block_inner(request).instrument(info_span!("proof_request", l2_block)),
+        )
+        .await;
+
+        guard.set_outcome(match &result {
+            Ok(_) => Metrics::OUTCOME_SUCCESS,
+            Err(ProverError::Host(_)) => Metrics::OUTCOME_WITNESS_ERROR,
+            Err(ProverError::Backend(_)) => Metrics::OUTCOME_PROVE_ERROR,
+        });
+
+        result
+    }
+
+    async fn prove_block_inner(
+        &self,
+        request: ProofRequest,
+    ) -> Result<ProofResult, ProverError<B>> {
+        info!(l2_block = request.claimed_l2_block_number, "starting proof generation");
+
+        let host = Host::new(HostConfig { request, prover: self.config.clone(), data_dir: None });
+        let l1_header_cache = self.l1_header_cache.get_or_init(L1HeaderCache::new).clone();
+        let oracle = self.backend.create_oracle();
+
+        let witness_timer = base_common_observability_metrics::timed!(
+            Metrics::witness_build_duration_seconds(self.backend.prover_label())
+        );
+        let oracle = host
+            .build_witness_with_l1_header_cache(oracle, l1_header_cache)
+            .await
+            .map_err(ProverError::Host)?;
+        drop(witness_timer);
+
+        let result =
+            base_common_observability_metrics::time!(Metrics::prover_duration_seconds(), {
+                self.backend.prove(oracle).await.map_err(ProverError::Backend)?
+            });
+
+        Ok(result)
+    }
+}
+
+/// Error type for [`ProverService`] operations.
+///
+/// Generic over the backend to carry its specific error type without boxing.
+#[derive(Debug, thiserror::Error)]
+pub enum ProverError<B: ProverBackend> {
+    /// Witness generation failed.
+    #[error("witness generation failed: {0}")]
+    Host(HostError),
+
+    /// Backend proving failed.
+    #[error("proving failed: {0}")]
+    Backend(B::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::RwLock};
+
+    use base_proof_witness_preimage::{PreimageKey, WitnessOracle};
+
+    use super::*;
+
+    /// Minimal backend for testing trait bounds and `ProverService` compilation.
+    struct NoopBackend;
+
+    #[derive(Debug, Default)]
+    struct NoopOracle {
+        preimages: RwLock<HashMap<PreimageKey, Vec<u8>>>,
+    }
+
+    impl WitnessOracle for NoopOracle {
+        fn insert_preimage(
+            &self,
+            key: PreimageKey,
+            value: &[u8],
+        ) -> base_proof_witness_preimage::WitnessOracleResult<()> {
+            self.preimages.write().unwrap().insert(key, value.to_vec());
+            Ok(())
+        }
+
+        fn finalize(&self) -> base_proof_witness_preimage::WitnessOracleResult<()> {
+            Ok(())
+        }
+
+        fn preimage_count(&self) -> base_proof_witness_preimage::WitnessOracleResult<usize> {
+            Ok(self.preimages.read().unwrap().len())
+        }
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("noop")]
+    struct NoopError;
+
+    #[async_trait::async_trait]
+    impl ProverBackend for NoopBackend {
+        type Oracle = NoopOracle;
+        type Error = NoopError;
+
+        fn create_oracle(&self) -> Self::Oracle {
+            NoopOracle::default()
+        }
+
+        fn prover_label(&self) -> &'static str {
+            "test"
+        }
+
+        async fn prove(&self, _witness: Self::Oracle) -> Result<ProofResult, Self::Error> {
+            Err(NoopError)
+        }
+    }
+
+    #[test]
+    fn prover_error_host_display() {
+        let err: ProverError<NoopBackend> =
+            ProverError::Host(HostError::Custom("rpc timeout".into()));
+        assert!(err.to_string().contains("witness generation failed"));
+        assert!(err.to_string().contains("rpc timeout"));
+    }
+
+    #[test]
+    fn prover_error_backend_display() {
+        let err: ProverError<NoopBackend> = ProverError::Backend(NoopError);
+        assert!(err.to_string().contains("proving failed"));
+        assert!(err.to_string().contains("noop"));
+    }
+}

@@ -1,6 +1,6 @@
 #![doc = include_str!("../README.md")]
 
-use base_infra_basectl_service::Cli;
+use base_infra_basectl::Cli;
 use clap::Parser;
 
 #[tokio::main]

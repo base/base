@@ -5,9 +5,8 @@ use std::sync::Arc;
 use alloy_eip7928::bal::{DecodedBal, RawBal};
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::B256;
-use base_execution_evm_blocks::EvmEnvFor;
 use base_execution_state_tasks::TxPoolPrewarmCacheSnapshot;
-use {base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats};
+use base_execution_state_types::{ExecutedBlock, ExecutionTimingStats};
 
 use crate::tree::error::InsertPayloadError;
 
@@ -15,7 +14,10 @@ use crate::tree::error::InsertPayloadError;
 #[derive(Debug, Clone)]
 pub struct ExecutionEnv {
     /// Evm environment.
-    pub evm_env: EvmEnvFor,
+    pub evm_env: base_execution_evm_runtime::EvmEnv<
+        base_execution_evm_runtime::BaseSpecId,
+        base_execution_evm_runtime::BlockEnv,
+    >,
     /// Hash of the block being executed.
     pub hash: B256,
     /// Hash of the parent block.
@@ -44,7 +46,10 @@ pub struct ExecutionEnv {
 
 impl ExecutionEnv
 where
-    EvmEnvFor: Default,
+    base_execution_evm_runtime::EvmEnv<
+        base_execution_evm_runtime::BaseSpecId,
+        base_execution_evm_runtime::BlockEnv,
+    >: Default,
 {
     /// Creates a new [`ExecutionEnv`] with default values for testing.
     #[cfg(any(test, feature = "test-utils"))]

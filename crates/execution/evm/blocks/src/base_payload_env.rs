@@ -1,17 +1,14 @@
 //! Builds Base execution environments from payload attributes.
 
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::Upgrades;
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::SealedHeader;
-use base_execution_payload_types::{
-    BasePayloadBuilderAttributes, BuildNextEnv, PayloadBuilderError,
-};
+use base_common_chain_config::{BaseChainSpec, Upgrades};
+use base_common_types_chain::{BlockHeader, SealedHeader};
+use base_common_types_payload::{BasePayloadBuilderAttributes, PayloadBuilderError};
 
 use crate::BaseNextBlockEnvAttributes;
 
-impl BuildNextEnv<BasePayloadBuilderAttributes, BaseChainSpec> for BaseNextBlockEnvAttributes {
-    fn build_next_env(
+impl BaseNextBlockEnvAttributes {
+    /// Builds the next Base execution environment from payload attributes.
+    pub fn build_next_env(
         attributes: &BasePayloadBuilderAttributes,
         parent: &SealedHeader,
         chain_spec: &BaseChainSpec,

@@ -1,19 +1,18 @@
 //! Reth genesis initialization utility functions.
 
-use crate::Collector;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{AddressMap, B256Map, B256Set, HashMap},
 };
 use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::{BlockHeader, Compact};
-use base_common_types_chain::{GotExpected, SealedHeader};
+use base_common_types_chain::{BlockHeader, Compact, GotExpected, SealedHeader};
+use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_database::{
-    DatabaseError, DbCursorRW, DbTxMut, models::AccountBeforeTx, models::IntegerList,
-    models::ShardedKey, models::storage_sharded_key::StorageShardedKey, tables,
+    DatabaseError, DbCursorRW, DbTxMut,
+    models::{AccountBeforeTx, IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
+    tables,
 };
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_provider::{
     BlockHashReader, BlockNumReader, BundleStateInit, ChainSpecProvider, DBProvider,
     DatabaseProviderFactory, ExecutionOutcome, HashingWriter, HeaderProvider, MetadataProvider,
@@ -26,11 +25,11 @@ use base_execution_state_trie::{
     DatabaseStateRoot, IntermediateStateRootState, StateRoot as StateRootComputer,
     StateRootProgress, prefix_set::TriePrefixSets,
 };
-use base_execution_state_types::EtlConfig;
-use base_execution_state_types::StateRootError;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{StageCheckpoint, StageId};
+use base_execution_state_types::{
+    EtlConfig, StageCheckpoint, StageId, StateRootError, StaticFileSegment, StorageEntry,
+};
+
+use crate::Collector;
 
 type DbStateRoot<'a, TX, A> = StateRootComputer<
     base_execution_state_trie::DatabaseTrieCursorFactory<&'a TX, A>,
@@ -1021,10 +1020,11 @@ mod tests {
 
     use alloy_genesis::Genesis;
     use base_common_chain_config::BaseChainSpec;
-    use base_execution_state_database::DatabaseEnv;
     use base_execution_state_database::{
-        Database, DbCursorRO, DbTx, Table, TableRow, models::BlockNumberAddress,
-        models::IntegerList, models::ShardedKey, models::storage_sharded_key::StorageShardedKey,
+        Database, DatabaseEnv, DbCursorRO, DbTx, Table, TableRow,
+        models::{
+            BlockNumberAddress, IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey,
+        },
     };
     use base_execution_state_provider::{
         ProviderFactory, RocksDBProviderFactory,
@@ -1303,7 +1303,7 @@ mod tests {
                 std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
-                base_common_runtime_tasks::Runtime::test(),
+                base_common_runtime::Runtime::test(),
             )
             .unwrap(),
         );
@@ -1332,7 +1332,7 @@ mod tests {
                 std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()),
                 static_file_provider,
                 rocksdb_provider,
-                base_common_runtime_tasks::Runtime::test(),
+                base_common_runtime::Runtime::test(),
             )
             .unwrap(),
             StorageSettings::base(),

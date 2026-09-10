@@ -2,12 +2,13 @@ use std::{collections::BTreeMap, ops::RangeBounds, path::Path, time::Duration};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{
     Database, DatabaseEnv, DatabaseError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW,
-    DbTx, DbTxMut, DupSort, Table, mdbx::DatabaseArguments, mdbx::MaxReadTransactionDuration,
-    mdbx::init_db_for,
+    DbTx, DbTxMut, DupSort, Table,
+    mdbx::{DatabaseArguments, MaxReadTransactionDuration, init_db_for},
 };
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
 use base_execution_state_types::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles,
     updates::{StorageTrieUpdates, TrieUpdates},
@@ -16,7 +17,6 @@ use base_execution_state_types::{
 use eyre::WrapErr;
 #[cfg(feature = "metrics")]
 use metrics::{Label, gauge};
-use base_execution_state_trie::{hashed_cursor::HashedCursor, trie_cursor::TrieCursor};
 #[cfg(feature = "metrics")]
 use tracing::error;
 

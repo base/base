@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use base_common_chain_config::{RollupConfig, SystemConfig};
-use base_consensus_batch_types::L1BlockInfoTx;
-use base_consensus_driver_service::{StandalonePrefund, StandaloneSequencerNode};
+use base_consensus_batch::L1BlockInfoTx;
+use base_consensus_driver::{StandalonePrefund, StandaloneSequencerNode};
 use eyre::Result;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -16,7 +16,7 @@ pub struct InProcessStandaloneSequencerConfig {
     /// Canonical rollup configuration for the snapshot chain.
     pub rollup_config: RollupConfig,
     /// Native execution client for the co-located execution node.
-    pub execution: base_consensus_driver_service::LocalEngineClient,
+    pub execution: base_consensus_driver::LocalEngineClient,
     /// L1-info transaction decoded from the snapshot head.
     pub l1_info: L1BlockInfoTx,
     /// Effective system configuration at the snapshot head.
@@ -43,7 +43,7 @@ impl InProcessStandaloneSequencer {
     pub async fn start(config: InProcessStandaloneSequencerConfig) -> Result<Self> {
         let rollup_config = Arc::new(config.rollup_config);
         let mut engine_client = config.execution;
-        engine_client.l1 = base_consensus_source_providers::L1RpcProvider::new_http(
+        engine_client.l1 = base_consensus_source::L1RpcProvider::new_http(
             Url::parse("http://127.0.0.1:1").expect("valid unused L1 URL"),
         );
         engine_client.l2.rollup_config = Arc::clone(&rollup_config);

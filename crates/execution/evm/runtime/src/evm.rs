@@ -1,37 +1,26 @@
-use base_execution_evm_runtime::EvmMachine as RevmEvm;
 use core::ops::{Deref, DerefMut};
 
 use alloy_primitives::{Address, Bytes};
-use base_execution_evm_machine::{
-    BlockEnv, CfgEnv, ContextError, ContextSetters, ContextTr, EVMError, ExecResultAndState,
-    ExecutionResult, FrameStack, JournalTr, ResultAndState,
-};
-use base_execution_evm_runtime::{
-    Database as RevmDatabase, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm,
-    InspectEvm, InspectSystemCallEvm, Inspector, SystemCallEvm,
-    interpreter::{InterpreterResult, interpreter_action::FrameInit},
-    state::EvmState,
-};
-use base_execution_evm_runtime::{
-    Database as AlloyDatabase, EthFrame, EthInstructions, Evm, EvmEnv, EvmTr, FrameInitOrResult,
-    FrameResult, Handler, InspectorEvmTr, InspectorHandler, ItemOrResult, PrecompileProvider,
-    PrecompilesMap, SystemCallTx,
-};
-
 #[cfg(feature = "std")]
-use crate::Eip8130Executor;
-use crate::{
-    BaseContext, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
-    handler::BaseHandler,
+use base_execution_evm_runtime::Eip8130Executor;
+use base_execution_evm_runtime::{
+    BaseContext, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError, BlockEnv,
+    CfgEnv, ContextError, ContextSetters, ContextTr, Database as RevmDatabase,
+    Database as AlloyDatabase, DatabaseCommit, EVMError, EthFrame, EthInstructions, Evm, EvmEnv,
+    EvmMachine as RevmEvm, EvmState, EvmTr, ExecResultAndState, ExecuteCommitEvm, ExecuteEvm,
+    ExecutionResult, FrameInitOrResult, FrameResult, FrameStack, Handler, InspectCommitEvm,
+    InspectEvm, InspectSystemCallEvm, Inspector, InspectorEvmTr, InspectorHandler, ItemOrResult,
+    JournalTr, PrecompileProvider, ResultAndState, SystemCallEvm, SystemCallTx,
+    handler::BaseHandler, interpreter_action::FrameInit,
 };
 
 /// Type alias for the inner [`RevmEvm`] parameterized with Base-specific context and fixed
 /// [`EthInstructions`] / [`EthFrame`], keeping [`BaseEvm`] field and constructor signatures tidy.
-type InnerEvm<DB, I, P> = RevmEvm<BaseContext<DB>, I, P>;
+type InnerEvm<DB, I> = RevmEvm<BaseContext<DB>, I, base_execution_evm_runtime::PrecompilesMap>;
 
 /// The Base EVM, wrapping [`RevmEvm`] with a [`BaseContext`] and an optional [`Inspector`].
 ///
-/// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`P`]
+/// Parameterized over a database [`DB`], inspector [`I`], and precompile set [`base_execution_evm_runtime::PrecompilesMap`]
 /// (defaulting to [`PrecompilesMap`]). All Base-specific context configuration —
 /// [`BaseSpecId`], [`BaseTransaction`], and [`crate::L1BlockInfo`] — is fixed by [`BaseContext`].
 ///
@@ -39,20 +28,20 @@ type InnerEvm<DB, I, P> = RevmEvm<BaseContext<DB>, I, P>;
 /// [`Evm::transact`]. When `false`, the inspector is present in the type but silent,
 /// enabling zero-cost tracing toggling at runtime without type changes.
 #[allow(missing_debug_implementations)] // base_execution_evm_runtime::Context does not implement Debug
-pub struct BaseEvm<DB: RevmDatabase, I, P = PrecompilesMap> {
+pub struct BaseEvm<DB: RevmDatabase, I> {
     /// Inner revm EVM with Base-specific context, fixed [`EthInstructions`] and
-    /// [`EthFrame`], and generic precompile set [`P`].
-    pub(crate) inner: InnerEvm<DB, I, P>,
+    /// [`EthFrame`], and generic precompile set [`base_execution_evm_runtime::PrecompilesMap`].
+    pub(crate) inner: InnerEvm<DB, I>,
     /// Whether to invoke the [`Inspector`] on each [`Evm::transact`] call.
     pub(crate) inspect: bool,
 }
 
-impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I> BaseEvm<DB, I> {
     /// Constructs a [`BaseEvm`] from a pre-built [`RevmEvm`] and an inspect flag.
     ///
     /// Prefer [`crate::Builder::build_base`] or [`crate::Builder::build_with_inspector`]
     /// to construct from a [`BaseContext`] directly.
-    pub const fn new(inner: InnerEvm<DB, I, P>, inspect: bool) -> Self {
+    pub const fn new(inner: InnerEvm<DB, I>, inspect: bool) -> Self {
         Self { inner, inspect }
     }
 
@@ -78,19 +67,22 @@ impl<DB: RevmDatabase, I, P> BaseEvm<DB, I, P> {
 
     /// Consumes `self` and returns a new [`BaseEvm`] with the given inspector, preserving
     /// the inspect flag. Used to swap inspectors without rebuilding from context.
-    pub fn with_inspector<J>(self, inspector: J) -> BaseEvm<DB, J, P> {
+    pub fn with_inspector<J>(self, inspector: J) -> BaseEvm<DB, J> {
         BaseEvm { inner: self.inner.with_inspector(inspector), inspect: self.inspect }
     }
 
     /// Consumes `self` and returns a new [`BaseEvm`] with the given precompile set,
     /// preserving the inspect flag. Used to substitute the default [`PrecompilesMap`] with
     /// custom implementations such as FPVM-accelerated precompiles in the proof system.
-    pub fn with_precompiles<Q>(self, precompiles: Q) -> BaseEvm<DB, I, Q> {
+    pub fn with_precompiles(
+        self,
+        precompiles: base_execution_evm_runtime::PrecompilesMap,
+    ) -> BaseEvm<DB, I> {
         BaseEvm { inner: self.inner.with_precompiles(precompiles), inspect: self.inspect }
     }
 }
 
-impl<DB: RevmDatabase, I, P> Deref for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I> Deref for BaseEvm<DB, I> {
     type Target = BaseContext<DB>;
 
     #[inline]
@@ -99,21 +91,20 @@ impl<DB: RevmDatabase, I, P> Deref for BaseEvm<DB, I, P> {
     }
 }
 
-impl<DB: RevmDatabase, I, P> DerefMut for BaseEvm<DB, I, P> {
+impl<DB: RevmDatabase, I> DerefMut for BaseEvm<DB, I> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ctx_mut()
     }
 }
 
-impl<DB, I, P> EvmTr for BaseEvm<DB, I, P>
+impl<DB, I> EvmTr for BaseEvm<DB, I>
 where
     DB: RevmDatabase,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Context = BaseContext<DB>;
 
-    type Precompiles = P;
+    type Precompiles = base_execution_evm_runtime::PrecompilesMap;
 
     #[inline]
     fn all(
@@ -154,11 +145,10 @@ where
     }
 }
 
-impl<DB, I, P> InspectorEvmTr for BaseEvm<DB, I, P>
+impl<DB, I> InspectorEvmTr for BaseEvm<DB, I>
 where
     DB: RevmDatabase,
     I: Inspector<BaseContext<DB>>,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Inspector = I;
 
@@ -189,10 +179,9 @@ where
     }
 }
 
-impl<DB, I, P> ExecuteEvm for BaseEvm<DB, I, P>
+impl<DB, I> ExecuteEvm for BaseEvm<DB, I>
 where
     DB: RevmDatabase,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Tx = BaseTransaction;
     type Block = BlockEnv;
@@ -215,7 +204,7 @@ where
             )));
         }
         self.inner.ctx.set_tx(tx);
-        let mut h = BaseHandler::<DB, I, P>::new();
+        let mut h = BaseHandler::<DB, I>::new();
         h.run(self)
     }
 
@@ -226,7 +215,7 @@ where
     fn replay(
         &mut self,
     ) -> Result<ExecResultAndState<Self::ExecutionResult, Self::State>, Self::Error> {
-        let mut h = BaseHandler::<DB, I, P>::new();
+        let mut h = BaseHandler::<DB, I>::new();
         h.run(self).map(|result| {
             let state = self.finalize();
             ExecResultAndState::new(result, state)
@@ -234,21 +223,19 @@ where
     }
 }
 
-impl<DB, I, P> ExecuteCommitEvm for BaseEvm<DB, I, P>
+impl<DB, I> ExecuteCommitEvm for BaseEvm<DB, I>
 where
     DB: RevmDatabase + DatabaseCommit,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn commit(&mut self, state: Self::State) {
         self.inner.ctx.db_mut().commit(state);
     }
 }
 
-impl<DB, I, P> InspectEvm for BaseEvm<DB, I, P>
+impl<DB, I> InspectEvm for BaseEvm<DB, I>
 where
     DB: RevmDatabase,
     I: Inspector<BaseContext<DB>>,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type Inspector = I;
 
@@ -265,23 +252,21 @@ where
             )));
         }
         self.inner.ctx.set_tx(tx);
-        let mut h = BaseHandler::<DB, I, P>::new();
+        let mut h = BaseHandler::<DB, I>::new();
         h.inspect_run(self)
     }
 }
 
-impl<DB, I, P> InspectCommitEvm for BaseEvm<DB, I, P>
+impl<DB, I> InspectCommitEvm for BaseEvm<DB, I>
 where
     DB: RevmDatabase + DatabaseCommit,
     I: Inspector<BaseContext<DB>>,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
 }
 
-impl<DB, I, P> SystemCallEvm for BaseEvm<DB, I, P>
+impl<DB, I> SystemCallEvm for BaseEvm<DB, I>
 where
     DB: RevmDatabase,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn system_call_one_with_caller(
         &mut self,
@@ -294,7 +279,7 @@ where
             system_contract_address,
             data,
         ));
-        let mut h = BaseHandler::<DB, I, P>::new();
+        let mut h = BaseHandler::<DB, I>::new();
 
         // load caller account into the journal (necessary for Geth proofs compatibility)
         // remove once https://github.com/bluealloy/revm/issues/3484 is fixed
@@ -304,11 +289,10 @@ where
     }
 }
 
-impl<DB, I, P> InspectSystemCallEvm for BaseEvm<DB, I, P>
+impl<DB, I> InspectSystemCallEvm for BaseEvm<DB, I>
 where
     DB: RevmDatabase,
     I: Inspector<BaseContext<DB>>,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     fn inspect_one_system_call_with_caller(
         &mut self,
@@ -321,7 +305,7 @@ where
             system_contract_address,
             data,
         ));
-        let mut h = BaseHandler::<DB, I, P>::new();
+        let mut h = BaseHandler::<DB, I>::new();
 
         // load caller account into the journal (necessary for Geth proofs compatibility)
         // remove once https://github.com/bluealloy/revm/issues/3484 is fixed
@@ -331,11 +315,10 @@ where
     }
 }
 
-impl<DB, I, P> Evm for BaseEvm<DB, I, P>
+impl<DB, I> Evm for BaseEvm<DB, I>
 where
     DB: AlloyDatabase,
     I: Inspector<BaseContext<DB>>,
-    P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
 {
     type DB = DB;
     type Tx = BaseTransaction;
@@ -343,7 +326,7 @@ where
     type HaltReason = BaseHaltReason;
     type Spec = BaseSpecId;
     type BlockEnv = BlockEnv;
-    type Precompiles = P;
+    type Precompiles = base_execution_evm_runtime::PrecompilesMap;
     type Inspector = I;
 
     fn block(&self) -> &BlockEnv {
@@ -447,18 +430,15 @@ mod tests {
     use alloc::vec;
 
     use alloy_primitives::{Address, U256};
-    use base_execution_evm_machine::CfgEnv;
-    use base_execution_evm_precompiles::{
-        JOVIAN, JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM,
-        JOVIAN_G2_MSM_MAX_INPUT_SIZE, JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING,
-        JOVIAN_PAIRING_MAX_INPUT_SIZE,
+    use base_execution_evm_runtime::{
+        BaseEvmFactory, BaseSpecId, BaseUpgrade, CfgEnv, EmptyDB, EvmFactory, EvmInternals, JOVIAN,
+        JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE,
+        JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING, JOVIAN_PAIRING_MAX_INPUT_SIZE, Precompile,
+        PrecompileInput,
     };
-    use base_execution_evm_runtime::database::EmptyDB;
-    use base_execution_evm_runtime::{EvmFactory, EvmInternals, Precompile, PrecompileInput};
     use rstest::rstest;
 
     use super::*;
-    use crate::{BaseEvmFactory, BaseSpecId, BaseUpgrade};
 
     #[rstest]
     #[case::bn254_pair(*JOVIAN.address(), JOVIAN_MAX_INPUT_SIZE)]

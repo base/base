@@ -1,5 +1,6 @@
-use crate::ValueWithSubKey;
 use alloy_primitives::{Address, B256, U256};
+
+use crate::ValueWithSubKey;
 
 /// Storage entry as it is saved in the static files.
 ///

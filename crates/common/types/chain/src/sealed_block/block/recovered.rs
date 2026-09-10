@@ -12,11 +12,9 @@ use base_common_types_chain::{
 };
 use derive_more::Deref;
 
-use {
-    crate::sealed_block::BlockBody, crate::sealed_block::InMemorySize,
-    crate::sealed_block::RecoveryError, crate::sealed_block::SealedHeader,
-    crate::sealed_block::SignedTransaction, crate::sealed_block::block::SealedBlock,
-    crate::sealed_block::block::error::SealedBlockRecoveryError,
+use crate::sealed_block::{
+    BlockBody, InMemorySize, RecoveryError, SealedHeader, SignedTransaction,
+    block::{SealedBlock, error::SealedBlockRecoveryError},
 };
 
 /// A block with senders recovered from the block's transactions.
@@ -704,6 +702,7 @@ impl<'a> IndexedTx<'a> {
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+
     use alloy_primitives::{Signature, TxKind, bytes};
     use base_common_types_chain::{BaseTxEnvelope, Header, TxLegacy};
 

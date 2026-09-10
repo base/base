@@ -8,10 +8,8 @@ use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bloom};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
-    BaseReceipt, BlockHeader as _, TxReceipt, proofs::calculate_receipt_root,
-};
-use base_common_types_chain::{
-    GotExpected, RecoveredBlock, SealedBlock, SealedHeader, gas_spent_by_transactions,
+    BaseReceipt, BlockHeader as _, GotExpected, RecoveredBlock, SealedBlock, SealedHeader,
+    TxReceipt, gas_spent_by_transactions, proofs::calculate_receipt_root,
 };
 use base_execution_state_types::BlockExecutionResult;
 

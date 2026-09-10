@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_payload_builder::{
+use base_execution_payload::{
     BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig, PayloadBuilderHandle,
     PayloadBuilderService, config::BaseBuilderConfig,
 };
@@ -54,18 +54,17 @@ impl BasePayloadServiceConfig {
     pub async fn start(
         self,
         ctx: &BuilderContext,
-        pool: base_execution_txpool_pool::BaseTransactionPool<
+        pool: base_execution_txpool::BaseTransactionPool<
             base_execution_state_provider::providers::BlockchainProvider,
         >,
         evm_config: BaseEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle> {
-        let payload_builder =
-            base_execution_payload_builder::BasePayloadBuilder::with_builder_config(
-                pool,
-                ctx.provider().clone(),
-                evm_config,
-                self.config,
-            );
+        let payload_builder = base_execution_payload::BasePayloadBuilder::with_builder_config(
+            pool,
+            ctx.provider().clone(),
+            evm_config,
+            self.config,
+        );
         let config = &ctx.config().builder;
         let job_config = BasicPayloadJobGeneratorConfig::default()
             .interval(config.interval)

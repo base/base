@@ -17,15 +17,15 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
+base-common-cli = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-cli-support = { workspace = true }
 base-proof-service-client = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 uuid = { workspace = true, features = ["default", "v4"] }
 serde = { workspace = true, features = ["derive", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }
-base-proof-host-service = {features = ["metrics"], workspace = true}
+base-proof-host = { features = ["metrics"], workspace = true }
 base-proof-tee-nitro-enclave = { workspace = true, optional = true }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-chain-config = { workspace = true, features = ["default"] }

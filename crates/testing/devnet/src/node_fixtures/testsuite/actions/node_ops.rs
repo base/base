@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use base_execution_rpc_handlers::EthApiClient;
+use base_execution_rpc::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tokio::time::{sleep, timeout};

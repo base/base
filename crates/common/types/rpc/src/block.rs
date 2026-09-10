@@ -3,7 +3,6 @@
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::ops::{Deref, DerefMut};
 
-use crate::{BlockResponse, BlockTransactions, HeaderResponse, TransactionResponse};
 pub use alloy_eips::{
     BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag, ForkBlock, RpcBlockHash,
     calc_blob_gasprice, calc_excess_blob_gas,
@@ -13,7 +12,7 @@ use alloy_primitives::{Address, B64, B256, BlockHash, Bloom, Bytes, Sealable, U2
 use alloy_rlp::Encodable;
 use base_common_types_chain::{BlockBody, BlockHeader, Sealed, TxEnvelope, error::ValueError};
 
-use crate::Transaction;
+use crate::{BlockResponse, BlockTransactions, HeaderResponse, Transaction, TransactionResponse};
 
 /// Base block RPC response.
 pub type BaseBlockResponse = Block<crate::BaseTransaction>;
@@ -64,7 +63,7 @@ impl<T, H> Block<T, H> {
     ///
     /// ```
     /// use alloy_eips::eip4895::Withdrawals;
-    /// use base_consensus_driver_service::BlockTransactions;
+    /// use base_consensus_driver::BlockTransactions;
     /// use base_common_types_rpc::{Block, Header, Transaction};
     /// let block = Block::new(
     ///     Header::new(base_common_types_chain::Header::default()),

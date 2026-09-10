@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use base_common_cli_support::CancellationToken;
+use base_common_cli::CancellationToken;
 use eyre::Result;
 
 use super::progress::{DownloadRequestLimiter, SharedProgress};

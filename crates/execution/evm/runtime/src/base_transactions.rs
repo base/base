@@ -1,8 +1,6 @@
 use alloy_eips::Typed2718;
 use base_common_types_chain::{BaseTxEnvelope, TxDeposit};
-use base_execution_evm_machine::TxEnv;
-
-use crate::{FromRecoveredTx, FromTxWithEncoded};
+use base_execution_evm_runtime::{FromRecoveredTx, FromTxWithEncoded, TxEnv};
 
 impl FromRecoveredTx<BaseTxEnvelope> for TxEnv {
     fn from_recovered_tx(tx: &BaseTxEnvelope, caller: alloy_primitives::Address) -> Self {

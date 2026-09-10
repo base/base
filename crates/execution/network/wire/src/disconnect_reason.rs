@@ -2,7 +2,7 @@
 
 use alloy_primitives::bytes::{Buf, BufMut};
 use alloy_rlp::{Decodable, Encodable, Header};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 use derive_more::Display;
 use thiserror::Error;
 

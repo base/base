@@ -6,13 +6,10 @@ use alloy_eips::{BlockHashOrNumber, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, TxHash, map::B256Map};
 use base_common_observability_metrics::{Metrics, metrics::Gauge};
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
+    BaseReceipt, BaseTxEnvelope, BlockBodyExt as _, BlockHeader, ChainInfo, IndexedTx,
+    RecoveredBlock, SealedBlock, SealedHeader, transaction::TransactionMeta,
 };
-use base_common_types_chain::{
-    BlockBodyExt as _, IndexedTx, RecoveredBlock, SealedBlock, SealedHeader,
-};
-use base_execution_state_api::StateProviderBox;
-use base_execution_state_types::{Chain, ExecutionOutcome};
+use base_execution_state_types::{Chain, ExecutionOutcome, StateProviderBox};
 use parking_lot::RwLock;
 use tokio::sync::{broadcast, watch};
 
@@ -840,17 +837,15 @@ impl NewCanonicalChain {
 mod tests {
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::{Address, BlockNumber, Bytes, StorageKey, StorageValue};
-    use base_execution_state_api::{
-        AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider,
-        StateProofProvider, StateRootProvider, StorageRootProvider,
-    };
-    use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+    use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
     use base_execution_state_trie::{
         AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets,
         StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
     };
-    use base_execution_state_types::LazyTrieData;
-    use base_execution_state_types::ProviderResult;
+    use base_execution_state_types::{
+        AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, LazyTrieData,
+        ProviderResult, StateProofProvider, StateRootProvider, StorageRootProvider,
+    };
     use rand::Rng;
 
     use super::*;
@@ -889,9 +884,9 @@ mod tests {
 
     struct MockStateProvider;
 
-    base_execution_state_api::impl_state_database!([] MockStateProvider where []);
+    base_execution_state_types::impl_state_database!([] MockStateProvider where []);
 
-    impl base_execution_state_api::StateReadProvider for MockStateProvider {
+    impl base_execution_state_types::StateReadProvider for MockStateProvider {
         fn storage(
             &self,
             _address: Address,
@@ -954,7 +949,7 @@ mod tests {
     impl HashedPostStateProvider for MockStateProvider {
         fn hashed_post_state(
             &self,
-            _bundle_state: &base_execution_evm_runtime::database::BundleState,
+            _bundle_state: &base_execution_evm_runtime::BundleState,
         ) -> ProviderResult<HashedPostState> {
             Ok(HashedPostState::default())
         }

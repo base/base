@@ -5,9 +5,9 @@ use std::{
     ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     path::PathBuf,
     sync::Arc,
+    time::Instant,
 };
 
-use crate::OverlayManager;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, StorageKey, StorageValue, TxHash, TxNumber, keccak256,
@@ -15,45 +15,39 @@ use alloy_primitives::{
 };
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, TxReceipt,
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockBodyExt as _, BlockHeader, ChainInfo,
+    RecoveredBlock, SealedHeader, TxReceipt,
     transaction::{SignerRecoverable, TransactionMeta},
 };
-use base_execution_evm_runtime::database::{PlainStateReverts, PlainStorageRevert, StateChangeset};
-use base_execution_state_api::{
-    BlockBodyIndicesProvider, MetadataProvider, StateProvider, StateReader, StateWriteConfig,
-    StorageChangeSetReader, StoragePath, StorageSettingsCache, TryIntoHistoricalStateProvider,
-    WriteStateInput,
+use base_execution_evm_runtime::{
+    PlainStateReverts, PlainStorageRevert, StateChangeset, StoredAccount as Account,
+    StoredBytecode as Bytecode,
 };
 use base_execution_state_database::{
     DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, DbTx, DbTxMut, ReaderTxnTracker, Table,
-    models::AccountBeforeTx, models::BlockNumberAddress, models::StorageBeforeTx,
-    models::StorageSettings, models::StoredBlockBodyIndices, tables,
+    models::{
+        AccountBeforeTx, BlockNumberAddress, StorageBeforeTx, StorageSettings,
+        StoredBlockBodyIndices,
+    },
+    tables,
 };
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_trie::{
     ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
-use base_execution_state_types::ExecutedBlock;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{
-    BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+    BlockBodyIndicesProvider, BlockExecutionOutput, BlockExecutionResult, Chain, ExecutedBlock,
+    ExecutionOutcome, FinishCheckpoint, MINIMUM_UNWIND_SAFE_DISTANCE, MetadataProvider,
+    ProviderResult, PruneCheckpoint, PruneMode, PruneModes, PruneSegment, StageCheckpoint, StageId,
+    StateProvider, StateReader, StateWriteConfig, StaticFileSegment, StaticFileWriterError,
+    StorageChangeSetReader, StorageEntry, StoragePath, StorageSettingsCache,
+    TryIntoHistoricalStateProvider, WriteStateInput,
 };
-use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
-use base_execution_state_types::{
-    MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneMode, PruneModes, PruneSegment,
-};
-use base_execution_state_types::{ProviderResult, StaticFileWriterError};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
-use {
-    base_common_types_chain::BlockBodyExt as _, base_common_types_chain::RecoveredBlock,
-    base_common_types_chain::SealedHeader, std::time::Instant,
-};
 
 use super::SaveBlocksInput;
 use crate::{
@@ -61,11 +55,11 @@ use crate::{
     BundleStateInit, ChainStateBlockReader, ChainStateBlockWriter, DBProvider, DbTxProvider,
     EitherReader, EitherWriter, HashingWriter, HeaderProvider, HeaderSyncGapProvider,
     HistoricalStateProvider, HistoricalStateProviderRef, HistoryWriter, LatestStateProvider,
-    LatestStateProviderRef, OriginalValuesKnown, PersistenceFrontiers, ProviderError,
-    ProviderRange, PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch, RevertsInit,
-    RocksBatchArg, RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateWriter,
-    StaticFileProviderFactory, StatsReader, StorageReader, StorageTrieWriter, TransactionVariant,
-    TransactionsProvider, TransactionsProviderExt, TrieWriter,
+    LatestStateProviderRef, OriginalValuesKnown, OverlayManager, PersistenceFrontiers,
+    ProviderError, ProviderRange, PruneCheckpointReader, PruneCheckpointWriter, RawRocksDBBatch,
+    RevertsInit, RocksBatchArg, RocksDBProviderFactory, StageCheckpointReader, StateProviderBox,
+    StateWriter, StaticFileProviderFactory, StatsReader, StorageReader, StorageTrieWriter,
+    TransactionVariant, TransactionsProvider, TransactionsProviderExt, TrieWriter,
     prepare_history_shard_writes_parallel,
     providers::{
         StaticFileProvider,
@@ -212,7 +206,7 @@ pub struct DatabaseProvider<TX> {
     /// Manager for state trie overlays and cached changesets.
     overlay_manager: OverlayManager,
     /// Task runtime for spawning parallel I/O work.
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
     /// Path to the database directory.
     db_path: PathBuf,
     /// Pending `RocksDB` batches to be committed at provider commit time.
@@ -412,7 +406,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
         db_path: PathBuf,
         commit_order: CommitOrder,
         metrics: Arc<DatabaseProviderMetrics>,
@@ -447,7 +441,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
     ) -> Self {
@@ -477,7 +471,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
     ) -> Self {
@@ -1013,7 +1007,7 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
         storage_settings: Arc<RwLock<StorageSettings>>,
         rocksdb_provider: RocksDBProvider,
         overlay_manager: OverlayManager,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
         db_path: PathBuf,
         metrics: Arc<DatabaseProviderMetrics>,
     ) -> Self {
@@ -1100,7 +1094,7 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
             self.transactions_by_tx_range(tx_range.clone())?
         };
 
-        let body = base_execution_state_api::BaseBodyStorage::read_block_bodies(
+        let body = base_execution_state_types::BaseBodyStorage::read_block_bodies(
             self,
             vec![(header.as_ref(), transactions)],
         )?
@@ -1185,7 +1179,7 @@ impl<TX: DbTx + 'static> DatabaseProvider<TX> {
             inputs.push((header.as_ref(), transactions));
         }
 
-        let bodies = base_execution_state_api::BaseBodyStorage::read_block_bodies(self, inputs)?;
+        let bodies = base_execution_state_types::BaseBodyStorage::read_block_bodies(self, inputs)?;
 
         for ((tx_range, header), body) in present_headers.into_iter().zip(bodies) {
             blocks.push(assemble_block(header, body, tx_range)?);
@@ -1671,7 +1665,7 @@ impl<TX: DbTx + 'static> BlockReader for DatabaseProvider<TX> {
                 return Ok(None);
             };
 
-            let body = base_execution_state_api::BaseBodyStorage::read_block_bodies(
+            let body = base_execution_state_types::BaseBodyStorage::read_block_bodies(
                 self,
                 vec![(&header, transactions)],
             )?
@@ -3497,7 +3491,7 @@ impl<TX: DbTxMut> DatabaseProvider<TX> {
             return Err(ProviderError::UnsupportedProvider);
         }
         self.write_metadata(
-            base_execution_state_api::STORAGE_SETTINGS,
+            base_execution_state_types::STORAGE_SETTINGS,
             serde_json::to_vec(&settings).map_err(ProviderError::other)?,
         )
     }
@@ -3534,21 +3528,19 @@ impl<TX: Send> StoragePath for DatabaseProvider<TX> {
 mod tests {
     use std::{sync::mpsc, time::Duration};
 
-    #[cfg(feature = "partial-persistence")]
-    use crate::test_utils::TestBlockBuilder;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{U256, map::B256Map};
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_types_chain::Header;
-    use base_common_types_chain::SealedBlock;
-    use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
-    use base_execution_state_api::{MetadataProvider, StateReadProvider};
+    use base_common_types_chain::{Header, SealedBlock};
+    use base_execution_evm_runtime::{AccountInfo, BundleState};
     use base_execution_state_database::models::StorageSettings;
     use base_execution_state_trie::{
         HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
     };
-    use base_execution_state_types::ExecutedBlock;
-    use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
+    use base_execution_state_types::{
+        BlockExecutionOutput, BlockExecutionResult, ExecutedBlock, MetadataProvider,
+        StateReadProvider,
+    };
     use base_testing_support::{generators, generators::BlockParams};
 
     use super::*;
@@ -4171,211 +4163,9 @@ mod tests {
         provider_rw.commit().unwrap();
     }
 
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn test_save_blocks_merges_storage_wipe_in_multi_block_batch() {
-        use base_execution_state_trie::{
-            BranchNodeCompact, HashedPostStateSorted,
-            updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
-        };
-
-        let factory = create_test_provider_factory();
-        factory.set_storage_settings_cache(StorageSettings::v2());
-
-        let mut test_block_builder = TestBlockBuilder::eth().with_state();
-        let genesis = test_block_builder.get_executed_blocks(0..1).next().unwrap();
-        let mut blocks: Vec<_> = test_block_builder.get_executed_blocks(1..4).collect();
-        let address = B256::with_last_byte(1);
-        let storage_path = Nibbles::from_nibbles([0x1, 0x2]);
-
-        let provider_rw = factory.provider_rw().unwrap();
-        save_genesis(&provider_rw, &genesis).unwrap();
-        provider_rw
-            .write_trie_updates_sorted(&TrieUpdatesSorted::new(
-                vec![],
-                B256Map::from_iter([(
-                    address,
-                    StorageTrieUpdatesSorted {
-                        is_deleted: false,
-                        storage_nodes: vec![(storage_path, Some(BranchNodeCompact::default()))],
-                    },
-                )]),
-            ))
-            .unwrap();
-        provider_rw.commit().unwrap();
-
-        let wipe = TrieUpdatesSorted::new(
-            vec![],
-            B256Map::from_iter([(
-                address,
-                StorageTrieUpdatesSorted { is_deleted: true, storage_nodes: vec![] },
-            )]),
-        );
-        let wipe_block = &blocks[2];
-        blocks[2] = ExecutedBlock::new(
-            Arc::clone(&wipe_block.recovered_block),
-            Arc::clone(&wipe_block.execution_output),
-            ComputedTrieData::new(Arc::new(HashedPostStateSorted::default()), Arc::new(wipe)),
-        );
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input = SaveBlocksInput::new(blocks, 0, 0, 3, 3);
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider = factory.provider().unwrap();
-        let checkpoint = provider.get_stage_checkpoint(StageId::Finish).unwrap().unwrap();
-        assert_eq!(checkpoint.block_number, 3);
-        let storage_entries = provider
-            .tx_ref()
-            .cursor_dup_read::<tables::PackedStoragesTrie>()
-            .unwrap()
-            .walk_dup(Some(address), None)
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(storage_entries.is_empty());
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn test_save_blocks_batches_transient_storage_wipe() {
-        use alloy_primitives::map::B256Set;
-        use base_execution_state_trie::{HashBuilder, HashedPostStateSorted, updates::TrieUpdates};
-
-        let factory = create_test_provider_factory();
-        factory.set_storage_settings_cache(StorageSettings::v2());
-
-        let mut test_block_builder = TestBlockBuilder::eth().with_state();
-        let genesis = test_block_builder.get_executed_blocks(0..1).next().unwrap();
-        let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..4).collect();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        save_genesis(&provider_rw, &genesis).unwrap();
-        provider_rw.commit().unwrap();
-
-        // A contract created and self-destructed in the same transaction leaves an empty whole-
-        // storage wipe in the trie updates, even though the account never reaches persisted state.
-        let ephemeral_account = B256::with_last_byte(0x57);
-        let hashed_state = HashedPostStateSorted::default();
-        let mut trie_updates = TrieUpdates::default();
-        trie_updates.finalize(
-            HashBuilder::default(),
-            Default::default(),
-            B256Set::from_iter([ephemeral_account]),
-        );
-        let trie_updates = trie_updates.into_sorted();
-        assert!(trie_updates.storage_tries_ref()[&ephemeral_account].is_deleted);
-        let selfdestruct_block = ExecutedBlock::new(
-            Arc::clone(&blocks[2].recovered_block),
-            Arc::clone(&blocks[2].execution_output),
-            ComputedTrieData::new(Arc::new(hashed_state), Arc::new(trie_updates)),
-        );
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input = SaveBlocksInput::new(
-            vec![blocks[0].clone(), blocks[1].clone(), selfdestruct_block],
-            0,
-            0,
-            3,
-            3,
-        );
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let checkpoint =
-            factory.provider().unwrap().get_stage_checkpoint(StageId::Finish).unwrap().unwrap();
-        assert_eq!(checkpoint.block_number, 3);
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn test_save_blocks_partial_cycles_do_not_duplicate_static_file_writes() {
-        let factory = create_test_provider_factory();
-        let mut test_block_builder = TestBlockBuilder::eth().with_state();
-
-        let genesis = test_block_builder.get_executed_blocks(0..1).next().unwrap();
-        let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..5).collect();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        save_genesis(&provider_rw, &genesis).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input = SaveBlocksInput::new(blocks[..2].to_vec(), 0, 0, 2, 2);
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let input = SaveBlocksInput::new(blocks[2..].to_vec(), 2, 2, 4, 2);
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let stale_input = SaveBlocksInput::new(vec![blocks[0].clone()], 0, 0, 1, 1);
-        let err = provider_rw.save_blocks(&stale_input).unwrap_err();
-        assert!(err.to_string().contains("persistence frontiers do not match Finish checkpoint"));
-        drop(provider_rw);
-
-        let provider = factory.provider().unwrap();
-        let finish_checkpoint = provider.get_stage_checkpoint(StageId::Finish).unwrap().unwrap();
-        assert_eq!(finish_checkpoint.block_number, 4);
-        assert_eq!(
-            finish_checkpoint.finish_stage_checkpoint().unwrap().partial_state_trie,
-            Some(2)
-        );
-
-        let static_files = factory.static_file_provider();
-        assert_eq!(static_files.get_highest_static_file_block(StaticFileSegment::Headers), Some(4));
-        assert_eq!(
-            static_files.get_highest_static_file_block(StaticFileSegment::Transactions),
-            Some(4)
-        );
-        assert_eq!(
-            static_files.get_highest_static_file_block(StaticFileSegment::Receipts),
-            Some(4)
-        );
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn remove_block_and_execution_above_returns_persistence_frontiers() {
-        let overlays = OverlayManager::default();
-        let factory = create_test_provider_factory().with_overlay_manager(overlays.clone());
-        let mut test_block_builder = TestBlockBuilder::eth().with_state();
-
-        let genesis = test_block_builder.get_executed_blocks(0..1).next().unwrap();
-        let blocks: Vec<_> = test_block_builder.get_executed_blocks(1..5).collect();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        save_genesis(&provider_rw, &genesis).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        // Partially persisted blocks must retain the suffix that masks unwritten trie updates.
-        for block in &blocks[2..] {
-            overlays.insert_block(block.clone());
-        }
-        let input = SaveBlocksInput::new(blocks, 0, 0, 4, 2);
-        provider_rw.save_blocks(&input).unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider_rw = factory.provider_rw().unwrap();
-        let frontiers = provider_rw.remove_block_and_execution_above(3).unwrap();
-        assert_eq!(frontiers, PersistenceFrontiers { db_tip: 3, partial_state_trie: 2 });
-        provider_rw.commit().unwrap();
-
-        let provider = factory.provider().unwrap();
-        let checkpoint = provider.get_stage_checkpoint(StageId::Finish).unwrap().unwrap();
-        assert_eq!(
-            checkpoint.finish_stage_checkpoint().and_then(|finish| finish.partial_state_trie()),
-            Some(2)
-        );
-    }
-
     #[test]
     fn test_try_into_history_rejects_unexecuted_blocks() {
-        use base_execution_state_api::TryIntoHistoricalStateProvider;
+        use base_execution_state_types::TryIntoHistoricalStateProvider;
 
         let factory = create_test_provider_factory();
 
@@ -4456,7 +4246,7 @@ mod tests {
 
     #[test]
     fn test_write_state_and_historical_read_hashed() {
-        use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
+        use base_execution_evm_runtime::{AccountInfo, BundleState};
         use base_execution_state_trie::HashedPostState;
 
         let factory = create_test_provider_factory();

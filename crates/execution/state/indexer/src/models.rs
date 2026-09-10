@@ -1,5 +1,4 @@
-use base_common_types_chain::BaseReceipt;
-use base_common_types_chain::RecoveredBlock;
+use base_common_types_chain::{BaseReceipt, RecoveredBlock};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

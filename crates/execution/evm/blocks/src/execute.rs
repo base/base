@@ -5,26 +5,23 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_eip7928::{BlockAccessList, compute_block_access_list_hash};
 use alloy_eips::eip2718::WithEncoded;
 use alloy_primitives::{Address, B256};
-use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, BlockHeader};
-use base_common_types_chain::{Recovered, RecoveredBlock, SealedHeader};
+use base_common_types_chain::{
+    BaseReceipt, BaseTxEnvelope, BlockHeader, Recovered, RecoveredBlock, SealedHeader,
+};
 pub use base_execution_evm_runtime::{
-    BlockExecutionError, BlockExecutor, BlockExecutorFactory, BlockValidationError, GasOutput,
+    BlockExecutionError, BlockExecutor, BlockValidationError, GasOutput,
     InternalBlockExecutionError,
 };
 use base_execution_evm_runtime::{
-    CommitChanges, Evm, EvmEnv, EvmFactory, ExecutableTxParts, RecoveredTx, ToTxEnv,
+    BundleRetention, BundleState, CommitChanges, Evm, EvmEnv, ExecutableTxParts, RecoveredTx,
+    State, ToTxEnv, bal::Bal,
 };
-use base_execution_evm_runtime::{
-    database::{BundleRetention, BundleState, State},
-    state::bal::Bal,
+pub use base_execution_state_types::{BlockExecutionOutput, ExecutionOutcome, ProviderError};
+use base_execution_state_types::{
+    BlockExecutionResult, HashedPostState, StateProvider, updates::TrieUpdates,
 };
-use base_execution_state_api::StateProvider;
-use base_execution_state_types::BlockExecutionResult;
-pub use base_execution_state_types::ProviderError;
-pub use base_execution_state_types::{BlockExecutionOutput, ExecutionOutcome};
-use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
 
-use crate::{Database, OnStateHook, TxEnvFor};
+use crate::{Database, OnStateHook};
 
 /// A type that knows how to execute a block. It is assumed to operate on a
 /// [`crate::Evm`] internally and use [`State`] as database.
@@ -186,9 +183,9 @@ pub trait Executor<DB: Database>: Sized {
 pub struct BlockAssemblerInput<'a, 'b> {
     /// Configuration of EVM used when executing the block.
     ///
-    /// Contains context relevant to EVM such as [`base_execution_evm_machine::BlockEnv`].
+    /// Contains context relevant to EVM such as [`base_execution_evm_runtime::BlockEnv`].
     pub evm_env: EvmEnv<base_execution_evm_runtime::BaseSpecId>,
-    /// [`BlockExecutorFactory::ExecutionCtx`] used to execute the block.
+    /// [`base_execution_evm_runtime::BaseBlockExecutionCtx`] used to execute the block.
     pub execution_ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     /// Parent block header.
     pub parent: &'a SealedHeader,
@@ -342,7 +339,7 @@ pub struct BasicBlockBuilder<'a, Executor> {
 
 /// Conversions for executable transactions.
 pub trait ExecutorTx<Executor: BlockExecutor> {
-    /// Converts the transaction into a tuple of [`TxEnvFor`] and [`Recovered`].
+    /// Converts the transaction into a tuple of [`base_execution_evm_runtime::BaseTransaction`] and [`Recovered`].
     fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>);
 }
 
@@ -382,9 +379,9 @@ impl<'a, DB, Executor> BlockBuilder for BasicBlockBuilder<'a, Executor>
 where
     Executor: BlockExecutor<
             Evm: Evm<
-                Spec = <<crate::BaseExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::Spec,
-                HaltReason = <<crate::BaseExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::HaltReason,
-                BlockEnv = <<crate::BaseExecutorFactory as BlockExecutorFactory>::EvmFactory as EvmFactory>::BlockEnv,
+                Spec = base_execution_evm_runtime::BaseSpecId,
+                HaltReason = base_execution_evm_runtime::BaseHaltReason,
+                BlockEnv = base_execution_evm_runtime::BlockEnv,
                 DB = &'a mut State<DB>,
             >,
             Transaction = BaseTxEnvelope,
@@ -581,12 +578,14 @@ where
 /// A helper trait marking a 'static type that can be converted into an [`ExecutableTxParts`] for
 /// block executor.
 pub trait ExecutableTxFor:
-    ExecutableTxParts<TxEnvFor, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
+    ExecutableTxParts<base_execution_evm_runtime::BaseTransaction, BaseTxEnvelope>
+    + RecoveredTx<BaseTxEnvelope>
 {
 }
 
 impl<T> ExecutableTxFor for T where
-    T: ExecutableTxParts<TxEnvFor, BaseTxEnvelope> + RecoveredTx<BaseTxEnvelope>
+    T: ExecutableTxParts<base_execution_evm_runtime::BaseTransaction, BaseTxEnvelope>
+        + RecoveredTx<BaseTxEnvelope>
 {
 }
 
@@ -643,7 +642,7 @@ mod tests {
     use core::marker::PhantomData;
 
     use base_common_types_chain::BaseReceipt;
-    use base_execution_evm_runtime::database::{CacheDB, EmptyDB};
+    use base_execution_evm_runtime::{CacheDB, EmptyDB};
 
     use super::*;
 

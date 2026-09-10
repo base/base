@@ -1,6 +1,4 @@
-use std::time::Duration;
-
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Trie stats.
 #[derive(Clone, Copy, Debug)]

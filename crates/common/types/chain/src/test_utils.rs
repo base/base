@@ -4,7 +4,7 @@
 /// backwards compatibility.
 ///
 /// Verifies that the unused bits in the bitflag struct remain as expected: `Zero` or `NotZero`. For
-/// more on bitflag struct: [`base_common_codec_macros::Compact`].
+/// more on bitflag struct: [`base_common_codec::Compact`].
 ///
 /// Possible failures:
 /// ### 1. `NotZero` -> `Zero`

@@ -95,11 +95,13 @@ impl PruneConfig {
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeMap;
+
+    use alloy_primitives::Address;
+
     use crate::{
         MINIMUM_UNWIND_SAFE_DISTANCE, PruneConfig, PruneMode, PruneModes, ReceiptsLogPruneConfig,
     };
-    use alloc::collections::BTreeMap;
-    use alloy_primitives::Address;
     #[test]
     fn test_prune_config_merge() {
         let mut config1 = PruneConfig {

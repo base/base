@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crate::ChainSpecValueParser;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::ChainConfig;
-use base_common_cli_support::parse_genesis;
+use base_common_chain_config::{BaseChainSpec, ChainConfig};
+use base_common_cli::parse_genesis;
 use clap::builder::TypedValueParser;
+
+use crate::ChainSpecValueParser;
 
 /// Base chain specification parser.
 #[derive(Debug, Clone, Default)]

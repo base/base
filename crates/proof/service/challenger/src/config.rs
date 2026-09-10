@@ -3,8 +3,8 @@
 use std::{net::SocketAddr, time::Duration};
 
 use alloy_primitives::Address;
-use base_common_cli_support::MetricsConfig;
-use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
+use base_common_cli::MetricsConfig;
+use base_common_l1::{SignerConfig, TxManagerConfig};
 use eyre::{Result, WrapErr, ensure};
 use url::Url;
 

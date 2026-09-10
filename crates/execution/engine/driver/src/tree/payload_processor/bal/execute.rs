@@ -22,18 +22,12 @@ use alloy_eip7928::{
     compute_block_access_list_hash,
 };
 use alloy_primitives::Address;
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 use base_common_types_chain::BaseReceipt;
-use base_execution_evm_blocks::{
-    BaseEvmConfig, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
-};
-use base_execution_evm_machine::{Block, ResultAndState};
+use base_execution_evm_blocks::{BaseEvmConfig, Database, ExecutableTxFor};
 use base_execution_evm_runtime::{
-    BlockExecutionError, BlockExecutor, BlockValidationError, Evm, TxResult,
-};
-use base_execution_evm_runtime::{
-    database::{BundleRetention, State},
-    state::bal::Bal as RevmBal,
+    Block, BlockExecutionError, BlockExecutor, BlockValidationError, BundleRetention, Evm,
+    ResultAndState, State, TxResult, bal::Bal as RevmBal,
 };
 use base_execution_state_provider::BlockExecutionOutput;
 use crossbeam_channel::{Receiver, Sender};
@@ -48,8 +42,11 @@ pub fn execute_block<'a, Tx, Err, DB, MakeDb>(
     evm_config: &'a BaseEvmConfig,
     make_db: &'a MakeDb,
     input_bal: Arc<DecodedBal>,
-    evm_env: EvmEnvFor,
-    ctx: ExecutionCtxFor,
+    evm_env: base_execution_evm_runtime::EvmEnv<
+        base_execution_evm_runtime::BaseSpecId,
+        base_execution_evm_runtime::BlockEnv,
+    >,
+    ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
     receipt_tx: Sender<IndexedReceipt>,
@@ -86,8 +83,11 @@ fn execute_block_inner<'scope, Tx, Err, DB, MakeDb>(
     evm_config: &'scope BaseEvmConfig,
     make_db: &'scope MakeDb,
     input_bal: Arc<DecodedBal>,
-    evm_env: EvmEnvFor,
-    ctx: ExecutionCtxFor,
+    evm_env: base_execution_evm_runtime::EvmEnv<
+        base_execution_evm_runtime::BaseSpecId,
+        base_execution_evm_runtime::BlockEnv,
+    >,
+    ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
     transaction_count: usize,
     txs: Receiver<(usize, Result<Tx, Err>)>,
     receipt_tx: Sender<IndexedReceipt>,
@@ -303,17 +303,14 @@ mod tests {
     };
     use alloy_primitives::{B256, U256, keccak256};
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_runtime_tasks::Runtime;
+    use base_common_runtime::Runtime;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseReceipt, BaseTxEnvelope, BlockHeader, Header, Predeploys,
-        SystemAddresses, TxDeposit,
+        Recovered, SealedBlock, SystemAddresses, TxDeposit,
     };
-    use base_execution_evm_runtime::L1BlockInfo;
     use base_execution_evm_runtime::{
-        database::{BundleState, CacheDB, EmptyDB},
-        state::{AccountInfo, Bytecode},
+        AccountInfo, BundleState, Bytecode, CacheDB, EmptyDB, L1BlockInfo,
     };
-    use {base_common_types_chain::Recovered, base_common_types_chain::SealedBlock};
 
     use super::*;
 
@@ -432,7 +429,7 @@ mod tests {
     /// This intentionally mirrors what `execute_block` does internally,
     /// but without any hash check — the output is the BAL itself, not a pass/fail signal.
     fn reference_bal_for_empty_block(evm_config: &BaseEvmConfig) -> BlockAccessList {
-        use base_execution_evm_runtime::database::State as RevmState;
+        use base_execution_evm_runtime::State as RevmState;
 
         let db = system_contracts_db();
         let mut state =
@@ -567,7 +564,7 @@ mod tests {
     where
         Tx: ExecutableTxFor,
     {
-        use base_execution_evm_runtime::database::State as RevmState;
+        use base_execution_evm_runtime::State as RevmState;
 
         let mut state = RevmState::builder()
             .with_database(&mut db)
@@ -601,9 +598,10 @@ mod tests {
         //    `with_bal_builder`.
         // 4. Feed that BAL into `execute_block` and assert the deposit and user receipts.
         use alloy_primitives::TxKind;
-        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
-        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
-        use base_testing_support::{generators::generate_key, generators::rng};
+        use base_common_types_chain::{
+            BaseTypedTransaction as Transaction, TxLegacy, crypto::secp256k1::public_key_to_address,
+        };
+        use base_testing_support::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -732,7 +730,7 @@ mod tests {
         block: &SealedBlock,
         txs: &[Recovered<BaseTxEnvelope>],
     ) -> (ShadowOutput, BlockAccessList) {
-        use base_execution_evm_runtime::database::State as RevmState;
+        use base_execution_evm_runtime::State as RevmState;
 
         let mut state = RevmState::builder()
             .with_database(canonical_db)
@@ -839,9 +837,10 @@ mod tests {
         // Two senders → same recipient. Byte-equal across paths means: worker-produced
         // diffs commit identically to a directly-executed serial path.
         use alloy_primitives::TxKind;
-        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
-        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
-        use base_testing_support::{generators::generate_key, generators::rng};
+        use base_common_types_chain::{
+            BaseTypedTransaction as Transaction, TxLegacy, crypto::secp256k1::public_key_to_address,
+        };
+        use base_testing_support::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -885,10 +884,11 @@ mod tests {
         // commit loop must still reject tx2 because tx1's committed gas leaves too little
         // block gas for tx2's gas limit.
         use alloy_primitives::TxKind;
-        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
-        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
+        use base_common_types_chain::{
+            BaseTypedTransaction as Transaction, TxLegacy, crypto::secp256k1::public_key_to_address,
+        };
         use base_execution_evm_runtime::BlockValidationError;
-        use base_testing_support::{generators::generate_key, generators::rng};
+        use base_testing_support::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -965,9 +965,10 @@ mod tests {
         // Deploys `0x60006000fd` (PUSH1 0 PUSH1 0 REVERT) at `revert_contract`. Sender calls
         // it; the call reverts; fees + nonce still apply.
         use alloy_primitives::{Bytes, TxKind, keccak256};
-        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
-        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
-        use base_testing_support::{generators::generate_key, generators::rng};
+        use base_common_types_chain::{
+            BaseTypedTransaction as Transaction, TxLegacy, crypto::secp256k1::public_key_to_address,
+        };
+        use base_testing_support::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -1022,9 +1023,10 @@ mod tests {
         //
         // Bytecode: PUSH1 0x42, PUSH1 0x00, SSTORE, STOP → `0x60 0x42 0x60 0x00 0x55 0x00`.
         use alloy_primitives::{Bytes, TxKind, keccak256};
-        use base_common_types_chain::crypto::secp256k1::public_key_to_address;
-        use base_common_types_chain::{BaseTypedTransaction as Transaction, TxLegacy};
-        use base_testing_support::{generators::generate_key, generators::rng};
+        use base_common_types_chain::{
+            BaseTypedTransaction as Transaction, TxLegacy, crypto::secp256k1::public_key_to_address,
+        };
+        use base_testing_support::generators::{generate_key, rng};
 
         let evm_config = BaseEvmConfig::new(Arc::new(
             BaseChainSpecBuilder::base_mainnet().ecotone_activated().build(),
@@ -1195,17 +1197,16 @@ mod tests {
         // All-state-gas results keep block_regular_gas_used at 0, so a second tx that fits
         // within the block limit but not the remaining cumulative budget proves that
         // non-Amsterdam reads cumulative_tx_gas_used while Amsterdam does not.
-        use base_execution_evm_machine::{
-            ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
+        use base_execution_evm_runtime::{
+            EvmState, ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
         };
-        use base_execution_evm_runtime::state::EvmState;
 
         let block_gas_limit = 1_000_000u64;
         let first_tx_gas = 600_000u64;
         let second_tx_gas_limit = 500_000u64; // fits in total limit but not after cumulative deduction
 
         let gas = ResultGas::new_with_state_gas(first_tx_gas, 0, 0, first_tx_gas);
-        let fake_result: ResultAndState<base_execution_evm_machine::HaltReason> =
+        let fake_result: ResultAndState<base_execution_evm_runtime::HaltReason> =
             ExecResultAndState::new(
                 ExecutionResult::Success {
                     reason: SuccessReason::Return,
@@ -1237,10 +1238,10 @@ mod tests {
     fn gas_tracker_caps_oversized_tx_gas_limit_at_tx_gas_limit_cap() {
         // A tx with gas_limit above TX_GAS_LIMIT_CAP (EIP-7825) is admitted when the
         // capped value fits in the remaining block gas and rejected when it does not.
-        use base_execution_evm_machine::{
-            ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
+        use base_execution_evm_runtime::{
+            EvmState, ExecResultAndState, ExecutionResult, Output, ResultGas, SuccessReason,
+            eip7825::TX_GAS_LIMIT_CAP,
         };
-        use base_execution_evm_runtime::{primitives::eip7825::TX_GAS_LIMIT_CAP, state::EvmState};
 
         let block_gas_limit = 30_000_000u64;
         let oversized = TX_GAS_LIMIT_CAP + 1_000_000; // 17_777_216 — above the cap
@@ -1257,7 +1258,7 @@ mod tests {
         // tx_min_gas_limit = TX_GAS_LIMIT_CAP (16_777_216) > block_available_gas (10M) → Err.
         let prior_gas = 20_000_000u64;
         let gas = ResultGas::new_with_state_gas(prior_gas, 0, 0, prior_gas);
-        let fake_result: ResultAndState<base_execution_evm_machine::HaltReason> =
+        let fake_result: ResultAndState<base_execution_evm_runtime::HaltReason> =
             ExecResultAndState::new(
                 ExecutionResult::Success {
                     reason: SuccessReason::Return,

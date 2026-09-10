@@ -1,4 +1,4 @@
-use base_common_cli_support::{LogConfig, MetricsConfig};
+use base_common_cli::{LogConfig, MetricsConfig};
 use clap::Parser;
 use eyre::WrapErr;
 
@@ -7,8 +7,8 @@ use crate::{
     config::{ChainArg, ChainResolver},
 };
 
-base_common_cli_support::define_log_args!("BASE_NODE");
-base_common_cli_support::define_metrics_args!("BASE_NODE", 9090);
+base_common_cli::define_log_args!("BASE_NODE");
+base_common_cli::define_metrics_args!("BASE_NODE", 9090);
 
 /// The `base` CLI.
 #[derive(Parser, Debug)]
@@ -16,7 +16,7 @@ base_common_cli_support::define_metrics_args!("BASE_NODE", 9090);
     name = "base",
     author,
     version = env!("CARGO_PKG_VERSION"),
-    styles = base_common_cli_support::CliStyles::init(),
+    styles = base_common_cli::CliStyles::init(),
     about,
     long_about = None
 )]
@@ -52,7 +52,7 @@ impl BaseCli {
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)
             .init_with(|| {
-                base_common_cli_support::register_version_metrics!();
+                base_common_cli::register_version_metrics!();
             })
             .wrap_err("failed to install Prometheus recorder")?;
 

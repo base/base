@@ -12,7 +12,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-infra-basectl-service = { workspace = true }
+base-infra-basectl = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive"] }
 rustls = { workspace = true, features = ["default", "ring"] }

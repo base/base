@@ -1,4 +1,3 @@
-use crate::native_mdbx::ffi;
 use std::{
     ffi::CString,
     fmt::{self, Debug},
@@ -19,6 +18,7 @@ use crate::native_mdbx::{
     Mode, SyncMode, Transaction, TransactionKind,
     database::Database,
     error::{Error, Result, mdbx_result},
+    ffi,
     flags::EnvironmentFlags,
     transaction::{RO, RW},
     txn_manager::{TxnManager, TxnManagerMessage, TxnPtr},
@@ -204,7 +204,7 @@ impl Environment {
     /// of used pages as well as free pages in this environment.
     ///
     /// ```
-    /// # use base_execution_state_database::mdbx::Environment;
+    /// # use crate::mdbx::Environment;
     /// let dir = tempfile::tempdir().unwrap();
     /// let env = Environment::builder().open(dir.path()).unwrap();
     /// let info = env.info().unwrap();
@@ -952,14 +952,13 @@ fn convert_hsr_fn(callback: Option<HandleSlowReadersCallback>) -> ffi::MDBX_hsr_
 
 #[cfg(test)]
 mod tests {
-    use crate::native_mdbx::ffi;
     use std::{
         ops::RangeInclusive,
         sync::atomic::{AtomicBool, Ordering},
     };
 
     use crate::native_mdbx::{
-        Environment, Error, Geometry, HandleSlowReadersReturnCode, PageSize, WriteFlags,
+        Environment, Error, Geometry, HandleSlowReadersReturnCode, PageSize, WriteFlags, ffi,
     };
 
     #[test]

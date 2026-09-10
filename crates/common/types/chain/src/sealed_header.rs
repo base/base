@@ -1,18 +1,18 @@
+#[cfg(not(feature = "std"))]
+use alloc::boxed::Box;
 use core::mem;
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 
-use crate::{BlockHeader, Header, InMemorySize, Sealed};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{BlockHash, keccak256};
 use alloy_rlp::{Decodable, Encodable};
 use bytes::BufMut;
 use derive_more::{AsRef, Deref};
-
-#[cfg(not(feature = "std"))]
-use alloc::boxed::Box;
 #[cfg(not(feature = "std"))]
 use once_cell::race::OnceBox as OnceLock;
-#[cfg(feature = "std")]
-use std::sync::OnceLock;
+
+use crate::{BlockHeader, Header, InMemorySize, Sealed};
 
 /// Seals the header with the block hash.
 ///

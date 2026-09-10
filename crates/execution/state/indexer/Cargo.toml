@@ -14,33 +14,43 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 metrics = { workspace = true, optional = true }
-tracing = {features = ["std"], workspace = true}
-alloy-eips = { workspace = true, optional = true}
-async-trait = { workspace = true, optional = true}
-tokio = {features = ["default"], workspace = true}
-anyhow = {features = ["default"], workspace = true}
-chrono = {features = ["default"], workspace = true}
-base-common-runtime-tasks = { workspace = true, optional = true}
-base-common-types-chain = {workspace = true, features = ["k256", "reth", "serde"]}
-eyre = { workspace = true, features = ["default"], optional = true}
-base-execution-network-service = { workspace = true, optional = true}
-base-execution-engine-observers = { workspace = true, optional = true}
-futures = { workspace = true, features = ["default"], optional = true}
-base-common-observability-metrics = { workspace = true, optional = true}
-base-execution-state-types = { workspace = true, features = ["default"], optional = true}
+tracing = { features = ["std"], workspace = true }
+alloy-eips = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { features = ["default"], workspace = true }
+anyhow = { features = ["default"], workspace = true }
+chrono = { features = ["default"], workspace = true }
+base-common-runtime = { workspace = true, optional = true }
+eyre = { workspace = true, features = ["default"], optional = true }
+base-execution-network-service = { workspace = true, optional = true }
+base-execution-engine-observers = { workspace = true, optional = true }
+futures = { workspace = true, features = ["default"], optional = true }
+base-common-observability-metrics = { workspace = true, optional = true }
+base-common-types-chain = { workspace = true, features = ["k256", "reth", "serde"] }
+base-execution-state-types = { workspace = true, features = ["default"], optional = true }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 
 [dev-dependencies]
 mockall = { workspace = true }
 serde_json = { workspace = true }
-alloy-primitives = {workspace = true}
+alloy-primitives = { workspace = true }
 base-execution-state-maintenance = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
-base-common-types-chain = {workspace = true, features = ["k256", "serde", "std", "test-utils"]}
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
-base-execution-state-provider = {workspace = true, features = ["test-utils"]}
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
+base-common-types-chain = { workspace = true, features = ["k256", "serde", "std", "test-utils"] }
 
 [features]
 default = ["metrics"]
 metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]
-service = ["dep:base-execution-engine-observers", "dep:alloy-eips", "dep:async-trait", "dep:base-execution-network-service", "dep:base-common-runtime-tasks", "dep:eyre", "dep:futures", "dep:base-common-observability-metrics", "dep:base-execution-state-types"]
+service = [
+    "dep:base-execution-engine-observers",
+    "dep:alloy-eips",
+    "dep:async-trait",
+    "dep:base-execution-network-service",
+    "dep:base-common-runtime",
+    "dep:eyre",
+    "dep:futures",
+    "dep:base-common-observability-metrics",
+    "dep:base-execution-state-types",
+]

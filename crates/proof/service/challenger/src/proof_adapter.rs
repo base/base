@@ -1,11 +1,11 @@
 //! Adapters between challenger proof types and the shared prover-service protocol.
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_types_protocol::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use base_proof_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest,
     SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
 };
+use base_proof_types::{ProofEncoder, ProofRequest as PrimitiveProofRequest};
 use eyre::{Result, WrapErr, bail};
 
 /// Conversion helpers for challenger proof requests and dispute proof bytes.
@@ -95,11 +95,11 @@ impl ChallengerProofAdapter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
-    use base_proof_types_protocol::{PROOF_TYPE_TEE, ProofRequest, Proposal};
     use base_proof_service_protocol::{
         ProofRequestKind, ProofResult, SnarkPlonkProofRequest, TeeKind, TeeProofRequest,
         TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
     };
+    use base_proof_types::{PROOF_TYPE_TEE, ProofRequest, Proposal};
 
     use super::ChallengerProofAdapter;
 

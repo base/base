@@ -1,0 +1,53 @@
+[package]
+name = "base-common-process"
+description = "Ethereum execution-layer client bindings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+readme = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[lib]
+name = "base_common_process"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-hardforks-legacy = { workspace = true }
+k256 = { workspace = true, features = ["ecdsa"] }
+url = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc", "std"] }
+alloy-primitives = { workspace = true, features = ["std", "k256", "serde"] }
+
+[dev-dependencies]
+ci_info = { workspace = true }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+
+[target."cfg(unix)".dependencies]
+libc = { workspace = true, features = ["default"] }
+[lints]
+workspace = true

@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_rlp::encode_fixed_size;
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_types::triehash::KeccakHasher;
 /// Re-export of [triehash].
 pub use triehash;

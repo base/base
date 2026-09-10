@@ -6,9 +6,9 @@
 use std::{fmt::Debug, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
-use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_common_types_payload::BasePayloadBuilderAttributes;
 use base_node_config::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use base_node_service::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
@@ -18,7 +18,7 @@ use crate::node_fixtures::{NodeHelperType, node::NodeTestContext, wallet::Wallet
 
 /// Type alias for tree config modifier closure
 type TreeConfigModifier = Box<
-    dyn Fn(base_execution_engine_types::TreeConfig) -> base_execution_engine_types::TreeConfig
+    dyn Fn(base_common_types_payload::TreeConfig) -> base_common_types_payload::TreeConfig
         + Send
         + Sync,
 >;
@@ -70,7 +70,7 @@ where
     /// The closure receives the base tree config and returns a modified version.
     pub fn with_tree_config_modifier<G>(mut self, modifier: G) -> Self
     where
-        G: Fn(base_execution_engine_types::TreeConfig) -> base_execution_engine_types::TreeConfig
+        G: Fn(base_common_types_payload::TreeConfig) -> base_common_types_payload::TreeConfig
             + Send
             + Sync
             + 'static,
@@ -108,7 +108,7 @@ where
         };
 
         // Apply tree config modifier if present, with test-appropriate defaults
-        let base_tree_config = base_execution_engine_types::TreeConfig::default()
+        let base_tree_config = base_common_types_payload::TreeConfig::default()
             .with_cross_block_cache_size(1024 * 1024);
         let tree_config = if let Some(modifier) = self.tree_config_modifier {
             modifier(base_tree_config)

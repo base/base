@@ -89,8 +89,8 @@ mod utils;
 /// Read more: <https://github.com/paradigmxyz/reth/issues/11370>
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
-    pub use super::{chain::serde_bincode_compat::*, execution_outcome::serde_bincode_compat::*};
     pub use super::{
+        chain::serde_bincode_compat::*, execution_outcome::serde_bincode_compat::*,
         hashed_state::serde_bincode_compat as hashed_state,
         updates::serde_bincode_compat as updates,
     };
@@ -102,10 +102,8 @@ pub use alloy_trie::{
 };
 
 mod errors;
+pub use base_common_types_chain::BlockExecutionResult;
 pub use errors::*;
-
-mod block_result;
-pub use block_result::BlockExecutionResult;
 
 mod accounts;
 pub use accounts::AccountBeforeTx;
@@ -187,3 +185,11 @@ pub use etl_config::EtlConfig;
 
 mod observer_progress;
 pub use observer_progress::FinishedExExHeight;
+
+mod block_number_address;
+pub use block_number_address::BlockNumberAddress;
+mod storage_settings;
+pub use storage_settings::StorageSettings;
+
+mod provider_api;
+pub use provider_api::*;

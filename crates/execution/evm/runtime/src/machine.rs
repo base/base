@@ -4,13 +4,12 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{EthFrame, EthInstructions};
-use base_execution_evm_machine::FrameStack;
+use base_execution_evm_runtime::{EthFrame, EthInstructions, FrameStack};
 
 /// Main EVM structure that contains all data needed for execution.
 #[derive(Debug)]
 pub struct EvmMachine<CTX, INSP, P> {
-    /// [`base_execution_evm_machine::ContextTr`] of the EVM it is used to fetch data from database.
+    /// [`base_execution_evm_runtime::ContextTr`] of the EVM it is used to fetch data from database.
     pub ctx: CTX,
     /// Inspector of the EVM it is used to inspect the EVM.
     /// Its trait are defined in revm-inspector crate.

@@ -3,7 +3,7 @@
 //! The [`OutputValidator`] verifies both the final output root and intermediate
 //! output roots for each [`CandidateGame`]. It fetches L2 block headers and
 //! `L2ToL1MessagePasser` storage proofs, recomputes expected output roots using
-//! [`OutputRoot`](base_consensus_batch_types::OutputRoot), and compares them against the
+//! [`OutputRoot`](base_consensus_batch::OutputRoot), and compares them against the
 //! onchain claims.
 
 use std::sync::Arc;
@@ -12,8 +12,8 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_trie::{Nibbles, TrieAccount, proof::verify_proof};
 use base_common_types_chain::Predeploys;
-use base_proof_client_providers::{L2Provider, RpcError};
-use base_consensus_batch_types::OutputRoot;
+use base_consensus_batch::OutputRoot;
+use base_proof_client::{L2Provider, RpcError};
 use futures::stream::{self, StreamExt};
 use thiserror::Error;
 use tracing::{info, warn};

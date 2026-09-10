@@ -20,7 +20,7 @@ impl Cli {
         config
             .metrics
             .init_with(|| {
-                base_common_cli_support::register_version_metrics!();
+                base_common_cli::register_version_metrics!();
             })
             .wrap_err("failed to install Prometheus recorder")?;
         base_proof_service_proposer::ProposerService::run(config).await

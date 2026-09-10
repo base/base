@@ -5,16 +5,16 @@ use std::{
 };
 
 use base_common_chain_config::BaseChainSpec;
-use base_execution_engine_driver::BaseExecutionHandle;
-use base_execution_engine_types::ConsensusEngineEvent;
-use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_payload_builder::PayloadBuilderHandle;
-use base_execution_state_tasks::ProofsProgress;
 // re-export the node api types
-use base_common_runtime_tasks::EventSender;
-use base_common_runtime_tasks::TaskExecutor;
-use base_execution_rpc_server::RpcServerHandle;
+use base_common_runtime::EventSender;
+use base_common_runtime::TaskExecutor;
+use base_common_types_payload::ConsensusEngineEvent;
+use base_execution_engine_driver::BaseExecutionHandle;
+use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_payload::PayloadBuilderHandle;
+use base_execution_rpc::RpcServerHandle;
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
+use base_execution_state_tasks::ProofsProgress;
 use base_node_config::{ChainPath, DataDirPath, NodeConfig};
 
 use crate::EngineShutdown;
@@ -27,7 +27,7 @@ pub struct FullNode {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
-    pub pool: base_execution_txpool_pool::BaseTransactionPool<BlockchainProvider>,
+    pub pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     /// Handle to the node's network.
     pub network: base_execution_network_service::NetworkHandle,
     /// Provider to interact with the node's database

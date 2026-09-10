@@ -5,11 +5,11 @@ use alloy_genesis::ChainConfig;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
-use base_consensus_batch_types::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
-use base_consensus_derive_pipeline::{
+use base_consensus_batch::{BlockInfo, L1BlockInfoTx, L2BlockInfo};
+use base_consensus_derive::{
     DataAvailabilityProvider, EthereumDataSource, PipelineBuilder, StatefulAttributesBuilder,
 };
-use base_consensus_driver_service::GossipTransport;
+use base_consensus_driver::GossipTransport;
 
 use crate::action_fixtures::{
     ActionBlobProvider, ActionEngineClient, ActionL1ChainProvider, ActionL2ChainProvider,

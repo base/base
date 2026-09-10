@@ -6,14 +6,13 @@ use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_execution_engine_observers::ExExManagerHandle;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::{BlockNumReader, ProviderFactory};
-use base_execution_sync_pipeline::{
-    DefaultStages, ExecutionStage, ExecutionStageThresholds, OfflineStages, Pipeline, StageSet,
+use base_execution_sync::{
+    DefaultStages, ExecutionStage, ExecutionStageThresholds, NoopBodiesDownloader,
+    NoopHeaderDownloader, OfflineStages, Pipeline, StageSet,
 };
-use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
 use base_node_config::NodeFileConfig as Config;
 use clap::{Parser, Subcommand};
 use tokio::sync::watch;
@@ -44,7 +43,7 @@ impl Command {
     pub async fn execute<F>(
         self,
         components: F,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<()>
     where
         F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
@@ -94,7 +93,7 @@ impl Command {
                     prune_modes.clone(),
                 )
                 .builder()
-                .disable(base_execution_sync_pipeline::StageId::SenderRecovery),
+                .disable(base_execution_sync::StageId::SenderRecovery),
             )
         } else {
             Pipeline::builder().with_tip_sender(tip_tx).add_stages(

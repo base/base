@@ -1,8 +1,6 @@
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_execution_evm_runtime::database::BundleAccount;
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::DatabaseError;
-use base_execution_state_types::HashedPostState;
+use base_execution_evm_runtime::{BundleAccount, StoredAccount as Account};
+use base_execution_state_types::{DatabaseError, HashedPostState};
 
 /// Implementation of hashed state cursor traits for the post state.
 mod post_state;
@@ -114,7 +112,7 @@ pub fn zero_destroyed_account_storage<'a>(
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_runtime::database::AccountStatus;
+    use base_execution_evm_runtime::AccountStatus;
 
     use super::*;
 

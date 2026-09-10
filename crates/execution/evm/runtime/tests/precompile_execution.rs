@@ -1,23 +1,14 @@
 //! End-to-end precompile execution and gas accounting regressions.
 //! The scripted providers return deliberately invalid gas usage to exercise runtime validation.
 
-use base_execution_evm_machine::{
-    Context, ExecutionResult, FrameStack, HaltReason, OutOfGasError, TxEnv,
+use base_execution_evm_runtime::{
+    AccountInfo, Address, AddressSet, Bytes, CallInputs, Cfg, ContextTr,
+    CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileStatus as PrecompileStatus,
+    EthInstructions, EthPrecompiles, EvmMachine, ExecuteEvm, ExecutionResult, FrameStack,
+    HaltReason, InMemoryDB, InstructionResult, InterpreterResult, MainContext, OutOfGasError,
+    PrecompileProvider, TxEnv, TxKind, U256, address, hardfork::SpecId,
+    precompile_output_to_interpreter_result,
 };
-use base_execution_evm_runtime::EvmMachine;
-use base_execution_state_memory::InMemoryDB;
-
-use base_execution_evm_primitives::{TxKind, U256, address, hardfork::SpecId};
-use base_execution_state_memory::AccountInfo;
-
-use base_execution_evm_machine::{CallInputs, InstructionResult, InterpreterResult};
-use base_execution_evm_machine::{Cfg, ContextTr};
-use base_execution_evm_precompiles::{
-    EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result,
-};
-use base_execution_evm_primitives::{Address, AddressSet, Bytes};
-use base_execution_evm_runtime::{EthInstructions, ExecuteEvm, MainContext};
-use base_execution_evm_crypto::{PrecompileOutput, PrecompileStatus};
 
 /// Test-only address that hosts an over-spending precompile.
 const OVERSPEND_PRECOMPILE: Address = address!("0000000000000000000000000000000000000100");
@@ -136,7 +127,7 @@ fn overspending_precompile_halts_tx_with_precompile_oog() {
     );
 
     let spec = SpecId::default();
-    let ctx = Context::mainnet().with_db(db);
+    let ctx = base_execution_evm_runtime::ReferenceContext::mainnet().with_db(db);
     let mut evm = EvmMachine {
         ctx,
         inspector: (),

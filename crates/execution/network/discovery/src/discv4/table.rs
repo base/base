@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, net::IpAddr, time::Instant};
 
-use base_execution_network_types::PeerId;
+use base_execution_network_wire::PeerId;
 
 /// Keeps track of nodes from which we have received a `Pong` message.
 #[derive(Debug, Clone, Default)]

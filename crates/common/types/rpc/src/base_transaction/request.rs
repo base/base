@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 
 use alloy_eips::eip7702::SignedAuthorization;
-use crate::TransactionBuilder7702;
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use base_common_types_chain::{
     AccountChange, BaseTxEnvelope, BaseTypedTransaction, Call, Eip8130Constants, Eip8130Contracts,
@@ -9,7 +8,9 @@ use base_common_types_chain::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{AccessList, BaseTransaction, TransactionInput, TransactionRequest};
+use crate::{
+    AccessList, BaseTransaction, TransactionBuilder7702, TransactionInput, TransactionRequest,
+};
 
 /// An enshrined EIP-8130 authenticator an estimate can price as a flat leaf.
 ///

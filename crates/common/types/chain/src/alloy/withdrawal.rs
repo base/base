@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::eip4895::{Withdrawal as AlloyWithdrawal, Withdrawals};
 use alloy_primitives::Address;
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 
 use crate::Compact;
 

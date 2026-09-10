@@ -15,7 +15,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
-use base_proof_client_providers::RollupProvider;
+use base_proof_client::RollupProvider;
 use eyre::Result;
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -237,16 +237,16 @@ mod tests {
             output_roots: HashMap::new(),
             max_safe_block: None,
         });
-        let anchor_registry: Arc<dyn base_proof_l1_submission::AnchorStateRegistryClient> =
+        let anchor_registry: Arc<dyn base_proof_l1::AnchorStateRegistryClient> =
             Arc::new(MockAnchorStateRegistry {
                 anchor_root: test_anchor_root(0),
                 anchor_game: Address::ZERO,
             });
-        let factory: Arc<dyn base_proof_l1_submission::DisputeGameFactoryClient> =
+        let factory: Arc<dyn base_proof_l1::DisputeGameFactoryClient> =
             Arc::new(MockDisputeGameFactory::default());
         let proof_requester: Arc<dyn base_proof_service_client::ProofRequesterProvider> =
             Arc::new(MockProofRequester::default());
-        let verifier: Arc<dyn base_proof_l1_submission::AggregateVerifierClient> =
+        let verifier: Arc<dyn base_proof_l1::AggregateVerifierClient> =
             Arc::new(MockAggregateVerifier::default());
         let output_proposer: Arc<dyn crate::OutputProposer> =
             Arc::new(MockOutputProposer::default());

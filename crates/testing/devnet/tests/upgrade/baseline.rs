@@ -1,8 +1,8 @@
 //! Azul baseline rules apply regardless of retired fork timestamps.
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_chain_config::UpgradeConfig;
-use base_consensus_batch_types::L1BlockInfoTx;
+use base_consensus_batch::L1BlockInfoTx;
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,

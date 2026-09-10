@@ -1,16 +1,18 @@
 //! Command that initializes the node by importing a chain from a file.
 use std::{path::PathBuf, sync::Arc};
 
-use crate::CliNodeComponents;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_node_config::version_metadata;
 use clap::Parser;
 use tracing::info;
 
 pub use crate::maintenance::import_core::build_import_pipeline_impl as build_import_pipeline;
-use crate::maintenance::{
-    common::{AccessRights, Environment, EnvironmentArgs},
-    import_core::{ImportConfig, import_blocks_from_file},
+use crate::{
+    CliNodeComponents,
+    maintenance::{
+        common::{AccessRights, Environment, EnvironmentArgs},
+        import_core::{ImportConfig, import_blocks_from_file},
+    },
 };
 
 /// Syncs RLP encoded blocks from a file or files.
@@ -48,7 +50,7 @@ impl ImportCommand {
     pub async fn execute(
         self,
         components: impl FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<()> {
         info!(target: "reth::cli", "reth {} starting", version_metadata().short_version);
 

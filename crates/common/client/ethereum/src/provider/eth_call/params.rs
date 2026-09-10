@@ -1,11 +1,12 @@
 use std::borrow::Cow;
 
-use crate::Network;
 use alloy_eips::BlockId;
 use base_common_types_rpc::{
     BlockOverrides, Bundle, StateContext, TransactionIndex, state::StateOverride,
 };
 use serde::ser::SerializeSeq;
+
+use crate::Network;
 
 /// The parameters for an `"eth_call"` RPC request.
 #[derive(Clone, Debug)]

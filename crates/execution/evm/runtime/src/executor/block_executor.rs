@@ -3,36 +3,29 @@
 use alloc::{boxed::Box, vec::Vec};
 
 use alloy_eips::{Encodable2718, Typed2718};
-use base_common_chain_config::Upgrades;
-use base_execution_evm_fees::tx_estimated_size_fjord as estimate_tx_compressed_size;
+use base_common_chain_config::{Upgrades, tx_estimated_size_fjord as estimate_tx_compressed_size};
 use base_common_types_chain::{
     BaseReceipt, BaseTxEnvelope, DepositReceipt, Eip658Value, Eip8130Receipt, Header, OpTxType,
     Predeploys, Transaction, TransactionEnvelope, TxReceipt,
 };
-use base_execution_evm_machine::{Block, ResultAndState};
 #[cfg(feature = "std")]
-use base_execution_evm_precompiles::IntrinsicGas;
+use base_execution_evm_runtime::IntrinsicGas;
 use base_execution_evm_runtime::{
-    BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError, Database,
-    EthTxResult, Evm, ExecutableTx, GasOutput, RecoveredTx, StateDB, SystemCaller,
-    post_block_balance_increments,
-};
-use base_execution_evm_runtime::{DatabaseCommit, database::DatabaseCommitExt};
-
-use crate::{
-    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseTime, BaseTransaction, BaseTxResult,
-    DEPOSIT_TRANSACTION_TYPE, L1BlockInfo, canyon,
+    BaseBlockExecutionCtx, BaseBlockExecutionError, BaseTime, BaseTransaction, BaseTxResult, Block,
+    BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
+    DEPOSIT_TRANSACTION_TYPE, Database, DatabaseCommit, DatabaseCommitExt, EthTxResult, Evm,
+    ExecutableTx, GasOutput, L1BlockInfo, RecoveredTx, ResultAndState, StateDB, SystemCaller,
+    canyon, post_block_balance_increments,
 };
 
 /// Block executor for Base.
-#[derive(Debug)]
-pub struct BaseBlockExecutor<Evm, Spec> {
+pub struct BaseBlockExecutor<DB: Database, I> {
     /// Spec.
-    pub spec: Spec,
+    pub spec: base_common_chain_config::ChainConfig,
     /// Context for block execution.
     pub ctx: BaseBlockExecutionCtx,
     /// The EVM used by executor.
-    pub evm: Evm,
+    pub evm: crate::BaseEvm<DB, I>,
     /// Receipts of executed transactions.
     pub receipts: Vec<BaseReceipt>,
     /// Total gas used by executed transactions.
@@ -45,16 +38,32 @@ pub struct BaseBlockExecutor<Evm, Spec> {
     /// Whether Regolith upgrade is active.
     pub is_regolith: bool,
     /// Utility to call system smart contracts.
-    pub system_caller: SystemCaller<Spec>,
+    pub system_caller: SystemCaller,
 }
 
-impl<E, Spec> BaseBlockExecutor<E, Spec>
+impl<DB: Database, I> core::fmt::Debug for BaseBlockExecutor<DB, I> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BaseBlockExecutor")
+            .field("spec", &self.spec)
+            .field("ctx", &self.ctx)
+            .field("receipts", &self.receipts)
+            .field("gas_used", &self.gas_used)
+            .field("da_footprint_used", &self.da_footprint_used)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<DB, I> BaseBlockExecutor<DB, I>
 where
-    E: Evm,
-    Spec: Upgrades + Clone,
+    DB: StateDB,
+    I: crate::Inspector<crate::BaseContext<DB>>,
 {
     /// Creates a new [`BaseBlockExecutor`].
-    pub fn new(evm: E, ctx: BaseBlockExecutionCtx, spec: Spec) -> Self {
+    pub fn new(
+        evm: crate::BaseEvm<DB, I>,
+        ctx: BaseBlockExecutionCtx,
+        spec: base_common_chain_config::ChainConfig,
+    ) -> Self {
         Self {
             is_regolith: spec
                 .is_regolith_active_at_timestamp(evm.block().timestamp().saturating_to()),
@@ -69,10 +78,10 @@ where
     }
 }
 
-impl<E, Spec> BaseBlockExecutor<E, Spec>
+impl<DB, I> BaseBlockExecutor<DB, I>
 where
-    E: Evm<DB: Database + DatabaseCommit + StateDB, Tx = BaseTransaction>,
-    Spec: Upgrades,
+    DB: StateDB,
+    I: crate::Inspector<crate::BaseContext<DB>>,
 {
     /// Block gas the transaction may consume, reserved against the block gas
     /// limit before execution.
@@ -91,7 +100,10 @@ where
     /// over-limit block), and the same bound is used by block building and
     /// validation, keeping them consistent.
     #[cfg(feature = "std")]
-    fn reserved_block_gas(tx_env: &E::Tx, gas_limit: u64) -> Result<u64, BlockExecutionError> {
+    fn reserved_block_gas(
+        tx_env: &BaseTransaction,
+        gas_limit: u64,
+    ) -> Result<u64, BlockExecutionError> {
         let Some(signed) = tx_env.eip8130.as_ref().map(|parts| &parts.signed) else {
             return Ok(gas_limit);
         };
@@ -105,7 +117,7 @@ where
     /// reserved block gas is just the declared `gas_limit`.
     #[cfg(not(feature = "std"))]
     const fn reserved_block_gas(
-        _tx_env: &E::Tx,
+        _tx_env: &BaseTransaction,
         gas_limit: u64,
     ) -> Result<u64, BlockExecutionError> {
         Ok(gas_limit)
@@ -113,7 +125,7 @@ where
 
     fn jovian_da_footprint_estimation(
         &mut self,
-        tx_env: &E::Tx,
+        tx_env: &BaseTransaction,
         tx: impl RecoveredTx<BaseTxEnvelope>,
     ) -> Result<u64, BlockExecutionError> {
         // Try to use the enveloped tx if it exists, otherwise use the encoded 2718 bytes
@@ -138,15 +150,15 @@ where
     }
 }
 
-impl<E, Spec> BlockExecutor for BaseBlockExecutor<E, Spec>
+impl<DB, I> BlockExecutor for BaseBlockExecutor<DB, I>
 where
-    E: Evm<DB: Database + DatabaseCommit + StateDB, Tx = BaseTransaction>,
-    Spec: Upgrades,
+    DB: StateDB,
+    I: crate::Inspector<crate::BaseContext<DB>>,
 {
     type Transaction = BaseTxEnvelope;
     type Receipt = BaseReceipt;
-    type Evm = E;
-    type Result = BaseTxResult<E::HaltReason, <BaseTxEnvelope as TransactionEnvelope>::TxType>;
+    type Evm = crate::BaseEvm<DB, I>;
+    type Result = BaseTxResult;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.system_caller.apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
@@ -350,39 +362,29 @@ mod tests {
     use alloy_eips::eip2718::WithEncoded;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Address, Bytes, Signature, U256, uint};
-    use base_common_chain_config::BaseUpgrade;
-    use base_common_chain_config::ChainUpgrades;
+    use base_common_chain_config::{BaseUpgrade, ChainUpgrades};
     use base_common_types_chain::{
         BaseTxEnvelope, Eip8130Constants, Eip8130Signed, Predeploys, SignableTransaction,
         TxEip8130, TxLegacy, transaction::Recovered,
     };
-    use base_execution_evm_machine::BlockEnv;
     use base_execution_evm_runtime::{
-        BlockExecutorFactory, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap, ToTxEnv,
-    };
-    use base_execution_evm_runtime::{
-        Context,
-        database::{CacheDB, EmptyDB, InMemoryDB},
-        primitives::HashMap,
-        state::AccountInfo,
+        AccountInfo, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId, BlockEnv,
+        Builder, CacheDB, Context, DefaultBase, EmptyDB, EvmEnv, EvmFactory, HashMap, InMemoryDB,
+        L1BlockInfo, NoOpInspector, PrecompilesMap, ToTxEnv,
     };
 
     use super::*;
-    use crate::{
-        BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId, Builder, DefaultBase,
-        L1BlockInfo,
-    };
 
     #[test]
     fn test_with_encoded() {
         let executor_factory = BaseBlockExecutorFactory::new(
-            base_common_chain_config::ChainConfig::mainnet().upgrades.clone(),
+            base_common_chain_config::ChainConfig::mainnet().clone(),
             BaseEvmFactory::default(),
         );
-        let mut db = base_execution_evm_runtime::database::State::builder()
+        let mut db = base_execution_evm_runtime::State::builder()
             .with_database(CacheDB::<EmptyDB>::default())
             .build();
-        let evm = executor_factory.evm_factory().create_evm(&mut db, EvmEnv::default());
+        let evm = executor_factory.evm_factory.create_evm(&mut db, EvmEnv::default());
         let mut executor = executor_factory.create_executor(evm, BaseBlockExecutionCtx::default());
         let tx = Recovered::new_unchecked(
             BaseTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::new(
@@ -401,7 +403,7 @@ mod tests {
 
     fn prepare_jovian_db(
         da_footprint_gas_scalar: u16,
-    ) -> base_execution_evm_runtime::database::State<InMemoryDB> {
+    ) -> base_execution_evm_runtime::State<InMemoryDB> {
         const L1_BASE_FEE: U256 = uint!(1_U256);
         const L1_BLOB_BASE_FEE: U256 = uint!(2_U256);
         const L1_BASE_FEE_SCALAR: u64 = 3;
@@ -423,7 +425,7 @@ mod tests {
         operator_fee_and_da_footprint[18] = da_footprint_gas_scalar_bytes[0];
         let operator_fee_and_da_footprint_u256 = U256::from_be_bytes(operator_fee_and_da_footprint);
 
-        let mut db = base_execution_evm_runtime::database::State::builder()
+        let mut db = base_execution_evm_runtime::State::builder()
             .with_database(InMemoryDB::default())
             .build();
 
@@ -447,18 +449,12 @@ mod tests {
     }
 
     fn build_executor<'a>(
-        db: &'a mut base_execution_evm_runtime::database::State<InMemoryDB>,
+        db: &'a mut base_execution_evm_runtime::State<InMemoryDB>,
         base_chain_upgrades: &'a ChainUpgrades,
         gas_limit: u64,
         jovian_timestamp: u64,
-    ) -> BaseBlockExecutor<
-        BaseEvm<
-            &'a mut base_execution_evm_runtime::database::State<InMemoryDB>,
-            NoOpInspector,
-            PrecompilesMap,
-        >,
-        &'a ChainUpgrades,
-    > {
+    ) -> BaseBlockExecutor<&'a mut base_execution_evm_runtime::State<InMemoryDB>, NoOpInspector>
+    {
         let ctx = Context::base()
             .with_db(db)
             .with_chain(L1BlockInfo {
@@ -475,7 +471,14 @@ mod tests {
 
         let evm = ctx.build_with_inspector(NoOpInspector {});
 
-        BaseBlockExecutor::new(evm, BaseBlockExecutionCtx::default(), base_chain_upgrades)
+        BaseBlockExecutor::new(
+            evm,
+            BaseBlockExecutionCtx::default(),
+            base_common_chain_config::ChainConfig {
+                upgrades: base_chain_upgrades.clone(),
+                ..Default::default()
+            },
+        )
     }
 
     #[test]
@@ -719,13 +722,12 @@ mod tests {
     #[cfg(feature = "std")]
     fn committed_receipts_preserve_phase_statuses_deposit_fields_and_cumulative_gas() {
         let factory = BaseBlockExecutorFactory::new(
-            base_common_chain_config::ChainConfig::mainnet().upgrades.clone(),
+            base_common_chain_config::ChainConfig::mainnet().clone(),
             BaseEvmFactory::default(),
         );
-        let mut db = base_execution_evm_runtime::database::State::builder()
-            .with_database(EmptyDB::default())
-            .build();
-        let evm = factory.evm_factory().create_evm(
+        let mut db =
+            base_execution_evm_runtime::State::builder().with_database(EmptyDB::default()).build();
+        let evm = factory.evm_factory.create_evm(
             &mut db,
             EvmEnv {
                 block_env: BlockEnv { timestamp: U256::from(u64::MAX), ..Default::default() },
@@ -738,13 +740,13 @@ mod tests {
             executor.commit_transaction(BaseTxResult {
                 inner: EthTxResult {
                     result: ResultAndState {
-                        result: base_execution_evm_machine::ExecutionResult::Success {
-                            reason: base_execution_evm_machine::SuccessReason::Return,
-                            gas: base_execution_evm_machine::ResultGas::new_with_state_gas(
+                        result: base_execution_evm_runtime::ExecutionResult::Success {
+                            reason: base_execution_evm_runtime::SuccessReason::Return,
+                            gas: base_execution_evm_runtime::ResultGas::new_with_state_gas(
                                 21_000, 0, 0, 0,
                             ),
                             logs: vec![alloy_primitives::Log::default()],
-                            output: base_execution_evm_machine::Output::Call(Bytes::new()),
+                            output: base_execution_evm_runtime::Output::Call(Bytes::new()),
                         },
                         state: Default::default(),
                     },

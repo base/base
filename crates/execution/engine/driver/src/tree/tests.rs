@@ -16,24 +16,19 @@ use alloy_primitives::{
 use alloy_rlp::Decodable;
 use assert_matches::assert_matches;
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime_tasks::spawn_os_thread;
+use base_common_runtime::spawn_os_thread;
 use base_common_types_chain::BaseBlock;
-
 use base_common_types_payload::{
-    BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar, ExecutionData,
-    ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
-    PayloadAttributes as EthPayloadAttributes,
+    BaseExecutionPayload, BaseExecutionPayloadSidecar as ExecutionPayloadSidecar,
+    BasePayloadBuilderAttributes, ExecutionData, ExecutionPayloadV1, ForkchoiceState,
+    ForkchoiceStatus, ForkchoiceUpdateError, PayloadAttributes as EthPayloadAttributes,
 };
-use base_execution_engine_types::ForkchoiceStatus;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_payload_builder::PayloadServiceCommand;
-use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_execution_state_provider::OverlayManager;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
+use base_execution_payload::PayloadServiceCommand;
 use base_execution_state_provider::{
-    BalStoreHandle, InMemoryBalStore, RawBal, test_utils::MockEthProvider,
+    BalStoreHandle, BlockState, InMemoryBalStore, OverlayManager, RawBal,
+    test_utils::{ProviderTestUtils, TestBlockBuilder},
 };
-use base_execution_state_provider::{BlockState, test_utils::TestBlockBuilder};
 use base_execution_state_types::ComputedTrieData;
 use tokio::sync::oneshot;
 
@@ -102,14 +97,14 @@ impl TestChannelHandle {
 }
 
 struct TestHarness {
-    tree: EngineApiTreeHandler<MockEthProvider>,
+    tree: EngineApiTreeHandler,
     to_tree_tx: crossbeam_channel::Sender<FromEngine>,
     from_tree_rx: UnboundedReceiver<EngineApiEvent>,
     payload_command_rx: UnboundedReceiver<PayloadServiceCommand>,
     blocks: Vec<ExecutedBlock>,
     action_rx: Receiver<PersistenceAction>,
     block_builder: TestBlockBuilder,
-    provider: MockEthProvider,
+    provider: base_execution_state_provider::BlockchainProvider,
 }
 
 impl TestHarness {
@@ -152,13 +147,13 @@ impl TestHarness {
 
         let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(chain_spec.clone()));
 
-        let provider = MockEthProvider::default();
+        let provider = ProviderTestUtils::empty(chain_spec.clone());
 
         let payload_validator =
-            base_execution_payload_builder::BaseEngineValidator::new(chain_spec.clone());
+            base_execution_payload::BaseEngineValidator::new(chain_spec.clone());
 
         let (from_tree_tx, from_tree_rx) = unbounded_channel();
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let overlay_manager = OverlayManager::new(runtime.state_trie_overlay_worker_pool());
 
         let header = chain_spec.genesis_header().clone();
@@ -333,13 +328,7 @@ impl TestHarness {
     }
 
     fn persist_blocks(&self, blocks: Vec<RecoveredBlock>) {
-        let mut block_data: Vec<(B256, BaseBlock)> = Vec::with_capacity(blocks.len());
-
-        for block in &blocks {
-            block_data.push((block.hash(), block.clone_block()));
-        }
-
-        self.provider.extend_blocks(block_data);
+        ProviderTestUtils::insert_blocks(&self.provider, &blocks);
     }
 }
 
@@ -371,7 +360,7 @@ pub(crate) struct ValidatorTestHarness {
     /// Basic test harness
     harness: TestHarness,
     /// Direct access to validator for `validate_block_with_state` calls
-    validator: BasicEngineValidator<MockEthProvider>,
+    validator: BasicEngineValidator,
     /// Simple validation metrics
     metrics: TestMetrics,
 }
@@ -384,7 +373,7 @@ impl ValidatorTestHarness {
         let consensus = Arc::new(BaseBeaconConsensus::ethereum_test(chain_spec.clone()));
         let provider = harness.provider.clone();
         let payload_validator =
-            base_execution_payload_builder::BaseEngineValidator::new(chain_spec.clone());
+            base_execution_payload::BaseEngineValidator::new(chain_spec.clone());
         let evm_config = BaseEvmConfig::default();
         let overlay_manager = harness.tree.state.tree_state.overlay_manager.clone();
 
@@ -396,7 +385,7 @@ impl ValidatorTestHarness {
             TreeConfig::default(),
             Vec::new(),
             overlay_manager,
-            base_common_runtime_tasks::Runtime::test(),
+            base_common_runtime::Runtime::test(),
         );
 
         Self { harness, validator, metrics: TestMetrics::default() }
@@ -999,8 +988,7 @@ fn test_validated_payload_bal_is_inserted_into_store() {
     let mut test_harness =
         TestHarness::new(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()))
             .with_blocks(vec![parent]);
-    let bal_store = BalStoreHandle::new(InMemoryBalStore::default());
-    test_harness.tree.provider.bal_store = bal_store.clone();
+    let bal_store = test_harness.tree.provider.bal_store().clone();
 
     let outcome = test_harness
         .tree
@@ -1514,7 +1502,14 @@ async fn test_engine_tree_live_sync_transition_required_blocks_requested() {
 
     let backfill_tip_block = main_chain[(backfill_finished_block_number - 1) as usize].clone();
     // add block to mock provider to enable persistence clean up.
-    test_harness.provider.add_block(backfill_tip_block.hash(), backfill_tip_block.into_block());
+    ProviderTestUtils::insert_blocks(
+        &test_harness.provider,
+        &[RecoveredBlock::new(
+            backfill_tip_block.clone_block(),
+            Vec::new(),
+            backfill_tip_block.hash(),
+        )],
+    );
     let _ = test_harness.tree.on_engine_message(FromEngine::Event(backfill_finished)).unwrap();
 
     let event = test_harness.from_tree_rx.recv().await.unwrap();
@@ -3205,7 +3200,14 @@ async fn assert_post_backfill_recheck_retriggers_to_buffered_target(engine_kind:
     // Simulate backfill finishing far below the buffered target (gap > threshold).
     let backfill_finished_block_number = MIN_BLOCKS_FOR_PIPELINE_RUN + 1;
     let backfill_tip_block = main_chain[(backfill_finished_block_number - 1) as usize].clone();
-    test_harness.provider.add_block(backfill_tip_block.hash(), backfill_tip_block.into_block());
+    ProviderTestUtils::insert_blocks(
+        &test_harness.provider,
+        &[RecoveredBlock::new(
+            backfill_tip_block.clone_block(),
+            Vec::new(),
+            backfill_tip_block.hash(),
+        )],
+    );
     let backfill_finished = FromOrchestrator::BackfillSyncFinished(ControlFlow::Continue {
         block_number: backfill_finished_block_number,
     });

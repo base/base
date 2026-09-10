@@ -3,8 +3,8 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::Address;
-use base_proof_client_providers::RollupProvider;
-use base_proof_l1_submission::ProofSubmissionError;
+use base_proof_client::RollupProvider;
+use base_proof_l1::ProofSubmissionError;
 use base_proof_service_client::ProofRequesterProvider;
 use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus,
@@ -431,12 +431,11 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{Address, B256};
-    use base_proof_l1_submission::ProofSubmissionError;
-    use base_proof_l1_submission::{
-        AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key,
+    use base_proof_l1::{
+        AggregateVerifierClient, DisputeGameFactoryClient, ProofSubmissionError, game_lookup_key,
     };
     use base_proof_service_protocol::TeeKind;
-    use base_proof_types_protocol::ProofRequest;
+    use base_proof_types::ProofRequest;
     use tokio_util::sync::CancellationToken;
 
     use super::*;

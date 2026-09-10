@@ -16,7 +16,7 @@ use base_common_types_chain::{
     EthereumTxEnvelope, Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702,
     TxLegacy, crypto::secp256k1, transaction::Recovered,
 };
-use base_execution_evm_machine::{TxEnv, either::Either};
+use base_execution_evm_runtime::{TxEnv, either::Either};
 
 /// Trait marking types that can be converted into a transaction environment.
 ///

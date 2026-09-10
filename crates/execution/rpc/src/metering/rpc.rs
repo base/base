@@ -1,0 +1,582 @@
+//! Implementation of the metering RPC API.
+
+use std::sync::Arc;
+
+use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::{B256, U256};
+use base_common_types_chain::BaseBlock;
+use base_common_types_payload::{Bundle, MeterBundleResponse, ParsedBundle};
+use base_execution_evm_blocks::extract_l1_info_from_tx;
+use base_execution_evm_runtime::L1BlockInfo;
+use base_execution_payload::{
+    MeterBlockResponse, MeterBundleInput, MeteredOpcodes, meter_block, meter_bundle,
+};
+use base_execution_state_provider::{
+    BlockReader, BlockReaderIdExt, ChainSpecProvider, StateProviderFactory,
+};
+use jsonrpsee::core::{RpcResult, async_trait};
+use tracing::{debug, error, info};
+
+use super::MeteringApiServer;
+
+/// Implementation of the metering RPC API.
+pub struct MeteringApiImpl {
+    provider: base_execution_state_provider::BlockchainProvider,
+    /// Opcodes and precompiles to track for gas metering. When non-empty, a
+    /// `MeteringInspector` is attached during bundle execution.
+    metered_opcodes: Arc<MeteredOpcodes>,
+}
+
+impl std::fmt::Debug for MeteringApiImpl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeteringApiImpl").finish_non_exhaustive()
+    }
+}
+
+impl MeteringApiImpl {
+    /// Creates a new instance of `MeteringApi`.
+    pub const fn new(
+        provider: base_execution_state_provider::BlockchainProvider,
+        metered_opcodes: Arc<MeteredOpcodes>,
+    ) -> Self {
+        Self { provider, metered_opcodes }
+    }
+}
+
+#[async_trait]
+impl MeteringApiServer for MeteringApiImpl {
+    async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
+        debug!(num_transactions = &bundle.txs.len(), "Starting bundle metering");
+
+        // Simulate against the latest canonical header and state for that
+        // header's hash. Do not pin state to `Number(n)`: reth routes numbered
+        // lookups through historical/DB state instead of the in-memory tip.
+        let header = self
+            .provider
+            .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
+            .map_err(|e| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get canonical block header: {e}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    "Canonical block not found".to_string(),
+                    None::<()>,
+                )
+            })?;
+
+        debug!(canonical_block = header.number, "Using canonical block state for metering");
+
+        let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                format!("Failed to parse bundle: {e}"),
+                None::<()>,
+            )
+        })?;
+
+        let state_provider = self.provider.state_by_block_hash(header.hash()).map_err(|e| {
+            error!(error = %e, block_hash = %header.hash(), "Failed to get state provider");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Failed to get state provider: {e}"),
+                None::<()>,
+            )
+        })?;
+
+        let l1_block_info = self.get_l1_block_info(header.hash())?;
+        let state_block_number = header.number;
+
+        let output = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: self.provider.chain_spec(),
+            bundle: parsed_bundle,
+            header,
+            l1_block_info,
+            metered_opcodes: Arc::clone(&self.metered_opcodes),
+        })
+        .map_err(|e| {
+            // Sample error msg:
+            // Transaction $TX_HASH execution failed: EVM reported invalid transaction ($TX_HASH): nonce $EXPECTED_NONCE too high, expected $EXPECTED_NONCE"
+            let error_msg = e.to_string();
+            if error_msg.contains("nonce") {
+                debug!(error = %e, "Bundle metering failed");
+            } else {
+                info!(error = %e, "Bundle metering failed");
+            }
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Bundle metering failed: {e}"),
+                None::<()>,
+            )
+        })?;
+
+        // Calculate average gas price
+        let bundle_gas_price = if output.total_gas_used > 0 {
+            output.total_gas_fees / U256::from(output.total_gas_used)
+        } else {
+            U256::from(0)
+        };
+        let total_execution_time_us = output
+            .results
+            .iter()
+            .fold(0u128, |acc, result| acc.saturating_add(result.execution_time_us));
+
+        debug!(
+            bundle_hash = %output.bundle_hash,
+            num_transactions = output.results.len(),
+            total_gas_used = output.total_gas_used,
+            total_time_us = output.total_time_us,
+            state_block_number,
+            "Bundle metering completed successfully"
+        );
+
+        Ok(MeterBundleResponse {
+            bundle_gas_price,
+            bundle_hash: output.bundle_hash,
+            coinbase_diff: output.total_gas_fees,
+            eth_sent_to_coinbase: U256::from(0),
+            gas_fees: output.total_gas_fees,
+            results: output.results,
+            state_block_number,
+            total_gas_used: output.total_gas_used,
+            total_execution_time_us,
+        })
+    }
+
+    async fn meter_block_by_hash(&self, hash: B256) -> RpcResult<MeterBlockResponse> {
+        debug!(block_hash = %hash, "Starting block metering by hash");
+
+        let block = self
+            .provider
+            .block_by_hash(hash)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get block by hash");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {e}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {hash}"),
+                    None::<()>,
+                )
+            })?;
+
+        let response = self.meter_block_internal(&block)?;
+
+        debug!(
+            block_hash = %hash,
+            signer_recovery_time_us = response.signer_recovery_time_us,
+            execution_time_us = response.execution_time_us,
+            total_time_us = response.total_time_us,
+            "Block metering completed successfully"
+        );
+
+        Ok(response)
+    }
+
+    async fn meter_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> RpcResult<MeterBlockResponse> {
+        debug!(block_number = ?number, "Starting block metering by number");
+
+        let block = self
+            .provider
+            .block_by_number_or_tag(number)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get block by number");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {e}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {number:?}"),
+                    None::<()>,
+                )
+            })?;
+
+        let response = self.meter_block_internal(&block)?;
+
+        debug!(
+            block_number = ?number,
+            block_hash = %response.block_hash,
+            signer_recovery_time_us = response.signer_recovery_time_us,
+            execution_time_us = response.execution_time_us,
+            total_time_us = response.total_time_us,
+            "Block metering completed successfully"
+        );
+
+        Ok(response)
+    }
+}
+
+impl MeteringApiImpl {
+    /// Get L1 block info from the first transaction of a canonical block.
+    fn get_l1_block_info(&self, block_hash: B256) -> RpcResult<L1BlockInfo> {
+        let first_tx = self
+            .provider
+            .block_by_hash(block_hash)
+            .map_err(|e| {
+                error!(error = %e, block_hash = %block_hash, "Failed to get block");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {e}"),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {block_hash}"),
+                    None::<()>,
+                )
+            })?
+            .body
+            .transactions
+            .first()
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block has no transactions: {block_hash}"),
+                    None::<()>,
+                )
+            })?
+            .clone();
+
+        extract_l1_info_from_tx(&first_tx).map_err(|e| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                format!("Failed to extract L1 block info from transaction: {e}"),
+                None::<()>,
+            )
+        })
+    }
+
+    /// Internal helper to meter a block's execution
+    fn meter_block_internal(&self, block: &BaseBlock) -> RpcResult<MeterBlockResponse> {
+        meter_block(self.provider.clone(), self.provider.chain_spec(), block).map_err(|e| {
+            error!(error = %e, "Block metering failed");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Block metering failed: {e}"),
+                None::<()>,
+            )
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use alloy_eips::Encodable2718;
+    use alloy_primitives::{Bytes, address};
+    use alloy_rpc_client::RpcClient;
+    use base_common_types_chain::{BaseTransactionSigned, BaseTxEnvelope};
+    use base_common_types_payload::{Bundle, MeterBundleResponse};
+    use base_execution_txpool::test_utils::TransactionBuilder;
+    use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+    use base_testing_support::Account;
+
+    use super::*;
+
+    fn create_bundle(txs: Vec<Bytes>) -> Bundle {
+        Bundle { txs }
+    }
+
+    async fn setup() -> eyre::Result<(TestHarness, RpcClient)> {
+        let harness = TestHarness::builder().with_metering().build().await?;
+        let client = harness.rpc_client()?;
+        Ok((harness, client))
+    }
+
+    async fn generate_txs_for_block(chain_id: u64) -> Vec<Bytes> {
+        vec![
+            L1_BLOCK_INFO_DEPOSIT_TX,
+            TransactionBuilder::default()
+                .signer(Account::Charlie.signer_b256())
+                .chain_id(chain_id)
+                .nonce(0)
+                .to(address!("0x1111111111111111111111111111111111111111"))
+                .value(1000)
+                .gas_limit(21_000)
+                .max_fee_per_gas(1_000_000_000)
+                .max_priority_fee_per_gas(1_000_000_000)
+                .into_eip1559()
+                .into_encoded()
+                .into_encoded_bytes(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_empty() -> eyre::Result<()> {
+        let (harness, client) = setup().await?;
+
+        // Build a block with a tx so that we don't get an error about missing L1 block info
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let bundle = create_bundle(vec![]);
+
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
+
+        assert_eq!(response.results.len(), 0);
+        assert_eq!(response.total_gas_used, 0);
+        assert_eq!(response.gas_fees, U256::from(0));
+        assert_eq!(response.state_block_number, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
+        let (harness, client) = setup().await?;
+
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let sender_address = Account::Alice.address();
+        let sender_secret = Account::Alice.signer_b256();
+
+        let tx = TransactionBuilder::default()
+            .signer(sender_secret)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x1111111111111111111111111111111111111111"))
+            .value(1000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000) // 1 gwei
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559();
+
+        let signed_tx =
+            BaseTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
+        let envelope: BaseTxEnvelope = signed_tx;
+
+        let tx_bytes = Bytes::from(envelope.encoded_2718());
+
+        let bundle = create_bundle(vec![tx_bytes]);
+
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
+
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.total_gas_used, 21_000);
+        assert!(response.total_execution_time_us > 0);
+        assert_eq!(
+            response.total_execution_time_us,
+            response.results.iter().map(|result| result.execution_time_us).sum::<u128>()
+        );
+
+        let result = &response.results[0];
+        assert_eq!(result.from_address, sender_address);
+        assert_eq!(result.to_address, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(result.gas_used, 21_000);
+        assert_eq!(result.gas_price, 1_000_000_000);
+        assert!(result.execution_time_us > 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
+        let (harness, client) = setup().await?;
+
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let address1 = Account::Alice.address();
+        let secret1 = Account::Alice.signer_b256();
+
+        let tx1_inner = TransactionBuilder::default()
+            .signer(secret1)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x1111111111111111111111111111111111111111"))
+            .value(1000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(1_000_000_000)
+            .max_priority_fee_per_gas(1_000_000_000)
+            .into_eip1559();
+
+        let tx1_signed = BaseTransactionSigned::Eip1559(
+            tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let tx1_envelope: BaseTxEnvelope = tx1_signed;
+        let tx1_bytes = Bytes::from(tx1_envelope.encoded_2718());
+
+        let address2 = Account::Bob.address();
+        let secret2 = Account::Bob.signer_b256();
+
+        let tx2_inner = TransactionBuilder::default()
+            .signer(secret2)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x2222222222222222222222222222222222222222"))
+            .value(2000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(2_000_000_000)
+            .max_priority_fee_per_gas(2_000_000_000)
+            .into_eip1559();
+
+        let tx2_signed = BaseTransactionSigned::Eip1559(
+            tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let tx2_envelope: BaseTxEnvelope = tx2_signed;
+        let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
+
+        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes]);
+
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
+
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(response.total_gas_used, 42_000);
+        assert!(response.total_execution_time_us > 0);
+        assert_eq!(
+            response.total_execution_time_us,
+            response.results.iter().map(|result| result.execution_time_us).sum::<u128>()
+        );
+
+        let result1 = &response.results[0];
+        assert_eq!(result1.from_address, address1);
+        assert_eq!(result1.gas_used, 21_000);
+        assert_eq!(result1.gas_price, 1_000_000_000);
+
+        let result2 = &response.results[1];
+        assert_eq!(result2.from_address, address2);
+        assert_eq!(result2.gas_used, 21_000);
+        assert_eq!(result2.gas_price, 2_000_000_000);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
+        let (_harness, client) = setup().await?;
+
+        let bundle = create_bundle(vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])]);
+
+        let result: Result<MeterBundleResponse, _> =
+            client.request("base_meterBundle", (bundle,)).await;
+
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
+        let (harness, client) = setup().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let bundle = create_bundle(vec![]);
+
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
+
+        assert_eq!(response.state_block_number, 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
+        let (harness, client) = setup().await?;
+        harness
+            .build_block_from_transactions(generate_txs_for_block(harness.chain_id()).await)
+            .await?;
+
+        let secret1 = Account::Alice.signer_b256();
+        let secret2 = Account::Bob.signer_b256();
+
+        let tx1_inner = TransactionBuilder::default()
+            .signer(secret1)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x1111111111111111111111111111111111111111"))
+            .value(1000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(3_000_000_000) // 3 gwei
+            .max_priority_fee_per_gas(3_000_000_000)
+            .into_eip1559();
+
+        let signed_tx1 = BaseTransactionSigned::Eip1559(
+            tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let envelope1: BaseTxEnvelope = signed_tx1;
+        let tx1_bytes = Bytes::from(envelope1.encoded_2718());
+
+        let tx2_inner = TransactionBuilder::default()
+            .signer(secret2)
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(address!("0x2222222222222222222222222222222222222222"))
+            .value(2000)
+            .gas_limit(21_000)
+            .max_fee_per_gas(7_000_000_000) // 7 gwei
+            .max_priority_fee_per_gas(7_000_000_000)
+            .into_eip1559();
+
+        let signed_tx2 = BaseTransactionSigned::Eip1559(
+            tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+        let envelope2: BaseTxEnvelope = signed_tx2;
+        let tx2_bytes = Bytes::from(envelope2.encoded_2718());
+
+        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes]);
+
+        let response: MeterBundleResponse = client.request("base_meterBundle", (bundle,)).await?;
+
+        assert_eq!(response.results.len(), 2);
+
+        let result1 = &response.results[0];
+        let expected_gas_fees_1 = U256::from(21_000) * U256::from(3_000_000_000u64);
+        assert_eq!(result1.gas_fees, expected_gas_fees_1);
+        assert_eq!(result1.gas_price, U256::from(3000000000u64));
+        assert_eq!(result1.coinbase_diff, expected_gas_fees_1);
+
+        let result2 = &response.results[1];
+        let expected_gas_fees_2 = U256::from(21_000) * U256::from(7_000_000_000u64);
+        assert_eq!(result2.gas_fees, expected_gas_fees_2);
+        assert_eq!(result2.gas_price, U256::from(7000000000u64));
+        assert_eq!(result2.coinbase_diff, expected_gas_fees_2);
+
+        let total_gas_fees = expected_gas_fees_1 + expected_gas_fees_2;
+        assert_eq!(response.gas_fees, total_gas_fees);
+        assert_eq!(response.coinbase_diff, total_gas_fees);
+        assert_eq!(response.total_gas_used, 42_000);
+
+        // Bundle gas price should be weighted average: (3*21000 + 7*21000) / (21000 + 21000) = 5 gwei
+        assert_eq!(response.bundle_gas_price, U256::from(5000000000u64));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_no_l1_block_info() -> eyre::Result<()> {
+        let (_harness, client) = setup().await?;
+
+        let bundle = create_bundle(vec![]);
+        let response: Result<MeterBundleResponse, _> =
+            client.request("base_meterBundle", (bundle,)).await;
+
+        assert!(response.is_err());
+
+        Ok(())
+    }
+}

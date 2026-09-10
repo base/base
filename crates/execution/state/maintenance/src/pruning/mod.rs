@@ -12,9 +12,8 @@ mod metrics;
 mod pruner;
 pub use pruner::{Pruner, PrunerResult, PrunerWithFactory, PrunerWithResult};
 mod segments;
+pub use base_execution_state_types::*;
 pub use segments::{
     AccountHistory, Bodies, PruneInput, ReceiptsByLogs, Segment as PruningSegment, SegmentSet,
     SenderRecovery, StorageHistory, TransactionLookup, UserReceipts,
 };
-
-pub use base_execution_state_types::*;

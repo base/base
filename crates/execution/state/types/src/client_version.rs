@@ -5,7 +5,10 @@ use alloc::string::String;
 /// Client version that accessed the database.
 #[derive(Clone, Eq, PartialEq, Debug, Default)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
+#[cfg_attr(
+    any(test, feature = "reth-codec"),
+    base_common_types_chain::add_arbitrary_tests(compact)
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ClientVersion {
     /// Client version

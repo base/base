@@ -3,11 +3,10 @@ use std::sync::Arc;
 use alloy_eip7928::BlockAccessIndex;
 use alloy_primitives::Address;
 use base_common_types_chain::Transaction;
-use base_execution_evm_blocks::{
-    BaseEvmConfig, BaseExecutorFactory, Database, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor,
+use base_execution_evm_blocks::{BaseEvmConfig, BaseExecutorFactory, Database, ExecutableTxFor};
+use base_execution_evm_runtime::{
+    BlockExecutionError, BlockExecutor, Evm, State, bal::Bal as RevmBal,
 };
-use base_execution_evm_runtime::{BlockExecutionError, BlockExecutor, BlockExecutorFactory, Evm};
-use base_execution_evm_runtime::{database::State, state::bal::Bal as RevmBal};
 use crossbeam_channel::{Receiver, Sender};
 
 use super::BalExecutionError;
@@ -42,7 +41,7 @@ pub(super) struct BalWorkerOutput<R> {
     pub(super) result: R,
 }
 
-type WorkerExecutorResult = <BaseExecutorFactory as BlockExecutorFactory>::TxExecutionResult;
+type WorkerExecutorResult = base_execution_evm_runtime::BaseTxResult;
 
 type WorkerResultSender = Sender<Result<BalWorkerOutput<WorkerExecutorResult>, BalWorkerError>>;
 
@@ -55,8 +54,11 @@ pub(super) fn spawn_worker<'scope, Tx, Err, DB, MakeDb>(
     evm_config: &'scope BaseEvmConfig,
     make_db: &'scope MakeDb,
     received_bal_revm: Arc<RevmBal>,
-    evm_env: EvmEnvFor,
-    ctx: ExecutionCtxFor,
+    evm_env: base_execution_evm_runtime::EvmEnv<
+        base_execution_evm_runtime::BaseSpecId,
+        base_execution_evm_runtime::BlockEnv,
+    >,
+    ctx: base_execution_evm_runtime::BaseBlockExecutionCtx,
 ) where
     Tx: ExecutableTxFor + Send + 'scope,
     Err: core::error::Error + Send + Sync + 'static,

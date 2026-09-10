@@ -4,13 +4,13 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::Address;
-use base_common_l1_transactions::TxManager;
-use base_common_runtime_tasks::Clock;
-use base_proof_l1_submission::{
+use base_common_l1::TxManager;
+use base_common_runtime::Clock;
+use base_proof_client::L2Provider;
+use base_proof_l1::{
     AggregateVerifierClient, DelayedWETHClient, DelayedWETHContractClient,
     DisputeGameFactoryClient, encode_claim_credit_calldata, encode_resolve_calldata,
 };
-use base_proof_client_providers::L2Provider;
 use futures::stream::{self, StreamExt};
 use tracing::{debug, info, warn};
 
@@ -531,7 +531,7 @@ mod tests {
         resolved_at: u64,
         bond_unlocked: bool,
     ) -> crate::test_utils::MockGameState {
-        let mut state = mock_state(base_proof_l1_submission::GameStatus::InProgress, zk_prover, 100);
+        let mut state = mock_state(base_proof_l1::GameStatus::InProgress, zk_prover, 100);
         state.bond_recipient = bond_recipient;
         state.resolved_at = resolved_at;
         state.bond_unlocked = bond_unlocked;
@@ -569,7 +569,7 @@ mod tests {
     }
 
     fn bond_submitter(
-        responses: Vec<base_common_l1_transactions::SendResponse>,
+        responses: Vec<base_common_l1::SendResponse>,
     ) -> (ChallengeSubmitter<MockTxManager>, MockTxManager) {
         let tx_manager = MockTxManager::with_responses(responses);
         (ChallengeSubmitter::new(tx_manager.clone()), tx_manager)

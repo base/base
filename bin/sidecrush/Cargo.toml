@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 tracing = { workspace = true }
 cadence = { workspace = true }
-base-infra-sidecrush-service = { workspace = true }
+base-infra-sidecrush = { workspace = true }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros", "signal"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt", "ansi", "json"] }

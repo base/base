@@ -15,40 +15,99 @@ workspace = true
 
 [dependencies]
 sha2 = { workspace = true }
+either = { workspace = true }
 thiserror = { workspace = true }
 snap = { workspace = true, optional = true }
-alloy-serde = {workspace = true, optional = true}
-ethereum_ssz = {workspace = true, optional = true}
-alloy-eips = {workspace = true, features = ["serde"]}
-ethereum_ssz_derive = {workspace = true, optional = true}
+base-common-chain-config = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
+base-execution-state-types = { workspace = true }
+alloy-serde = { workspace = true, optional = true }
+pin-project = { workspace = true, optional = true }
+ethereum_ssz = { workspace = true, optional = true }
+alloy-eips = { workspace = true, features = ["serde"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 derive_more = { workspace = true, features = ["display"] }
-base-common-types-chain = {workspace = true, features = ["serde"]}
-alloy-rlp = {workspace = true, features = ["arrayvec", "derive"]}
-alloy-primitives = {workspace = true, features = ["rlp", "serde"]}
-arbitrary = {workspace = true, features = ["derive"], optional = true}
+ethereum_ssz_derive = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["sync"], optional = true }
 rand_08 = { workspace = true, optional = true, features = ["default"] }
-serde = {workspace = true, optional = true, features = ["derive", "alloc"]}
+futures = { workspace = true, optional = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+serde_with = { workspace = true, features = ["macros"], optional = true }
+tracing = { workspace = true, features = ["attributes"], optional = true }
+base-common-types-chain = { workspace = true, features = ["serde", "k256"] }
 jsonwebtoken = { workspace = true, optional = true, features = ["default"] }
+serde = { workspace = true, optional = true, features = ["derive", "alloc"] }
+alloy-rlp = { workspace = true, features = ["arrayvec", "derive", "core-net"] }
+alloy-primitives = { workspace = true, features = ["rlp", "serde", "map-foldhash"] }
+tokio-stream = { workspace = true, features = ["default", "sync"], optional = true }
 [dev-dependencies]
 arbtest = { workspace = true }
-assert_matches_1_5 = { workspace = true }
-serde_json = {workspace = true, features = ["alloc"]}
-arbitrary = {workspace = true, features = ["derive"]}
+bincode_1_3_3 = { workspace = true }
+assert_matches = { workspace = true }
+base-common-chain-config = { workspace = true }
+base-common-client-ethereum = { workspace = true }
 base64 = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc", "std"] }
 similar-asserts = { workspace = true, features = ["default"] }
-base-common-types-chain = { workspace = true, features = ["arbitrary"] }
 jsonwebtoken = { workspace = true, features = ["default", "aws_lc_rs"] }
-alloy-primitives = {workspace = true, features = ["arbitrary", "getrandom", "rand", "rlp", "serde"]}
+base-common-types-rpc = { workspace = true, features = ["default", "std"] }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
+alloy-primitives = { workspace = true, features = ["arbitrary", "getrandom", "rand", "rlp", "serde", "map-foldhash"] }
 
 [features]
 default = ["serde", "std"]
-std = ["base-common-types-chain/std", "alloy-eips/std", "alloy-primitives/std", "alloy-rlp/std", "ssz", "alloy-serde?/std", "dep:ethereum_ssz", "dep:ethereum_ssz_derive", "dep:snap", "serde?/std", "sha2/std", "thiserror/std", "derive_more/std"]
-serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "dep:alloy-serde", "dep:serde", "rand_08?/serde"]
+std = [
+    "base-common-types-chain/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "alloy-rlp/std",
+    "ssz",
+    "alloy-serde?/std",
+    "dep:ethereum_ssz",
+    "dep:ethereum_ssz_derive",
+    "dep:snap",
+    "serde?/std",
+    "sha2/std",
+    "thiserror/std",
+    "derive_more/std",
+    "base-execution-state-types/std",
+    "serde/std",
+    "either/std",
+    "serde_json/std",
+    "dep:pin-project",
+    "dep:tracing",
+    "dep:tokio-stream",
+    "futures/std",
+    "tokio",
+    "uuid/std",
+]
+serde = [
+    "base-common-types-chain/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "dep:alloy-serde",
+    "dep:serde",
+    "rand_08?/serde",
+    "base-execution-state-types/serde",
+]
 k256 = ["base-common-types-chain/k256"]
-arbitrary = ["base-common-types-chain/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand", "alloy-serde?/arbitrary", "dep:arbitrary", "std", "alloy-serde/arbitrary"]
+arbitrary = [
+    "base-common-types-chain/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "alloy-primitives/rand",
+    "alloy-serde?/arbitrary",
+    "dep:arbitrary",
+    "std",
+    "alloy-serde/arbitrary",
+]
 jwt = ["std", "dep:jsonwebtoken", "dep:rand_08"]
 jwt-aws-lc-rs = ["jwt", "jsonwebtoken/aws_lc_rs"]
 kzg = ["base-common-types-chain/kzg", "alloy-eips/kzg"]
 ssz = ["std", "dep:ethereum_ssz", "dep:ethereum_ssz_derive", "alloy-eips/ssz"]
+test-utils = ["std"]
+trie-debug = []
+serde-bincode-compat = ["base-execution-state-types/serde-bincode-compat", "serde_with", "alloy-eips/serde-bincode-compat"]

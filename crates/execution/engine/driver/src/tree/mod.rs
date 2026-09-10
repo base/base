@@ -5,36 +5,33 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent, merge::EPOCH_SLOTS};
 use alloy_primitives::{B256, map::B256Map};
-use base_common_runtime_tasks::{spawn_os_thread, utils::increase_thread_priority};
-use base_common_types_chain::BlockHeader;
+use base_common_runtime::{spawn_os_thread, utils::increase_thread_priority};
+use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedBlock, SealedHeader};
 use base_common_types_payload::{
-    ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
+    BasePayloadBuilderAttributes, BeaconEngineMessage, BeaconOnNewPayloadError,
+    ConsensusEngineEvent, ForkchoiceState, ForkchoiceStateTracker, NewPayloadError,
+    OnForkChoiceUpdated, PayloadStatus, PayloadStatusEnum, PayloadValidationError, SlowBlockInfo,
 };
-use base_execution_engine_types::{
-    BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
-    ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
-};
-use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
-use base_execution_evm_runtime::interpreter::debug_unreachable;
-use base_execution_payload_builder::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
-use base_execution_payload_types::{BasePayloadBuilderAttributes, NewPayloadError};
-use base_execution_state_provider::OverlayManager;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig, ConsensusError};
+use base_execution_evm_runtime::debug_unreachable;
+use base_execution_payload::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use base_execution_state_provider::{
-    BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockNumReader, BlockReader,
-    ChangeSetReader, DatabaseProviderFactory, LatestStateProvider, ProviderError,
-    PruneCheckpointReader, SaveBlocksInput, StageCheckpointReader, StateProviderBox,
-    StateProviderFactory, StateReader, StorageChangeSetReader, StorageSettingsCache,
-    TransactionVariant, TryIntoHistoricalStateProvider,
+    BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockHashReader, BlockNumReader,
+    BlockReader, CanonicalInMemoryState, ChangeSetReader, DatabaseProviderFactory,
+    DatabaseProviderROFactory, HeaderProvider, LatestStateProvider, MemoryOverlayStateProvider,
+    NewCanonicalChain, OverlayManager, ProviderError, PruneCheckpointReader, SaveBlocksInput,
+    StageCheckpointReader, StateProviderBox, StateProviderFactory, StateReader,
+    StorageChangeSetReader, StorageSettingsCache, TransactionVariant,
+    TryIntoHistoricalStateProvider,
 };
 use base_execution_state_trie::ComputedTrieData;
-use base_execution_state_types::ProviderResult;
-use base_execution_sync_pipeline::ControlFlow;
+use base_execution_state_types::{ExecutedBlock, ExecutionTimingStats, ProviderResult};
+use base_execution_sync::ControlFlow;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
 use state::TreeState;
@@ -43,16 +40,6 @@ use tokio::sync::{
     oneshot,
 };
 use tracing::*;
-use {
-    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedBlock,
-    base_common_types_chain::SealedHeader, std::time::Instant,
-};
-use {
-    base_execution_state_provider::CanonicalInMemoryState,
-    base_execution_state_provider::MemoryOverlayStateProvider,
-    base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock,
-    base_execution_state_types::ExecutionTimingStats,
-};
 
 use crate::{
     backfill::{BackfillAction, BackfillSyncState},
@@ -79,7 +66,7 @@ mod trie_updates;
 mod txpool_prewarm;
 pub mod types;
 
-pub use base_execution_engine_types::TreeConfig;
+pub use base_common_types_payload::TreeConfig;
 pub use base_execution_state_tasks::{
     CachedStateCacheMetrics, CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
     ExecutionCache, PayloadExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot,
@@ -119,19 +106,19 @@ const CHANGESET_CACHE_RETENTION_BLOCKS: u64 = 64;
 
 /// A builder for creating state providers that can be used across threads.
 #[derive(Clone, Debug)]
-pub struct StateProviderBuilder<P> {
+pub struct StateProviderBuilder {
     /// The provider factory used to create providers.
-    provider_factory: P,
+    provider_factory: base_execution_state_provider::BlockchainProvider,
     /// Hash of the block whose state to provide.
     parent_hash: B256,
     /// Tracks the in-memory parent chain and its overlays.
     overlay_manager: OverlayManager,
 }
 
-impl<P> StateProviderBuilder<P> {
+impl StateProviderBuilder {
     /// Creates a new state provider builder for `parent_hash`.
     pub const fn new(
-        provider_factory: P,
+        provider_factory: base_execution_state_provider::BlockchainProvider,
         parent_hash: B256,
         overlay_manager: OverlayManager,
     ) -> Self {
@@ -139,16 +126,7 @@ impl<P> StateProviderBuilder<P> {
     }
 }
 
-impl<P> StateProviderBuilder<P>
-where
-    P: DatabaseProviderFactory,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-{
+impl StateProviderBuilder {
     /// Creates a new state provider from this builder.
     pub fn build(&self) -> ProviderResult<StateProviderBox> {
         let overlay_builder = self.overlay_manager.overlay_builder(self.parent_hash);
@@ -347,10 +325,10 @@ pub enum TreeAction {
 ///
 /// This type is responsible for processing engine API requests, maintaining the canonical state and
 /// emitting events.
-pub struct EngineApiTreeHandler<P> {
-    provider: P,
+pub struct EngineApiTreeHandler {
+    provider: base_execution_state_provider::BlockchainProvider,
     consensus: Arc<BaseBeaconConsensus>,
-    payload_validator: BasicEngineValidator<P>,
+    payload_validator: BasicEngineValidator,
     /// Keeps track of internals such as executed and buffered blocks.
     state: EngineApiTreeState,
     /// The half for sending messages to the engine.
@@ -398,10 +376,10 @@ pub struct EngineApiTreeHandler<P> {
     /// payload jobs finish.
     pending_persisted_handoff: Option<PersistenceResult>,
     /// Task runtime for spawning blocking work on named, reusable threads.
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
 }
 
-impl<P: Debug> std::fmt::Debug for EngineApiTreeHandler<P> {
+impl std::fmt::Debug for EngineApiTreeHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EngineApiTreeHandler")
             .field("provider", &self.provider)
@@ -426,37 +404,13 @@ impl<P: Debug> std::fmt::Debug for EngineApiTreeHandler<P> {
     }
 }
 
-impl<P> EngineApiTreeHandler<P>
-where
-    P: DatabaseProviderFactory
-        + BlockReader
-        + StateProviderFactory
-        + StateReader
-        + BalProvider
-        + Clone
-        + 'static,
-    P::Provider: BlockReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + ChangeSetReader
-        + StorageChangeSetReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-    P: ChangeSetReader,
-    base_execution_state_provider::OverlayStateProviderFactory<P>:
-        base_execution_state_api::DatabaseProviderROFactory<
-                Provider: base_execution_state_trie::trie_cursor::TrieCursorFactory
-                              + base_execution_state_trie::hashed_cursor::HashedCursorFactory,
-            > + Clone
-            + 'static,
-{
+impl EngineApiTreeHandler {
     /// Creates a new [`EngineApiTreeHandler`].
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        provider: P,
+        provider: base_execution_state_provider::BlockchainProvider,
         consensus: Arc<BaseBeaconConsensus>,
-        payload_validator: BasicEngineValidator<P>,
+        payload_validator: BasicEngineValidator,
         outgoing: UnboundedSender<EngineApiEvent>,
         state: EngineApiTreeState,
         canonical_in_memory_state: CanonicalInMemoryState,
@@ -466,7 +420,7 @@ where
         config: TreeConfig,
         engine_kind: EngineApiKind,
         evm_config: BaseEvmConfig,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> Self {
         let (incoming_tx, incoming) = crossbeam_channel::unbounded();
 
@@ -504,9 +458,9 @@ where
     /// end of a [`EngineApiEvent`] unbounded channel to receive events from the engine.
     #[expect(clippy::complexity)]
     pub fn spawn_new(
-        provider: P,
+        provider: base_execution_state_provider::BlockchainProvider,
         consensus: Arc<BaseBeaconConsensus>,
-        payload_validator: BasicEngineValidator<P>,
+        payload_validator: BasicEngineValidator,
         persistence: PersistenceHandle,
         payload_builder: PayloadBuilderHandle,
         canonical_in_memory_state: CanonicalInMemoryState,
@@ -514,7 +468,7 @@ where
         config: TreeConfig,
         kind: EngineApiKind,
         evm_config: BaseEvmConfig,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> (Sender<FromEngine>, UnboundedReceiver<EngineApiEvent>) {
         let best_block_number = provider.best_block_number().unwrap_or(0);
         let header = provider.sealed_header(best_block_number).ok().flatten().unwrap_or_default();
@@ -3057,7 +3011,7 @@ where
         block_id: BlockWithParent,
         input: Input,
         execute: impl FnOnce(
-            &mut BasicEngineValidator<P>,
+            &mut BasicEngineValidator,
             Input,
             TreeCtx<'_>,
         ) -> Result<ValidationOutput, Err>,
@@ -3364,7 +3318,7 @@ where
     /// This is called during `engine_forkchoiceUpdated` when the CL provides payload attributes,
     /// indicating it wants the EL to start building a new block.
     ///
-    /// Runs [`BaseEngineValidator::validate_payload_attributes_against_header`](base_execution_payload_builder::BaseEngineValidator::validate_payload_attributes_against_header) to ensure
+    /// Runs [`BaseEngineValidator::validate_payload_attributes_against_header`](base_execution_payload::BaseEngineValidator::validate_payload_attributes_against_header) to ensure
     /// `payloadAttributes.timestamp > headBlock.timestamp` per the Engine API spec.
     ///
     /// If validation passes, sends the attributes to the payload builder to start a new
@@ -3464,10 +3418,7 @@ where
     pub fn state_provider_builder(
         &self,
         hash: B256,
-    ) -> ProviderResult<Option<StateProviderBuilder<P>>>
-    where
-        P: BlockReader + StateProviderFactory + StateReader + Clone,
-    {
+    ) -> ProviderResult<Option<StateProviderBuilder>> {
         if !self.state.tree_state.contains_hash(&hash) && self.provider.header(hash)?.is_none() {
             debug!(target: "engine::tree", %hash, "no canonical state found for block");
             return Ok(None);

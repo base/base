@@ -1,6 +1,5 @@
 use std::{marker::PhantomData, sync::Arc, task::Poll};
 
-use crate::Network;
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
 use alloy_transport::TransportResult;
@@ -8,7 +7,7 @@ use base_common_types_rpc::{Bundle, StateContext, TransactionIndex, state::State
 use futures::{FutureExt, future};
 
 use super::{Caller, EthCallManyParams};
-use crate::ProviderCall;
+use crate::{Network, ProviderCall};
 
 /// A builder for an `"eth_callMany"` RPC request.
 #[derive(Clone)]

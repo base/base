@@ -2,7 +2,7 @@ use base_common_types_chain::{BaseTxEnvelope, transaction::Either};
 use base_execution_evm_runtime::{ExecutableTxParts, RecoveredTx};
 use rayon::prelude::*;
 
-use crate::{TxEnvFor, execute::ExecutableTxFor};
+use crate::execute::ExecutableTxFor;
 
 /// Converts a raw transaction into an executable transaction.
 ///
@@ -115,7 +115,10 @@ impl<T> ExecutableTxIterator for T
 where
     T: ExecutableTxTuple<Tx: ExecutableTxFor<Recovered: Send + Sync>>,
 {
-    type Recovered = <T::Tx as ExecutableTxParts<TxEnvFor, BaseTxEnvelope>>::Recovered;
+    type Recovered = <T::Tx as ExecutableTxParts<
+        base_execution_evm_runtime::BaseTransaction,
+        BaseTxEnvelope,
+    >>::Recovered;
 }
 
 /// Wraps `Either<L, R>` to implement both [`IntoParallelIterator`] and [`IntoIterator`],

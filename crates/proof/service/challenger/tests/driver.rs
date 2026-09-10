@@ -7,6 +7,10 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, Bytes};
+use base_common_l1::TxManagerError;
+use base_consensus_batch::OutputRoot;
+use base_proof_client::L1Provider;
+use base_proof_l1::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
 use base_proof_service_challenger::{
     AnchorUpdater, ChallengeSubmitter, DisputeIntent, DisputeProofManager, Driver,
     DriverComponents, GameScanner, OutputValidator, PendingProof, ProofKind, ProofPhase,
@@ -17,15 +21,11 @@ use base_proof_service_challenger::{
         mock_state, mock_state_with_tee, receipt_with_status,
     },
 };
-use base_common_l1_transactions::TxManagerError;
-use base_proof_l1_submission::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
-use base_proof_types_protocol::Proposal;
-use base_proof_client_providers::L1Provider;
-use base_consensus_batch_types::OutputRoot;
 use base_proof_service_protocol::{
     ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
     TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
 };
+use base_proof_types::Proposal;
 use tokio_util::sync::CancellationToken;
 
 const STORAGE_HASH: B256 = B256::repeat_byte(0xBB);
@@ -38,7 +38,7 @@ const BOGUS_CLAIM: B256 = B256::repeat_byte(0x01);
 /// `MockGameState { tee_prover: DEFAULT_TEE_PROVER, ..game_state(20) }`.
 fn game_state(l2_block_number: u64) -> MockGameState {
     MockGameState {
-        game_info: base_proof_l1_submission::GameInfo {
+        game_info: base_proof_l1::GameInfo {
             root_claim: BOGUS_CLAIM,
             l2_block_number,
             parent_address: Address::ZERO,
@@ -96,7 +96,7 @@ fn test_driver_with_l1_provider(
         anchor_updater: AnchorUpdater::new(
             factory,
             anchor_registry,
-            l2_provider as Arc<dyn base_proof_client_providers::L2Provider>,
+            l2_provider as Arc<dyn base_proof_client::L2Provider>,
             Address::repeat_byte(0xAA),
             1,
             100,

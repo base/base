@@ -16,7 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+base-testing-tools = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-base-testing-tools-witness-diff = {workspace = true}
 tokio = { workspace = true, features = ["default", "full"] }
 clap = { workspace = true, features = ["default", "derive"] }

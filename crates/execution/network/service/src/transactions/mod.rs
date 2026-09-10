@@ -23,10 +23,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{
-    NetworkEvent, NetworkEventListenerProvider, PeerEvent, PeerKind, PeerRequest,
-    PeerRequestSender, Peers, SessionInfo,
-};
 use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{
     B256, TxHash,
@@ -35,30 +31,17 @@ use alloy_primitives::{
 };
 use alloy_rlp::Encodable;
 use base_common_observability_metrics::common::mpsc::MemoryBoundedReceiver;
-use base_common_runtime_tasks::EventStream;
-use base_common_types_chain::TxType;
-use base_common_types_chain::{InMemorySize, SignedTransaction};
+use base_common_runtime::EventStream;
+use base_common_types_chain::{InMemorySize, SignedTransaction, TxType};
 use base_execution_evm_blocks::SenderRecoveryCache;
-use base_execution_network_types::PeerId;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_wire::BroadcastPoolTransactions;
-use base_execution_network_wire::DedupPayload;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::GetPooledTransactions;
-use base_execution_network_wire::HandleMempoolData;
-use base_execution_network_wire::HandleVersionedMempoolData;
-use base_execution_network_wire::LazyEncoded;
-use base_execution_network_wire::LazyEncodedTransaction;
-use base_execution_network_wire::NewPooledTransactionHashes;
-use base_execution_network_wire::NewPooledTransactionHashes66;
-use base_execution_network_wire::NewPooledTransactionHashes68;
-use base_execution_network_wire::NewPooledTransactionHashes72;
-use base_execution_network_wire::PooledTransactions;
-use base_execution_network_wire::RequestTxHashes;
-use base_execution_network_wire::Transactions;
-use base_execution_network_wire::ValidAnnouncementData;
-use base_execution_network_wire::{RequestError, RequestResult, SyncStateProvider};
-use base_execution_txpool_pool::{
+use base_execution_network_wire::{
+    BroadcastPoolTransactions, DedupPayload, EthVersion, GetPooledTransactions, HandleMempoolData,
+    HandleVersionedMempoolData, LazyEncoded, LazyEncodedTransaction, NewPooledTransactionHashes,
+    NewPooledTransactionHashes66, NewPooledTransactionHashes68, NewPooledTransactionHashes72,
+    PeerId, PooledTransactions, ReputationChangeKind, RequestError, RequestResult, RequestTxHashes,
+    SyncStateProvider, Transactions, ValidAnnouncementData,
+};
+use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
     PropagatedTransactions, TransactionPool, ValidPoolTransaction,
 };
@@ -81,7 +64,8 @@ pub use self::constants::{
     tx_fetcher::DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
 };
 use crate::{
-    NetworkHandle, TxTypesCounter,
+    NetworkEvent, NetworkEventListenerProvider, NetworkHandle, PeerEvent, PeerKind, PeerRequest,
+    PeerRequestSender, Peers, SessionInfo, TxTypesCounter,
     budget::{
         DEFAULT_BUDGET_TRY_DRAIN_NETWORK_TRANSACTION_EVENTS,
         DEFAULT_BUDGET_TRY_DRAIN_PENDING_POOL_IMPORTS, DEFAULT_BUDGET_TRY_DRAIN_STREAM,
@@ -308,7 +292,7 @@ pub struct TransactionsManager<Pool> {
     /// The import process includes:
     ///  - validation of the transactions, e.g. transaction is well formed: valid tx type, fees are
     ///    valid, or for 4844 transaction the blobs are valid. See also
-    ///    [`EthTransactionValidator`](base_execution_txpool_pool::EthTransactionValidator)
+    ///    [`BaseTransactionValidator`](base_execution_txpool::BaseTransactionValidator)
     /// - if the transaction is valid, it is added into the pool.
     ///
     /// Once the new transaction reaches the __pending__ state it will be emitted by the pool via
@@ -1460,9 +1444,9 @@ where
 
         let recover = |tx| {
             let recovered = if let Some(cache) = &self.sender_recovery_cache {
-                base_execution_txpool_pool::BasePooledTransaction::try_recover_with_cache(tx, cache)
+                base_execution_txpool::BasePooledTransaction::try_recover_with_cache(tx, cache)
             } else {
-                base_execution_txpool_pool::BasePooledTransaction::try_recover(tx)
+                base_execution_txpool::BasePooledTransaction::try_recover(tx)
             };
             match recovered {
                 Ok(tx) => Some(tx),
@@ -2341,18 +2325,17 @@ mod tests {
         time::Instant,
     };
 
-    use crate::{NetworkInfo, PeerKind};
     use alloy_eips::{eip2718::Encodable2718, eip4844::BlobTransactionValidationError};
     use alloy_primitives::{B256, Signature, TxKind, U256, hex};
     use alloy_rlp::Decodable;
-    use base_common_runtime_tasks::Runtime;
+    use base_common_runtime::Runtime;
     use base_common_types_chain::{
         BasePooledTransaction as PooledTransactionVariant, BaseTxEnvelope as TransactionSigned,
         BaseTypedTransaction as Transaction, Transaction as _, TxEip1559, TxLegacy, Typed2718,
     };
     use base_execution_network_wire::{NetworkSyncUpdater, RequestError, RequestResult, SyncState};
-    use base_execution_state_api::NoopProvider;
-    use base_execution_txpool_pool::{
+    use base_execution_state_database::NoopProvider;
+    use base_execution_txpool::{
         BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError, InMemoryBlobStore,
         InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
         ValidPoolTransaction,
@@ -2367,7 +2350,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        NetworkConfigBuilder, NetworkManager,
+        NetworkConfigBuilder, NetworkInfo, NetworkManager, PeerKind,
         test_utils::{
             NetworkTestData, TestPool, Testnet,
             transactions::{buffer_hash_to_tx_fetcher, new_mock_session, new_tx_manager},
@@ -2405,7 +2388,7 @@ mod tests {
     }
 
     fn valid_pool_transaction(
-        transaction: base_execution_txpool_pool::BasePooledTransaction,
+        transaction: base_execution_txpool::BasePooledTransaction,
     ) -> Arc<ValidPoolTransaction> {
         let mut ids = SenderIdentifiers::default();
         let transaction_id =
@@ -2911,7 +2894,7 @@ mod tests {
         let tx = NetworkTestData::transaction(MockTransaction::eip1559());
         let _ = transactions
             .pool
-            .add_transaction(base_execution_txpool_pool::TransactionOrigin::External, tx.clone())
+            .add_transaction(base_execution_txpool::TransactionOrigin::External, tx.clone())
             .await;
 
         let request = GetPooledTransactions(vec![*tx.hash()]);
@@ -3354,7 +3337,7 @@ mod tests {
         let tx_hash = *tx.hash();
         tx_manager
             .pool
-            .add_transaction(base_execution_txpool_pool::TransactionOrigin::External, tx.clone())
+            .add_transaction(base_execution_txpool::TransactionOrigin::External, tx.clone())
             .await
             .expect("transaction should be accepted into the pool");
 

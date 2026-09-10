@@ -9,16 +9,14 @@ use std::{
 };
 
 use alloy_primitives::{B256, map::B256Set};
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::SealedBlock;
+use base_common_types_chain::{BlockHeader, SealedBlock};
 use base_execution_evm_blocks::BaseBeaconConsensus;
+use base_execution_network_service::{
+    FetchFullBlockFuture, FetchFullBlockRangeFuture, FullBlockClient,
+};
+use base_execution_network_wire::BlockClient;
 use futures::FutureExt;
 use tracing::trace;
-use {
-    base_execution_network_service::FetchFullBlockFuture,
-    base_execution_network_service::FetchFullBlockRangeFuture,
-    base_execution_network_service::FullBlockClient, base_execution_network_wire::BlockClient,
-};
 
 use crate::{engine::DownloadRequest, metrics::BlockDownloaderMetrics};
 
@@ -290,8 +288,7 @@ mod tests {
     use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_types_chain::Header;
-    use base_common_types_chain::SealedHeader;
+    use base_common_types_chain::{Header, SealedHeader};
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_network_service::test_utils::TestFullBlockClient;
 

@@ -1,16 +1,16 @@
 # `base-execution-evm-runtime`
 
-Base transaction execution and the shared EVM handler in one crate.
+Base execution, interpreter operations, memory state, cryptographic precompiles, and native
+precompile dispatch in one crate. Procedural macros remain in `base-execution-evm-macros`.
 
-The runtime owns Base transaction rules, execution handlers, frame processing, execution APIs, state hooks, and inspector integration. Context/environment types, memory state, interpreter operations, and native precompile dispatch remain lower-level dependencies.
+`Context<DB>` fixes the transaction, configuration, and chain state to Base. `BaseEvm<DB, I>`
+retains database and inspector parameters and uses `PrecompilesMap`, including its dynamic
+callbacks and caching support. `BaseBlockExecutorFactory` uses `ChainConfig` and `BaseEvmFactory`.
+The node's block execution configuration lives in `base-execution-evm-blocks`.
 
-`BaseEvm`, `BaseEvmFactory`, `BaseHandler`, and `BaseTransaction` provide the Base execution path. Shared execution and inspection APIs remain available for proof execution and test harnesses. The block-level node executor lives in `base-execution-evm-blocks`.
+Ethereum reference constructors and `ReferenceContext` are exposed only by `test-utils`.
+Concrete tracing implementations, including the optional JavaScript tracer, live in
+`base-execution-rpc`. The runtime retains the inspector interface.
 
-The `std`, tracing, crypto backend, and execution-check features describe actual build capabilities. RPC request conversion does not require a feature switch; there is no separate `reth` feature.
-
-```sh
-cargo test -p base-execution-evm-runtime --lib --tests
-cargo check -p base-execution-evm-runtime --no-default-features --target riscv32imac-unknown-none-elf
-```
-
-This crate combines the former Base EVM and local REVM handler packages. Historical execution upgrade behavior and existing tracing APIs are retained.
+`std`, tracing, and the retained cryptographic features describe build capabilities. Proof
+execution continues to support bare-metal builds without `std`.

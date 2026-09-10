@@ -1,9 +1,8 @@
 use std::time::Duration;
 
-use crate::Network;
 use alloy_chains::NamedChain;
 
-use crate::{Provider, ProviderLayer};
+use crate::{Network, Provider, ProviderLayer};
 
 /// A layer that wraps a [`NamedChain`]. The layer will be used to set
 /// the client's poll interval based on the average block time for this chain.

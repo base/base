@@ -2,19 +2,19 @@
 
 use std::net::SocketAddr;
 
-use base_common_cli_support::{LogConfig, RuntimeManager};
+use base_common_cli::{LogConfig, RuntimeManager};
 use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
-use base_proof_service_server::{DatabaseConfig, ProofRequestRepo};
 use base_proof_service_server::{
-    ProverServiceServer, ServerConfig, StatusPoller, WorkerApiConfig, WorkerQueueConfig,
+    DatabaseConfig, ProofRequestRepo, ProverServiceServer, ServerConfig, StatusPoller,
+    WorkerApiConfig, WorkerQueueConfig,
 };
 use clap::Parser;
 use eyre::eyre;
 use jsonrpsee::server::{Server, ServerConfig as JsonRpcServerConfig};
 use tracing::info;
 
-base_common_cli_support::define_log_args!("BASE_PROVER_SERVICE");
-base_common_cli_support::define_metrics_args!("BASE_PROVER_SERVICE", 7302);
+base_common_cli::define_log_args!("BASE_PROVER_SERVICE");
+base_common_cli::define_metrics_args!("BASE_PROVER_SERVICE", 7302);
 
 const DEFAULT_RPC_MAX_BODY_BYTES: u32 = 32 * 1024 * 1024;
 
@@ -121,8 +121,8 @@ impl Cli {
     pub(crate) fn run(self) -> eyre::Result<()> {
         let Self { args, logging, metrics } = self;
         LogConfig::from(logging).init_tracing_subscriber()?;
-        base_common_cli_support::MetricsConfig::from(metrics).init_with(|| {
-            base_common_cli_support::register_version_metrics!();
+        base_common_cli::MetricsConfig::from(metrics).init_with(|| {
+            base_common_cli::register_version_metrics!();
             base_proof_service_server::ProverMetrics::init();
         })?;
         RuntimeManager::new().run_until_ctrl_c(async move { args.run().await })

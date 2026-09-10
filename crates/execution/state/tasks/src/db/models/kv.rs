@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{DupSort, Table};
-use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
 
 use crate::db::{

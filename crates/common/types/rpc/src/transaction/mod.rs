@@ -5,7 +5,6 @@ pub use alloy_eips::{
     eip2930::{AccessList, AccessListItem, AccessListResult},
     eip7702::{Authorization, SignedAuthorization},
 };
-use crate::TransactionResponse;
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 pub use base_common_types_chain::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, Receipt, ReceiptEnvelope,
@@ -15,6 +14,8 @@ use base_common_types_chain::{
     EthereumTxEnvelope, EthereumTypedTransaction, Signed, TxEip1559, TxEip2930, TxEip4844,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, Typed2718, transaction::Recovered,
 };
+
+use crate::TransactionResponse;
 
 mod error;
 pub use error::ConversionError;

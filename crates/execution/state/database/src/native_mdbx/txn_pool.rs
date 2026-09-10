@@ -1,7 +1,6 @@
-use crate::native_mdbx::ffi;
 use crossbeam_queue::ArrayQueue;
 
-use crate::native_mdbx::error::mdbx_result;
+use crate::native_mdbx::{error::mdbx_result, ffi};
 
 /// Lock-free pool of reset read-only MDBX transaction handles.
 ///

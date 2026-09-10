@@ -2,12 +2,12 @@
 
 use async_trait::async_trait;
 use backon::Retryable;
+use base_common_runtime::RetryConfig;
 use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
     ProverRequesterApiClient,
 };
-use base_common_runtime_tasks::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
@@ -276,13 +276,13 @@ mod tests {
     };
 
     use async_trait::async_trait;
+    use base_common_runtime::RetryConfig;
     use base_proof_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
         ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult,
         ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,
         ProverRequesterApiServer, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
-    use base_common_runtime_tasks::RetryConfig;
     use chrono::Utc;
     use jsonrpsee::{
         core::{RpcResult, client::Error as JsonRpcClientError},

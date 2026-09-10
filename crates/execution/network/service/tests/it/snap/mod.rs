@@ -12,29 +12,21 @@ use alloy_eip7928::{
 use alloy_eips::NumHash;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_trie::{Nibbles, nodes::RlpNode, proof::verify_proof};
-
 use base_common_types_chain::{
     Header,
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_network_service::{
-    BlockDownloaderProvider, eth_requests::SOFT_RESPONSE_LIMIT, test_utils::PeerConfig,
-    test_utils::TestPool, test_utils::Testnet, test_utils::TestnetHandle,
+    BlockDownloaderProvider,
+    eth_requests::SOFT_RESPONSE_LIMIT,
+    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
 };
-use base_execution_network_wire::AccountData;
-use base_execution_network_wire::AccountRangeMessage;
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::BlockAccessListsMessage;
-use base_execution_network_wire::ByteCodesMessage;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::GetAccountRangeMessage;
-use base_execution_network_wire::GetBlockAccessListsMessage;
-use base_execution_network_wire::GetByteCodesMessage;
-use base_execution_network_wire::GetStorageRangesMessage;
-use base_execution_network_wire::Protocol;
-use base_execution_network_wire::StorageRangesMessage;
-use base_execution_network_wire::{SnapClient, SnapResponse};
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_network_wire::{
+    AccountData, AccountRangeMessage, BlockAccessLists, BlockAccessListsMessage, ByteCodesMessage,
+    EthVersion, GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
+    GetStorageRangesMessage, Protocol, SnapClient, SnapResponse, StorageRangesMessage,
+};
 use base_execution_state_provider::{
     BalProvider, BalStoreHandle, BlockReader, BlockWriter, ChainSpecProvider, HashingWriter,
     HeaderProvider, InMemoryBalStore, ProviderFactory, RawBal, StateProviderFactory,
@@ -43,8 +35,7 @@ use base_execution_state_provider::{
     test_utils::{ExtendedAccount, MockEthProvider, create_test_provider_factory},
 };
 use base_execution_state_trie::{HashedPostState, HashedStorage};
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{StageCheckpoint, StageId};
+use base_execution_state_types::{StageCheckpoint, StageId, StorageEntry};
 use base_testing_support::{generators, generators::BlockParams};
 
 mod protocol;

@@ -1,52 +1,15 @@
 //! Account related models and types.
 
-use std::ops::{Bound, Range, RangeBounds, RangeInclusive};
+use std::ops::{Bound, RangeBounds};
 
 use alloy_primitives::{Address, BlockNumber, StorageKey};
+pub use base_execution_state_types::BlockNumberAddress;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     DatabaseError, impl_fixed_arbitrary,
     table::{Decode, Encode},
 };
-
-/// [`BlockNumber`] concatenated with [`Address`].
-///
-/// Since it's used as a key, it isn't compressed when encoding it.
-#[derive(
-    Debug, Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Ord, PartialOrd, Hash,
-)]
-pub struct BlockNumberAddress(pub (BlockNumber, Address));
-
-impl BlockNumberAddress {
-    /// Create a new Range from `start` to `end`
-    ///
-    /// Note: End is inclusive
-    pub fn range(range: RangeInclusive<BlockNumber>) -> Range<Self> {
-        (*range.start(), Address::ZERO).into()..(*range.end() + 1, Address::ZERO).into()
-    }
-
-    /// Return the block number
-    pub const fn block_number(&self) -> BlockNumber {
-        self.0.0
-    }
-
-    /// Return the address
-    pub const fn address(&self) -> Address {
-        self.0.1
-    }
-
-    /// Consumes `Self` and returns [`BlockNumber`], [`Address`]
-    pub const fn take(self) -> (BlockNumber, Address) {
-        (self.0.0, self.0.1)
-    }
-}
-
-impl From<(BlockNumber, Address)> for BlockNumberAddress {
-    fn from(tpl: (u64, Address)) -> Self {
-        Self(tpl)
-    }
-}
 
 impl Encode for BlockNumberAddress {
     type Encoded = [u8; 28];
@@ -140,7 +103,7 @@ impl Decode for AddressStorageKey {
     }
 }
 
-impl_fixed_arbitrary!((BlockNumberAddress, 28), (AddressStorageKey, 52));
+impl_fixed_arbitrary!((AddressStorageKey, 52));
 
 #[cfg(test)]
 mod tests {

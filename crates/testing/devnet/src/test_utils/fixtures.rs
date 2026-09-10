@@ -6,10 +6,12 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{U256, utils::Unit};
 use base_common_chain_config::BaseChainSpec;
 use base_execution_state_database::{
-    ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, mdbx::KILOBYTE, mdbx::MEGABYTE,
-    mdbx::MaxReadTransactionDuration, test_utils::ERROR_DB_CREATION, test_utils::TempDatabase,
-    test_utils::create_test_rocksdb_dir, test_utils::create_test_static_files_dir,
-    test_utils::tempdir_path,
+    ClientVersion, DatabaseEnv, init_db,
+    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    test_utils::{
+        ERROR_DB_CREATION, TempDatabase, create_test_rocksdb_dir, create_test_static_files_dir,
+        tempdir_path,
+    },
 };
 use base_execution_state_provider::{
     ProviderFactory,
@@ -41,7 +43,7 @@ pub fn load_chain_spec() -> Arc<BaseChainSpec> {
 /// Creates a provider factory for tests with the given chain spec.
 pub fn create_provider_factory(
     chain_spec: Arc<BaseChainSpec>,
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
 ) -> ProviderFactory {
     let (static_dir, _) = create_test_static_files_dir();
     let (rocksdb_dir, _) = create_test_rocksdb_dir();

@@ -1,11 +1,11 @@
 //! Block-production health-check sidecar binary. Long-lived process that polls an
 //! execution-layer HTTP RPC endpoint and emits four `StatsD` counters (`base.blocks.healthy`,
 //! `base.blocks.delayed`, `base.blocks.unhealthy`, `base.blocks.error`) to the local Datadog
-//! agent. All meaningful logic lives in the `base-infra-sidecrush-service` library crate.
+//! agent. All meaningful logic lives in the `base-infra-sidecrush` library crate.
 
 use std::net::UdpSocket;
 
-use base_infra_sidecrush_service::{
+use base_infra_sidecrush::{
     AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, HealthcheckMetrics, Node,
 };
 use cadence::{StatsdClient, UdpMetricSink};

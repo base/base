@@ -1,15 +1,11 @@
-use crate::AccountRangeMessage;
-use crate::BlockAccessListsMessage;
-use crate::ByteCodesMessage;
-use crate::GetAccountRangeMessage;
-use crate::GetBlockAccessListsMessage;
-use crate::GetByteCodesMessage;
-use crate::GetStorageRangesMessage;
-use crate::SnapProtocolMessage;
-use crate::StorageRangesMessage;
 use futures::Future;
 
-use crate::{DownloadClient, PeerRequestResult, Priority};
+use crate::{
+    AccountRangeMessage, BlockAccessListsMessage, ByteCodesMessage, DownloadClient,
+    GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
+    GetStorageRangesMessage, PeerRequestResult, Priority, SnapProtocolMessage,
+    StorageRangesMessage,
+};
 
 /// Response types for snap sync requests
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,10 +113,10 @@ pub trait SnapClient: DownloadClient {
 
 #[cfg(test)]
 mod tests {
-    use crate::BlockAccessLists;
     use test_case::test_case;
 
     use super::*;
+    use crate::BlockAccessLists;
 
     #[test_case(
         SnapProtocolMessage::GetAccountRange(GetAccountRangeMessage {

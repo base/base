@@ -6,12 +6,11 @@ use std::{
 use alloy_eip7928::BAL_RETENTION_PERIOD_SLOTS;
 use alloy_eips::NumHash;
 use alloy_primitives::{BlockHash, BlockNumber, Bytes};
-use base_common_runtime_tasks::EventSender;
-use base_execution_state_api::{
-    BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, RawBal,
+use base_common_runtime::EventSender;
+use base_execution_state_types::{
+    BalNotification, BalNotificationStream, BalStore, GetBlockAccessListLimit, ProviderResult,
+    PruneMode, RawBal,
 };
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::PruneMode;
 use parking_lot::RwLock;
 
 mod rocksdb;

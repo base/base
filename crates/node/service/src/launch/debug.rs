@@ -3,12 +3,11 @@ use std::sync::Arc;
 
 use base_common_client_ethereum::Base;
 use base_common_types_chain::SealedBlock;
+use base_common_types_payload::BaseBuiltPayload;
 use base_execution_engine_driver::{LocalMiner, MiningMode};
-use base_execution_payload_types::BaseBuiltPayload;
-use base_testing_debug_client::{DebugConsensusClient, EtherscanBlockProvider, RpcBlockProvider};
 use tracing::info;
 
-use crate::NodeHandle;
+use crate::{DebugConsensusClient, EtherscanBlockProvider, NodeHandle, RpcBlockProvider};
 
 /// Starts the Base debug services selected by operational CLI arguments.
 #[derive(Debug)]
@@ -22,7 +21,7 @@ impl BaseDebugServices {
             info!(target: "reth::cli", url = %url, "Using RPC consensus client");
 
             let block_provider =
-                RpcBlockProvider::<Base, _>::new(url.as_str(), move |block_response, extras| {
+                RpcBlockProvider::<Base>::new(url.as_str(), move |block_response, extras| {
                     let primitive_block = block_response
                         .map_transactions(|tx| tx.inner.inner.into_inner())
                         .into_consensus();

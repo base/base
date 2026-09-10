@@ -2,13 +2,14 @@
 
 use std::sync::Arc;
 
+use base_common_chain_config::BaseChainSpec;
+use base_common_types_chain::TxDeposit;
+use clap::{Parser, Subcommand};
+
 use crate::{
     GENERATE_VECTORS as ETH_GENERATE_VECTORS, READ_VECTORS as ETH_READ_VECTORS,
     generate_table_vectors, generate_vector, generate_vectors_with, read_vector, read_vectors_with,
 };
-use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::TxDeposit;
-use clap::{Parser, Subcommand};
 
 /// Generate test-vectors for different data types.
 #[derive(Debug, Parser)]

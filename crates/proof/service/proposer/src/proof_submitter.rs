@@ -3,12 +3,11 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_client_providers::RollupProvider;
-use base_proof_l1_submission::ProofSubmissionError;
-use base_proof_l1_submission::{
-    AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key,
+use base_proof_client::RollupProvider;
+use base_proof_l1::{
+    AggregateVerifierClient, DisputeGameFactoryClient, ProofSubmissionError, game_lookup_key,
 };
-use base_proof_types_protocol::Proposal;
+use base_proof_types::Proposal;
 use futures::{StreamExt, stream};
 use tracing::{debug, info, instrument, warn};
 

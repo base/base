@@ -4,8 +4,8 @@ use std::{
     time::Duration,
 };
 
-use base_common_cli_support::CancellationToken;
-use base_common_io_files as fs;
+use base_common_cli::CancellationToken;
+use base_common_io as fs;
 use eyre::Result;
 use futures::stream::{self, StreamExt};
 use tokio::task;

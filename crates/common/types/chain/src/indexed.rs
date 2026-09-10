@@ -19,7 +19,6 @@ use alloc::borrow::Cow;
 )]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "borsh", derive(borsh::BorshSerialize, borsh::BorshDeserialize))]
 #[doc(alias = "IndexedReceipt", alias = "IndexedTransaction")]
 pub struct Indexed<T> {
     /// The index of the value in its containing sequence.

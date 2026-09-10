@@ -1,9 +1,8 @@
-use crate::native_mdbx::ffi;
 use std::{borrow::Cow, slice};
 
 use derive_more::{Debug, Deref, DerefMut};
 
-use crate::native_mdbx::{Error, TransactionKind};
+use crate::native_mdbx::{Error, TransactionKind, ffi};
 
 /// Implement this to be able to decode data values
 pub trait TableObject: Sized {

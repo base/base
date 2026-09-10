@@ -8,13 +8,6 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::mdbx::{
-    DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
-    MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
-};
-use crate::{
-    Database, DatabaseMetrics, DbCursorRO, DbCursorRW, DbTx, DbTxMut, models::ClientVersion,
-};
 use base_common_observability_tracing::tracing::error;
 use base_execution_state_types::LogLevel;
 use eyre::Context;
@@ -22,9 +15,14 @@ use metrics::{Label, gauge};
 use tx::Tx;
 
 use crate::{
-    DatabaseError, TableSet,
+    Database, DatabaseError, DatabaseMetrics, DbCursorRO, DbCursorRW, DbTx, DbTxMut, TableSet,
     lockfile::StorageLock,
+    mdbx::{
+        DatabaseFlags, Environment, EnvironmentFlags, Geometry, HandleSlowReadersReturnCode,
+        MaxReadTransactionDuration, Mode, PageSize, RO, RW, SyncMode, ffi,
+    },
     metrics::DatabaseEnvMetrics,
+    models::ClientVersion,
     tables::{self, Tables},
     utils::default_page_size,
 };
@@ -47,7 +45,7 @@ pub const TERABYTE: usize = GIGABYTE * 1024;
 const DEFAULT_MAX_READERS: u64 = 32_000;
 
 /// Space that a read-only transaction can occupy until the warning is emitted.
-/// See [`base_execution_state_database::mdbx::EnvironmentBuilder::set_handle_slow_readers`] for more information.
+/// See [`crate::mdbx::EnvironmentBuilder::set_handle_slow_readers`] for more information.
 const MAX_SAFE_READER_SPACE: usize = 10 * GIGABYTE;
 
 /// Environment used when opening a MDBX environment. RO/RW.
@@ -696,21 +694,17 @@ mod tests {
     #[cfg(feature = "test-utils")]
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::mdbx::Error;
-    use crate::{
-        DbDupCursorRO, DbDupCursorRW, Encode, ReverseWalker, Table, Walker,
-        models::AccountBeforeTx, models::IntegerList, models::ShardedKey,
-    };
     use alloy_primitives::{Address, B256, U256, address};
     use base_common_types_chain::Header;
-    use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_types::StorageEntry;
-    use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation};
+    use base_execution_evm_runtime::StoredAccount as Account;
+    use base_execution_state_types::{DatabaseWriteError, DatabaseWriteOperation, StorageEntry};
     use tempfile::TempDir;
 
     use super::*;
     use crate::{
-        AccountChangeSets,
+        AccountChangeSets, DbDupCursorRO, DbDupCursorRW, Encode, ReverseWalker, Table, Walker,
+        mdbx::Error,
+        models::{AccountBeforeTx, IntegerList, ShardedKey},
         tables::{
             AccountsHistory, CanonicalHeaders, Headers, PlainAccountState, PlainStorageState,
         },

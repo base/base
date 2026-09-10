@@ -1,10 +1,9 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::B256;
 #[cfg(feature = "metrics")]
 use base_common_observability_metrics::metrics::{self, Histogram};
 use base_execution_state_types::DatabaseError;
-use std::time::Instant;
 use tracing::trace_span;
 
 use super::{HashedCursor, HashedStorageCursor};

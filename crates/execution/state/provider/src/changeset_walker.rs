@@ -4,10 +4,8 @@
 use std::ops::{Bound, RangeBounds};
 
 use alloy_primitives::BlockNumber;
-use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader};
-use base_execution_state_database::models::AccountBeforeTx;
-use base_execution_state_database::models::BlockNumberAddress;
-use base_execution_state_types::StorageEntry;
+use base_execution_state_database::models::{AccountBeforeTx, BlockNumberAddress};
+use base_execution_state_types::{ChangeSetReader, StorageChangeSetReader, StorageEntry};
 
 use crate::ProviderResult;
 

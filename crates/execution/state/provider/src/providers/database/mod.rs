@@ -1,6 +1,5 @@
 //! Database provider factory.
 
-use base_execution_state_api::DatabaseProviderROFactory;
 use core::fmt;
 use std::{
     ops::{RangeBounds, RangeInclusive},
@@ -11,26 +10,23 @@ use std::{
     },
 };
 
-use crate::OverlayManager;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, transaction::TransactionMeta,
+    BaseBlock, BaseReceipt, BaseTxEnvelope, ChainInfo, RecoveredBlock, SealedHeader,
+    transaction::TransactionMeta,
 };
-use base_common_types_chain::{RecoveredBlock, SealedHeader};
-use base_execution_state_api::{
-    BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
-    StorageSettings, StorageSettingsCache, TryIntoHistoricalStateProvider,
+use base_execution_state_database::{
+    DBProvider, Database, DatabaseProviderROFactory, DbTx, init_db, mdbx::DatabaseArguments,
+    models::StoredBlockBodyIndices, tables,
 };
-use base_execution_state_database::{Database, DbTx, models::StoredBlockBodyIndices, tables};
-use base_execution_state_database::{init_db, mdbx::DatabaseArguments};
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
-    MINIMUM_UNWIND_SAFE_DISTANCE, PruneCheckpoint, PruneModes, PruneSegment,
+    BlockBodyIndicesProvider, ChainStateBlockReader, ChainStateBlockWriter,
+    MINIMUM_UNWIND_SAFE_DISTANCE, PipelineTarget, ProviderResult, PruneCheckpoint, PruneModes,
+    PruneSegment, StageCheckpoint, StageId, StaticFileSegment, StorageSettings,
+    StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use base_execution_state_types::{PipelineTarget, StageCheckpoint, StageId};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use tracing::{info, instrument, trace, warn};
@@ -38,9 +34,9 @@ use tracing::{info, instrument, trace, warn};
 use crate::{
     BalProvider, BalStoreHandle, BlockHashReader, BlockNumReader, BlockReader, ChainSpecProvider,
     DatabaseProviderFactory, HeaderProvider, HeaderSyncGapProvider, InMemoryBalStore,
-    MetadataProvider, ProviderError, ProviderRange, PruneCheckpointReader, RocksDBProviderFactory,
-    StageCheckpointReader, StateProviderBox, StaticFileProviderFactory, StaticFileWriter,
-    TransactionVariant, TransactionsProvider,
+    MetadataProvider, OverlayManager, ProviderError, ProviderRange, PruneCheckpointReader,
+    RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StaticFileProviderFactory,
+    StaticFileWriter, TransactionVariant, TransactionsProvider,
     providers::{
         RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut,
         state::latest::LatestStateProvider,
@@ -90,7 +86,7 @@ pub struct ProviderFactory {
     /// Store for block access lists.
     bal_store: BalStoreHandle,
     /// Task runtime for spawning parallel I/O work.
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
     /// Minimum distance from tip required before pruning can occur.
     minimum_pruning_distance: u64,
     /// Database provider metrics shared by providers created from this factory.
@@ -122,7 +118,7 @@ impl ProviderFactory {
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> ProviderResult<Self> {
         let db = db.into();
         // Load storage settings from database at init time. Creates a temporary provider
@@ -182,7 +178,7 @@ impl ProviderFactory {
         chain_spec: Arc<BaseChainSpec>,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> ProviderResult<Self> {
         Self::new(db, chain_spec, static_file_provider, rocksdb_provider, runtime)
             .and_then(Self::assert_consistent)
@@ -248,7 +244,7 @@ impl ProviderFactory {
     fn watch_db_directory(&self) {
         let factory = self.clone();
         let db_path = self.db.path();
-        base_common_runtime_tasks::spawn_os_thread("ro-sync", move || {
+        base_common_runtime::spawn_os_thread("ro-sync", move || {
             let (tx, rx) = std::sync::mpsc::channel();
             let mut watcher = RecommendedWatcher::new(
                 move |res| {
@@ -361,7 +357,7 @@ impl ProviderFactory {
         args: DatabaseArguments,
         static_file_provider: StaticFileProvider,
         rocksdb_provider: RocksDBProvider,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<Self> {
         Ok(Self::new(
             init_db(path, args)?,
@@ -1014,14 +1010,17 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::SignerRecoverable;
-    use base_execution_state_database::{DbTxMut, tables};
     use base_execution_state_database::{
-        mdbx::DatabaseArguments, test_utils::ERROR_TEMPDIR, test_utils::create_test_rocksdb_dir,
-        test_utils::create_test_static_files_dir,
+        DbTxMut,
+        mdbx::DatabaseArguments,
+        tables,
+        test_utils::{ERROR_TEMPDIR, create_test_rocksdb_dir, create_test_static_files_dir},
     };
-    use base_execution_state_types::ProviderError;
-    use base_execution_state_types::{PruneMode, PruneModes};
-    use base_testing_support::{generators, generators::BlockParams, generators::random_header};
+    use base_execution_state_types::{ProviderError, PruneMode, PruneModes};
+    use base_testing_support::{
+        generators,
+        generators::{BlockParams, random_header},
+    };
 
     use super::*;
     use crate::{
@@ -1105,7 +1104,7 @@ mod tests {
             DatabaseArguments::new(Default::default()),
             StaticFileProvider::read_write(static_dir_path).unwrap(),
             RocksDBProvider::builder(&rocksdb_path).build().unwrap(),
-            base_common_runtime_tasks::Runtime::test(),
+            base_common_runtime::Runtime::test(),
         )
         .unwrap();
         let provider = factory.provider().unwrap();

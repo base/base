@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_common_types_chain::BaseBlock;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId};
-use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
-use base_consensus_driver_service::{ResetReason, SequencerEngineClient};
+use base_consensus_batch::{AttributesWithParent, L2BlockInfo};
+use base_consensus_driver::{ResetReason, SequencerEngineClient};
 use tokio::sync::mpsc;
 
 use super::ExecutionPayloadConverter;
@@ -42,14 +42,14 @@ impl SequencerEngineClient for ActionSequencerEngineClient {
     async fn reset_engine_forkchoice(
         &self,
         reason: ResetReason,
-    ) -> Result<(), base_consensus_driver_service::EngineClientError> {
+    ) -> Result<(), base_consensus_driver::EngineClientError> {
         self.inner.reset_engine_forkchoice(reason).await
     }
 
     async fn start_build_block(
         &self,
         attributes: AttributesWithParent,
-    ) -> Result<PayloadId, base_consensus_driver_service::EngineClientError> {
+    ) -> Result<PayloadId, base_consensus_driver::EngineClientError> {
         self.inner.start_build_block(attributes).await
     }
 
@@ -57,18 +57,16 @@ impl SequencerEngineClient for ActionSequencerEngineClient {
         &self,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
-    ) -> Result<BaseExecutionPayloadEnvelope, base_consensus_driver_service::EngineClientError>
-    {
+    ) -> Result<BaseExecutionPayloadEnvelope, base_consensus_driver::EngineClientError> {
         self.inner.get_sealed_payload(payload_id, attributes).await
     }
 
     async fn insert_unsafe_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
-    ) -> Result<L2BlockInfo, base_consensus_driver_service::EngineClientError> {
-        let block = ExecutionPayloadConverter::block_from_envelope(&payload).map_err(|e| {
-            base_consensus_driver_service::EngineClientError::ResponseError(e.to_string())
-        })?;
+    ) -> Result<L2BlockInfo, base_consensus_driver::EngineClientError> {
+        let block = ExecutionPayloadConverter::block_from_envelope(&payload)
+            .map_err(|e| base_consensus_driver::EngineClientError::ResponseError(e.to_string()))?;
         let inserted_head = self.inner.insert_unsafe_payload(payload).await?;
         let _ = self.inserted_tx.send((block, inserted_head)).await;
         Ok(inserted_head)
@@ -76,13 +74,11 @@ impl SequencerEngineClient for ActionSequencerEngineClient {
 
     async fn get_unsafe_head(
         &self,
-    ) -> Result<L2BlockInfo, base_consensus_driver_service::EngineClientError> {
+    ) -> Result<L2BlockInfo, base_consensus_driver::EngineClientError> {
         self.inner.get_unsafe_head().await
     }
 
-    async fn el_sync_finished(
-        &self,
-    ) -> Result<bool, base_consensus_driver_service::EngineClientError> {
+    async fn el_sync_finished(&self) -> Result<bool, base_consensus_driver::EngineClientError> {
         self.inner.el_sync_finished().await
     }
 }

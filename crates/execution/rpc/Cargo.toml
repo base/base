@@ -1,0 +1,166 @@
+[package]
+name = "base-execution-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Ethereum RPC implementation for Base."
+
+[lints]
+workspace = true
+
+[dependencies]
+lru = { workspace = true }
+metrics = { workspace = true }
+itertools = { workspace = true }
+dyn-clone = { workspace = true }
+alloy-serde = { workspace = true }
+async-trait = { workspace = true }
+pin-project = { workspace = true }
+colorchoice = { workspace = true }
+alloy-chains = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-eip2124 = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-json-rpc = { workspace = true }
+alloy-transport = { workspace = true }
+jsonrpsee-types = { workspace = true }
+alloy-hardforks = { workspace = true }
+alloy-sol-types = { workspace = true }
+opentelemetry-http = { workspace = true }
+base-consensus-batch = { workspace = true }
+alloy-rpc-types-admin = { workspace = true }
+alloy-rpc-types-debug = { workspace = true }
+boa_gc = { workspace = true, optional = true }
+url = { workspace = true, features = ["serde"] }
+tower = { workspace = true, features = ["full"] }
+base-execution-state-tasks = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+http = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+strum = { workspace = true, features = ["derive"] }
+base-execution-state-provider = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+base-execution-state-database = { workspace = true }
+alloy-eips = { features = ["kzg"], workspace = true }
+base-execution-network-service = { workspace = true }
+futures = { features = ["default"], workspace = true }
+base-common-observability-events = { workspace = true }
+derive_more = { workspace = true, features = ["full"] }
+serde_json = { workspace = true, features = ["alloc"] }
+alloy-eip7928 = { features = ["rlp"], workspace = true }
+schnellru = { workspace = true, features = ["default"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+parking_lot = { workspace = true, features = ["default"] }
+tokio-stream = { features = ["default"], workspace = true }
+opentelemetry = { workspace = true, features = ["default"] }
+jsonrpsee-core = { features = ["default"], workspace = true }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+tracing = { workspace = true, features = ["attributes", "std"] }
+base-common-runtime = { features = ["rayon"], workspace = true }
+jsonrpsee = { workspace = true, features = ["macros", "server"] }
+tower-http = { workspace = true, features = ["default", "full"] }
+tokio-util = { workspace = true, features = ["default", "codec"] }
+alloy-transport-http = { workspace = true, features = ["default"] }
+jsonrpsee-http-client = { workspace = true, features = ["default"] }
+base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-payload = { workspace = true, features = ["default"] }
+alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
+base-common-chain-config = { workspace = true, features = ["default"] }
+anstyle = { workspace = true, optional = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true, optional = true }
+alloy-rpc-client = { features = ["default", "reqwest"], workspace = true }
+boa_engine = { workspace = true, optional = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "map"] }
+base-common-types-rpc = { features = ["default", "serde"], workspace = true }
+serde = { workspace = true, features = ["derive", "default"], optional = true }
+base-execution-evm-blocks = { features = ["default", "witness"], workspace = true }
+base-execution-network-wire = { features = ["secp256k1", "std"], workspace = true }
+base-common-types-chain = { features = ["k256", "reth", "serde"], workspace = true }
+tokio = { features = ["default", "sync", "rt", "rt-multi-thread"], workspace = true }
+base-common-observability-metrics = { workspace = true, features = ["metrics", "common"] }
+base-execution-state-types = { features = ["default", "eip1186", "serde"], workspace = true }
+base-common-client-ethereum = { features = ["mnemonic", "debug-api", "reqwest", "ws"], workspace = true }
+base-common-types-payload = { workspace = true, features = ["serde", "std", "kzg", "jwt-aws-lc-rs", "default"] }
+base-execution-evm-runtime = { features = ["memory_limit", "optional_block_gas_limit", "optional_eip3607", "optional_fee_charge", "optional_no_base_fee"], workspace = true }
+
+[dev-dependencies]
+alloy-eips = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-genesis = { workspace = true }
+assert_matches = { workspace = true }
+alloy-hardforks = { workspace = true }
+base-testing-support = { workspace = true }
+base-execution-network-wire = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+base-execution-state-database = { workspace = true }
+serde_json = { workspace = true, features = ["alloc"] }
+base-execution-state-maintenance = { workspace = true }
+httpmock = { workspace = true, features = ["default"] }
+criterion = { workspace = true, features = ["default"] }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+base-common-types-rpc = { workspace = true, features = [] }
+http-body-util = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
+alloy-rpc-client = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["client", "server"] }
+snapbox = { workspace = true, features = ["default", "term-svg"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-types = { workspace = true, features = ["std"] }
+base-testing-devnet = { workspace = true, features = ["test-utils"] }
+base-common-runtime = { workspace = true, features = ["test-utils"] }
+base-consensus-batch = { features = ["test-utils"], workspace = true }
+base-execution-txpool = { workspace = true, features = ["test-utils"] }
+base-execution-payload = { workspace = true, features = ["test-utils"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
+base-common-types-payload = { workspace = true, features = ["test-utils"] }
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
+base-execution-rpc = { workspace = true, features = ["test-utils", "client"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
+base-execution-network-service = { workspace = true, features = ["test-utils"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+base-common-observability-events = { workspace = true, features = ["test-utils"] }
+base-common-types-chain = { workspace = true, features = ["reth", "serde", "k256"] }
+base-execution-evm-runtime = { workspace = true, features = ["default", "test-utils"] }
+
+[[test]]
+name = "server"
+path = "tests/server/it/main.rs"
+[[bench]]
+name = "inspectors_js_tracer"
+required-features = ["js-tracer"]
+path = "benches/inspectors/js_tracer.rs"
+harness = false
+
+[features]
+default = ["metrics", "std"]
+client = ["base-execution-state-provider/serde", "jsonrpsee/async-client", "jsonrpsee/client"]
+metrics = [
+    "base-execution-payload/metrics",
+    "base-execution-state-tasks/metrics",
+    "base-common-observability-metrics/metrics",
+    "base-common-observability-events/metrics",
+    "base-execution-evm-blocks/metrics",
+]
+test-utils = [
+    "base-execution-evm-blocks/test-utils",
+    "base-execution-state-provider/test-utils",
+    "base-execution-network-service/test-utils",
+    "dep:base-execution-state-maintenance",
+]
+js-tracer = ["dep:boa_engine", "dep:boa_gc"]
+serde = ["dep:serde", "base-execution-evm-runtime/serde"]
+std = [
+    "alloy-primitives/std",
+    "anstyle/std",
+    "serde/std",
+    "serde_json/std",
+    "base-execution-evm-runtime/std",
+    "thiserror/std",
+]

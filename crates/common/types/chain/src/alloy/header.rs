@@ -1,7 +1,7 @@
 //! Compact implementation for [`AlloyHeader`]
 
 use alloy_primitives::{Address, B256, BlockNumber, Bloom, Bytes, U256};
-use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
+use base_common_codec::{add_arbitrary_tests, generate_tests};
 use base_common_types_chain::Header as AlloyHeader;
 
 use crate::Compact;
@@ -51,7 +51,7 @@ pub(crate) struct Header {
 /// All new fields should be added here in the form of a `Option<T>`, since `Option<HeaderExt>` is
 /// used as a field of [`Header`] for backwards compatibility.
 ///
-/// More information: <https://github.com/paradigmxyz/reth/issues/7820> & [`base_common_codec_macros::Compact`].
+/// More information: <https://github.com/paradigmxyz/reth/issues/7820> & [`base_common_codec::Compact`].
 #[cfg_attr(
     any(test, feature = "test-utils"),
     derive(serde::Serialize, serde::Deserialize, arbitrary::Arbitrary)

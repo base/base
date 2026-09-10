@@ -1,15 +1,15 @@
 //! Contains the [`BaseTxResult`] type.
 
 use alloy_primitives::Address;
-use base_execution_evm_machine::ResultAndState;
-use base_execution_evm_runtime::state::AccountInfo;
-use base_execution_evm_runtime::{EthTxResult, TxResult as TxResultTrait};
+use base_execution_evm_runtime::{
+    AccountInfo, EthTxResult, ResultAndState, TxResult as TxResultTrait,
+};
 
 /// The result of executing a Base transaction.
 #[derive(Debug)]
-pub struct BaseTxResult<H, T> {
+pub struct BaseTxResult {
     /// The inner result of the transaction execution.
-    pub inner: EthTxResult<H, T>,
+    pub inner: EthTxResult<crate::BaseHaltReason, base_common_types_chain::OpTxType>,
     /// Whether the transaction is a deposit transaction.
     pub is_deposit: bool,
     /// The sender of the transaction.
@@ -18,8 +18,8 @@ pub struct BaseTxResult<H, T> {
     pub depositor: Option<AccountInfo>,
 }
 
-impl<H: Send + 'static, T: Send + 'static> TxResultTrait for BaseTxResult<H, T> {
-    type HaltReason = H;
+impl TxResultTrait for BaseTxResult {
+    type HaltReason = crate::BaseHaltReason;
 
     fn result(&self) -> &ResultAndState<Self::HaltReason> {
         &self.inner.result

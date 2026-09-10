@@ -5,12 +5,11 @@ use std::{path::PathBuf, sync::Arc};
 use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
 use base_common_chain_config::BaseChainSpec;
-use base_common_cli_support::hash_or_num_value_parser;
-use base_common_runtime_tasks::Runtime;
+use base_common_cli::hash_or_num_value_parser;
+use base_common_runtime::Runtime;
 use base_execution_network_service::{BlockDownloaderProvider, NetworkConfigBuilder};
 use base_execution_network_wire::BodiesClient;
-use base_node_config::NodeFileConfig as Config;
-use base_node_config::{DatadirArgs, NetworkArgs, get_single_header};
+use base_node_config::{DatadirArgs, NetworkArgs, NodeFileConfig as Config, get_single_header};
 use clap::{Parser, Subcommand};
 
 mod bootnode;
@@ -191,7 +190,7 @@ impl DownloadArgs {
         let p2p_secret_key = self.network.secret_key(default_secret_key_path)?;
         let rlpx_socket = (self.network.addr, self.network.port).into();
         let boot_nodes = self.network.resolved_bootnodes().unwrap_or_else(|| {
-            base_execution_network_types::NodeRecord::parse_bootnodes(
+            base_execution_network_wire::NodeRecord::parse_bootnodes(
                 self.chain.config.bootnodes.execution,
             )
             .unwrap_or_default()

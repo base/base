@@ -10,11 +10,11 @@ use std::time::Duration;
 use alloy_primitives::Address;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_common_chain_config::rollup_config;
-use base_common_cli_support::{LogConfig, RuntimeManager};
+use base_common_cli::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_host_service::ProverConfig;
+use base_proof_host::ProverConfig;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_host_service::{
+use base_proof_host::{
     DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
 };
 #[cfg(any(target_os = "linux", feature = "local"))]
@@ -42,8 +42,8 @@ use tracing::warn;
 #[cfg(any(target_os = "linux", feature = "local"))]
 use uuid::Uuid;
 
-base_common_cli_support::define_log_args!("BASE_PROVER_NITRO_HOST");
-base_common_cli_support::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
+base_common_cli::define_log_args!("BASE_PROVER_NITRO_HOST");
+base_common_cli::define_metrics_args!("BASE_PROVER_NITRO_HOST", 7300);
 
 /// Nitro TEE prover host binary.
 #[derive(Parser)]
@@ -214,8 +214,8 @@ impl Cli {
     pub(crate) fn run(self) -> eyre::Result<()> {
         let Self { command, logging, metrics } = self;
         LogConfig::from(logging).init_tracing_subscriber()?;
-        base_common_cli_support::MetricsConfig::from(metrics).init_with(|| {
-            base_common_cli_support::register_version_metrics!();
+        base_common_cli::MetricsConfig::from(metrics).init_with(|| {
+            base_common_cli::register_version_metrics!();
         })?;
 
         RuntimeManager::new().with_thread_stack_size(8 * 1024 * 1024).run_until_shutdown(

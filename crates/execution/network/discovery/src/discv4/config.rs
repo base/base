@@ -8,11 +8,11 @@ use std::{
     time::Duration,
 };
 
-use crate::{NatResolver, ResolveNatInterval};
 use alloy_primitives::bytes::Bytes;
 use alloy_rlp::Encodable;
-use base_execution_network_types::BanList;
-use base_execution_network_types::NodeRecord;
+use base_execution_network_wire::{BanList, NodeRecord};
+
+use crate::{NatResolver, ResolveNatInterval};
 
 /// Configuration parameters that define the performance of the discovery network.
 #[derive(Clone, Debug)]

@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::BlockResponse;
 pub use alloy_eips::eip1559::Eip1559Estimation;
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{B256, U64, U128};
@@ -13,7 +12,7 @@ use alloy_rpc_client::WeakClient;
 use alloy_transport::{TransportError, TransportResult};
 
 use crate::{
-    Identity,
+    BlockResponse, Identity,
     fillers::{BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller},
 };
 

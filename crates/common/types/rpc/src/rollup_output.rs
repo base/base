@@ -1,8 +1,9 @@
 //! Output Types
 
-use crate::RollupSyncStatus;
 use alloy_primitives::B256;
 use base_common_types_chain::{L2BlockInfo, OutputRoot};
+
+use crate::RollupSyncStatus;
 
 /// An [output response][or] for Base Rollup.
 ///

@@ -1,12 +1,11 @@
 //! Reth-specific provider extensions.
-use crate::Network;
 use alloy_primitives::{Address, U64, U256, map::HashMap};
 use alloy_transport::TransportResult;
 use base_common_types_rpc::BlockId;
 
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;
-use crate::Provider;
+use crate::{Network, Provider};
 
 /// Reth API namespace for reth-specific methods
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]

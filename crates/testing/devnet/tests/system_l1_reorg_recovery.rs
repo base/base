@@ -5,9 +5,8 @@ use std::time::Duration;
 use alloy_eips::{BlockNumberOrTag, NumHash};
 use alloy_primitives::B256;
 use base_common_chain_config::RollupConfig;
-use base_common_client_ethereum::{Base, Ethereum};
-use base_common_client_ethereum::{Provider, RootProvider};
-use base_consensus_batch_types::{L2BlockInfo, SyncStatus};
+use base_common_client_ethereum::{Base, Ethereum, Provider, RootProvider};
+use base_consensus_batch::{L2BlockInfo, SyncStatus};
 use base_testing_devnet::{
     L1ReorgDriver, L1RpcProxy, SystemTestProviderExt, SystemTestRpcClient, SystemTestStackBuilder,
 };
@@ -249,11 +248,8 @@ async fn l2_block_info(
         .ok_or_eyre("L2 block is missing at the requested height")?
         .into_consensus()
         .map_transactions(|transaction| transaction.inner.inner);
-    base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
-        &block,
-        &rollup_config.genesis,
-    )
-    .wrap_err("Failed to decode L1 origin from L2 block")
+    base_consensus_batch::L2BlockInfoDecoder::from_block_and_genesis(&block, &rollup_config.genesis)
+        .wrap_err("Failed to decode L1 origin from L2 block")
 }
 
 async fn l1_block_hash(provider: &RootProvider<Ethereum>, number: u64) -> Result<B256> {

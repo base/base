@@ -8,7 +8,7 @@ use std::{
 use alloy_primitives::{B256, map::B256Map};
 use alloy_rlp::Encodable;
 use base_common_types_chain::DashMap;
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_trie::{
     ProofTrieNodeV2,
     hashed_cursor::HashedStorageCursor,

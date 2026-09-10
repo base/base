@@ -9,18 +9,20 @@ use std::{
 
 use alloy_primitives::{Address, BlockNumber, TxHash, TxNumber, map::HashMap};
 use base_common_types_chain::BaseReceipt;
-use base_execution_state_api::{ChangeSetReader, DBProvider, DbTxProvider};
 use base_execution_state_database::{
-    CursorMutTy, CursorTy, DbCursorRO, DbDupCursorRW, DbTx, DbTxMut, DupCursorMutTy, DupCursorTy,
-    Value, models::AccountBeforeTx, models::StorageBeforeTx, static_file::TransactionSenderMask,
+    CursorMutTy, CursorTy, DBProvider, DbCursorRO, DbCursorRW, DbDupCursorRW, DbTx, DbTxMut,
+    DbTxProvider, DupCursorMutTy, DupCursorTy, Value,
+    models::{
+        AccountBeforeTx, BlockNumberAddress, ShardedKey, StorageBeforeTx,
+        storage_sharded_key::StorageShardedKey,
+    },
+    static_file::TransactionSenderMask,
+    tables,
+    tables::BlockNumberList,
 };
-use base_execution_state_database::{
-    DbCursorRW, models::BlockNumberAddress, models::ShardedKey,
-    models::storage_sharded_key::StorageShardedKey, tables, tables::BlockNumberList,
+use base_execution_state_types::{
+    ChangeSetReader, ProviderError, ProviderResult, StaticFileSegment, StorageEntry,
 };
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{ProviderError, ProviderResult};
 use rayon::slice::ParallelSliceMut;
 use strum::{Display, EnumIs};
 
@@ -830,12 +832,10 @@ impl EitherWriterDestination {}
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
-    use base_execution_state_api::DatabaseProviderROFactory;
-    use base_execution_state_api::{
-        DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
+    use base_execution_state_database::{
+        DatabaseProviderFactory, DatabaseProviderROFactory, models::AccountBeforeTx,
     };
-    use base_execution_state_database::models::AccountBeforeTx;
-    use base_execution_state_types::StaticFileSegment;
+    use base_execution_state_types::{StaticFileSegment, StorageSettings, StorageSettingsCache};
 
     use super::*;
     use crate::{StaticFileWriter, test_utils::create_test_provider_factory};
@@ -933,17 +933,15 @@ mod tests {
 
 #[cfg(test)]
 mod rocksdb_tests {
-    use base_execution_state_api::DatabaseProviderROFactory;
     use std::marker::PhantomData;
 
     use alloy_primitives::{Address, B256};
-    use base_execution_state_api::{
-        DatabaseProviderFactory, StorageSettings, StorageSettingsCache,
-    };
     use base_execution_state_database::{
-        DbTxMut, models::IntegerList, models::ShardedKey,
-        models::storage_sharded_key::StorageShardedKey, tables,
+        DatabaseProviderFactory, DatabaseProviderROFactory, DbTxMut,
+        models::{IntegerList, ShardedKey, storage_sharded_key::StorageShardedKey},
+        tables,
     };
+    use base_execution_state_types::{StorageSettings, StorageSettingsCache};
     use tempfile::TempDir;
 
     use super::*;

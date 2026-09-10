@@ -1,29 +1,18 @@
 //! Ethereum EVM implementation.
 
-use base_execution_evm_runtime::EvmMachine as RevmEvm;
 use core::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
 
 use alloy_primitives::{Address, Bytes};
-use base_execution_evm_machine::{
-    BlockEnv, CfgEnv, DBErrorMarker, EVMError, HaltReason, ResultAndState, TxEnv,
-};
+pub(crate) use base_execution_evm_runtime::EthEvmContext;
 use base_execution_evm_runtime::{
-    Context, ExecuteEvm, InspectEvm, Inspector, MainBuilder, MainContext, SystemCallEvm,
-    interpreter::InterpreterResult,
-    precompile::{PrecompileSpecId, Precompiles},
-    primitives::hardfork::SpecId,
+    BlockEnv, CfgEnv, DBErrorMarker, Database, EVMError, EthPrecompiles, Evm, EvmEnv,
+    EvmMachine as RevmEvm, ExecuteEvm, HaltReason, InspectEvm, Inspector, InterpreterResult,
+    MainBuilder, MainContext, NoOpInspector, PrecompileProvider, PrecompileSpecId, Precompiles,
+    PrecompilesMap, ResultAndState, SystemCallEvm, TxEnv, evm_api::EvmFactory, hardfork::SpecId,
 };
-use base_execution_evm_runtime::{EthPrecompiles, NoOpInspector, PrecompileProvider};
-
-use crate::{Database, Evm, EvmEnv, PrecompilesMap, evm_api::EvmFactory};
-
-mod tx_result;
-pub use tx_result::*;
-
-pub use base_execution_evm_machine::EthEvmContext;
 
 /// Helper builder to construct `EthEvm` instances in a unified way.
 #[derive(Debug)]
@@ -98,7 +87,7 @@ impl<DB: Database, I> EthEvmBuilder<DB, I> {
             ))),
         };
 
-        let inner = Context::mainnet()
+        let inner = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_block(self.block_env)
             .with_cfg(self.cfg_env)
             .with_db(self.db)
@@ -205,7 +194,12 @@ where
     }
 
     fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>) {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.ctx;
+        let base_execution_evm_runtime::ReferenceContext {
+            block: block_env,
+            cfg: cfg_env,
+            journaled_state,
+            ..
+        } = self.inner.ctx;
 
         (journaled_state.database, EvmEnv { block_env, cfg_env })
     }
@@ -234,7 +228,7 @@ pub struct EthEvmFactory;
 
 impl EvmFactory for EthEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = EthEvm<DB, I, Self::Precompiles>;
-    type Context<DB: Database> = Context<TxEnv, CfgEnv, DB>;
+    type Context<DB: Database> = base_execution_evm_runtime::ReferenceContext<TxEnv, CfgEnv, DB>;
     type Tx = TxEnv;
     type Error<DBError: DBErrorMarker> = EVMError<DBError>;
     type HaltReason = HaltReason;
@@ -261,7 +255,7 @@ mod tests {
     use alloc::boxed::Box;
 
     use alloy_primitives::address;
-    use base_execution_evm_runtime::{database::EmptyDB, primitives::hardfork::SpecId};
+    use base_execution_evm_runtime::{EmptyDB, hardfork::SpecId};
 
     use super::*;
 

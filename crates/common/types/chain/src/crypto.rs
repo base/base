@@ -5,8 +5,6 @@ use alloc::boxed::Box;
 #[cfg(any(feature = "secp256k1", feature = "k256"))]
 use alloy_primitives::Signature;
 use alloy_primitives::U256;
-#[cfg(feature = "crypto-backend")]
-pub use backend::{CryptoProvider, CryptoProviderAlreadySetError, install_default_provider};
 
 /// Error for signature S.
 #[derive(Debug, thiserror::Error)]
@@ -54,148 +52,6 @@ pub const SECP256K1N_HALF: U256 = U256::from_be_bytes([
 /// Serialized uncompressed public key
 pub type UncompressedPublicKey = [u8; 65];
 
-/// Crypto backend module for pluggable cryptographic implementations.
-#[cfg(feature = "crypto-backend")]
-pub mod backend {
-    use alloc::sync::Arc;
-    #[cfg(feature = "std")]
-    use std::sync::OnceLock;
-
-    use alloy_primitives::Address;
-    #[cfg(not(feature = "std"))]
-    use once_cell::race::OnceBox;
-
-    use super::*;
-
-    /// Trait for cryptographic providers that can perform signature recovery.
-    ///
-    /// This trait allows pluggable cryptographic backends for Ethereum signature recovery.
-    /// By default, alloy uses compile-time selected implementations (secp256k1 or k256),
-    /// but applications can install a custom provider to override this behavior.
-    ///
-    /// # Why is this needed?
-    ///
-    /// The primary reason is performance - when targeting special execution environments
-    /// that require custom cryptographic logic. For example, zkVMs (zero-knowledge virtual
-    /// machines) may have special accelerators that would allow them to perform signature
-    /// recovery faster.
-    ///
-    /// # Usage
-    ///
-    /// 1. Enable the `crypto-backend` feature in your `Cargo.toml`
-    /// 2. Implement the `CryptoProvider` trait for your custom backend
-    /// 3. Install it globally using [`install_default_provider`]
-    /// 4. All subsequent signature recovery operations will use your provider
-    ///
-    /// Note: This trait currently only provides signature recovery functionality,
-    /// not signature creation. For signature creation, use the compile-time selected
-    /// implementations in the [`secp256k1`] module.
-    ///
-    /// ```rust,ignore
-    /// use base_common_types_chain::crypto::backend::{CryptoProvider, install_default_provider};
-    /// use alloy_primitives::Address;
-    /// use alloc::sync::Arc;
-    ///
-    /// struct MyCustomProvider;
-    ///
-    /// impl CryptoProvider for MyCustomProvider {
-    ///     fn recover_signer_unchecked(
-    ///         &self,
-    ///         sig: &[u8; 65],
-    ///         msg: &[u8; 32],
-    ///     ) -> Result<Address, RecoveryError> {
-    ///         // Your custom implementation here
-    ///         todo!()
-    ///     }
-    /// }
-    ///
-    /// // Install your provider globally
-    /// install_default_provider(Arc::new(MyCustomProvider)).unwrap();
-    /// ```
-    pub trait CryptoProvider: Send + Sync + 'static {
-        /// Recover signer from signature and message hash, without ensuring low S values.
-        fn recover_signer_unchecked(
-            &self,
-            sig: &[u8; 65],
-            msg: &[u8; 32],
-        ) -> Result<Address, RecoveryError>;
-
-        /// Verify a signature against a public key and message hash, without ensuring low S values.
-        fn verify_and_compute_signer_unchecked(
-            &self,
-            pubkey: &[u8; 65],
-            sig: &[u8; 64],
-            msg: &[u8; 32],
-        ) -> Result<Address, RecoveryError>;
-    }
-
-    /// Global default crypto provider.
-    #[cfg(feature = "std")]
-    static DEFAULT_PROVIDER: OnceLock<Arc<dyn CryptoProvider>> = OnceLock::new();
-
-    #[cfg(not(feature = "std"))]
-    static DEFAULT_PROVIDER: OnceBox<Arc<dyn CryptoProvider>> = OnceBox::new();
-
-    /// Error returned when attempting to install a provider when one is already installed.
-    /// Contains the provider that was attempted to be installed.
-    pub struct CryptoProviderAlreadySetError {
-        /// The provider that was attempted to be installed.
-        pub provider: Arc<dyn CryptoProvider>,
-    }
-
-    impl core::fmt::Debug for CryptoProviderAlreadySetError {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            f.debug_struct("CryptoProviderAlreadySetError")
-                .field("provider", &"<crypto provider>")
-                .finish()
-        }
-    }
-
-    impl core::fmt::Display for CryptoProviderAlreadySetError {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            write!(f, "crypto provider already installed")
-        }
-    }
-
-    impl core::error::Error for CryptoProviderAlreadySetError {}
-
-    /// Install the default crypto provider.
-    ///
-    /// This sets the global default provider used by the high-level crypto functions.
-    /// Returns an error containing the provider that was attempted to be installed if one is
-    /// already set.
-    pub fn install_default_provider(
-        provider: Arc<dyn CryptoProvider>,
-    ) -> Result<(), CryptoProviderAlreadySetError> {
-        #[cfg(feature = "std")]
-        {
-            DEFAULT_PROVIDER.set(provider).map_err(|provider| {
-                // Return the provider we tried to install in the error
-                CryptoProviderAlreadySetError { provider }
-            })
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            DEFAULT_PROVIDER.set(Box::new(provider)).map_err(|provider| {
-                // Return the provider we tried to install in the error
-                CryptoProviderAlreadySetError { provider: *provider }
-            })
-        }
-    }
-
-    /// Get the currently installed default provider, panicking if none is installed.
-    pub fn get_default_provider() -> &'static dyn CryptoProvider {
-        try_get_provider().unwrap_or_else(|| {
-            panic!("No crypto backend installed. Call install_default_provider() first.")
-        })
-    }
-
-    /// Try to get the currently installed default provider, returning None if none is installed.
-    pub(super) fn try_get_provider() -> Option<&'static dyn CryptoProvider> {
-        DEFAULT_PROVIDER.get().map(|arc| arc.as_ref())
-    }
-}
-
 /// Secp256k1 cryptographic functions.
 #[cfg(any(feature = "secp256k1", feature = "k256"))]
 pub mod secp256k1 {
@@ -224,13 +80,6 @@ pub mod secp256k1 {
         sig[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
         sig[64] = signature.v() as u8;
 
-        // Try dynamic backend first when crypto-backend feature is enabled
-        #[cfg(feature = "crypto-backend")]
-        if let Some(provider) = super::backend::try_get_provider() {
-            return provider.recover_signer_unchecked(&sig, &hash.0);
-        }
-
-        // Fallback to compile-time selected implementation
         // NOTE: we are removing error from underlying crypto library as it will restrain primitive
         // errors and we care only if recovery is passing or not.
         imp::recover_signer_unchecked(&sig, &hash.0).map_err(|_| RecoveryError::new())
@@ -260,13 +109,6 @@ pub mod secp256k1 {
         sig[0..32].copy_from_slice(&signature.r().to_be_bytes::<32>());
         sig[32..64].copy_from_slice(&signature.s().to_be_bytes::<32>());
 
-        // Try dynamic backend first when crypto-backend feature is enabled
-        #[cfg(feature = "crypto-backend")]
-        if let Some(provider) = super::backend::try_get_provider() {
-            return provider.verify_and_compute_signer_unchecked(pubkey, &sig, &hash.0);
-        }
-
-        // Fallback to compile-time selected implementation
         imp::verify_and_compute_signer_unchecked(pubkey, &sig, &hash.0)
             .map_err(|_| RecoveryError::new())
     }
@@ -522,100 +364,5 @@ mod tests {
         assert_eq!(k256_recovered, k256_signer);
 
         assert_eq!(secp256k1_recovered, k256_recovered);
-    }
-
-    #[cfg(feature = "crypto-backend")]
-    mod backend_tests {
-        use alloc::sync::Arc;
-
-        use alloy_primitives::{Address, B256, Signature};
-
-        use crate::crypto::{RecoveryError, backend::CryptoProvider};
-
-        /// Mock crypto provider for testing
-        struct MockCryptoProvider {
-            should_fail: bool,
-            return_address: Address,
-        }
-
-        impl CryptoProvider for MockCryptoProvider {
-            fn recover_signer_unchecked(
-                &self,
-                _sig: &[u8; 65],
-                _msg: &[u8; 32],
-            ) -> Result<Address, RecoveryError> {
-                if self.should_fail { Err(RecoveryError::new()) } else { Ok(self.return_address) }
-            }
-
-            fn verify_and_compute_signer_unchecked(
-                &self,
-                _pubkey: &[u8; 65],
-                _sig: &[u8; 64],
-                _msg: &[u8; 32],
-            ) -> Result<Address, RecoveryError> {
-                if self.should_fail { Err(RecoveryError::new()) } else { Ok(self.return_address) }
-            }
-        }
-
-        #[test]
-        fn test_crypto_backend_basic_functionality() {
-            // Test that when a provider is installed, it's actually used
-            let custom_address = Address::from([0x99; 20]); // Unique test address
-            let provider =
-                Arc::new(MockCryptoProvider { should_fail: false, return_address: custom_address });
-
-            // Try to install the provider (may fail if already set from other tests)
-            let install_result = crate::crypto::backend::install_default_provider(provider);
-
-            // Create test signature and hash
-            let signature = Signature::new(
-                alloy_primitives::U256::from(123u64),
-                alloy_primitives::U256::from(456u64),
-                false,
-            );
-            let hash = B256::from([0xAB; 32]);
-
-            // Call the high-level function
-            let result = crate::crypto::secp256k1::recover_signer_unchecked(&signature, hash);
-
-            // If our provider was successfully installed, we should get our custom address
-            if install_result.is_ok() {
-                assert!(result.is_ok());
-                assert_eq!(result.unwrap(), custom_address);
-            }
-            // If provider was already set, we still should get a valid result
-            else {
-                assert!(result.is_ok()); // Should work with any provider
-            }
-        }
-
-        #[test]
-        fn test_provider_already_set_error() {
-            // First installation might work or fail if already set from another test
-            // Since tests are ran in parallel.
-            let provider1 = Arc::new(MockCryptoProvider {
-                should_fail: false,
-                return_address: Address::from([0x11; 20]),
-            });
-            let _result1 = crate::crypto::backend::install_default_provider(provider1);
-
-            // Second installation should always fail since OnceLock can only be set once
-            let provider2 = Arc::new(MockCryptoProvider {
-                should_fail: true,
-                return_address: Address::from([0x22; 20]),
-            });
-            let result2 = crate::crypto::backend::install_default_provider(provider2);
-
-            // The second attempt should fail with CryptoProviderAlreadySetError
-            assert!(result2.is_err());
-
-            // The error should contain the provider we tried to install (provider2)
-            if let Err(err) = result2 {
-                // We can't easily compare Arc pointers due to type erasure,
-                // but we can verify the error contains a valid provider
-                // (just by accessing it without panicking)
-                let _provider_ref = err.provider.as_ref();
-            }
-        }
     }
 }

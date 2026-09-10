@@ -2,7 +2,7 @@
 
 use std::{num::NonZeroUsize, sync::OnceLock, time::Duration};
 
-use base_execution_engine_types::DEFAULT_DEV_FINALITY_DEPTH;
+use base_common_types_payload::DEFAULT_DEV_FINALITY_DEPTH;
 use clap::{Args, builder::Resettable};
 use humantime::{format_duration, parse_duration};
 

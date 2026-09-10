@@ -147,9 +147,8 @@ impl SaveBlocksInput {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::TestBlockBuilder;
-
     use super::*;
+    use crate::test_utils::TestBlockBuilder;
 
     #[test]
     fn splits_frontier_ranges() {

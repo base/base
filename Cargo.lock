@@ -309,7 +309,6 @@ checksum = "f007e257069855bdf21d27762fd3f3705a613f805c9a08309bf353503f081d71"
 dependencies = [
  "alloy-rlp",
  "arbitrary",
- "borsh",
  "bytes",
  "cfg-if",
  "const-hex",
@@ -2043,7 +2042,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-encoding-channel"
+name = "base-batcher-encoding"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -2052,7 +2051,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-observability-metrics",
  "base-common-types-chain",
- "base-consensus-batch-types",
+ "base-consensus-batch",
  "brotli",
  "clap",
  "derive_more",
@@ -2064,22 +2063,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-service-driver"
+name = "base-batcher-service"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
  "auto_impl",
  "backon",
- "base-batcher-encoding-channel",
+ "base-batcher-encoding",
  "base-common-client-ethereum",
  "base-common-client-rollup",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-consensus-batch-types",
+ "base-consensus-batch",
  "derive_more",
  "eyre",
  "futures",
@@ -2105,8 +2104,8 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "axum",
- "base-common-cli-support",
- "base-infra-audit-service",
+ "base-common-cli",
+ "base-infra-audit",
  "clap",
  "dotenvy",
  "jsonrpsee",
@@ -2124,11 +2123,11 @@ dependencies = [
  "alloy-chains",
  "base-common-chain-activation",
  "base-common-chain-config",
- "base-common-cli-support",
- "base-consensus-driver-service",
- "base-consensus-source-providers",
+ "base-common-cli",
+ "base-consensus-driver",
+ "base-consensus-source",
  "base-execution-evm-blocks",
- "base-execution-payload-builder",
+ "base-execution-payload",
  "base-node-cli",
  "base-node-service",
  "clap",
@@ -2146,7 +2145,7 @@ name = "base-bin-basectl"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "base-infra-basectl-service",
+ "base-infra-basectl",
  "clap",
  "rustls 0.23.43",
  "tokio",
@@ -2179,9 +2178,9 @@ name = "base-bin-websocket-proxy"
 version = "0.0.0"
 dependencies = [
  "axum",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-observability-metrics",
- "base-infra-websocket-proxy-service",
+ "base-infra-websocket-proxy",
  "brotli",
  "clap",
  "dotenvy",
@@ -2199,7 +2198,7 @@ dependencies = [
 name = "base-bin-witness-diff"
 version = "0.0.0"
 dependencies = [
- "base-testing-tools-witness-diff",
+ "base-testing-tools",
  "clap",
  "eyre",
  "tokio",
@@ -2209,7 +2208,7 @@ dependencies = [
 name = "base-challenger-bin"
 version = "0.0.0"
 dependencies = [
- "base-common-cli-support",
+ "base-common-cli",
  "base-proof-service-challenger",
  "clap",
  "eyre",
@@ -2228,7 +2227,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-rpc",
  "clap",
  "eyre",
@@ -2262,7 +2261,10 @@ dependencies = [
  "auto_impl",
  "base-common-types-chain",
  "base-common-types-rpc",
+ "criterion",
  "derive_more",
+ "hex-literal 1.1.0",
+ "iai-callgrind",
  "rand 0.9.5",
  "rstest",
  "serde",
@@ -2274,18 +2276,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-cli-support"
+name = "base-common-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
  "backtrace",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "cfg-if",
+ "base-common-runtime",
  "clap",
  "dirs-next",
  "eyre",
@@ -2301,7 +2302,6 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
- "snmalloc-rs",
  "thiserror 2.0.19",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -2310,7 +2310,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "tracy-client",
  "url",
 ]
 
@@ -2325,7 +2324,7 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "base-common-client-ethereum",
- "base-common-process-nodes",
+ "base-common-process",
  "base-common-types-chain",
  "base-common-types-rpc",
  "futures",
@@ -2360,7 +2359,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "auto_impl",
- "base-common-process-nodes",
+ "base-common-process",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -2419,7 +2418,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-codec-macros"
+name = "base-common-codec"
 version = "0.0.0"
 dependencies = [
  "proc-macro2",
@@ -2429,14 +2428,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-codec-storage"
-version = "0.0.0"
-dependencies = [
- "zstd",
-]
-
-[[package]]
-name = "base-common-http-proxy"
+name = "base-common-http"
 version = "0.0.0"
 dependencies = [
  "http 1.4.2",
@@ -2446,7 +2438,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-io-files"
+name = "base-common-io"
 version = "0.0.0"
 dependencies = [
  "serde",
@@ -2456,7 +2448,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-l1-transactions"
+name = "base-common-l1"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -2469,8 +2461,8 @@ dependencies = [
  "backon",
  "base-common-client-ethereum",
  "base-common-observability-metrics",
- "base-common-process-nodes",
- "base-common-runtime-tasks",
+ "base-common-process",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-rpc",
  "clap",
@@ -2567,13 +2559,11 @@ dependencies = [
  "tracing-opentelemetry 0.33.0",
  "tracing-samply",
  "tracing-subscriber",
- "tracing-tracy",
- "tracy-client",
  "url",
 ]
 
 [[package]]
-name = "base-common-process-nodes"
+name = "base-common-process"
 version = "0.0.0"
 dependencies = [
  "alloy-genesis",
@@ -2592,7 +2582,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-runtime-tasks"
+name = "base-common-runtime"
 version = "0.0.0"
 dependencies = [
  "backon",
@@ -2633,10 +2623,8 @@ dependencies = [
  "assert_matches",
  "auto_impl",
  "base-common-client-ethereum",
- "base-common-codec-macros",
- "base-common-codec-storage",
+ "base-common-codec",
  "bincode 2.0.1",
- "borsh",
  "byteorder",
  "bytes",
  "c-kzg",
@@ -2660,6 +2648,7 @@ dependencies = [
  "test-fuzz",
  "thiserror 2.0.19",
  "visibility",
+ "zstd",
 ]
 
 [[package]]
@@ -2673,20 +2662,34 @@ dependencies = [
  "arbitrary",
  "arbtest",
  "assert_matches",
+ "base-common-chain-config",
+ "base-common-client-ethereum",
  "base-common-types-chain",
+ "base-common-types-rpc",
+ "base-execution-evm-runtime",
+ "base-execution-state-types",
  "base64 0.22.1",
+ "bincode 1.3.3",
  "derive_more",
+ "either",
  "ethereum_ssz",
  "ethereum_ssz_derive",
+ "futures",
  "jsonwebtoken",
+ "pin-project",
  "rand 0.8.7",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "similar-asserts",
  "snap",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -2716,7 +2719,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-batch-types"
+name = "base-consensus-batch"
 version = "0.0.0"
 dependencies = [
  "alloc-no-stdlib",
@@ -2748,7 +2751,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-derive-pipeline"
+name = "base-consensus-derive"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -2760,7 +2763,7 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-consensus-batch-types",
+ "base-consensus-batch",
  "metrics",
  "proptest",
  "serde",
@@ -2773,7 +2776,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-driver-service"
+name = "base-consensus-driver"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
@@ -2799,14 +2802,13 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-consensus-network-service",
- "base-consensus-source-providers",
+ "base-consensus-batch",
+ "base-consensus-derive",
+ "base-consensus-network",
+ "base-consensus-source",
  "base-execution-engine-driver",
- "base-execution-engine-types",
  "base-execution-network-service",
- "base-execution-payload-builder",
+ "base-execution-payload",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-testing-devnet",
@@ -2848,7 +2850,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-network-service"
+name = "base-consensus-network"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
@@ -2864,7 +2866,7 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
+ "base-consensus-batch",
  "derive_more",
  "dirs",
  "discv5",
@@ -2892,7 +2894,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-consensus-source-providers"
+name = "base-consensus-source"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -2910,9 +2912,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-execution-state-api",
+ "base-consensus-batch",
+ "base-consensus-derive",
  "base-execution-state-database",
  "base-execution-state-maintenance",
  "base-execution-state-provider",
@@ -2945,31 +2946,26 @@ dependencies = [
  "alloy-rlp",
  "assert_matches",
  "base-common-chain-config",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-execution-engine-observers",
- "base-execution-engine-types",
  "base-execution-evm-blocks",
- "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-execution-network-service",
  "base-execution-network-wire",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-state-api",
+ "base-execution-payload",
  "base-execution-state-database",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-trie",
  "base-execution-state-types",
- "base-execution-sync-pipeline",
- "base-execution-txpool-pool",
+ "base-execution-sync",
+ "base-execution-txpool",
  "base-testing-support",
  "crossbeam-channel",
  "derive_more",
@@ -3008,19 +3004,18 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "base-common-chain-config",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
- "base-execution-engine-types",
+ "base-common-types-payload",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-service",
- "base-execution-rpc-handlers",
+ "base-execution-rpc",
  "base-execution-state-database",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-trie",
@@ -3047,24 +3042,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-engine-types"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-payload-types",
- "base-execution-state-types",
- "bincode 1.3.3",
- "futures",
- "serde",
- "serde_with",
- "thiserror 2.0.19",
- "tokio",
-]
-
-[[package]]
 name = "base-execution-evm-blocks"
 version = "0.0.0"
 dependencies = [
@@ -3081,13 +3058,9 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-consensus-batch-types",
- "base-execution-evm-machine",
+ "base-consensus-batch",
  "base-execution-evm-runtime",
- "base-execution-payload-types",
- "base-execution-state-api",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-trie",
  "base-execution-state-types",
@@ -3102,86 +3075,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-evm-crypto"
-version = "0.0.0"
-dependencies = [
- "ark-bls12-381",
- "ark-bn254",
- "ark-ec",
- "ark-ff 0.6.0",
- "ark-serialize 0.6.0",
- "ark-std 0.6.0",
- "arrayref",
- "aurora-engine-modexp",
- "aws-lc-rs",
- "base-execution-evm-machine",
- "base-execution-evm-primitives",
- "blst",
- "c-kzg",
- "cfg-if",
- "codspeed-criterion-compat 5.0.1",
- "gmp-mpfr-sys",
- "k256",
- "p256",
- "rand 0.10.2",
- "ripemd 0.2.0",
- "rstest",
- "secp256k1 0.31.1",
- "sha2 0.11.0",
- "substrate-bn",
-]
-
-[[package]]
-name = "base-execution-evm-fees"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-chain-config",
- "criterion",
- "hex-literal 1.1.0",
- "iai-callgrind",
- "rstest",
-]
-
-[[package]]
-name = "base-execution-evm-inspectors"
-version = "0.0.0"
-dependencies = [
- "alloy-hardforks 0.4.7",
- "alloy-primitives",
- "alloy-sol-types",
- "anstyle",
- "base-common-types-rpc",
- "base-execution-evm-machine",
- "base-execution-evm-runtime",
- "boa_engine",
- "boa_gc",
- "colorchoice",
- "criterion",
- "serde",
- "serde_json",
- "snapbox",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "base-execution-evm-machine"
-version = "0.0.0"
-dependencies = [
- "alloy-eip2930",
- "alloy-eip7702",
- "auto_impl",
- "base-execution-evm-primitives",
- "base-execution-state-memory",
- "bitvec",
- "cfg-if",
- "derive-where",
- "either",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "base-execution-evm-macros"
 version = "0.0.0"
 dependencies = [
@@ -3192,75 +3085,68 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-evm-precompiles"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "auto_impl",
- "base-common-chain-config",
- "base-common-types-chain",
- "base-execution-evm-crypto",
- "base-execution-evm-machine",
- "base-execution-evm-macros",
- "base-execution-evm-primitives",
- "base-execution-state-memory",
- "base64 0.22.1",
- "criterion",
- "derive_more",
- "k256",
- "p256",
- "proptest",
- "rstest",
- "sha2 0.10.9",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
-name = "base-execution-evm-primitives"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "anyhow",
- "bitvec",
- "once_cell",
- "paste",
- "phf 0.14.0",
- "rand 0.10.2",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "base-execution-evm-runtime"
 version = "0.0.0"
 dependencies = [
+ "alloy-eip2930",
+ "alloy-eip7702",
+ "alloy-eip7928",
  "alloy-eips",
+ "alloy-genesis",
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-signer",
  "alloy-sol-types",
+ "alloy-trie",
+ "anyhow",
+ "arbitrary",
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.6.0",
+ "ark-serialize 0.6.0",
+ "ark-std 0.6.0",
+ "arrayref",
+ "aurora-engine-modexp",
  "auto_impl",
+ "aws-lc-rs",
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-observability-metrics",
  "base-common-types-chain",
- "base-execution-evm-crypto",
- "base-execution-evm-fees",
- "base-execution-evm-machine",
- "base-execution-evm-precompiles",
- "base-execution-evm-primitives",
- "base-execution-state-memory",
- "base-execution-state-types",
+ "base-execution-evm-macros",
+ "base-execution-evm-runtime",
+ "base64 0.22.1",
+ "bitflags 2.13.1",
+ "bitvec",
+ "blst",
+ "bytes",
+ "c-kzg",
+ "cfg-if",
+ "codspeed-criterion-compat 5.0.1",
+ "criterion",
+ "derive-where",
  "derive_more",
  "either",
  "k256",
  "metrics",
+ "mockall",
+ "modular-bitfield",
+ "nonmax",
+ "once_cell",
+ "p256",
+ "paste",
+ "phf 0.14.0",
+ "proptest",
+ "proptest-arbitrary-interop",
+ "rand 0.10.2",
+ "ripemd 0.2.0",
  "rstest",
+ "secp256k1 0.31.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "sha2 0.11.0",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -3269,73 +3155,59 @@ dependencies = [
 name = "base-execution-network-discovery"
 version = "0.0.0"
 dependencies = [
+ "aes",
+ "aes-gcm",
  "alloy-chains",
  "alloy-eip2124",
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
+ "arrayvec",
  "assert_matches",
  "base-common-chain-config",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "base-execution-network-discv5",
- "base-execution-network-types",
+ "base-common-runtime",
+ "base-execution-network-wire",
+ "ctr",
  "dashmap",
  "data-encoding",
- "derive_more",
- "enr",
- "futures",
- "futures-util",
- "hickory-resolver 0.26.1",
- "if-addrs 0.14.0",
- "itertools 0.14.0",
- "linked_hash_set",
- "metrics",
- "parking_lot",
- "rand 0.8.7",
- "rand 0.9.5",
- "reqwest",
- "schnellru",
- "secp256k1 0.30.0",
- "serde",
- "serde_with",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "base-execution-network-discv5"
-version = "0.0.0"
-dependencies = [
- "aes",
- "aes-gcm",
- "alloy-rlp",
- "arrayvec",
- "ctr",
  "delay_map",
+ "derive_more",
  "enr",
  "fnv",
  "futures",
+ "futures-util",
  "hashlink 0.11.1",
  "hex",
+ "hickory-resolver 0.26.1",
  "hkdf",
  "if-addrs 0.13.4",
+ "if-addrs 0.14.0",
+ "itertools 0.14.0",
  "lazy_static",
  "libp2p-identity",
+ "linked_hash_set",
+ "metrics",
  "more-asserts",
  "multiaddr",
  "parking_lot",
  "quickcheck",
  "rand 0.7.3",
  "rand 0.8.7",
+ "rand 0.9.5",
  "rand_core 0.6.4",
  "rand_xorshift 0.3.0",
+ "reqwest",
+ "schnellru",
+ "secp256k1 0.30.0",
+ "serde",
+ "serde_with",
  "smallvec",
  "socket2 0.6.5",
+ "thiserror 2.0.19",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "uint 0.10.0",
@@ -3359,23 +3231,21 @@ dependencies = [
  "aquamarine",
  "auto_impl",
  "base-common-chain-config",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-execution-evm-blocks",
+ "base-execution-evm-runtime",
  "base-execution-network-discovery",
- "base-execution-network-discv5",
  "base-execution-network-service",
- "base-execution-network-types",
  "base-execution-network-wire",
- "base-execution-state-api",
- "base-execution-state-memory",
+ "base-execution-state-database",
  "base-execution-state-provider",
  "base-execution-state-trie",
  "base-execution-state-types",
- "base-execution-txpool-pool",
+ "base-execution-txpool",
  "base-testing-support",
  "derive_more",
  "enr",
@@ -3403,29 +3273,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-network-types"
-version = "0.0.0"
-dependencies = [
- "alloy-eip2124",
- "alloy-primitives",
- "alloy-rlp",
- "base-common-chain-config",
- "enr",
- "humantime-serde",
- "ipnet",
- "rand 0.8.7",
- "rand 0.9.5",
- "secp256k1 0.30.0",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-execution-network-wire"
 version = "0.0.0"
 dependencies = [
@@ -3441,11 +3288,11 @@ dependencies = [
  "arbitrary",
  "async-stream",
  "auto_impl",
- "base-common-codec-macros",
+ "base-common-chain-config",
+ "base-common-codec",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-types-chain",
- "base-execution-network-types",
  "byteorder",
  "bytes",
  "cipher",
@@ -3453,8 +3300,11 @@ dependencies = [
  "ctr",
  "derive_more",
  "digest 0.10.7",
+ "enr",
  "futures",
  "hmac 0.12.1",
+ "humantime-serde",
+ "ipnet",
  "pin-project",
  "proptest",
  "proptest-arbitrary-interop",
@@ -3462,6 +3312,8 @@ dependencies = [
  "rand 0.9.5",
  "secp256k1 0.30.0",
  "serde",
+ "serde_json",
+ "serde_with",
  "sha2 0.10.9",
  "snap",
  "test-case",
@@ -3471,10 +3323,11 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
-name = "base-execution-payload-builder"
+name = "base-execution-payload"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -3489,25 +3342,19 @@ dependencies = [
  "base-common-client-ethereum",
  "base-common-observability-events",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
+ "base-consensus-batch",
  "base-execution-evm-blocks",
- "base-execution-evm-machine",
- "base-execution-evm-precompiles",
- "base-execution-evm-primitives",
  "base-execution-evm-runtime",
- "base-execution-payload-types",
- "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-types",
- "base-execution-txpool-pool",
+ "base-execution-txpool",
  "base-node-service",
  "base-testing-devnet",
  "base-testing-support",
@@ -3515,7 +3362,6 @@ dependencies = [
  "eyre",
  "futures-core",
  "futures-util",
- "jsonrpsee",
  "metrics",
  "metrics-exporter-prometheus",
  "moka",
@@ -3530,35 +3376,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-payload-types"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "assert_matches",
- "base-common-chain-config",
- "base-common-client-ethereum",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-common-types-rpc",
- "base-execution-evm-fees",
- "base-execution-evm-runtime",
- "base-execution-state-types",
- "either",
- "pin-project",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "base-execution-rpc-handlers"
+name = "base-execution-rpc"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
@@ -3579,46 +3397,48 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-http",
+ "anstyle",
  "assert_matches",
  "async-trait",
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-observability-events",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-observability-tracing",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-execution-engine-types",
+ "base-consensus-batch",
  "base-execution-evm-blocks",
- "base-execution-evm-fees",
- "base-execution-evm-inspectors",
- "base-execution-evm-machine",
- "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-network-service",
- "base-execution-network-types",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-state-api",
+ "base-execution-network-wire",
+ "base-execution-payload",
+ "base-execution-rpc",
  "base-execution-state-database",
  "base-execution-state-maintenance",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-types",
- "base-execution-txpool-pool",
+ "base-execution-txpool",
  "base-testing-devnet",
  "base-testing-support",
+ "boa_engine",
+ "boa_gc",
+ "colorchoice",
+ "criterion",
  "derive_more",
  "dyn-clone",
  "eyre",
  "futures",
  "http 1.4.2",
+ "http-body-util",
  "httpmock",
  "itertools 0.14.0",
  "jsonrpsee",
  "jsonrpsee-core",
+ "jsonrpsee-http-client",
  "jsonrpsee-types",
  "lru 0.16.4",
  "metrics",
@@ -3631,92 +3451,36 @@ dependencies = [
  "schnellru",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tower",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "base-execution-rpc-server"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-chain-config",
- "base-common-client-ethereum",
- "base-common-observability-metrics",
- "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-common-types-rpc",
- "base-execution-engine-types",
- "base-execution-evm-blocks",
- "base-execution-network-service",
- "base-execution-network-types",
- "base-execution-payload-builder",
- "base-execution-rpc-handlers",
- "base-execution-state-provider",
- "base-execution-txpool-pool",
- "dyn-clone",
- "http 1.4.2",
- "http-body-util",
- "jsonrpsee",
- "jsonrpsee-http-client",
- "metrics",
- "pin-project",
- "reqwest",
- "serde",
- "serde_json",
+ "snapbox",
  "strum 0.27.2",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tower",
  "tower-http",
  "tracing",
-]
-
-[[package]]
-name = "base-execution-state-api"
-version = "0.0.0"
-dependencies = [
- "alloy-eip7928",
- "alloy-eips",
- "alloy-hardforks 0.4.7",
- "alloy-primitives",
- "auto_impl",
- "base-common-chain-config",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-state-database",
- "base-execution-state-memory",
- "base-execution-state-types",
- "mockall",
- "serde_json",
- "tokio",
- "tokio-stream",
+ "url",
 ]
 
 [[package]]
 name = "base-execution-state-database"
 version = "0.0.0"
 dependencies = [
+ "alloy-eips",
  "alloy-primitives",
  "anyhow",
  "arbitrary",
  "arrayvec",
  "assert_matches",
- "base-common-io-files",
+ "auto_impl",
+ "base-common-chain-config",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-types-chain",
+ "base-execution-evm-runtime",
  "base-execution-state-mdbx-sys",
- "base-execution-state-memory",
  "base-execution-state-types",
  "bincode 1.3.3",
  "bitflags 2.13.1",
@@ -3760,7 +3524,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-execution-engine-observers",
  "base-execution-evm-blocks",
@@ -3790,18 +3554,17 @@ dependencies = [
  "anyhow",
  "assert_matches",
  "base-common-chain-config",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
- "base-execution-state-api",
+ "base-execution-evm-runtime",
  "base-execution-state-database",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-trie",
  "base-execution-state-types",
- "base-execution-sync-pipeline",
+ "base-execution-sync",
  "base-testing-support",
  "blake3",
  "boyer-moore-magiclen",
@@ -3831,32 +3594,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-state-memory"
-version = "0.0.0"
-dependencies = [
- "alloy-eip7928",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-trie",
- "arbitrary",
- "auto_impl",
- "base-common-types-chain",
- "base-execution-evm-primitives",
- "bitflags 2.13.1",
- "bytes",
- "derive_more",
- "either",
- "mockall",
- "modular-bitfield",
- "nonmax",
- "proptest",
- "proptest-arbitrary-interop",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "base-execution-state-provider"
 version = "0.0.0"
 dependencies = [
@@ -3870,15 +3607,12 @@ dependencies = [
  "assert_matches",
  "base-common-chain-config",
  "base-common-client-ethereum",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
- "base-common-types-payload",
  "base-execution-evm-runtime",
- "base-execution-state-api",
  "base-execution-state-database",
- "base-execution-state-memory",
  "base-execution-state-trie",
  "base-execution-state-types",
  "base-testing-support",
@@ -3915,14 +3649,12 @@ dependencies = [
  "auto_impl",
  "base-common-chain-config",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
- "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-trie",
  "base-execution-state-types",
@@ -3967,9 +3699,7 @@ dependencies = [
  "base-common-observability-tracing",
  "base-common-types-chain",
  "base-execution-evm-runtime",
- "base-execution-state-api",
  "base-execution-state-database",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-types",
  "codspeed-criterion-compat 4.7.0",
@@ -3997,8 +3727,10 @@ dependencies = [
 name = "base-execution-state-types"
 version = "0.0.0"
 dependencies = [
+ "alloy-eip7928",
  "alloy-eips",
  "alloy-genesis",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
@@ -4006,10 +3738,13 @@ dependencies = [
  "arbitrary",
  "arrayvec",
  "assert_matches",
+ "auto_impl",
+ "base-common-chain-config",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-rpc",
+ "base-execution-evm-runtime",
  "base-execution-state-database",
- "base-execution-state-memory",
  "bincode 1.3.3",
  "bytes",
  "clap",
@@ -4018,6 +3753,7 @@ dependencies = [
  "hash-db",
  "insta",
  "itertools 0.14.0",
+ "mockall",
  "modular-bitfield",
  "nybbles",
  "plain_hasher",
@@ -4031,12 +3767,14 @@ dependencies = [
  "strum 0.27.2",
  "tempfile",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
 ]
 
 [[package]]
-name = "base-execution-sync-pipeline"
+name = "base-execution-sync"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4051,18 +3789,15 @@ dependencies = [
  "base-common-chain-config",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-execution-engine-observers",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-service",
- "base-execution-network-types",
  "base-execution-network-wire",
- "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-trie",
  "base-execution-state-types",
@@ -4089,7 +3824,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-txpool-pool"
+name = "base-execution-txpool"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4100,30 +3835,24 @@ dependencies = [
  "alloy-sol-types",
  "aquamarine",
  "assert_matches",
- "async-trait",
  "auto_impl",
  "base-common-chain-config",
  "base-common-client-ethereum",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-events",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-execution-evm-blocks",
- "base-execution-evm-fees",
- "base-execution-evm-machine",
- "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-network-wire",
- "base-execution-rpc-handlers",
- "base-execution-state-api",
- "base-execution-state-memory",
+ "base-execution-rpc",
  "base-execution-state-provider",
  "base-execution-state-types",
- "base-execution-txpool-pool",
+ "base-execution-txpool",
  "base-testing-devnet",
  "base-testing-support",
  "bitflags 2.13.1",
@@ -4159,7 +3888,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-audit-service"
+name = "base-infra-audit"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -4171,7 +3900,7 @@ dependencies = [
  "base-common-observability-events",
  "base-common-observability-metrics",
  "base-common-types-chain",
- "base-execution-payload-types",
+ "base-common-types-payload",
  "bytes",
  "chrono",
  "futures",
@@ -4192,7 +3921,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-basectl-service"
+name = "base-infra-basectl"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4209,14 +3938,13 @@ dependencies = [
  "base-common-client-contracts",
  "base-common-client-ethereum",
  "base-common-client-rollup",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-consensus-network-service",
- "base-execution-evm-precompiles",
+ "base-consensus-batch",
+ "base-consensus-network",
  "base-execution-evm-runtime",
- "base-proof-l1-submission",
+ "base-proof-l1",
  "base-proof-service-client",
  "base-proof-service-protocol",
  "chrono",
@@ -4239,7 +3967,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-shadow-metrics-service"
+name = "base-infra-shadow-metrics"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -4256,7 +3984,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-sidecrush-service"
+name = "base-infra-sidecrush"
 version = "0.0.0"
 dependencies = [
  "anyhow",
@@ -4269,7 +3997,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-snapshotter-service"
+name = "base-infra-snapshotter"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4293,16 +4021,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-telemetry-service"
+name = "base-infra-telemetry"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "anyhow",
  "async-trait",
  "axum",
- "base-common-http-proxy",
+ "base-common-http",
  "base-common-observability-health",
- "base-execution-network-types",
  "base-execution-network-wire",
  "clap",
  "discv5",
@@ -4322,12 +4049,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-infra-websocket-proxy-service"
+name = "base-infra-websocket-proxy"
 version = "0.0.0"
 dependencies = [
  "axum",
  "backoff",
- "base-common-http-proxy",
+ "base-common-http",
  "base-common-observability-metrics",
  "brotli",
  "futures",
@@ -4348,10 +4075,10 @@ name = "base-load-tester-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
  "base-common-types-rpc",
- "base-testing-load-service",
+ "base-testing-load",
  "clap",
  "eyre",
  "futures",
@@ -4376,45 +4103,41 @@ dependencies = [
  "arbitrary",
  "axum",
  "backon",
- "base-batcher-encoding-channel",
- "base-batcher-service-driver",
+ "base-batcher-encoding",
+ "base-batcher-service",
  "base-common-chain-activation",
  "base-common-chain-config",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
- "base-common-io-files",
- "base-common-l1-transactions",
+ "base-common-io",
+ "base-common-l1",
  "base-common-observability-events",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-consensus-driver-service",
- "base-consensus-network-service",
- "base-consensus-source-providers",
+ "base-common-types-payload",
+ "base-consensus-batch",
+ "base-consensus-derive",
+ "base-consensus-driver",
+ "base-consensus-network",
+ "base-consensus-source",
  "base-execution-engine-observers",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-discovery",
- "base-execution-network-discv5",
  "base-execution-network-service",
- "base-execution-network-types",
  "base-execution-network-wire",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-rpc-handlers",
- "base-execution-state-api",
+ "base-execution-payload",
+ "base-execution-rpc",
  "base-execution-state-database",
  "base-execution-state-indexer",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-trie",
  "base-execution-state-types",
- "base-execution-sync-pipeline",
- "base-execution-txpool-pool",
+ "base-execution-sync",
+ "base-execution-txpool",
  "base-node-config",
  "base-node-service",
  "blake3",
@@ -4465,25 +4188,21 @@ dependencies = [
  "alloy-hardforks 0.4.7",
  "alloy-primitives",
  "base-common-chain-config",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-execution-engine-types",
  "base-execution-evm-blocks",
  "base-execution-network-discovery",
- "base-execution-network-discv5",
  "base-execution-network-service",
- "base-execution-network-types",
  "base-execution-network-wire",
- "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-maintenance",
  "base-execution-state-types",
- "base-execution-sync-pipeline",
- "base-execution-txpool-pool",
+ "base-execution-sync",
+ "base-execution-txpool",
  "clap",
  "derive_more",
  "dirs-next",
@@ -4512,34 +4231,31 @@ dependencies = [
  "alloy-eips",
  "alloy-genesis",
  "alloy-hardforks 0.4.7",
+ "alloy-json-rpc",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-transport",
+ "auto_impl",
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-client-ethereum",
- "base-common-io-files",
+ "base-common-io",
  "base-common-observability-metrics",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
+ "base-consensus-batch",
  "base-execution-engine-driver",
  "base-execution-engine-observers",
- "base-execution-engine-types",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-discovery",
- "base-execution-network-discv5",
  "base-execution-network-service",
- "base-execution-network-types",
  "base-execution-network-wire",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-rpc-handlers",
- "base-execution-rpc-server",
- "base-execution-state-api",
+ "base-execution-payload",
+ "base-execution-rpc",
  "base-execution-state-database",
  "base-execution-state-indexer",
  "base-execution-state-maintenance",
@@ -4547,11 +4263,10 @@ dependencies = [
  "base-execution-state-tasks",
  "base-execution-state-trie",
  "base-execution-state-types",
- "base-execution-sync-pipeline",
- "base-execution-txpool-pool",
+ "base-execution-sync",
+ "base-execution-txpool",
  "base-node-config",
  "base-node-service",
- "base-testing-debug-client",
  "base-testing-devnet",
  "bytes",
  "chrono",
@@ -4579,6 +4294,7 @@ dependencies = [
  "procfs",
  "rayon",
  "reqwest",
+ "ringbuffer",
  "rstest",
  "secp256k1 0.30.0",
  "serde",
@@ -4596,7 +4312,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-client-providers"
+name = "base-proof-client"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4609,7 +4325,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-client-rollup",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-rpc",
  "metrics",
  "moka",
@@ -4622,7 +4338,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-execution-client"
+name = "base-proof-execution"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4640,9 +4356,8 @@ dependencies = [
  "base-common-client-ethereum",
  "base-common-types-chain",
  "base-common-types-payload",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-execution-evm-machine",
+ "base-consensus-batch",
+ "base-consensus-derive",
  "base-execution-evm-runtime",
  "base-proof-witness-mpt",
  "base-proof-witness-preimage",
@@ -4663,7 +4378,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-host-service"
+name = "base-proof-host"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -4679,17 +4394,17 @@ dependencies = [
  "base-common-client-ethereum",
  "base-common-client-rollup",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-consensus-source-providers",
+ "base-consensus-batch",
+ "base-consensus-source",
  "base-execution-evm-runtime",
- "base-proof-execution-client",
+ "base-proof-execution",
  "base-proof-service-client",
  "base-proof-service-protocol",
- "base-proof-types-protocol",
+ "base-proof-types",
  "base-proof-witness-mpt",
  "base-proof-witness-preimage",
  "chrono",
@@ -4706,7 +4421,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-l1-submission"
+name = "base-proof-l1"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -4715,7 +4430,7 @@ dependencies = [
  "async-trait",
  "base-common-client-contracts",
  "base-common-client-ethereum",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-types-chain",
  "base-common-types-rpc",
  "futures",
@@ -4736,21 +4451,21 @@ dependencies = [
  "alloy-rlp",
  "alloy-trie",
  "async-trait",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-observability-health",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-proof-client-providers",
- "base-proof-l1-submission",
+ "base-consensus-batch",
+ "base-proof-client",
+ "base-proof-l1",
  "base-proof-service-challenger",
  "base-proof-service-client",
  "base-proof-service-protocol",
- "base-proof-types-protocol",
+ "base-proof-types",
  "clap",
  "eyre",
  "futures",
@@ -4774,7 +4489,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "backon",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-proof-service-protocol",
  "chrono",
  "jsonrpsee",
@@ -4793,20 +4508,20 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "base-common-chain-config",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
  "base-common-client-rollup",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-observability-health",
  "base-common-observability-metrics",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-proof-client-providers",
- "base-proof-l1-submission",
+ "base-proof-client",
+ "base-proof-l1",
  "base-proof-service-client",
  "base-proof-service-protocol",
- "base-proof-types-protocol",
+ "base-proof-types",
  "clap",
  "eyre",
  "futures",
@@ -4829,7 +4544,7 @@ name = "base-proof-service-protocol"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-proof-types-protocol",
+ "base-proof-types",
  "chrono",
  "jsonrpsee",
  "serde",
@@ -4844,7 +4559,7 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "base-proof-service-protocol",
- "base-proof-types-protocol",
+ "base-proof-types",
  "chrono",
  "futures",
  "jsonrpsee",
@@ -4873,8 +4588,8 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-execution-evm-runtime",
- "base-proof-execution-client",
- "base-proof-types-protocol",
+ "base-proof-execution",
+ "base-proof-types",
  "base-proof-witness-preimage",
  "bincode 2.0.1",
  "eyre",
@@ -4901,12 +4616,12 @@ dependencies = [
  "async-trait",
  "base-common-chain-config",
  "base-common-observability-health",
- "base-proof-host-service",
- "base-proof-l1-submission",
+ "base-proof-host",
+ "base-proof-l1",
  "base-proof-service-client",
  "base-proof-service-protocol",
  "base-proof-tee-nitro-enclave",
- "base-proof-types-protocol",
+ "base-proof-types",
  "base-proof-witness-preimage",
  "chrono",
  "eyre",
@@ -4950,16 +4665,16 @@ dependencies = [
  "aws-config",
  "aws-sdk-ec2",
  "aws-sdk-elasticloadbalancingv2",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-proof-l1-submission",
+ "base-proof-l1",
  "base-proof-tee-nitro-verifier",
- "base-proof-types-protocol",
+ "base-proof-types",
  "ciborium",
  "futures",
  "hex",
@@ -4985,9 +4700,9 @@ name = "base-proof-tee-registrar-bin"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-proof-tee-registrar",
  "clap",
  "eyre",
@@ -4998,7 +4713,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-types-protocol"
+name = "base-proof-types"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
@@ -5054,7 +4769,7 @@ dependencies = [
 name = "base-proposer-bin"
 version = "0.0.0"
 dependencies = [
- "base-common-cli-support",
+ "base-common-cli",
  "base-proof-service-proposer",
  "clap",
  "eyre",
@@ -5076,8 +4791,8 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "base-common-chain-config",
- "base-common-cli-support",
- "base-proof-host-service",
+ "base-common-cli",
+ "base-proof-host",
  "base-proof-service-client",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
@@ -5094,7 +4809,7 @@ dependencies = [
 name = "base-prover-service-bin"
 version = "0.0.0"
 dependencies = [
- "base-common-cli-support",
+ "base-common-cli",
  "base-proof-service-protocol",
  "base-proof-service-server",
  "clap",
@@ -5111,8 +4826,8 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "axum",
- "base-common-cli-support",
- "base-infra-shadow-metrics-service",
+ "base-common-cli",
+ "base-infra-shadow-metrics",
  "clap",
  "dotenvy",
  "serde",
@@ -5124,7 +4839,7 @@ dependencies = [
 name = "base-sidecrush-bin"
 version = "0.0.0"
 dependencies = [
- "base-infra-sidecrush-service",
+ "base-infra-sidecrush",
  "cadence",
  "clap",
  "tokio",
@@ -5140,7 +4855,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
- "base-infra-snapshotter-service",
+ "base-infra-snapshotter",
  "clap",
  "rayon",
  "tokio",
@@ -5153,38 +4868,13 @@ name = "base-telemetry-bin"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "base-common-cli-support",
- "base-infra-telemetry-service",
+ "base-common-cli",
+ "base-infra-telemetry",
  "clap",
  "dotenvy",
  "serde",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "base-testing-debug-client"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-json-rpc",
- "alloy-primitives",
- "alloy-transport",
- "auto_impl",
- "base-common-client-ethereum",
- "base-common-observability-tracing",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-engine-types",
- "base-execution-payload-types",
- "derive_more",
- "eyre",
- "futures",
- "reqwest",
- "ringbuffer",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -5204,50 +4894,45 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "base-batcher-encoding-channel",
- "base-batcher-service-driver",
+ "base-batcher-encoding",
+ "base-batcher-service",
  "base-common-chain-activation",
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-client-rollup",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-observability-events",
  "base-common-observability-tracing",
- "base-common-runtime-tasks",
+ "base-common-runtime",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-consensus-driver-service",
- "base-consensus-network-service",
- "base-consensus-source-providers",
+ "base-consensus-batch",
+ "base-consensus-derive",
+ "base-consensus-driver",
+ "base-consensus-network",
+ "base-consensus-source",
  "base-execution-engine-driver",
- "base-execution-engine-types",
  "base-execution-evm-blocks",
- "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-network-service",
- "base-execution-network-types",
- "base-execution-payload-builder",
- "base-execution-payload-types",
- "base-execution-rpc-handlers",
- "base-execution-rpc-server",
+ "base-execution-network-wire",
+ "base-execution-payload",
+ "base-execution-rpc",
  "base-execution-state-database",
  "base-execution-state-indexer",
  "base-execution-state-maintenance",
- "base-execution-state-memory",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-types",
- "base-execution-txpool-pool",
+ "base-execution-txpool",
  "base-node-cli",
  "base-node-config",
  "base-node-service",
  "base-proof-service-protocol",
  "base-proof-service-server",
  "base-testing-devnet",
- "base-testing-load-service",
+ "base-testing-load",
  "base-testing-support",
  "chrono",
  "clap",
@@ -5294,7 +4979,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-testing-load-service"
+name = "base-testing-load"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
@@ -5302,14 +4987,13 @@ dependencies = [
  "alloy-signer",
  "alloy-sol-types",
  "async-trait",
- "base-common-cli-support",
+ "base-common-cli",
  "base-common-client-ethereum",
- "base-common-l1-transactions",
+ "base-common-l1",
  "base-common-types-chain",
  "base-common-types-rpc",
- "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
- "base-execution-txpool-pool",
+ "base-execution-txpool",
  "eyre",
  "futures",
  "humantime",
@@ -5345,7 +5029,6 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-execution-evm-runtime",
- "base-execution-state-memory",
  "base-execution-state-types",
  "eyre",
  "rand 0.8.7",
@@ -5355,7 +5038,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-testing-tools-witness-diff"
+name = "base-testing-tools"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -8476,16 +8159,6 @@ dependencies = [
  "serde_json",
  "wasm-bindgen",
  "web-sys",
-]
-
-[[package]]
-name = "gmp-mpfr-sys"
-version = "1.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7db155b537cb791b133341f99f68371d86ee7fa4c79aacfbc376d72d23c70531"
-dependencies = [
- "libc",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -13845,7 +13518,6 @@ dependencies = [
  "ark-ff 0.4.2",
  "ark-ff 0.5.0",
  "ark-ff 0.6.0",
- "borsh",
  "bytes",
  "fastrlp 0.3.1",
  "fastrlp 0.4.0",
@@ -14925,25 +14597,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "snmalloc-rs"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb317153089fdfa4d8a2eec059d40a5a23c3bde43995ea23b19121c3f621e74a"
-dependencies = [
- "snmalloc-sys",
-]
-
-[[package]]
-name = "snmalloc-sys"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "065fea53d32bb77bc36cca466cb191f2e5216ebfd0ed360b1d64889ee6e559ea"
-dependencies = [
- "cc",
- "cmake",
-]
-
-[[package]]
 name = "snow"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15367,19 +15020,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "substrate-bn"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b5bbfa79abbae15dd642ea8176a21a635ff3c00059961d1ea27ad04e5b441c"
-dependencies = [
- "byteorder",
- "crunchy",
- "lazy_static",
- "rand 0.8.7",
- "rustc-hex",
 ]
 
 [[package]]
@@ -16495,39 +16135,6 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
-]
-
-[[package]]
-name = "tracing-tracy"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eaa1852afa96e0fe9e44caa53dc0bd2d9d05e0f2611ce09f97f8677af56e4ba"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracy-client",
-]
-
-[[package]]
-name = "tracy-client"
-version = "0.18.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4f6fc3baeac5d86ab90c772e9e30620fc653bf1864295029921a15ef478e6a5"
-dependencies = [
- "loom",
- "once_cell",
- "rustc-demangle",
- "tracy-client-sys",
-]
-
-[[package]]
-name = "tracy-client-sys"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5f7c95348f20c1c913d72157b3c6dee6ea3e30b3d19502c5a7f6d3f160dacbf"
-dependencies = [
- "cc",
- "windows-targets 0.52.6",
 ]
 
 [[package]]

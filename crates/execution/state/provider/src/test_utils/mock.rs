@@ -1,4 +1,3 @@
-use base_execution_state_api::DatabaseProviderROFactory;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Debug,
@@ -9,7 +8,6 @@ use std::{
     },
 };
 
-use crate::{CanonStateNotifications, CanonStateSubscriptions};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumberOrTag};
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, TxNumber, U256,
@@ -18,44 +16,38 @@ use alloy_primitives::{
 };
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo,
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, ChainInfo,
+    GotExpected, RecoveredBlock, SealedHeader, SignerRecoverable,
     constants::EMPTY_ROOT_HASH,
     transaction::{TransactionMeta, TxHashRef},
 };
-use base_execution_state_api::{
-    BlockBodyIndicesProvider, BytecodeReader, DBProvider, DatabaseProviderFactory, DbTxProvider,
-    HashedPostStateProvider, StageCheckpointReader, StateProofProvider, StorageChangeSetReader,
-    StorageRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
-};
-use base_execution_state_database::{DbTx, DbTxMut};
+use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_database::{
-    TxMock, models::AccountBeforeTx, models::StorageSettings, models::StoredBlockBodyIndices,
+    DBProvider, DatabaseProviderFactory, DatabaseProviderROFactory, DbTx, DbTxMut, DbTxProvider,
+    TxMock,
+    models::{AccountBeforeTx, StorageSettings, StoredBlockBodyIndices},
 };
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
-use base_execution_state_types::ExecutionOutcome;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{ConsistentViewError, ProviderError, ProviderResult};
-use base_execution_state_types::{PruneCheckpoint, PruneModes, PruneSegment};
-use base_execution_state_types::{StageCheckpoint, StageId};
+use base_execution_state_types::{
+    BlockBodyIndicesProvider, BytecodeReader, ConsistentViewError, ExecutionOutcome,
+    HashedPostStateProvider, ProviderError, ProviderResult, PruneCheckpoint, PruneModes,
+    PruneSegment, StageCheckpoint, StageCheckpointReader, StageId, StateProofProvider,
+    StorageChangeSetReader, StorageEntry, StorageRootProvider, StorageSettingsCache,
+    TryIntoHistoricalStateProvider,
+};
 use parking_lot::Mutex;
 use tokio::sync::broadcast;
-use {
-    base_common_types_chain::BlockBodyExt as BlockBody, base_common_types_chain::GotExpected,
-    base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedHeader,
-    base_common_types_chain::SignerRecoverable,
-};
 
 use crate::{
     AccountReader, BalProvider, BalStoreHandle, BlockHashReader, BlockIdReader, BlockNumReader,
-    BlockReader, BlockReaderIdExt, ChainSpecProvider, ChangeSetReader, HashingWriter,
-    HeaderProvider, PruneCheckpointReader, RangeEnd, RangeResponse, RangeResult,
-    ReceiptProviderIdExt, StateProviderBox, StateProviderFactory, StateRangeProvider,
-    StateRangeProviderFactory, StateRangeView, StateReader, StateRootProvider, StorageRangeResult,
-    TransactionVariant, TransactionsProvider,
+    BlockReader, BlockReaderIdExt, CanonStateNotifications, CanonStateSubscriptions,
+    ChainSpecProvider, ChangeSetReader, HashingWriter, HeaderProvider, PruneCheckpointReader,
+    RangeEnd, RangeResponse, RangeResult, ReceiptProviderIdExt, StateProviderBox,
+    StateProviderFactory, StateRangeProvider, StateRangeProviderFactory, StateRangeView,
+    StateReader, StateRootProvider, StorageRangeResult, TransactionVariant, TransactionsProvider,
     traits::{BlockSource, ReceiptProvider},
 };
 
@@ -1082,15 +1074,15 @@ impl StateProofProvider for MockEthProvider {
 impl HashedPostStateProvider for MockEthProvider {
     fn hashed_post_state(
         &self,
-        _bundle_state: &base_execution_evm_runtime::database::BundleState,
+        _bundle_state: &base_execution_evm_runtime::BundleState,
     ) -> ProviderResult<HashedPostState> {
         Ok(HashedPostState::default())
     }
 }
 
-base_execution_state_api::impl_state_database!([] MockEthProvider where []);
+base_execution_state_types::impl_state_database!([] MockEthProvider where []);
 
-impl base_execution_state_api::StateReadProvider for MockEthProvider {
+impl base_execution_state_types::StateReadProvider for MockEthProvider {
     fn storage(
         &self,
         account: Address,

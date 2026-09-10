@@ -1,8 +1,7 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportError;
-use base_common_client_ethereum::Provider;
-use base_common_client_ethereum::{Network, TransactionBuilder};
+use base_common_client_ethereum::{Network, Provider, TransactionBuilder};
 use base_common_types_rpc::state::{AccountOverride, StateOverridesBuilder};
 
 /// A utility for finding storage slots in smart contracts, particularly useful for ERC20 tokens.
@@ -194,8 +193,9 @@ where
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use alloy_sol_types::sol;
-    use base_common_client_ethereum::TransactionBuilder;
-    use base_common_client_ethereum::{Provider, ProviderBuilder, ext::AnvilApi};
+    use base_common_client_ethereum::{
+        Provider, ProviderBuilder, TransactionBuilder, ext::AnvilApi,
+    };
     use base_common_types_rpc::TransactionRequest;
 
     use crate::StorageSlotFinder;

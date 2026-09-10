@@ -11,6 +11,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     ops::RangeInclusive,
     sync::Arc,
+    time::Instant,
 };
 
 use alloy_eips::BlockNumHash;
@@ -19,10 +20,7 @@ use base_common_observability_metrics::{
     Metrics,
     metrics::{Counter, Gauge},
 };
-use base_execution_state_api::{
-    BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
-    StorageChangeSetReader, StorageSettingsCache,
-};
+use base_execution_state_database::DBProvider;
 #[cfg(test)]
 use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot,
@@ -35,10 +33,12 @@ use base_execution_state_trie::{
 use base_execution_state_trie::{
     HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets,
 };
-use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
-use base_execution_state_types::{ProviderError, ProviderResult};
+use base_execution_state_types::{
+    BlockNumReader, ChangeSetReader, ProviderError, ProviderResult, PruneCheckpointReader,
+    StageCheckpointReader, StorageChangeSetReader, StorageSettingsCache,
+    updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
+};
 use parking_lot::RwLock;
-use std::time::Instant;
 use tracing::{debug, warn};
 
 use crate::overlay::{OverlayManager, OverlayStateProvider, database_state_frontiers};
@@ -618,26 +618,25 @@ impl ChangesetCacheInner {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        StaticFileProviderFactory, StaticFileSegment, StaticFileWriter,
-        test_utils::create_test_provider_factory,
-    };
     use alloy_primitives::{
         Address, U256, keccak256,
         map::{B256Map, HashMap},
     };
     use base_common_types_chain::Header;
-    use base_execution_state_api::TrieWriter;
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_database::{
-        DbTxMut, models::AccountBeforeTx, models::BlockNumberAddress, tables,
+        DbTxMut,
+        models::{AccountBeforeTx, BlockNumberAddress},
+        tables,
     };
-    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_trie::{BranchNodeCompact, Nibbles, StateRoot};
-    use base_execution_state_types::StorageEntry;
-    use base_execution_state_types::{StageCheckpoint, StageId};
+    use base_execution_state_types::{StageCheckpoint, StageId, StorageEntry, TrieWriter};
 
     use super::*;
-    use crate::overlay::Overlay;
+    use crate::{
+        StaticFileProviderFactory, StaticFileSegment, StaticFileWriter, overlay::Overlay,
+        test_utils::create_test_provider_factory,
+    };
 
     // Helper function to create empty TrieUpdatesSorted for testing
     fn create_test_changesets() -> Arc<TrieUpdatesSorted> {

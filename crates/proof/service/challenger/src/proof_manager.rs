@@ -12,13 +12,12 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256};
-use base_common_l1_transactions::{TxManager, TxManagerError};
-use base_proof_client_providers::{L1Provider, L2Provider};
-use base_proof_l1_submission::KnownRevert;
-use base_proof_l1_submission::{AggregateVerifierClient, GameStatus};
+use base_common_l1::{TxManager, TxManagerError};
+use base_proof_client::{L1Provider, L2Provider};
+use base_proof_l1::{AggregateVerifierClient, GameStatus, KnownRevert};
 use base_proof_service_client::ProofRequesterProvider;
 use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
-use base_proof_types_protocol::ProofRequest as TeeProofRequest;
+use base_proof_types::ProofRequest as TeeProofRequest;
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -624,11 +623,9 @@ mod tests {
     use std::{collections::HashMap, sync::Arc, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
-    use base_common_l1_transactions::TxManagerError;
-    use base_proof_client_providers::L1Provider;
-    use base_proof_l1_submission::{
-        AggregateVerifierClient, GameStatus, l1_origin_too_old_selector,
-    };
+    use base_common_l1::TxManagerError;
+    use base_proof_client::L1Provider;
+    use base_proof_l1::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
     use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
 
     use super::*;
@@ -927,7 +924,8 @@ mod tests {
                 let snapshot = snapshotter.snapshot().into_vec();
                 let count = snapshot.iter().find_map(|(key, _, _, value)| {
                     if key.kind() != MetricKind::Counter
-                        || key.key().name() != "base_proof_service_challenger.proof_retries_exhausted_total"
+                        || key.key().name()
+                            != "base_proof_service_challenger.proof_retries_exhausted_total"
                     {
                         return None;
                     }

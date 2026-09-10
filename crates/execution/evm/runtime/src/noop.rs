@@ -1,4 +1,4 @@
-use crate::inspector::Inspector;
+use base_execution_evm_runtime::inspector::Inspector;
 
 /// Dummy [Inspector], helpful as standalone replacement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]

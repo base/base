@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
 
-use base_execution_rpc_handlers::{EthConfig, EthStateCacheConfig};
-use base_execution_rpc_server::{RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig};
+use base_execution_rpc::{
+    EthConfig, EthStateCacheConfig, RpcModuleConfig, RpcServerConfig, TransportRpcModuleConfig,
+};
 use base_node_config::RpcServerArgs;
 use jsonrpsee::server::ServerConfigBuilder;
 
@@ -94,8 +95,8 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
     use base_common_types_rpc as constants;
-    use base_execution_rpc_handlers::RPC_DEFAULT_GAS_CAP;
-use base_node_config::RpcServerArgs;
+    use base_execution_rpc::RPC_DEFAULT_GAS_CAP;
+    use base_node_config::RpcServerArgs;
     use clap::{Args, Parser};
 
     use crate::RpcConfig;

@@ -4,7 +4,7 @@ use anyhow::Result;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
-use base_infra_snapshotter_service::{
+use base_infra_snapshotter::{
     DockerContainerManager, RpcTipChecker, S3ConfigType, SnapshotUploader, Snapshotter,
     SnapshotterConfig,
 };

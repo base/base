@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{AccessRights, Environment, EnvironmentArgs};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader as _;
 use base_execution_state_provider::{BlockReader, TransactionVariant};
@@ -13,6 +12,8 @@ use base_node_config::version_metadata;
 use base_node_service::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use tracing::{info, warn};
+
+use crate::{AccessRights, Environment, EnvironmentArgs};
 
 /// Unwinds the proofs storage to a specific block number.
 ///
@@ -53,7 +54,7 @@ pub struct UnwindCommand {
 
 impl UnwindCommand {
     /// Execute [`UnwindCommand`].
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb, target } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");

@@ -1,6 +1,6 @@
 //! `base snapshot` subcommand group: snapshot manifest generation and download.
 
-use base_common_cli_support::CliRunner;
+use base_common_cli::CliRunner;
 use base_node_cli::commands::{SnapshotManifestCommand, download};
 use clap::{Parser, Subcommand};
 

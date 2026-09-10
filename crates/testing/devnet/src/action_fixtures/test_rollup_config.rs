@@ -1,6 +1,5 @@
 use alloy_primitives::Address;
-use base_common_chain_config::{ChainConfig, rollup_config};
-use base_common_chain_config::{RollupConfig, UpgradeConfig};
+use base_common_chain_config::{ChainConfig, RollupConfig, UpgradeConfig, rollup_config};
 
 use crate::action_fixtures::BatcherConfig;
 

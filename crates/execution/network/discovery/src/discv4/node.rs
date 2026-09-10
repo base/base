@@ -1,5 +1,5 @@
 use alloy_primitives::keccak256;
-use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_wire::{NodeRecord, PeerId};
 
 /// The key type for the table.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -11,7 +11,7 @@ impl From<PeerId> for NodeKey {
     }
 }
 
-impl From<NodeKey> for base_execution_network_discv5::Key<NodeKey> {
+impl From<NodeKey> for crate::Key<NodeKey> {
     fn from(value: NodeKey) -> Self {
         let hash = keccak256(value.0.as_slice());
         Self::new_raw(value, hash.0.into())
@@ -27,7 +27,7 @@ impl From<&NodeRecord> for NodeKey {
 impl NodeKey {
     /// Converts a `PeerId` into the required `Key` type for the table
     #[inline]
-    pub fn kad_key(node: PeerId) -> base_execution_network_discv5::Key<NodeKey> {
-        base_execution_network_discv5::Key::from(NodeKey::from(node))
+    pub fn kad_key(node: PeerId) -> crate::Key<NodeKey> {
+        crate::Key::from(NodeKey::from(node))
     }
 }

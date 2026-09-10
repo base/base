@@ -2,15 +2,10 @@
 
 use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
-use crate::PeerInfo;
-use base_execution_network_types::PeerKind;
-use base_execution_network_types::{NodeRecord, PeerId};
-use base_execution_network_wire::Capabilities;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::ECIESError;
-use base_execution_network_wire::EthStreamError;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::UnifiedStatus;
+use base_execution_network_wire::{
+    Capabilities, DisconnectReason, ECIESError, EthStreamError, EthVersion, NodeRecord, PeerId,
+    PeerKind, UnifiedStatus,
+};
 use tokio::sync::{
     mpsc::{self, error::SendError},
     oneshot,
@@ -18,7 +13,7 @@ use tokio::sync::{
 use tracing::trace;
 
 use crate::{
-    PendingSessionHandshakeError,
+    PeerInfo, PendingSessionHandshakeError,
     message::PeerMessage,
     session::{Direction, SessionId, active::BroadcastItemCounter, conn::EthRlpxConnection},
 };

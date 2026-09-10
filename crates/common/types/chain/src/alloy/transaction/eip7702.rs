@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, Bytes, ChainId, U256};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 use base_common_types_chain::TxEip7702 as AlloyTxEip7702;
 
 use crate::Compact;

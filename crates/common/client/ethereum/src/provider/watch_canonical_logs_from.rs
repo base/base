@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use crate::{BlockResponse as _, Network};
 use alloy_eips::BlockNumberOrTag;
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
@@ -18,7 +17,7 @@ use super::{
     BlockLogs, BlockLogsFut, CanonicalEvent, WatchLogsFrom, WatchLogsFromStream,
     watch_canonical_blocks_from::FixedBuf,
 };
-use crate::transport::TransportErrorKind;
+use crate::{BlockResponse as _, Network, transport::TransportErrorKind};
 
 const RPC_CONCURRENCY_DEFAULT: usize = 4;
 const MAX_REORG_DEPTH_DEFAULT: usize = 64;

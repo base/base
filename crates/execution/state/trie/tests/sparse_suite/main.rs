@@ -22,12 +22,9 @@ use std::{collections::BTreeMap, iter::once};
 use alloy_primitives::{B256, U256, map::B256Map};
 use alloy_rlp::{Decodable, encode_fixed_size};
 use alloy_trie::EMPTY_ROOT_HASH;
-use base_execution_state_trie::test_utils::TrieTestHarness;
-use base_execution_state_types::{Nibbles, ProofV2Target, TrieNodeV2};
-use {
-    base_execution_state_trie::ArenaParallelSparseTrie, base_execution_state_types::LeafLookup,
-    base_execution_state_types::LeafLookupError, base_execution_state_types::LeafUpdate,
-    base_execution_state_types::TrieNodeEpoch,
+use base_execution_state_trie::{ArenaParallelSparseTrie, test_utils::TrieTestHarness};
+use base_execution_state_types::{
+    LeafLookup, LeafLookupError, LeafUpdate, Nibbles, ProofV2Target, TrieNodeEpoch, TrieNodeV2,
 };
 
 mod find_leaf;

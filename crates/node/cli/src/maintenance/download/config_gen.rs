@@ -1,17 +1,13 @@
 use std::{collections::BTreeMap, path::Path};
 
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
-use base_execution_state_database::tables;
-use base_execution_state_database::{DbTx, DbTxMut};
-use base_execution_state_types::StageCheckpoint;
-use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
-use base_node_config::DefaultPruningValues;
-use tracing::info;
-use {
-    base_execution_state_maintenance::BlocksPerFileConfig,
-    base_execution_state_maintenance::StaticFilesConfig, base_execution_state_types::PruneConfig,
-    base_node_config::NodeFileConfig as Config,
+use base_execution_state_database::{DbTx, DbTxMut, tables};
+use base_execution_state_maintenance::{BlocksPerFileConfig, StaticFilesConfig};
+use base_execution_state_types::{
+    PruneCheckpoint, PruneConfig, PruneMode, PruneSegment, StageCheckpoint,
 };
+use base_node_config::{DefaultPruningValues, NodeFileConfig as Config};
+use tracing::info;
 
 use crate::maintenance::download::{
     SelectionPreset,
@@ -40,7 +36,7 @@ pub fn write_config(config: &Config, data_dir: &Path) -> eyre::Result<bool> {
     }
 
     let toml_str = toml_0_9_12_spec_1_1_0::to_string_pretty(config)?;
-    base_common_io_files::Files::write(&config_path, toml_str)?;
+    base_common_io::Files::write(&config_path, toml_str)?;
 
     info!(target: "reth::cli",
         path = ?config_path,

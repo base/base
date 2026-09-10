@@ -36,14 +36,15 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::{
     B256, U256,
     map::{B256Map, B256Set},
 };
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
+use base_common_types_chain::DashMap;
 use base_execution_state_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
 use base_execution_state_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
@@ -59,7 +60,6 @@ use base_execution_state_trie::{
 use base_execution_state_types::{DatabaseError, StateProofError};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use tracing::{debug, debug_span, error, instrument, trace};
-use {base_common_types_chain::DashMap, std::time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::proof_task_metrics::{ProofTaskCursorMetrics, ProofTaskTrieMetrics};
@@ -1246,7 +1246,7 @@ mod tests {
         );
         let ctx = test_ctx(factory);
 
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let (proof_result_tx, _) = unbounded();
         let proof_handle = ProofWorkerHandle::new(&runtime, ctx, false, proof_result_tx);
 

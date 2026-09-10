@@ -1,16 +1,8 @@
-use base_execution_evm_machine::InterpreterResult;
-use base_execution_evm_machine::{ContextSetters, ContextTr, FrameStack};
-use base_execution_evm_primitives::{Address, Bytes};
-use base_execution_evm_runtime::EthInstructions;
-use base_execution_evm_runtime::EvmMachine;
 use base_execution_evm_runtime::{
-    EthFrame, EvmTr, EvmTrError, Handler, MainnetHandler, PrecompileProvider, SystemCallTx,
-};
-use base_execution_state_memory::DatabaseCommit;
-
-use crate::{
-    Inspector, InspectorEvmTr, InspectorHandler, inspect::InspectCommitEvm, inspect::InspectEvm,
-    inspect::InspectSystemCallEvm,
+    Address, Bytes, ContextSetters, ContextTr, DatabaseCommit, EthFrame, EthInstructions,
+    EvmMachine, EvmTr, EvmTrError, FrameStack, Handler, Inspector, InspectorEvmTr,
+    InspectorHandler, InterpreterResult, MainnetHandler, PrecompileProvider, SystemCallTx,
+    inspect::{InspectCommitEvm, InspectEvm, InspectSystemCallEvm},
 };
 
 // Implementing InspectorHandler for MainnetHandler.

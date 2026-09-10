@@ -3,11 +3,9 @@ use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
-use base_execution_state_database::{DatabaseError, mdbx::tx::Tx};
-use base_execution_state_database::{DbTx, DbTxMut, tables};
-use base_execution_state_maintenance::PruneSegment;
+use base_execution_state_database::{DatabaseError, DbTx, DbTxMut, mdbx::tx::Tx, tables};
 use base_execution_state_maintenance::{
-    DbTool,
+    DbTool, PruneSegment,
     init::{
         insert_genesis_account_history, insert_genesis_header, insert_genesis_state,
         insert_genesis_storage_history,
@@ -17,7 +15,7 @@ use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory, StaticFileWriter,
 };
 use base_execution_state_types::StaticFileSegment;
-use base_execution_sync_pipeline::StageId;
+use base_execution_sync::StageId;
 use base_node_config::StageEnum;
 use clap::Parser;
 
@@ -34,7 +32,7 @@ pub struct Command {
 
 impl Command {
     /// Execute `db` command
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         let Environment { provider_factory, .. } = self.env.init(AccessRights::RW, runtime)?;
 
         let tool = DbTool::new(provider_factory)?;

@@ -3,19 +3,16 @@
 use core::time::Duration;
 use std::path::PathBuf;
 
-use crate::ShadowIndexerArgs;
 use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
 };
-use base_execution_payload_builder::MeteringStore;
-use base_execution_payload_builder::SharedMeteringStore;
-use base_execution_rpc_handlers::{
-    BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig,
-};
-use base_node_service::BuilderConfig;
-use base_node_service::RollupArgs;
+use base_execution_payload::{MeteringStore, SharedMeteringStore};
+use base_execution_rpc::{BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig};
+use base_node_service::{BuilderConfig, RollupArgs};
 use tracing::warn;
+
+use crate::ShadowIndexerArgs;
 
 /// Dedicated transaction event journal configuration.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -300,7 +297,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{B256, TxHash, U256};
-    use base_execution_payload_types::MeterBundleResponse;
+    use base_common_types_payload::MeterBundleResponse;
     use clap::Parser;
     use rstest::rstest;
 

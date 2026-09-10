@@ -12,10 +12,9 @@ use std::cmp::Ordering;
 use alloy_primitives::{B256, U256, keccak256};
 use alloy_rlp::Encodable;
 use alloy_trie::{BranchNodeCompact, TrieMask};
-use base_execution_state_types::StateProofError;
 use base_execution_state_types::{
     BranchNodeMasks, BranchNodeRef, BranchNodeV2, Nibbles, ProofTrieNodeV2, ProofV2Target, RlpNode,
-    TrieNodeV2, prefix_set::PrefixSet,
+    StateProofError, TrieNodeV2, prefix_set::PrefixSet,
 };
 use tracing::{error, instrument, trace};
 

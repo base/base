@@ -3,10 +3,8 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{B256, U256};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{DbCursorRO, DbCursorRW, DbDupCursorRW, DbTxMut, tables};
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::StorageEntry;
-use proptest::prelude::*;
 use base_execution_state_provider::test_utils::create_test_provider_factory;
 use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseStorageRoot, DatabaseTrieCursorFactory,
@@ -15,6 +13,8 @@ use base_execution_state_trie::{
     trie_cursor::InMemoryTrieCursorFactory,
     updates::TrieUpdates,
 };
+use base_execution_state_types::StorageEntry;
+use proptest::prelude::*;
 
 type DbStateRoot<'a, TX, A> =
     StateRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;

@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use crate::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-use crate::metrics;
+use crate::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome, metrics};
 
 /// Server-side worker queue tuning shared by worker claims and the expired-claim reaper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

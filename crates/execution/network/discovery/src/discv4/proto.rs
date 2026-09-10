@@ -12,7 +12,7 @@ use alloy_rlp::{
     Decodable, Encodable, Error as RlpError, Header, RlpDecodable, RlpEncodable,
     RlpEncodableWrapper,
 };
-use base_execution_network_types::{NodeRecord, PeerId, pk2id};
+use base_execution_network_wire::{NodeRecord, PeerId, pk2id};
 use enr::Enr;
 use secp256k1::{
     SECP256K1, SecretKey,

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use base_common_io_files as fs;
+use base_common_io as fs;
 use eyre::{Result, WrapErr};
 use reqwest::Client;
 use tracing::info;

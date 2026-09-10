@@ -5,7 +5,7 @@ use core::fmt;
 
 use alloy_primitives::bytes::Bytes;
 use alloy_rlp::{Decodable, Encodable, RlpDecodable, RlpEncodable};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 use bytes::BufMut;
 
 use crate::{EthMessageID, EthVersion, SnapVersion};

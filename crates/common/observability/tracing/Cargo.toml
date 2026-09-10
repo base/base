@@ -16,30 +16,57 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-url = { workspace = true, optional = true}
+url = { workspace = true, optional = true }
 rolling-file = { workspace = true, optional = true }
 tracing-chrome = { workspace = true, optional = true }
 tracing-logfmt = { workspace = true, optional = true }
 tracing-samply = { workspace = true, optional = true }
-tracing = {workspace = true, features = ["attributes"]}
 tracing-appender = { workspace = true, optional = true }
 tracing-journald = { workspace = true, optional = true }
-eyre = {optional = true, workspace = true, features = ["default"]}
-base64 = { workspace = true, features = ["default"], optional = true}
-clap = {optional = true, workspace = true, features = ["default", "derive"]}
+tracing = { workspace = true, features = ["attributes"] }
+eyre = { optional = true, workspace = true, features = ["default"] }
+base64 = { workspace = true, features = ["default"], optional = true }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
-tracing-tracy = { workspace = true, optional = true, features = ["default"] }
+clap = { optional = true, workspace = true, features = ["default", "derive"] }
 opentelemetry_sdk = { workspace = true, optional = true, features = ["default"] }
-tracy-client = { workspace = true, features = ["default", "demangle"], optional = true }
 tracing-opentelemetry_0_33_0 = { workspace = true, optional = true, features = ["default"] }
 opentelemetry-appender-tracing = { workspace = true, optional = true, features = ["default"] }
 opentelemetry-semantic-conventions = { workspace = true, optional = true, features = ["default"] }
-tracing-subscriber = {optional = true, workspace = true, features = ["ansi", "env-filter", "fmt", "json"]}
+tracing-subscriber = { optional = true, workspace = true, features = ["ansi", "env-filter", "fmt", "json"] }
 opentelemetry-otlp = { workspace = true, features = ["default", "grpc-tonic", "reqwest-rustls"], optional = true }
 
 [features]
 default = ["std", "otlp"]
-std = ["dep:tracing-subscriber", "dep:tracing-appender", "dep:tracing-chrome", "dep:tracing-journald", "dep:tracing-logfmt", "dep:tracing-samply", "dep:clap", "dep:eyre", "dep:rolling-file", "tracing/std", "tracing-subscriber?/std"]
-otlp = ["std", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:tracing-opentelemetry_0_33_0", "dep:url", "dep:tracing-subscriber", "dep:eyre", "dep:base64", "dep:clap"]
-otlp-logs = ["otlp", "dep:opentelemetry-appender-tracing", "opentelemetry-appender-tracing/experimental_span_attributes", "opentelemetry-otlp/logs", "opentelemetry_sdk/logs"]
-tracy = ["dep:tracing-tracy", "dep:tracy-client"]
+std = [
+    "dep:tracing-subscriber",
+    "dep:tracing-appender",
+    "dep:tracing-chrome",
+    "dep:tracing-journald",
+    "dep:tracing-logfmt",
+    "dep:tracing-samply",
+    "dep:clap",
+    "dep:eyre",
+    "dep:rolling-file",
+    "tracing/std",
+    "tracing-subscriber?/std",
+]
+otlp = [
+    "std",
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:tracing-opentelemetry_0_33_0",
+    "dep:url",
+    "dep:tracing-subscriber",
+    "dep:eyre",
+    "dep:base64",
+    "dep:clap",
+]
+otlp-logs = [
+    "otlp",
+    "dep:opentelemetry-appender-tracing",
+    "opentelemetry-appender-tracing/experimental_span_attributes",
+    "opentelemetry-otlp/logs",
+    "opentelemetry_sdk/logs",
+]

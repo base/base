@@ -24,8 +24,6 @@ pub use sync::{DnsResolveKind, DnsSyncAction, DnsSyncTree};
 
 mod query;
 pub use query::{DnsQueryOutcome, DnsQueryPool, DnsResolveEntryResult, DnsResolveRootResult};
-
 #[cfg(test)]
 pub use resolver::DnsTimeoutResolver;
-
 pub use resolver::{NetError, TokioResolver};

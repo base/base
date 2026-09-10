@@ -31,5 +31,6 @@ reqwest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest"] }
 tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
+
 [features]
 axum-server = ["dep:axum", "dep:eyre", "dep:tokio", "dep:tokio-util", "dep:tracing"]

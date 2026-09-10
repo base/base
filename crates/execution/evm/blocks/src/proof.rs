@@ -79,8 +79,7 @@ pub fn calculate_receipt_root_no_memo(
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, Bytes, Log, LogData, b256, bloom, hex};
-    use base_common_chain_config::BaseChainSpec;
-    use base_common_chain_config::BaseUpgrade;
+    use base_common_chain_config::{BaseChainSpec, BaseUpgrade};
     use base_common_types_chain::{
         BaseReceipt, DepositReceipt, Receipt, ReceiptWithBloom, TxReceipt,
     };

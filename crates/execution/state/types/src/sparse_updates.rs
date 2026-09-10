@@ -1,12 +1,14 @@
 //! Sparse trie updates, epochs, and leaf lookup results.
 
-use crate::Nibbles;
 use alloc::vec::Vec;
+
 use alloy_primitives::{
     B256,
     map::{HashMap, HashSet},
 };
 use alloy_trie::BranchNodeCompact;
+
+use crate::Nibbles;
 
 /// Modification epoch assigned to cached sparse trie nodes.
 ///

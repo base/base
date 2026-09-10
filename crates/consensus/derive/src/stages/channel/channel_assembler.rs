@@ -1,0 +1,394 @@
+//! This module contains the [`ChannelAssembler`] stage.
+
+use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
+use alloy_primitives::{Bytes, hex};
+use async_trait::async_trait;
+use base_common_chain_config::RollupConfig;
+use base_consensus_batch::{BlockInfo, Channel};
+
+use super::{ChannelReaderProvider, NextFrameProvider};
+use crate::{
+    Metrics,
+    errors::PipelineError,
+    traits::{OriginAdvancer, OriginProvider, StageReset},
+    types::PipelineResult,
+};
+
+/// The [`ChannelAssembler`] stage is responsible for assembling the [`Frame`]s from the
+/// [`FrameQueue`] stage into a raw compressed [`Channel`].
+///
+/// [`Frame`]: base_consensus_batch::Frame
+/// [`FrameQueue`]: crate::stages::FrameQueue
+/// [`Channel`]: base_consensus_batch::Channel
+#[derive(Debug)]
+pub struct ChannelAssembler<P>
+where
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
+{
+    /// The rollup configuration.
+    pub cfg: Arc<RollupConfig>,
+    /// The previous stage of the derivation pipeline.
+    pub prev: P,
+    /// The current [`Channel`] being assembled.
+    pub channel: Option<Channel>,
+}
+
+impl<P> ChannelAssembler<P>
+where
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
+{
+    /// Creates a new [`ChannelAssembler`] stage with the given configuration and previous stage.
+    pub const fn new(cfg: Arc<RollupConfig>, prev: P) -> Self {
+        Self { cfg, prev, channel: None }
+    }
+
+    /// Returns whether or not the channel currently being assembled has timed out.
+    pub fn is_timed_out(&self) -> PipelineResult<bool> {
+        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        let is_timed_out = self
+            .channel
+            .as_ref()
+            .map(|c| c.open_block_number() + self.cfg.granite_channel_timeout < origin.number)
+            .unwrap_or_default();
+
+        Ok(is_timed_out)
+    }
+}
+
+#[async_trait]
+impl<P> ChannelReaderProvider for ChannelAssembler<P>
+where
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
+{
+    async fn next_data(&mut self) -> PipelineResult<Option<Bytes>> {
+        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+
+        // Time out the channel if it has timed out.
+        if let Some(channel) = self.channel.as_ref()
+            && self.is_timed_out()?
+        {
+            warn!(
+                target: "channel_assembler",
+                channel_id = %hex::encode(channel.id()),
+                origin_number = origin.number,
+                open_block_number = channel.open_block_number(),
+                "Channel timed out at L1 origin; discarding channel"
+            );
+            self.channel = None;
+        }
+
+        // Grab the next frame from the previous stage.
+        let next_frame = self.prev.next_frame().await?;
+
+        // Start a new channel if the frame number is 0.
+        if next_frame.number == 0 {
+            info!(
+                target: "channel_assembler",
+                channel_id = %hex::encode(next_frame.id),
+                origin_number = origin.number,
+                "Starting new channel"
+            );
+            self.channel = Some(Channel::new(next_frame.id, origin));
+        }
+
+        let count = if self.channel.is_some() { 1 } else { 0 };
+        Metrics::pipeline_channel_buffer().set(count);
+
+        if let Some(channel) = self.channel.as_mut() {
+            // Track the number of blocks until the channel times out.
+            let timeout = channel.open_block_number() + self.cfg.granite_channel_timeout;
+            let margin = timeout.saturating_sub(origin.number) as f64;
+            Metrics::pipeline_channel_timeout().set(margin);
+
+            // Add the frame to the channel. If this fails, return NotEnoughData and discard the
+            // frame.
+            debug!(
+                target: "channel_assembler",
+                frame_number = next_frame.number,
+                channel_id = %hex::encode(channel.id()),
+                origin_number = origin.number,
+                "Adding frame to channel"
+            );
+            let expected_frame_number = channel.len();
+            if usize::from(next_frame.number) != expected_frame_number {
+                warn!(
+                    target: "channel_assembler",
+                    channel_id = %hex::encode(channel.id()),
+                    frame_channel_id = %hex::encode(next_frame.id),
+                    frame_number = next_frame.number,
+                    expected_frame_number,
+                    origin_number = origin.number,
+                    "Dropping out-of-order frame"
+                );
+                return Err(PipelineError::NotEnoughData.temp());
+            }
+            if channel.add_frame(next_frame, origin).is_err() {
+                error!(
+                    target: "channel_assembler",
+                    channel_id = %hex::encode(channel.id()),
+                    origin_number = origin.number,
+                    "Failed to add frame to channel"
+                );
+                return Err(PipelineError::NotEnoughData.temp());
+            }
+
+            let size = channel.size() as f64;
+            Metrics::pipeline_channel_mem().set(size);
+
+            let max_rlp_bytes_per_channel = { RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD };
+            Metrics::pipeline_max_rlp_bytes().set(max_rlp_bytes_per_channel as f64);
+            if channel.size() > max_rlp_bytes_per_channel as usize {
+                warn!(
+                    target: "channel_assembler",
+                    channel_id = %hex::encode(channel.id()),
+                    channel_size = channel.size(),
+                    max_rlp_bytes_per_channel,
+                    "Compressed channel size exceeded max RLP bytes per channel; dropping channel"
+                );
+                self.channel = None;
+                return Err(PipelineError::NotEnoughData.temp());
+            }
+
+            // If the channel is ready, forward the channel to the next stage.
+            if channel.is_ready() {
+                let channel_bytes =
+                    channel.frame_data().ok_or(PipelineError::ChannelNotFound.crit())?;
+
+                info!(
+                    target: "channel_assembler",
+                    channel_id = %hex::encode(channel.id()),
+                    "Channel ready for decompression"
+                );
+
+                // Reset the channel and return the compressed bytes.
+                self.channel = None;
+                return Ok(Some(channel_bytes));
+            }
+        }
+
+        Metrics::pipeline_channel_mem().set(0);
+
+        Err(PipelineError::NotEnoughData.temp())
+    }
+}
+
+#[async_trait]
+impl<P> OriginAdvancer for ChannelAssembler<P>
+where
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
+{
+    async fn advance_origin(&mut self) -> PipelineResult<()> {
+        self.prev.advance_origin().await
+    }
+}
+
+impl<P> OriginProvider for ChannelAssembler<P>
+where
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
+{
+    fn origin(&self) -> Option<BlockInfo> {
+        self.prev.origin()
+    }
+}
+
+#[async_trait]
+impl<P> StageReset for ChannelAssembler<P>
+where
+    P: NextFrameProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
+{
+    async fn reset(
+        &mut self,
+        l1_origin: alloy_eips::BlockNumHash,
+        system_config: base_common_chain_config::SystemConfig,
+    ) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
+        self.channel = None;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await?;
+        self.channel = None;
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        self.prev.flush_channel().await?;
+        self.channel = None;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{sync::Arc, vec};
+
+    use base_common_chain_config::{RollupConfig, UpgradeConfig};
+    use base_consensus_batch::BlockInfo;
+    use tracing::Level;
+
+    use super::ChannelAssembler;
+    use crate::{ChannelReaderProvider, PipelineError, test_utils::TestNextFrameProvider};
+
+    #[tokio::test]
+    async fn test_assembler_channel_timeout() {
+        let (trace_store, _guard) = base_consensus_batch::capture_traces!();
+
+        let frames = [
+            crate::frame!(0xFF, 0, vec![0xDD; 50], false),
+            crate::frame!(0xFF, 1, vec![0xDD; 50], true),
+        ];
+        let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
+        let cfg = Arc::new(RollupConfig::default());
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+
+        // Set the origin to default block info @ block # 0.
+        assembler.prev.block_info = Some(BlockInfo::default());
+
+        // Read in the first frame. Since the frame isn't the last, the assembler
+        // should return None.
+        assert!(assembler.channel.is_none());
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_some());
+
+        // Push the origin forward past channel timeout.
+        assembler.prev.block_info = Some(BlockInfo {
+            number: assembler.cfg.granite_channel_timeout + 1,
+            ..Default::default()
+        });
+
+        // Assert that the assembler has timed out the channel.
+        assert!(assembler.is_timed_out().unwrap());
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_none());
+
+        // Assert that the info log was emitted.
+        let info_logs = trace_store.get_by_level(Level::INFO);
+        assert_eq!(info_logs.len(), 1);
+        let info_str = "Starting new channel";
+        assert!(info_logs[0].contains(info_str));
+
+        // Assert that the warning log was emitted.
+        let warning_logs = trace_store.get_by_level(Level::WARN);
+        assert_eq!(warning_logs.len(), 1);
+        let warn_str = "timed out at L1 origin";
+        assert!(warning_logs[0].contains(warn_str));
+    }
+
+    #[tokio::test]
+    async fn test_assembler_non_starting_frame() {
+        let frames = [
+            crate::frame!(0xFF, 0, vec![0xDD; 50], false),
+            crate::frame!(0xFF, 1, vec![0xDD; 50], true),
+        ];
+        let mock = TestNextFrameProvider::new(frames.into_iter().map(Ok).collect());
+        let cfg = Arc::new(RollupConfig::default());
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+
+        // Send in the second frame first. This should result in no channel being created,
+        // and the frame being discarded.
+        assert!(assembler.channel.is_none());
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_assembler_already_built() {
+        let (trace_store, _guard) = base_consensus_batch::capture_traces!();
+
+        let frames = [
+            crate::frame!(0xFF, 0, vec![0xDD; 50], false),
+            crate::frame!(0xFF, 1, vec![0xDD; 50], true),
+        ];
+        let mock = TestNextFrameProvider::new(frames.clone().into_iter().rev().map(Ok).collect());
+        let cfg = Arc::new(RollupConfig::default());
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+
+        // Send in the first frame. This should result in a channel being created.
+        assert!(assembler.channel.is_none());
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_some());
+
+        // Send in a malformed second frame. This should result in an error in `add_frame`.
+        assembler.prev.data.push(Ok(frames[1].clone()).map(|mut f| {
+            f.id = Default::default();
+            f
+        }));
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_some());
+
+        // Send in the second frame again. This should return the channel bytes.
+        assert!(assembler.next_data().await.unwrap().is_some());
+        assert!(assembler.channel.is_none());
+
+        // Assert that the error log was emitted.
+        let error_logs = trace_store.get_by_level(Level::ERROR);
+        assert_eq!(error_logs.len(), 1);
+        let error_str = "Failed to add frame to channel";
+        assert!(error_logs[0].contains(error_str));
+    }
+
+    #[tokio::test]
+    async fn test_assembler_rejects_out_of_order_frame_holocene() {
+        let frames = [
+            crate::frame!(0xFF, 0, b"zero".to_vec(), false),
+            crate::frame!(0xFF, 2, b"two".to_vec(), true),
+            crate::frame!(0xFF, 1, b"one".to_vec(), false),
+        ];
+        let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
+        let cfg = Arc::new(RollupConfig {
+            upgrades: UpgradeConfig { holocene_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+        assembler.prev.block_info = Some(BlockInfo::default());
+
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert_eq!(assembler.channel.as_ref().unwrap().len(), 1);
+
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert_eq!(assembler.channel.as_ref().unwrap().len(), 1);
+
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        let channel = assembler.channel.as_ref().unwrap();
+        assert_eq!(channel.len(), 2);
+        assert!(!channel.is_ready());
+    }
+
+    #[tokio::test]
+    async fn test_assembler_size_limit_exceeded_fjord() {
+        let (trace_store, _guard) = base_consensus_batch::capture_traces!();
+
+        let mut frames = [
+            crate::frame!(0xFF, 0, vec![0xDD; 50], false),
+            crate::frame!(0xFF, 1, vec![0xDD; 50], true),
+        ];
+        frames[1].data = vec![0; RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize];
+        let mock = TestNextFrameProvider::new(frames.into_iter().rev().map(Ok).collect());
+        let cfg = Arc::new(RollupConfig {
+            upgrades: UpgradeConfig { fjord_time: Some(0), ..Default::default() },
+            ..Default::default()
+        });
+
+        let mut assembler = ChannelAssembler::new(cfg, mock);
+
+        // Send in the first frame. This should result in a channel being created.
+        assert!(assembler.channel.is_none());
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_some());
+
+        // Send in the second frame. This should result in the channel being dropped due to the size
+        // limit being reached.
+        assert_eq!(assembler.next_data().await.unwrap_err(), PipelineError::NotEnoughData.temp());
+        assert!(assembler.channel.is_none());
+
+        let trace_store_lock = trace_store.lock();
+        assert_eq!(trace_store_lock.iter().filter(|(l, _)| matches!(l, &Level::WARN)).count(), 1);
+
+        let (_, message) =
+            trace_store_lock.iter().find(|(l, _)| matches!(l, &Level::WARN)).unwrap();
+        assert!(message.contains("Compressed channel size exceeded max RLP bytes per channel"));
+    }
+}

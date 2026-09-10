@@ -1,17 +1,14 @@
-use crate::api::{CellCustody, NetworkError};
 use std::{future::Future, net::SocketAddr, sync::Arc, time::Instant};
 
 pub use alloy_rpc_types_admin::EthProtocolInfo;
-use base_execution_network_types::NodeRecord;
-pub use base_execution_network_types::PeerKind;
-pub use base_execution_network_types::Reputation;
-pub use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_wire::Capabilities;
-use base_execution_network_wire::Capability;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::UnifiedStatus;
-pub use base_execution_network_wire::{BlockClient, HeadersClient};
+pub use base_execution_network_wire::{
+    BlockClient, HeadersClient, PeerKind, Reputation, ReputationChangeKind,
+};
+use base_execution_network_wire::{
+    Capabilities, Capability, DisconnectReason, EthVersion, NodeRecord, UnifiedStatus,
+};
+
+use crate::api::{CellCustody, NetworkError};
 
 /// The `PeerId` type.
 pub type PeerId = alloy_primitives::B512;
@@ -95,7 +92,7 @@ pub trait Peers: PeersInfo {
     /// Resolution is performed asynchronously by the periodic DNS resolver; the peer is
     /// added to the peer set on first successful resolution and re-resolved periodically
     /// so address changes are picked up automatically.
-    fn add_trusted_peer_node(&self, _peer: base_execution_network_types::TrustedPeer) {}
+    fn add_trusted_peer_node(&self, _peer: base_execution_network_wire::TrustedPeer) {}
 
     /// Adds a peer to the known peer set, with the given kind.
     ///

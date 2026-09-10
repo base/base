@@ -3,10 +3,10 @@
 use std::{num::ParseIntError, sync::Arc, time::Duration};
 
 use base_common_chain_config::RollupConfig;
-use base_consensus_driver_service::LocalEngineClient;
-use base_consensus_driver_service::RpcBuilder;
-use base_consensus_driver_service::{FollowNode, FollowNodeConfig, L1Config, RemoteL2Client};
-use base_consensus_source_providers::{L1RpcProvider, OnlineBeaconClient};
+use base_consensus_driver::{
+    FollowNode, FollowNodeConfig, L1Config, LocalEngineClient, RemoteL2Client, RpcBuilder,
+};
+use base_consensus_source::{L1RpcProvider, OnlineBeaconClient};
 use clap::Args;
 use tracing::{error, info, warn};
 use url::Url;

@@ -6,16 +6,17 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
-use base_common_types_payload::PayloadAttributes;
-use base_execution_engine_types::TreeConfig;
+use base_common_types_payload::{PayloadAttributes, TreeConfig};
 use base_testing_devnet::{
-    BaseNodeTestUtils, E2ETestSetupBuilder, testsuite::TestBuilder,
-    testsuite::actions::BlockReference, testsuite::actions::CaptureBlock,
-    testsuite::actions::CaptureBlockOnNode, testsuite::actions::CompareNodeChainTips,
-    testsuite::actions::CreateFork, testsuite::actions::FinalizeBlock,
-    testsuite::actions::MakeCanonical, testsuite::actions::ProduceBlocks,
-    testsuite::actions::ReorgTo, testsuite::actions::SelectActiveNode,
-    testsuite::setup::NetworkSetup, testsuite::setup::Setup,
+    BaseNodeTestUtils, E2ETestSetupBuilder,
+    testsuite::{
+        TestBuilder,
+        actions::{
+            BlockReference, CaptureBlock, CaptureBlockOnNode, CompareNodeChainTips, CreateFork,
+            FinalizeBlock, MakeCanonical, ProduceBlocks, ReorgTo, SelectActiveNode,
+        },
+        setup::{NetworkSetup, Setup},
+    },
 };
 use eyre::Result;
 use fixtures::BaseTestPayload;

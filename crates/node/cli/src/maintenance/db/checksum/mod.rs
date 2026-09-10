@@ -4,9 +4,9 @@ use std::{
 };
 
 use alloy_primitives::map::foldhash::fast::FixedState;
-use base_execution_state_database::static_file::iter_static_files;
 use base_execution_state_database::{
     DbCursorRO, DbTx, RawKey, RawTable, RawValue, Table, TableViewer, Tables,
+    static_file::iter_static_files,
 };
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{DBProvider, StaticFileProviderFactory};
@@ -18,8 +18,7 @@ use tracing::{info, warn};
 use crate::maintenance::db::get::{maybe_json_value_parser, table_key};
 
 mod rocksdb;
-pub use rocksdb::RocksDbTable;
-pub use rocksdb::{RocksDbTable as ChecksumRocksDbTable, checksum_rocksdb};
+pub use rocksdb::{RocksDbTable, RocksDbTable as ChecksumRocksDbTable, checksum_rocksdb};
 
 /// Interval for logging progress during checksum computation.
 const PROGRESS_LOG_INTERVAL: usize = 100_000;

@@ -13,8 +13,7 @@ use alloy_primitives::{
 };
 use alloy_rlp::{Decodable, EMPTY_LIST_CODE, Encodable, Error as RlpError};
 use base_common_observability_metrics::metrics::counter;
-use base_common_types_chain::GotExpected;
-use base_common_types_chain::add_arbitrary_tests;
+use base_common_types_chain::{GotExpected, add_arbitrary_tests};
 use futures::{Sink, SinkExt, StreamExt};
 use pin_project::pin_project;
 #[cfg(feature = "serde")]
@@ -22,15 +21,10 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 use tracing::{debug, trace};
 
-use crate::CanDisconnect;
-use crate::DisconnectReason;
-use crate::HelloMessage;
-use crate::HelloMessageWithProtocols;
-use crate::P2PHandshakeError;
-use crate::P2PStreamError;
-use crate::Pinger;
-use crate::PingerEvent;
-use crate::SharedCapabilities;
+use crate::{
+    CanDisconnect, DisconnectReason, HelloMessage, HelloMessageWithProtocols, P2PHandshakeError,
+    P2PStreamError, Pinger, PingerEvent, SharedCapabilities,
+};
 
 /// [`MAX_PAYLOAD_SIZE`] is the maximum size of an uncompressed message payload.
 /// This is defined in [EIP-706](https://eips.ethereum.org/EIPS/eip-706).
@@ -68,7 +62,7 @@ const PING_INTERVAL: Duration = Duration::from_secs(60);
 /// `p2p` stream.
 ///
 /// Note: this default is rather low because it is expected that the [`P2PStream`] wraps an
-/// [`ECIESStream`](base_execution_network_wire::ECIESStream) which internally already buffers a few MB of
+/// [`ECIESStream`](crate::ECIESStream) which internally already buffers a few MB of
 /// encoded data.
 const MAX_P2P_CAPACITY: usize = 2;
 
@@ -247,7 +241,7 @@ where
 /// This stream emits _non-empty_ Bytes that start with the normalized message id, so that the first
 /// byte of each message starts from 0. If this stream only supports a single capability, for
 /// example `eth` then the first byte of each message will match
-/// [EthMessageID](base_execution_network_wire::EthMessageID).
+/// [EthMessageID](crate::EthMessageID).
 ///
 /// ### Sink behavior
 ///
@@ -875,11 +869,7 @@ mod tests {
     use tokio_util::codec::Decoder;
 
     use super::*;
-    use crate::Capability;
-    use crate::EthVersion;
-    use crate::ProtocolVersion;
-    use crate::SharedCapability;
-    use crate::test_utils::eth_hello;
+    use crate::{Capability, EthVersion, ProtocolVersion, SharedCapability, test_utils::eth_hello};
 
     /// A sink that records started frames and counts flushes, to observe batching behavior.
     #[derive(Default)]

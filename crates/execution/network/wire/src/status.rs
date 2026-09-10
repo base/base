@@ -4,7 +4,7 @@ use alloy_chains::Chain;
 use alloy_hardforks::ForkId;
 use alloy_primitives::{B256, U256, hex};
 use alloy_rlp::{BufMut, Encodable, RlpDecodable, RlpEncodable};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 
 use crate::{BlockRangeUpdate, EthVersion};
 

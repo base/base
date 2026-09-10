@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use base_execution_engine_types::{BeaconEngineMessage, OnForkChoiceUpdated};
+use base_common_types_payload::{BeaconEngineMessage, OnForkChoiceUpdated};
 use futures::{Stream, StreamExt};
 
 /// Engine API stream wrapper that skips the specified number of forkchoice updated messages.

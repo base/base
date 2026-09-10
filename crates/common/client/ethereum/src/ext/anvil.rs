@@ -1,13 +1,12 @@
 //! This module extends the Ethereum JSON-RPC provider with the Anvil namespace's RPC methods.
 
-use crate::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxHash, U64, U128, U256};
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::Blob;
 use futures::try_join;
 
 use super::{Forking, Metadata, MineOptions, NodeInfo, ReorgOptions};
-use crate::{PendingTransactionBuilder, Provider};
+use crate::{Network, PendingTransactionBuilder, Provider, TransactionBuilder};
 
 /// Anvil namespace rpc interface that gives access to several non-standard RPC methods.
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
@@ -527,18 +526,16 @@ impl ImpersonateConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Ethereum, TransactionBuilder, TransactionBuilder4844};
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{B256, address};
     use alloy_sol_types::{SolCall, sol};
     use alloy_transport::mock::Asserter;
     use base_common_types_chain::{BlockHeader, SidecarBuilder, SimpleCoder};
-    use base_common_types_rpc::BlockResponse as _;
-    use base_common_types_rpc::TransactionRequest;
+    use base_common_types_rpc::{BlockResponse as _, TransactionRequest};
 
     use super::*;
     use crate::{
-        ProviderBuilder,
+        Ethereum, ProviderBuilder, TransactionBuilder, TransactionBuilder4844,
         fillers::{ChainIdFiller, GasFiller},
     };
 

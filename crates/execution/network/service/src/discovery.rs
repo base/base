@@ -8,20 +8,12 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::{DiscoveredEvent, DiscoveryEvent};
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
-use base_execution_network_discovery::DiscoveredPeer;
-use base_execution_network_discovery::Discv4;
-use base_execution_network_discovery::Discv4Config;
-use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
-use base_execution_network_discovery::Discv5;
-use base_execution_network_discovery::DnsDiscoveryConfig;
-use base_execution_network_discovery::DnsDiscoveryHandle;
-use base_execution_network_discovery::DnsDiscoveryService;
-use base_execution_network_discovery::DnsNodeRecordUpdate;
-use base_execution_network_discovery::DnsResolver;
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_discovery::{
+    DiscoveredPeer, Discv4, Discv4Config, Discv4DiscoveryUpdate as DiscoveryUpdate, Discv5,
+    DnsDiscoveryConfig, DnsDiscoveryHandle, DnsDiscoveryService, DnsNodeRecordUpdate, DnsResolver,
+};
+use base_execution_network_wire::{NodeRecord, PeerAddr, PeerId};
 use enr::Enr;
 use futures::StreamExt;
 use secp256k1::SecretKey;
@@ -30,6 +22,7 @@ use tokio_stream::{Stream, wrappers::ReceiverStream};
 use tracing::{debug, trace};
 
 use crate::{
+    DiscoveredEvent, DiscoveryEvent,
     cache::LruMap,
     error::{NetworkError, ServiceKind},
 };
@@ -60,7 +53,7 @@ pub struct Discovery {
     /// Handler to interact with the Discovery v5 service
     discv5: Option<Discv5>,
     /// All KAD table updates from the discv5 service.
-    discv5_updates: Option<ReceiverStream<base_execution_network_discv5::Event>>,
+    discv5_updates: Option<ReceiverStream<base_execution_network_discovery::Event>>,
     /// Background task that, in shared-port mode, drains `UnrecognizedFrame`s from discv5 and
     /// feeds them into the discv4 ingress so packets advance without polling `Discovery`.
     _discv5_forwarder: Option<JoinHandle<()>>,
@@ -194,7 +187,7 @@ impl Discovery {
                 }
 
                 discv5_cfg.listen_config =
-                    base_execution_network_discv5::ListenConfig::FromSockets { ipv4, ipv6 };
+                    base_execution_network_discovery::ListenConfig::FromSockets { ipv4, ipv6 };
             }
 
             let (discv5, discv5_updates) = Discv5::start(&sk, config).await?;
@@ -213,7 +206,7 @@ impl Discovery {
                 let (tx, rx) = mpsc::channel(updates.max_capacity());
                 let handle = tokio::spawn(async move {
                     while let Some(event) = updates.recv().await {
-                        if let base_execution_network_discv5::Event::UnrecognizedFrame(frame) =
+                        if let base_execution_network_discovery::Event::UnrecognizedFrame(frame) =
                             &event
                         {
                             ingress.handle_packet(&frame.packet, frame.src_address).await;
@@ -512,9 +505,9 @@ mod tests {
         .unwrap();
     }
 
-    use base_execution_network_discovery::Discv4ConfigBuilder;
-    use base_execution_network_discovery::EnrCombinedKeyWrapper;
-    use base_execution_network_discovery::enr_to_discv4_id;
+    use base_execution_network_discovery::{
+        Discv4ConfigBuilder, EnrCombinedKeyWrapper, enr_to_discv4_id,
+    };
     use tracing::trace;
 
     async fn start_discovery_node(udp_port_discv4: u16, udp_port_discv5: u16) -> Discovery {
@@ -526,10 +519,11 @@ mod tests {
         // disable `NatResolver`
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
-        let discv5_listen_config = base_execution_network_discv5::ListenConfig::from(discv5_addr);
+        let discv5_listen_config =
+            base_execution_network_discovery::ListenConfig::from(discv5_addr);
         let discv5_config = base_execution_network_discovery::Discv5Config::builder(discv5_addr)
             .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+                base_execution_network_discovery::ConfigBuilder::new(discv5_listen_config).build(),
             )
             .build();
 
@@ -555,7 +549,7 @@ mod tests {
             (Ipv4Addr::LOCALHOST, 0).into(),
         )
         .discv5_config(
-            base_execution_network_discv5::ConfigBuilder::new(discv5_addr.into()).build(),
+            base_execution_network_discovery::ConfigBuilder::new(discv5_addr.into()).build(),
         )
         .build();
 
@@ -575,7 +569,8 @@ mod tests {
         let mut discv5_config =
             base_execution_network_discovery::Discv5Config::builder(advertised_addr)
                 .discv5_config(
-                    base_execution_network_discv5::ConfigBuilder::new(discv5_addr.into()).build(),
+                    base_execution_network_discovery::ConfigBuilder::new(discv5_addr.into())
+                        .build(),
                 )
                 .build();
 
@@ -683,10 +678,10 @@ mod tests {
 
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
-        let discv5_listen_config = base_execution_network_discv5::ListenConfig::from(disc_addr);
+        let discv5_listen_config = base_execution_network_discovery::ListenConfig::from(disc_addr);
         let discv5_config = base_execution_network_discovery::Discv5Config::builder(tcp_addr)
             .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+                base_execution_network_discovery::ConfigBuilder::new(discv5_listen_config).build(),
             )
             .build();
 
@@ -831,7 +826,7 @@ mod tests {
 
         let discv4_config = Discv4ConfigBuilder::default().external_ip_resolver(None).build();
 
-        let discv5_listen_config = base_execution_network_discv5::ListenConfig::DualStack {
+        let discv5_listen_config = base_execution_network_discovery::ListenConfig::DualStack {
             ipv4: std::net::Ipv4Addr::UNSPECIFIED,
             ipv4_port: port,
             ipv6: std::net::Ipv6Addr::UNSPECIFIED,
@@ -839,7 +834,7 @@ mod tests {
         };
         let discv5_config = base_execution_network_discovery::Discv5Config::builder(tcp_addr)
             .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
+                base_execution_network_discovery::ConfigBuilder::new(discv5_listen_config).build(),
             )
             .build();
 

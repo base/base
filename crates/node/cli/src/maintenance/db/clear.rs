@@ -1,5 +1,6 @@
-use base_execution_state_database::static_file::iter_static_files;
-use base_execution_state_database::{Database, DbTx, DbTxMut, Table, TableViewer, Tables};
+use base_execution_state_database::{
+    Database, DbTx, DbTxMut, Table, TableViewer, Tables, static_file::iter_static_files,
+};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::StaticFileProviderFactory;
 use base_execution_state_types::StaticFileSegment;

@@ -10,7 +10,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::{DownloadCommand, DownloadDefaults};
 use base_common_chain_config::BaseChainSpec;
 use base_node_config::DatadirArgs;
 use clap::Parser;
@@ -18,6 +17,8 @@ use eyre::Result;
 use futures::StreamExt;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
+
+use crate::{DownloadCommand, DownloadDefaults};
 
 /// Download Base node snapshots from R2 storage.
 ///

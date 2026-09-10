@@ -1,7 +1,6 @@
-use crate::{BaseUpgrade, ChainUpgrades};
 use alloy_hardforks::ForkCondition;
 
-use crate::Upgrades;
+use crate::{BaseUpgrade, ChainUpgrades, Upgrades};
 
 impl Upgrades for ChainUpgrades {
     fn fork_condition(&self, fork: BaseUpgrade) -> ForkCondition {

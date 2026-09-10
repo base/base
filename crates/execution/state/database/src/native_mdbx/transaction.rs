@@ -1,4 +1,3 @@
-use crate::native_mdbx::ffi;
 use std::{
     ffi::{c_uint, c_void},
     fmt::{self, Debug},
@@ -8,16 +7,17 @@ use std::{
     time::Duration,
 };
 
-#[cfg(feature = "read-tx-timeouts")]
-use crate::native_mdbx::ffi::mdbx_txn_renew;
-use crate::native_mdbx::ffi::{MDBX_TXN_RDONLY, MDBX_TXN_READWRITE, MDBX_txn_flags_t};
 use parking_lot::{Mutex, MutexGuard};
 
+#[cfg(feature = "read-tx-timeouts")]
+use crate::native_mdbx::ffi::mdbx_txn_renew;
 use crate::native_mdbx::{
     Cursor, Error, Stat, TableObject,
     database::Database,
     environment::Environment,
     error::{Result, mdbx_result},
+    ffi,
+    ffi::{MDBX_TXN_RDONLY, MDBX_TXN_READWRITE, MDBX_txn_flags_t},
     flags::{DatabaseFlags, WriteFlags},
     txn_manager::{TxnManagerMessage, TxnPtr},
 };

@@ -11,21 +11,22 @@
 //! 2. Prewarming tasks execute transactions in parallel using shared caches
 //! 3. When actual block execution happens, it benefits from the warmed cache
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    mpsc::{self, Receiver, Sender, channel},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc::{self, Receiver, Sender, channel},
+    },
+    time::Instant,
 };
 
 use alloy_eip7928::bal::DecodedBal;
 use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{B256, U256, keccak256};
 use base_common_observability_metrics::Metrics;
-use base_common_runtime_tasks::{Runtime, pool::WorkerPool};
-use base_execution_evm_blocks::{
-    BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor,
-};
-use base_execution_state_memory::StoredAccount as Account;
+use base_common_runtime::{Runtime, pool::WorkerPool};
+use base_execution_evm_blocks::{BaseEvmConfig, Evm, ExecutableTxFor, RecoveredTx};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_provider::{
     AccountReader, BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory,
     PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
@@ -34,7 +35,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::MultiProofTargetsV2;
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;
-use std::time::Instant;
 use tokio::sync::oneshot;
 use tracing::{Span, debug, debug_span, instrument, trace, trace_span, warn};
 
@@ -75,34 +75,25 @@ pub enum PrewarmMode<Tx> {
 ///
 /// Note: This task runs until cancelled externally.
 #[derive(Debug)]
-pub struct PrewarmCacheTask<P> {
+pub struct PrewarmCacheTask {
     /// The executor used to spawn execution tasks.
     executor: Runtime,
     /// Shared execution cache.
     execution_cache: PayloadExecutionCache,
     /// Context provided to execution tasks
-    ctx: PrewarmContext<P>,
+    ctx: PrewarmContext,
     /// Receiver for events produced by tx execution
     actions_rx: Receiver<PrewarmTaskEvent>,
     /// Parent span for tracing
     parent_span: Span,
 }
 
-impl<P> PrewarmCacheTask<P>
-where
-    P: DatabaseProviderFactory + Clone + 'static,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-{
+impl PrewarmCacheTask {
     /// Initializes the task with the given transactions pending execution
     pub fn new(
         executor: Runtime,
         execution_cache: PayloadExecutionCache,
-        ctx: PrewarmContext<P>,
+        ctx: PrewarmContext,
     ) -> (Self, Sender<PrewarmTaskEvent>) {
         let (actions_tx, actions_rx) = channel();
 
@@ -124,7 +115,7 @@ where
     /// Kicks off EVM init on every pool thread, then uses `in_place_scope` to dispatch
     /// transactions as they arrive and wait for all spawned tasks to complete before
     /// clearing per-thread state. Workers that start via work-stealing lazily initialise
-    /// their EVM state on first access via [`get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init).
+    /// their EVM state on first access via [`get_or_init`](base_common_runtime::pool::Worker::get_or_init).
     fn spawn_txs_prewarm<Tx>(
         &self,
         pending: mpsc::Receiver<(usize, Tx)>,
@@ -204,9 +195,9 @@ where
     /// Executes a single prewarm transaction on the current pool thread's EVM.
     ///
     /// Lazily initialises per-thread [`PrewarmEvmState`] via
-    /// [`get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init) on first access.
+    /// [`get_or_init`](base_common_runtime::pool::Worker::get_or_init) on first access.
     fn transact_worker<Tx>(
-        ctx: &PrewarmContext<P>,
+        ctx: &PrewarmContext,
         index: usize,
         tx: Tx,
         state_root_hint_stream: Option<&StateRootHintStream>,
@@ -517,7 +508,7 @@ where
 
 /// Context required by tx execution tasks.
 #[derive(Debug, Clone)]
-pub struct PrewarmContext<P> {
+pub struct PrewarmContext {
     /// The execution environment.
     pub env: ExecutionEnv,
     /// The EVM configuration.
@@ -525,7 +516,7 @@ pub struct PrewarmContext<P> {
     /// The saved cache.
     pub saved_cache: Option<SavedCache>,
     /// Provider to obtain the state
-    pub provider: StateProviderBuilder<P>,
+    pub provider: StateProviderBuilder,
     /// Dedicated blocking pool for warming the BAL read-set. `Some` only on the BAL parallel
     /// execution path; the pool is owned by the [`PayloadProcessor`](super::PayloadProcessor).
     pub(crate) bal_prewarm_pool: Option<Arc<BalPrewarmPool>>,
@@ -545,7 +536,7 @@ pub struct PrewarmContext<P> {
     /// Whether the precompile cache is disabled.
     pub precompile_cache_disabled: bool,
     /// The precompile cache map.
-    pub precompile_cache_map: PrecompileCacheMap<SpecFor>,
+    pub precompile_cache_map: PrecompileCacheMap<base_execution_evm_runtime::BaseSpecId>,
     /// Whether to disable BAL-driven parallel state root computation.
     /// Only valid when BAL parallel execution is also disabled.
     pub disable_bal_parallel_state_root: bool,
@@ -554,19 +545,15 @@ pub struct PrewarmContext<P> {
 }
 
 /// Per-thread EVM state initialised by [`PrewarmContext::evm_for_ctx`] and stored in
-/// [`WorkerPool`] workers via [`Worker::get_or_init`](base_common_runtime_tasks::pool::Worker::get_or_init).
-type PrewarmEvmState = Option<EvmFor<base_execution_state_provider::StateProviderBox>>;
+/// [`WorkerPool`] workers via [`Worker::get_or_init`](base_common_runtime::pool::Worker::get_or_init).
+type PrewarmEvmState = Option<
+    base_execution_evm_runtime::BaseEvm<
+        base_execution_state_provider::StateProviderBox,
+        base_execution_evm_runtime::NoOpInspector,
+    >,
+>;
 
-impl<P> PrewarmContext<P>
-where
-    P: DatabaseProviderFactory,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-{
+impl PrewarmContext {
     /// Creates a per-thread EVM for prewarming.
     #[instrument(level = "debug", target = "engine::tree::payload_processor::prewarm", skip_all)]
     fn evm_for_ctx(&self) -> PrewarmEvmState {

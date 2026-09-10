@@ -17,18 +17,18 @@ serde_json = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-ipnet = {workspace = true, features = ["std", "serde"]}
-jsonrpsee = {workspace = true, features = ["macros", "client-core"]}
-base-common-types-rpc = {workspace = true, features = ["std", "serde"]}
-base-common-client-ethereum = {workspace = true, features = ["default"]}
-base-common-chain-activation = {workspace = true, features = ["default"]}
-base-common-types-chain = {workspace = true, features = ["std", "serde"]}
-base-common-chain-config = {workspace = true, features = ["std", "serde"]}
-base-common-types-payload = {workspace = true, features = ["std", "serde"]}
+ipnet = { workspace = true, features = ["std", "serde"] }
+jsonrpsee = { workspace = true, features = ["macros", "client-core"] }
+base-common-types-rpc = { workspace = true, features = ["std", "serde"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
+base-common-chain-activation = { workspace = true, features = ["default"] }
+base-common-types-chain = { workspace = true, features = ["std", "serde"] }
+base-common-chain-config = { workspace = true, features = ["std", "serde"] }
+base-common-types-payload = { workspace = true, features = ["std", "serde"] }
 
 [dev-dependencies]
-async-trait = {workspace = true}
-rstest = {workspace = true, features = ["default"]}
+async-trait = { workspace = true }
+rstest = { workspace = true, features = ["default"] }
 
 [features]
 default = []

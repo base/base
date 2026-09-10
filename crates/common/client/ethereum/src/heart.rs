@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-use crate::{BlockResponse, Network};
 use alloy_json_rpc::RpcError;
 use alloy_primitives::{
     B256, TxHash,
@@ -32,7 +31,7 @@ use {
     tokio::time::{interval, sleep_until},
 };
 
-use crate::{Provider, RootProvider, blocks::Paused};
+use crate::{BlockResponse, Network, Provider, RootProvider, blocks::Paused};
 
 /// Errors which may occur when watching a pending transaction.
 #[derive(Debug, thiserror::Error)]

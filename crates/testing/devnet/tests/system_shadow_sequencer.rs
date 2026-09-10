@@ -17,8 +17,9 @@ use std::{num::NonZeroU64, time::Duration};
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_signer::SignerSync;
-use base_common_client_ethereum::{Base, PrivateKeySigner, TransactionBuilder};
-use base_common_client_ethereum::{Provider, RootProvider};
+use base_common_client_ethereum::{
+    Base, PrivateKeySigner, Provider, RootProvider, TransactionBuilder,
+};
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
 use base_testing_devnet::{

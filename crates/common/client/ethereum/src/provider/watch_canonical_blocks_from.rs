@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use crate::{BlockResponse as _, Network};
 use alloy_eips::BlockNumberOrTag;
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
@@ -14,7 +13,10 @@ use base_common_types_rpc::HeaderResponse;
 use futures::{Stream, StreamExt as _, stream::Buffered};
 use pin_project::pin_project;
 
-use crate::{WatchBlocksFrom, WatchBlocksFromStream, transport::TransportErrorKind};
+use crate::{
+    BlockResponse as _, Network, WatchBlocksFrom, WatchBlocksFromStream,
+    transport::TransportErrorKind,
+};
 
 const RPC_CONCURRENCY_DEFAULT: usize = 4;
 const MAX_REORG_DEPTH_DEFAULT: usize = 64;

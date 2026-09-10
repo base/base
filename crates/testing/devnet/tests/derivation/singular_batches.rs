@@ -1,6 +1,6 @@
 //! Singular batch ordering and channel recovery.
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_testing_devnet::{
     ActionTestHarness, BatcherConfig, L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,
 };

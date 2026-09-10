@@ -1,6 +1,5 @@
 use alloy_primitives::BlockNumber;
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::{ProviderResult, StaticFileSegment};
 
 use crate::providers::{StaticFileProvider, StaticFileProviderRWRefMut};
 

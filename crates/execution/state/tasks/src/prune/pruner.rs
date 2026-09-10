@@ -250,7 +250,7 @@ mod tests {
                 use std::sync::Arc;
 
                 use alloy_primitives::{B256, U256};
-                use base_execution_state_memory::StoredAccount as Account;
+                use base_execution_evm_runtime::StoredAccount as Account;
                 use base_execution_state_trie::{
                     BranchNodeCompact, HashedPostState, HashedStorage, Nibbles,
                     hashed_cursor::HashedCursor,

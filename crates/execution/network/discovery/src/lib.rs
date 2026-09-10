@@ -1,5 +1,8 @@
 #![doc = include_str!("../README.md")]
 
+#[macro_use]
+extern crate lazy_static;
+
 mod nat;
 pub use nat::{NatResolver, ParseNatResolverError, ResolveNatInterval};
 
@@ -7,6 +10,8 @@ mod net_if;
 pub use net_if::{DEFAULT_NET_IF_NAME, NetInterfaceError, NetworkInterface};
 
 mod dns;
+#[cfg(test)]
+pub use dns::DnsTimeoutResolver;
 pub use dns::{
     DnsBranchEntry, DnsDiscoveryConfig, DnsDiscoveryEvent, DnsDiscoveryHandle, DnsDiscoveryService,
     DnsEntry, DnsLinkEntry, DnsLookup, DnsLookupError, DnsLookupResult, DnsMapResolver,
@@ -15,17 +20,15 @@ pub use dns::{
     DnsSyncAction, DnsSyncTree, DnsTreeRootEntry, NetError, ParseDnsEntryError, TokioResolver,
 };
 
-#[cfg(test)]
-pub use dns::DnsTimeoutResolver;
-
 mod discv4;
-pub use discv4::Discv4Socket;
+#[cfg(any(test, feature = "test-utils"))]
+pub use discv4::test_utils as discv4_test_utils;
 pub use discv4::{
     DEFAULT_DISCOVERY_ADDR as DISCV4_DEFAULT_DISCOVERY_ADDR,
     DEFAULT_DISCOVERY_ADDRESS as DISCV4_DEFAULT_DISCOVERY_ADDRESS,
     DEFAULT_DISCOVERY_PORT as DISCV4_DEFAULT_DISCOVERY_PORT,
     DecodePacketError as Discv4DecodePacketError, DiscoveryUpdate as Discv4DiscoveryUpdate, Discv4,
-    Discv4Config, Discv4ConfigBuilder, Discv4Error, Discv4Event, Discv4Service,
+    Discv4Config, Discv4ConfigBuilder, Discv4Error, Discv4Event, Discv4Service, Discv4Socket,
     EnrRequest as Discv4EnrRequest, EnrResponse as Discv4EnrResponse, FindNode as Discv4FindNode,
     IngressEvent as Discv4IngressEvent, IngressHandler as Discv4IngressHandler,
     IngressReceiver as Discv4IngressReceiver, IngressSender as Discv4IngressSender,
@@ -34,9 +37,6 @@ pub use discv4::{
     Packet as Discv4Packet, Ping as Discv4Ping, PingReason as Discv4PingReason, Pong as Discv4Pong,
     PongNodeKey as Discv4PongNodeKey, PongTable as Discv4PongTable,
 };
-
-#[cfg(any(test, feature = "test-utils"))]
-pub use discv4::test_utils as discv4_test_utils;
 
 mod discv5;
 pub use discv5::{
@@ -51,3 +51,6 @@ pub use discv5::{
     enr_to_discv4_id, get_lookup_target, ipv4 as discv5_ipv4, ipv6 as discv5_ipv6, lookup,
     spawn_populate_kbuckets_bg,
 };
+
+mod discv5_protocol;
+pub use discv5_protocol::*;

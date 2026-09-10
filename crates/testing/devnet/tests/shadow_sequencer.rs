@@ -1,8 +1,8 @@
 //! Action tests for shadow-sequencer canonical catch-up.
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
-use base_consensus_driver_service::CanonicalUnsafeCatchup;
+use base_consensus_driver::CanonicalUnsafeCatchup;
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, ExecutionPayloadConverter,
     L1MinerConfig, SharedL1Chain, TestRollupConfigBuilder,

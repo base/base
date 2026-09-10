@@ -1,0 +1,39 @@
+[package]
+name = "base-batcher-encoding"
+description = "Batcher encoding pipeline: BatchPipeline trait and BatchEncoder state machine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-rlp = { workspace = true }
+metrics = { workspace = true, optional = true }
+brotli = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+thiserror = { features = ["std"], workspace = true }
+alloy-eips = { features = ["std"], workspace = true }
+base-common-observability-metrics = { workspace = true }
+alloy-primitives = { features = ["std"], workspace = true }
+derive_more = { workspace = true, features = ["debug", "std"] }
+base-consensus-batch = { features = ["std"], workspace = true }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
+rand = { workspace = true, features = ["default", "std", "small_rng"] }
+clap = { workspace = true, features = ["default", "derive"], optional = true }
+
+[dev-dependencies]
+rstest = { features = ["default"], workspace = true }
+alloy-primitives = { workspace = true, features = ["std"] }
+base-consensus-batch = { workspace = true, features = ["std"] }
+base-common-types-chain = { workspace = true, features = ["std"] }
+base-common-chain-config = { workspace = true, features = ["std"] }
+
+[features]
+clap = ["dep:clap"]
+metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]

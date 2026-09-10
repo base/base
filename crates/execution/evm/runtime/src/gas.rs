@@ -1,5 +1,5 @@
 //! GasIspector. Helper Inspector to calculate gas for others.
-use base_execution_evm_machine::{CallOutcome, CreateOutcome, Gas};
+use base_execution_evm_runtime::{CallOutcome, CreateOutcome, Gas};
 
 /// Helper that keeps track of gas.
 #[derive(Clone, Copy, Debug)]
@@ -101,15 +101,13 @@ impl GasInspector {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::{CallInputs, CreateInputs, Interpreter, InterpreterResult};
-    use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
-    use base_execution_evm_primitives::{Address, Bytes, TxKind, hardfork::SpecId};
-    use base_execution_evm_runtime::{MainBuilder, MainContext};
-    use base_execution_state_memory::bytecode::{Bytecode, opcode};
-    use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
+    use base_execution_evm_runtime::{
+        Address, BENCH_CALLER, BENCH_TARGET, BenchmarkDB, Bytecode, Bytes, CallInputs, CfgEnv,
+        CreateInputs, InspectEvm, Inspector, Interpreter, InterpreterResult, MainBuilder,
+        MainContext, TxEnv, TxKind, hardfork::SpecId, opcode,
+    };
 
     use super::*;
-    use crate::{InspectEvm, Inspector};
 
     #[derive(Default, Debug)]
     struct StackInspector {
@@ -163,7 +161,8 @@ mod tests {
         ]);
         let bytecode = Bytecode::new_raw(contract_data);
 
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode.clone()));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode.clone()));
 
         let mut evm = ctx.build_mainnet_with_inspector(StackInspector::default());
 
@@ -231,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_call_override_inspector() {
-        use base_execution_evm_machine::{CallOutcome, CreateOutcome, InstructionResult};
+        use base_execution_evm_runtime::{CallOutcome, CreateOutcome, InstructionResult};
 
         let mut inspector = CallOverrideInspector::default();
         inspector.call_override.push(Some(CallOutcome::new(
@@ -274,7 +273,7 @@ mod tests {
         let mut cfg = CfgEnv::<SpecId>::default();
         cfg.tx_gas_limit_cap = Some(u64::MAX);
 
-        let mut evm = Context::mainnet()
+        let mut evm = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_db(BenchmarkDB::new_bytecode(bytecode.clone()))
             .with_cfg(cfg)
             .build_mainnet_with_inspector(inspector);

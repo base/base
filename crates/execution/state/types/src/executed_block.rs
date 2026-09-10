@@ -1,8 +1,7 @@
 use alloc::sync::Arc;
 
 use alloy_primitives::BlockNumber;
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::{RecoveredBlock, SealedBlock};
+use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedBlock};
 
 use crate::{
     BlockExecutionOutput, BlockExecutionResult, ComputedTrieData, HashedPostStateSorted,

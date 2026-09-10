@@ -10,28 +10,15 @@ use std::{
     time::Duration,
 };
 
-use crate::{PeerCommand, PeersHandle};
 use alloy_eip2124::ForkId;
 use alloy_primitives::map::{FbBuildHasher, HashMap, HashSet, hash_map::Entry};
-use base_execution_network_types::BanList;
-use base_execution_network_types::ConnectionsConfig;
-use base_execution_network_types::DEFAULT_REPUTATION;
-use base_execution_network_types::MAX_TRUSTED_PEER_REPUTATION_CHANGE;
-use base_execution_network_types::PEER_ROTATION_MIN_UPTIME;
-use base_execution_network_types::Peer;
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::PeerBackoffDurations;
-use base_execution_network_types::PeerConnectionState;
-use base_execution_network_types::PeerKind;
-use base_execution_network_types::PeersConfig;
-use base_execution_network_types::PersistedPeerInfo;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_types::ReputationChangeOutcome;
-use base_execution_network_types::ReputationChangeWeights;
-use base_execution_network_types::is_connection_failed_reputation;
-use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::EthStreamError;
+use base_execution_network_wire::{
+    BanList, ConnectionsConfig, DEFAULT_REPUTATION, DisconnectReason, EthStreamError,
+    MAX_TRUSTED_PEER_REPUTATION_CHANGE, NodeRecord, PEER_ROTATION_MIN_UPTIME, Peer, PeerAddr,
+    PeerBackoffDurations, PeerConnectionState, PeerId, PeerKind, PeersConfig, PersistedPeerInfo,
+    ReputationChangeKind, ReputationChangeOutcome, ReputationChangeWeights, TrustedPeer,
+    is_connection_failed_reputation,
+};
 use futures::StreamExt;
 use rand::Rng;
 use thiserror::Error;
@@ -43,6 +30,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{trace, warn};
 
 use crate::{
+    PeerCommand, PeersHandle,
     error::SessionError,
     session::{Direction, PendingSessionHandshakeError},
     swarm::NetworkConnectionState,
@@ -102,7 +90,7 @@ pub struct PeersManager {
     /// How long to temporarily ban ip on an incoming connection attempt.
     incoming_ip_throttle_duration: Duration,
     /// IP address filter for restricting network connections to specific IP ranges.
-    ip_filter: base_execution_network_types::IpFilter,
+    ip_filter: base_execution_network_wire::IpFilter,
     /// If true, discovered peers without a confirmed ENR fork ID will not be added until their
     /// fork ID is verified via EIP-868.
     enforce_enr_fork_id: bool,
@@ -1518,25 +1506,18 @@ mod tests {
         time::Duration,
     };
 
-    use crate::Direction;
     use alloy_eip2124::{ForkHash, ForkId};
     use alloy_primitives::B512;
-    use base_execution_network_types::BackoffKind;
-    use base_execution_network_types::BanList;
-    use base_execution_network_types::DEFAULT_REPUTATION;
-    use base_execution_network_types::Peer;
-    use base_execution_network_types::ReputationChangeKind;
-    use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-    use base_execution_network_wire::DisconnectReason;
-    use base_execution_network_wire::EthHandshakeError;
-    use base_execution_network_wire::EthStreamError;
-    use base_execution_network_wire::P2PHandshakeError;
-    use base_execution_network_wire::P2PStreamError;
+    use base_execution_network_wire::{
+        BackoffKind, BanList, DEFAULT_REPUTATION, DisconnectReason, EthHandshakeError,
+        EthStreamError, NodeRecord, P2PHandshakeError, P2PStreamError, Peer, PeerId,
+        ReputationChangeKind, TrustedPeer,
+    };
     use url::Host;
 
     use super::PeersManager;
     use crate::{
-        PeersConfig,
+        Direction, PeersConfig,
         error::SessionError,
         peers::{
             ConnectionInfo, InboundConnectionError, PeerAction, PeerAddr, PeerBackoffDurations,
@@ -3434,7 +3415,7 @@ mod tests {
     async fn test_ip_filter_blocks_inbound_connection() {
         use std::net::IpAddr;
 
-        use base_execution_network_types::IpFilter;
+        use base_execution_network_wire::IpFilter;
 
         // Create a filter that only allows 192.168.0.0/16
         let ip_filter = IpFilter::from_cidr_string("192.168.0.0/16").unwrap();
@@ -3454,7 +3435,7 @@ mod tests {
     async fn test_ip_filter_blocks_outbound_connection() {
         use std::net::SocketAddr;
 
-        use base_execution_network_types::IpFilter;
+        use base_execution_network_wire::IpFilter;
 
         // Create a filter that only allows 192.168.0.0/16
         let ip_filter = IpFilter::from_cidr_string("192.168.0.0/16").unwrap();
@@ -3479,7 +3460,7 @@ mod tests {
     async fn test_ip_filter_ipv6() {
         use std::net::IpAddr;
 
-        use base_execution_network_types::IpFilter;
+        use base_execution_network_wire::IpFilter;
 
         // Create a filter that only allows IPv6 range 2001:db8::/32
         let ip_filter = IpFilter::from_cidr_string("2001:db8::/32").unwrap();
@@ -3499,7 +3480,7 @@ mod tests {
     async fn test_ip_filter_multiple_ranges() {
         use std::net::IpAddr;
 
-        use base_execution_network_types::IpFilter;
+        use base_execution_network_wire::IpFilter;
 
         // Create a filter that allows multiple ranges
         let ip_filter = IpFilter::from_cidr_string("192.168.0.0/16,10.0.0.0/8").unwrap();
@@ -3521,7 +3502,7 @@ mod tests {
     async fn test_ip_filter_no_restriction() {
         use std::net::IpAddr;
 
-        use base_execution_network_types::IpFilter;
+        use base_execution_network_wire::IpFilter;
 
         // Create a filter with no restrictions (allow all)
         let ip_filter = IpFilter::allow_all();

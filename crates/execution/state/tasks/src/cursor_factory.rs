@@ -8,7 +8,9 @@
 
 use alloy_primitives::B256;
 use base_execution_state_database::DatabaseError;
-use base_execution_state_trie::{hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory};
+use base_execution_state_trie::{
+    hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
+};
 
 use crate::{
     BaseProofsHashedAccountCursor, BaseProofsHashedStorageCursor, BaseProofsStorage,

@@ -4,11 +4,6 @@ mod canyon;
 pub use canyon::{ensure_empty_shanghai_withdrawals, ensure_empty_withdrawals_root};
 
 mod isthmus;
-pub use isthmus::{
-    ensure_withdrawals_storage_root_is_some, verify_withdrawals_root,
-    verify_withdrawals_root_prehashed, withdrawals_root, withdrawals_root_prehashed,
-};
-
 use alloc::vec::Vec;
 
 use alloy_eips::Encodable2718;
@@ -16,11 +11,15 @@ use alloy_primitives::{B256, Bloom, Bytes};
 use alloy_trie::EMPTY_ROOT_HASH;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, BlockHeader, EMPTY_OMMER_ROOT_HASH, TxReceipt,
+    BaseReceipt, BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, EMPTY_OMMER_ROOT_HASH,
+    GotExpected, TxReceipt, gas_spent_by_transactions,
 };
-use base_common_types_chain::{BlockBodyExt as BlockBody, GotExpected, gas_spent_by_transactions};
-use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_consensus_batch::{BaseTimeMetadataError, BaseTimeUpdateTx};
 use base_execution_state_types::BlockExecutionResult;
+pub use isthmus::{
+    ensure_withdrawals_storage_root_is_some, verify_withdrawals_root,
+    verify_withdrawals_root_prehashed, withdrawals_root, withdrawals_root_prehashed,
+};
 use tracing::debug;
 
 use crate::{ConsensusError, proof::calculate_receipt_root};
@@ -252,13 +251,12 @@ mod tests {
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::{Bloom, Bytes, b256, hex};
     use alloy_trie::root::ordered_trie_root_with_encoder;
-    use base_common_chain_config::BaseChainSpec;
-    use base_common_chain_config::BaseUpgrade;
+    use base_common_chain_config::{BaseChainSpec, BaseUpgrade};
     use base_common_types_chain::{
         BaseReceipt, BaseTxEnvelope, DepositReceipt, Header, Receipt, Sealable, TxDeposit,
         TxReceipt,
     };
-    use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
+    use base_consensus_batch::{BaseTimeMetadataError, BaseTimeUpdateTx};
 
     use super::*;
 

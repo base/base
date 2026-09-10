@@ -1,12 +1,9 @@
 //! Contains trait [`DefaultBase`] used to create a default context.
 use base_common_chain_config::BaseUpgrade;
-use base_execution_evm_machine::CfgEnv;
-use base_execution_evm_runtime::{Context, MainContext, database::EmptyDB};
-
-use crate::{BaseSpecId, BaseTransaction, L1BlockInfo};
+use base_execution_evm_runtime::{BaseSpecId, BaseTransaction, CfgEnv, EmptyDB, L1BlockInfo};
 
 /// Type alias for the default context type of the `BaseEvm`.
-pub type BaseContext<DB> = Context<BaseTransaction, CfgEnv<BaseSpecId>, DB, L1BlockInfo>;
+pub use crate::Context as BaseContext;
 
 /// Trait that allows for a default context to be created.
 pub trait DefaultBase {
@@ -16,7 +13,7 @@ pub trait DefaultBase {
 
 impl DefaultBase for BaseContext<EmptyDB> {
     fn base() -> Self {
-        Context::mainnet()
+        Self::new(EmptyDB::default(), BaseSpecId::new(BaseUpgrade::Bedrock))
             .with_tx(BaseTransaction::builder().build_fill())
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Bedrock)))
             .with_chain(L1BlockInfo::default())
@@ -25,15 +22,13 @@ impl DefaultBase for BaseContext<EmptyDB> {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_runtime::NoOpInspector;
-    use base_execution_evm_runtime::{ExecuteEvm, InspectEvm};
+    use base_execution_evm_runtime::{Builder, ExecuteEvm, InspectEvm, NoOpInspector};
 
     use super::*;
-    use crate::Builder;
 
     #[test]
     fn default_run_base() {
-        let ctx = Context::base();
+        let ctx = BaseContext::base();
         let mut evm = ctx.build_with_inspector(NoOpInspector {});
         // execute without inspector
         let _ = evm.transact(BaseTransaction::builder().build_fill());

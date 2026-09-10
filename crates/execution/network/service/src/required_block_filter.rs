@@ -3,13 +3,13 @@
 //! This module provides functionality to filter out peers that don't have
 //! specific required blocks (primarily used for shadowfork testing).
 
-use crate::{NetworkEvent, NetworkEventListenerProvider, PeerRequest, Peers, ReputationChangeKind};
 use alloy_eips::BlockNumHash;
-use base_execution_network_wire::GetBlockHeaders;
-use base_execution_network_wire::HeadersDirection;
+use base_execution_network_wire::{GetBlockHeaders, HeadersDirection};
 use futures::StreamExt;
 use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
+
+use crate::{NetworkEvent, NetworkEventListenerProvider, PeerRequest, Peers, ReputationChangeKind};
 
 /// Task that filters peers based on required block hashes.
 ///
@@ -157,11 +157,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::NoopNetwork;
     use alloy_eips::BlockNumHash;
     use alloy_primitives::{B256, b256};
 
     use super::*;
+    use crate::NoopNetwork;
 
     #[test]
     fn test_required_block_filter_creation() {

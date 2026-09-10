@@ -3,8 +3,8 @@
 use std::{io::Write, net::SocketAddr, sync::Arc, time::Duration};
 
 use axum::{extract::ws::Message, http::Uri};
-use base_common_cli_support::LogConfig;
-use base_infra_websocket_proxy_service::{
+use base_common_cli::LogConfig;
+use base_infra_websocket_proxy::{
     Authentication, InMemoryRateLimit, Metrics, RateLimit, Registry, Server, SubscriberOptions,
     TrustedProxyConfig, WebsocketSubscriber,
 };
@@ -20,7 +20,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn};
 
-base_common_cli_support::define_log_args!("WEBSOCKET_PROXY");
+base_common_cli::define_log_args!("WEBSOCKET_PROXY");
 
 #[derive(Parser, Debug)]
 #[command(name = "websocket-proxy-bin", author, version, about)]

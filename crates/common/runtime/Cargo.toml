@@ -1,0 +1,45 @@
+[package]
+name = "base-common-runtime"
+description = "Async runtime abstraction for deterministic batcher and pipeline testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dashmap = { workspace = true }
+metrics = { workspace = true }
+thiserror = { workspace = true }
+thread-priority = { workspace = true }
+rayon = { workspace = true, optional = true }
+pin-project = { workspace = true, optional = true }
+backon = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+futures-util = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+tracing-futures = { workspace = true, features = ["default"] }
+tokio-stream = { workspace = true, features = ["default", "sync"] }
+rand = { workspace = true, optional = true, features = ["default"] }
+tokio-util = { workspace = true, optional = true, features = ["default"] }
+crossbeam-utils = { workspace = true, optional = true, features = ["default"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"] }
+tokio = { workspace = true, features = ["default", "rt", "rt-multi-thread", "sync"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["default", "full", "macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true, features = ["default"] }
+
+[features]
+default = ["tokio"]
+tokio = ["dep:tokio-util", "tokio/macros", "tokio/rt", "tokio/sync", "tokio/time"]
+test-utils = ["dep:rand"]
+time = ["tokio/time"]
+rayon = ["dep:rayon", "dep:crossbeam-utils", "pin-project"]

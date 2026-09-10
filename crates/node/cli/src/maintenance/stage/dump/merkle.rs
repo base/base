@@ -2,17 +2,17 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, BlockNumber};
 use base_execution_engine_observers::ExExManagerHandle;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_state_database::DatabaseEnv;
-use base_execution_state_database::{Database, TableImporter, models::BlockNumberAddress, tables};
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
+use base_execution_state_database::{
+    Database, DatabaseEnv, TableImporter, models::BlockNumberAddress, tables,
+};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},
 };
 use base_execution_state_types::EtlConfig;
-use base_execution_sync_pipeline::{
+use base_execution_sync::{
     AccountHashingStage, ExecutionStage, ExecutionStageThresholds,
     MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD, MerkleStage, Stage, StageCheckpoint,
     StorageHashingStage, UnwindInput,
@@ -32,7 +32,7 @@ pub(crate) async fn dump_merkle_stage(
     should_run: bool,
     evm_config: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
 ) -> Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
@@ -88,7 +88,7 @@ fn unwind_and_copy(
         checkpoint: StageCheckpoint::new(tip_block_number),
         bad_block: None,
     };
-    let execute_input = base_execution_sync_pipeline::ExecInput {
+    let execute_input = base_execution_sync::ExecInput {
         target: Some(to),
         checkpoint: Some(StageCheckpoint::new(from)),
     };
@@ -167,7 +167,7 @@ fn dry_run(output_provider_factory: ProviderFactory, to: u64, from: u64) -> eyre
     };
 
     loop {
-        let input = base_execution_sync_pipeline::ExecInput {
+        let input = base_execution_sync::ExecInput {
             target: Some(to),
             checkpoint: Some(StageCheckpoint::new(from)),
         };

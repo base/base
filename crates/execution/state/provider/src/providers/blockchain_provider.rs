@@ -1,57 +1,47 @@
-use base_execution_state_api::DatabaseProviderROFactory;
 use std::{
     ops::{RangeBounds, RangeInclusive},
     sync::Arc,
     time::Instant,
 };
 
-use crate::{
-    AnchorForParent, OverlayStateProvider, OverlayStateProviderFactory, anchor_for_parent,
-};
-use crate::{
-    BlockState, CanonicalInMemoryState, ForkChoiceNotifications, ForkChoiceSubscriptions,
-    MemoryOverlayStateProvider, PersistedBlockNotifications, PersistedBlockSubscriptions,
-};
 use alloy_eips::{BlockHashOrNumber, BlockId, BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, Bytes, TxHash, TxNumber};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{
-    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, transaction::TransactionMeta,
+    BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, ChainInfo, RecoveredBlock, SealedHeader,
+    SealedOrRecoveredBlock, transaction::TransactionMeta,
 };
-use base_common_types_chain::{RecoveredBlock, SealedHeader, SealedOrRecoveredBlock};
-use base_common_types_payload::ForkchoiceState;
-use base_execution_state_api::{
-    BlockBodyIndicesProvider, RangeEnd, RangeResponse, RangeResult, StateRangeProvider,
-    StateRangeProviderFactory, StateRangeView, StorageChangeSetReader, StorageRangeResult,
-    TryIntoHistoricalStateProvider,
-};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{
-    models::AccountBeforeTx, models::BlockNumberAddress, models::StoredBlockBodyIndices,
+    DatabaseProviderROFactory,
+    models::{AccountBeforeTx, BlockNumberAddress, StoredBlockBodyIndices},
 };
-use base_execution_state_memory::StoredAccount as Account;
 use base_execution_state_trie::{
     MultiProofTargets, StorageRoot, TrieInput, TrieInputSorted, TrieType,
     hashed_cursor::{HashedCursor, HashedCursorFactory},
     metrics::TrieRootMetrics,
     proof::{Proof, StorageProof},
 };
-use base_execution_state_types::ExecutionOutcome;
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
-use base_execution_state_types::{PruneCheckpoint, PruneSegment};
-use base_execution_state_types::{StageCheckpoint, StageId};
+use base_execution_state_types::{
+    BlockBodyIndicesProvider, ExecutionOutcome, ProviderResult, PruneCheckpoint, PruneSegment,
+    RangeEnd, RangeResponse, RangeResult, StageCheckpoint, StageId, StateRangeProvider,
+    StateRangeProviderFactory, StateRangeView, StaticFileSegment, StorageChangeSetReader,
+    StorageEntry, StorageRangeResult, TryIntoHistoricalStateProvider,
+};
 use tracing::trace;
 
 use super::state::latest::LatestStateProvider;
 use crate::{
-    BalProvider, BalStoreHandle, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
-    BlockReaderIdExt, BlockSource, CanonChainTracker, CanonStateNotifications,
-    CanonStateSubscriptions, ChainSpecProvider, ChainStateBlockReader, ChangeSetReader,
-    DatabaseProviderFactory, HeaderProvider, ProviderError, ProviderFactory, PruneCheckpointReader,
-    ReceiptProvider, ReceiptProviderIdExt, RocksDBProviderFactory, StageCheckpointReader,
-    StateProviderBox, StateProviderFactory, StateReader, StaticFileProviderFactory,
-    TransactionVariant, TransactionsProvider,
+    AnchorForParent, BalProvider, BalStoreHandle, BlockHashReader, BlockIdReader, BlockNumReader,
+    BlockReader, BlockReaderIdExt, BlockSource, BlockState, CanonChainTracker,
+    CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ChainSpecProvider,
+    ChainStateBlockReader, ChangeSetReader, DatabaseProviderFactory, ForkChoiceNotifications,
+    ForkChoiceSubscriptions, HeaderProvider, MemoryOverlayStateProvider, OverlayStateProvider,
+    OverlayStateProviderFactory, PersistedBlockNotifications, PersistedBlockSubscriptions,
+    ProviderError, ProviderFactory, PruneCheckpointReader, ReceiptProvider, ReceiptProviderIdExt,
+    RocksDBProviderFactory, StageCheckpointReader, StateProviderBox, StateProviderFactory,
+    StateReader, StaticFileProviderFactory, TransactionVariant, TransactionsProvider,
+    anchor_for_parent,
     providers::{
         ConsistentProvider, RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut,
     },
@@ -206,8 +196,10 @@ impl BlockchainProvider {
                 .overlay_builder(matched.anchor().hash)
                 .with_immediate_state_trie_overlay(merged.state, merged.nodes),
         );
-        base_execution_state_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
-            .map(Some)
+        base_execution_state_database::DatabaseProviderROFactory::database_provider_ro(
+            &overlay_factory,
+        )
+        .map(Some)
     }
 
     /// Returns a cursor-backed state view for a retained canonical state root.
@@ -234,8 +226,10 @@ impl BlockchainProvider {
             self.database.clone(),
             self.database.overlay_manager().overlay_builder(block_hash),
         );
-        base_execution_state_api::DatabaseProviderROFactory::database_provider_ro(&overlay_factory)
-            .map(Some)
+        base_execution_state_database::DatabaseProviderROFactory::database_provider_ro(
+            &overlay_factory,
+        )
+        .map(Some)
     }
 }
 
@@ -853,7 +847,7 @@ impl StateProviderFactory for BlockchainProvider {
 impl CanonChainTracker for BlockchainProvider {
     type Header = base_common_types_chain::Header;
 
-    fn on_forkchoice_update_received(&self, _update: &ForkchoiceState) {
+    fn on_forkchoice_update_received(&self) {
         // update timestamp
         self.canonical_in_memory_state.on_forkchoice_update_received();
     }
@@ -1006,48 +1000,42 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
     use alloy_primitives::{Address, B256, BlockNumber, TxNumber, U256, keccak256};
     use base_common_chain_config::BaseChainSpec;
-    use base_common_types_chain::{BaseReceipt, constants::EMPTY_ROOT_HASH};
-    use base_execution_evm_runtime::database::{BundleState, OriginalValuesKnown};
-    use base_execution_state_api::{
-        BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader,
-        BlockReaderIdExt, BlockSource, ChangeSetReader, DBProvider, DatabaseProviderFactory,
-        HashingWriter, HeaderProvider, RangeEnd, ReceiptProvider, ReceiptProviderIdExt,
-        StateProviderFactory, StateRangeProvider, StateRangeProviderFactory, StateRootProvider,
-        StateWriteConfig, StateWriter, StorageRootProvider, TransactionVariant,
-        TransactionsProvider,
+    use base_common_types_chain::{
+        BaseReceipt, RecoveredBlock, SealedBlock, SignerRecoverable, constants::EMPTY_ROOT_HASH,
     };
-    use base_execution_state_database::{models::AccountBeforeTx, models::StoredBlockBodyIndices};
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::{BundleState, OriginalValuesKnown, StoredAccount as Account};
+    use base_execution_state_database::{
+        DBProvider, DatabaseProviderFactory,
+        models::{AccountBeforeTx, StoredBlockBodyIndices},
+    };
     use base_execution_state_trie::{
         ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdates,
     };
-    use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{
-        BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,
+        BlockBodyIndicesProvider, BlockExecutionOutput, BlockExecutionResult, BlockHashReader,
+        BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource,
+        CanonStateNotification, Chain, ChangeSetReader, ExecutedBlock, ExecutionOutcome,
+        HashingWriter, HeaderProvider, RangeEnd, ReceiptProvider, ReceiptProviderIdExt,
+        StageCheckpoint, StageId, StateProviderFactory, StateRangeProvider,
+        StateRangeProviderFactory, StateRootProvider, StateWriteConfig, StateWriter, StorageEntry,
+        StorageRootProvider, TransactionVariant, TransactionsProvider,
     };
-    use base_execution_state_types::{StageCheckpoint, StageId};
     use base_testing_support::{
-        generators, generators::BlockParams, generators::BlockRangeParams,
-        generators::random_changeset_range, generators::random_eoa_accounts,
+        generators,
+        generators::{BlockParams, BlockRangeParams, random_changeset_range, random_eoa_accounts},
     };
     use itertools::Itertools;
     use rand::Rng;
-    use {
-        crate::CanonStateSubscriptions, crate::NewCanonicalChain,
-        crate::test_utils::TestBlockBuilder, base_execution_state_types::CanonStateNotification,
-        base_execution_state_types::ExecutedBlock,
-    };
-    use {
-        base_common_types_chain::RecoveredBlock, base_common_types_chain::SealedBlock,
-        base_common_types_chain::SignerRecoverable,
-    };
 
     use super::SNAPSHOT_STATE_RETENTION;
     use crate::{
-        BlockWriter, CanonChainTracker, ProviderFactory, SaveBlocksInput,
-        StaticFileProviderFactory, StaticFileWriter,
+        BlockWriter, CanonChainTracker, CanonStateSubscriptions, NewCanonicalChain,
+        ProviderFactory, SaveBlocksInput, StaticFileProviderFactory, StaticFileWriter,
         providers::BlockchainProvider,
-        test_utils::{create_test_provider_factory, create_test_provider_factory_with_chain_spec},
+        test_utils::{
+            TestBlockBuilder, create_test_provider_factory,
+            create_test_provider_factory_with_chain_spec,
+        },
     };
 
     const TEST_BLOCKS_COUNT: usize = 5;

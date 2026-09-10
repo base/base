@@ -1,6 +1,6 @@
 //! Action tests for upgrade activation gating and cascade semantics.
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_chain_config::UpgradeConfig;
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,

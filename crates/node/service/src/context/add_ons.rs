@@ -1,7 +1,7 @@
 //! Traits for configuring a node.
 
-use base_common_runtime_tasks::EventSender;
-use base_execution_engine_types::ConsensusEngineEvent;
+use base_common_runtime::EventSender;
+use base_common_types_payload::ConsensusEngineEvent;
 use base_node_config::NodeConfig;
 
 /// Components and configuration available while launching Base RPC services.

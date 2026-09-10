@@ -1,10 +1,10 @@
 use std::sync::{Arc, OnceLock};
 
-use crate::{Network, TransactionBuilder};
 use alloy_primitives::ChainId;
 use alloy_transport::TransportResult;
 
 use crate::{
+    Network, TransactionBuilder,
     fillers::{FillerControlFlow, TxFiller},
     provider::SendableTx,
 };

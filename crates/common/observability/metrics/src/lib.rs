@@ -35,13 +35,12 @@ pub use registry::register_initializer;
 #[cfg(feature = "metrics")]
 mod timer;
 #[cfg(feature = "metrics")]
-pub use timer::DropTimer;
-
-#[cfg(feature = "metrics")]
 pub use metrics;
 /// Derive named metric handles.
 #[cfg(feature = "metrics")]
 pub use metrics_derive::Metrics;
+#[cfg(feature = "metrics")]
+pub use timer::DropTimer;
 
 #[cfg(feature = "common")]
 pub mod common;

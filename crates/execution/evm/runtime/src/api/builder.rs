@@ -1,10 +1,9 @@
 //! [`Builder`] trait for constructing a [`BaseEvm`] directly from a [`BaseContext`].
 use alloy_primitives::Address;
-use base_execution_evm_machine::FrameStack;
-use base_execution_evm_runtime::Database;
-use base_execution_evm_runtime::{EthFrame, EthInstructions, PrecompilesMap};
-
-use crate::{BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver};
+use base_execution_evm_runtime::{
+    BaseContext, BaseEvm, BasePrecompiles, BaseSpecId, BerylPrecompileMetricsObserver, Database,
+    EthFrame, EthInstructions, FrameStack, PrecompilesMap,
+};
 
 /// Trait that allows constructing a [`BaseEvm`] from a [`BaseContext`].
 ///
@@ -28,7 +27,7 @@ pub trait Builder: Sized {
     /// Builds a [`BaseEvm`] with a `()` inspector. The inspect flag is `false`,
     /// so [`Inspector`][base_execution_evm_runtime::Inspector] callbacks are never invoked via
     /// [`base_execution_evm_runtime::Evm::transact`].
-    fn build_base(self) -> BaseEvm<Self::Db, (), PrecompilesMap> {
+    fn build_base(self) -> BaseEvm<Self::Db, ()> {
         self.build_base_with_activation_admin_address(None)
     }
 
@@ -39,7 +38,7 @@ pub trait Builder: Sized {
     fn build_base_with_activation_admin_address(
         self,
         activation_admin_address: Option<Address>,
-    ) -> BaseEvm<Self::Db, (), PrecompilesMap> {
+    ) -> BaseEvm<Self::Db, ()> {
         let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_base_with_precompiles(precompiles)
     }
@@ -48,15 +47,15 @@ pub trait Builder: Sized {
     ///
     /// The inspect flag is `false`, so [`Inspector`][base_execution_evm_runtime::Inspector] callbacks are never invoked
     /// via [`base_execution_evm_runtime::Evm::transact`].
-    fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<Self::Db, (), P>;
+    fn build_base_with_precompiles(
+        self,
+        precompiles: base_execution_evm_runtime::PrecompilesMap,
+    ) -> BaseEvm<Self::Db, ()>;
 
     /// Builds a [`BaseEvm`] with the given inspector. The inspect flag is `true`,
     /// so [`Inspector`][base_execution_evm_runtime::Inspector] callbacks are invoked on every
     /// [`base_execution_evm_runtime::Evm::transact`] call.
-    fn build_with_inspector<INSP>(
-        self,
-        inspector: INSP,
-    ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
+    fn build_with_inspector<INSP>(self, inspector: INSP) -> BaseEvm<Self::Db, INSP> {
         self.build_with_inspector_and_activation_admin_address(inspector, None)
     }
 
@@ -68,7 +67,7 @@ pub trait Builder: Sized {
         self,
         inspector: INSP,
         activation_admin_address: Option<Address>,
-    ) -> BaseEvm<Self::Db, INSP, PrecompilesMap> {
+    ) -> BaseEvm<Self::Db, INSP> {
         let precompiles = self.precompiles_for_node(activation_admin_address);
         self.build_with_inspector_and_precompiles(inspector, precompiles)
     }
@@ -77,11 +76,11 @@ pub trait Builder: Sized {
     ///
     /// The inspect flag is `true`, so [`Inspector`][base_execution_evm_runtime::Inspector] callbacks are invoked on every
     /// [`base_execution_evm_runtime::Evm::transact`] call.
-    fn build_with_inspector_and_precompiles<INSP, P>(
+    fn build_with_inspector_and_precompiles<INSP>(
         self,
         inspector: INSP,
-        precompiles: P,
-    ) -> BaseEvm<Self::Db, INSP, P>;
+        precompiles: base_execution_evm_runtime::PrecompilesMap,
+    ) -> BaseEvm<Self::Db, INSP>;
 }
 
 impl<DB: Database> Builder for BaseContext<DB> {
@@ -91,7 +90,10 @@ impl<DB: Database> Builder for BaseContext<DB> {
         self.cfg.spec
     }
 
-    fn build_base_with_precompiles<P>(self, precompiles: P) -> BaseEvm<DB, (), P> {
+    fn build_base_with_precompiles(
+        self,
+        precompiles: base_execution_evm_runtime::PrecompilesMap,
+    ) -> BaseEvm<DB, ()> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
             base_execution_evm_runtime::EvmMachine {
@@ -105,11 +107,11 @@ impl<DB: Database> Builder for BaseContext<DB> {
         )
     }
 
-    fn build_with_inspector_and_precompiles<INSP, P>(
+    fn build_with_inspector_and_precompiles<INSP>(
         self,
         inspector: INSP,
-        precompiles: P,
-    ) -> BaseEvm<DB, INSP, P> {
+        precompiles: base_execution_evm_runtime::PrecompilesMap,
+    ) -> BaseEvm<DB, INSP> {
         let spec: BaseSpecId = self.cfg.spec;
         BaseEvm::new(
             base_execution_evm_runtime::EvmMachine {
@@ -130,21 +132,14 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use alloy_sol_types::SolCall;
-    use base_execution_evm_machine::{CfgEnv, TxEnv};
-    use base_execution_evm_precompiles::{
-        ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
-        IActivationRegistry, PolicyRegistryStorage,
-    };
     use base_execution_evm_runtime::{
-        Context, DatabaseRef, ExecuteEvm,
-        bytecode::Bytecode,
-        primitives::{Bytes, StorageKey, StorageValue, TxKind},
-        state::AccountInfo,
+        AccountInfo, ActivationFeature, ActivationRegistryStorage, B20FactoryStorage, B20Variant,
+        BaseTransaction, BaseUpgrade, BerylPrecompileMetricsObserver, Bytecode, Bytes, CfgEnv,
+        Context, DatabaseRef, DefaultBase, EvmTr, ExecuteEvm, IActivationRegistry, NoOpInspector,
+        PolicyRegistryStorage, StorageKey, StorageValue, TxEnv, TxKind,
     };
-    use base_execution_evm_runtime::{EvmTr, NoOpInspector};
 
     use super::*;
-    use crate::{BaseTransaction, BaseUpgrade, BerylPrecompileMetricsObserver, DefaultBase};
 
     fn b20_token_address() -> Address {
         B20Variant::Asset.compute_address(Address::repeat_byte(0x11), B256::repeat_byte(0x22)).0

@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, time::Duration};
 
-use base_common_cli_support::{parse_duration_from_secs, parse_socket_address};
+use base_common_cli::{parse_duration_from_secs, parse_socket_address};
 use clap::Parser;
 
 /// Default push gateway interval in seconds.

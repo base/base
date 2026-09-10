@@ -3,8 +3,7 @@ use std::ops::RangeInclusive;
 use alloy_primitives::BlockNumber;
 use futures::Stream;
 
-use crate::BlockResponse;
-use crate::DownloadResult;
+use crate::{BlockResponse, DownloadResult};
 
 /// Body downloader return type.
 pub type BodyDownloaderResult = DownloadResult<Vec<BlockResponse>>;

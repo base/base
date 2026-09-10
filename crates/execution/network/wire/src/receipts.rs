@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use alloy_primitives::B256;
 use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 use base_common_types_chain::{
     EthereumReceipt as Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt,
     TxReceipt,

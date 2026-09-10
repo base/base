@@ -9,12 +9,12 @@ mod config;
 
 #[cfg(all(feature = "jemalloc-prof", unix))]
 #[global_allocator]
-static ALLOC: base_common_cli_support::Allocator = base_common_cli_support::new_allocator();
+static ALLOC: base_common_cli::Allocator = base_common_cli::new_allocator();
 
 #[cfg(all(feature = "jemalloc-prof", unix))]
 #[unsafe(export_name = "malloc_conf")]
 static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 fn main() {
-    base_common_cli_support::run_cli_main!(cli::BaseCli);
+    base_common_cli::run_cli_main!(cli::BaseCli);
 }

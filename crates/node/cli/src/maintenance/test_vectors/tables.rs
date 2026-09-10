@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use alloy_primitives::{B256, hex};
 use arbitrary::Arbitrary;
-use base_common_io_files as fs;
+use base_common_io as fs;
 use base_common_types_chain::{EthereumTxEnvelope, Header, TxEip4844};
 use base_execution_state_database::{DupSort, Table, TableRow, tables};
 use eyre::Result;

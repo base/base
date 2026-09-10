@@ -4,16 +4,16 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, StorageKey, StorageValue, U256, keccak256,
 };
 use base_common_types_chain::BlockHeader;
-use base_execution_evm_runtime::database::BundleState;
-use base_execution_state_api::{
-    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
-    StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
+use base_execution_evm_runtime::{
+    BundleState, StoredAccount as Account, StoredBytecode as Bytecode,
 };
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::ProviderResult;
 use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     TrieInput, updates::TrieUpdates,
+};
+use base_execution_state_types::{
+    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderResult,
+    StateProofProvider, StateProvider, StateProviderBox, StateRootProvider, StorageRootProvider,
 };
 
 use super::ExecutedBlock;
@@ -233,9 +233,9 @@ impl HashedPostStateProvider for MemoryOverlayStateProviderRef<'_> {
     }
 }
 
-base_execution_state_api::impl_state_database!(['__state, ] MemoryOverlayStateProviderRef<'__state> where []);
+base_execution_state_types::impl_state_database!(['__state, ] MemoryOverlayStateProviderRef<'__state> where []);
 
-impl base_execution_state_api::StateReadProvider for MemoryOverlayStateProviderRef<'_> {
+impl base_execution_state_types::StateReadProvider for MemoryOverlayStateProviderRef<'_> {
     fn storage(
         &self,
         address: Address,
@@ -304,13 +304,13 @@ impl MemoryOverlayStateProvider {
 }
 
 // Delegates all provider impls to [`MemoryOverlayStateProviderRef`]
-base_execution_state_api::delegate_provider_impls!(MemoryOverlayStateProvider);
+base_execution_state_types::delegate_provider_impls!(MemoryOverlayStateProvider);
 
 #[cfg(test)]
 mod tests {
 
-    use base_execution_evm_runtime::database::{AccountStatus, BundleAccount};
-    use base_execution_state_api::NoopProvider;
+    use base_execution_evm_runtime::{AccountStatus, BundleAccount};
+    use base_execution_state_database::NoopProvider;
 
     use super::*;
 

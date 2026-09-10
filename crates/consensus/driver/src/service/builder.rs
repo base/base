@@ -1,0 +1,434 @@
+//! Contains the builder for the [`RollupNode`].
+
+use std::{path::PathBuf, sync::Arc, time::Duration};
+
+use alloy_genesis::ChainConfig;
+use alloy_primitives::Address;
+use alloy_transport::{TransportErrorKind, TransportResult};
+use base_common_chain_activation::UpgradeSignalConfig;
+use base_common_chain_config::RollupConfig;
+use base_consensus_source::{L1RpcProvider, OnlineBeaconClient};
+use url::Url;
+
+use crate::{
+    EngineConfig, NetworkConfig, RollupNode, RpcBuilder, SequencerConfig, UpgradeSignalNodeConfig,
+    actors::DerivationDelegateClient, service::node::L1Config,
+};
+
+/// Upgrade signal configuration for the [`RollupNodeBuilder`].
+#[derive(Debug, Clone, Default)]
+pub struct UpgradeSignalBuilderConfig {
+    /// Optional L1 upgrade signal metrics observer configuration.
+    pub metrics_config: Option<UpgradeSignalConfig>,
+    /// Optional L1 RPC endpoint override for upgrade signal reads.
+    pub l1_rpc: Option<Url>,
+}
+
+/// Configuration for Derivation Delegate mode.
+#[derive(Debug, Clone)]
+pub struct DerivationDelegateConfig {
+    /// The L2 consensus layer RPC URL to delegate derivation to.
+    /// This CL must expose the `optimism_syncStatus` RPC endpoint.
+    pub l2_cl_url: Url,
+}
+
+impl Default for DerivationDelegateConfig {
+    fn default() -> Self {
+        Self { l2_cl_url: Url::parse("http://localhost:9545").unwrap() }
+    }
+}
+
+/// The [`L1ConfigBuilder`] is used to construct a [`L1Config`].
+#[derive(Debug)]
+pub struct L1ConfigBuilder {
+    /// The L1 chain configuration.
+    pub chain_config: ChainConfig,
+    /// Whether to trust the L1 RPC.
+    pub trust_rpc: bool,
+    /// The L1 beacon API.
+    pub beacon: Url,
+    /// The L1 RPC URL.
+    pub rpc_url: Url,
+    /// Request timeout for general L1 execution JSON-RPC calls.
+    pub rpc_timeout: Duration,
+    /// The duration in seconds of an L1 slot. This can be used to hardcode a fixed slot
+    /// duration if the l1-beacon's slot configuration is not available.
+    pub slot_duration_override: Option<u64>,
+    /// Number of L1 blocks to keep distance from the L1 head for the verifier.
+    pub verifier_l1_confs: u64,
+    /// Optional sender used only to filter L1 data-availability transactions.
+    pub da_batcher_sender_override: Option<Address>,
+}
+
+/// The [`RollupNodeBuilder`] is used to construct a [`RollupNode`] service.
+#[derive(Debug)]
+pub struct RollupNodeBuilder {
+    /// The rollup configuration.
+    pub config: RollupConfig,
+    /// The L1 chain configuration.
+    pub l1_config_builder: L1ConfigBuilder,
+    /// Engine builder configuration.
+    pub engine_config: EngineConfig,
+    /// The [`NetworkConfig`].
+    pub p2p_config: NetworkConfig,
+    /// An RPC Configuration.
+    pub rpc_config: Option<RpcBuilder>,
+    /// The [`SequencerConfig`].
+    pub sequencer_config: Option<SequencerConfig>,
+    /// Optional configuration for Derivation Delegate mode.
+    /// When present, the node does not run derivation, instead trusting the configured delegate.
+    pub derivation_delegate_config: Option<DerivationDelegateConfig>,
+    /// Override for the finalized-block poll interval.
+    ///
+    /// When `None`, [`L1Config::default_finalized_poll_interval`] is used to select a
+    /// chain-appropriate default derived from `config.l1_chain_id`.
+    pub finalized_poll_interval: Option<Duration>,
+    /// Optional path to the checkpoint database file.
+    ///
+    /// When `None`, the node stores checkpoints under the default consensus data directory.
+    pub checkpoint_path: Option<PathBuf>,
+    /// Optional path to the safe head database file.
+    ///
+    /// When set, enables persistent safe head tracking via redb and serves
+    /// `optimism_safeHeadAtL1Block` RPC requests from the database.
+    pub safedb_path: Option<PathBuf>,
+    /// Upgrade signal configuration.
+    pub upgrade_signal_config: UpgradeSignalBuilderConfig,
+}
+
+impl RollupNodeBuilder {
+    /// Creates a new [`RollupNodeBuilder`] with the given [`RollupConfig`].
+    pub const fn new(
+        config: RollupConfig,
+        l1_config_builder: L1ConfigBuilder,
+        engine_config: EngineConfig,
+        p2p_config: NetworkConfig,
+        rpc_config: Option<RpcBuilder>,
+    ) -> Self {
+        Self {
+            config,
+            l1_config_builder,
+            engine_config,
+            p2p_config,
+            rpc_config,
+            sequencer_config: None,
+            derivation_delegate_config: None,
+            finalized_poll_interval: None,
+            checkpoint_path: None,
+            safedb_path: None,
+            upgrade_signal_config: UpgradeSignalBuilderConfig {
+                metrics_config: None,
+                l1_rpc: None,
+            },
+        }
+    }
+
+    /// Sets the [`EngineConfig`] on the [`RollupNodeBuilder`].
+    pub fn with_engine_config(self, engine_config: EngineConfig) -> Self {
+        Self { engine_config, ..self }
+    }
+
+    /// Sets the [`RpcBuilder`] on the [`RollupNodeBuilder`].
+    pub fn with_rpc_config(self, rpc_config: Option<RpcBuilder>) -> Self {
+        Self { rpc_config, ..self }
+    }
+
+    /// Appends the [`SequencerConfig`] to the builder.
+    pub fn with_sequencer_config(self, sequencer_config: SequencerConfig) -> Self {
+        Self { sequencer_config: Some(sequencer_config), ..self }
+    }
+
+    /// Overrides the finalized-block poll interval.
+    ///
+    /// By default the interval is derived from `config.l1_chain_id` via
+    /// [`L1Config::default_finalized_poll_interval`]. Use this method when you need a
+    /// specific interval regardless of chain (e.g. in integration tests).
+    pub fn with_finalized_poll_interval(self, interval: Duration) -> Self {
+        Self { finalized_poll_interval: Some(interval), ..self }
+    }
+
+    /// Sets the Derivation Delegate configuration, trusting the configured delegate for safe head
+    /// updates.
+    pub fn with_derivation_delegate_config(
+        self,
+        derivation_delegate_config: Option<DerivationDelegateConfig>,
+    ) -> Self {
+        Self { derivation_delegate_config, ..self }
+    }
+
+    /// Enables persistent safe head tracking by setting the path to the redb database file.
+    pub fn with_safedb_path(self, path: PathBuf) -> Self {
+        Self { safedb_path: Some(path), ..self }
+    }
+
+    /// Sets the checkpoint database path.
+    pub fn with_checkpoint_path(self, path: PathBuf) -> Self {
+        Self { checkpoint_path: Some(path), ..self }
+    }
+
+    /// Sets the upgrade signal configuration.
+    pub fn with_upgrade_signal_config(self, config: UpgradeSignalBuilderConfig) -> Self {
+        Self { upgrade_signal_config: config, ..self }
+    }
+
+    /// Assembles the [`RollupNode`] service.
+    ///
+    /// Returns an error if the internal L2 provider transport cannot be constructed. WebSocket
+    /// URLs are normalized to HTTP(S) so the derivation pipeline's request/response L2 provider
+    /// remains lazy during startup. `file://` URLs still connect eagerly because IPC is an
+    /// explicit opt-in transport.
+    pub async fn build(self) -> TransportResult<RollupNode> {
+        let sequencer_config = self.sequencer_config.unwrap_or_default();
+        let mut l1_beacon = OnlineBeaconClient::new_http(self.l1_config_builder.beacon.to_string());
+        if let Some(l1_slot_duration) = self.l1_config_builder.slot_duration_override {
+            l1_beacon = l1_beacon.with_l1_slot_duration_override(l1_slot_duration);
+        }
+
+        let finalized_poll_interval = self
+            .finalized_poll_interval
+            .unwrap_or_else(|| L1Config::default_finalized_poll_interval(self.config.l1_chain_id));
+
+        let l1_config = L1Config {
+            chain_config: Arc::new(self.l1_config_builder.chain_config),
+            trust_rpc: self.l1_config_builder.trust_rpc,
+            beacon_client: l1_beacon,
+            engine_provider: L1RpcProvider::new_http_with_timeout(
+                self.l1_config_builder.rpc_url.clone(),
+                self.l1_config_builder.rpc_timeout,
+            ),
+            finalized_poll_interval,
+            verifier_l1_confs: self.l1_config_builder.verifier_l1_confs,
+            da_batcher_sender_override: self.l1_config_builder.da_batcher_sender_override,
+        };
+        let sequencer_l1_provider = if self.engine_config.mode.is_sequencer() {
+            L1RpcProvider::new_http_with_timeout(
+                self.l1_config_builder.rpc_url.clone(),
+                sequencer_config.l1_rpc_timeout,
+            )
+        } else {
+            l1_config.engine_provider.clone()
+        };
+
+        let l2_provider = self.engine_config.client.l2.clone();
+
+        let rollup_config = Arc::new(self.config);
+        let checkpoint_path = self.checkpoint_path.unwrap_or_else(|| {
+            Self::default_checkpoint_path(
+                self.engine_config.client.l2.rollup_config.l2_chain_id.id(),
+            )
+        });
+
+        let p2p_config = self.p2p_config;
+
+        let derivation_delegate_provider = self.derivation_delegate_config.as_ref().map(|config| {
+            DerivationDelegateClient::new(config.l2_cl_url.clone()).expect(
+                "Failed to create Derivation Delegate provider despite config being present",
+            )
+        });
+
+        let upgrade_signal_config = self
+            .upgrade_signal_config
+            .metrics_config
+            .map(|mut config| {
+                config.request_timeout = self.l1_config_builder.rpc_timeout;
+                UpgradeSignalNodeConfig::resolve(
+                    config,
+                    self.upgrade_signal_config.l1_rpc.as_ref(),
+                    self.l1_config_builder.rpc_url.clone(),
+                    rollup_config.l2_chain_id.id(),
+                )
+            })
+            .transpose()
+            .map_err(TransportErrorKind::non_retryable)?;
+
+        Ok(RollupNode {
+            config: rollup_config,
+            l1_config,
+            sequencer_l1_provider,
+            l2_provider,
+            engine_config: self.engine_config,
+            rpc_builder: self.rpc_config,
+            p2p_config,
+            sequencer_config,
+            derivation_delegate_provider,
+            checkpoint_path,
+            safedb_path: self.safedb_path,
+            upgrade_signal_config,
+        })
+    }
+
+    fn default_checkpoint_path(l2_chain_id: u64) -> PathBuf {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".base")
+            .join(l2_chain_id.to_string())
+            .join("checkpoint.redb")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{IpAddr, Ipv4Addr},
+        sync::Arc,
+    };
+
+    use alloy_primitives::{Address, B256};
+    use base_common_chain_config::{BaseChainSpec, Upgrades};
+    use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
+    use base_consensus_network::LocalNode as DiscoveryNode;
+    use base_consensus_source::LocalL2Provider;
+    use base_testing_devnet::test_utils::LocalNode;
+    use discv5::enr::k256::ecdsa::SigningKey;
+    use libp2p::Multiaddr;
+
+    use super::*;
+    use crate::{EngineClient, LocalEngineClient, NodeMode};
+
+    async fn test_builder() -> (RollupNodeBuilder, LocalNode) {
+        let rollup_config = RollupConfig::default();
+        let l1_config_builder = L1ConfigBuilder {
+            chain_config: ChainConfig::default(),
+            trust_rpc: true,
+            beacon: Url::parse("http://127.0.0.1:5052").unwrap(),
+            rpc_url: Url::parse("http://127.0.0.1:8545").unwrap(),
+            rpc_timeout: base_consensus_source::L1_RPC_TIMEOUT,
+            slot_duration_override: None,
+            verifier_l1_confs: 0,
+            da_batcher_sender_override: None,
+        };
+        let node = LocalNode::new(
+            Default::default(),
+            Default::default(),
+            Arc::new(BaseChainSpec::sepolia()),
+        )
+        .await
+        .unwrap();
+        let engine_config = EngineConfig {
+            client: LocalEngineClient {
+                l1: L1RpcProvider::new_http_with_timeout(
+                    l1_config_builder.rpc_url.clone(),
+                    l1_config_builder.rpc_timeout,
+                ),
+                l2: LocalL2Provider {
+                    provider: node.blockchain_provider(),
+                    rollup_config: Arc::new(rollup_config.clone()),
+                },
+                execution: node.execution.clone(),
+                network: node.network.clone(),
+                proofs_progress: None,
+            },
+            mode: NodeMode::Validator,
+        };
+        let discovery_listen = DiscoveryNode::new(
+            SigningKey::from_bytes((&[7_u8; 32]).into()).unwrap(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            0,
+            0,
+        );
+        let p2p_config = NetworkConfig::new(
+            rollup_config.clone(),
+            discovery_listen,
+            "/ip4/127.0.0.1/tcp/0".parse::<Multiaddr>().unwrap(),
+            Address::ZERO,
+        );
+
+        (
+            RollupNodeBuilder::new(
+                rollup_config,
+                l1_config_builder,
+                engine_config,
+                p2p_config,
+                None,
+            ),
+            node,
+        )
+    }
+
+    #[tokio::test]
+    async fn native_execution_builds_imports_and_canonicalizes_without_rpc() {
+        let (builder, _node) = test_builder().await;
+        let client = builder.engine_config.client;
+        let head =
+            client.l2.block(alloy_eips::BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+        let head_hash = head.header.hash_slow();
+        let timestamp = head.header.timestamp + 2;
+        let chain = client.execution.validator.chain_spec();
+        let attributes = BasePayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp,
+                withdrawals: chain.is_canyon_active_at_timestamp(timestamp).then(Vec::new),
+                parent_beacon_block_root: chain
+                    .is_ecotone_active_at_timestamp(timestamp)
+                    .then_some(B256::ZERO),
+                ..Default::default()
+            },
+            gas_limit: Some(head.header.gas_limit),
+            eip_1559_params: chain
+                .is_holocene_active_at_timestamp(timestamp)
+                .then_some(Default::default()),
+            min_base_fee: chain.is_jovian_active_at_timestamp(timestamp).then_some(0),
+            no_tx_pool: Some(true),
+            ..Default::default()
+        };
+        let update = client
+            .update_forkchoice(ForkchoiceState::same_hash(head_hash), Some(attributes.clone()))
+            .await
+            .unwrap();
+        assert!(update.payload_status.is_valid());
+        let payload = client.resolve_payload(update.payload_id.unwrap()).await.unwrap();
+        let hash = payload.execution_payload.block_hash();
+        let mut malformed = payload.clone();
+        malformed.parent_beacon_block_root =
+            if payload.parent_beacon_block_root.is_some() { None } else { Some(B256::ZERO) };
+        assert!(client.submit_payload(malformed).await.unwrap().is_invalid());
+        let inserted = client.submit_payload(payload).await.unwrap();
+        assert!(inserted.is_valid());
+        let update = client
+            .update_forkchoice(
+                ForkchoiceState {
+                    head_block_hash: hash,
+                    safe_block_hash: head_hash,
+                    finalized_block_hash: head_hash,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(update.payload_status.is_valid());
+        let canonical =
+            client.l2.block(alloy_eips::BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+        assert_eq!(canonical.header.hash_slow(), hash);
+        assert_eq!(canonical.header.number, head.header.number + 1);
+    }
+
+    #[tokio::test]
+    async fn build_applies_l1_request_timeout_to_upgrade_signal_reads() {
+        let request_timeout = Duration::from_millis(2_500);
+        let (mut builder, _node) = test_builder().await;
+        builder.l1_config_builder.rpc_timeout = request_timeout;
+        let builder = builder.with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+            l1_rpc: None,
+        });
+
+        let rollup_node = builder.build().await.unwrap();
+        let upgrade_signal_config = rollup_node.upgrade_signal_config.unwrap();
+
+        assert_eq!(upgrade_signal_config.config.request_timeout, request_timeout);
+    }
+
+    #[tokio::test]
+    async fn build_returns_error_for_unsupported_upgrade_signal_rpc() {
+        let (builder, _node) = test_builder().await;
+        let builder = builder.with_upgrade_signal_config(UpgradeSignalBuilderConfig {
+            metrics_config: Some(UpgradeSignalConfig::new(Address::ZERO)),
+            l1_rpc: Some(Url::parse("ws://127.0.0.1:8545").unwrap()),
+        });
+
+        let error = builder.build().await.expect_err("unsupported URL should fail");
+
+        assert!(error.to_string().contains("build upgrade signal HTTP client failed"));
+    }
+}

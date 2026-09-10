@@ -13,7 +13,7 @@ use std::{
 
 use alloy_eip2124::{ForkHash, ForkId};
 use alloy_primitives::{B256, B512, hex};
-use base_execution_network_types::{NodeRecord, pk2id};
+use base_execution_network_wire::{NodeRecord, pk2id};
 use rand_08::{Rng, RngCore, thread_rng};
 use secp256k1::{SECP256K1, SecretKey};
 use tokio::{

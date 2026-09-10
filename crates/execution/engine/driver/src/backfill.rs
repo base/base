@@ -9,8 +9,8 @@
 
 use std::task::{Context, Poll, ready};
 
-use base_common_runtime_tasks::Runtime;
-use base_execution_sync_pipeline::{
+use base_common_runtime::Runtime;
+use base_execution_sync::{
     ControlFlow, Pipeline, PipelineError, PipelineTarget, PipelineWithResult,
 };
 use futures::FutureExt;
@@ -229,12 +229,10 @@ mod tests {
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
     use base_common_chain_config::BaseChainSpecBuilder;
-    use base_common_runtime_tasks::Runtime;
-    use base_common_types_chain::Header;
-    use base_common_types_chain::SealedHeader;
+    use base_common_runtime::Runtime;
+    use base_common_types_chain::{Header, SealedHeader};
     use base_execution_network_service::test_utils::TestFullBlockClient;
-    use base_execution_sync_pipeline::ExecOutput;
-    use base_execution_sync_pipeline::StageCheckpoint;
+    use base_execution_sync::{ExecOutput, StageCheckpoint};
     use futures::poll;
 
     use super::*;

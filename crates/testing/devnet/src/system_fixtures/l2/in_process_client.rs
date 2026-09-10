@@ -4,12 +4,11 @@
 
 use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::builder_test_utils::get_available_port;
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
-use base_node_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
+use base_common_runtime::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use base_execution_state_database::{ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments};
-use base_execution_txpool_pool::TxForwardingConfig;
+use base_execution_txpool::TxForwardingConfig;
+use base_node_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
 use base_node_config::{
     DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, MetricArgs, NetworkArgs,
     NodeExitFuture, RpcServerArgs,
@@ -19,6 +18,8 @@ use eyre::{Context, Result, eyre};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
+
+use crate::builder_test_utils::get_available_port;
 
 /// Source for the chain spec used to start an in-process client node.
 #[derive(Debug, Clone)]
@@ -79,7 +80,7 @@ pub struct InProcessClient {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     /// Native execution client shared with the co-located consensus node.
-    pub execution: base_consensus_driver_service::LocalEngineClient,
+    pub execution: base_consensus_driver::LocalEngineClient,
     metrics_addr: SocketAddr,
     chain_spec: Arc<BaseChainSpec>,
     _node_exit_future: NodeExitFuture,
@@ -210,7 +211,7 @@ impl InProcessClient {
         rpc.sequencer = Some(config.builder_rpc_url.clone());
         rpc.validity = config
             .enable_experimental_validity_transactions
-            .then_some(base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES);
+            .then_some(base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES);
         let mut builder =
             base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         builder.base = base_node;
@@ -235,11 +236,9 @@ impl InProcessClient {
             .ws_local_addr()
             .ok_or_else(|| eyre!("Failed to get websocket api address"))?;
 
-        let execution = base_consensus_driver_service::LocalEngineClient {
-            l1: base_consensus_source_providers::L1RpcProvider::new_http(Url::parse(
-                "http://127.0.0.1:1",
-            )?),
-            l2: base_consensus_source_providers::LocalL2Provider {
+        let execution = base_consensus_driver::LocalEngineClient {
+            l1: base_consensus_source::L1RpcProvider::new_http(Url::parse("http://127.0.0.1:1")?),
+            l2: base_consensus_source::LocalL2Provider {
                 provider: node_handle.provider().clone(),
                 rollup_config: Arc::new(node_handle.config.chain.config.rollup_config()),
             },

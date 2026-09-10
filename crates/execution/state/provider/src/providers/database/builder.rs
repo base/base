@@ -7,7 +7,8 @@ use std::{
 
 use base_common_chain_config::BaseChainSpec;
 use base_execution_state_database::{
-    mdbx::DatabaseArguments, mdbx::MaxReadTransactionDuration, open_db_read_only,
+    mdbx::{DatabaseArguments, MaxReadTransactionDuration},
+    open_db_read_only,
 };
 
 use crate::{
@@ -33,7 +34,7 @@ impl ProviderFactoryBuilder {
     /// use base_execution_state_provider::providers::{ProviderFactoryBuilder};
     ///
     /// fn demo(
-    ///     runtime: base_common_runtime_tasks::Runtime,
+    ///     runtime: base_common_runtime::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder
     ///         .open_read_only(BaseChainSpec::mainnet().into(), "datadir", runtime)
@@ -50,7 +51,7 @@ impl ProviderFactoryBuilder {
     /// use base_execution_state_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
     /// fn demo(
-    ///     runtime: base_common_runtime_tasks::Runtime,
+    ///     runtime: base_common_runtime::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder
     ///         .open_read_only(
@@ -74,7 +75,7 @@ impl ProviderFactoryBuilder {
     /// use base_execution_state_provider::providers::{ProviderFactoryBuilder, ReadOnlyConfig};
     ///
     /// fn demo(
-    ///     runtime: base_common_runtime_tasks::Runtime,
+    ///     runtime: base_common_runtime::Runtime,
     /// ) {
     ///     let provider_factory = ProviderFactoryBuilder
     ///         .open_read_only(
@@ -89,7 +90,7 @@ impl ProviderFactoryBuilder {
         self,
         chainspec: Arc<BaseChainSpec>,
         config: impl Into<ReadOnlyConfig>,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<ProviderFactory> {
         let ReadOnlyConfig { db_dir, db_args, static_files_dir, rocksdb_dir, watch } =
             config.into();

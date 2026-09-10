@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::{Network, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_transport::TransportResult;
 use async_trait::async_trait;
@@ -8,7 +7,7 @@ use dashmap::DashMap;
 use futures::lock::Mutex;
 
 use crate::{
-    Provider,
+    Network, Provider, TransactionBuilder,
     fillers::{FillerControlFlow, TxFiller},
     provider::SendableTx,
 };

@@ -4,15 +4,9 @@ use std::fmt::Debug;
 
 use alloy_primitives::keccak256;
 use base_execution_evm_runtime::{
-    database::BundleState,
-    primitives::{Address, B256, Bytes, StorageValue, alloy_primitives::BlockNumber},
+    Address, B256, BundleState, Bytes, StorageValue, StoredAccount as Account,
+    StoredBytecode as Bytecode, alloy_primitives::BlockNumber,
 };
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::{
-    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
-    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
-};
-use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderError,
     ProviderResult, StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
@@ -23,6 +17,11 @@ use base_execution_state_trie::{
     proof::{self, Proof},
     witness::TrieWitness,
 };
+use base_execution_state_types::{
+    AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProof,
+    MultiProofTargets, StorageMultiProof, StorageProof, TrieInput, updates::TrieUpdates,
+};
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 
 use crate::{
     BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
@@ -244,9 +243,9 @@ impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<
     }
 }
 
-base_execution_state_api::impl_state_database!(['a, Storage] BaseProofsStateProviderRef<'a, Storage> where [Storage: BaseProofsStore + Clone,]);
+base_execution_state_types::impl_state_database!(['a, Storage] BaseProofsStateProviderRef<'a, Storage> where [Storage: BaseProofsStore + Clone,]);
 
-impl<'a, Storage> base_execution_state_api::StateReadProvider
+impl<'a, Storage> base_execution_state_types::StateReadProvider
     for BaseProofsStateProviderRef<'a, Storage>
 where
     Storage: BaseProofsStore + Clone,

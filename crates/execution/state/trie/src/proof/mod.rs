@@ -4,10 +4,10 @@ use alloy_primitives::{
 };
 use alloy_rlp::{BufMut, Encodable};
 use alloy_trie::proof::AddedRemovedKeys;
-use base_execution_state_types::StateProofError;
 use base_execution_state_types::{
     AccountProof, BranchNodeMasks, BranchNodeMasksMap, DecodedMultiProofV2, MultiProof,
-    MultiProofTargets, MultiProofTargetsV2, StorageMultiProof, proof::ProofRetainer,
+    MultiProofTargets, MultiProofTargetsV2, StateProofError, StorageMultiProof,
+    proof::ProofRetainer,
 };
 
 use crate::{

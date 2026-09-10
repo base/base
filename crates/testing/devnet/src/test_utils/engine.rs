@@ -3,11 +3,10 @@
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use base_common_types_payload::{
-    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, ExecutionData, ForkchoiceState,
-    ForkchoiceUpdated, PayloadId, PayloadStatus,
+    BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, BasePayloadBuilderAttributes,
+    ExecutionData, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use base_execution_engine_driver::BaseExecutionHandle;
-use base_execution_payload_types::BasePayloadBuilderAttributes;
 
 /// Integration access to the local execution driver and payload builder.
 #[derive(Clone, Debug)]

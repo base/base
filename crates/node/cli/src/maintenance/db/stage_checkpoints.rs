@@ -2,7 +2,7 @@
 
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{DBProvider, DatabaseProviderFactory, StageCheckpointReader};
-use base_execution_sync_pipeline::StageId;
+use base_execution_sync::StageId;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::AccessRights;
@@ -149,7 +149,7 @@ mod tests {
         DBProvider, DatabaseProviderFactory, StageCheckpointReader,
         test_utils::create_test_provider_factory,
     };
-    use base_execution_sync_pipeline::StageCheckpoint;
+    use base_execution_sync::StageCheckpoint;
     use clap::Parser;
 
     use super::*;

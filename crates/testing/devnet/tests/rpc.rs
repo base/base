@@ -9,11 +9,10 @@ use base_common_types_chain::{
     BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
 };
 use base_common_types_rpc::BaseTransactionRequest;
-use base_execution_rpc_handlers::BuilderApiConfig;
-use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
-use base_execution_txpool_pool::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,
-    ValidityOperator, ValidityPredicate,
+use base_execution_rpc::{BuilderApiConfig, SendRawTransactionValidityOptions};
+use base_execution_txpool::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction, ValidityOperator,
+    ValidityPredicate,
 };
 use base_testing_devnet::test_utils::TestHarness;
 use base_testing_support::Account;
@@ -110,7 +109,8 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
     let (_harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     let (sender, raw) = create_deposit_tx();
-    let validated_tx = ValidatedTransaction { sender, raw, extensions: NoExtensions {} };
+    let validated_tx =
+        ValidatedTransaction { sender, raw, extensions: TransactionValidity::default() };
 
     let result: Result<(), _> =
         client.request("base_insertValidatedTransaction", (validated_tx,)).await;
@@ -133,7 +133,8 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
     let (harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     let (sender, raw) = create_eip1559_tx(harness.chain_id());
-    let validated_tx = ValidatedTransaction { sender, raw, extensions: NoExtensions {} };
+    let validated_tx =
+        ValidatedTransaction { sender, raw, extensions: TransactionValidity::default() };
 
     // EIP-1559 transactions are supported by the pool
     let result: Result<(), _> =
@@ -152,7 +153,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender: Address::repeat_byte(0x01),
         raw: Bytes::from(vec![0xFF, 0x01, 0x02, 0x03]),
-        extensions: NoExtensions {},
+        extensions: TransactionValidity::default(),
     };
 
     let result: Result<(), _> =

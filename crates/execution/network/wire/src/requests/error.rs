@@ -1,14 +1,14 @@
-use crate::HeadersRequest;
 use alloy_eips::BlockHashOrNumber;
 use base_common_types_chain::BlockHeader;
-use base_execution_network_types::{ReputationChangeKind, WithPeerId};
 use derive_more::{Display, Error};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::{HeadersRequest, ReputationChangeKind, WithPeerId};
 
 /// Result alias for result of a request.
 pub type RequestResult<T> = Result<T, RequestError>;
 
-/// Result with [`PeerId`][base_execution_network_types::PeerId]
+/// Result with [`PeerId`][crate::PeerId]
 pub type PeerRequestResult<T> = RequestResult<WithPeerId<T>>;
 
 /// Helper trait used to validate responses.

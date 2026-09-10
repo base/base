@@ -26,7 +26,6 @@ use crate::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt, TxType};
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
-#[cfg_attr(feature = "borsh", derive(borsh::BorshSerialize, borsh::BorshDeserialize))]
 #[doc(alias = "TransactionReceiptEnvelope", alias = "TxReceiptEnvelope")]
 pub enum ReceiptEnvelope<T = Log> {
     /// Receipt envelope with no type flag.

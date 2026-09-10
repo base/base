@@ -188,7 +188,7 @@ pub struct TransactionsManagerMetrics {
     /// gaps).
     pub(crate) bad_imports: Counter,
     /// Number of inflight requests at which the
-    /// [`TransactionPool`](base_execution_txpool_pool::TransactionPool) is considered to be at
+    /// [`TransactionPool`](base_execution_txpool::TransactionPool) is considered to be at
     /// capacity. Note, this is not a limit to the number of inflight requests, but a health
     /// measure.
     pub(crate) capacity_pending_pool_imports: Counter,

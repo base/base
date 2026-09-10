@@ -2,14 +2,12 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::BaseBlockBody as BlockBody;
-use base_common_types_chain::SealedHeader;
+use base_common_types_chain::{BaseBlockBody as BlockBody, SealedHeader};
 use base_execution_network_service::test_utils::TestFullBlockClient;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use base_execution_state_types::PruneModes;
-use base_execution_sync_pipeline::Pipeline;
-use base_execution_sync_pipeline::{ExecOutput, StageError, test_utils::TestStages};
+use base_execution_sync::{ExecOutput, Pipeline, StageError, test_utils::TestStages};
 use tokio::sync::watch;
 
 /// Test pipeline builder.

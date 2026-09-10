@@ -5,17 +5,14 @@ use std::{sync::Arc, time::Duration};
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes};
 use alloy_rpc_client::RpcClient;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::Upgrades;
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Provider, RootProvider};
-use base_common_types_chain::Predeploys;
-use base_common_types_chain::RecoveredBlock;
+use base_common_chain_config::{BaseChainSpec, Upgrades};
+use base_common_client_ethereum::{Base, Provider, RootProvider};
+use base_common_types_chain::{Predeploys, RecoveredBlock};
 use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
 use base_common_types_rpc::BlockNumberOrTag;
-use base_consensus_batch_types::BaseTimeUpdateTx;
+use base_consensus_batch::BaseTimeUpdateTx;
 use base_execution_evm_runtime::BaseTime;
-use base_execution_payload_builder::BasePayloadBuilderAttributes;
+use base_execution_payload::BasePayloadBuilderAttributes;
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, BlockReaderIdExt, ChainSpecProvider, StateProviderFactory,
 };
@@ -63,10 +60,7 @@ impl TestHarnessBuilder {
     /// Prefer [`with_ext`](Self::with_ext) for simpler configuration.
 
     /// Configures sequencer transaction ingress.
-    pub fn with_builder_rpc(
-        mut self,
-        config: base_execution_rpc_handlers::BuilderApiConfig,
-    ) -> Self {
+    pub fn with_builder_rpc(mut self, config: base_execution_rpc::BuilderApiConfig) -> Self {
         self.rpc.builder = Some(config);
         self
     }
@@ -79,15 +73,12 @@ impl TestHarnessBuilder {
 
     /// Configures bundle metering.
     pub fn with_metering(mut self) -> Self {
-        self.rpc.metering = Some(base_execution_payload_builder::MeteringConfig::enabled());
+        self.rpc.metering = Some(base_execution_payload::MeteringConfig::enabled());
         self
     }
 
     /// Configures the built-in transaction forwarder.
-    pub fn with_forwarding(
-        mut self,
-        config: base_execution_txpool_pool::TxForwardingConfig,
-    ) -> Self {
+    pub fn with_forwarding(mut self, config: base_execution_txpool::TxForwardingConfig) -> Self {
         self.services.forwarding = Some(config);
         self
     }

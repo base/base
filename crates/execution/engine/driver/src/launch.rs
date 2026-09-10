@@ -6,16 +6,16 @@
 
 use std::sync::Arc;
 
-use base_common_runtime_tasks::Runtime;
-use base_execution_engine_types::BeaconEngineMessage;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
+use base_common_runtime::Runtime;
+use base_common_types_payload::BeaconEngineMessage;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_wire::BlockClient;
-use base_execution_payload_builder::PayloadBuilderHandle;
+use base_execution_payload::PayloadBuilderHandle;
 use base_execution_state_maintenance::PrunerWithFactory;
-use base_execution_state_provider::OverlayManager;
-use base_execution_state_provider::{ProviderFactory, providers::BlockchainProvider};
-use base_execution_sync_pipeline::{MetricEventsSender, Pipeline};
+use base_execution_state_provider::{
+    OverlayManager, ProviderFactory, providers::BlockchainProvider,
+};
+use base_execution_sync::{MetricEventsSender, Pipeline};
 use futures::Stream;
 
 use crate::{
@@ -57,7 +57,7 @@ pub fn build_engine_orchestrator<Client, S>(
     blockchain_db: BlockchainProvider,
     pruner: PrunerWithFactory<ProviderFactory>,
     payload_builder: PayloadBuilderHandle,
-    payload_validator: BasicEngineValidator<BlockchainProvider>,
+    payload_validator: BasicEngineValidator,
     overlay_manager: OverlayManager,
     tree_config: TreeConfig,
     sync_metrics_tx: MetricEventsSender,

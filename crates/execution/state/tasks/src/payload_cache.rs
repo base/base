@@ -1,12 +1,12 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
-use crate::SavedCache;
 use alloy_primitives::B256;
 use base_common_observability_metrics::Metrics;
 use metrics::{Counter, Histogram};
 use parking_lot::Mutex;
-use std::time::Instant;
 use tracing::{debug, instrument, warn};
+
+use crate::SavedCache;
 
 /// A guarded, thread-safe cache of execution state that tracks the most recent block's caches.
 ///

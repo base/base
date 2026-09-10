@@ -4,13 +4,11 @@ use core::{
     str::FromStr,
 };
 
-use crate::StageId;
-use alloy_primitives::TxNumber;
+use alloy_primitives::{BlockNumber, TxNumber};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Visitor, ser::SerializeStruct};
 use strum::{EnumIs, EnumString};
 
-use crate::{Compression, find_fixed_range};
-use alloy_primitives::BlockNumber;
+use crate::{Compression, StageId, find_fixed_range};
 
 #[derive(
     Debug,

@@ -1,16 +1,16 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
-use base_batcher_encoding_channel::{BatchEncoder, EncoderConfig};
-use base_batcher_service_driver::{
-    BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
-    ThrottleConfig, ThrottleController, ThrottleStrategy,
+use base_batcher_encoding::{BatchEncoder, EncoderConfig};
+use base_batcher_service::{
+    BatchDriver, BatchDriverConfig, BatchDriverError, ChannelBlockSource, ChannelL1HeadSource,
+    DaThrottle, L2BlockEvent, NoopThrottleClient, ThrottleConfig, ThrottleController,
+    ThrottleStrategy,
 };
-use base_batcher_service_driver::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_common_l1_transactions::TxManager;
-use base_common_runtime_tasks::TokioRuntime;
+use base_common_l1::TxManager;
+use base_common_runtime::TokioRuntime;
 use base_common_types_chain::BaseBlock;
 use tokio_util::sync::CancellationToken;
 
@@ -95,10 +95,10 @@ pub enum BatcherError {
 /// The driver task continues running between cycles, waiting for new events.
 ///
 /// [`advance`]: Batcher::advance
-/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_service_driver::ChannelL1HeadSource
-/// [`L1HeadEvent::NewHead`]: base_batcher_service_driver::L1HeadEvent
-/// [`L2BlockEvent::Flush`]: base_batcher_service_driver::L2BlockEvent::Flush
+/// [`BatchDriver`]: base_batcher_service::BatchDriver
+/// [`ChannelL1HeadSource`]: base_batcher_service::ChannelL1HeadSource
+/// [`L1HeadEvent::NewHead`]: base_batcher_service::L1HeadEvent
+/// [`L2BlockEvent::Flush`]: base_batcher_service::L2BlockEvent::Flush
 pub struct Batcher<S: L2BlockProvider> {
     /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
     l2_source: S,
@@ -254,8 +254,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Use [`wait_until_requeued`] after [`encode_only`] to wait for the driver
     /// to process the failures and return frames to the pending queue.
     ///
-    /// [`TxManager::send_async`]: base_common_l1_transactions::TxManager::send_async
-    /// [`TxManagerError::Rpc`]: base_common_l1_transactions::TxManagerError::Rpc
+    /// [`TxManager::send_async`]: base_common_l1::TxManager::send_async
+    /// [`TxManagerError::Rpc`]: base_common_l1::TxManagerError::Rpc
     /// [`encode_only`]: Batcher::encode_only
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn fail_next_n_submissions(&self, n: usize) {
@@ -273,11 +273,11 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// [`cancellation_count`] to assert the recovery path ran, and
     /// [`wait_until_requeued`] to wait for the frames to return to pending.
     ///
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-    /// [`TxManager::send_async`]: base_common_l1_transactions::TxManager::send_async
-    /// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
-    /// [`TxManagerError::AlreadyReserved`]: base_common_l1_transactions::TxManagerError::AlreadyReserved
-    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
+    /// [`TxManager::send_async`]: base_common_l1::TxManager::send_async
+    /// [`TxManager::cancel_tx`]: base_common_l1::TxManager::cancel_tx
+    /// [`TxManagerError::AlreadyReserved`]: base_common_l1::TxManagerError::AlreadyReserved
+    /// [`TxOutcome::TxpoolBlocked`]: base_batcher_service::TxOutcome::TxpoolBlocked
     /// [`cancellation_count`]: Batcher::cancellation_count
     /// [`wait_until_requeued`]: Batcher::wait_until_requeued
     pub fn block_next_n_submissions(&self, n: usize) {
@@ -287,7 +287,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Returns how many times the driver has called [`TxManager::cancel_tx`] to
     /// recover from a txpool blockage.
     ///
-    /// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+    /// [`TxManager::cancel_tx`]: base_common_l1::TxManager::cancel_tx
     pub fn cancellation_count(&self) -> usize {
         self.tx_manager.cancellation_count()
     }
@@ -360,7 +360,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Panics if `pending_count()` does not reach `min_frames` within the
     /// polling iteration limit (20 yields).
     ///
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
     /// [`send_async`]: crate::action_fixtures::L1MinerTxManager::send_async
     /// [`encode_only`]: Batcher::encode_only
     pub async fn wait_until_pending(&self, min_frames: usize) {
@@ -414,7 +414,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// Panics if the driver task has already exited.
     ///
-    /// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
+    /// [`BatchDriver`]: base_batcher_service::BatchDriver
     pub async fn signal_reorg(&self) {
         self.block_tx.send(L2BlockEvent::Reorg).expect("driver task alive");
         tokio::task::yield_now().await;

@@ -6,16 +6,12 @@ use std::{
     sync::Arc,
 };
 
-use base_common_cli_support::{get_secret_key, rng_secret_key};
-use base_execution_network_discovery::Discv4;
-use base_execution_network_discovery::Discv4Config;
-use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
-use base_execution_network_discovery::Discv5;
-use base_execution_network_discovery::Discv5Config as Config;
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_discv5::Event;
-use base_execution_network_discv5::ListenConfig;
-use base_execution_network_types::NodeRecord;
+use base_common_cli::{get_secret_key, rng_secret_key};
+use base_execution_network_discovery::{
+    Discv4, Discv4Config, Discv4DiscoveryUpdate as DiscoveryUpdate, Discv5, Discv5Config as Config,
+    Event, ListenConfig, NatResolver,
+};
+use base_execution_network_wire::NodeRecord;
 use clap::Parser;
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};
@@ -245,7 +241,7 @@ impl Command {
             ListenConfig::Ipv4 { ip: Ipv4Addr::UNSPECIFIED, port }
         };
         builder = builder
-            .discv5_config(base_execution_network_discv5::ConfigBuilder::new(listen).build());
+            .discv5_config(base_execution_network_discovery::ConfigBuilder::new(listen).build());
 
         for ip in &nat.advertised_ips {
             builder = builder.advertised_ip(*ip);

@@ -21,9 +21,8 @@
 use std::cmp::Ordering;
 
 use alloy_primitives::{B256, map::B256Map};
-use base_execution_state_types::DatabaseError;
 use base_execution_state_types::{
-    BranchNodeCompact, Nibbles,
+    BranchNodeCompact, DatabaseError, Nibbles,
     updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
 };
 use itertools::{EitherOrBoth, merge_join_by};

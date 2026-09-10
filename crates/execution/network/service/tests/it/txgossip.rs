@@ -4,14 +4,14 @@ use std::sync::Arc;
 use alloy_primitives::{Signature, U256};
 use base_common_types_chain::TxLegacy;
 use base_execution_network_service::{
-    NetworkEvent, NetworkEventListenerProvider, Peers, test_utils::NetworkEventStream,
-    test_utils::Testnet, transactions::config::TransactionIngressPolicy,
-    transactions::config::TransactionPropagationKind,
-    transactions::config::TransactionsManagerConfig,
+    NetworkEvent, NetworkEventListenerProvider, PeerEvent, PeerKind, Peers, PeersInfo,
+    test_utils::{NetworkEventStream, Testnet},
+    transactions::config::{
+        TransactionIngressPolicy, TransactionPropagationKind, TransactionsManagerConfig,
+    },
 };
-use base_execution_network_service::{PeerEvent, PeerKind, PeersInfo};
 use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use base_execution_txpool_pool::{
+use base_execution_txpool::{
     AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
 };
 use futures::StreamExt;

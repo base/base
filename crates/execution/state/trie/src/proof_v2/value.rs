@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use alloy_primitives::{B256, U256, map::B256Map};
 use alloy_rlp::Encodable;
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_types::StateProofError;
 
 use crate::{

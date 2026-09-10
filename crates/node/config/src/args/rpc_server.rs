@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use base_common_cli_support::{parse_duration_from_secs_or_ms, parse_ether_value};
+use base_common_cli::{parse_duration_from_secs_or_ms, parse_ether_value};
 use base_common_types_payload::JwtSecret;
 use base_common_types_rpc as constants;
 use base_common_types_rpc::PendingBlockKind;

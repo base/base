@@ -1,17 +1,16 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base_common_observability_metrics::{
-    Metrics,
+    GasDisplay, Metrics,
     metrics::{Counter, Gauge, Histogram},
     thread::{ThreadResourceUsage, ThreadResourceUsageDelta},
 };
-use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
-use base_execution_engine_types::{ForkchoiceStatus, OnForkChoiceUpdated};
+use base_common_types_payload::{
+    ForkchoiceStatus, OnForkChoiceUpdated, PayloadStatus, PayloadStatusEnum,
+};
 use base_execution_evm_blocks::ExecutorMetrics;
 use base_execution_state_trie::updates::TrieUpdates;
-use base_execution_state_types::BlockExecutionOutput;
-use base_execution_state_types::ProviderError;
-use {base_common_observability_metrics::GasDisplay, std::time::Instant};
+use base_execution_state_types::{BlockExecutionOutput, ProviderError};
 
 use crate::tree::{TreeOutcome, error::InsertBlockFatalError};
 
@@ -639,7 +638,7 @@ pub(crate) struct BlockBufferMetrics {
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip7685::Requests;
-    use base_execution_evm_runtime::database::BundleState;
+    use base_execution_evm_runtime::BundleState;
     use base_execution_state_types::BlockExecutionResult;
     use metrics_util::debugging::{DebuggingRecorder, Snapshotter};
 

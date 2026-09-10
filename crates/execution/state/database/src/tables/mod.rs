@@ -20,14 +20,12 @@ use std::fmt;
 
 use alloy_primitives::{Address, B256, BlockHash, BlockNumber, TxHash, TxNumber};
 use base_common_types_chain::{EthereumReceipt as Receipt, Header};
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::StageCheckpoint;
-use base_execution_state_types::StorageEntry;
+use base_execution_evm_runtime::{StoredAccount as Account, StoredBytecode as Bytecode};
 use base_execution_state_types::{
     BranchNodeCompact, PackedStorageTrieEntry, PackedStoredNibbles, PackedStoredNibblesSubKey,
-    StorageTrieEntry, StoredNibbles, StoredNibblesSubKey,
+    PruneCheckpoint, PruneSegment, StageCheckpoint, StorageEntry, StorageTrieEntry, StoredNibbles,
+    StoredNibblesSubKey,
 };
-use base_execution_state_types::{PruneCheckpoint, PruneSegment};
 pub use raw::{RawDupSort, RawKey, RawTable, RawValue, TableRawRow};
 use serde::{Deserialize, Serialize};
 
@@ -58,7 +56,7 @@ pub enum TableType {
 /// # Example
 ///
 /// ```
-/// use base_execution_state_database::{DupSort, Table, TableViewer, Tables};
+/// use crate::{DupSort, Table, TableViewer, Tables};
 ///
 /// struct MyTableViewer;
 ///
@@ -284,7 +282,7 @@ macro_rules! tables {
         /// # Examples
         ///
         /// ```
-        /// use base_execution_state_database::{Table,Tables,tables_to_generic};
+        /// use crate::{Table,Tables,tables_to_generic};
         ///
         /// let table = Tables::Headers;
         /// let result = tables_to_generic!(table, |GenericTable| <GenericTable as Table>::NAME);

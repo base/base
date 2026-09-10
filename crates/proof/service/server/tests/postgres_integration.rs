@@ -30,7 +30,7 @@ use base_proof_service_server::{
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
     UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
 };
-use base_proof_types_protocol::Proposal;
+use base_proof_types::Proposal;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 

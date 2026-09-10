@@ -12,13 +12,13 @@
 //! and it exercises the `cancel_tx` hook that the harness previously left as the
 //! trait's default no-op.
 //!
-//! [`TxManager::send_async`]: base_common_l1_transactions::TxManager::send_async
-//! [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
-//! [`TxManagerError::AlreadyReserved`]: base_common_l1_transactions::TxManagerError::AlreadyReserved
-//! [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-//! [`TxOutcome::TxpoolBlocked`]: base_batcher_service_driver::TxOutcome::TxpoolBlocked
+//! [`TxManager::send_async`]: base_common_l1::TxManager::send_async
+//! [`TxManager::cancel_tx`]: base_common_l1::TxManager::cancel_tx
+//! [`TxManagerError::AlreadyReserved`]: base_common_l1::TxManagerError::AlreadyReserved
+//! [`BatchDriver`]: base_batcher_service::BatchDriver
+//! [`TxOutcome::TxpoolBlocked`]: base_batcher_service::TxOutcome::TxpoolBlocked
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
@@ -35,8 +35,8 @@ fn calldata_batcher_config() -> BatcherConfig {
 /// requeues the frame, clears the blockage via [`TxManager::cancel_tx`], and the
 /// derivation node successfully derives the L2 block after recovery.
 ///
-/// [`BatchDriver`]: base_batcher_service_driver::BatchDriver
-/// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+/// [`BatchDriver`]: base_batcher_service::BatchDriver
+/// [`TxManager::cancel_tx`]: base_common_l1::TxManager::cancel_tx
 #[tokio::test]
 async fn txpool_blocked_recovers_via_cancel_tx_and_derives() {
     let batcher_cfg = calldata_batcher_config();
@@ -87,7 +87,7 @@ async fn txpool_blocked_recovers_via_cancel_tx_and_derives() {
 /// [`TxManager::cancel_tx`] before the third submission succeeds. No data is
 /// lost: the derivation node still sees the correct L2 block.
 ///
-/// [`TxManager::cancel_tx`]: base_common_l1_transactions::TxManager::cancel_tx
+/// [`TxManager::cancel_tx`]: base_common_l1::TxManager::cancel_tx
 #[tokio::test]
 async fn consecutive_txpool_blocks_recover_and_derive() {
     let batcher_cfg = calldata_batcher_config();

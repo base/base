@@ -2,8 +2,7 @@
 
 use std::time::Duration;
 
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Provider, RootProvider};
+use base_common_client_ethereum::{Base, Provider, RootProvider};
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 

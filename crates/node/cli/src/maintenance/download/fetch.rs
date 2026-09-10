@@ -11,8 +11,8 @@ use std::{
     time::Duration,
 };
 
-use base_common_cli_support::CancellationToken;
-use base_common_io_files as fs;
+use base_common_cli::CancellationToken;
+use base_common_io as fs;
 use eyre::Result;
 use reqwest::{StatusCode, blocking::Client as BlockingClient, header::RANGE};
 use tracing::info;
@@ -983,7 +983,7 @@ fn panic_payload_message(payload: Box<dyn Any + Send + 'static>) -> String {
 mod tests {
     use std::io::Write;
 
-    use base_common_cli_support::CancellationToken;
+    use base_common_cli::CancellationToken;
     use reqwest::StatusCode;
 
     use super::*;

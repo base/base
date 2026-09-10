@@ -10,7 +10,7 @@ use base_common_types_chain::{
 };
 
 use crate::sealed_block::{
-    RecoveryError, BlockHeader, InMemorySize, MaybeSerde, SignedTransaction,
+    BlockHeader, InMemorySize, MaybeSerde, RecoveryError, SignedTransaction,
 };
 
 /// Abstraction for block's body.

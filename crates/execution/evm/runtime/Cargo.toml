@@ -14,70 +14,226 @@ workspace = true
 
 [dependencies]
 either = { workspace = true }
-auto_impl = {workspace = true}
-thiserror = {workspace = true}
+nonmax = { workspace = true }
+cfg-if = { workspace = true }
+ark-ec = { workspace = true }
+ripemd = { workspace = true }
 tracing = { workspace = true }
-alloy-eips = {workspace = true}
-alloy-primitives = {workspace = true}
+bitflags = { workspace = true }
+arrayref = { workspace = true }
+auto_impl = { workspace = true }
+thiserror = { workspace = true }
+alloy-eips = { workspace = true }
+alloy-trie = { workspace = true }
+sha2_0_11_0 = { workspace = true }
+derive-where = { workspace = true }
+alloy-eip7928 = { workspace = true }
+alloy-genesis = { workspace = true }
+alloy-eip2930 = { workspace = true }
+ark-serialize = { workspace = true }
+alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-execution-evm-fees = {workspace = true}
-base-execution-evm-machine = {workspace = true}
-base-execution-state-types = {workspace = true}
+aurora-engine-modexp = { workspace = true }
+sha2 = { workspace = true, optional = true }
+paste = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
-base-execution-evm-crypto = { workspace = true }
-base-execution-state-memory = {workspace = true}
-base-execution-evm-primitives = {workspace = true}
-base-execution-evm-precompiles = {workspace = true }
-derive_more = { workspace = true, features = ["full"] }
-base-common-types-chain = {features = ["k256"], workspace = true}
-base-common-chain-config = {workspace = true, features = ["default"]}
-serde = {features = ["derive", "rc"], optional = true, workspace = true}
+base-execution-evm-macros = { workspace = true }
+ark-ff = { workspace = true, features = ["asm"] }
+k256 = { workspace = true, features = ["ecdsa"] }
+p256 = { workspace = true, features = ["ecdsa"] }
+bitvec = { workspace = true, features = ["alloc"] }
+modular-bitfield = { workspace = true, optional = true }
+alloy-eip7702 = { workspace = true, features = ["k256"] }
+ark-bls12-381 = { workspace = true, features = ["curve"] }
+ark-bn254_0_6_0 = { workspace = true, features = ["curve"] }
+once_cell = { workspace = true, features = ["alloc", "race"] }
+phf = { workspace = true, features = ["macros"], optional = true }
+base-common-types-chain = { features = ["k256"], workspace = true }
+blst = { workspace = true, optional = true, features = ["default"] }
+base64 = { workspace = true, features = ["default"], optional = true }
+base-common-chain-config = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, optional = true, features = ["derive"] }
 base-common-observability-metrics = { workspace = true, optional = true }
-serde_json = { workspace = true, features = [
-    "alloc",
-    "preserve_order",
-], optional = true }
+serde = { features = ["derive", "rc"], optional = true, workspace = true }
+aws-lc-rs = { workspace = true, features = ["aws-lc-sys"], optional = true }
+alloy-primitives = { workspace = true, features = ["map-indexmap", "rlp", "map"] }
+c-kzg = { workspace = true, features = ["ethereum_kzg_settings"], optional = true }
+serde_json = { workspace = true, features = ["alloc", "preserve_order"], optional = true }
+derive_more = { workspace = true, features = ["full", "deref", "debug", "from", "try_into"] }
+secp256k1_0_31_1 = { workspace = true, features = ["alloc", "recovery", "rand", "global-context"], optional = true }
 
 [dev-dependencies]
 sha2 = { workspace = true }
+mockall = { workspace = true }
+ark-std = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-sol-types = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+p256 = { workspace = true, features = ["ecdsa"] }
 base-common-client-ethereum = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 rstest = { workspace = true, features = ["default"] }
-alloy-primitives = {features = ["serde"], workspace = true}
+anyhow = { workspace = true, features = ["default"] }
+proptest = { workspace = true, features = ["default"] }
+arbitrary = { workspace = true, features = ["derive"] }
+criterion = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
-base-execution-state-memory = { workspace = true, features = ["serde"]}
-base-execution-evm-precompiles = { workspace = true, features = ["test-utils"] }
-serde_json = {features = ["alloc", "default", "preserve_order"], workspace = true}
+rand_0_10_2 = { workspace = true, features = ["default", "std"] }
+codspeed-criterion-compat_5_0 = { workspace = true, features = ["default"] }
+alloy-primitives = { features = ["serde", "arbitrary", "rand"], workspace = true }
+serde_json = { features = ["alloc", "default", "preserve_order"], workspace = true }
+base-execution-evm-runtime = { workspace = true, features = ["serde", "test-utils"] }
+
+[[test]]
+name = "core_machine_miri_read_slice_oob"
+path = "tests/core_machine/miri_read_slice_oob.rs"
+
+[[test]]
+name = "core_precompiles_b20_stablecoin_v1_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_stablecoin_v1_golden.rs"
+
+[[test]]
+name = "core_precompiles_b20_stablecoin_v2_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_stablecoin_v2_golden.rs"
+
+[[test]]
+name = "core_precompiles_b20_asset_v1_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_asset_v1_golden.rs"
+
+[[test]]
+name = "core_precompiles_b20_asset_v2_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_asset_v2_golden.rs"
+
+[[test]]
+name = "core_precompiles_b20_policy_v1_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_policy_v1_golden.rs"
+
+[[test]]
+name = "core_precompiles_b20_factory_v1_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_factory_v1_golden.rs"
+
+[[test]]
+name = "core_precompiles_contract"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/contract.rs"
+
+[[test]]
+name = "core_precompiles_b20_policy_v2_golden"
+required-features = ["test-utils"]
+path = "tests/core_precompiles/b20_policy_v2_golden.rs"
+
+[[bench]]
+name = "core_precompiles_base_precompiles"
+harness = false
+required-features = ["test-utils"]
+path = "benches/core_precompiles/base_precompiles.rs"
 
 [features]
 default = ["blst", "c-kzg", "portable", "secp256k1", "std"]
-std = ["alloy-eips/std", "alloy-primitives/std", "base-common-chain-config/std", "base-execution-evm-fees/std", "base-execution-evm-precompiles/std", "base-common-types-chain/std", "base-execution-evm-machine/std", "base-common-observability-metrics?/std", "base-execution-state-memory/std", "derive_more/std", "either/std", "base-execution-evm-primitives/std", "base-execution-evm-crypto/std", "serde?/std", "serde_json?/preserve_order", "serde_json?/std", "thiserror/std", "tracing/std", "base-execution-state-types/std"]
-serde = ["alloy-eips/serde", "alloy-primitives/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-evm-machine/serde", "base-execution-state-memory/serde", "dep:serde", "either/serde", "base-execution-evm-primitives/serde"]
-metrics = ["base-common-observability-metrics/metrics", "dep:base-common-observability-metrics", "dep:metrics", "std"]
-bn = ["base-execution-evm-precompiles/bn", "base-execution-evm-crypto/bn"]
-blst = ["base-execution-evm-precompiles/blst", "base-execution-evm-crypto/blst"]
-c-kzg = ["base-execution-evm-precompiles/c-kzg", "base-execution-evm-crypto/c-kzg"]
-portable = ["base-execution-evm-precompiles/portable", "base-execution-evm-crypto/portable"]
-secp256k1 = ["base-execution-evm-precompiles/secp256k1", "base-execution-evm-crypto/secp256k1"]
-memory_limit = ["base-execution-evm-precompiles/memory_limit", "base-execution-evm-machine/memory_limit"]
-optional_no_base_fee = ["base-execution-evm-precompiles/optional_no_base_fee", "base-execution-evm-machine/optional_no_base_fee"]
-optional_eip3541 = ["base-execution-evm-precompiles/optional_eip3541", "base-execution-evm-machine/optional_eip3541"]
-optional_eip3607 = ["base-execution-evm-precompiles/optional_eip3607", "base-execution-evm-machine/optional_eip3607"]
-optional_fee_charge = ["base-execution-evm-precompiles/optional_fee_charge", "base-execution-evm-machine/optional_fee_charge"]
-optional_balance_check = ["base-execution-evm-precompiles/optional_balance_check", "base-execution-evm-machine/optional_balance_check"]
-optional_block_gas_limit = ["base-execution-evm-precompiles/optional_block_gas_limit", "base-execution-evm-machine/optional_block_gas_limit"]
+std = [
+    "alloy-eips/std",
+    "alloy-primitives/std",
+    "base-common-chain-config/std",
+    "base-common-types-chain/std",
+    "base-common-observability-metrics?/std",
+    "derive_more/std",
+    "either/std",
+    "serde?/std",
+    "serde_json?/preserve_order",
+    "serde_json?/std",
+    "thiserror/std",
+    "tracing/std",
+    "once_cell/std",
+    "bitvec/std",
+    "phf?/std",
+    "alloy-genesis/std",
+    "alloy-trie/std",
+    "bitflags/std",
+    "alloy-eip7928/std",
+    "nonmax/std",
+    "alloy-eip7702/std",
+    "alloy-eip2930/std",
+    "k256/std",
+    "c-kzg?/std",
+    "secp256k1_0_31_1?/std",
+    "ark-bn254_0_6_0/std",
+    "ark-bls12-381/std",
+    "aurora-engine-modexp/std",
+    "ark-ec/std",
+    "ark-ff/std",
+    "ark-serialize/std",
+    "ark-std/std",
+    "p256/std",
+    "alloy-sol-types/std",
+    "dep:sha2",
+    "dep:base64",
+    "base-common-types-chain/k256",
+    "k256/default",
+    "p256/default",
+]
+serde = [
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "base-common-chain-config/serde",
+    "base-common-types-chain/serde",
+    "dep:serde",
+    "either/serde",
+    "bitvec/serde",
+    "phf?/serde",
+    "bitflags/serde",
+    "alloy-eip7928/serde",
+    "nonmax/serde",
+    "derive-where/serde",
+    "alloy-eip7702/serde",
+    "alloy-eip2930/serde",
+]
+metrics = [
+    "base-common-observability-metrics/metrics",
+    "dep:base-common-observability-metrics",
+    "dep:metrics",
+    "std",
+]
+blst = ["dep:blst"]
+c-kzg = ["dep:c-kzg"]
+portable = ["c-kzg?/portable", "blst?/portable"]
+secp256k1 = ["dep:secp256k1_0_31_1"]
+memory_limit = []
+optional_no_base_fee = []
+optional_eip3541 = []
+optional_eip3607 = []
+optional_fee_charge = []
+optional_balance_check = []
+optional_block_gas_limit = []
 serde-json = ["serde", "tracer"]
 tracer = ["dep:serde", "dep:serde_json", "serde", "std"]
-asm-keccak = ["alloy-primitives/asm-keccak", "base-execution-evm-primitives/asm-keccak"]
-gmp = ["base-execution-evm-crypto/gmp"]
-arbitrary = ["base-execution-evm-primitives/arbitrary"]
-dev = ["memory_limit", "optional_balance_check", "optional_block_gas_limit", "optional_eip3541", "optional_eip3607", "optional_eip7623", "optional_no_base_fee"]
-hashbrown = ["base-execution-evm-machine/hashbrown", "base-execution-evm-crypto/hashbrown"]
-map-foldhash = ["base-execution-evm-primitives/map-foldhash"]
-optional_eip7623 = ["base-execution-evm-machine/optional_eip7623"]
-optional_priority_fee_check = ["base-execution-evm-machine/optional_priority_fee_check"]
-p256-aws-lc-rs = ["base-execution-evm-crypto/p256-aws-lc-rs"]
-parse = ["base-execution-evm-primitives/parse"]
-sha3-keccak = ["base-execution-evm-primitives/sha3-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak"]
+arbitrary = ["std", "alloy-primitives/arbitrary", "dep:arbitrary"]
+dev = [
+    "memory_limit",
+    "optional_balance_check",
+    "optional_block_gas_limit",
+    "optional_eip3541",
+    "optional_eip3607",
+    "optional_eip7623",
+    "optional_no_base_fee",
+    "optional_priority_fee_check",
+    "optional_fee_charge",
+]
+hashbrown = ["alloy-primitives/map-hashbrown"]
+map-foldhash = ["alloy-primitives/map-foldhash"]
+optional_eip7623 = []
+optional_priority_fee_check = []
+p256-aws-lc-rs = ["dep:aws-lc-rs"]
+parse = ["phf", "paste"]
+sha3-keccak = ["alloy-primitives/sha3-keccak"]
+test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-common-chain-config/test-utils", "std"]
+rand = ["alloy-primitives/rand"]
+reth-codec = ["dep:bytes", "dep:modular-bitfield", "base-common-types-chain/alloy"]

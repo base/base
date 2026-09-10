@@ -1,7 +1,6 @@
-use base_execution_evm_machine::{ContextTr, HaltReason};
+use base_execution_evm_runtime::{ContextTr, EvmTr, HaltReason};
 
 use super::{EvmTrError, Handler};
-use crate::EvmTr;
 
 /// Mainnet handler that implements the default [`Handler`] trait for the Evm.
 #[derive(Debug, Clone)]

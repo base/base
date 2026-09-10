@@ -4,15 +4,16 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_execution_engine_types::{BeaconEngineMessage, ConsensusEngineEvent};
+use base_common_types_payload::{BeaconEngineMessage, ConsensusEngineEvent};
 use base_execution_network_wire::BlockClient;
+use base_execution_sync::{ControlFlow, PipelineTarget};
 use futures::Stream;
-
-use crate::engine::EngineHandler;
-use base_execution_sync_pipeline::{ControlFlow, PipelineTarget};
 use tracing::*;
 
-use crate::backfill::{BackfillAction, BackfillEvent, PipelineSync};
+use crate::{
+    backfill::{BackfillAction, BackfillEvent, PipelineSync},
+    engine::EngineHandler,
+};
 
 /// The type that drives the chain forward.
 ///

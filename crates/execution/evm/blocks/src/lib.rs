@@ -32,9 +32,6 @@ pub use either::Either;
 mod execute;
 pub use execute::*;
 
-mod aliases;
-pub use aliases::*;
-
 #[cfg(feature = "std")]
 mod engine;
 #[cfg(feature = "std")]

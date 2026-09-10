@@ -3,11 +3,10 @@
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use base_common_client_ethereum::AuthClientLayer;
-use base_common_types_payload::JwtSecret;
 use base_common_types_payload::{
-    BaseExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadStatus,
+    BaseExecutionPayloadV4, BasePayloadBuilderAttributes, ForkchoiceState, ForkchoiceUpdated,
+    JwtSecret, PayloadStatus,
 };
-use base_execution_payload_types::BasePayloadBuilderAttributes;
 use jsonrpsee::{core::client::ClientT, rpc_params};
 
 /// Access to the separately maintained reference client's execution endpoint.

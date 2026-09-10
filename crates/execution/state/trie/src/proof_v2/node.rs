@@ -1,8 +1,7 @@
 use alloy_rlp::Encodable;
-use base_execution_state_types::StateProofError;
 use base_execution_state_types::{
     BranchNodeMasks, BranchNodeV2, LeafNode, LeafNodeRef, Nibbles, ProofTrieNodeV2, RlpNode,
-    TrieMask, TrieNodeV2,
+    StateProofError, TrieMask, TrieNodeV2,
 };
 
 use crate::proof_v2::DeferredValueEncoder;

@@ -2,8 +2,7 @@
 
 use alloc::vec;
 
-use base_execution_evm_machine::TxEnvBuilder;
-use base_execution_evm_runtime::primitives::{B256, Bytes};
+use base_execution_evm_runtime::{B256, Bytes, TxEnvBuilder};
 
 use super::{
     core::BaseTransaction,

@@ -3,13 +3,12 @@
 use alloy_eip2124::Head;
 use base_common_chain_config::BaseChainSpec;
 use base_execution_network_wire::UnifiedStatus;
-
-use crate::NetworkConfigBuilder;
-
-use base_execution_txpool_pool::{
+use base_execution_txpool::{
     BaseOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
     test_utils::BaseTestTransaction,
 };
+
+use crate::NetworkConfigBuilder;
 
 /// Pool accepting Base transactions for network tests.
 pub type TestPool = Pool<MockTransactionValidator, InMemoryBlobStore>;

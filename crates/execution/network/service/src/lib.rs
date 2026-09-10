@@ -37,11 +37,10 @@ mod state;
 mod swarm;
 mod trusted_peers_resolver;
 
-pub use base_execution_network_types::PeersConfig;
-pub use base_execution_network_types::SessionsConfig;
-pub use base_execution_network_wire::DisconnectReason;
-pub use base_execution_network_wire::HelloMessageWithProtocols;
-pub use base_execution_network_wire::{NetworkSyncUpdater, SyncState};
+pub use base_execution_network_wire::{
+    DisconnectReason, HelloMessageWithProtocols, NetworkSyncUpdater, PeersConfig, SessionsConfig,
+    SyncState,
+};
 pub use builder::NetworkBuilder;
 pub use config::{NetworkConfig, NetworkConfigBuilder};
 pub use discovery::Discovery;
@@ -60,7 +59,6 @@ pub use swarm::NetworkConnectionState;
 /// re-export types crates
 pub mod types {
     pub use base_execution_network_discovery::NatResolver;
-    pub use base_execution_network_types::*;
     pub use base_execution_network_wire::*;
 }
 

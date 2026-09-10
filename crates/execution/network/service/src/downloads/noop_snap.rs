@@ -1,8 +1,9 @@
-use crate::NoopFullBlockClient;
 use base_execution_network_wire::{
     GetAccountRangeMessage, GetBlockAccessListsMessage, GetByteCodesMessage,
     GetStorageRangesMessage, PeerRequestResult, Priority, RequestError, SnapClient, SnapResponse,
 };
+
+use crate::NoopFullBlockClient;
 
 /// Fails every snap request with [`RequestError::UnsupportedCapability`], so the noop client can
 /// stand in wherever a [`SnapClient`] bound is required but snap is not served.

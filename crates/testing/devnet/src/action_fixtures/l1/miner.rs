@@ -8,7 +8,7 @@ use base_common_types_chain::{
     transaction::{SignerRecoverable, TransactionMeta},
 };
 use base_common_types_rpc::{Log as RpcLog, TransactionReceipt};
-use base_consensus_batch_types::{BlockInfo, Deposits};
+use base_consensus_batch::{BlockInfo, Deposits};
 use tracing::info;
 
 use crate::action_fixtures::Action;

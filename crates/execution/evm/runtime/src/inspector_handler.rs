@@ -1,18 +1,13 @@
-use base_execution_evm_machine::{
-    ContextTr, ExecutionResult, JournalCheckpoint, JournalEntry, JournalTr,
-};
-use base_execution_evm_machine::{
-    FrameInput, GasTracker, Host, InitialAndFloorGas, InstructionResult, Interpreter,
-    InterpreterAction,
+use base_execution_evm_runtime::{
+    ContextTr, EvmTr, ExecutionResult, FrameInput, FrameResult, GasTracker, Handler, Host,
+    InitialAndFloorGas, Inspector, InspectorEvmTr, InstructionResult, Interpreter,
+    InterpreterAction, ItemOrResult, JournalCheckpoint, JournalEntry, JournalExt, JournalTr,
+    build_result_gas,
+    hints_util::cold_path,
     instructions::{GasTable, InstructionTable},
     interpreter_action::FrameInit,
+    runtime_oog_unwind,
 };
-use base_execution_evm_primitives::hints_util::cold_path;
-use base_execution_evm_runtime::{
-    EvmTr, FrameResult, Handler, ItemOrResult, build_result_gas, runtime_oog_unwind,
-};
-
-use crate::{Inspector, InspectorEvmTr, JournalExt};
 
 /// Trait that extends [`Handler`] with inspection functionality.
 ///
@@ -187,7 +182,7 @@ where
 /// Handles the start of a frame by calling the appropriate inspector method.
 pub fn frame_start<CTX>(
     context: &mut CTX,
-    inspector: &mut impl Inspector<CTX, FrameInput, FrameResult>,
+    inspector: &mut impl Inspector<CTX>,
     frame_input: &mut FrameInput,
 ) -> Option<FrameResult> {
     // Generic hook before variant dispatch
@@ -214,7 +209,7 @@ pub fn frame_start<CTX>(
 /// Handles the end of a frame by calling the appropriate inspector method.
 pub fn frame_end<CTX>(
     context: &mut CTX,
-    inspector: &mut impl Inspector<CTX, FrameInput, FrameResult>,
+    inspector: &mut impl Inspector<CTX>,
     frame_input: &FrameInput,
     frame_output: &mut FrameResult,
 ) {

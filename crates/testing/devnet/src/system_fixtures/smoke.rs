@@ -14,9 +14,8 @@ use alloy_rpc_client::RpcClient;
 use base_common_chain_config::{
     BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation,
 };
-use base_common_client_ethereum::RootProvider;
-use base_common_client_ethereum::{Base, Ethereum, PrivateKeySigner};
-use base_execution_txpool_pool::TxForwardingConfig;
+use base_common_client_ethereum::{Base, Ethereum, PrivateKeySigner, RootProvider};
+use base_execution_txpool::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;
 use eyre::{OptionExt, Result, WrapErr};

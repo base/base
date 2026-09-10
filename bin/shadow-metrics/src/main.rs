@@ -10,8 +10,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use base_common_cli_support::LogConfig;
-use base_infra_shadow_metrics_service::{
+use base_common_cli::LogConfig;
+use base_infra_shadow_metrics::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowMetricsStore,
     api_router,
 };
@@ -19,8 +19,8 @@ use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-base_common_cli_support::define_log_args!("SHADOW_METRICS");
-base_common_cli_support::define_metrics_args!("SHADOW_METRICS", 9003);
+base_common_cli::define_log_args!("SHADOW_METRICS");
+base_common_cli::define_metrics_args!("SHADOW_METRICS", 9003);
 
 #[derive(Debug, Clone)]
 struct HealthState {
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
         .init_tracing_subscriber()
         .expect("Failed to initialize tracing");
 
-    base_common_cli_support::MetricsConfig::from(args.metrics.clone())
+    base_common_cli::MetricsConfig::from(args.metrics.clone())
         .init()
         .expect("Failed to install Prometheus exporter");
 

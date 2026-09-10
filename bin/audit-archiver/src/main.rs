@@ -14,8 +14,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use base_common_cli_support::LogConfig;
-use base_infra_audit_service::{
+use base_common_cli::LogConfig;
+use base_infra_audit::{
     AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
     DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
     DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
@@ -38,8 +38,8 @@ use tokio::{
 use tower::ServiceBuilder;
 use tracing::{error, info};
 
-base_common_cli_support::define_log_args!("TIPS_AUDIT");
-base_common_cli_support::define_metrics_args!("TIPS_AUDIT", 9002);
+base_common_cli::define_log_args!("TIPS_AUDIT");
+base_common_cli::define_metrics_args!("TIPS_AUDIT", 9002);
 
 #[derive(Debug, Clone, ValueEnum)]
 enum S3ConfigType {
@@ -247,7 +247,7 @@ async fn main() -> Result<()> {
         .init_tracing_subscriber()
         .expect("Failed to initialize tracing");
 
-    base_common_cli_support::MetricsConfig::from(args.metrics.clone())
+    base_common_cli::MetricsConfig::from(args.metrics.clone())
         .init()
         .expect("Failed to install Prometheus exporter");
 

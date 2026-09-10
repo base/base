@@ -1,5 +1,4 @@
-use base_execution_state_api::StorageSettingsCache;
-use base_execution_state_types::ProviderResult;
+use base_execution_state_types::{ProviderResult, StorageSettingsCache};
 
 use crate::{
     either_writer::{RawRocksDBBatch, RocksBatchArg, RocksDBRefArg},

@@ -161,7 +161,7 @@ pub mod private {
 }
 
 mod compact;
-pub use base_common_codec_macros::*;
+pub use base_common_codec::*;
 pub use compact::{Compact, CompactPlaceholder};
 
 #[cfg(feature = "alloy")]
@@ -218,3 +218,17 @@ pub use sealed_block::{LazyLock, OnceLock};
 #[cfg(feature = "k256")]
 pub use sealed_block::{recover_signers, recover_signers_unchecked, try_recover_signers};
 pub use transaction::{Recovered, SignerRecoverable, TransactionInfo, TransactionMeta, TxHashRef};
+
+#[cfg(feature = "alloy")]
+mod storage_codec;
+#[cfg(all(feature = "alloy", feature = "std"))]
+pub use storage_codec::{
+    RECEIPT_COMPRESSOR, RECEIPT_DECOMPRESSOR, TRANSACTION_COMPRESSOR, TRANSACTION_DECOMPRESSOR,
+};
+#[cfg(feature = "alloy")]
+pub use storage_codec::{
+    RECEIPT_DICTIONARY, ReusableDecompressor, StorageCodec, TRANSACTION_DICTIONARY,
+};
+
+mod block_result;
+pub use block_result::BlockExecutionResult;

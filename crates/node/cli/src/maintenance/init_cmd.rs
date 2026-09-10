@@ -19,7 +19,7 @@ pub struct InitCommand {
 
 impl InitCommand {
     /// Execute the `init` command
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         info!(target: "reth::cli", "reth init starting");
 
         let Environment { provider_factory, .. } = self.env.init(AccessRights::RW, runtime)?;

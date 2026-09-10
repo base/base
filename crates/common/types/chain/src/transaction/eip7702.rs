@@ -16,7 +16,6 @@ use crate::{SignableTransaction, Transaction, TxType};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "borsh", derive(borsh::BorshSerialize, borsh::BorshDeserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[doc(alias = "Eip7702Transaction", alias = "TransactionEip7702", alias = "Eip7702Tx")]
 pub struct TxEip7702 {

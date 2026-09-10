@@ -1,9 +1,8 @@
 //! Macros and helper traits for ergonomic chain config access.
 
-use crate::RollupConfig;
 use alloy_chains::Chain;
 
-use crate::ChainConfig;
+use crate::{ChainConfig, RollupConfig};
 
 /// Input accepted by the [`rollup_config!`] macro.
 pub trait RollupConfigSource {

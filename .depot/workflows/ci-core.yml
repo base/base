@@ -238,7 +238,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y musl-tools
           rustup target add x86_64-unknown-linux-musl
       - name: Run SIGSEGV tests under musl
-        run: cargo test --locked -p base-common-cli-support --test sigsegv_test --target x86_64-unknown-linux-musl
+        run: cargo test --locked -p base-common-cli --test sigsegv_test --target x86_64-unknown-linux-musl
   system-tests:
     name: System Tests
     if: inputs.run_system_tests

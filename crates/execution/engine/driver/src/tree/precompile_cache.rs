@@ -8,7 +8,10 @@ use alloy_primitives::{
 };
 use base_common_types_chain::DashMap;
 use base_execution_evm_blocks::{DynPrecompile, Precompile, PrecompileInput};
-use base_execution_evm_runtime::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
+use base_execution_evm_runtime::{
+    CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileResult as PrecompileResult,
+    PrecompileId,
+};
 use moka::policy::EvictionPolicy;
 use tracing::error;
 
@@ -256,11 +259,9 @@ impl CachedPrecompileMetrics {
 #[cfg(test)]
 mod tests {
     use base_execution_evm_blocks::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
-    use base_execution_evm_machine::TxEnv;
     use base_execution_evm_runtime::{
-        database::EmptyDB,
-        precompile::{PrecompileOutput, PrecompileStatus},
-        primitives::hardfork::SpecId,
+        CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileStatus as PrecompileStatus,
+        EmptyDB, TxEnv, hardfork::SpecId,
     };
 
     use super::*;

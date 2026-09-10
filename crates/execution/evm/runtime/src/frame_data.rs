@@ -1,10 +1,9 @@
 use core::ops::Range;
 
-use base_execution_evm_machine::{
-    CallOutcome, CreateOutcome, Gas, InstructionResult, InterpreterResult,
+use base_execution_evm_runtime::{
+    Address, CallOutcome, CreateOutcome, Gas, GasParams, InstructionResult, InterpreterResult,
+    Output,
 };
-use base_execution_evm_machine::{GasParams, Output};
-use base_execution_evm_primitives::Address;
 
 /// Call Frame
 #[derive(Debug, Clone)]

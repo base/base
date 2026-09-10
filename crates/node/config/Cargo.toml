@@ -15,8 +15,8 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-serde = {workspace = true}
 url = { workspace = true }
+serde = { workspace = true }
 dirs-next = { workspace = true }
 humantime = { workspace = true }
 thiserror = { workspace = true }
@@ -24,36 +24,32 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-hardforks = { workspace = true }
-base-common-types-rpc = {workspace = true}
-base-execution-txpool-pool = { workspace = true }
-base-common-cli-support = { workspace = true }
+base-common-cli = { workspace = true }
+base-common-runtime = { workspace = true }
+base-common-types-rpc = { workspace = true }
+base-execution-txpool = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
-eyre = {workspace = true, features = ["default"]}
-base-execution-engine-types = { workspace = true }
-base-execution-network-discv5 = {workspace = true}
+eyre = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
 ipnet = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = {workspace = true}
 futures = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
-base-common-types-chain = {features = ["k256", "rayon", "reth"], workspace = true}
-toml_0_9_12_spec_1_1_0 = {workspace = true, features = ["default"]}
-base-execution-sync-pipeline = {workspace = true,features = ["serde"]}
-base-execution-network-wire = {workspace = true, features = ["requests"]}
+base-execution-sync = { workspace = true, features = ["serde"] }
+toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-network-service = { workspace = true, features = ["serde"] }
-base-execution-state-types = {workspace = true, features = ["std", "serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
-base-execution-network-discovery = {features = ["default"], workspace = true}
-base-execution-state-api = { workspace = true, features = ["std", "db-api"] }
 clap = { workspace = true, features = ["default", "derive", "env", "string"] }
+base-execution-network-discovery = { features = ["default"], workspace = true }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
+base-common-types-chain = { features = ["k256", "rayon", "reth"], workspace = true }
 base-common-types-payload = { workspace = true, features = ["std", "jwt-aws-lc-rs"] }
-base-execution-network-types = {workspace = true, features = ["secp256k1", "std", "serde"]}
-base-common-observability-tracing = {workspace = true, features = ["default", "otlp", "std"]}
+base-execution-state-types = { workspace = true, features = ["std", "serde", "db-api"] }
+base-common-observability-tracing = { workspace = true, features = ["default", "otlp", "std"] }
+base-execution-network-wire = { workspace = true, features = ["requests", "secp256k1", "std", "serde"] }
 
 [dev-dependencies]
 url = { workspace = true }
@@ -63,12 +59,11 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [features]
-jemalloc = ["base-common-cli-support/jemalloc"]
+jemalloc = ["base-common-cli/jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global"]
-otlp = ["base-common-observability-tracing/otlp", "base-common-cli-support/otlp"]
-otlp-logs = ["base-common-observability-tracing/otlp-logs", "base-common-cli-support/otlp-logs"]
-tracy = ["base-common-observability-tracing/tracy"]
+otlp = ["base-common-observability-tracing/otlp", "base-common-cli/otlp"]
+otlp-logs = ["base-common-observability-tracing/otlp-logs", "base-common-cli/otlp-logs"]
 
 min-error-logs = ["tracing/release_max_level_error"]
 min-warn-logs = ["tracing/release_max_level_warn"]
@@ -76,7 +71,6 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-partial-persistence = ["base-execution-state-types/partial-persistence"]
 
 # Debug recording for sparse trie mutations
-trie-debug = ["base-execution-engine-types/trie-debug"]
+trie-debug = ["base-common-types-payload/trie-debug"]

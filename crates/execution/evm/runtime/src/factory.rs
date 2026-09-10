@@ -1,11 +1,8 @@
 use alloy_primitives::Address;
-use base_execution_evm_machine::{BlockEnv, DBErrorMarker, EVMError};
-use base_execution_evm_runtime::{Context, Inspector};
-use base_execution_evm_runtime::{Database, EvmEnv, EvmFactory, NoOpInspector, PrecompilesMap};
-
-use crate::{
+use base_execution_evm_runtime::{
     BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
-    Builder, DefaultBase,
+    BlockEnv, Builder, Context, DBErrorMarker, Database, DefaultBase, EVMError, EvmEnv, EvmFactory,
+    Inspector, NoOpInspector, PrecompilesMap,
 };
 
 /// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
@@ -56,7 +53,7 @@ impl Default for BaseEvmFactory {
 }
 
 impl EvmFactory for BaseEvmFactory {
-    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I, PrecompilesMap>;
+    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I>;
     type Context<DB: Database> = BaseContext<DB>;
     type Tx = BaseTransaction;
     type Error<DBError: DBErrorMarker> = EVMError<DBError, BaseTransactionError>;
@@ -97,12 +94,11 @@ impl EvmFactory for BaseEvmFactory {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::{BlockEnv, CfgEnv};
-    use base_execution_evm_runtime::database::EmptyDB;
-    use base_execution_evm_runtime::{EvmEnv, NoOpInspector};
+    use base_execution_evm_runtime::{
+        BaseUpgrade, BlockEnv, CfgEnv, EmptyDB, EvmEnv, NoOpInspector,
+    };
 
     use super::*;
-    use crate::BaseUpgrade;
 
     fn default_env() -> EvmEnv<BaseSpecId> {
         EvmEnv::new(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Beryl)), BlockEnv::default())

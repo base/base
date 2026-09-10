@@ -1,8 +1,9 @@
 //! Executor metrics.
+use std::time::Instant;
+
 use base_common_observability_metrics::Metrics;
-use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BlockHeader, RecoveredBlock};
 use metrics::{Counter, Gauge, Histogram};
-use {base_common_types_chain::RecoveredBlock, std::time::Instant};
 
 /// Executor metrics.
 #[derive(Metrics, Clone)]
@@ -73,7 +74,6 @@ impl ExecutorMetrics {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
-
     use base_common_types_chain::{BaseBlock as Block, Header};
 
     use super::*;

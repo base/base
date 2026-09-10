@@ -10,15 +10,15 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
-use base_common_client_ethereum::{Base, PrivateKeySigner, TransactionBuilder};
-use base_common_client_ethereum::{Provider, RootProvider};
+use base_common_client_ethereum::{
+    Base, PrivateKeySigner, Provider, RootProvider, TransactionBuilder,
+};
 use base_common_types_chain::{Call, Eip8130Signed, SignableTransaction, TxEip8130, TxReceipt};
 use base_common_types_rpc::BaseTransactionRequest;
-use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
-use base_execution_txpool_pool::TxForwardingConfig;
-use base_execution_txpool_pool::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, ValidatedTransaction, ValidityOperator,
-    ValidityPredicate,
+use base_execution_rpc::SendRawTransactionValidityOptions;
+use base_execution_txpool::{
+    DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, TxForwardingConfig, ValidatedTransaction,
+    ValidityOperator, ValidityPredicate,
 };
 use base_testing_devnet::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
@@ -174,7 +174,8 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     // Create the ValidatedTransaction payload
-    let validated_tx = ValidatedTransaction { sender, raw: raw_tx, extensions: NoExtensions {} };
+    let validated_tx =
+        ValidatedTransaction { sender, raw: raw_tx, extensions: TransactionValidity::default() };
 
     // Create RPC client for the builder
     let builder_rpc_url = system.l2_rpc_url()?;

@@ -4,11 +4,10 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
-use base_common_types_chain::WithEncoded;
-use base_common_types_chain::{BaseTxEnvelope, BlockHeader, TxDeposit};
+use base_common_types_chain::{BaseTxEnvelope, BlockHeader, TxDeposit, WithEncoded};
 use base_common_types_payload::PayloadAttributes;
-use base_consensus_batch_types::L1BlockInfoEcotone;
-use base_execution_payload_builder::BasePayloadBuilderAttributes;
+use base_consensus_batch::L1BlockInfoEcotone;
+use base_execution_payload::BasePayloadBuilderAttributes;
 use base_testing_devnet::BaseNodeTestUtils;
 #[path = "../fixtures/mod.rs"]
 pub mod fixtures;

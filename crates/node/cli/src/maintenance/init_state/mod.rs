@@ -4,8 +4,7 @@ use std::{io::BufReader, path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
-use base_common_types_chain::BlockHeader as AlloyBlockHeader;
-use base_common_types_chain::SealedHeader;
+use base_common_types_chain::{BlockHeader as AlloyBlockHeader, SealedHeader};
 use base_execution_state_maintenance::init::init_from_state_dump;
 use base_execution_state_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,
@@ -66,7 +65,7 @@ pub struct InitStateCommand {
 
 impl InitStateCommand {
     /// Execute the `init` command
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         info!(target: "reth::cli", "Reth init-state starting");
 
         let Environment { config, provider_factory, .. } =
@@ -113,7 +112,7 @@ impl InitStateCommand {
 
         info!(target: "reth::cli", "Initiating state dump");
 
-        let reader = BufReader::new(base_common_io_files::Files::open(self.state)?);
+        let reader = BufReader::new(base_common_io::Files::open(self.state)?);
 
         let hash = init_from_state_dump(reader, &provider_factory, config.stages.etl)?;
 

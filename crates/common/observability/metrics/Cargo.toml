@@ -13,8 +13,8 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-metrics = {optional = true, workspace = true}
-metrics-derive = { workspace = true, optional = true}
+metrics = { optional = true, workspace = true }
+metrics-derive = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 ctor = { workspace = true, optional = true, features = ["default"] }
@@ -27,7 +27,7 @@ ordered-float = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = { workspace = true, features = ["default"], optional = true}
+libc = { workspace = true, features = ["default"], optional = true }
 
 [[test]]
 name = "metrics"

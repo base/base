@@ -2,18 +2,13 @@
 
 use std::{net::SocketAddr, path::PathBuf};
 
-use base_common_cli_support::{get_secret_key, rng_secret_key};
-use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_LISTEN_CONFIG;
-use base_execution_network_discovery::Discv4;
-use base_execution_network_discovery::Discv4Config;
-use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
-use base_execution_network_discovery::Discv5;
-use base_execution_network_discovery::Discv5Config as Config;
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_discv5::ConfigBuilder as Discv5ConfigBuilder;
-use base_execution_network_discv5::Event;
-use base_execution_network_discv5::ProtocolIdentity;
-use base_execution_network_types::NodeRecord;
+use base_common_cli::{get_secret_key, rng_secret_key};
+use base_execution_network_discovery::{
+    ConfigBuilder as Discv5ConfigBuilder, DEFAULT_DISCOVERY_V5_LISTEN_CONFIG, Discv4, Discv4Config,
+    Discv4DiscoveryUpdate as DiscoveryUpdate, Discv5, Discv5Config as Config, Event, NatResolver,
+    ProtocolIdentity,
+};
+use base_execution_network_wire::NodeRecord;
 use base_node_service::BASE_V0_PROTOCOL_VERSION;
 use clap::Parser;
 use secp256k1::SecretKey;

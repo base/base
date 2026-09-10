@@ -17,60 +17,63 @@ workspace = true
 
 [dependencies]
 bytes = { workspace = true }
-metrics = {workspace = true }
+metrics = { workspace = true }
 memmap2 = { workspace = true }
-thiserror = {workspace = true}
 arrayvec = { workspace = true }
 lz4_flex = { workspace = true }
+thiserror = { workspace = true }
+auto_impl = { workspace = true }
+alloy-eips = { workspace = true }
 bincode_1_3_3 = { workspace = true }
+base-common-io = { workspace = true }
 modular-bitfield = { workspace = true }
-base-common-io-files = {workspace = true}
-bitflags = { workspace = true, optional = true}
-smallvec = { workspace = true, optional = true}
+base-common-chain-config = { workspace = true }
+bitflags = { workspace = true, optional = true }
+smallvec = { workspace = true, optional = true }
 page_size = { workspace = true, optional = true }
-serde = {workspace = true, features = ["derive"]}
+serde = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true, features = ["default"] }
-derive_more = {workspace = true, features = ["full"]}
 sysinfo = { workspace = true, features = ["system"] }
 roaring = { workspace = true, features = ["default"] }
-tracing = {workspace = true, features = ["attributes"]}
-alloy-primitives = {workspace = true, features = ["map-foldhash"]}
-base-common-types-chain = { workspace = true, features = ["serde"]}
-base-execution-state-mdbx-sys = { workspace = true, optional = true}
+derive_more = { workspace = true, features = ["full"] }
+tracing = { workspace = true, features = ["attributes"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-common-types-chain = { workspace = true, features = ["serde"] }
 eyre = { workspace = true, optional = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"], optional = true }
+base-execution-state-mdbx-sys = { workspace = true, optional = true }
 dashmap = { workspace = true, features = ["inline"], optional = true }
 quanta = { workspace = true, optional = true, features = ["default"] }
 rustc-hash = { workspace = true, features = ["std"], optional = true }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-byteorder = { workspace = true, features = ["default"], optional = true}
 proptest = { workspace = true, optional = true, features = ["default"] }
 tempfile = { workspace = true, optional = true, features = ["default"] }
-parking_lot = {workspace = true, optional = true, features = ["default"]}
-crossbeam-queue = { workspace = true, features = ["default"], optional = true}
+byteorder = { workspace = true, features = ["default"], optional = true }
+parking_lot = { workspace = true, optional = true, features = ["default"] }
+crossbeam-queue = { workspace = true, features = ["default"], optional = true }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
-base-execution-state-types = {workspace = true, features = ["reth-codec", "serde"]}
-base-execution-state-memory = {workspace = true, features = ["reth-codec", "serde"]}
 zstd = { workspace = true, features = ["default", "experimental", "zdict_builder"] }
-base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"]}
+base-execution-evm-runtime = { workspace = true, features = ["reth-codec", "serde"] }
+base-execution-state-types = { workspace = true, features = ["reth-codec", "serde", "db-api"] }
+base-common-observability-metrics = { workspace = true, optional = true, features = ["metrics"] }
 
 [target.'cfg(unix)'.dependencies]
-libc = { workspace = true, features = ["default"], optional = true}
+libc = { workspace = true, features = ["default"], optional = true }
 [dev-dependencies]
 serde = { workspace = true }
 test-fuzz = { workspace = true }
 assert_matches = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
-arbitrary = {workspace = true, features = ["derive"]}
-proptest = {workspace = true, features = ["default"]}
-tempfile = {workspace = true, features = ["default"]}
+arbitrary = { workspace = true, features = ["derive"] }
+proptest = { workspace = true, features = ["default"] }
+tempfile = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 parking_lot = { workspace = true, features = ["default"] }
-rand = {workspace = true, features = ["default", "small_rng"]}
-base-common-types-chain = {features = ["k256", "reth-codec", "serde", "test-utils"], workspace = true}
-base-execution-state-memory = {workspace = true, features = ["reth-codec"]}
-alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash", "rand"]}
-base-execution-state-types = {workspace = true, features = ["arbitrary", "reth-codec"]}
+rand = { workspace = true, features = ["default", "small_rng"] }
+base-execution-evm-runtime = { workspace = true, features = ["reth-codec"] }
+alloy-primitives = { workspace = true, features = ["getrandom", "map-foldhash", "rand"] }
+base-execution-state-types = { workspace = true, features = ["arbitrary", "reth-codec"] }
+base-common-types-chain = { features = ["k256", "reth-codec", "serde", "test-utils"], workspace = true }
 
 [[test]]
 name = "mdbx_cursor"
@@ -89,9 +92,39 @@ required-features = ["mdbx"]
 
 [features]
 default = ["mdbx"]
-mdbx = ["dep:eyre", "dep:page_size", "dep:quanta", "base-common-observability-metrics", "dep:strum", "dep:rustc-hash", "return-borrowed", "read-tx-timeouts", "dep:bitflags", "dep:smallvec", "dep:base-execution-state-mdbx-sys", "dep:byteorder", "dep:parking_lot", "dep:crossbeam-queue", "dep:libc"]
-test-utils = ["dep:tempfile", "mdbx", "arbitrary", "dep:parking_lot", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-execution-state-memory/test-utils", "base-common-types-chain/test-utils"]
-arbitrary = ["alloy-primitives/arbitrary", "base-common-types-chain/arbitrary", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "base-execution-state-memory/arbitrary", "dep:arbitrary", "dep:proptest"]
-disable-lock = []
+mdbx = [
+    "dep:eyre",
+    "dep:page_size",
+    "dep:quanta",
+    "base-common-observability-metrics",
+    "dep:strum",
+    "dep:rustc-hash",
+    "return-borrowed",
+    "read-tx-timeouts",
+    "dep:bitflags",
+    "dep:smallvec",
+    "dep:base-execution-state-mdbx-sys",
+    "dep:byteorder",
+    "dep:parking_lot",
+    "dep:crossbeam-queue",
+    "dep:libc",
+]
+test-utils = [
+    "dep:tempfile",
+    "mdbx",
+    "arbitrary",
+    "dep:parking_lot",
+    "base-common-types-chain/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-execution-evm-runtime/test-utils",
+]
+arbitrary = [
+    "alloy-primitives/arbitrary",
+    "base-common-types-chain/arbitrary",
+    "base-execution-state-types/arbitrary",
+    "base-execution-evm-runtime/arbitrary",
+    "dep:arbitrary",
+    "dep:proptest",
+]
 return-borrowed = []
 read-tx-timeouts = ["dep:dashmap"]

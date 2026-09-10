@@ -5,9 +5,7 @@ use std::{
 
 use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_evm_runtime::Evm;
-use base_execution_evm_runtime::database::State;
-use base_execution_state_memory::CachedReads;
+use base_execution_evm_runtime::{CachedReads, Evm, State};
 use base_execution_state_provider::{
     BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
@@ -37,9 +35,9 @@ const HEAD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// The worker is driven by [`Command`]s: `Start` points it at a new parent state, and
 /// `Pause`/`Resume` bracket cache-sensitive work elsewhere. Commands are only applied between
 /// batches, never while an EVM or state provider is alive.
-pub(super) struct Worker<P> {
+pub(super) struct Worker {
     /// Control commands from the [`Handle`](super::Handle).
-    commands: Receiver<Command<Job<P>>>,
+    commands: Receiver<Command<Job>>,
     /// Shared slot the latest snapshot is published into.
     publication: Publication,
     /// The txpool view transactions are drawn from.
@@ -47,7 +45,7 @@ pub(super) struct Worker<P> {
     /// Configures the EVM used for speculative execution.
     evm_config: BaseEvmConfig,
     /// The parent state to warm, from the most recent `Start` command.
-    job: Option<(B256, Job<P>)>,
+    job: Option<(B256, Job)>,
     /// Outstanding pauses; the worker only warms while this is zero.
     pauses: u64,
     /// Read-through cache filled by execution; replaced whenever the warmed parent changes.
@@ -61,18 +59,9 @@ pub(super) struct Worker<P> {
     transactions: Option<(B256, Transactions)>,
 }
 
-impl<P> Worker<P>
-where
-    P: DatabaseProviderFactory,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-{
+impl Worker {
     pub(super) fn new(
-        commands: Receiver<Command<Job<P>>>,
+        commands: Receiver<Command<Job>>,
         publication: Publication,
         source: Arc<dyn Source>,
         evm_config: BaseEvmConfig,
@@ -267,7 +256,7 @@ where
     ///
     /// Only called while no EVM or state provider is alive, so a paused worker holds no
     /// execution resources.
-    fn apply(&mut self, command: Command<Job<P>>) {
+    fn apply(&mut self, command: Command<Job>) {
         match command {
             Command::Start { parent_hash, job } => self.job = Some((parent_hash, job)),
             Command::Pause => {
@@ -318,8 +307,8 @@ mod tests {
 
     use alloy_primitives::{Address, Signature, TxKind, U256};
     use base_common_types_chain::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
-    use base_execution_state_provider::test_utils::MockEthProvider;
-    use base_execution_sync_pipeline::{StageCheckpoint, StageId};
+    use base_execution_state_provider::test_utils::ProviderTestUtils;
+    use base_execution_sync::{StageCheckpoint, StageId};
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
 
@@ -330,7 +319,7 @@ mod tests {
     const WAIT_LIMIT: Duration = Duration::from_secs(5);
     const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-    type TestJob = Job<MockEthProvider>;
+    type TestJob = Job;
 
     /// Drives a live worker thread through its public seams only: commands in, the publication
     /// slot and the scripted pool out.
@@ -365,10 +354,17 @@ mod tests {
 
         /// Points the worker at `parent_hash`, as [`Handle::start`](super::super::Handle) does.
         fn start(&self, parent_hash: B256) {
-            let provider = MockEthProvider::default();
-            provider.enable_database_provider();
-            provider.add_header(parent_hash, Default::default());
-            provider.add_stage_checkpoint(StageId::Finish, StageCheckpoint::new(0));
+            let provider = ProviderTestUtils::empty(Arc::new(
+                base_common_chain_config::BaseChainSpec::mainnet(),
+            ));
+            ProviderTestUtils::insert_blocks(
+                &provider,
+                &[base_common_types_chain::RecoveredBlock::new(
+                    Default::default(),
+                    Vec::new(),
+                    parent_hash,
+                )],
+            );
             let job = Job {
                 evm_env: Default::default(),
                 provider_builder: StateProviderBuilder::new(

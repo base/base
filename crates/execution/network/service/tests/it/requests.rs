@@ -7,24 +7,19 @@ use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_types_chain::{BaseBlock as Block, Header};
 use base_execution_network_service::{
-    BlockDownloaderProvider, NetworkEventListenerProvider,
-    eth_requests::MAX_BLOCK_ACCESS_LISTS_SERVE, eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::NetworkEventStream, test_utils::PeerConfig, test_utils::TestPool,
-    test_utils::Testnet, test_utils::TestnetHandle,
+    BlockDownloaderProvider, NetworkEventListenerProvider, NetworkInfo, Peers,
+    eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
+    test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
 };
-use base_execution_network_service::{NetworkInfo, Peers};
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::EthVersion;
-use base_execution_network_wire::GetBlockAccessLists;
-use base_execution_network_wire::HeadersDirection;
 use base_execution_network_wire::{
-    BlockAccessListsClient, BodiesClient, HeadersClient, HeadersRequest, RequestError,
+    BlockAccessLists, BlockAccessListsClient, BodiesClient, EthVersion, GetBlockAccessLists,
+    HeadersClient, HeadersDirection, HeadersRequest, RequestError,
 };
 use base_execution_state_provider::{
     BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
     ProviderResult, RawBal, test_utils::MockEthProvider,
 };
-use base_execution_txpool_pool::test_utils::TransactionGenerator;
+use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use tokio::sync::oneshot;
 

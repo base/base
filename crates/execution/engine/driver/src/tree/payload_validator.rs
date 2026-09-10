@@ -100,7 +100,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_eip7928::{BlockAccessList, bal::DecodedBal, compute_block_access_list_hash};
@@ -109,52 +109,38 @@ use alloy_primitives::{
     Address, B256,
     map::{AddressMap, B256Set},
 };
-use base_common_runtime_tasks::LazyHandle;
+use base_common_runtime::LazyHandle;
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, EIP1559ParamError,
+    BaseReceipt, BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, EIP1559ParamError,
+    GotExpected, RecoveredBlock, SealedBlock, SealedHeader, SignerRecoverable,
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
 };
-use base_execution_engine_observers::InvalidBlockWitnessHook;
-use base_execution_engine_types::ExecutionPayload;
-use base_execution_evm_blocks::ExecutableTxIterator;
-use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
-use base_execution_evm_blocks::{
-    BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
-};
-use base_execution_evm_runtime::database::{BundleAccount, BundleRetention, State};
-use base_execution_evm_runtime::{BlockExecutionError, Evm};
-use base_execution_payload_builder::{
-    BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources,
-};
-use base_execution_payload_types::{
+use base_common_types_payload::{
     BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
     NewPayloadError,
 };
+use base_execution_engine_observers::InvalidBlockWitnessHook;
+use base_execution_evm_blocks::{
+    BaseBeaconConsensus, BaseEvmConfig, BlockExecutor, ConsensusError, ExecutableTxFor,
+    ExecutableTxIterator, OnStateHook, ReceiptRootBloom,
+};
+use base_execution_evm_runtime::{BlockExecutionError, BundleAccount, BundleRetention, Evm, State};
+use base_execution_payload::{BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources};
 use base_execution_state_provider::{
-    BlockExecutionOutput, BlockReader, ChangeSetReader, DatabaseProviderFactory,
-    DatabaseProviderROFactory, ProviderError, PruneCheckpointReader, StageCheckpointReader,
+    BlockExecutionOutput, BlockReader, CanonicalInMemoryState, ChangeSetReader,
+    DatabaseProviderFactory, DatabaseProviderROFactory, HeaderProvider, OverlayManager,
+    OverlayStateProviderFactory, ProviderError, PruneCheckpointReader, StageCheckpointReader,
     StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
 use base_execution_state_tasks::{CacheFillMode, CacheStats};
 use base_execution_state_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
-use base_execution_state_types::ProviderResult;
+use base_execution_state_types::{ExecutedBlock, ExecutionTimingStats, ProviderResult};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
-use {
-    base_common_types_chain::BlockBodyExt as BlockBody, base_common_types_chain::BlockHeader,
-    base_common_types_chain::GotExpected, base_common_types_chain::RecoveredBlock,
-    base_common_types_chain::SealedBlock, base_common_types_chain::SealedHeader,
-    base_common_types_chain::SignerRecoverable, std::time::Instant,
-};
-use {
-    base_execution_state_provider::CanonicalInMemoryState,
-    base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
-};
 
 pub use crate::tree::types::ValidationOutcome;
 use crate::tree::{
@@ -235,9 +221,9 @@ impl<'a> TreeCtx<'a> {
 
 /// Executes and validates Base blocks and payloads, retaining execution and state-root caches.
 #[derive(derive_more::Debug)]
-pub struct BasicEngineValidator<P> {
+pub struct BasicEngineValidator {
     /// Provider for database access.
-    provider: P,
+    provider: base_execution_state_provider::BlockchainProvider,
     /// Consensus implementation for validation.
     consensus: Arc<BaseBeaconConsensus>,
     /// EVM configuration.
@@ -247,62 +233,45 @@ pub struct BasicEngineValidator<P> {
     /// Payload processor for transaction conversion, prewarming, and execution caching.
     payload_processor: PayloadProcessor,
     /// Precompile cache map.
-    precompile_cache_map: PrecompileCacheMap<SpecFor>,
+    precompile_cache_map: PrecompileCacheMap<base_execution_evm_runtime::BaseSpecId>,
     /// Precompile cache metrics.
     precompile_cache_metrics: AddressMap<CachedPrecompileMetrics>,
     /// Hook to call when invalid blocks are encountered.
     #[debug(skip)]
-    invalid_block_hook: Vec<InvalidBlockWitnessHook<P>>,
+    invalid_block_hook:
+        Vec<InvalidBlockWitnessHook<base_execution_state_provider::BlockchainProvider>>,
     /// Metrics for the engine api.
     metrics: EngineApiMetrics,
     /// Validator for the payload.
     validator: BaseEngineValidator,
     /// Task runtime for spawning parallel work.
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
     /// Shared overlay manager.
     overlay_manager: OverlayManager,
     /// State-root strategy used to prepare per-block commitment tasks.
     #[debug(skip)]
-    state_root_strategy: Arc<dyn StateRootStrategy<P>>,
+    state_root_strategy: Arc<dyn StateRootStrategy>,
     /// Persistent txpool prewarming worker and its latest immutable snapshot.
     ///
     /// None if txpool prewarming is disabled.
     #[debug(skip)]
-    txpool_prewarm: Option<txpool_prewarm::Handle<P>>,
+    txpool_prewarm: Option<txpool_prewarm::Handle>,
 }
 
-impl<P> BasicEngineValidator<P>
-where
-    P: DatabaseProviderFactory<
-            Provider: BlockReader
-                          + StageCheckpointReader
-                          + PruneCheckpointReader
-                          + ChangeSetReader
-                          + StorageChangeSetReader
-                          + StorageSettingsCache
-                          + TryIntoHistoricalStateProvider
-                          + 'static,
-        > + BlockReader
-        + ChangeSetReader
-        + StateProviderFactory
-        + StateReader
-        + Clone
-        + 'static,
-    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
-        + Clone
-        + 'static,
-{
+impl BasicEngineValidator {
     /// Creates a new `TreePayloadValidator`.
     #[expect(clippy::too_many_arguments)]
     pub fn new(
-        provider: P,
+        provider: base_execution_state_provider::BlockchainProvider,
         consensus: Arc<BaseBeaconConsensus>,
         evm_config: BaseEvmConfig,
         validator: BaseEngineValidator,
         config: TreeConfig,
-        invalid_block_hook: Vec<InvalidBlockWitnessHook<P>>,
+        invalid_block_hook: Vec<
+            InvalidBlockWitnessHook<base_execution_state_provider::BlockchainProvider>,
+        >,
         overlay_manager: OverlayManager,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> Self {
         let precompile_cache_map = PrecompileCacheMap::default();
         let payload_processor = PayloadProcessor::new(
@@ -332,7 +301,7 @@ where
     /// Sets the state-root strategy used by payload validation.
     pub fn with_state_root_strategy(
         mut self,
-        state_root_strategy: Arc<dyn StateRootStrategy<P>>,
+        state_root_strategy: Arc<dyn StateRootStrategy>,
     ) -> Self {
         self.state_root_strategy = state_root_strategy;
         self
@@ -361,7 +330,16 @@ where
     }
 
     /// Returns EVM environment for the given payload or block.
-    pub fn evm_env_for(&self, input: &BlockOrPayload) -> Result<EvmEnvFor, EIP1559ParamError> {
+    pub fn evm_env_for(
+        &self,
+        input: &BlockOrPayload,
+    ) -> Result<
+        base_execution_evm_runtime::EvmEnv<
+            base_execution_evm_runtime::BaseSpecId,
+            base_execution_evm_runtime::BlockEnv,
+        >,
+        EIP1559ParamError,
+    > {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.evm_env_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.evm_env(block.header())?),
@@ -389,11 +367,11 @@ where
         })
     }
 
-    /// Returns a [`ExecutionCtxFor`] for the given payload or block.
+    /// Returns a [`base_execution_evm_runtime::BaseBlockExecutionCtx`] for the given payload or block.
     pub fn execution_ctx_for<'a>(
         &self,
         input: &'a BlockOrPayload,
-    ) -> Result<ExecutionCtxFor, EIP1559ParamError> {
+    ) -> Result<base_execution_evm_runtime::BaseBlockExecutionCtx, EIP1559ParamError> {
         match input {
             BlockOrPayload::Payload(payload) => Ok(self.evm_config.context_for_payload(payload)?),
             BlockOrPayload::Block(block) => Ok(self.evm_config.context_for_block(block)?),
@@ -1289,14 +1267,14 @@ where
         &self,
         env: ExecutionEnv,
         txs: T,
-        provider_builder: StateProviderBuilder<P>,
+        provider_builder: StateProviderBuilder,
         hint_stream: Option<StateRootHintStream>,
         hashed_update_stream: Option<StateRootUpdateStream>,
         parallel_bal_execution: bool,
     ) -> Result<
         PayloadHandle<
-            impl ExecutableTxFor + use<P, T>,
-            impl core::error::Error + Send + Sync + 'static + use<P, T>,
+            impl ExecutableTxFor + use<T>,
+            impl core::error::Error + Send + Sync + 'static + use<T>,
         >,
         InsertBlockErrorKind,
     > {
@@ -1322,7 +1300,7 @@ where
         &self,
         hash: B256,
         state: &EngineApiTreeState,
-    ) -> ProviderResult<Option<StateProviderBuilder<P>>> {
+    ) -> ProviderResult<Option<StateProviderBuilder>> {
         if !state.tree_state.contains_hash(&hash) && self.provider.header(hash)?.is_none() {
             debug!(target: "engine::tree::payload_validator", %hash, "no canonical state found for block");
             return Ok(None);
@@ -1623,27 +1601,7 @@ where
     }
 }
 
-impl<P> BasicEngineValidator<P>
-where
-    P: DatabaseProviderFactory<
-            Provider: BlockReader
-                          + StageCheckpointReader
-                          + PruneCheckpointReader
-                          + ChangeSetReader
-                          + StorageChangeSetReader
-                          + StorageSettingsCache
-                          + TryIntoHistoricalStateProvider
-                          + 'static,
-        > + BlockReader
-        + StateProviderFactory
-        + StateReader
-        + ChangeSetReader
-        + Clone
-        + 'static,
-    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
-        + Clone
-        + 'static,
-{
+impl BasicEngineValidator {
     /// Validates the payload attributes with respect to the header.
     ///
     /// By default, this enforces that the payload attributes timestamp is greater than the

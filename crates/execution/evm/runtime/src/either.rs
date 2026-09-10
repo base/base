@@ -1,10 +1,8 @@
-use base_execution_evm_machine::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
+use base_execution_evm_runtime::{
+    Address, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter, Log, U256,
+    inspector::Inspector,
 };
-use base_execution_evm_primitives::{Address, Log, U256};
 use either::Either;
-
-use crate::inspector::Inspector;
 
 impl<CTX, L, R> Inspector<CTX> for Either<L, R>
 where
@@ -100,8 +98,9 @@ where
 #[cfg(test)]
 mod tests {
 
+    use base_execution_evm_runtime::noop::NoOpInspector;
+
     use super::*;
-    use crate::noop::NoOpInspector;
 
     #[derive(Default)]
     struct DummyInsp;

@@ -12,11 +12,11 @@ pub use traits::*;
 /// Provider trait implementations.
 pub mod providers;
 pub use providers::{
-    DatabaseProvider, DatabaseProviderRO, DatabaseProviderRW, HistoricalStateProvider,
-    HistoricalStateProviderRef, LatestStateProvider, LatestStateProviderRef, LoadedJar,
-    ProviderFactory, PruneShardOutcome, PrunedIndices, RocksTxIter, SaveBlocksInput,
-    StaticFileAccess, StaticFileProviderBuilder, StaticFileProviderInner,
-    StaticFileProviderMetrics, StaticFileWriteCtx, StaticFileWriter,
+    BlockchainProvider, DatabaseProvider, DatabaseProviderRO, DatabaseProviderRW,
+    HistoricalStateProvider, HistoricalStateProviderRef, LatestStateProvider,
+    LatestStateProviderRef, LoadedJar, ProviderFactory, PruneShardOutcome, PrunedIndices,
+    RocksTxIter, SaveBlocksInput, StaticFileAccess, StaticFileProviderBuilder,
+    StaticFileProviderInner, StaticFileProviderMetrics, StaticFileWriteCtx, StaticFileWriter,
 };
 
 pub mod changeset_walker;
@@ -37,17 +37,15 @@ pub use history_shards::{
 
 mod bal;
 pub use bal::{BalConfig, InMemoryBalStore, RocksDBBalStore};
-pub use base_execution_state_types::CanonStateNotification;
-pub use base_execution_state_types::*;
 // reexport traits to avoid breaking changes
 /// Re-export `OriginalValuesKnown`
-pub use base_execution_evm_runtime::database::OriginalValuesKnown;
-pub use base_execution_state_api::{
-    BalNotification, BalNotificationStream, BalProvider, BalStore, BalStoreHandle,
-    GetBlockAccessListLimit, HistoryWriter, MetadataProvider, NoopBalStore, RawBal,
-    StateWriteConfig, StatsReader, StorageSettings, StorageSettingsCache,
-};
+pub use base_execution_evm_runtime::OriginalValuesKnown;
 pub use base_execution_state_types as static_file;
+pub use base_execution_state_types::{
+    BalNotification, BalNotificationStream, BalProvider, BalStore, BalStoreHandle,
+    CanonStateNotification, GetBlockAccessListLimit, HistoryWriter, MetadataProvider, NoopBalStore,
+    RawBal, StateWriteConfig, StorageSettings, StorageSettingsCache,
+};
 /// Re-export provider error.
 pub use base_execution_state_types::{ProviderError, ProviderResult};
 pub use static_file::StaticFileSegment;
@@ -64,6 +62,10 @@ mod overlay;
 pub use overlay::*;
 
 mod canonical_state;
+pub use base_execution_state_database::{
+    DBProvider, DatabaseProviderFactory, DatabaseProviderROFactory, DbTxProvider, FactoryTx,
+    NoopProvider, StatsReader,
+};
 pub use canonical_state::{
     BlockState, CanonStateNotificationSender, CanonStateNotificationStream,
     CanonStateNotifications, CanonStateSubscriptions, CanonicalInMemoryState, ChainInfoTracker,

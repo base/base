@@ -21,17 +21,17 @@ use alloy_primitives::{
     Address, B256, U256, keccak256,
     map::{B256Map, B256Set},
 };
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{
-    ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
+use base_execution_evm_runtime::StoredAccount as Account;
+use base_execution_state_provider::{
+    AccountReader, NoopProvider, StateProofProvider, StateReadProvider, StateRootProvider,
+    StorageRootProvider,
 };
 use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, MdbxProofsStorage,
     provider::BaseProofsStateProviderRef,
 };
-use base_execution_state_provider::{
-    AccountReader, NoopProvider, StateProofProvider, StateReadProvider, StateRootProvider,
-    StorageRootProvider,
+use base_execution_state_types::{
+    ExecutionWitnessMode, HashedPostState, HashedStorage, MultiProofTargets, TrieInput,
 };
 use tempfile::TempDir;
 

@@ -1,6 +1,5 @@
 use alloy_primitives::B256;
-use base_execution_state_types::DatabaseError;
-use base_execution_state_types::{BranchNodeCompact, Nibbles};
+use base_execution_state_types::{BranchNodeCompact, DatabaseError, Nibbles};
 
 use super::{TrieCursor, TrieCursorFactory, TrieStorageCursor};
 use crate::{forward_cursor::ForwardInMemoryCursor, updates::TrieUpdatesSorted};

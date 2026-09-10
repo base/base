@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256, BlockNumber, keccak256, map::hash_map};
-use base_execution_state_api::{BlockNumReader, StorageChangeSetReader};
 use base_execution_state_database::{DbTx, models::BlockNumberAddress};
-use base_execution_state_types::{ProviderResult, StorageRootError};
+use base_execution_state_types::{
+    BlockNumReader, ProviderResult, StorageChangeSetReader, StorageRootError,
+};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::TrieRootMetrics;
@@ -137,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_hashed_storage_from_reverts_hashed_state() {
-        use base_execution_state_database::{models::StorageBeforeTx, models::StorageSettings};
+        use base_execution_state_database::models::{StorageBeforeTx, StorageSettings};
 
         let factory = create_test_provider_factory();
 

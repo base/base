@@ -6,10 +6,7 @@ use alloy_eips::{
 use alloy_hardforks::EthereumHardforks;
 use alloy_primitives::{B256, Bytes};
 use base_common_types_chain::BlockHeader;
-use base_execution_evm_machine::Block;
-use base_execution_evm_runtime::DatabaseCommit;
-
-use crate::{Evm, block::BlockExecutionError};
+use base_execution_evm_runtime::{Block, DatabaseCommit, Evm, block::BlockExecutionError};
 
 mod eip2935;
 pub use eip2935::*;
@@ -31,22 +28,19 @@ pub use eip8282::*;
 ///
 /// This can be used to chain system transaction calls.
 #[derive(derive_more::Debug)]
-pub struct SystemCaller<Spec> {
-    spec: Spec,
+pub struct SystemCaller {
+    spec: base_common_chain_config::ChainConfig,
 }
 
-impl<Spec> SystemCaller<Spec> {
+impl SystemCaller {
     /// Create a new system caller with the given EVM config, database, and chain spec, and creates
     /// the EVM with the given initialized config and block environment.
-    pub const fn new(spec: Spec) -> Self {
+    pub const fn new(spec: base_common_chain_config::ChainConfig) -> Self {
         Self { spec }
     }
 }
 
-impl<Spec> SystemCaller<Spec>
-where
-    Spec: EthereumHardforks,
-{
+impl SystemCaller {
     /// Apply pre execution changes.
     pub fn apply_pre_execution_changes(
         &mut self,

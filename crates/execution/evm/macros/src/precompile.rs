@@ -34,8 +34,9 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
         let storage = format_ident!("{base_name}Storage", span = ident.span());
         syn::parse_quote!(#storage<'_>)
     });
-    let macro_path =
-        config.macro_path.unwrap_or_else(|| syn::parse_quote!(crate::macros::base_precompile));
+    let macro_path = config
+        .macro_path
+        .unwrap_or_else(|| syn::parse_quote!(crate::core_precompiles::macros::base_precompile));
     let args = config.args;
     let arg_defs = args.iter().map(PrecompileArg::definition);
     let install_arg_defs = args.iter().map(PrecompileArg::definition);
@@ -46,7 +47,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
         quote! {
             #[doc = #doc]
             pub fn install(
-                precompiles: &mut ::base_execution_evm_precompiles::PrecompilesMap,
+                precompiles: &mut ::base_execution_evm_runtime::PrecompilesMap,
                 #(#install_arg_defs),*
             ) {
                 precompiles.extend_precompiles(::core::iter::once((
@@ -77,7 +78,7 @@ fn expand_impl(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStrea
             #install
 
             #[doc = #precompile_doc]
-            pub fn precompile(#(#arg_defs),*) -> ::base_execution_evm_precompiles::DynPrecompile {
+            pub fn precompile(#(#arg_defs),*) -> ::base_execution_evm_runtime::DynPrecompile {
                 #macro_invocation
             }
         }
@@ -308,7 +309,7 @@ mod tests {
     fn config_accepts_storage_features() {
         let config = parse_config(quote! {
             install,
-            storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
+            storage_features = ::base_execution_evm_runtime::StorageFeatures::Cobalt,
         })
         .unwrap();
 
@@ -333,7 +334,7 @@ mod tests {
         let tokens = expand_impl(
             quote! {
                 install,
-                storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
+                storage_features = ::base_execution_evm_runtime::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;
@@ -368,7 +369,7 @@ mod tests {
         let tokens = expand_impl(
             quote! {
                 install,
-                storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
+                storage_features = ::base_execution_evm_runtime::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;
@@ -388,7 +389,7 @@ mod tests {
             quote! {
                 storage = CustomStorage<'_>,
                 install,
-                storage_features = ::base_execution_evm_precompiles::StorageFeatures::Cobalt,
+                storage_features = ::base_execution_evm_runtime::StorageFeatures::Cobalt,
             },
             quote! {
                 pub struct Example;

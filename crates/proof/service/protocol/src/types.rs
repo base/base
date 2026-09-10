@@ -3,7 +3,7 @@
 use std::{collections::HashMap, fmt};
 
 use alloy_primitives::{Address, B256, Bytes};
-use base_proof_types_protocol::{ProofRequest as PrimitiveProofRequest, Proposal};
+use base_proof_types::{ProofRequest as PrimitiveProofRequest, Proposal};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

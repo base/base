@@ -2,21 +2,20 @@ use core::time::Duration;
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Provider, RootProvider};
+use base_common_client_ethereum::{Base, Provider, RootProvider};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
 use base_common_types_payload::{
     BasePayloadAttributes, ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum,
 };
 use base_common_types_rpc::{BaseTransaction as Transaction, Block};
-use base_execution_payload_builder::BasePayloadBuilderAttributes;
+use base_execution_payload::BasePayloadBuilderAttributes;
+use base_node_service::BuilderConfig;
 use chrono::Utc;
 
 use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode,
     LocalInstance, PrivateKeySigner, TransactionBuilder, sign_base_tx,
 };
-use base_node_service::BuilderConfig;
 
 /// The `ChainDriver` is a type that allows driving the Base builder node to build new blocks manually.
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node

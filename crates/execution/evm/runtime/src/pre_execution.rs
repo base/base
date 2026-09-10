@@ -4,18 +4,12 @@
 
 use core::cmp::Ordering;
 
-use base_execution_evm_machine::GasTracker;
-use base_execution_evm_machine::{
-    AccessListItemTr, AuthorizationTr, Block, Cfg, ContextTr, Database, InvalidTransaction,
-    JournalCheckpoint, JournalTr, JournaledAccountTr, Transaction, TransactionType,
+use base_execution_evm_runtime::{
+    AccessListItemTr, AccountInfo, Address, AddressMap, AuthorizationTr, Block, Bytecode, Cfg,
+    ContextTr, Database, EvmTr, GasTracker, HashSet, InvalidTransaction, JournalCheckpoint,
+    JournalTr, JournaledAccountTr, PrecompileProvider, StorageKey, Transaction, TransactionType,
+    TxKind, U256, hardfork::SpecId,
 };
-use base_execution_evm_primitives::Bytecode;
-use base_execution_evm_primitives::{
-    Address, AddressMap, HashSet, StorageKey, TxKind, U256, hardfork::SpecId,
-};
-use base_execution_state_memory::AccountInfo;
-
-use crate::{EvmTr, PrecompileProvider};
 
 /// Loads and warms accounts for execution, including precompiles and access list.
 pub fn load_accounts<
@@ -442,7 +436,7 @@ pub fn apply_auth_list_eip2780<
 ///
 /// The refund per existing account authorization is
 /// `PER_EMPTY_ACCOUNT_COST - PER_AUTH_BASE_COST` (25000 - 12500 = 12500), see
-/// [`GasParams::tx_eip7702_auth_refund_regular`](base_execution_evm_machine::GasParams::tx_eip7702_auth_refund_regular).
+/// [`GasParams::tx_eip7702_auth_refund_regular`](base_execution_evm_runtime::GasParams::tx_eip7702_auth_refund_regular).
 ///
 /// Returns the number of refunded (already existing) accounts.
 #[inline]
@@ -510,8 +504,7 @@ pub fn apply_auth_list<
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::InvalidTransaction;
-    use base_execution_state_memory::AccountInfo;
+    use base_execution_evm_runtime::{AccountInfo, InvalidTransaction};
 
     use super::validate_account_nonce_and_code;
 

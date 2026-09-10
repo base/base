@@ -5,38 +5,33 @@ use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 use base_common_types_chain::BaseBlock;
-use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDRESS as DEFAULT_DISCOVERY_ADDRESS;
-use base_execution_network_discovery::Discv4Config;
-use base_execution_network_discovery::Discv4ConfigBuilder;
-use base_execution_network_discovery::DnsDiscoveryConfig;
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_discovery::NetworkStackId;
-use base_execution_network_types::PeersConfig;
-use base_execution_network_types::SessionsConfig;
-use base_execution_network_types::{PeerId, TrustedPeer, mainnet_nodes, pk2id, sepolia_nodes};
-use base_execution_network_wire::EthHandshake;
-use base_execution_network_wire::EthRlpxHandshake;
-use base_execution_network_wire::HelloMessage;
-use base_execution_network_wire::HelloMessageWithProtocols;
-use base_execution_network_wire::MAX_MESSAGE_SIZE;
-use base_execution_network_wire::UnifiedStatus;
-use base_execution_state_api::{
-    BalProvider, BlockNumReader, BlockReader, HeaderProvider, NoopProvider, StateProviderFactory,
+use base_execution_network_discovery::{
+    DISCV4_DEFAULT_DISCOVERY_ADDRESS as DEFAULT_DISCOVERY_ADDRESS, Discv4Config,
+    Discv4ConfigBuilder, DnsDiscoveryConfig, NatResolver, NetworkStackId,
+};
+use base_execution_network_wire::{
+    EthHandshake, EthRlpxHandshake, HelloMessage, HelloMessageWithProtocols, MAX_MESSAGE_SIZE,
+    PeerId, PeersConfig, SessionsConfig, TrustedPeer, UnifiedStatus, mainnet_nodes, pk2id,
+    sepolia_nodes,
+};
+use base_execution_state_database::NoopProvider;
+use base_execution_state_types::{
+    BalProvider, BlockNumReader, BlockReader, HeaderProvider, StateProviderFactory,
     StateRangeProviderFactory,
 };
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
+// re-export for convenience
+use crate::transactions::TransactionPropagationMode;
 use crate::{
     NetworkHandle, NetworkManager,
     error::NetworkError,
     import::{BlockImport, ProofOfStakeBlockImport},
     transactions::TransactionsManagerConfig,
 };
-// re-export for convenience
-use crate::transactions::TransactionPropagationMode;
 
 /// Convenience function to create a new random [`SecretKey`]
 pub fn rng_secret_key() -> SecretKey {
@@ -759,7 +754,7 @@ mod tests {
     use alloy_primitives::U256;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_execution_network_discovery::build_local_enr;
-    use base_execution_state_api::NoopProvider;
+    use base_execution_state_database::NoopProvider;
     use rand::Rng;
 
     use super::*;

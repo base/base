@@ -2,10 +2,11 @@
 
 use std::path::Path;
 
-use crate::{NippyJar, NippyJarError};
 use base_execution_state_types::{
     SegmentHeader, SegmentRangeInclusive, StaticFileMap, StaticFileSegment,
 };
+
+use crate::{NippyJar, NippyJarError};
 
 mod cursor;
 pub use cursor::{KeyOrNumber, StaticFileCursor};
@@ -24,12 +25,12 @@ type SortedStaticFiles = StaticFileMap<Vec<(SegmentRangeInclusive, SegmentHeader
 /// segment headers as presented in the file configuration.
 pub fn iter_static_files(path: &Path) -> Result<SortedStaticFiles, NippyJarError> {
     if !path.exists() {
-        base_common_io_files::Files::create_dir_all(path)
+        base_common_io::Files::create_dir_all(path)
             .map_err(|err| NippyJarError::Custom(err.to_string()))?;
     }
 
     let mut static_files = SortedStaticFiles::default();
-    let entries = base_common_io_files::Files::read_dir(path)
+    let entries = base_common_io::Files::read_dir(path)
         .map_err(|err| NippyJarError::Custom(err.to_string()))?
         .filter_map(Result::ok);
     for entry in entries {

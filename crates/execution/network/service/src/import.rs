@@ -6,9 +6,7 @@ use std::{
 };
 
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
-use base_execution_network_types::PeerId;
-use base_execution_network_wire::NewBlock;
-use base_execution_network_wire::NewBlockHashes;
+use base_execution_network_wire::{NewBlock, NewBlockHashes, PeerId};
 
 use crate::message::NewBlockMessage;
 

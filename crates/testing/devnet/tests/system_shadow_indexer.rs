@@ -7,8 +7,9 @@
 
 use std::time::Duration;
 
-use base_execution_state_indexer::{PgConnectionParams, ShadowBlockRepo, ShadowDbConfig};
-use base_execution_state_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
+use base_execution_state_indexer::{
+    PgConnectionParams, ShadowBlockRepo, ShadowDbConfig, ShadowIndexerConfig, ShadowRetentionConfig,
+};
 use base_testing_devnet::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
 use sqlx::postgres::PgPoolOptions;

@@ -12,25 +12,15 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::RawCapabilityMessage;
-use crate::SnapProtocolMessage;
-use crate::SnapVersion;
 use alloy_eip2124::ForkFilter;
 use alloy_primitives::bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 
-use crate::Capability;
-use crate::EthBroadcastMessage;
-use crate::EthMessage;
-use crate::EthRlpxHandshake;
-use crate::EthStreamError;
-use crate::EthStreamInner;
-use crate::EthVersion;
-use crate::HANDSHAKE_TIMEOUT;
-use crate::P2PStream;
-use crate::P2PStreamError;
-use crate::SharedCapabilities;
-use crate::UnifiedStatus;
+use crate::{
+    Capability, EthBroadcastMessage, EthMessage, EthRlpxHandshake, EthStreamError, EthStreamInner,
+    EthVersion, HANDSHAKE_TIMEOUT, P2PStream, P2PStreamError, RawCapabilityMessage,
+    SharedCapabilities, SnapProtocolMessage, SnapVersion, UnifiedStatus,
+};
 
 /// A dedicated stream that carries `eth` as the primary protocol and `snap/2` (EIP-8189) as a typed
 /// side-channel on the same `RLPx` connection.
@@ -239,20 +229,15 @@ fn mask_snap(bytes: &mut BytesMut, snap_offset: u8) -> Result<(), io::Error> {
 
 #[cfg(test)]
 mod tests {
-    use crate::BlockAccessListsMessage;
-    use crate::EthVersion;
-    use crate::GetBlockAccessListsMessage;
     use tokio::net::TcpListener;
     use tokio_util::codec::Decoder;
 
     use super::*;
-    use crate::EthHandshake;
-    use crate::MAX_MESSAGE_SIZE;
-    use crate::Protocol;
-    use crate::UnauthedP2PStream;
-    use crate::test_utils::connect_passthrough;
-    use crate::test_utils::eth_handshake;
-    use crate::test_utils::eth_hello;
+    use crate::{
+        BlockAccessListsMessage, EthHandshake, EthVersion, GetBlockAccessListsMessage,
+        MAX_MESSAGE_SIZE, Protocol, UnauthedP2PStream,
+        test_utils::{connect_passthrough, eth_handshake, eth_hello},
+    };
 
     /// Builds shared capabilities from matching local protocols and peer capabilities.
     fn shared_caps(local: Vec<Protocol>, peer: Vec<Capability>) -> SharedCapabilities {

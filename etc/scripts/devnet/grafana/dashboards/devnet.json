@@ -1874,7 +1874,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max by(instance) (reth_base_consensus_derive_pipeline_origin{job=~\"$node_job\",instance=~\"$instance\"})",
+          "expr": "max by(instance) (reth_base_consensus_derive_origin{job=~\"$node_job\",instance=~\"$instance\"})",
           "legendFormat": "{{instance}}",
           "range": true,
           "refId": "A"
@@ -1953,7 +1953,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max by(instance) (reth_base_consensus_derive_pipeline_step_block{job=~\"$node_job\",instance=~\"$instance\"})",
+          "expr": "max by(instance) (reth_base_consensus_derive_step_block{job=~\"$node_job\",instance=~\"$instance\"})",
           "legendFormat": "{{instance}}",
           "range": true,
           "refId": "A"
@@ -2032,7 +2032,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_consensus_derive_pipeline_frame_queue_buffer{job=~\"$node_job\",instance=~\"$instance\"})",
+          "expr": "max(reth_base_consensus_derive_frame_queue_buffer{job=~\"$node_job\",instance=~\"$instance\"})",
           "legendFormat": "Frame queue",
           "range": true,
           "refId": "A"
@@ -2043,7 +2043,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_consensus_derive_pipeline_channel_buffer{job=~\"$node_job\",instance=~\"$instance\"})",
+          "expr": "max(reth_base_consensus_derive_channel_buffer{job=~\"$node_job\",instance=~\"$instance\"})",
           "legendFormat": "Channel buffer",
           "range": true,
           "refId": "B"
@@ -2054,7 +2054,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(reth_base_consensus_derive_pipeline_payload_attributes_buffer{job=~\"$node_job\",instance=~\"$instance\"})",
+          "expr": "max(reth_base_consensus_derive_payload_attributes_buffer{job=~\"$node_job\",instance=~\"$instance\"})",
           "legendFormat": "Payload attributes",
           "range": true,
           "refId": "C"

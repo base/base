@@ -51,3 +51,9 @@ pub use error::*;
 mod jwt;
 #[cfg(feature = "jwt")]
 pub use jwt::*;
+
+mod builder;
+pub use builder::*;
+
+mod engine;
+pub use engine::*;

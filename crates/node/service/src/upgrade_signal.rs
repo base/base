@@ -487,8 +487,9 @@ mod tests {
     use alloy_hardforks::{EthereumHardfork, ForkCondition};
     use alloy_primitives::Address;
     use base_common_chain_activation::UpgradeSignalDefaults;
-    use base_common_chain_config::BaseChainSpec;
-    use base_common_chain_config::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_common_chain_config::{
+        BaseChainSpec, BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation,
+    };
 
     use super::*;
 
@@ -856,9 +857,10 @@ mod tests {
         use std::net::Ipv4Addr;
 
         use base_common_chain_config::BaseChainSpecBuilder;
-        use base_common_runtime_tasks::Runtime;
-        use base_execution_network_discv5::ConfigBuilder as Discv5ConfigBuilder;
-        use base_execution_network_discv5::ListenConfig;
+        use base_common_runtime::Runtime;
+        use base_execution_network_discovery::{
+            ConfigBuilder as Discv5ConfigBuilder, ListenConfig,
+        };
         use base_execution_network_service::{NetworkConfigBuilder, NetworkManager};
 
         // Use a scheduled fork so startup and the later runtime update advertise different IDs.

@@ -1,10 +1,8 @@
 //! State database abstraction.
 
 use base_execution_evm_runtime::{
-    DatabaseCommit, database::BalDatabase, database::State, state::bal::BlockAccessIndex,
+    BalDatabase, Database, DatabaseCommit, State, bal::BlockAccessIndex,
 };
-
-use crate::Database;
 
 /// Database that tracks the current block-level access list (BAL) index from EIP-7928.
 ///
@@ -58,7 +56,7 @@ impl<T> StateDB for T where T: Database + DatabaseCommit {}
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_runtime::{database::CacheDB, database::EmptyDB};
+    use base_execution_evm_runtime::{CacheDB, EmptyDB};
 
     use super::*;
 

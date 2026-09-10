@@ -1,6 +1,5 @@
 use std::{fmt::Debug, marker::PhantomData, time::Duration};
 
-use crate::BlockResponse;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{Address, B64, B256, BlockHash};
@@ -14,7 +13,7 @@ use futures::{Stream, StreamExt};
 use serde_json::Value;
 
 use super::FilterPollerBuilder;
-use crate::{ProviderCall, utils};
+use crate::{BlockResponse, ProviderCall, utils};
 
 /// The parameters for an `eth_getBlockBy{Hash, Number}` RPC request.
 ///

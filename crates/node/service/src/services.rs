@@ -1,21 +1,20 @@
 //! Fixed background services for Base execution nodes.
 
-use crate::BaseNodeContext;
-use base_execution_state_indexer::ShadowWrite;
 use base_execution_state_indexer::{
-    ShadowIndexerConfig, ShadowIndexerExEx, ShadowRetention, ShadowWriter,
+    ShadowIndexerConfig, ShadowIndexerExEx, ShadowRetention, ShadowWrite, ShadowWriter,
 };
 use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_txpool_pool::TransactionValidity;
-use base_execution_txpool_pool::{TransactionTracingConfig as TxpoolConfig, tracex_subscription};
-use base_execution_txpool_pool::{TxForwardingConfig, TxForwardingService};
+use base_execution_txpool::{
+    TransactionTracingConfig as TxpoolConfig, TransactionValidity, TxForwardingConfig,
+    TxForwardingService, tracex_subscription,
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
 
 use crate::{
-    BaseExecutionService, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntime, FullNode,
-    ProofHistory, RollupArgs, RpcContext,
+    BaseExecutionService, BaseNodeContext, ExecutionUpgradeSignalConfig,
+    ExecutionUpgradeSignalRuntime, FullNode, ProofHistory, RollupArgs, RpcContext,
 };
 
 /// Runtime settings for the services shipped with the Base node.
@@ -140,10 +139,7 @@ impl PreparedNodeServices {
         {
             info!(builder_urls = ?config.builder_urls, resend_after_ms = config.resend_after_ms, max_batch_size = config.max_batch_size, max_rps = config.max_rps, "starting transaction forwarding pipeline");
             let handle = TxForwardingService::new(config)
-                .spawn_with_extensions::<_, TransactionValidity>(
-                    node.pool.clone(),
-                    &node.task_executor,
-                );
+                .spawn_with_extensions::<_>(node.pool.clone(), &node.task_executor);
             node.task_executor.spawn_with_graceful_shutdown_signal(|signal| {
                 Box::pin(async move {
                     let _guard = signal.await;

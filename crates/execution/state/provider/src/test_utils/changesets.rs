@@ -2,9 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use base_execution_state_database::{models::AccountBeforeTx, models::StorageBeforeTx};
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
+use base_execution_state_database::models::{AccountBeforeTx, StorageBeforeTx};
+use base_execution_state_types::{ProviderResult, StaticFileSegment};
 
 use crate::{StaticFileWriter, providers::StaticFileProvider};
 

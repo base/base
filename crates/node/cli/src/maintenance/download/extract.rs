@@ -9,8 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use base_common_cli_support::CancellationToken;
-use base_common_io_files as fs;
+use base_common_cli::CancellationToken;
+use base_common_io as fs;
 use eyre::{Result, WrapErr};
 use lz4::Decoder;
 use reqwest::blocking::Client as BlockingClient;

@@ -5,11 +5,8 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use base_execution_evm_runtime::{
-        precompile::{bn254, modexp, secp256r1},
-        primitives::eip7823,
+        BasePrecompiles, BaseSpecId, BaseUpgrade, bn254, eip7823, modexp, secp256r1,
     };
-
-    use crate::{BasePrecompiles, BaseSpecId, BaseUpgrade};
 
     fn encode_length(len: usize) -> [u8; 32] {
         let mut encoded = [0u8; 32];

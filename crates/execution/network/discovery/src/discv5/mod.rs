@@ -11,7 +11,7 @@ use std::{
 use ::enr::Enr;
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::bytes::Bytes;
-use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_wire::{NodeRecord, PeerId};
 use futures::future::join_all;
 use itertools::Itertools;
 use rand::{Rng, RngCore};
@@ -32,11 +32,11 @@ pub use metrics::*;
 mod network_stack_id;
 pub use network_stack_id::*;
 
-use base_execution_network_discv5::IpMode;
+use crate::IpMode;
 
 /// Max kbucket index is 255.
 ///
-/// This is the max log2distance for 32 byte [`NodeId`](base_execution_network_discv5::enr::NodeId) - 1. See <https://github.com/sigp/discv5/blob/e9e0d4f93ec35591832a9a8d937b4161127da87b/src/kbucket.rs#L586-L587>.
+/// This is the max log2distance for 32 byte [`NodeId`](crate::enr::NodeId) - 1. See <https://github.com/sigp/discv5/blob/e9e0d4f93ec35591832a9a8d937b4161127da87b/src/kbucket.rs#L586-L587>.
 pub const MAX_KBUCKET_INDEX: usize = 255;
 
 /// Default lowest kbucket index to attempt filling, in periodic look up query to populate kbuckets.
@@ -46,22 +46,22 @@ pub const MAX_KBUCKET_INDEX: usize = 255;
 /// Default is 0th index.
 pub const DEFAULT_MIN_TARGET_KBUCKET_INDEX: usize = 0;
 
-/// Transparent wrapper around [`base_execution_network_discv5::Discv5`].
+/// Transparent wrapper around [`crate::Discv5Protocol`].
 #[derive(Clone)]
 pub struct Discv5 {
     /// sigp/discv5 node.
-    discv5: Arc<base_execution_network_discv5::Discv5>,
+    discv5: Arc<crate::Discv5Protocol>,
     /// [`IpMode`] of the `RLPx` network.
     rlpx_ip_mode: IpMode,
     /// Key used in kv-pair to ID chain, e.g. 'opstack' or 'eth'.
     fork_key: Option<&'static [u8]>,
     /// Filter applied to a discovered peers before passing it up to app.
     discovered_peer_filter: MustNotIncludeKeys,
-    /// Metrics for underlying [`base_execution_network_discv5::Discv5`] node and filtered discovered peers.
+    /// Metrics for underlying [`crate::Discv5Protocol`] node and filtered discovered peers.
     metrics: Discv5Metrics,
     /// Returns the _local_ [`NodeRecord`] this service was started with.
-    // Note: we must track this separately because the `base_execution_network_discv5::Discv5` does not necessarily
-    // provide this via its [`local_enr`](base_execution_network_discv5::Discv5::local_enr()). This is intended for
+    // Note: we must track this separately because the `crate::Discv5Protocol` does not necessarily
+    // provide this via its [`local_enr`](crate::Discv5Protocol::local_enr()). This is intended for
     // obtaining the port this service was launched at
     local_node_record: NodeRecord,
 }
@@ -145,7 +145,7 @@ impl Discv5 {
     }
 
     /// Returns the local [`Enr`] of the service.
-    pub fn local_enr(&self) -> Enr<base_execution_network_discv5::enr::CombinedKey> {
+    pub fn local_enr(&self) -> Enr<crate::enr::CombinedKey> {
         self.discv5.local_enr()
     }
 
@@ -154,13 +154,13 @@ impl Discv5 {
         self.local_node_record.udp_port
     }
 
-    /// Spawns [`base_execution_network_discv5::Discv5`]. Returns [`base_execution_network_discv5::Discv5`] handle in reth compatible wrapper type
-    /// [`Discv5`], a receiver of [`base_execution_network_discv5::Event`]s from the underlying node, and the local
-    /// [`Enr`](base_execution_network_discv5::Enr) converted into the reth compatible [`NodeRecord`] type.
+    /// Spawns [`crate::Discv5Protocol`]. Returns [`crate::Discv5Protocol`] handle in reth compatible wrapper type
+    /// [`Discv5`], a receiver of [`crate::Event`]s from the underlying node, and the local
+    /// [`Enr`](crate::Enr) converted into the reth compatible [`NodeRecord`] type.
     pub async fn start(
         sk: &SecretKey,
         discv5_config: Config,
-    ) -> Result<(Self, mpsc::Receiver<base_execution_network_discv5::Event>), Error> {
+    ) -> Result<(Self, mpsc::Receiver<crate::Event>), Error> {
         //
         // 1. make local enr from listen config
         //
@@ -182,11 +182,8 @@ impl Discv5 {
         } = discv5_config;
 
         let EnrCombinedKeyWrapper(enr) = enr.into();
-        let sk = base_execution_network_discv5::enr::CombinedKey::secp256k1_from_bytes(
-            &mut sk.secret_bytes(),
-        )
-        .unwrap();
-        let mut discv5 = match base_execution_network_discv5::Discv5::new(enr, sk, discv5_config) {
+        let sk = crate::enr::CombinedKey::secp256k1_from_bytes(&mut sk.secret_bytes()).unwrap();
+        let mut discv5 = match crate::Discv5Protocol::new(enr, sk, discv5_config) {
             Ok(discv5) => discv5,
             Err(err) => return Err(Error::InitFailure(err)),
         };
@@ -228,31 +225,28 @@ impl Discv5 {
         ))
     }
 
-    /// Process an event from the underlying [`base_execution_network_discv5::Discv5`] node.
-    pub fn on_discv5_update(
-        &self,
-        update: base_execution_network_discv5::Event,
-    ) -> Option<DiscoveredPeer> {
+    /// Process an event from the underlying [`crate::Discv5Protocol`] node.
+    pub fn on_discv5_update(&self, update: crate::Event) -> Option<DiscoveredPeer> {
         #[expect(clippy::match_same_arms)]
         match update {
-            base_execution_network_discv5::Event::SocketUpdated(_) | base_execution_network_discv5::Event::TalkRequest(_) |
+            crate::Event::SocketUpdated(_) | crate::Event::TalkRequest(_) |
             // `Discovered` not unique discovered peers
-            base_execution_network_discv5::Event::Discovered(_) |
+            crate::Event::Discovered(_) |
             // Unrecognized frames are handled separately by the discovery layer
-            base_execution_network_discv5::Event::UnrecognizedFrame(_) => None,
-            base_execution_network_discv5::Event::NodeInserted { .. } => {
+            crate::Event::UnrecognizedFrame(_) => None,
+            crate::Event::NodeInserted { .. } => {
 
                 // node has been inserted into kbuckets
 
-                // `replaced` partly covers `base_execution_network_discovery::Discv4DiscoveryUpdate::Removed(_)`
+                // `replaced` partly covers `crate::Discv4DiscoveryUpdate::Removed(_)`
 
                 self.metrics.discovered_peers.increment_kbucket_insertions(1);
 
                 None
             }
-            base_execution_network_discv5::Event::SessionEstablished(enr, remote_socket) => {
+            crate::Event::SessionEstablished(enr, remote_socket) => {
                 // this branch is semantically similar to branches of
-                // `base_execution_network_discovery::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
+                // `crate::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
                 // `DiscoveryUpdate::DiscoveredAtCapacity(_)
 
                 // peer has been discovered as part of query, or, by incoming session (peer has
@@ -262,19 +256,19 @@ impl Discv5 {
 
                 self.on_discovered_peer(&enr, remote_socket)
             }
-            base_execution_network_discv5::Event::UnverifiableEnr {
+            crate::Event::UnverifiableEnr {
                 enr,
                 socket,
                 node_id: _,
             } => {
                 // this branch is semantically similar to branches of
-                // `base_execution_network_discovery::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
+                // `crate::Discv4DiscoveryUpdate`: `DiscoveryUpdate::Added(_)` and
                 // `DiscoveryUpdate::DiscoveredAtCapacity(_)
 
                 // peer has been discovered as part of query, or, by an outgoing session (but peer
                 // is behind NAT and responds from a different socket)
 
-                // NOTE: `base_execution_network_discv5::Discv5` won't initiate a session with any peer with an
+                // NOTE: `crate::Discv5Protocol` won't initiate a session with any peer with an
                 // unverifiable node record, for example one that advertises a reserved LAN IP
                 // address on a WAN network. This is in order to prevent DoS attacks, where some
                 // malicious peers may advertise a victim's socket. We will still try and connect
@@ -298,7 +292,7 @@ impl Discv5 {
     /// Processes a discovered peer. Returns `true` if peer is added to
     pub fn on_discovered_peer(
         &self,
-        enr: &base_execution_network_discv5::Enr,
+        enr: &crate::Enr,
         socket: SocketAddr,
     ) -> Option<DiscoveredPeer> {
         self.metrics.discovered_peers_advertised_networks.increment_once_by_network_type(enr);
@@ -340,8 +334,8 @@ impl Discv5 {
         Some(DiscoveredPeer { node_record, fork_id })
     }
 
-    /// Tries to recover an unreachable [`Enr`](base_execution_network_discv5::Enr) received via
-    /// [`base_execution_network_discv5::Event::UnverifiableEnr`], into a [`NodeRecord`] usable by `RLPx`.
+    /// Tries to recover an unreachable [`Enr`](crate::Enr) received via
+    /// [`crate::Event::UnverifiableEnr`], into a [`NodeRecord`] usable by `RLPx`.
     ///
     /// NOTE: Fallback solution to be compatible with Geth which includes peers into the discv5
     /// WAN topology which, for example, advertise in their ENR that localhost is their UDP IP
@@ -351,7 +345,7 @@ impl Discv5 {
     /// reading their ENR.
     pub fn try_into_reachable(
         &self,
-        enr: &base_execution_network_discv5::Enr,
+        enr: &crate::Enr,
         socket: SocketAddr,
     ) -> Result<NodeRecord, Error> {
         // ignore UDP socket advertised in ENR, use sender socket instead
@@ -379,18 +373,15 @@ impl Discv5 {
 
     /// Applies filtering rules on an ENR. Returns [`Ok`](FilterOutcome::Ok) if peer should be
     /// passed up to app, and [`Ignore`](FilterOutcome::Ignore) if peer should instead be dropped.
-    pub fn filter_discovered_peer(
-        &self,
-        enr: &base_execution_network_discv5::Enr,
-    ) -> FilterOutcome {
+    pub fn filter_discovered_peer(&self, enr: &crate::Enr) -> FilterOutcome {
         self.discovered_peer_filter.filter(enr)
     }
 
-    /// Returns the [`ForkId`] of the given [`Enr`](base_execution_network_discv5::Enr) w.r.t. the local node's network
+    /// Returns the [`ForkId`] of the given [`Enr`](crate::Enr) w.r.t. the local node's network
     /// stack, if field is set.
-    pub fn get_fork_id<K: base_execution_network_discv5::enr::EnrKey>(
+    pub fn get_fork_id<K: crate::enr::EnrKey>(
         &self,
-        enr: &base_execution_network_discv5::enr::Enr<K>,
+        enr: &crate::enr::Enr<K>,
     ) -> Result<ForkId, Error> {
         let Some(key) = self.fork_key else { return Err(Error::NetworkStackIdNotConfigured) };
         let fork_id = enr
@@ -420,10 +411,10 @@ impl Discv5 {
     // Interface with sigp/discv5
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    /// Exposes API of [`base_execution_network_discv5::Discv5`].
+    /// Exposes API of [`crate::Discv5Protocol`].
     pub fn with_discv5<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&base_execution_network_discv5::Discv5) -> R,
+        F: FnOnce(&crate::Discv5Protocol) -> R,
     {
         f(&self.discv5)
     }
@@ -437,7 +428,7 @@ impl Discv5 {
         self.rlpx_ip_mode
     }
 
-    /// Returns the key to use to identify the [`ForkId`] kv-pair on the [`Enr`](base_execution_network_discv5::Enr).
+    /// Returns the key to use to identify the [`ForkId`] kv-pair on the [`Enr`](crate::Enr).
     pub const fn fork_key(&self) -> Option<&[u8]> {
         self.fork_key
     }
@@ -449,7 +440,7 @@ impl fmt::Debug for Discv5 {
     }
 }
 
-/// Result of successfully processing a peer discovered by [`base_execution_network_discv5::Discv5`].
+/// Result of successfully processing a peer discovered by [`crate::Discv5Protocol`].
 #[derive(Debug)]
 pub struct DiscoveredPeer {
     /// A discovery v4 backwards compatible ENR.
@@ -463,7 +454,7 @@ pub fn build_local_enr(
     sk: &SecretKey,
     config: &Config,
 ) -> (Enr<SecretKey>, NodeRecord, Option<&'static [u8]>, IpMode) {
-    let mut builder = base_execution_network_discv5::enr::Enr::builder();
+    let mut builder = crate::enr::Enr::builder();
 
     let Config {
         discv5_config,
@@ -533,10 +524,10 @@ pub fn build_local_enr(
     (enr, bc_enr, network_stack_id, rlpx_ip_mode)
 }
 
-/// Bootstraps underlying [`base_execution_network_discv5::Discv5`] node with configured peers.
+/// Bootstraps underlying [`crate::Discv5Protocol`] node with configured peers.
 pub async fn bootstrap(
     bootstrap_nodes: HashSet<BootNode>,
-    discv5: &Arc<base_execution_network_discv5::Discv5>,
+    discv5: &Arc<crate::Discv5Protocol>,
 ) -> Result<(), Error> {
     trace!(target: "net::discv5",
         ?bootstrap_nodes,
@@ -576,7 +567,7 @@ pub fn spawn_populate_kbuckets_bg(
     bootstrap_lookup_interval: u64,
     bootstrap_lookup_countdown: u64,
     metrics: Discv5Metrics,
-    discv5: std::sync::Weak<base_execution_network_discv5::Discv5>,
+    discv5: std::sync::Weak<crate::Discv5Protocol>,
 ) {
     let lookup_interval = Duration::from_secs(lookup_interval);
     let metrics = metrics.discovered_peers;
@@ -592,7 +583,7 @@ pub fn spawn_populate_kbuckets_bg(
         // make many fast lookup queries at bootstrap, trying to fill kbuckets at furthest
         // log2distance from local node
         for i in (0..bootstrap_lookup_countdown).rev() {
-            let target = base_execution_network_discv5::enr::NodeId::random();
+            let target = crate::enr::NodeId::random();
 
             trace!(target: "net::discv5",
                 %target,
@@ -646,8 +637,8 @@ pub fn spawn_populate_kbuckets_bg(
 /// Gets the next lookup target, based on which bucket is currently being targeted.
 pub fn get_lookup_target(
     kbucket_index: usize,
-    local_node_id: base_execution_network_discv5::enr::NodeId,
-) -> base_execution_network_discv5::enr::NodeId {
+    local_node_id: crate::enr::NodeId,
+) -> crate::enr::NodeId {
     // init target
     let mut target = local_node_id.raw();
 
@@ -674,10 +665,10 @@ pub fn get_lookup_target(
     target.into()
 }
 
-/// Runs a [`base_execution_network_discv5::Discv5`] lookup query.
+/// Runs a [`crate::Discv5Protocol`] lookup query.
 pub async fn lookup(
-    target: base_execution_network_discv5::enr::NodeId,
-    discv5: &base_execution_network_discv5::Discv5,
+    target: crate::enr::NodeId,
+    discv5: &crate::Discv5Protocol,
     metrics: &DiscoveredPeersMetrics,
 ) {
     metrics.set_total_sessions(discv5.metrics().active_sessions);
@@ -718,24 +709,21 @@ mod test {
     };
 
     use ::enr::{CombinedKey, EnrKey};
-    use base_execution_network_discv5::ListenConfig;
     use futures::FutureExt;
     use rand_08::thread_rng;
     use tracing::trace;
 
     use super::*;
+    use crate::ListenConfig;
 
     fn discv5_noop() -> Discv5 {
         let sk = CombinedKey::generate_secp256k1();
         Discv5 {
             discv5: Arc::new(
-                base_execution_network_discv5::Discv5::new(
+                crate::Discv5Protocol::new(
                     Enr::empty(&sk).unwrap(),
                     sk,
-                    base_execution_network_discv5::ConfigBuilder::new(
-                        DEFAULT_DISCOVERY_V5_LISTEN_CONFIG,
-                    )
-                    .build(),
+                    crate::ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG).build(),
                 )
                 .unwrap(),
             ),
@@ -750,9 +738,7 @@ mod test {
         }
     }
 
-    async fn start_discovery_node(
-        udp_port_discv5: u16,
-    ) -> (Discv5, mpsc::Receiver<base_execution_network_discv5::Event>) {
+    async fn start_discovery_node(udp_port_discv5: u16) -> (Discv5, mpsc::Receiver<crate::Event>) {
         let secret_key = SecretKey::new(&mut thread_rng());
 
         let discv5_addr: SocketAddr = format!("127.0.0.1:{udp_port_discv5}").parse().unwrap();
@@ -760,9 +746,7 @@ mod test {
 
         let discv5_listen_config = ListenConfig::from(discv5_addr);
         let discv5_config = Config::builder(rlpx_addr)
-            .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
-            )
+            .discv5_config(crate::ConfigBuilder::new(discv5_listen_config).build())
             .build();
 
         Discv5::start(&secret_key, discv5_config).await.expect("should build discv5")
@@ -771,15 +755,13 @@ mod test {
     async fn start_discovery_node_with_key(
         secret_key: &SecretKey,
         udp_port_discv5: u16,
-    ) -> Result<(Discv5, mpsc::Receiver<base_execution_network_discv5::Event>), Error> {
+    ) -> Result<(Discv5, mpsc::Receiver<crate::Event>), Error> {
         let discv5_addr: SocketAddr = format!("127.0.0.1:{udp_port_discv5}").parse().unwrap();
         let rlpx_addr: SocketAddr = "127.0.0.1:30303".parse().unwrap();
 
         let discv5_listen_config = ListenConfig::from(discv5_addr);
         let discv5_config = Config::builder(rlpx_addr)
-            .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(discv5_listen_config).build(),
-            )
+            .discv5_config(crate::ConfigBuilder::new(discv5_listen_config).build())
             .build();
 
         Discv5::start(secret_key, discv5_config).await
@@ -871,14 +853,14 @@ mod test {
 
         assert!(matches!(
             event_1_v5,
-            base_execution_network_discv5::Event::SessionEstablished(node, socket) if node == node_2_enr && socket == node_2_enr.udp4_socket().unwrap().into()
+            crate::Event::SessionEstablished(node, socket) if node == node_2_enr && socket == node_2_enr.udp4_socket().unwrap().into()
         ));
 
         // verify node_1 is in KBuckets of node_2:discv5
         let event_2_v5 = stream_2.recv().await.unwrap();
         assert!(matches!(
             event_2_v5,
-            base_execution_network_discv5::Event::NodeInserted { node_id, replaced } if node_id == node_1_enr.node_id() && replaced.is_none()
+            crate::Event::NodeInserted { node_id, replaced } if node_id == node_1_enr.node_id() && replaced.is_none()
         ));
     }
 
@@ -996,7 +978,7 @@ mod test {
     fn select_lookup_target() {
         for bucket_index in 0..=MAX_KBUCKET_INDEX {
             let sk = CombinedKey::generate_secp256k1();
-            let local_node_id = base_execution_network_discv5::enr::NodeId::from(sk.public());
+            let local_node_id = crate::enr::NodeId::from(sk.public());
             let target = get_lookup_target(bucket_index, local_node_id);
 
             let local_node_id = sigp::Key::from(local_node_id);

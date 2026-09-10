@@ -2,12 +2,12 @@
 
 use async_trait::async_trait;
 use backon::Retryable;
+use base_common_runtime::RetryConfig;
 use base_proof_service_protocol::{
     GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
     HeartbeatRequest, HeartbeatResponse, ProverWorkerApiClient, RecordProofSessionRequest,
     RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
-use base_common_runtime_tasks::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
 use tracing::{debug, warn};
 
@@ -276,13 +276,13 @@ mod tests {
         time::Duration,
     };
 
+    use base_common_runtime::RetryConfig;
     use base_proof_service_protocol::{
         BackendSession, BackendSessionState, GetProofSessionRequest, GetProofSessionResponse,
         ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
         ProverWorkerApiServer, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,
         ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
-    use base_common_runtime_tasks::RetryConfig;
     use chrono::Utc;
     use jsonrpsee::{
         core::{RpcResult, async_trait, client::Error as JsonRpcClientError},

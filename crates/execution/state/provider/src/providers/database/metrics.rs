@@ -1,8 +1,7 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base_common_observability_metrics::Metrics;
 use metrics::{Gauge, Histogram};
-use std::time::Instant;
 
 #[derive(Debug)]
 pub(crate) struct DurationsRecorder<'a> {

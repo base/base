@@ -1,15 +1,15 @@
 //! In-process batcher for L2 system test stacks.
 //!
-//! Runs `base-batcher-service-driver` directly in the test process, eliminating the Docker
+//! Runs `base-batcher-service` directly in the test process, eliminating the Docker
 //! dependency for the batch submission layer. Mirrors the pattern used by
 //! [`InProcessConsensus`](super::InProcessConsensus).
 
 use alloy_primitives::B256;
-use base_batcher_encoding_channel::DaType;
-use base_batcher_service_driver::{BatcherConfig, BatcherService};
+use base_batcher_encoding::DaType;
+use base_batcher_service::{BatcherConfig, BatcherService};
 use base_common_client_ethereum::PrivateKeySigner;
-use base_common_l1_transactions::SignerConfig;
-use base_common_runtime_tasks::TokioRuntime;
+use base_common_l1::SignerConfig;
+use base_common_runtime::TokioRuntime;
 use eyre::Result;
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_util::sync::CancellationToken;

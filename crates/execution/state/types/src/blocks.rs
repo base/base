@@ -13,7 +13,10 @@ pub type NumTransactions = u64;
 #[derive(Debug, Default, Eq, PartialEq, Clone, Copy)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_types_chain::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
+#[cfg_attr(
+    any(test, feature = "reth-codec"),
+    base_common_types_chain::add_arbitrary_tests(compact)
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StoredBlockBodyIndices {
     /// The number of the first transaction in this block
@@ -79,7 +82,10 @@ base_common_types_chain::impl_compression_for_compact!(StoredBlockBodyIndices);
 #[derive(Debug, Default, Eq, PartialEq, Clone)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(any(test, feature = "reth-codec"), derive(base_common_types_chain::Compact))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
+#[cfg_attr(
+    any(test, feature = "reth-codec"),
+    base_common_types_chain::add_arbitrary_tests(compact)
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StoredBlockWithdrawals {
     /// The block withdrawals.
@@ -93,7 +99,10 @@ base_common_types_chain::impl_compression_for_compact!(StoredBlockWithdrawals);
 /// represents a pre-merge block.
 #[derive(Debug, Default, Eq, PartialEq, Clone)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(any(test, feature = "reth-codec"), base_common_types_chain::add_arbitrary_tests(compact))]
+#[cfg_attr(
+    any(test, feature = "reth-codec"),
+    base_common_types_chain::add_arbitrary_tests(compact)
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StaticFileBlockWithdrawals {
     /// The block withdrawals. A `None` value represents a pre-merge block.

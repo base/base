@@ -1,17 +1,15 @@
 use std::{fmt::Debug, sync::Arc};
 
-use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 use base_common_types_chain::RecoveredBlock;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_service::{
     NetworkConfigBuilder, NetworkManager, config::rng_secret_key,
 };
-use base_execution_state_database::{
-    test_utils::create_test_rocksdb_dir, test_utils::create_test_rw_db,
-    test_utils::create_test_static_files_dir,
+use base_execution_state_database::test_utils::{
+    create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
 };
 use base_execution_state_maintenance::init::init_genesis;
 use base_execution_state_provider::{
@@ -21,6 +19,8 @@ use base_execution_state_provider::{
 use base_execution_state_types::Chain;
 use tempfile::TempDir;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
+
+use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 
 /// A helper type for testing Execution Extensions.
 #[derive(Debug)]
@@ -107,7 +107,7 @@ impl TestExExHandle {
             chain_spec,
             StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
             RocksDBProvider::builder(rocksdb_dir.keep()).with_default_tables().build().unwrap(),
-            base_common_runtime_tasks::Runtime::test(),
+            base_common_runtime::Runtime::test(),
         )?;
 
         let genesis_hash = init_genesis(&provider_factory)?;

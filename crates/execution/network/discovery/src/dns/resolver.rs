@@ -61,7 +61,7 @@ fn txt_entry(txt: &TXT) -> Option<String> {
 ///
 /// ```
 /// # fn t() {
-/// use base_execution_network_discovery::DnsResolver;
+/// use crate::DnsResolver;
 /// let resolver = DnsResolver::from_system_conf().unwrap();
 /// # }
 /// ```

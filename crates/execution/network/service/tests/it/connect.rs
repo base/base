@@ -4,21 +4,18 @@ use std::time::Duration;
 
 use alloy_primitives::map::HashSet;
 use base_common_observability_tracing::init_test_tracing;
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_service::{
     BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
-    NetworkManager, PeersConfig, test_utils::NetworkEventStream, test_utils::NetworkTestData,
-    test_utils::PeerConfig, test_utils::Testnet,
+    NetworkInfo, NetworkManager, PeerEvent, PeerKind, Peers, PeersConfig, PeersInfo, SessionInfo,
+    test_utils::{NetworkEventStream, NetworkTestData, PeerConfig, Testnet},
 };
-use base_execution_network_service::{
-    NetworkInfo, PeerEvent, PeerKind, Peers, PeersInfo, SessionInfo,
+use base_execution_network_wire::{
+    DisconnectReason, HeadersClient, HeadersDirection, HeadersRequest, NetworkSyncUpdater,
+    NodeRecord, SyncState, TrustedPeer, mainnet_nodes,
 };
-use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::HeadersDirection;
-use base_execution_network_wire::{HeadersClient, HeadersRequest, NetworkSyncUpdater, SyncState};
-use base_execution_state_api::NoopProvider;
+use base_execution_state_database::NoopProvider;
 use base_execution_state_provider::test_utils::MockEthProvider;
 use futures::StreamExt;
 use secp256k1::SecretKey;

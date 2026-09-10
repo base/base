@@ -1,19 +1,16 @@
 use alloc::{vec, vec::Vec};
 
-use crate::HashedPostState;
-use crate::StorageEntry;
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{
     Address, B256, BlockNumber, Bloom, Log, U256, logs_bloom,
     map::{AddressMap, B256Map, HashMap},
 };
 use base_common_types_chain::{BaseReceipt, TxReceipt};
-use base_execution_state_memory::AccountInfo;
-use base_execution_state_memory::BundleAccount;
-use base_execution_state_memory::BundleState;
-use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_evm_runtime::{
+    AccountInfo, BundleAccount, BundleState, StoredAccount as Account, StoredBytecode as Bytecode,
+};
 
-use crate::{BlockExecutionOutput, BlockExecutionResult};
+use crate::{BlockExecutionOutput, BlockExecutionResult, HashedPostState, StorageEntry};
 
 /// Type used to initialize revms bundle state.
 pub type BundleStateInit = AddressMap<(Option<Account>, Option<Account>, B256Map<(U256, U256)>)>;
@@ -416,7 +413,7 @@ pub(super) mod serde_bincode_compat {
     use alloy_primitives::{BlockNumber, Bytes};
     use alloy_rlp::Decodable;
     use base_common_types_chain::BaseReceipt;
-    use base_execution_state_memory::BundleState;
+    use base_execution_evm_runtime::BundleState;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 

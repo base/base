@@ -3,11 +3,9 @@ use std::sync::{Arc, Mutex};
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Receipt};
-use base_consensus_batch_types::BlockInfo;
-use base_consensus_derive_pipeline::{ChainProvider, PipelineError, PipelineErrorKind};
-use base_consensus_driver_service::{
-    L1OriginSelectorError, L1OriginSelectorProvider, PreparedL1Origin,
-};
+use base_consensus_batch::BlockInfo;
+use base_consensus_derive::{ChainProvider, PipelineError, PipelineErrorKind};
+use base_consensus_driver::{L1OriginSelectorError, L1OriginSelectorProvider, PreparedL1Origin};
 
 use crate::action_fixtures::{L1Block, block_info_from};
 

@@ -12,31 +12,22 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{DiscoveredEvent, DiscoveryEvent, PeerRequest, PeerRequestSender};
 use alloy_eip2124::ForkId;
 use alloy_primitives::{
     B256,
     map::{FbBuildHasher, HashMap},
 };
-
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::PeerId;
-use base_execution_network_types::PeerKind;
-use base_execution_network_wire::BlockHashNumber;
-use base_execution_network_wire::Capabilities;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::GetReceipts70;
-use base_execution_network_wire::NewBlockHashes;
-use base_execution_network_wire::NewBlockPayload;
-use base_execution_network_wire::ReceiptsResponse;
-use base_execution_network_wire::UnifiedStatus;
+use base_execution_network_wire::{
+    BlockHashNumber, Capabilities, DisconnectReason, GetReceipts70, NewBlockHashes,
+    NewBlockPayload, PeerAddr, PeerId, PeerKind, ReceiptsResponse, UnifiedStatus,
+};
 use rand::seq::SliceRandom;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
-    FetchClient,
+    DiscoveredEvent, DiscoveryEvent, FetchClient, PeerRequest, PeerRequestSender,
     cache::LruCache,
     discovery::Discovery,
     fetch::{BlockResponseOutcome, FetchAction, NewPeerInfo, StateFetcher},
@@ -49,11 +40,11 @@ use crate::{
 const PEER_BLOCK_CACHE_LIMIT: u32 = 512;
 
 /// Wrapper type for the [`BlockNumReader`] trait.
-pub(crate) struct BlockNumReader(Box<dyn base_execution_state_api::BlockNumReader>);
+pub(crate) struct BlockNumReader(Box<dyn base_execution_state_types::BlockNumReader>);
 
 impl BlockNumReader {
     /// Create a new instance with the given reader.
-    pub fn new(reader: impl base_execution_state_api::BlockNumReader + 'static) -> Self {
+    pub fn new(reader: impl base_execution_state_types::BlockNumReader + 'static) -> Self {
         Self(Box::new(reader))
     }
 }
@@ -65,7 +56,7 @@ impl fmt::Debug for BlockNumReader {
 }
 
 impl Deref for BlockNumReader {
-    type Target = Box<dyn base_execution_state_api::BlockNumReader>;
+    type Target = Box<dyn base_execution_state_types::BlockNumReader>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -328,7 +319,7 @@ impl NetworkState {
     /// Adds a trusted peer that may use a hostname, with periodic DNS re-resolution.
     pub(crate) fn add_trusted_peer_node(
         &mut self,
-        trusted: base_execution_network_types::TrustedPeer,
+        trusted: base_execution_network_wire::TrustedPeer,
     ) {
         self.peers_manager.add_trusted_peer_node(trusted)
     }
@@ -695,21 +686,17 @@ mod tests {
         sync::{Arc, atomic::AtomicU64},
     };
 
-    use crate::PeerRequestSender;
     use alloy_primitives::B256;
     use base_common_types_chain::{BaseBlockBody as BlockBody, Header};
-    use base_execution_network_types::PeerId;
-    use base_execution_network_wire::BlockBodies;
-    use base_execution_network_wire::Capabilities;
-    use base_execution_network_wire::Capability;
-    use base_execution_network_wire::EthVersion;
-    use base_execution_network_wire::{BodiesClient, RequestError};
-    use base_execution_state_api::NoopProvider;
+    use base_execution_network_wire::{
+        BlockBodies, BodiesClient, Capabilities, Capability, EthVersion, PeerId, RequestError,
+    };
+    use base_execution_state_database::NoopProvider;
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
     use crate::{
-        PeerRequest,
+        PeerRequest, PeerRequestSender,
         discovery::Discovery,
         fetch::StateFetcher,
         peers::PeersManager,

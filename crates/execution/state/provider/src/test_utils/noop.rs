@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 /// Re-exported for convenience
-pub use base_execution_state_api::NoopProvider;
+pub use base_execution_state_database::NoopProvider;
 use base_execution_state_types::{ProviderError, ProviderResult};
 
 use crate::{

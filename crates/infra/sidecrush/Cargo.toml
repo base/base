@@ -1,0 +1,23 @@
+[package]
+name = "base-infra-sidecrush"
+description = "Block-production health-check sidecar library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tracing = { workspace = true }
+cadence = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true, features = ["default"] }
+base-common-types-rpc = { workspace = true, features = ["std"] }
+base-common-client-ethereum = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "rt", "time", "macros"] }
+[dev-dependencies]
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }

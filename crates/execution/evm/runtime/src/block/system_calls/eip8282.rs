@@ -17,9 +17,10 @@ use core::fmt::Debug;
 
 use alloy_eips::eip7002::SYSTEM_ADDRESS;
 use alloy_primitives::{Address, Bytes, address};
-use base_execution_evm_machine::{ExecutionResult, ResultAndState};
-
-use crate::{Evm, block::BlockExecutionError, block::BlockValidationError};
+use base_execution_evm_runtime::{
+    Evm, ExecutionResult, ResultAndState,
+    block::{BlockExecutionError, BlockValidationError},
+};
 
 /// The [EIP-7685](https://eips.ethereum.org/EIPS/eip-7685) request type for EIP-8282 builder
 /// deposit requests.

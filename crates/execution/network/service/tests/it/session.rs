@@ -1,12 +1,11 @@
 //! Session tests
 
 use base_execution_network_service::{
-    NetworkEvent, NetworkEventListenerProvider, test_utils::NetworkEventStream,
-    test_utils::PeerConfig, test_utils::Testnet,
+    NetworkEvent, NetworkEventListenerProvider, NetworkInfo, PeerEvent, Peers, SessionInfo,
+    test_utils::{NetworkEventStream, PeerConfig, Testnet},
 };
-use base_execution_network_service::{NetworkInfo, PeerEvent, Peers, SessionInfo};
 use base_execution_network_wire::EthVersion;
-use base_execution_state_api::NoopProvider;
+use base_execution_state_database::NoopProvider;
 use futures::StreamExt;
 
 #[tokio::test(flavor = "multi_thread")]

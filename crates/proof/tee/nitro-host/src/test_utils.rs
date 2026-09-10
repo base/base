@@ -9,7 +9,7 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_proof_l1_submission::TEEProverRegistryClient;
+use base_proof_l1::TEEProverRegistryClient;
 use jsonrpsee::core::async_trait;
 
 /// In-memory mock of [`TEEProverRegistryClient`] for unit tests.
@@ -42,17 +42,17 @@ impl TEEProverRegistryClient for MockRegistry {
         Address::ZERO
     }
 
-    async fn nitro_validator(&self) -> Result<Address, base_proof_l1_submission::ContractError> {
+    async fn nitro_validator(&self) -> Result<Address, base_proof_l1::ContractError> {
         unimplemented!()
     }
 
     async fn is_valid_signer(
         &self,
         _signer: Address,
-    ) -> Result<bool, base_proof_l1_submission::ContractError> {
+    ) -> Result<bool, base_proof_l1::ContractError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         if self.should_fail.load(Ordering::Relaxed) {
-            return Err(base_proof_l1_submission::ContractError::Validation("mock RPC failure".into()));
+            return Err(base_proof_l1::ContractError::Validation("mock RPC failure".into()));
         }
         Ok(self.valid.load(Ordering::Relaxed))
     }
@@ -60,13 +60,11 @@ impl TEEProverRegistryClient for MockRegistry {
     async fn is_registered_signer(
         &self,
         _signer: Address,
-    ) -> Result<bool, base_proof_l1_submission::ContractError> {
+    ) -> Result<bool, base_proof_l1::ContractError> {
         unimplemented!()
     }
 
-    async fn get_registered_signers(
-        &self,
-    ) -> Result<Vec<Address>, base_proof_l1_submission::ContractError> {
+    async fn get_registered_signers(&self) -> Result<Vec<Address>, base_proof_l1::ContractError> {
         unimplemented!()
     }
 }
@@ -102,20 +100,17 @@ impl TEEProverRegistryClient for AddressBasedMockRegistry {
         Address::ZERO
     }
 
-    async fn nitro_validator(&self) -> Result<Address, base_proof_l1_submission::ContractError> {
+    async fn nitro_validator(&self) -> Result<Address, base_proof_l1::ContractError> {
         unimplemented!()
     }
 
-    async fn is_valid_signer(
-        &self,
-        signer: Address,
-    ) -> Result<bool, base_proof_l1_submission::ContractError> {
+    async fn is_valid_signer(&self, signer: Address) -> Result<bool, base_proof_l1::ContractError> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         if self.should_fail.load(Ordering::Relaxed) {
-            return Err(base_proof_l1_submission::ContractError::Validation("mock RPC failure".into()));
+            return Err(base_proof_l1::ContractError::Validation("mock RPC failure".into()));
         }
         if self.fail_signers.lock().expect("fail_signers poisoned").contains(&signer) {
-            return Err(base_proof_l1_submission::ContractError::Validation("mock RPC failure".into()));
+            return Err(base_proof_l1::ContractError::Validation("mock RPC failure".into()));
         }
         let map = self.validity_map.lock().expect("validity map poisoned");
         Ok(map.get(&signer).copied().unwrap_or(false))
@@ -124,13 +119,11 @@ impl TEEProverRegistryClient for AddressBasedMockRegistry {
     async fn is_registered_signer(
         &self,
         _signer: Address,
-    ) -> Result<bool, base_proof_l1_submission::ContractError> {
+    ) -> Result<bool, base_proof_l1::ContractError> {
         unimplemented!()
     }
 
-    async fn get_registered_signers(
-        &self,
-    ) -> Result<Vec<Address>, base_proof_l1_submission::ContractError> {
+    async fn get_registered_signers(&self) -> Result<Vec<Address>, base_proof_l1::ContractError> {
         unimplemented!()
     }
 }

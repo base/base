@@ -1,13 +1,12 @@
 //! Builder support for configuring the entire setup.
 
-use crate::PeersHandleProvider;
 use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
-use base_execution_state_api::BalProvider;
-use base_execution_txpool_pool::{BlobStore, TransactionPool};
+use base_execution_state_types::BalProvider;
+use base_execution_txpool::{BlobStore, TransactionPool};
 use tokio::sync::mpsc;
 
 use crate::{
-    NetworkHandle, NetworkManager,
+    NetworkHandle, NetworkManager, PeersHandleProvider,
     eth_requests::EthRequestHandler,
     metrics::NETWORK_POOL_TRANSACTIONS_SCOPE,
     transactions::{

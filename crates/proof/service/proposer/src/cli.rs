@@ -3,19 +3,16 @@
 use std::{num::NonZeroUsize, time::Duration};
 
 use alloy_primitives::Address;
-use base_common_cli_support::CliStyles;
+use base_common_cli::CliStyles;
 use clap::{Args, Parser};
 use url::Url;
 
-base_common_cli_support::define_cli_env!("BASE_PROPOSER");
-base_common_cli_support::define_log_args!("BASE_PROPOSER");
-base_common_cli_support::define_metrics_args!("BASE_PROPOSER", 7300);
-base_common_cli_support::define_health_args!("BASE_PROPOSER", 8080);
-base_common_l1_transactions::define_signer_cli!("BASE_PROPOSER");
-base_common_l1_transactions::define_tx_manager_cli!(
-    "BASE_PROPOSER",
-    tx_send_timeout_default = "10m"
-);
+base_common_cli::define_cli_env!("BASE_PROPOSER");
+base_common_cli::define_log_args!("BASE_PROPOSER");
+base_common_cli::define_metrics_args!("BASE_PROPOSER", 7300);
+base_common_cli::define_health_args!("BASE_PROPOSER", 8080);
+base_common_l1::define_signer_cli!("BASE_PROPOSER");
+base_common_l1::define_tx_manager_cli!("BASE_PROPOSER", tx_send_timeout_default = "10m");
 
 const DEFAULT_RECOVERY_SCAN_CONCURRENCY: usize = 8;
 

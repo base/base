@@ -18,23 +18,25 @@ use base_common_observability_metrics::{
     metrics::{Counter, Histogram},
 };
 #[cfg(feature = "rayon")]
-use base_common_runtime_tasks::WorkerPool;
+use base_common_runtime::WorkerPool;
 use base_common_types_chain::{BlockHeader as AlloyBlockHeader, DashMap, mapref::entry::Entry};
-use base_execution_state_api::{
-    BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
-    StorageChangeSetReader, StorageSettingsCache,
-};
+use base_execution_state_database::DBProvider;
 use base_execution_state_trie::{
     HashedPostStateSorted, TrieInputSorted, updates::TrieUpdatesSorted,
 };
-use base_execution_state_types::ProviderResult;
+use base_execution_state_types::{
+    BlockNumReader, ChangeSetReader, ExecutedBlock, ProviderResult, PruneCheckpointReader,
+    StageCheckpointReader, StorageChangeSetReader, StorageSettingsCache,
+};
 use parking_lot::Mutex;
 use tracing::{debug, trace};
-use {crate::PreservedSparseTrie, base_execution_state_types::ExecutedBlock};
 
-use crate::overlay::{
-    ChangesetCache, OverlayBuilder, changeset_cache::compute_block_trie_updates,
-    database_state_frontiers,
+use crate::{
+    PreservedSparseTrie,
+    overlay::{
+        ChangesetCache, OverlayBuilder, changeset_cache::compute_block_trie_updates,
+        database_state_frontiers,
+    },
 };
 
 /// Manages flattened state trie overlays for in-memory blocks.
@@ -661,16 +663,14 @@ mod tests {
     };
 
     use alloy_primitives::U256;
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_trie::{
         ComputedTrieData, HashedPostState, HashedStorage, updates::TrieUpdatesSorted,
     };
-    use {
-        crate::SparseTrie, crate::test_utils::TestBlockBuilder,
-        base_execution_state_types::ExecutedBlock,
-    };
+    use base_execution_state_types::ExecutedBlock;
 
     use super::*;
+    use crate::{SparseTrie, test_utils::TestBlockBuilder};
 
     fn with_unique_state(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
         let hashed_address = B256::with_last_byte(id);

@@ -1,10 +1,9 @@
-use crate::Network;
 use alloy_json_rpc::{RpcRecv, RpcSend};
 use alloy_rpc_client::WeakClient;
 use alloy_transport::{TransportErrorKind, TransportResult};
 
 use super::{EthCallManyParams, EthCallParams};
-use crate::ProviderCall;
+use crate::{Network, ProviderCall};
 
 /// Trait that helps convert `EthCall` into a `ProviderCall`.
 pub trait Caller<N, Resp>: Send + Sync

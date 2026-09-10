@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
+use base_common_l1::{SignerConfig, TxManagerConfig};
 use base_proof_tee_registrar::{
     DEFAULT_MAX_CONCURRENCY, DEFAULT_MAX_TX_RETRIES, DEFAULT_TX_RETRY_DELAY_SECS,
     INSTANCE_CACHE_TTL_CYCLES, RegistrarConfig, RegistrarError,
@@ -12,12 +12,12 @@ use clap::Parser;
 use url::Url;
 
 // Generate env-var helper and CLI structs with the `BASE_REGISTRAR_` prefix.
-base_common_cli_support::define_cli_env!("BASE_REGISTRAR");
-base_common_cli_support::define_log_args!("BASE_REGISTRAR");
-base_common_cli_support::define_metrics_args!("BASE_REGISTRAR", 7300);
-base_common_cli_support::define_health_args!("BASE_REGISTRAR", 8080);
-base_common_l1_transactions::define_signer_cli!("BASE_REGISTRAR");
-base_common_l1_transactions::define_tx_manager_cli!("BASE_REGISTRAR");
+base_common_cli::define_cli_env!("BASE_REGISTRAR");
+base_common_cli::define_log_args!("BASE_REGISTRAR");
+base_common_cli::define_metrics_args!("BASE_REGISTRAR", 7300);
+base_common_cli::define_health_args!("BASE_REGISTRAR", 8080);
+base_common_l1::define_signer_cli!("BASE_REGISTRAR");
+base_common_l1::define_tx_manager_cli!("BASE_REGISTRAR");
 
 /// Prover Registrar — automated TEE signer registration service.
 #[derive(Parser)]

@@ -21,10 +21,8 @@ use base_proof_service_protocol::{
 };
 use base_proof_service_server::{
     ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
-    ProofStatus as DbProofStatus, ZkVmKind,
-};
-use base_proof_service_server::{
-    ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig,
+    ProofStatus as DbProofStatus, ProverServiceServer, ServerConfig, WorkerApiConfig,
+    WorkerQueueConfig, ZkVmKind,
 };
 use jsonrpsee::{
     core::client::Error as ClientError,

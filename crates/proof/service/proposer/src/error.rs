@@ -1,7 +1,7 @@
 //! Error types for the proposer.
 
-use base_proof_client_providers::RpcError;
-use base_proof_l1_submission::ProofSubmissionError;
+use base_proof_client::RpcError;
+use base_proof_l1::ProofSubmissionError;
 use thiserror::Error;
 
 /// Main error type for the proposer.

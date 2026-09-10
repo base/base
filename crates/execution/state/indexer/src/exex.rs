@@ -1,7 +1,5 @@
-use crate::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use alloy_eips::BlockNumHash;
-use base_common_types_chain::BaseReceipt;
-use base_common_types_chain::{BlockHeader as AlloyBlockHeader, RecoveredBlock};
+use base_common_types_chain::{BaseReceipt, BlockHeader as AlloyBlockHeader, RecoveredBlock};
 use base_execution_engine_observers::{ExExContext, ExExEvent, ExExNotification};
 use base_execution_network_service::NetworkInfo;
 use base_execution_state_types::Chain;
@@ -11,7 +9,9 @@ use futures::TryStreamExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::ShadowExExMetrics;
+use crate::{
+    ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowExExMetrics, ShadowWrite,
+};
 
 /// Shadow indexer `ExEx` handler.
 #[derive(Debug)]
@@ -260,9 +260,8 @@ mod tests {
     use base_execution_engine_observers::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_maintenance::init::init_genesis;
-    use base_execution_state_provider::ForkChoiceStream;
     use base_execution_state_provider::{
-        providers::BlockchainProvider, test_utils::create_test_provider_factory,
+        ForkChoiceStream, providers::BlockchainProvider, test_utils::create_test_provider_factory,
     };
     use base_execution_state_types::{Chain, ExecutionOutcome};
     use futures::TryStreamExt;

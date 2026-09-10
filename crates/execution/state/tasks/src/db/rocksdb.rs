@@ -12,18 +12,18 @@ use std::{
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256, map::HashMap};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{Compress, DatabaseError, Decompress, DupSort, Encode, Table};
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_state_trie::{
+    hashed_cursor::{HashedCursor, HashedStorageCursor},
+    trie_cursor::{TrieCursor, TrieStorageCursor},
+};
 use base_execution_state_types::{
     BranchNodeCompact, HashedPostState, Nibbles, StoredNibbles, updates::TrieUpdates,
 };
 #[cfg(feature = "metrics")]
 use metrics::Label;
 use parking_lot::{Mutex, RwLock};
-use base_execution_state_trie::{
-    hashed_cursor::{HashedCursor, HashedStorageCursor},
-    trie_cursor::{TrieCursor, TrieStorageCursor},
-};
 use rocksdb::{
     BlockBasedIndexType, BlockBasedOptions, BoundColumnFamily, Cache, ColumnFamilyDescriptor,
     CompactionPri, DBCompressionType, DBWithThreadMode, Direction, IteratorMode, MultiThreaded,

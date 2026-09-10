@@ -2,12 +2,11 @@
 
 use std::path::Path;
 
-pub use crate::native_mdbx::*;
 use base_common_observability_tracing::tracing::{info, warn};
 use eyre::Context;
 
-pub use crate::implementation::mdbx::*;
 use crate::{TableSet, Tables, is_database_empty};
+pub use crate::{implementation::mdbx::*, native_mdbx::*};
 
 /// Tables that have been removed from the schema but may still exist on disk from previous
 /// versions. These will be dropped during database initialization.
@@ -83,7 +82,7 @@ pub fn create_db<P: AsRef<Path>>(path: P, args: DatabaseArguments) -> eyre::Resu
     warn_if_zfs(rpath);
 
     if is_database_empty(rpath) {
-        base_common_io_files::Files::create_dir_all(rpath)
+        base_common_io::Files::create_dir_all(rpath)
             .wrap_err_with(|| format!("Could not create database directory {}", rpath.display()))?;
         create_db_version_file(rpath)?;
     } else {
@@ -164,14 +163,13 @@ pub fn open_db(path: impl AsRef<Path>, args: DatabaseArguments) -> eyre::Result<
 mod tests {
     use std::time::Duration;
 
-    use crate::mdbx::MaxReadTransactionDuration;
-    use crate::{Database, DbCursorRO, DbTx, models::ClientVersion};
     use assert_matches::assert_matches;
     use tempfile::tempdir;
 
     use crate::{
-        init_db,
-        mdbx::DatabaseArguments,
+        Database, DbCursorRO, DbTx, init_db,
+        mdbx::{DatabaseArguments, MaxReadTransactionDuration},
+        models::ClientVersion,
         open_db, tables,
         version::{DatabaseVersionError, db_version_file_path},
     };
@@ -215,7 +213,7 @@ mod tests {
 
         // Database is not empty, version file is malformed
         {
-            base_common_io_files::Files::write(
+            base_common_io::Files::write(
                 path.path().join(db_version_file_path(&path)),
                 "invalid-version",
             )
@@ -230,7 +228,7 @@ mod tests {
 
         // Database is not empty, version file contains not matching version
         {
-            base_common_io_files::Files::write(path.path().join(db_version_file_path(&path)), "0")
+            base_common_io::Files::write(path.path().join(db_version_file_path(&path)), "0")
                 .unwrap();
             let db = init_db(&path, args);
             assert!(db.is_err());

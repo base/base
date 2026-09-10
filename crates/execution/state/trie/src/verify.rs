@@ -475,7 +475,7 @@ mod tests {
     use alloy_primitives::{U256, address, keccak256, map::B256Map};
     use alloy_trie::TrieMask;
     use assert_matches::assert_matches;
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::StoredAccount as Account;
 
     use super::*;
     use crate::{

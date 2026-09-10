@@ -3,8 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use base_common_cli_support::parse_socket_address;
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_cli::parse_socket_address;
+use base_common_runtime::TaskExecutor;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_execution_state_database::{
     Database, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut,
@@ -16,7 +16,7 @@ use base_execution_state_trie::{
     StorageTrieEntryLike, TrieTableAdapter,
     verify::{Output, Verifier},
 };
-use base_execution_sync_pipeline::StageId;
+use base_execution_sync::StageId;
 use base_node_config::{ChainPath, DataDirPath, version_metadata};
 use base_node_service::{ChainSpecInfo, Hooks, MetricServer, MetricServerConfig, VersionInfo};
 use clap::Parser;

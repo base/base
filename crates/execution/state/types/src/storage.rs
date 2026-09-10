@@ -1,6 +1,5 @@
-use crate::ValueWithSubKey;
-
 use super::{BranchNodeCompact, PackedStoredNibblesSubKey, StoredNibblesSubKey};
+use crate::ValueWithSubKey;
 
 /// Account storage trie node.
 ///

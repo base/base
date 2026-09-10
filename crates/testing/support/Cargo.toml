@@ -12,24 +12,26 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-alloy-eips = {workspace = true}
+alloy-eips = { workspace = true }
 alloy-signer = { workspace = true }
-base-execution-evm-runtime = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["std"] }
-alloy-genesis = {features = ["std"], workspace = true}
 rand_08 = { workspace = true, features = ["default"] }
+alloy-genesis = { features = ["std"], workspace = true }
 base-common-client-contracts = { workspace = true, optional = true }
 base-common-types-rpc = { workspace = true, features = ["default"] }
-base-execution-state-types = {workspace = true, features = ["arbitrary"]}
-base-execution-state-memory = {workspace = true, features = ["arbitrary"]}
+base-execution-state-types = { workspace = true, features = ["arbitrary"] }
+base-execution-evm-runtime = { workspace = true, features = ["arbitrary"] }
 alloy-sol-types = { workspace = true, features = ["std"], optional = true }
 alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
-alloy-primitives = {features = ["map-foldhash", "rand", "serde"], workspace = true}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
-base-common-types-chain = {workspace = true, features = ["arbitrary", "k256", "reth", "secp256k1", "serde", "std"]}
+alloy-primitives = { features = ["map-foldhash", "rand", "serde"], workspace = true }
+base-common-types-chain = { workspace = true, features = ["arbitrary", "k256", "reth", "secp256k1", "serde", "std"] }
+
+[dev-dependencies]
+alloy-rlp = { workspace = true, features = ["core-net"] }
 
 [features]
 # The `contracts` module binds Solidity test fixtures with
@@ -39,6 +41,3 @@ base-common-types-chain = {workspace = true, features = ["arbitrary", "k256", "r
 # only need the accounts/genesis helpers (e.g. base-testing-devnet's `test-utils`) build artifact-free,
 # and consumers that use the contract bindings enable this feature (where the artifacts are built).
 contracts = ["dep:base-common-client-contracts", "dep:alloy-sol-macro", "dep:alloy-sol-types"]
-
-[dev-dependencies]
-alloy-rlp = { workspace = true, features = ["core-net"] }

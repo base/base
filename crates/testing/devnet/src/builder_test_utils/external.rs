@@ -6,8 +6,7 @@ use std::{
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B256, U256, keccak256, private::alloy_rlp::Encodable};
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Identity, Provider, ProviderBuilder, RootProvider};
+use base_common_client_ethereum::{Base, Identity, Provider, ProviderBuilder, RootProvider};
 use base_common_types_chain::constants::EMPTY_WITHDRAWALS;
 use base_common_types_payload::{
     BaseExecutionPayloadV4, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,

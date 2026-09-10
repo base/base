@@ -7,53 +7,32 @@ use std::{
     time::Duration,
 };
 
-use crate::PeersHandle;
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Encodable;
-
 use base_common_types_chain::{
     BaseReceipt, BlockHeader, ReceiptWithBloom, constants::KECCAK_EMPTY,
 };
-use base_execution_network_types::PeerId;
-use base_execution_network_wire::AccountData;
-use base_execution_network_wire::AccountRangeMessage;
-use base_execution_network_wire::BlockAccessLists;
-use base_execution_network_wire::BlockAccessListsMessage;
-use base_execution_network_wire::BlockBodies;
-use base_execution_network_wire::BlockHeaders;
-use base_execution_network_wire::ByteCodesMessage;
-use base_execution_network_wire::Cells;
-use base_execution_network_wire::GetAccountRangeMessage;
-use base_execution_network_wire::GetBlockAccessLists;
-use base_execution_network_wire::GetBlockBodies;
-use base_execution_network_wire::GetBlockHeaders;
-use base_execution_network_wire::GetCells;
-use base_execution_network_wire::GetNodeData;
-use base_execution_network_wire::GetReceipts;
-use base_execution_network_wire::GetReceipts70;
-use base_execution_network_wire::GetStorageRangesMessage;
-use base_execution_network_wire::HeadersDirection;
-use base_execution_network_wire::NodeData;
-use base_execution_network_wire::Receipts;
-use base_execution_network_wire::Receipts69;
-use base_execution_network_wire::Receipts70;
-use base_execution_network_wire::SnapProtocolMessage;
-use base_execution_network_wire::StorageData;
-use base_execution_network_wire::StorageRangesMessage;
-use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
-use base_execution_state_api::{
+use base_execution_network_wire::{
+    AccountData, AccountRangeMessage, BlockAccessLists, BlockAccessListsMessage, BlockBodies,
+    BlockHeaders, ByteCodesMessage, Cells, GetAccountRangeMessage, GetBlockAccessLists,
+    GetBlockBodies, GetBlockHeaders, GetCells, GetNodeData, GetReceipts, GetReceipts70,
+    GetStorageRangesMessage, HeadersDirection, NodeData, PeerId, Receipts, Receipts69, Receipts70,
+    RequestError, RequestResult, SnapProtocolMessage, SnapResponse, StorageData,
+    StorageRangesMessage,
+};
+use base_execution_state_types::{
     BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
     ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
 };
-use base_execution_txpool_pool::{BlobStore, NoopBlobStore};
+use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
-    budget::DEFAULT_BUDGET_TRY_DRAIN_DOWNLOADERS, metered_poll_nested_stream_with_budget,
-    metrics::EthRequestHandlerMetrics,
+    PeersHandle, budget::DEFAULT_BUDGET_TRY_DRAIN_DOWNLOADERS,
+    metered_poll_nested_stream_with_budget, metrics::EthRequestHandlerMetrics,
 };
 
 // Limits: <https://github.com/ethereum/go-ethereum/blob/b0d44338bbcefee044f1f635a84487cbbd8f0538/eth/protocols/eth/handler.go#L34-L56>
@@ -833,21 +812,21 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
-    use crate::PeersHandle;
     use alloy_eips::{
         eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
         eip7594::{BlobTransactionSidecarVariant, Cell},
     };
     use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
     use base_common_types_chain::constants::EMPTY_ROOT_HASH;
-    use base_execution_state_api::NoopProvider;
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::StoredAccount as Account;
+    use base_execution_state_database::NoopProvider;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use base_execution_txpool_pool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
+    use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use test_case::test_case;
     use tokio::sync::mpsc;
 
     use super::*;
+    use crate::PeersHandle;
 
     #[derive(Debug, Default)]
     struct CountingBlobStore {

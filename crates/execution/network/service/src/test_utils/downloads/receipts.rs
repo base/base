@@ -2,13 +2,12 @@ use std::fmt::{Debug, Formatter};
 
 use alloy_primitives::B256;
 use base_common_types_chain::EthereumReceipt as Receipt;
-use base_execution_network_types::PeerId;
+use base_execution_network_wire::{
+    DownloadClient, PeerId, PeerRequestResult, Priority, ReceiptsClient, ReceiptsFut,
+    ReceiptsResponse,
+};
 use futures::FutureExt;
 use tokio::sync::oneshot;
-
-use base_execution_network_wire::{
-    DownloadClient, PeerRequestResult, Priority, ReceiptsClient, ReceiptsFut, ReceiptsResponse,
-};
 
 /// A test client for fetching receipts
 pub struct TestReceiptsClient<F> {

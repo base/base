@@ -29,50 +29,39 @@
 //!
 //! This ensures correct initialization order without runtime checks.
 
-use base_execution_state_provider::DatabaseProviderROFactory;
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
-use crate::BaseNodeContext;
-use crate::EthStatsService;
-use crate::{
-    ChainSpecInfo, Hooks, MetricServer, MetricServerConfig, StorageSettingsInfo, VersionInfo,
-    install_prometheus_recorder,
-};
-use crate::{ConsensusLayerHealthEvents, NodeEvent};
 use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_chain_config::BaseChainSpec;
-use base_common_io_files as fs;
+use base_common_io as fs;
 use base_common_observability_tracing::{
     throttle,
     tracing::{debug, error, info, warn},
 };
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use base_execution_engine_observers::ExExManagerHandle;
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_wire::HeadersClient;
 use base_execution_state_database::{DatabaseMetrics, models::PartialStateTrieUnwindMarker};
-use base_execution_state_maintenance::init::{
-    InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate,
-};
-use base_execution_state_maintenance::{PruneMode, PruneModes, PrunerBuilder};
 use base_execution_state_maintenance::{
-    StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance,
+    PruneMode, PruneModes, PrunerBuilder, StaticFileProducer, StaticFileSegment,
+    blocks_per_file_for_prune_distance,
+    init::{InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate},
 };
-use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{
     BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
-    InMemoryBalStore, MetadataProvider, ProviderError, ProviderFactory, ProviderResult,
-    RocksDBProviderFactory, StageCheckpointReader, StaticFileProviderBuilder,
-    StaticFileProviderFactory, StorageSettingsCache,
+    DatabaseProviderROFactory, InMemoryBalStore, MetadataProvider, OverlayManager, ProviderError,
+    ProviderFactory, ProviderResult, RocksDBProviderFactory, StageCheckpointReader,
+    StaticFileProviderBuilder, StaticFileProviderFactory, StorageSettingsCache,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
-use base_execution_sync_pipeline::{
-    DefaultStages, MerkleStage, MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet,
+use base_execution_state_types::{EtlConfig, PruneConfig};
+use base_execution_sync::{
+    DefaultStages, MerkleStage, MetricEvent, NoopBodiesDownloader, NoopHeaderDownloader,
+    PipelineBuilder, PipelineTarget, StageId, StageSet,
 };
-use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
 use base_node_config::{ChainPath, DataDirPath, NodeConfig, PruneConfigKind, version_metadata};
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
@@ -81,9 +70,12 @@ use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,
 };
-use {base_execution_state_types::EtlConfig, base_execution_state_types::PruneConfig};
 
-use crate::{BaseNode, BuilderContext, ExExLauncher};
+use crate::{
+    BaseNode, BaseNodeContext, BuilderContext, ChainSpecInfo, ConsensusLayerHealthEvents,
+    EthStatsService, ExExLauncher, Hooks, MetricServer, MetricServerConfig, NodeEvent,
+    StorageSettingsInfo, VersionInfo, install_prometheus_recorder,
+};
 
 /// Reusable setup for launching a node.
 ///
@@ -567,7 +559,7 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
 
             // Pipeline should be run as blocking and panic if it fails.
             self.task_executor().spawn_critical_blocking_task("pipeline task", async move {
-                let result: Result<(), base_execution_sync_pipeline::PipelineError> = async {
+                let result: Result<(), base_execution_sync::PipelineError> = async {
                     for (unwind_target, inconsistency_source, pipeline, clear_partial_trie_unwind) in
                         unwinds
                     {
@@ -707,8 +699,7 @@ impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
             WithMeteredProvider { provider_factory: self.right().clone(), metrics_sender };
 
         debug!(target: "reth::cli", "Spawning stages metrics listener task");
-        let sync_metrics_listener =
-            base_execution_sync_pipeline::MetricsListener::new(metrics_receiver);
+        let sync_metrics_listener = base_execution_sync::MetricsListener::new(metrics_receiver);
         self.task_executor()
             .spawn_critical_task("stages metrics listener task", sync_metrics_listener);
 
@@ -1013,10 +1004,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     /// Spawns the [`EthStatsService`] service if configured.
     pub async fn spawn_ethstats<St>(&self, mut engine_events: St) -> eyre::Result<()>
     where
-        St: Stream<Item = base_execution_engine_types::ConsensusEngineEvent>
-            + Send
-            + Unpin
-            + 'static,
+        St: Stream<Item = base_common_types_payload::ConsensusEngineEvent> + Send + Unpin + 'static,
     {
         let Some(url) = self.node_config().debug.ethstats.as_ref() else { return Ok(()) };
 
@@ -1033,7 +1021,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
         let task_executor = self.task_executor().clone();
         task_executor.spawn_task(async move {
             while let Some(event) = engine_events.next().await {
-                use base_execution_engine_types::ConsensusEngineEvent;
+                use base_common_types_payload::ConsensusEngineEvent;
                 match event {
                     ConsensusEngineEvent::ForkBlockAdded(executed, duration)
                     | ConsensusEngineEvent::CanonicalBlockAdded(executed, duration) => {
@@ -1250,9 +1238,8 @@ fn delete_partial_trie_unwind_marker(
 mod tests {
     use base_execution_state_database::models::PartialStateTrieUnwindMarker;
     use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
-    use base_execution_sync_pipeline::{FinishCheckpoint, StageCheckpoint, StageId};
-    use base_node_config::NodeFileConfig as Config;
-    use base_node_config::PruningArgs;
+    use base_execution_sync::{FinishCheckpoint, StageCheckpoint, StageId};
+    use base_node_config::{NodeFileConfig as Config, PruningArgs};
 
     use super::{LaunchContext, NodeConfig, get_partial_trie_unwind_marker};
 

@@ -1,6 +1,6 @@
 //! Helpers for testing.
 
-use base_execution_evm_runtime::database::State;
+use base_execution_evm_runtime::State;
 
 use crate::execute::BasicBlockExecutor;
 

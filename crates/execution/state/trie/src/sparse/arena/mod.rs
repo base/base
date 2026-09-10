@@ -3277,14 +3277,16 @@ impl ArenaParallelSparseTrie {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::test_utils::TrieTestHarness;
     use alloy_primitives::{B256, U256, map::B256Map};
     use base_execution_state_types::ProofV2Target;
     use rand::{Rng, SeedableRng, seq::SliceRandom};
     use tracing::{info, trace};
 
     use super::TRACE_TARGET;
-    use crate::{ArenaParallelSparseTrie, ArenaParallelismThresholds, LeafUpdate, TrieNodeEpoch};
+    use crate::{
+        ArenaParallelSparseTrie, ArenaParallelismThresholds, LeafUpdate, TrieNodeEpoch,
+        test_utils::TrieTestHarness,
+    };
 
     const fn epoch(value: u64) -> TrieNodeEpoch {
         TrieNodeEpoch::new(value)

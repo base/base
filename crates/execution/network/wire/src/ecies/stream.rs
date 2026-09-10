@@ -22,11 +22,7 @@ use tokio_stream::{Stream, StreamExt};
 use tokio_util::codec::{Decoder, Framed};
 use tracing::{instrument, trace};
 
-use crate::ECIESCodec;
-use crate::ECIESError;
-use crate::ECIESErrorImpl;
-use crate::EgressECIESValue;
-use crate::IngressECIESValue;
+use crate::{ECIESCodec, ECIESError, ECIESErrorImpl, EgressECIESValue, IngressECIESValue};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -197,11 +193,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_network_types::pk2id;
     use secp256k1::SECP256K1;
     use tokio::net::{TcpListener, TcpStream};
 
     use super::*;
+    use crate::pk2id;
 
     #[tokio::test]
     async fn can_write_and_read() {

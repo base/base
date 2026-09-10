@@ -1,6 +1,7 @@
 //! Raft conductor membership responses.
 
 use alloc::{string::String, vec::Vec};
+
 use serde::{Deserialize, Serialize};
 
 /// Live Raft cluster membership snapshot returned by `conductor_clusterMembership`.

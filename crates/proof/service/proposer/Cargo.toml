@@ -18,14 +18,14 @@ humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 async-trait = { workspace = true }
-base-proof-client-providers = { workspace = true }
+base-proof-l1 = { workspace = true }
+base-common-l1 = { workspace = true }
+base-common-cli = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-l1-submission = {workspace = true}
-base-common-cli-support = { workspace = true }
+base-proof-client = { workspace = true }
+base-common-runtime = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-client-rollup = { workspace = true }
-base-common-l1-transactions = {workspace = true}
-base-common-runtime-tasks = { workspace = true }
 base-proof-service-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
@@ -35,9 +35,9 @@ jsonrpsee = { workspace = true, features = ["server"] }
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
+base-proof-types = { workspace = true, features = ["rpc-client"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-proof-types-protocol = { workspace = true, features = ["rpc-client"] }
-base-common-client-ethereum = {workspace = true, features = ["default"]}
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-proof-service-protocol = { workspace = true, features = ["default"] }
 base-common-observability-health = { workspace = true, features = ["axum-server"] }
 
@@ -50,4 +50,4 @@ tokio = { workspace = true, features = ["default", "test-util"] }
 base-common-chain-config = { workspace = true, features = ["serde"] }
 
 [features]
-metrics = ["base-common-observability-metrics/metrics", "base-common-l1-transactions/metrics", "dep:metrics"]
+metrics = ["base-common-observability-metrics/metrics", "base-common-l1/metrics", "dep:metrics"]

@@ -2,12 +2,9 @@
 
 use std::io;
 
-use crate::DisconnectReason;
-use crate::UnknownDisconnectReason;
 use base_common_types_chain::GotExpected;
 
-use crate::ProtocolVersion;
-use crate::SharedCapabilityError;
+use crate::{DisconnectReason, ProtocolVersion, SharedCapabilityError, UnknownDisconnectReason};
 
 /// Errors when sending/receiving p2p messages. These should result in kicking the peer.
 #[derive(thiserror::Error, Debug)]

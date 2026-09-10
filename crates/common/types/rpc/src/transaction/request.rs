@@ -8,7 +8,6 @@ use alloc::{
 use core::{hash::Hash, str::FromStr};
 
 use alloy_eips::eip7702::SignedAuthorization;
-use crate::{TransactionBuilder4844, TransactionBuilder7702};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256};
 use base_common_types_chain::{
     BlobTransactionSidecarVariant, SignableTransaction, TxEip1559, TxEip2930, TxEip4844,
@@ -16,7 +15,10 @@ use base_common_types_chain::{
     TypedTransaction, error::ValueError, transaction::Recovered,
 };
 
-use crate::{Transaction, TransactionTrait, transaction::AccessList};
+use crate::{
+    Transaction, TransactionBuilder4844, TransactionBuilder7702, TransactionTrait,
+    transaction::AccessList,
+};
 
 /// Represents _all_ transaction requests to/from RPC.
 ///

@@ -4,9 +4,7 @@ use std::time::Duration;
 
 use alloy_eips::{BlockNumberOrTag::Latest, Encodable2718, eip1559::MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::bytes;
-use base_testing_devnet::{
-    builder_test_utils::BlockTransactionsExt, builder_test_utils::setup_test_instance,
-};
+use base_testing_devnet::builder_test_utils::{BlockTransactionsExt, setup_test_instance};
 use chrono::Utc;
 
 #[tokio::test]

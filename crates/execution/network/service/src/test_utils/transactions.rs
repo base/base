@@ -4,19 +4,17 @@
 
 use std::sync::Arc;
 
-use crate::{PeerKind, PeerRequest, PeerRequestSender};
 use alloy_primitives::TxHash;
-use base_common_runtime_tasks::Runtime;
-use base_execution_network_types::PeerId;
-use base_execution_network_wire::EthVersion;
-use base_execution_state_api::NoopProvider;
+use base_common_runtime::Runtime;
+use base_execution_network_wire::{EthVersion, PeerId};
+use base_execution_state_database::NoopProvider;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc;
 use tracing::trace;
 
 use super::{NetworkTestData, TestPool};
 use crate::{
-    NetworkConfigBuilder, NetworkManager,
+    NetworkConfigBuilder, NetworkManager, PeerKind, PeerRequest, PeerRequestSender,
     cache::LruCache,
     transactions::{
         PeerMetadata, TransactionsManager,

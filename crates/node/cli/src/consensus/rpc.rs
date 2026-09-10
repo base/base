@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use base_consensus_driver_service::RpcBuilder;
+use base_consensus_driver::RpcBuilder;
 use clap::Parser;
 
 /// RPC CLI Arguments

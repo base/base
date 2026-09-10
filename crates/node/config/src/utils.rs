@@ -4,8 +4,7 @@
 use std::path::PathBuf;
 
 use alloy_eips::BlockHashOrNumber;
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::{SealedBlock, SealedHeader};
+use base_common_types_chain::{BlockHeader, SealedBlock, SealedHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_wire::{BodiesClient, HeadersClient, Priority};
 use eyre::Result;

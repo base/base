@@ -7,26 +7,27 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::builder_test_utils::get_available_port;
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use base_common_runtime::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use base_execution_state_database::{
-    ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, mdbx::KILOBYTE, mdbx::MEGABYTE,
-    mdbx::MaxReadTransactionDuration,
+    ClientVersion, DatabaseEnv, init_db,
+    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
 };
-use base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES;
+use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_node_config::{
     DataDirPath, DatadirArgs, MaybePlatformPath, MetricArgs, NetworkArgs, NodeExitFuture,
     RpcServerArgs,
 };
-use base_node_service::BuilderConfig;
-use base_node_service::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
+use base_node_service::{BaseNode, BuilderConfig, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
-use crate::system_fixtures::{config::BUILDER, setup::BUILDER_ENODE_ID};
+use crate::{
+    builder_test_utils::get_available_port,
+    system_fixtures::{config::BUILDER, setup::BUILDER_ENODE_ID},
+};
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
@@ -86,7 +87,7 @@ pub struct InProcessBuilder {
     http_api_addr: SocketAddr,
     ws_api_addr: SocketAddr,
     /// Native execution client shared with the co-located consensus node.
-    pub execution: base_consensus_driver_service::LocalEngineClient,
+    pub execution: base_consensus_driver::LocalEngineClient,
     metrics_addr: SocketAddr,
 
     p2p_port: u16,
@@ -160,7 +161,7 @@ impl InProcessBuilder {
             shadow_indexer: config.shadow_indexer,
             ..Default::default()
         };
-        rpc.builder = Some(base_execution_rpc_handlers::BuilderApiConfig::new(
+        rpc.builder = Some(base_execution_rpc::BuilderApiConfig::new(
             accept_validity_transactions,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         ));
@@ -186,11 +187,9 @@ impl InProcessBuilder {
             .ws_local_addr()
             .ok_or_else(|| eyre!("WebSocket RPC server failed to bind to address"))?;
 
-        let execution = base_consensus_driver_service::LocalEngineClient {
-            l1: base_consensus_source_providers::L1RpcProvider::new_http(Url::parse(
-                "http://127.0.0.1:1",
-            )?),
-            l2: base_consensus_source_providers::LocalL2Provider {
+        let execution = base_consensus_driver::LocalEngineClient {
+            l1: base_consensus_source::L1RpcProvider::new_http(Url::parse("http://127.0.0.1:1")?),
+            l2: base_consensus_source::LocalL2Provider {
                 provider: node_handle.provider().clone(),
                 rollup_config: Arc::new(node_handle.config.chain.config.rollup_config()),
             },

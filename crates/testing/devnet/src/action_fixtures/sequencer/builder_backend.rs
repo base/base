@@ -18,29 +18,27 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    builder_test_utils::ChainDriver, builder_test_utils::EngineApi,
-    builder_test_utils::LocalInstance, builder_test_utils::LocalInstanceBuilder,
-    builder_test_utils::node_config_with_chain_spec,
-};
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
 use async_trait::async_trait;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::RollupConfig;
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::{Identity, ProviderBuilder};
+use base_common_chain_config::{BaseChainSpec, RollupConfig};
+use base_common_client_ethereum::{Base, Identity, ProviderBuilder};
 use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
-use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
-use base_consensus_driver_service::{
+use base_consensus_batch::{AttributesWithParent, L2BlockInfo};
+use base_consensus_driver::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };
-use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_execution_txpool_pool::BasePooledTransaction;
+use base_execution_payload::BasePayloadBuilderAttributes;
+use base_execution_txpool::BasePooledTransaction;
 use base_node_service::BuilderConfig;
 
 use super::ExecutionPayloadConverter;
-use crate::action_fixtures::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry};
+use crate::{
+    action_fixtures::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry},
+    builder_test_utils::{
+        ChainDriver, EngineApi, LocalInstance, LocalInstanceBuilder, node_config_with_chain_spec,
+    },
+};
 
 /// A sequencer engine backend backed by the production full-block builder running in-process.
 ///
@@ -236,7 +234,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         // state root against the builder-produced one.
         self.block_registry.insert(block.header.number, new_hash, Some(block.header.state_root));
 
-        let info = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
+        let info = base_consensus_batch::L2BlockInfoDecoder::from_block_and_genesis(
             &block,
             &self.rollup_config.genesis,
         )
@@ -288,7 +286,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::B256;
     use base_common_chain_config::UpgradeConfig;
-    use base_consensus_batch_types::BlockInfo;
+    use base_consensus_batch::BlockInfo;
 
     use super::*;
     use crate::action_fixtures::TestRollupConfigBuilder;

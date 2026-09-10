@@ -3,10 +3,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use base_common_types_payload::{Claims, JwtSecret};
 use http::{HeaderValue, header::AUTHORIZATION};
 use tower::{Layer, Service};
-
-use base_common_types_payload::{Claims, JwtSecret};
 
 /// A layer that adds a new JWT token to every request using `AuthClientService`.
 #[derive(Debug)]

@@ -1,8 +1,7 @@
 //! Top-level command dispatch for the unified Base binary.
 
-use base_common_cli_support::CliRunner;
-use base_node_cli::BatcherArgs;
-use base_node_cli::commands::base_proofs;
+use base_common_cli::CliRunner;
+use base_node_cli::{BatcherArgs, commands::base_proofs};
 use clap::Subcommand;
 
 use crate::{

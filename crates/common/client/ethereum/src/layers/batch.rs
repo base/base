@@ -1,6 +1,5 @@
 use std::{fmt, future::IntoFuture, marker::PhantomData, sync::Arc, time::Duration};
 
-use crate::{Ethereum, Network, TransactionBuilder};
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_rpc_client::WeakClient;
@@ -13,8 +12,8 @@ use tokio::time::sleep;
 use wasmtimer::tokio::sleep;
 
 use crate::{
-    ARB_SYS_ADDRESS, Caller, MULTICALL3_ADDRESS, Provider, ProviderCall, ProviderLayer,
-    RootProvider,
+    ARB_SYS_ADDRESS, Caller, Ethereum, MULTICALL3_ADDRESS, Network, Provider, ProviderCall,
+    ProviderLayer, RootProvider, TransactionBuilder,
     bindings::{ArbSys, IMulticall3},
 };
 
@@ -533,7 +532,6 @@ impl<N: Network> Caller<N, Bytes> for CallBatchCaller<N> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Ethereum, TransactionBuilder};
     use alloy_primitives::address;
     #[cfg(feature = "anvil-api")]
     use alloy_primitives::hex;
@@ -541,7 +539,7 @@ mod tests {
     use base_common_types_rpc::{BlockOverrides, TransactionRequest};
 
     use super::*;
-    use crate::ProviderBuilder;
+    use crate::{Ethereum, ProviderBuilder, TransactionBuilder};
 
     // https://etherscan.io/address/0xcA11bde05977b3631167028862bE2a173976CA11#code
     #[cfg(feature = "anvil-api")]

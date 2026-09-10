@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use crate::Network;
 use alloy_eips::BlockId;
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{Address, Bytes};
@@ -22,7 +21,7 @@ use tokio::time::{Timeout, timeout as timeout_future};
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasmtimer::tokio::{Timeout, timeout as timeout_future};
 
-use crate::ProviderCall;
+use crate::{Network, ProviderCall};
 
 mod params;
 pub use params::{EthCallManyParams, EthCallParams};
@@ -426,12 +425,12 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::{Ethereum, TransactionBuilder};
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{U256, address};
     use base_common_types_rpc::{TransactionRequest, state::StateOverride};
 
     use super::*;
+    use crate::{Ethereum, TransactionBuilder};
 
     #[derive(Clone, Copy, Debug)]
     struct PendingCaller;

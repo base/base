@@ -1,8 +1,7 @@
 //! Base-specific implementation and utilities for the executor
 
 use alloy_primitives::{U16, U256, hex};
-use base_common_types_chain::BlockBodyExt as BlockBody;
-use base_common_types_chain::Transaction;
+use base_common_types_chain::{BlockBodyExt as BlockBody, Transaction};
 use base_execution_evm_runtime::L1BlockInfo;
 
 use crate::{BaseBlockExecutionError, L1BlockInfoError};
@@ -301,8 +300,7 @@ pub fn parse_l1_info_tx_jovian(data: &[u8]) -> Result<L1BlockInfo, BaseBlockExec
 mod tests {
     use alloy_eips::eip2718::Decodable2718;
     use alloy_primitives::{Bytes, hex_literal::hex, keccak256};
-    use base_common_chain_config::BaseChainSpec;
-    use base_common_chain_config::Upgrades;
+    use base_common_chain_config::{BaseChainSpec, Upgrades};
     use base_common_types_chain::{BaseTransactionSigned, Block, BlockBody, Header};
 
     use super::*;

@@ -1,11 +1,10 @@
-use crate::native_mdbx::ffi;
 use std::{ffi::CStr, ptr};
-
-use crate::native_mdbx::ffi::MDBX_db_flags_t;
 
 use crate::native_mdbx::{
     Environment, Transaction,
     error::{Result, mdbx_result},
+    ffi,
+    ffi::MDBX_db_flags_t,
     transaction::TransactionKind,
 };
 

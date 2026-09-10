@@ -1,4 +1,4 @@
-//! Wrapper around [`base_execution_network_discv5::Config`].
+//! Wrapper around [`crate::Config`].
 
 use std::{
     collections::HashSet,
@@ -8,18 +8,19 @@ use std::{
 
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
 use alloy_primitives::Bytes;
-use base_execution_network_discv5::ListenConfig;
-use base_execution_network_discv5::multiaddr::Multiaddr;
-use base_execution_network_discv5::multiaddr::Protocol;
-use base_execution_network_types::NodeRecord;
+use base_execution_network_wire::NodeRecord;
 use derive_more::Display;
 use tracing::debug;
 
-use crate::discv5::{NetworkStackId, enr::discv4_id_to_multiaddr_id, filter::MustNotIncludeKeys};
+use crate::{
+    ListenConfig,
+    discv5::{NetworkStackId, enr::discv4_id_to_multiaddr_id, filter::MustNotIncludeKeys},
+    multiaddr::{Multiaddr, Protocol},
+};
 
 /// The default address for discv5 via UDP is IPv4.
 ///
-/// Default is 0.0.0.0, all interfaces. See [`base_execution_network_discv5::ListenConfig`] default.
+/// Default is 0.0.0.0, all interfaces. See [`crate::ListenConfig`] default.
 pub const DEFAULT_DISCOVERY_V5_ADDR: Ipv4Addr = Ipv4Addr::UNSPECIFIED;
 
 /// The default IPv6 address for discv5 via UDP.
@@ -32,7 +33,7 @@ pub const DEFAULT_DISCOVERY_V5_ADDR_IPV6: Ipv6Addr = Ipv6Addr::UNSPECIFIED;
 /// Default is port 9200.
 pub const DEFAULT_DISCOVERY_V5_PORT: u16 = 9200;
 
-/// The default [`base_execution_network_discv5::ListenConfig`].
+/// The default [`crate::ListenConfig`].
 ///
 /// This is different from the upstream default.
 pub const DEFAULT_DISCOVERY_V5_LISTEN_CONFIG: ListenConfig =
@@ -57,8 +58,8 @@ pub const DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL: u64 = 5;
 /// Builds a [`Config`].
 #[derive(Debug)]
 pub struct ConfigBuilder {
-    /// Config used by [`base_execution_network_discv5::Discv5`]. Contains the discovery listen socket.
-    discv5_config: Option<base_execution_network_discv5::Config>,
+    /// Config used by [`crate::Discv5Protocol`]. Contains the discovery listen socket.
+    discv5_config: Option<crate::Config>,
     /// Nodes to boot from.
     bootstrap_nodes: HashSet<BootNode>,
     /// Fork kv-pair to set in local node record. Identifies which network/chain/fork the node
@@ -69,11 +70,11 @@ pub struct ConfigBuilder {
     /// `RLPx` TCP socket to advertise.
     ///
     /// NOTE: IP address of `RLPx` socket overwrites IP address of same IP version in
-    /// [`base_execution_network_discv5::ListenConfig`].
+    /// [`crate::ListenConfig`].
     tcp_socket: SocketAddr,
     /// IPv4 address to advertise in the local ENR instead of the listen socket address.
     ///
-    /// This is separate from [`base_execution_network_discv5::ListenConfig`] because the listen address describes where
+    /// This is separate from [`crate::ListenConfig`] because the listen address describes where
     /// discv5 binds its UDP socket. Nodes commonly bind to an unspecified address like `0.0.0.0`
     /// while advertising an externally reachable address from NAT configuration.
     advertised_ipv4: Option<Ipv4Addr>,
@@ -127,30 +128,24 @@ impl ConfigBuilder {
         }
     }
 
-    /// Set [`base_execution_network_discv5::Config`], which contains the [`base_execution_network_discv5::Discv5`] listen socket.
-    pub fn discv5_config(mut self, discv5_config: base_execution_network_discv5::Config) -> Self {
+    /// Set [`crate::Config`], which contains the [`crate::Discv5Protocol`] listen socket.
+    pub fn discv5_config(mut self, discv5_config: crate::Config) -> Self {
         self.discv5_config = Some(discv5_config);
         self
     }
 
-    /// Adds multiple boot nodes from a list of [`Enr`](base_execution_network_discv5::Enr)s.
-    pub fn add_signed_boot_nodes(
-        mut self,
-        nodes: impl IntoIterator<Item = base_execution_network_discv5::Enr>,
-    ) -> Self {
+    /// Adds multiple boot nodes from a list of [`Enr`](crate::Enr)s.
+    pub fn add_signed_boot_nodes(mut self, nodes: impl IntoIterator<Item = crate::Enr>) -> Self {
         self.bootstrap_nodes.extend(nodes.into_iter().map(BootNode::Enr));
         self
     }
 
-    /// Parses a comma-separated list of serialized [`Enr`](base_execution_network_discv5::Enr)s, signed node records, and
+    /// Parses a comma-separated list of serialized [`Enr`](crate::Enr)s, signed node records, and
     /// adds any successfully deserialized records to boot nodes. Note: this type is serialized in
     /// CL format since [`discv5`] is originally a CL library.
     pub fn add_cl_serialized_signed_boot_nodes(mut self, enrs: &str) -> Self {
         let bootstrap_nodes = &mut self.bootstrap_nodes;
-        for node in enrs
-            .split(&[','])
-            .flat_map(|record| record.trim().parse::<base_execution_network_discv5::Enr>())
-        {
+        for node in enrs.split(&[',']).flat_map(|record| record.trim().parse::<crate::Enr>()) {
             bootstrap_nodes.insert(BootNode::Enr(node));
         }
         self
@@ -180,7 +175,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Set fork ID kv-pair to set in local [`Enr`](base_execution_network_discv5::enr::Enr). This lets peers on discovery
+    /// Set fork ID kv-pair to set in local [`Enr`](crate::enr::Enr). This lets peers on discovery
     /// network know which chain this node belongs to.
     pub const fn fork(mut self, fork_key: &'static [u8], fork_id: ForkId) -> Self {
         self.fork = Some((fork_key, fork_id));
@@ -195,7 +190,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Sets the tcp socket to advertise in the local [`Enr`](base_execution_network_discv5::enr::Enr). The IP address of
+    /// Sets the tcp socket to advertise in the local [`Enr`](crate::enr::Enr). The IP address of
     /// this socket will overwrite the discovery address of the same IP version, if one is
     /// configured.
     pub const fn tcp_socket(mut self, socket: SocketAddr) -> Self {
@@ -203,7 +198,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Sets the IP address to advertise in the local [`Enr`](base_execution_network_discv5::enr::Enr), without changing
+    /// Sets the IP address to advertise in the local [`Enr`](crate::enr::Enr), without changing
     /// the discv5 listen socket.
     ///
     /// Routed to the matching address family, so calling this once per family yields a dual-stack
@@ -216,7 +211,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Adds an additional kv-pair to include in the local [`Enr`](base_execution_network_discv5::enr::Enr). Takes the key
+    /// Adds an additional kv-pair to include in the local [`Enr`](crate::enr::Enr). Takes the key
     /// to use for the kv-pair and the rlp encoded value.
     pub fn add_enr_kv_pair(mut self, key: &'static [u8], value: Bytes) -> Self {
         self.other_enr_kv_pairs.push((key, value));
@@ -270,8 +265,7 @@ impl ConfigBuilder {
         } = self;
 
         let mut discv5_config = discv5_config.unwrap_or_else(|| {
-            base_execution_network_discv5::ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG)
-                .build()
+            crate::ConfigBuilder::new(DEFAULT_DISCOVERY_V5_LISTEN_CONFIG).build()
         });
 
         discv5_config.listen_config =
@@ -310,12 +304,12 @@ impl ConfigBuilder {
     }
 }
 
-/// Config used to bootstrap [`base_execution_network_discv5::Discv5`].
+/// Config used to bootstrap [`crate::Discv5Protocol`].
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Config used by [`base_execution_network_discv5::Discv5`]. Contains the [`ListenConfig`], with the discovery listen
+    /// Config used by [`crate::Discv5Protocol`]. Contains the [`ListenConfig`], with the discovery listen
     /// socket.
-    pub discv5_config: base_execution_network_discv5::Config,
+    pub discv5_config: crate::Config,
     /// Nodes to boot from.
     pub bootstrap_nodes: HashSet<BootNode>,
     /// Fork kv-pair to set in local node record. Identifies which network/chain/fork the node
@@ -324,7 +318,7 @@ pub struct Config {
     /// `RLPx` TCP socket to advertise.
     ///
     /// NOTE: IP address of `RLPx` socket overwrites IP address of same IP version in
-    /// [`base_execution_network_discv5::ListenConfig`].
+    /// [`crate::ListenConfig`].
     pub tcp_socket: SocketAddr,
     /// IPv4 address to advertise in the local ENR instead of the listen socket address.
     pub advertised_ipv4: Option<Ipv4Addr>,
@@ -364,9 +358,9 @@ impl Config {
         }
     }
 
-    /// Returns a mutable reference to the inner [`base_execution_network_discv5::Config`]. This allows overriding
+    /// Returns a mutable reference to the inner [`crate::Config`]. This allows overriding
     /// the listen config after the config has been built.
-    pub const fn discv5_config_mut(&mut self) -> &mut base_execution_network_discv5::Config {
+    pub const fn discv5_config_mut(&mut self) -> &mut crate::Config {
         &mut self.discv5_config
     }
 
@@ -397,9 +391,9 @@ impl Config {
         }
     }
 
-    /// Returns the discovery (UDP) socket contained in the [`base_execution_network_discv5::Config`]. Returns the IPv6
+    /// Returns the discovery (UDP) socket contained in the [`crate::Config`]. Returns the IPv6
     /// socket, if both IPv4 and v6 are configured. This socket will be advertised to peers in the
-    /// local [`Enr`](base_execution_network_discv5::enr::Enr).
+    /// local [`Enr`](crate::enr::Enr).
     pub fn discovery_socket(&self) -> SocketAddr {
         // Prefer v6 when both are configured (matches original `DualStack` behavior).
         ipv6(&self.discv5_config.listen_config)
@@ -408,8 +402,8 @@ impl Config {
             .unwrap_or_else(|| SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0)))
     }
 
-    /// Returns the `RLPx` (TCP) socket contained in the [`base_execution_network_discv5::Config`]. This socket will be
-    /// advertised to peers in the local [`Enr`](base_execution_network_discv5::enr::Enr).
+    /// Returns the `RLPx` (TCP) socket contained in the [`crate::Config`]. This socket will be
+    /// advertised to peers in the local [`Enr`](crate::enr::Enr).
     pub const fn rlpx_socket(&self) -> &SocketAddr {
         &self.tcp_socket
     }
@@ -451,7 +445,7 @@ pub fn ipv6(listen_config: &ListenConfig) -> Option<SocketAddrV6> {
     }
 }
 
-/// Returns the amended [`base_execution_network_discv5::ListenConfig`] based on the `RLPx` IP address. The ENR is limited
+/// Returns the amended [`crate::ListenConfig`] based on the `RLPx` IP address. The ENR is limited
 /// to one IP address per IP version (atm, may become spec'd how to advertise different addresses).
 /// The `RLPx` address overwrites the discv5 address w.r.t. IP version.
 pub fn amend_listen_config_wrt_rlpx(
@@ -531,7 +525,7 @@ pub fn discv5_sockets_wrt_rlpx_addr(
 }
 
 /// A boot node can be added either as a string in either 'enode' URL scheme or serialized from
-/// [`Enr`](base_execution_network_discv5::Enr) type.
+/// [`Enr`](crate::Enr) type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Display)]
 pub enum BootNode {
     /// An unsigned node record.
@@ -539,7 +533,7 @@ pub enum BootNode {
     Enode(Multiaddr),
     /// A signed node record.
     #[display("{_0:?}")]
-    Enr(base_execution_network_discv5::Enr),
+    Enr(crate::Enr),
 }
 
 impl BootNode {

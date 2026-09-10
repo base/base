@@ -1,7 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use base_common_types_chain::BaseReceipt;
-use base_common_types_chain::RecoveredBlock;
+use base_common_types_chain::{BaseReceipt, RecoveredBlock};
 
 use crate::{BlockReceipts, Chain};
 
@@ -106,14 +105,14 @@ impl CanonStateNotification {
 mod tests {
     use std::collections::BTreeMap;
 
-    use crate::ExecutionOutcome;
     use alloy_primitives::{B256, Signature, b256};
     use base_common_types_chain::{
-        BaseTxEnvelope as TransactionSigned, BlockBody, SignableTransaction, TxLegacy,
+        BaseTxEnvelope as TransactionSigned, BlockBody, SealedBlock, SealedHeader,
+        SignableTransaction, TxLegacy,
     };
-    use base_common_types_chain::{SealedBlock, SealedHeader};
 
     use super::*;
+    use crate::ExecutionOutcome;
 
     #[test]
     fn test_commit_notification() {

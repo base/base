@@ -9,37 +9,38 @@ use std::{
     sync::OnceLock,
 };
 
-use crate::NodeFileConfig as Config;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
-use base_common_cli_support::{SecretKeyError, get_secret_key};
-use base_common_runtime_tasks::Runtime;
-use base_execution_network_discovery::DEFAULT_COUNT_BOOTSTRAP_LOOKUPS;
-use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_PORT;
-use base_execution_network_discovery::DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL;
-use base_execution_network_discovery::DEFAULT_SECONDS_LOOKUP_INTERVAL;
-use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR;
-use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT as DEFAULT_DISCOVERY_PORT;
-use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
-use base_execution_network_discv5::ListenConfig;
+use base_common_cli::{SecretKeyError, get_secret_key};
+use base_common_runtime::Runtime;
+use base_execution_network_discovery::{
+    DEFAULT_COUNT_BOOTSTRAP_LOOKUPS, DEFAULT_DISCOVERY_V5_PORT, DEFAULT_NET_IF_NAME,
+    DEFAULT_SECONDS_BOOTSTRAP_LOOKUP_INTERVAL, DEFAULT_SECONDS_LOOKUP_INTERVAL,
+    DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR,
+    DISCV4_DEFAULT_DISCOVERY_PORT as DEFAULT_DISCOVERY_PORT, ListenConfig, NatResolver,
+};
 use base_execution_network_service::{
     HelloMessageWithProtocols, NetworkConfigBuilder,
-    transactions::DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
-    transactions::SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE,
-    transactions::TransactionFetcherConfig, transactions::TransactionPropagationMode,
-    transactions::TransactionsManagerConfig, transactions::config::TransactionIngressPolicy,
-    transactions::config::TransactionPropagationKind,
-    transactions::constants::tx_fetcher::DEFAULT_MAX_CAPACITY_CACHE_PENDING_FETCH,
-    transactions::constants::tx_fetcher::DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS,
-    transactions::constants::tx_fetcher::DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS_PER_PEER,
-    transactions::constants::tx_manager::DEFAULT_MAX_COUNT_PENDING_POOL_IMPORTS,
-    transactions::constants::tx_manager::DEFAULT_MAX_COUNT_TRANSACTIONS_SEEN_BY_PEER,
-    transactions::constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
+    transactions::{
+        DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
+        SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESPONSE, TransactionFetcherConfig,
+        TransactionPropagationMode, TransactionsManagerConfig,
+        config::{TransactionIngressPolicy, TransactionPropagationKind},
+        constants::{
+            tx_fetcher::{
+                DEFAULT_MAX_CAPACITY_CACHE_PENDING_FETCH, DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS,
+                DEFAULT_MAX_COUNT_CONCURRENT_REQUESTS_PER_PEER,
+            },
+            tx_manager::{
+                DEFAULT_MAX_COUNT_PENDING_POOL_IMPORTS,
+                DEFAULT_MAX_COUNT_TRANSACTIONS_SEEN_BY_PEER,
+                DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
+            },
+        },
+    },
 };
-use base_execution_network_types::IpFilter;
-use base_execution_network_types::NodeRecord;
-use base_execution_network_types::{TrustedPeer, mainnet_nodes};
+use base_execution_network_wire::{IpFilter, NodeRecord, TrustedPeer, mainnet_nodes};
 use clap::{
     Args,
     builder::{OsStr, Resettable},
@@ -47,7 +48,7 @@ use clap::{
 use secp256k1::SecretKey;
 use tracing::error;
 
-use crate::version::version_metadata;
+use crate::{NodeFileConfig as Config, version::version_metadata};
 
 /// Global static network defaults
 static NETWORK_DEFAULTS: OnceLock<DefaultNetworkArgs> = OnceLock::new();
@@ -1053,7 +1054,7 @@ impl DiscoveryArgs {
         });
 
         let mut discv5_config_builder =
-            base_execution_network_discv5::ConfigBuilder::new(ListenConfig::from_two_sockets(
+            base_execution_network_discovery::ConfigBuilder::new(ListenConfig::from_two_sockets(
                 discv5_addr_ipv4.map(|addr| SocketAddrV4::new(addr, discv5_port.unwrap_or(*port))),
                 discv5_addr_ipv6
                     .map(|addr| SocketAddrV6::new(addr, discv5_port_ipv6.unwrap_or(*port), 0, 0)),
@@ -1168,13 +1169,13 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::NodeFileConfig as Config;
     use base_common_chain_config::BaseChainSpec;
-    use base_execution_network_types::NodeRecord;
+    use base_execution_network_wire::NodeRecord;
     use clap::Parser;
     use secp256k1::SecretKey;
 
     use super::*;
+    use crate::NodeFileConfig as Config;
 
     /// A helper type to parse Args more easily
     #[derive(Parser)]

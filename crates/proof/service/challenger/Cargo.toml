@@ -18,15 +18,15 @@ alloy-rlp = { workspace = true }
 humantime = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
-base-proof-client-providers = { workspace = true }
+base-proof-l1 = { workspace = true }
+base-common-l1 = { workspace = true }
+base-common-cli = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-l1-submission = {workspace = true}
-base-proof-types-protocol = { workspace = true }
-base-common-cli-support = { workspace = true }
+base-proof-types = { workspace = true }
+base-proof-client = { workspace = true }
+base-consensus-batch = { workspace = true }
 base-common-types-chain = { workspace = true }
 metrics = { workspace = true, optional = true }
-base-common-l1-transactions = {workspace = true}
-base-consensus-batch-types = { workspace = true }
 base-proof-service-client = { workspace = true }
 serde_json = { workspace = true, optional = true }
 url = { workspace = true, features = ["default"] }
@@ -39,18 +39,24 @@ base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["default", "ring"] }
+base-common-runtime = { workspace = true, features = ["tokio"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-common-runtime-tasks = { workspace = true, features = ["tokio"] }
-base-common-client-ethereum = {workspace = true, features = ["default"]}
+base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-proof-service-protocol = { workspace = true, features = ["default"] }
 base-common-observability-health = { workspace = true, features = ["axum-server"] }
 
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-proof-service-challenger = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
+base-proof-service-challenger = { workspace = true, features = ["test-utils"] }
 
 [features]
-metrics = ["base-common-observability-metrics/metrics", "base-common-l1-transactions/metrics", "dep:metrics"]
-test-utils = ["base-common-types-rpc", "async-trait", "base-consensus-batch-types/test-utils", "base-common-runtime-tasks/test-utils", "serde_json"]
+metrics = ["base-common-observability-metrics/metrics", "base-common-l1/metrics", "dep:metrics"]
+test-utils = [
+    "base-common-types-rpc",
+    "async-trait",
+    "base-consensus-batch/test-utils",
+    "base-common-runtime/test-utils",
+    "serde_json",
+]

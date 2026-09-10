@@ -1,11 +1,10 @@
 //! This module extends the Ethereum JSON-RPC provider with the Admin namespace's RPC methods.
-use crate::Network;
 use alloy_rpc_types_admin::{NodeInfo, PeerInfo};
 use alloy_transport::TransportResult;
 
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;
-use crate::Provider;
+use crate::{Network, Provider};
 
 /// Admin namespace rpc interface that gives access to several non-standard RPC methods.
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
@@ -83,7 +82,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use base_common_process_nodes::{Geth, utils::run_with_tempdir};
+    use base_common_process::{Geth, utils::run_with_tempdir};
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

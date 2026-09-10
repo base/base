@@ -6,10 +6,8 @@ use alloy_primitives::{
 };
 use alloy_rlp::EMPTY_STRING_CODE;
 use base_common_types_chain::EMPTY_ROOT_HASH;
-use base_execution_state_database::DbTxMut;
-use base_execution_state_database::{DbCursorRW, tables};
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::StorageEntry;
+use base_execution_evm_runtime::StoredAccount as Account;
+use base_execution_state_database::{DbCursorRW, DbTxMut, tables};
 use base_execution_state_provider::{HashingWriter, test_utils::create_test_provider_factory};
 use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseProof, DatabaseStateRoot, DatabaseStorageRoot,
@@ -17,6 +15,7 @@ use base_execution_state_trie::{
     MultiProofTargets, Nibbles, StateRoot, StorageRoot, TrieNodeV2, proof::Proof,
     witness::TrieWitness,
 };
+use base_execution_state_types::StorageEntry;
 
 type DbStateRoot<'a, TX, A> =
     StateRoot<DatabaseTrieCursorFactory<&'a TX, A>, DatabaseHashedCursorFactory<&'a TX>>;

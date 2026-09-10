@@ -1,0 +1,264 @@
+//! RPC errors specific to Base.
+
+use std::convert::Infallible;
+
+use alloy_json_rpc::ErrorPayload;
+use alloy_primitives::Bytes;
+use alloy_transport::{RpcError, TransportErrorKind};
+use base_common_types_rpc::{BlockError, error::EthRpcErrorCode};
+use base_execution_evm_blocks::{BaseBlockExecutionError, ProviderError};
+use base_execution_evm_runtime::{
+    BaseHaltReason, BaseTransactionError, EVMError, ExecutionResult, InvalidTransaction,
+};
+use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
+
+use crate::{
+    EthTxEnvError, RpcErrorFactory, TransactionConversionError,
+    eth_services::{
+        EthApiError, RevertError,
+        error::{RpcInvalidTransactionError, SignError},
+    },
+};
+
+/// Base-specific errors, that extend [`EthApiError`].
+#[derive(Debug, thiserror::Error)]
+pub enum BaseEthApiError {
+    /// L1 ethereum error.
+    #[error(transparent)]
+    Eth(#[from] EthApiError),
+    /// EVM error originating from invalid Base data.
+    #[error(transparent)]
+    Evm(#[from] BaseBlockExecutionError),
+    /// Wrapper for [`base_execution_evm_runtime::InvalidTransaction`](InvalidTransaction).
+    #[error(transparent)]
+    InvalidTransaction(#[from] BaseInvalidTransactionError),
+    /// Sequencer client error.
+    #[error(transparent)]
+    Sequencer(#[from] SequencerClientError),
+}
+
+impl BaseEthApiError {
+    /// Returns the underlying Ethereum error when present.
+    pub fn as_err(&self) -> Option<&EthApiError> {
+        match self {
+            Self::Eth(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<BaseEthApiError> for jsonrpsee_types::error::ErrorObject<'static> {
+    fn from(err: BaseEthApiError) -> Self {
+        match err {
+            BaseEthApiError::Eth(err) => err.into(),
+            BaseEthApiError::InvalidTransaction(err) => err.into(),
+            BaseEthApiError::Evm(_) => RpcErrorFactory::internal(err.to_string()),
+            BaseEthApiError::Sequencer(err) => err.into(),
+        }
+    }
+}
+
+/// Base-specific invalid transaction errors
+#[derive(thiserror::Error, Debug)]
+pub enum BaseInvalidTransactionError {
+    /// A deposit transaction was submitted as a system transaction post-regolith.
+    #[error("no system transactions allowed after regolith")]
+    DepositSystemTxPostRegolith,
+    /// A deposit transaction halted post-regolith
+    #[error("deposit transaction halted after regolith")]
+    HaltedDepositPostRegolith,
+    /// The encoded transaction was missing during evm execution.
+    #[error("missing enveloped transaction bytes")]
+    MissingEnvelopedTx,
+    /// An EIP-8130 (account-abstraction) transaction was submitted via
+    /// `eth_sendRawTransaction` before the Zenith fork was active.
+    ///
+    /// The transaction type byte (`0x79`) is recognised by the consensus layer for
+    /// decoding/serialization purposes, but RPC admission is rejected until the
+    /// Zenith fork is active. The txpool validator enforces the same fork gate for
+    /// transactions arriving over devp2p.
+    #[error("{}", base_common_types_chain::EIP8130_REJECTION_MSG)]
+    Eip8130NotAccepted,
+    /// An EIP-8130 (account-abstraction) transaction was rejected during its
+    /// enshrined execution pipeline (authorization, nonce, intrinsic gas, fee, or
+    /// account-change apply). The string carries the underlying rejection reason.
+    #[error("EIP-8130 transaction rejected: {0}")]
+    Eip8130Rejected(String),
+}
+
+impl From<BaseInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
+    fn from(err: BaseInvalidTransactionError) -> Self {
+        match err {
+            BaseInvalidTransactionError::DepositSystemTxPostRegolith
+            | BaseInvalidTransactionError::HaltedDepositPostRegolith
+            | BaseInvalidTransactionError::MissingEnvelopedTx
+            | BaseInvalidTransactionError::Eip8130NotAccepted
+            | BaseInvalidTransactionError::Eip8130Rejected(_) => {
+                RpcErrorFactory::with_code_and_data(
+                    EthRpcErrorCode::TransactionRejected.code(),
+                    err.to_string(),
+                    None,
+                )
+            }
+        }
+    }
+}
+
+impl TryFrom<BaseTransactionError> for BaseInvalidTransactionError {
+    type Error = InvalidTransaction;
+
+    fn try_from(err: BaseTransactionError) -> Result<Self, Self::Error> {
+        match err {
+            BaseTransactionError::DepositSystemTxPostRegolith => {
+                Ok(Self::DepositSystemTxPostRegolith)
+            }
+            BaseTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
+            BaseTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
+            BaseTransactionError::Eip8130(reason) => Ok(Self::Eip8130Rejected(reason)),
+            BaseTransactionError::Base(err) => Err(err),
+        }
+    }
+}
+
+/// Error type when interacting with the Sequencer
+#[derive(Debug, thiserror::Error)]
+pub enum SequencerClientError {
+    /// Wrapper around an [`RpcError<TransportErrorKind>`].
+    #[error(transparent)]
+    HttpError(#[from] RpcError<TransportErrorKind>),
+}
+
+impl From<SequencerClientError> for jsonrpsee_types::error::ErrorObject<'static> {
+    fn from(err: SequencerClientError) -> Self {
+        match err {
+            SequencerClientError::HttpError(RpcError::ErrorResp(ErrorPayload {
+                code,
+                message,
+                data,
+            })) => jsonrpsee_types::error::ErrorObject::owned(code as i32, message, data),
+            err => jsonrpsee_types::error::ErrorObject::owned(
+                INTERNAL_ERROR_CODE,
+                err.to_string(),
+                None::<String>,
+            ),
+        }
+    }
+}
+
+impl<T> From<EVMError<T, BaseTransactionError>> for BaseEthApiError
+where
+    T: Into<EthApiError>,
+{
+    fn from(error: EVMError<T, BaseTransactionError>) -> Self {
+        match error {
+            EVMError::Transaction(err) => match err.try_into() {
+                Ok(err) => Self::InvalidTransaction(err),
+                Err(err) => Self::Eth(EthApiError::InvalidTransaction(err.into())),
+            },
+            EVMError::Database(err) => Self::Eth(err.into()),
+            EVMError::Header(err) => Self::Eth(err.into()),
+            EVMError::Custom(err) => Self::Eth(EthApiError::EvmCustom(err)),
+            EVMError::CustomAny(err) => Self::Eth(EthApiError::EvmCustom(err.to_string())),
+        }
+    }
+}
+
+impl BaseEthApiError {
+    /// Maps an execution halt to its Base RPC error.
+    pub fn from_evm_halt(halt: BaseHaltReason, gas_limit: u64) -> Self {
+        match halt {
+            BaseHaltReason::FailedDeposit => {
+                BaseInvalidTransactionError::HaltedDepositPostRegolith.into()
+            }
+            BaseHaltReason::Base(halt) => {
+                EthApiError::from(RpcInvalidTransactionError::halt(halt, gas_limit)).into()
+            }
+        }
+    }
+}
+
+impl BaseEthApiError {
+    /// Maps unexpected revert data to its RPC error.
+    pub fn from_revert(output: Bytes) -> Self {
+        Self::Eth(RpcInvalidTransactionError::Revert(RevertError::new(output)).into())
+    }
+}
+
+impl From<TransactionConversionError> for BaseEthApiError {
+    fn from(value: TransactionConversionError) -> Self {
+        Self::Eth(EthApiError::from(value))
+    }
+}
+
+impl From<EthTxEnvError> for BaseEthApiError {
+    fn from(value: EthTxEnvError) -> Self {
+        Self::Eth(EthApiError::from(value))
+    }
+}
+
+impl From<ProviderError> for BaseEthApiError {
+    fn from(value: ProviderError) -> Self {
+        Self::Eth(EthApiError::from(value))
+    }
+}
+
+impl From<BlockError> for BaseEthApiError {
+    fn from(value: BlockError) -> Self {
+        Self::Eth(EthApiError::from(value))
+    }
+}
+
+impl From<Infallible> for BaseEthApiError {
+    fn from(value: Infallible) -> Self {
+        match value {}
+    }
+}
+
+impl From<crate::eth_services::error::RpcPoolError> for BaseEthApiError {
+    fn from(error: crate::eth_services::error::RpcPoolError) -> Self {
+        Self::Eth(EthApiError::PoolError(error))
+    }
+}
+
+impl BaseEthApiError {
+    /// Converts an error through the Ethereum RPC error representation.
+    pub fn from_eth_err<E>(error: E) -> Self
+    where
+        EthApiError: From<E>,
+    {
+        Self::Eth(EthApiError::from(error))
+    }
+
+    /// Returns whether initialization failed because the requested gas limit was too high.
+    pub fn is_gas_too_high(&self) -> bool {
+        matches!(self, Self::Eth(error) if error.is_gas_too_high())
+    }
+
+    /// Returns whether initialization failed because the intrinsic gas was too low.
+    pub fn is_gas_too_low(&self) -> bool {
+        matches!(self, Self::Eth(error) if error.is_gas_too_low())
+    }
+
+    /// Returns successful call data or the corresponding revert/halt error.
+    pub fn ensure_success(result: ExecutionResult<BaseHaltReason>) -> Result<Bytes, Self> {
+        match result {
+            ExecutionResult::Success { output, .. } => Ok(output.into_data()),
+            ExecutionResult::Revert { output, .. } => Err(Self::from_revert(output)),
+            ExecutionResult::Halt { reason, gas, .. } => {
+                Err(Self::from_evm_halt(reason, gas.tx_gas_used()))
+            }
+        }
+    }
+}
+
+impl From<SignError> for BaseEthApiError {
+    fn from(error: SignError) -> Self {
+        Self::Eth(error.into())
+    }
+}
+
+impl From<RpcInvalidTransactionError> for BaseEthApiError {
+    fn from(error: RpcInvalidTransactionError) -> Self {
+        Self::Eth(error.into())
+    }
+}

@@ -6,13 +6,13 @@
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_common_chain_config as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_proof_host_service as _;
+use base_proof_host as _;
+#[cfg(not(any(target_os = "linux", feature = "local")))]
+use base_proof_service_client as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_tee_nitro_host as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
 use base_proof_worker as _;
-#[cfg(not(any(target_os = "linux", feature = "local")))]
-use base_proof_service_client as _;
 use serde as _;
 use tokio as _;
 #[cfg(not(any(target_os = "linux", feature = "local")))]
@@ -25,5 +25,5 @@ use uuid as _;
 mod cli;
 
 fn main() {
-    base_common_cli_support::run_cli_main!(cli::Cli);
+    base_common_cli::run_cli_main!(cli::Cli);
 }

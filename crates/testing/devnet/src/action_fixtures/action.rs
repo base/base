@@ -27,7 +27,7 @@ pub trait Action {
 /// filters out all deposit transactions, and encodes the remaining user
 /// transactions into a [`SingleBatch`] for submission.
 ///
-/// [`SingleBatch`]: base_consensus_batch_types::SingleBatch
+/// [`SingleBatch`]: base_consensus_batch::SingleBatch
 pub trait L2BlockProvider {
     /// Return the next L2 block, or `None` if the source is exhausted.
     fn next_block(&mut self) -> Option<BaseBlock>;

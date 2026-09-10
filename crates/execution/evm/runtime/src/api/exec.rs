@@ -1,7 +1,5 @@
 //! Base execution error type.
-use base_execution_evm_machine::{Database, EVMError};
-
-use crate::BaseTransactionError;
+use base_execution_evm_runtime::{BaseTransactionError, Database, EVMError};
 
 /// Error type for [`BaseEvm`][crate::BaseEvm] execution, parameterized over the database
 /// error type [`DB`].
@@ -11,11 +9,8 @@ pub type BaseError<DB> = EVMError<<DB as Database>::Error, BaseTransactionError>
 mod tests {
     use alloy_primitives::Address;
     use base_execution_evm_runtime::{
-        ExecuteEvm, SystemCallEvm,
-        database::{InMemoryDB, State},
+        BaseContext, Builder, DefaultBase, ExecuteEvm, InMemoryDB, State, SystemCallEvm,
     };
-
-    use crate::{BaseContext, Builder, DefaultBase};
 
     /// Verifies that the system call caller is loaded into the EVM state cache so it appears in the
     /// execution witness.

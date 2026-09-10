@@ -1,16 +1,14 @@
 use alloy_primitives::{B256, Signature};
-use base_common_types_chain::SignedTransaction;
-use base_common_types_chain::{EthereumTxEnvelope, TxEip4844};
+use base_common_types_chain::{EthereumTxEnvelope, SignedTransaction, TxEip4844};
 use base_execution_network_service::{
-    NetworkEventListenerProvider, PeerRequest, test_utils::NetworkEventStream,
-    test_utils::NetworkTestData, test_utils::Testnet,
+    NetworkEventListenerProvider, NetworkInfo, PeerRequest, Peers,
+    test_utils::{NetworkEventStream, NetworkTestData, Testnet},
 };
-use base_execution_network_service::{NetworkInfo, Peers};
-use base_execution_network_wire::GetPooledTransactions;
-use base_execution_network_wire::PooledTransactions;
-use base_execution_network_wire::{NetworkSyncUpdater, SyncState};
+use base_execution_network_wire::{
+    GetPooledTransactions, NetworkSyncUpdater, PooledTransactions, SyncState,
+};
 use base_execution_state_provider::test_utils::MockEthProvider;
-use base_execution_txpool_pool::{TransactionPool, test_utils::MockTransaction};
+use base_execution_txpool::{TransactionPool, test_utils::MockTransaction};
 use tokio::sync::oneshot;
 // peer0: `GetPooledTransactions` requester
 // peer1: `GetPooledTransactions` responder

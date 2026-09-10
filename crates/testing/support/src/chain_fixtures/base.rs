@@ -4,10 +4,9 @@ use std::ops::RangeInclusive;
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType, SignableTransaction,
-    Transaction as _,
+    BaseReceipt, BaseTxEnvelope, BaseTypedTransaction, OpTxType, SealedBlock, SignableTransaction,
+    Transaction as _, crypto::secp256k1::sign_message,
 };
-use base_common_types_chain::{SealedBlock, crypto::secp256k1::sign_message};
 use rand::Rng;
 use secp256k1::Keypair;
 

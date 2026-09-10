@@ -17,22 +17,22 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
+base-common-cli = { workspace = true }
 base-node-service = { workspace = true }
-base-common-cli-support = { workspace = true}
+base-consensus-driver = { workspace = true }
+base-consensus-source = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
-base-consensus-driver-service = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
-base-consensus-source-providers = { workspace = true }
 alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "env"] }
 figment = { workspace = true, features = ["env", "toml"] }
-base-node-cli = {features = ["default"], workspace = true}
+base-node-cli = { features = ["default"], workspace = true }
+base-execution-payload = { workspace = true, features = ["default"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
-base-execution-payload-builder = {workspace = true, features = ["default"]}
-base-common-chain-config = {features = ["default", "std"], workspace = true}
-base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
+base-common-chain-config = { features = ["default", "std"], workspace = true }
+base-execution-evm-blocks = { features = ["default", "std"], workspace = true }
 
 [dev-dependencies]
 url = { workspace = true }
@@ -40,4 +40,4 @@ base-common-chain-config = { workspace = true }
 figment = { workspace = true, features = ["test"] }
 
 [features]
-jemalloc-prof = ["base-node-cli/jemalloc-symbols", "base-common-cli-support/jemalloc-prof"]
+jemalloc-prof = ["base-node-cli/jemalloc-symbols", "base-common-cli/jemalloc-prof"]

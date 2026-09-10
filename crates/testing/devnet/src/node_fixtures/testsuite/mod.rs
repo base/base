@@ -3,9 +3,8 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use alloy_primitives::B256;
-use base_common_types_payload::BaseExecutionPayloadEnvelopeV3;
-use base_execution_payload_builder::PayloadId;
-use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_common_types_payload::{BaseExecutionPayloadEnvelopeV3, BasePayloadBuilderAttributes};
+use base_execution_payload::PayloadId;
 use eyre::Result;
 use jsonrpsee::http_client::HttpClient;
 
@@ -15,9 +14,8 @@ pub mod setup;
 use std::sync::Arc;
 
 use base_common_client_ethereum::{Provider, ProviderBuilder};
-use base_common_types_payload::{ForkchoiceState, PayloadAttributes};
+use base_common_types_payload::{ConsensusEngineHandle, ForkchoiceState, PayloadAttributes};
 use base_execution_engine_driver::BaseExecutionHandle;
-use base_execution_engine_types::ConsensusEngineHandle;
 use url::Url;
 
 use crate::node_fixtures::testsuite::setup::Setup;

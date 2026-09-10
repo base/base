@@ -2,46 +2,49 @@
 
 Repository-owned code is organized by responsibility. A library at
 `crates/<domain>/<subsystem>/<item>` is named
-`base-<domain>-<subsystem>-<item>`; two-segment library paths are also valid.
+`base-<domain>-<subsystem>-<item>`. When a subsystem contains only one crate,
+it lives directly at `crates/<domain>/<subsystem>` and is named
+`base-<domain>-<subsystem>`, for example `crates/execution/txpool` and
+`base-execution-txpool`. The checker rejects single-crate grouping directories.
+Groups containing multiple crates, such as EVM and state, retain their children.
 Grouping directories are not packages. Binary packages live under `bin/`,
 use the `base-` prefix, and preserve their explicit executable names.
 
-The consolidation reduced the workspace from 203 packages (83 under
-`vendor/`) to 109 packages (none under `vendor/`). Retained Reth, REVM and
-Alloy implementations now live with their Base subsystem. This is an
-ownership change, not an upstream dependency migration. Crypto backend,
-native FFI, procedural macro and proof deployment boundaries remain distinct.
-Package counts do not establish a build-time improvement; no clean-build
-speedup is claimed.
+The workspace contains 94 packages, down from 109 before the Base-only simplification
+(and 203 before the earlier vendor consolidation). Local Reth, REVM, and Alloy code
+lives with its Base subsystem. Native FFI, procedural macro, and proof deployment
+boundaries remain distinct. The dependency graph has 642 internal edges, down from 768.
+These counts do not establish a build-time improvement.
 
 ## Ownership
 
 | Domain | Packages | Responsibility |
 |---|---:|---|
-| `common` | 20 | Cross-domain chain/configuration data, RPC and payload schemas, clients, codecs, CLI support and process utilities |
-| `execution` | 33 | EVM, persistent and memory state, transaction pool, payload building, RPC, EL networking, synchronization and execution driver |
+| `common` | 19 | Cross-domain chain/configuration data, RPC and payload schemas, clients, codecs, CLI support and process utilities |
+| `execution` | 20 | EVM, persistent and memory state, transaction pool, payload building, RPC, EL networking, synchronization and execution driver |
 | `consensus` | 5 | CL networking, L1/L2 sources, deterministic derivation, actor service and shared consensus types |
 | `batcher` | 2 | Batch/channel encoding and publication service |
 | `node` | 3 | Process configuration, command parsing and fixed node assembly/lifecycle |
 | `proof` | 16 | Deterministic proof execution, witness formats, submission, host/client/server and attestation boundaries |
 | `infra` | 7 | Independent operational services |
-| `testing` | 5 | Reusable fixtures, devnet systems and diagnostic tools |
+| `testing` | 4 | Reusable fixtures, devnet systems and diagnostic tools |
 | `bin` | 18 | Executable entry points and separate deployment artifacts |
 
-EVM primitives and machine code sit below precompiles and runtime. Execution
-blocks combine the runtime with Base block validation and execution. Concrete
-inspectors remain separate so lightweight execution does not load every tracing
-backend.
+EVM primitives, interpreter, memory state, cryptographic precompiles, native precompiles,
+and Base execution live in `execution/evm/runtime`. Its production context fixes Base's
+transaction, configuration, and chain-state types. Database and inspector parameters remain.
+Ethereum reference constructors are gated behind test utilities. RPC owns concrete inspectors,
+including the retained optional JavaScript tracer.
 
-State types and interfaces sit below database/provider/trie implementations.
-Memory state remains separate from persistent databases. Maintenance jobs own
-their options and snapshot schemas; node configuration combines those options.
-The MDBX sys package retains the native build/linking boundary.
+State types and provider interfaces sit below database, provider, and trie implementations.
+Database-specific traits live in the database crate. Storage codecs live with chain types;
+L1 fee calculations live with chain configuration. The MDBX sys package retains its native
+build/linking boundary.
 
-RPC wire schemas live in common types. Execution handlers own simulations,
-conversion and endpoint caches; the server owns transport assembly. Node service
-resolves startup configuration. Consensus and execution share payload data
-without sharing their implementation crates.
+RPC handlers, transport assembly, builder RPC, and metering RPC live together in
+`execution/rpc`. Shared payload types also own engine data and payload builder
+interfaces. Node service owns operational debug clients. Discovery v5 and its wrapper share
+one crate, as do wire messages and peer types.
 
 Consensus derivation and proof execution retain their bare-metal/no_std build
 paths. Node assembly, CLI command trees and launch helpers do not belong in these
@@ -56,16 +59,38 @@ as dependency boundaries. It is included in `just check all`, `just ci` and
 
 - Common cannot depend on execution, consensus, batcher, builder, proof, infra,
   client or node. Execution may depend on common. These domain rules include
-  optional, build, target-specific and dev dependencies.
+  optional, build, target-specific and dev dependencies. Shared payload outcomes have two
+  specific normal dependencies on execution state types and EVM runtime error types.
 - Lower domains cannot use node composition as a normal or build dependency.
   Execution integration tests may depend on node through dev dependencies.
-- Production libraries cannot depend on testing helpers, with two bounded
-  exceptions: node/service uses the operational debug client, and
-  execution/sync/pipeline exposes optional testing/support fixtures through its
+- Production libraries cannot depend on testing helpers, with one bounded
+  exception: execution/sync exposes optional testing/support fixtures through its
   explicit `test-utils` feature.
 - The pre-existing restrictions between execution, consensus, batcher, proof
   and infra remain enforced. The complete policy is in
   [check-crate-deps.py](../../etc/scripts/ci/check-crate-deps.py).
+
+Execution also has direct dependency boundaries between subsystems:
+
+| Consumer | Cannot depend on execution subsystems |
+|---|---|
+| State | Payload, RPC, txpool |
+| EVM | Engine, network, payload, RPC, sync, txpool |
+| Network | Engine, payload, RPC, sync |
+| Txpool | Engine, payload, sync; RPC except in dev dependencies |
+| Payload | Engine, network, RPC, sync |
+| Sync | Payload, RPC, txpool |
+| RPC | Engine, sync |
+
+These rules include optional, build, target-specific, and dev dependencies,
+apart from the explicit txpool/RPC integration-test allowance. Common RPC
+schemas are data dependencies and are not covered by the RPC-server restriction.
+The checker validates manifest edges, not transitive feature reachability.
+
+Foundational state packages (`types`, `database`, `mdbx-sys`, `provider`, and
+`trie`) also cannot depend on engine, network, or sync services, even in tests.
+The state indexer's event-consumer service and maintenance's sync integration
+tests retain their existing dependencies; they are outside this storage foundation.
 
 ## Validation
 
@@ -74,7 +99,7 @@ See [build, regression-test and Docker devnet results](validation.md).
 ## Internal dependency graph
 
 [Open the complete SVG](crates.svg), or inspect the [Graphviz source](crates.dot).
-The graph contains all 109 workspace packages and 768 distinct internal edges;
+The graph contains all 94 workspace packages and 642 distinct internal edges;
 external dependencies are excluded.
 
 An arrow points from the consumer to its dependency. A solid line means an

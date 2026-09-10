@@ -49,7 +49,7 @@ async fn test_base_node_custom_genesis_number() {
             .unwrap_or_chain_default(config.chain.chain(), config.datadir.clone())
             .db(),
     );
-    let runtime = base_common_runtime_tasks::Runtime::test();
+    let runtime = base_common_runtime::Runtime::test();
     let node_handle = base_node_service::NodeLaunch::new(config.clone(), db, runtime.clone())
         .launch()
         .await

@@ -1,15 +1,13 @@
 mod sync_target;
 use std::{sync::Arc, time::Duration};
 
-use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
 };
-use base_execution_state_tasks::BaseProofsStore;
 use base_execution_state_tasks::{
-    BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage,
+    BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage, BaseProofsStore,
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
 };
@@ -18,6 +16,8 @@ use futures::TryStreamExt;
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
+
+use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 
 /// Default safety threshold for the gap between stored earliest block and the configured
 /// window target. When exceeded on startup, the node refuses to auto-prune and asks the
@@ -625,8 +625,7 @@ mod tests {
     use std::{collections::BTreeMap, default::Default, sync::Arc, time::Duration};
 
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
-    use base_common_types_chain::RecoveredBlock;
-    use base_common_types_chain::private::alloy_primitives::B256;
+    use base_common_types_chain::{RecoveredBlock, private::alloy_primitives::B256};
     use base_execution_state_database::test_utils::tempdir_path;
     use base_execution_state_tasks::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,

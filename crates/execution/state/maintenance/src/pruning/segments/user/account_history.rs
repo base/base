@@ -1,13 +1,12 @@
 use alloy_primitives::BlockNumber;
-use base_execution_state_api::{ChangeSetReader, StorageSettingsCache};
 use base_execution_state_database::DbTxMut;
 use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory,
     changeset_walker::StaticFileAccountChangesetWalker,
 };
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
-    PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
+    ChangeSetReader, PruneMode, PrunePurpose, PruneSegment, SegmentOutput, SegmentOutputCheckpoint,
+    StaticFileSegment, StorageSettingsCache,
 };
 use rustc_hash::FxHashMap;
 use tracing::{instrument, trace};
@@ -180,16 +179,17 @@ mod tests {
 
     use alloy_primitives::{B256, BlockNumber};
     use assert_matches::assert_matches;
-    use base_execution_state_api::StorageSettingsCache;
     use base_execution_state_database::{BlockNumberList, models::StorageSettings, tables};
     use base_execution_state_provider::{
         DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
     };
-    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
-    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
+    use base_execution_state_types::{
+        PruneCheckpoint, PruneMode, PruneProgress, PruneSegment, StorageSettingsCache,
+    };
+    use base_execution_sync::test_utils::{StorageKind, TestStageDB};
     use base_testing_support::{
-        generators, generators::BlockRangeParams, generators::random_changeset_range,
-        generators::random_eoa_accounts,
+        generators,
+        generators::{BlockRangeParams, random_changeset_range, random_eoa_accounts},
     };
 
     use crate::pruning::segments::{

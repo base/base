@@ -6,29 +6,16 @@ use std::{
     },
 };
 
-use crate::{
-    BlockDownloaderProvider, CellCustody, DiscoveryEvent, NetworkError, NetworkEvent,
-    NetworkEventListenerProvider, NetworkInfo, NetworkPeersEvents, NetworkStatus, PeerEvent,
-    PeerEventStream, PeerInfo, PeerRequest, Peers, PeersHandle, PeersHandleProvider, PeersInfo,
-};
 use alloy_eip2124::{ForkFilter, Head};
 use alloy_primitives::B256;
-use base_common_runtime_tasks::{EventSender, EventStream};
+use base_common_runtime::{EventSender, EventStream};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
-use base_execution_network_discovery::Discv4;
-use base_execution_network_discovery::Discv5;
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_types::PeerAddr;
-use base_execution_network_types::PeerKind;
-use base_execution_network_types::Reputation;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_types::{NodeRecord, PeerId, TrustedPeer};
-use base_execution_network_wire::BlockRangeUpdate;
-use base_execution_network_wire::BroadcastPoolTransactions;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::NewPooledTransactionHashes;
-use base_execution_network_wire::SharedTransactions;
-use base_execution_network_wire::{NetworkSyncUpdater, SyncState, SyncStateProvider};
+use base_execution_network_discovery::{Discv4, Discv5, NatResolver};
+use base_execution_network_wire::{
+    BlockRangeUpdate, BroadcastPoolTransactions, DisconnectReason, NetworkSyncUpdater,
+    NewPooledTransactionHashes, NodeRecord, PeerAddr, PeerId, PeerKind, Reputation,
+    ReputationChangeKind, SharedTransactions, SyncState, SyncStateProvider, TrustedPeer,
+};
 use enr::Enr;
 use futures::StreamExt;
 use parking_lot::Mutex;
@@ -40,7 +27,10 @@ use tokio::sync::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
-    FetchClient, config::NetworkMode, message::PeerMessage, swarm::NetworkConnectionState,
+    BlockDownloaderProvider, CellCustody, DiscoveryEvent, FetchClient, NetworkError, NetworkEvent,
+    NetworkEventListenerProvider, NetworkInfo, NetworkPeersEvents, NetworkStatus, PeerEvent,
+    PeerEventStream, PeerInfo, PeerRequest, Peers, PeersHandle, PeersHandleProvider, PeersInfo,
+    config::NetworkMode, message::PeerMessage, swarm::NetworkConnectionState,
     transactions::TransactionsHandle,
 };
 
@@ -103,7 +93,7 @@ impl NetworkHandle {
             Arc::new(Mutex::new(([127, 0, 0, 1], 0).into())),
             mpsc::unbounded_channel().0,
             secret_key,
-            base_execution_network_types::pk2id(&secret_key.public_key(secp256k1::SECP256K1)),
+            base_execution_network_wire::pk2id(&secret_key.public_key(secp256k1::SECP256K1)),
             PeersHandle::new(mpsc::unbounded_channel().0),
             NetworkMode::Stake,
             Arc::new(AtomicU64::new(chain_id)),

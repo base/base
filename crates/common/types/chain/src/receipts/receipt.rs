@@ -576,7 +576,8 @@ pub(super) mod serde_bincode_compat {
         /// EIP-8130 Account Abstraction receipt
         Eip8130 {
             /// Standard receipt body.
-            inner: base_common_types_chain::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>,
+            inner:
+                base_common_types_chain::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>,
             /// Per-phase execution statuses.
             phase_statuses: Cow<'a, [u8]>,
         },

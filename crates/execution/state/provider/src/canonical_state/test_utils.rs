@@ -11,16 +11,11 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{
     BaseBlockBody as BlockBody, BaseReceipt as Receipt, BaseTxEnvelope as TransactionSigned,
-    BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, SignableTransaction, TxEip1559,
-    TxReceipt,
+    BaseTypedTransaction as Transaction, EMPTY_ROOT_HASH, Header, Recovered, RecoveredBlock,
+    SealedBlock, SealedHeader, SignableTransaction, SignedTransaction, TxEip1559, TxReceipt,
+    proofs::{calculate_receipt_root, calculate_transaction_root, calculate_withdrawals_root},
 };
-use base_common_types_chain::{
-    Recovered, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction,
-    proofs::calculate_receipt_root, proofs::calculate_transaction_root,
-    proofs::calculate_withdrawals_root,
-};
-use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_evm_runtime::{AccountInfo, BundleState, StoredAccount as Account};
 use base_execution_state_trie::{ComputedTrieData, SortedTrieData, root::state_root_unhashed};
 use base_execution_state_types::{
     BlockExecutionOutput, BlockExecutionResult, Chain, ExecutionOutcome,

@@ -9,8 +9,7 @@ use base_common_observability_tracing::tracing::debug;
 use base_common_types_chain::RecoveredBlock;
 use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use base_execution_state_provider::{BlockReader, Chain, StateProviderFactory};
-use base_execution_state_types::ExecutionStageThresholds;
-use base_execution_state_types::PruneModes;
+use base_execution_state_types::{ExecutionStageThresholds, PruneModes};
 use futures::{
     StreamExt,
     stream::{FuturesOrdered, Stream},
@@ -232,9 +231,9 @@ mod tests {
 
     use alloy_primitives::{Address, TxKind, U256, b256};
     use base_common_chain_config::BaseChainSpec;
-    use base_common_types_chain::crypto::secp256k1::public_key_to_address;
     use base_common_types_chain::{
         BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
+        crypto::secp256k1::public_key_to_address,
     };
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{

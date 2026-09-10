@@ -3,7 +3,7 @@
 use core::time::Duration;
 use std::sync::Arc;
 
-use base_execution_payload_builder::{
+use base_execution_payload::{
     MeteringStore, SharedMeteringStore,
     config::{BaseBuilderConfig, BaseDAConfig, GasLimitConfig},
 };

@@ -1,7 +1,3 @@
-use crate::{
-    ProofRequest, ProofStatus as DbProofStatus, SessionStatus as DbSessionStatus,
-    canonical_session_id,
-};
 use base_proof_service_protocol::{
     ExecutionStats, GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
     ProofResult, ProofStatus, ZkProofResult, ZkVm,
@@ -11,7 +7,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY,
+    OP_SUCCINCT_DRY_RUN_METADATA_KEY, OP_SUCCINCT_EXECUTION_STATS_METADATA_KEY, ProofRequest,
+    ProofStatus as DbProofStatus, SessionStatus as DbSessionStatus, canonical_session_id,
     server::{ProverServiceServer, internal, invalid_argument, not_found, record_rpc_result},
 };
 
@@ -108,11 +105,11 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
     use chrono::Utc;
     use uuid::Uuid;
 
     use super::*;
+    use crate::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
 
     fn metadata_with_execution_stats(stats: serde_json::Value) -> serde_json::Value {
         let mut metadata = serde_json::Map::new();

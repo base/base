@@ -3,15 +3,15 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
 };
 
-use base_common_runtime_tasks::Runtime;
-use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR;
-use base_execution_network_discovery::Discv4Config;
-use base_execution_network_discovery::NatResolver;
-use base_execution_network_service::{
-    Discovery, NetworkConfigBuilder, NetworkManager, error::NetworkError, error::ServiceKind,
+use base_common_runtime::Runtime;
+use base_execution_network_discovery::{
+    DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_DISCOVERY_ADDR, Discv4Config, NatResolver,
 };
-use base_execution_network_service::{NetworkInfo, PeersInfo};
-use base_execution_state_api::NoopProvider;
+use base_execution_network_service::{
+    Discovery, NetworkConfigBuilder, NetworkInfo, NetworkManager, PeersInfo,
+    error::{NetworkError, ServiceKind},
+};
+use base_execution_state_database::NoopProvider;
 use secp256k1::SecretKey;
 use tokio::net::TcpListener;
 
@@ -21,7 +21,7 @@ fn is_addr_in_use_kind(err: &NetworkError, kind: ServiceKind) -> bool {
             *k == kind && error.kind() == io::ErrorKind::AddrInUse
         }
         NetworkError::Discv5Error(base_execution_network_discovery::Discv5Error::Discv5Error(
-            base_execution_network_discv5::Error::Io(err),
+            base_execution_network_discovery::Error::Io(err),
         )) => err.kind() == io::ErrorKind::AddrInUse,
         _ => false,
     }
@@ -91,8 +91,8 @@ async fn test_discv5_and_discv4_same_socket_ok() {
                 (DEFAULT_DISCOVERY_ADDR, test_port).into(),
             )
             .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(
-                    base_execution_network_discv5::ListenConfig::from_ip(
+                base_execution_network_discovery::ConfigBuilder::new(
+                    base_execution_network_discovery::ListenConfig::from_ip(
                         DEFAULT_DISCOVERY_ADDR,
                         test_port,
                     ),
@@ -123,8 +123,8 @@ async fn test_discv5_and_rlpx_same_socket_ok_without_discv4() {
                 (DEFAULT_DISCOVERY_ADDR, test_port).into(),
             )
             .discv5_config(
-                base_execution_network_discv5::ConfigBuilder::new(
-                    base_execution_network_discv5::ListenConfig::from_ip(
+                base_execution_network_discovery::ConfigBuilder::new(
+                    base_execution_network_discovery::ListenConfig::from_ip(
                         DEFAULT_DISCOVERY_ADDR,
                         test_port,
                     ),

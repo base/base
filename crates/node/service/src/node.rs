@@ -8,27 +8,25 @@ use std::{
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Address, B64, B256, Bytes, bytes::BytesMut};
 use alloy_rlp::Encodable;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::Upgrades;
+use base_common_chain_config::{BaseChainSpec, Upgrades};
 use base_common_observability_tracing::tracing::{debug, info};
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::SealedHeader;
-use base_common_types_payload::BasePayloadAttributes;
+use base_common_types_chain::{BlockHeader, SealedHeader};
+use base_common_types_payload::{BasePayloadAttributes, PayloadAttributesBuilder};
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_network_discv5::enr::IP_ENR_KEY;
-use base_execution_network_discv5::enr::IP6_ENR_KEY;
+use base_execution_network_discovery::enr::{IP_ENR_KEY, IP6_ENR_KEY};
 use base_execution_network_service::{
     NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo,
 };
-use base_execution_network_types::NodeRecord;
-use base_execution_payload_builder::{
+use base_execution_network_wire::NodeRecord;
+use base_execution_payload::{
     BasePayloadBuilderAttributes, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
-use base_execution_payload_types::PayloadAttributesBuilder;
-use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_state_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
-use base_execution_txpool_pool::{
+use base_execution_state_provider::{
+    CanonStateSubscriptions,
+    providers::{BlockchainProvider, ProviderFactoryBuilder},
+};
+use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
@@ -199,7 +197,7 @@ impl BaseNode {
         let pool = self.build_pool(ctx, evm_config.clone()).await?;
         let network = self.build_network(ctx, pool.clone()).await?;
         let payload = payload.unwrap_or_else(|| BasePayloadServiceConfig {
-            config: base_execution_payload_builder::config::BaseBuilderConfig {
+            config: base_execution_payload::config::BaseBuilderConfig {
                 da_config: self.da_config.clone(),
                 gas_limit_config: self.gas_limit_config.clone(),
                 manifest_precheck_enabled: self.manifest_precheck_enabled,
@@ -235,7 +233,7 @@ impl BaseNode {
     /// use base_node_service::BaseNode;
     /// use std::sync::Arc;
     ///
-    /// fn demo(runtime: base_common_runtime_tasks::Runtime) {
+    /// fn demo(runtime: base_common_runtime::Runtime) {
     ///     let factory = BaseNode::provider_factory_builder()
     ///         .open_read_only(Arc::new(BaseChainSpec::mainnet()), "datadir", runtime)
     ///         .unwrap();
@@ -249,7 +247,7 @@ impl BaseNode {
     /// use base_node_service::BaseNode;
     /// use base_execution_state_provider::providers::ReadOnlyConfig;
     ///
-    /// fn demo(runtime: base_common_runtime_tasks::Runtime) {
+    /// fn demo(runtime: base_common_runtime::Runtime) {
     ///     let factory = BaseNode::provider_factory_builder()
     ///         .open_read_only(
     ///             BaseChainSpecBuilder::base_mainnet().build(),
@@ -291,7 +289,7 @@ impl BaseNode {
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .build_with_tasks(ctx.task_executor().clone())
                 .map(|validator| {
-                    BaseTransactionValidator::new(validator)
+                    validator
                         // In --dev mode we can't require gas fees because we're unable to decode
                         // the L1 block info
                         .require_l1_data_gas_fee(!ctx.config().dev.dev)
@@ -303,7 +301,7 @@ impl BaseNode {
         let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
-        let transaction_pool = base_execution_txpool_pool::Pool::new(
+        let transaction_pool = base_execution_txpool::Pool::new(
             validator,
             ordering.clone(),
             blob_store,
@@ -403,11 +401,14 @@ impl BaseDiscoveryConfig {
     }
 
     /// Creates the inner discv5 config with the Base protocol identity.
-    pub fn discv5_config(&self, args: &RethNetworkArgs) -> base_execution_network_discv5::Config {
+    pub fn discv5_config(
+        &self,
+        args: &RethNetworkArgs,
+    ) -> base_execution_network_discovery::Config {
         let mut builder =
-            base_execution_network_discv5::ConfigBuilder::new(Self::discv5_listen_config(args));
+            base_execution_network_discovery::ConfigBuilder::new(Self::discv5_listen_config(args));
 
-        builder.protocol_identity(base_execution_network_discv5::ProtocolIdentity {
+        builder.protocol_identity(base_execution_network_discovery::ProtocolIdentity {
             protocol_id: BASE_V0_PROTOCOL_VERSION,
             ..Default::default()
         });
@@ -423,7 +424,7 @@ impl BaseDiscoveryConfig {
     /// advertised IP.
     pub fn discv5_listen_config(
         args: &RethNetworkArgs,
-    ) -> base_execution_network_discv5::ListenConfig {
+    ) -> base_execution_network_discovery::ListenConfig {
         let rlpx_socket = Self::rlpx_socket(args);
         let discv5_addr_ipv4 = args.discovery.discv5_addr.or_else(|| match rlpx_socket {
             SocketAddr::V4(addr) => Some(*addr.ip()),
@@ -434,7 +435,7 @@ impl BaseDiscoveryConfig {
             SocketAddr::V6(addr) => Some(*addr.ip()),
         });
 
-        base_execution_network_discv5::ListenConfig::from_two_sockets(
+        base_execution_network_discovery::ListenConfig::from_two_sockets(
             discv5_addr_ipv4.map(|addr| {
                 SocketAddrV4::new(
                     addr,
@@ -503,7 +504,7 @@ impl BaseNode {
                         .network
                         .resolved_bootnodes()
                         .or_else(|| {
-                            base_execution_network_types::NodeRecord::parse_bootnodes(
+                            base_execution_network_wire::NodeRecord::parse_bootnodes(
                                 ctx.chain_spec().config.bootnodes.execution,
                             )
                         })
@@ -525,7 +526,7 @@ impl BaseNode {
     pub async fn build_network(
         &self,
         ctx: &BuilderContext,
-        pool: base_execution_txpool_pool::BaseTransactionPool<BlockchainProvider>,
+        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     ) -> eyre::Result<NetworkHandle> {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;
@@ -543,8 +544,7 @@ mod tests {
         sync::Arc,
     };
 
-    use base_execution_network_discovery::build_local_enr;
-    use base_execution_network_discv5::ListenConfig;
+    use base_execution_network_discovery::{ListenConfig, build_local_enr};
     use base_execution_network_service::{NetworkConfigBuilder, config::rng_secret_key};
     use rstest::rstest;
 
@@ -589,9 +589,7 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::with_rng_secret_key(
-                    base_common_runtime_tasks::Runtime::test(),
-                ),
+                NetworkConfigBuilder::with_rng_secret_key(base_common_runtime::Runtime::test()),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,
@@ -614,9 +612,7 @@ mod tests {
 
         let network_config = discovery_config
             .apply_to_network_builder(
-                NetworkConfigBuilder::with_rng_secret_key(
-                    base_common_runtime_tasks::Runtime::test(),
-                ),
+                NetworkConfigBuilder::with_rng_secret_key(base_common_runtime::Runtime::test()),
                 &args,
                 Vec::<NodeRecord>::new(),
                 None,

@@ -4,7 +4,7 @@ use std::{
 };
 
 use base_common_observability_tracing::tracing::debug;
-use base_execution_engine_types::ExExNotification;
+use base_common_types_payload::ExExNotification;
 use tracing::instrument;
 
 use crate::wal::{WalError, WalResult};
@@ -25,7 +25,7 @@ impl Storage {
     /// Creates a new instance of [`Storage`] backed by the file at the given path and creates
     /// it doesn't exist.
     pub(super) fn new(path: impl AsRef<Path>) -> WalResult<Self> {
-        base_common_io_files::Files::create_dir_all(&path)?;
+        base_common_io::Files::create_dir_all(&path)?;
 
         Ok(Self { path: path.as_ref().to_path_buf() })
     }
@@ -51,7 +51,7 @@ impl Storage {
         let path = self.file_path(file_id);
         let size = path.metadata().ok()?.len();
 
-        match base_common_io_files::Files::remove_file(self.file_path(file_id)) {
+        match base_common_io::Files::remove_file(self.file_path(file_id)) {
             Ok(()) => {
                 debug!(target: "exex::wal::storage", "Notification was removed from the storage");
                 Some(size)
@@ -67,7 +67,7 @@ impl Storage {
     pub(super) fn file_ids(&self) -> WalResult<Vec<u32>> {
         let mut file_ids = Vec::new();
 
-        for entry in base_common_io_files::Files::read_dir(&self.path)? {
+        for entry in base_common_io::Files::read_dir(&self.path)? {
             let entry = entry.map_err(|err| WalError::DirEntry(self.path.clone(), err))?;
 
             if entry.path().extension() == Some(FILE_EXTENSION.as_ref()) {
@@ -127,12 +127,12 @@ impl Storage {
         let mut file = match File::open(&file_path) {
             Ok(file) => file,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(base_common_io_files::FsPathError::open(err, &file_path).into()),
+            Err(err) => return Err(base_common_io::FsPathError::open(err, &file_path).into()),
         };
         let size = file.metadata().map_err(|err| WalError::FileMetadata(file_id, err))?.len();
 
         // Deserialize using the bincode- and msgpack-compatible serde wrapper
-        let notification: base_execution_engine_types::ExExNotificationBincode<'_> =
+        let notification: base_common_types_payload::ExExNotificationBincode<'_> =
             rmp_serde::decode::from_read(&mut file)
                 .map_err(|err| WalError::Decode(file_id, file_path, err))?;
 
@@ -154,9 +154,9 @@ impl Storage {
         debug!(target: "exex::wal::storage", ?file_path, "Writing notification to WAL");
 
         // Serialize using the bincode- and msgpack-compatible serde wrapper
-        let notification = base_execution_engine_types::ExExNotificationBincode::from(notification);
+        let notification = base_common_types_payload::ExExNotificationBincode::from(notification);
 
-        base_common_io_files::Files::atomic_write_file(&file_path, |file| {
+        base_common_io::Files::atomic_write_file(&file_path, |file| {
             rmp_serde::encode::write(file, &notification)
         })?;
 
@@ -173,8 +173,8 @@ mod tests {
         map::{HashMap, HashSet},
     };
     use base_common_types_chain::BlockHeader;
-    use base_execution_engine_types::ExExNotification;
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_common_types_payload::ExExNotification;
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_provider::Chain;
     use base_execution_state_types::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, LazyTrieData, Nibbles,
@@ -230,7 +230,7 @@ mod tests {
 
         // Serialize the notification
         let notification_compat =
-            base_execution_engine_types::ExExNotificationBincode::from(&notification);
+            base_common_types_payload::ExExNotificationBincode::from(&notification);
         let encoded = rmp_serde::encode::to_vec(&notification_compat)?;
 
         // Write to test-data directory

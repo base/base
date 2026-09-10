@@ -2,14 +2,14 @@
 //! [`BaseProofsStorage`](crate::BaseProofsStorage).
 
 use alloy_primitives::{B256, U256};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::DatabaseError;
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{BranchNodeCompact, Nibbles};
-use derive_more::Constructor;
 use base_execution_state_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
+use base_execution_state_types::{BranchNodeCompact, Nibbles};
+use derive_more::Constructor;
 
 /// Manages reading storage or account trie nodes from [`TrieCursor`].
 #[derive(Debug, Clone, Constructor)]

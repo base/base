@@ -1,8 +1,7 @@
 //! This module extends the Ethereum JSON-RPC provider with the Net namespace's RPC methods.
-use crate::Network;
 use alloy_transport::TransportResult;
 
-use crate::Provider;
+use crate::{Network, Provider};
 
 /// Net namespace rpc interface that provides access to network information of the node.
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
@@ -38,7 +37,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use base_common_process_nodes::{Geth, utils::run_with_tempdir};
+    use base_common_process::{Geth, utils::run_with_tempdir};
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

@@ -16,53 +16,50 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-rayon = { workspace = true  }
+rayon = { workspace = true }
+smallvec = { workspace = true }
 auto_impl = { workspace = true }
 itertools = { workspace = true }
-smallvec = { workspace = true  }
-metrics = {optional = true, workspace = true}
-base-common-types-chain = {features = ["k256", "rayon", "std"], workspace = true}
-base-execution-evm-runtime = { workspace = true }
-either = { workspace = true,  features = ["std"]}
-alloy-trie = {features = ["std"], workspace = true}
+metrics = { optional = true, workspace = true }
+either = { workspace = true, features = ["std"] }
 base-execution-state-database = { workspace = true }
-slotmap = { workspace = true,  features = ["default"] }
+alloy-trie = { features = ["std"], workspace = true }
+slotmap = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-strum = { workspace = true, features = ["derive", "std"]  }
-tracing = { features = ["attributes", "std"], workspace = true}
-base-execution-state-memory = {workspace = true, features = ["std"]}
-base-execution-state-api = { workspace = true, features = ["db-api"] }
+strum = { workspace = true, features = ["derive", "std"] }
+tracing = { features = ["attributes", "std"], workspace = true }
+base-execution-evm-runtime = { workspace = true, features = ["std"] }
 triehash = { workspace = true, optional = true, features = ["default"] }
-alloy-primitives = {features = ["map-foldhash", "std"], workspace = true}
+alloy-primitives = { features = ["map-foldhash", "std"], workspace = true }
 parking_lot = { workspace = true, optional = true, features = ["default"] }
 serde = { workspace = true, features = ["derive", "std"], optional = true }
-base-execution-state-types = {features = ["rayon", "std"], workspace = true}
 serde_json = { workspace = true, features = ["alloc", "std"], optional = true }
-base-common-observability-metrics = {optional = true, features = ["metrics"], workspace = true}
+base-common-types-chain = { features = ["k256", "rayon", "std"], workspace = true }
+base-execution-state-types = { features = ["rayon", "std", "db-api"], workspace = true }
+base-common-observability-metrics = { optional = true, features = ["metrics"], workspace = true }
 
 [dev-dependencies]
 arbitrary = { workspace = true }
 itertools = { workspace = true }
 assert_matches = { workspace = true }
-base-common-chain-config = {workspace = true}
-base-common-types-chain = {features = ["arbitrary", "k256", "rayon", "std", "test-utils"], workspace = true}
-proptest-arbitrary-interop = {workspace = true}
-base-execution-evm-runtime = { workspace = true }
-rand = {features = ["default"], workspace = true}
-proptest = {features = ["default"], workspace = true}
+base-common-chain-config = { workspace = true }
+proptest-arbitrary-interop = { workspace = true }
+rand = { features = ["default"], workspace = true }
 rand_08 = { workspace = true, features = ["default"] }
+proptest = { features = ["default"], workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 triehash = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
-alloy-rlp = {features = ["core-net", "std"], workspace = true}
-pretty_assertions = {features = ["default"], workspace = true}
+alloy-rlp = { features = ["core-net", "std"], workspace = true }
+pretty_assertions = { features = ["default"], workspace = true }
 similar-asserts = { workspace = true, features = ["default", "serde"] }
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
-base-common-observability-tracing = {features = ["default", "std"], workspace = true}
-base-execution-state-memory = {features = ["arbitrary", "test-utils"], workspace = true}
-base-execution-state-types = {features = ["arbitrary", "std", "test-utils"], workspace = true}
+base-common-observability-tracing = { features = ["default", "std"], workspace = true }
+base-execution-evm-runtime = { workspace = true, features = ["arbitrary", "test-utils"] }
+base-execution-state-types = { features = ["arbitrary", "std", "test-utils"], workspace = true }
+base-common-types-chain = { features = ["arbitrary", "k256", "rayon", "std", "test-utils"], workspace = true }
 
 [[bench]]
 name = "proof_v2"
@@ -71,8 +68,32 @@ harness = false
 
 [features]
 metrics = ["dep:metrics", "dep:base-common-observability-metrics"]
-serde = ["alloy-primitives/serde", "base-common-types-chain/serde", "alloy-trie/serde", "base-execution-state-types/serde", "base-common-types-chain/serde", "parking_lot/serde", "rand/serde", "base-execution-evm-runtime/serde", "similar-asserts/serde", "base-execution-state-api/serde", "base-execution-state-memory/serde"]
-test-utils = ["triehash", "parking_lot", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-execution-state-database/test-utils", "base-execution-state-provider/test-utils", "base-execution-state-memory/test-utils"]
+serde = [
+    "alloy-primitives/serde",
+    "base-common-types-chain/serde",
+    "alloy-trie/serde",
+    "base-execution-state-types/serde",
+    "parking_lot/serde",
+    "rand/serde",
+    "base-execution-evm-runtime/serde",
+    "similar-asserts/serde",
+]
+test-utils = [
+    "triehash",
+    "parking_lot",
+    "base-common-types-chain/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-execution-state-database/test-utils",
+    "base-execution-state-provider/test-utils",
+    "base-execution-evm-runtime/test-utils",
+]
 serde-bincode-compat = ["base-common-types-chain/serde-bincode-compat", "base-execution-state-types/serde-bincode-compat"]
 trie-debug = ["dep:serde", "dep:serde_json", "alloy-primitives/serde", "alloy-trie/serde"]
-arbitrary = ["alloy-primitives/arbitrary", "alloy-trie/arbitrary", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "smallvec/arbitrary", "base-execution-state-memory/arbitrary"]
+arbitrary = [
+    "alloy-primitives/arbitrary",
+    "alloy-trie/arbitrary",
+    "base-common-types-chain/arbitrary",
+    "base-execution-state-types/arbitrary",
+    "smallvec/arbitrary",
+    "base-execution-evm-runtime/arbitrary",
+]

@@ -3,63 +3,50 @@ use alloc::{boxed::Box, vec::Vec};
 
 use base_common_chain_config::BaseUpgrade;
 use base_common_types_chain::Predeploys;
-use base_execution_evm_machine::{
-    Block, Cfg, ContextTr, Database, EVMError, ExecutionResult, InitialAndFloorGas,
-    InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr, LocalContextTr,
-    ResultGas, Transaction, take_error,
-};
 use base_execution_evm_runtime as post_execution;
 use base_execution_evm_runtime::{
-    EvmTr, FrameResult, Handler, Inspector, InspectorHandler, MainnetHandler, calculate_caller_fee,
-    handle_reservoir_remaining_gas, reimburse_caller,
-    validate_account_nonce_and_code_with_components,
-};
-use base_execution_evm_runtime::{interpreter::GasTracker, primitives::U256};
-
-use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, L1BlockInfo,
+    BaseContext, BaseEvm, BaseHaltReason, Block, Cfg, ContextTr, Database, EVMError, EvmTr,
+    ExecutionResult, FrameResult, GasTracker, Handler, InitialAndFloorGas, Inspector,
+    InspectorHandler, InvalidTransaction, JournalCheckpoint, JournalTr, JournaledAccountTr,
+    L1BlockInfo, LocalContextTr, MainnetHandler, ResultGas, Transaction, U256,
+    calculate_caller_fee, handle_reservoir_remaining_gas, reimburse_caller, take_error,
     transaction::{BaseTransactionError, DEPOSIT_TRANSACTION_TYPE},
+    validate_account_nonce_and_code_with_components,
 };
 
 /// Base handler extends the [`Handler`] with Base-specific logic.
-pub struct BaseHandler<DB: Database, I, P> {
+pub struct BaseHandler<DB: Database, I> {
     /// Shared Ethereum execution rules used by Base.
-    pub mainnet: MainnetHandler<BaseEvm<DB, I, P>, EVMError<DB::Error, BaseTransactionError>>,
+    pub mainnet: MainnetHandler<BaseEvm<DB, I>, EVMError<DB::Error, BaseTransactionError>>,
 }
 
-impl<DB: Database, I, P> core::fmt::Debug for BaseHandler<DB, I, P> {
+impl<DB: Database, I> core::fmt::Debug for BaseHandler<DB, I> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("BaseHandler")
     }
 }
 
-impl<DB: Database, I, P> Clone for BaseHandler<DB, I, P> {
+impl<DB: Database, I> Clone for BaseHandler<DB, I> {
     fn clone(&self) -> Self {
         Self::new()
     }
 }
 
-impl<DB: Database, I, P> BaseHandler<DB, I, P> {
+impl<DB: Database, I> BaseHandler<DB, I> {
     /// Creates the Base execution handler.
     pub fn new() -> Self {
         Self { mainnet: MainnetHandler::default() }
     }
 }
 
-impl<DB: Database, I, P> Default for BaseHandler<DB, I, P> {
+impl<DB: Database, I> Default for BaseHandler<DB, I> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<DB: Database, I, P> Handler for BaseHandler<DB, I, P>
-where
-    P: base_execution_evm_runtime::PrecompileProvider<
-            BaseContext<DB>,
-            Output = base_execution_evm_runtime::interpreter::InterpreterResult,
-        >,
-{
-    type Evm = BaseEvm<DB, I, P>;
+impl<DB: Database, I> Handler for BaseHandler<DB, I> {
+    type Evm = BaseEvm<DB, I>;
     type Error = EVMError<DB::Error, BaseTransactionError>;
     type HaltReason = BaseHaltReason;
 
@@ -367,35 +354,21 @@ where
     }
 }
 
-impl<DB: Database, I, P> InspectorHandler for BaseHandler<DB, I, P>
-where
-    I: Inspector<BaseContext<DB>>,
-    P: base_execution_evm_runtime::PrecompileProvider<
-            BaseContext<DB>,
-            Output = base_execution_evm_runtime::interpreter::InterpreterResult,
-        >,
-{
-}
+impl<DB: Database, I> InspectorHandler for BaseHandler<DB, I> where I: Inspector<BaseContext<DB>> {}
 
 #[cfg(test)]
 mod tests {
 
     use alloy_primitives::uint;
     use base_common_types_chain::Predeploys;
-    use base_execution_evm_machine::{BlockEnv, CfgEnv, Context, TxEnv};
-    use base_execution_evm_runtime::{Handler, NoOpInspector};
     use base_execution_evm_runtime::{
-        InspectEvm,
-        bytecode::Bytecode,
-        database::EmptyDB,
-        database::InMemoryDB,
-        interpreter::{CallOutcome, Gas, InstructionResult, InterpreterResult},
-        primitives::{Address, B256, Bytes, TxKind, bytes, hardfork::SpecId},
-        state::AccountInfo,
+        AccountInfo, Address, B256, BaseContext, BaseSpecId, BaseTransaction, BlockEnv, Builder,
+        Bytecode, Bytes, CallOutcome, CfgEnv, Context, DefaultBase, EmptyDB, Gas, Handler,
+        InMemoryDB, InspectEvm, InstructionResult, InterpreterResult, L1BlockInfo, NoOpInspector,
+        TxEnv, TxKind, bytes, hardfork::SpecId,
     };
 
     use super::*;
-    use crate::{BaseContext, BaseSpecId, BaseTransaction, Builder, DefaultBase, L1BlockInfo};
 
     /// Creates frame result.
     fn call_last_frame_return(
@@ -410,7 +383,7 @@ mod tests {
             0..0,
         ));
 
-        let mut handler = BaseHandler::<_, _, _>::new();
+        let mut handler = BaseHandler::<_, _>::new();
 
         let tx_gas_limit = evm.ctx().tx().gas_limit();
         let mut parent_gas = GasTracker::new(tx_gas_limit, tx_gas_limit, 0);
@@ -589,7 +562,7 @@ mod tests {
 
         let mut evm = ctx.build_base();
 
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
         handler
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
@@ -632,7 +605,7 @@ mod tests {
 
         let mut evm = ctx.build_base();
 
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
         handler
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
@@ -688,7 +661,7 @@ mod tests {
 
         assert_ne!(evm.ctx().chain().l2_block, Some(BLOCK_NUM));
 
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let mut init_and_floor_gas = InitialAndFloorGas::new(0, 0);
         handler
             .validate_against_state_and_deduct_caller(&mut evm, &mut init_and_floor_gas)
@@ -723,7 +696,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_err(), "gas_limit above cap should be rejected");
     }
@@ -739,7 +712,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "gas_limit at cap should be accepted");
     }
@@ -755,7 +728,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Jovian)));
         let mut evm = ctx.build_base();
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "Jovian should not enforce gas limit cap");
     }
@@ -771,7 +744,7 @@ mod tests {
             )
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Azul)));
         let mut evm = ctx.build_base();
-        let handler = BaseHandler::<_, _, _>::new();
+        let handler = BaseHandler::<_, _>::new();
         let result = handler.validate_env(&mut evm);
         assert!(result.is_ok(), "deposit txs should skip gas limit cap");
     }
@@ -785,7 +758,7 @@ mod tests {
     /// against the given spec and returns the execution result.
     fn run_clz_bytecode(
         spec: BaseSpecId,
-    ) -> base_execution_evm_machine::ExecutionResult<BaseHaltReason> {
+    ) -> base_execution_evm_runtime::ExecutionResult<BaseHaltReason> {
         let contract = Address::from([0x42; 20]);
         let mut db = InMemoryDB::default();
         db.insert_account_info(
@@ -817,7 +790,7 @@ mod tests {
             });
         let mut evm = ctx.build_base();
 
-        let mut handler = BaseHandler::<_, _, _>::new();
+        let mut handler = BaseHandler::<_, _>::new();
         handler.run(&mut evm).unwrap()
     }
 

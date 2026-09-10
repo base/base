@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
-use base_common_cli_support::CliContext;
+use base_common_cli::CliContext;
 use base_execution_state_database::init_db;
 use base_node_config::{
     DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs, NodeConfig,

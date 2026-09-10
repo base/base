@@ -1,11 +1,9 @@
-use crate::BaseUpgrade;
-use crate::ChainUpgrades;
 use alloy_chains::Chain;
 use alloy_genesis::Genesis;
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::Address;
 
-use crate::{BaseChainSpec, BaseChainSpecError};
+use crate::{BaseChainSpec, BaseChainSpecError, BaseUpgrade, ChainUpgrades};
 
 /// Chain spec builder for a Base chain.
 #[derive(Debug, Default)]

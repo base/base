@@ -12,7 +12,7 @@ use alloy_primitives::{Address, B256, LogData};
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_rpc::BaseTransactionReceipt;
-use base_execution_evm_precompiles::{
+use base_execution_evm_runtime::{
     ActivationFeature, ActivationRegistryStorage, IActivationRegistry,
 };
 use base_testing_devnet::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient};

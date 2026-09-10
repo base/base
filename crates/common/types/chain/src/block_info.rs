@@ -1,9 +1,10 @@
 //! L1 and L2 block references shared by rollup protocols and clients.
 
-use crate::Block;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use derive_more::Display;
+
+use crate::Block;
 
 /// Block Header Info
 #[derive(Debug, Clone, Display, Copy, Eq, Hash, PartialEq, Default)]
@@ -104,10 +105,12 @@ impl L2BlockInfo {
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::ToString;
+
+    use alloy_primitives::b256;
+
     use super::*;
     use crate::{Header, TxEnvelope};
-    use alloc::string::ToString;
-    use alloy_primitives::b256;
 
     #[test]
     fn test_from_block() {

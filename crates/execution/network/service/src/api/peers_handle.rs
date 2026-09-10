@@ -1,8 +1,6 @@
 use std::net::SocketAddr;
 
-use base_execution_network_types::Peer;
-use base_execution_network_types::ReputationChangeKind;
-use base_execution_network_types::{NodeRecord, PeerId};
+use base_execution_network_wire::{NodeRecord, Peer, PeerId, ReputationChangeKind};
 use derive_more::Constructor;
 use tokio::sync::{mpsc, oneshot};
 

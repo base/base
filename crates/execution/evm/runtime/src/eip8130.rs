@@ -49,34 +49,18 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use base_common_types_chain::{
     AccountChange, Delegation, Eip8130Constants, Eip8130Contracts, Predeploys,
 };
-use base_execution_evm_machine::{
-    Block, Cfg, ContextTr, EVMError, ExecutionResult, JournalTr, JournaledAccountTr,
-    LocalContextTr, Output, ResultGas, SuccessReason, take_error,
-};
-use base_execution_evm_precompiles::{
+use base_execution_evm_runtime::{
     AccountChangeApplier, AccountConfigurationEvents, AccountConfigurationStorage, ApplyError,
-    DelegationEffect, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
-    TransactionAuthorizer,
-};
-use base_execution_evm_precompiles::{JournalStorageProvider, StorageCtx};
-use base_execution_evm_precompiles::{NonceManagerStorage, TxContextStorage};
-use base_execution_evm_runtime::{
-    Database as AlloyDatabase, EvmInternals, EvmTr, FrameResult, Handler, InspectorEvmTr,
-    InspectorHandler, PrecompileProvider,
-};
-use base_execution_evm_runtime::{
-    Inspector,
-    interpreter::{
-        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, FrameInput, Gas,
-        InstructionResult, InterpreterResult, SharedMemory, interpreter_action::FrameInit,
-    },
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
-    state::Bytecode,
-};
-
-use crate::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, Eip8130PhaseStatuses,
-    L1BlockInfo, handler::BaseHandler,
+    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransactionError, Block, Bytecode,
+    CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Cfg, ContextTr,
+    Database as AlloyDatabase, DelegationEffect, EVMError, Eip8130PhaseStatuses, EvmInternals,
+    EvmTr, ExecutionResult, FeeCheck, FrameInput, FrameResult, Gas, Handler, Inspector,
+    InspectorEvmTr, InspectorHandler, InstructionResult, InterpreterResult, IntrinsicGas,
+    IntrinsicGasInput, JournalStorageProvider, JournalTr, JournaledAccountTr, KECCAK_EMPTY,
+    L1BlockInfo, LocalContextTr, NonceManagerStorage, NonceMode, NonceValidator, Output,
+    PrecompileProvider, ResultGas, SharedMemory, StorageCtx, SuccessReason, TransactionAuthorizer,
+    TxContextStorage, handler::BaseHandler, hardfork::SpecId, interpreter_action::FrameInit,
+    take_error,
 };
 
 /// EIP-3529 maximum gas refund quotient: refunds are capped at `gas_used / 5`.
@@ -170,13 +154,12 @@ impl Eip8130Executor {
     /// reverted ([`ExecutionResult::Revert`] reports a phase revert); only a
     /// *validity* failure surfaces an [`EVMError`], reverting all journal writes
     /// via a checkpoint so the transaction is not included.
-    pub fn execute<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    pub fn execute<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         // Discard any phase statuses a previous transaction may have leaked into
         // the thread-local slot (e.g. via a panic caught between its `set` and the
@@ -389,13 +372,12 @@ impl Eip8130Executor {
     /// authenticator the caller declared is priced from the synthesized
     /// `sender_auth` / `payer_auth` blob shape. No signature is ever verified, so
     /// the declared authenticator only selects which schedule entry is charged.
-    pub fn simulate<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    pub fn simulate<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
     ) -> Result<ExecutionResult<BaseHaltReason>, EVMError<DB::Error, BaseTransactionError>>
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         // Clone the envelope + optional acting-actor hint before taking a mutable
         // borrow of `ctx` (same pattern as `execute`).
@@ -628,8 +610,8 @@ impl Eip8130Executor {
     /// resolved pre-call state so the next probe starts identically. Used only by
     /// the [`Self::simulate`] gas-limit search; returns the measured
     /// [`CallsResult`] so the caller can read `reverted` / `call_gas_spent`.
-    fn probe_calls<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn probe_calls<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
         signed: &base_common_types_chain::Eip8130Signed,
         outcome: &Eip8130Outcome,
         pool: u64,
@@ -637,7 +619,6 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         let checkpoint = evm.ctx_mut().journal_mut().checkpoint();
         let calls = Self::execute_calls(evm, signed, outcome, pool)?;
@@ -657,8 +638,8 @@ impl Eip8130Executor {
     /// [`POOL_SEARCH_TOLERANCE_PER_MILLE`] early exit. Every bound assigned to
     /// `highest` is a probe-verified success, so the returned value always
     /// succeeds.
-    fn search_estimate_pool<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn search_estimate_pool<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
         signed: &base_common_types_chain::Eip8130Signed,
         outcome: &Eip8130Outcome,
         ceiling_spent: u64,
@@ -667,7 +648,6 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         // The calls consumed `ceiling_spent` at the full pool, so no smaller pool
         // can satisfy them; if `ceiling_spent` itself succeeds it is the answer.
@@ -1138,8 +1118,8 @@ impl Eip8130Executor {
     /// estimate probes the same calls at several candidate pools to search for the
     /// minimum gas limit that succeeds, so it is supplied explicitly rather than
     /// read from `outcome`.
-    fn execute_calls<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn execute_calls<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
         signed: &base_common_types_chain::Eip8130Signed,
         outcome: &Eip8130Outcome,
         pool: u64,
@@ -1147,7 +1127,6 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         let mut remaining = pool;
         // Signed transaction-level refund counter: refunds are accounted across
@@ -1239,8 +1218,8 @@ impl Eip8130Executor {
 
     /// Opens the synthetic transaction root used to attach inspected EIP-8130
     /// protocol calls to one connected trace arena.
-    fn start_inspection<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn start_inspection<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
         sender: Address,
         encoded: Bytes,
         gas_limit: u64,
@@ -1248,7 +1227,6 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         if !evm.inspect {
             return None;
@@ -1273,8 +1251,8 @@ impl Eip8130Executor {
     }
 
     /// Closes the synthetic EIP-8130 transaction trace root.
-    fn end_inspection<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn end_inspection<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
         inputs: Option<CallInputs>,
         reverted: bool,
         output: Bytes,
@@ -1283,7 +1261,6 @@ impl Eip8130Executor {
     ) where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         let Some(inputs) = inputs else { return };
         let mut gas = Gas::new(gas_limit);
@@ -1308,8 +1285,8 @@ impl Eip8130Executor {
     /// top-level EVM call frame with `gas_limit` and runs it to completion,
     /// returning the [`FrameResult`]. Reuses the Base handler's frame loop and
     /// drives the configured inspector when inspection is enabled.
-    fn run_call<DB, I, P>(
-        evm: &mut BaseEvm<DB, I, P>,
+    fn run_call<DB, I>(
+        evm: &mut BaseEvm<DB, I>,
         caller: Address,
         to: Address,
         data: Bytes,
@@ -1318,7 +1295,6 @@ impl Eip8130Executor {
     where
         DB: AlloyDatabase,
         I: Inspector<BaseContext<DB>>,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         // Resolve the bytecode at `to`, following an EIP-7702 delegation
         // designator to its target (mirrors `create_init_frame`).
@@ -1380,7 +1356,7 @@ impl Eip8130Executor {
         memory.set_memory_limit(ctx.cfg().memory_limit());
         let frame_init = FrameInit { depth: 0, memory, frame_input };
 
-        let mut handler = BaseHandler::<DB, I, P>::new();
+        let mut handler = BaseHandler::<DB, I>::new();
         let frame = if evm.inspect {
             handler.inspect_run_exec_loop(evm, frame_init)?
         } else {
@@ -1409,10 +1385,9 @@ impl Eip8130Executor {
     /// a cold coinbase / precompile set — charging cold-access gas (2600) where a
     /// call in a normal transaction is charged warm (100) and otherwise drifting
     /// from EVM equivalence on the same chain.
-    fn warm_pre_call_accounts<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
+    fn warm_pre_call_accounts<DB, I>(evm: &mut BaseEvm<DB, I>)
     where
         DB: AlloyDatabase,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         let (ctx, precompiles) = evm.ctx_precompiles();
 
@@ -1422,9 +1397,13 @@ impl Eip8130Executor {
 
         // Inject the precompile addresses when the spec changed them or the
         // journal has not been warmed yet, matching `pre_execution::load_accounts`.
-        let precompiles_changed = precompiles.set_spec(gen_spec);
+        let precompiles_changed = <base_execution_evm_runtime::PrecompilesMap as PrecompileProvider<BaseContext<DB>>>::set_spec(precompiles, gen_spec);
         if precompiles_changed || ctx.journal_mut().precompile_addresses().is_empty() {
-            ctx.journal_mut().warm_precompiles(precompiles.warm_addresses());
+            ctx.journal_mut().warm_precompiles(
+                <base_execution_evm_runtime::PrecompilesMap as PrecompileProvider<
+                    BaseContext<DB>,
+                >>::warm_addresses(precompiles),
+            );
         }
 
         // EIP-3651: the COINBASE address starts warm from Shanghai onward.
@@ -1443,10 +1422,9 @@ impl Eip8130Executor {
     /// subcall surfaces while the parent frame is still on the stack, so draining
     /// both prevents stale frame/local state from leaking into the next
     /// transaction when a `BaseEvm` is reused.
-    fn discard_transaction_state<DB, I, P>(evm: &mut BaseEvm<DB, I, P>)
+    fn discard_transaction_state<DB, I>(evm: &mut BaseEvm<DB, I>)
     where
         DB: AlloyDatabase,
-        P: PrecompileProvider<BaseContext<DB>, Output = InterpreterResult>,
     {
         let ctx = evm.ctx_mut();
         ctx.journal_mut().discard_tx();
@@ -1726,22 +1704,16 @@ mod tests {
         AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
         Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
     };
-    use base_execution_evm_machine::{BlockEnv, CfgEnv, Context};
-    use base_execution_evm_precompiles::INonceManager;
-    use base_execution_evm_precompiles::{AccountChangeApplier, DelegationApplied};
-    use base_execution_evm_precompiles::{HashMapStorageProvider, StorageCtx};
     use base_execution_evm_runtime::{
-        Database, bytecode::Bytecode, database::DBErrorMarker, database::InMemoryDB,
-        state::AccountInfo,
+        AccountChangeApplier, AccountInfo, BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade,
+        BlockEnv, Builder, Bytecode, CfgEnv, Context, DBErrorMarker, Database, DefaultBase,
+        DelegationApplied, Eip8130ExecutionMode, Evm, FromTxWithEncoded, HashMapStorageProvider,
+        INonceManager, InMemoryDB, NoOpInspector, PrecompilesMap, StorageCtx,
     };
-    use base_execution_evm_runtime::{Evm, FromTxWithEncoded, NoOpInspector, PrecompilesMap};
     use k256::ecdsa::SigningKey;
 
     use super::*;
-    use crate::{
-        BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
-        Eip8130ExecutionMode,
-    };
+    use crate::StorageHandler as _;
 
     const CHAIN_ID: u64 = 8453;
     const NOW: u64 = 1_000;
@@ -1801,7 +1773,7 @@ mod tests {
         balance: U256,
         sender: Address,
         contracts: &[(Address, Bytes)],
-    ) -> BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap> {
+    ) -> BaseEvm<InMemoryDB, NoOpInspector> {
         let mut db = InMemoryDB::default();
         db.insert_account_info(sender, AccountInfo { balance, ..Default::default() });
         for (addr, code) in contracts {
@@ -1830,15 +1802,12 @@ mod tests {
             .build_with_inspector(NoOpInspector)
     }
 
-    fn evm_with(
-        balance: U256,
-        sender: Address,
-    ) -> BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap> {
+    fn evm_with(balance: U256, sender: Address) -> BaseEvm<InMemoryDB, NoOpInspector> {
         evm_with_accounts(balance, sender, &[])
     }
 
     fn seed_account_code(
-        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector>,
         address: Address,
         code: Bytes,
     ) {
@@ -1850,7 +1819,7 @@ mod tests {
     }
 
     fn journal_account_code(
-        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector>,
         address: Address,
     ) -> Bytes {
         evm.ctx_mut()
@@ -2153,7 +2122,7 @@ mod tests {
         // COLD_SLOAD and by nothing else.
         assert_eq!(
             sim_gas,
-            exec_gas + base_execution_evm_precompiles::Eip8130GasSchedule::COLD_SLOAD,
+            exec_gas + base_execution_evm_runtime::Eip8130GasSchedule::COLD_SLOAD,
             "estimate must be the execution charge plus exactly the pinned policy-gate SLOAD",
         );
 
@@ -2172,7 +2141,7 @@ mod tests {
         sender: Address,
         contracts: &[(Address, Bytes)],
         storage: &[(Address, U256, U256)],
-    ) -> BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap> {
+    ) -> BaseEvm<InMemoryDB, NoOpInspector> {
         let mut db = InMemoryDB::default();
         db.insert_account_info(sender, AccountInfo { balance, ..Default::default() });
         for (addr, code) in contracts {
@@ -2958,12 +2927,12 @@ mod tests {
     /// key and gated to `target`, then commits it. POLICY-only (plus payer/nonce
     /// grants): OPERATOR would override POLICY and leave the sender ungated.
     fn seed_gated_sender(
-        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
+        evm: &mut BaseEvm<InMemoryDB, NoOpInspector>,
         account: Address,
         signer_addr: Address,
         target: Address,
     ) {
-        use base_execution_evm_precompiles::Handler as _;
+        use base_execution_evm_runtime::Handler as _;
         let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
         {
             let ctx = evm.ctx_mut();

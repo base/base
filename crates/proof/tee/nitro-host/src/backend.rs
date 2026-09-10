@@ -2,8 +2,8 @@ use core::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base_proof_types_protocol::{ProofResult, ProverBackend};
 use base_proof_tee_nitro_enclave::Oracle;
+use base_proof_types::{ProofResult, ProverBackend};
 
 use super::transport::NitroTransport;
 use crate::NitroHostError;
@@ -36,7 +36,7 @@ impl ProverBackend for NitroBackend {
     }
 
     fn prover_label(&self) -> &'static str {
-        base_proof_host_service::Metrics::PROVER_NITRO
+        base_proof_host::Metrics::PROVER_NITRO
     }
 
     async fn prove(&self, witness: Oracle) -> Result<ProofResult, NitroHostError> {
@@ -47,8 +47,8 @@ impl ProverBackend for NitroBackend {
 
 #[cfg(test)]
 mod tests {
-    use base_proof_witness_preimage::{PreimageKey, PreimageKeyType, WitnessOracle};
     use base_proof_tee_nitro_enclave::Server;
+    use base_proof_witness_preimage::{PreimageKey, PreimageKeyType, WitnessOracle};
 
     use super::*;
 

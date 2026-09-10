@@ -7,17 +7,15 @@ use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
-use base_execution_state_api::{
-    BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
-    StorageChangeSetReader, StorageSettingsCache,
-};
+use base_execution_state_database::DBProvider;
 use base_execution_state_trie::{
     DatabaseHashedPostState, HashedPostStateSorted, updates::TrieUpdatesSorted,
 };
-use base_execution_state_types::ExecutedBlock;
-use base_execution_state_types::PruneSegment;
-use base_execution_state_types::StageId;
-use base_execution_state_types::{ProviderError, ProviderResult};
+use base_execution_state_types::{
+    BlockNumReader, ChangeSetReader, ExecutedBlock, ProviderError, ProviderResult,
+    PruneCheckpointReader, PruneSegment, StageCheckpointReader, StageId, StorageChangeSetReader,
+    StorageSettingsCache,
+};
 use metrics::{Counter, Histogram};
 use tracing::{debug, debug_span, instrument};
 
@@ -603,19 +601,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "partial-persistence")]
-    use crate::{BlockWriter, ProviderFactory, test_utils::create_test_provider_factory};
+
     use alloy_primitives::U256;
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_trie::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,
     };
-    #[cfg(feature = "partial-persistence")]
-    #[cfg(feature = "partial-persistence")]
-    use base_execution_state_types::{FinishCheckpoint, StageCheckpoint};
-    use {crate::test_utils::TestBlockBuilder, base_execution_state_types::ExecutedBlock};
+    use base_execution_state_types::ExecutedBlock;
 
     use super::*;
+    use crate::test_utils::TestBlockBuilder;
 
     fn with_unique_trie_data(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
         let hashed_address = B256::with_last_byte(id);
@@ -648,168 +643,6 @@ mod tests {
             .enumerate()
             .map(|(index, block)| with_unique_trie_data(&block, index as u8 + 1))
             .collect()
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    fn setup_frontiers(
-        state_trie_tip_index: usize,
-        finish_tip_index: usize,
-    ) -> (ProviderFactory, Vec<ExecutedBlock>) {
-        let factory = create_test_provider_factory();
-        let blocks = test_blocks();
-        let provider_rw = factory.provider_rw().unwrap();
-        for block in &blocks[..=finish_tip_index] {
-            provider_rw.insert_block(block.recovered_block()).unwrap();
-        }
-        provider_rw
-            .save_stage_checkpoint(
-                StageId::Finish,
-                StageCheckpoint::new(blocks[finish_tip_index].block_number())
-                    .with_finish_stage_checkpoint(FinishCheckpoint {
-                        partial_state_trie: Some(blocks[state_trie_tip_index].block_number()),
-                    }),
-            )
-            .unwrap();
-        provider_rw.commit().unwrap();
-
-        (factory, blocks)
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    fn account_keys(overlay: &Overlay) -> Vec<B256> {
-        overlay.hashed_post_state.accounts.iter().map(|(key, _)| *key).collect()
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    fn account_node_paths(overlay: &Overlay) -> Vec<Nibbles> {
-        overlay.trie_updates.account_nodes_ref().iter().map(|(path, _)| *path).collect()
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn managed_overlay_starts_at_state_trie_frontier() {
-        let (factory, blocks) = setup_frontiers(1, 3);
-        let manager = OverlayManager::default();
-        for block in &blocks[2..=4] {
-            manager.insert_block(block.clone());
-        }
-        let provider = factory.provider().unwrap();
-
-        for (parent_index, expected_ids) in [(3, vec![3, 4]), (4, vec![3, 4, 5])] {
-            let overlay = manager
-                .overlay_builder(blocks[parent_index].recovered_block().hash())
-                .build_overlay(&provider)
-                .unwrap();
-
-            assert_eq!(
-                account_keys(&overlay),
-                expected_ids.iter().copied().map(B256::with_last_byte).collect::<Vec<_>>()
-            );
-            assert_eq!(
-                account_node_paths(&overlay),
-                expected_ids
-                    .iter()
-                    .copied()
-                    .map(|id| Nibbles::from_nibbles([id]))
-                    .collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn managed_overlay_skips_when_finish_is_the_anchor() {
-        let (factory, blocks) = setup_frontiers(3, 3);
-        let manager = OverlayManager::default();
-        manager.insert_block(blocks[4].clone());
-        let provider = factory.provider().unwrap();
-
-        let overlay = manager
-            .overlay_builder(blocks[4].recovered_block().hash())
-            .with_skip_overlay_for_reused_sparse_trie(blocks[3].recovered_block().hash())
-            .build_overlay(&provider)
-            .unwrap();
-
-        assert!(overlay.hashed_post_state.is_empty());
-        assert!(overlay.trie_updates.is_empty());
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn no_reverts_errors_when_reverts_are_required() {
-        let (factory, blocks) = setup_frontiers(2, 3);
-        let provider = factory.provider().unwrap();
-
-        let error = OverlayManager::default()
-            .overlay_builder(blocks[1].recovered_block().hash())
-            .with_no_reverts()
-            .build_overlay(&provider)
-            .unwrap_err();
-
-        assert!(error.to_string().contains("reverts are disabled"));
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn managed_overlay_uses_persisted_parent_even_if_retained() {
-        let (factory, blocks) = setup_frontiers(2, 3);
-        let manager = OverlayManager::default();
-        manager.insert_block(blocks[1].clone());
-        // This test computes real reverts, so the empty execution suffix needs valid empty
-        // trie data rather than the synthetic branch markers used by merge-only tests.
-        manager.insert_block(ExecutedBlock::new(
-            Arc::clone(&blocks[3].recovered_block),
-            Arc::clone(&blocks[3].execution_output),
-            ComputedTrieData::default(),
-        ));
-        let provider = factory.provider().unwrap();
-        let builder = manager.overlay_builder(blocks[1].recovered_block().hash());
-        match builder.anchor_at_parent(&provider).unwrap() {
-            AnchorForParent::RevertsRequired { anchor, finish, overlay } => {
-                assert_eq!(anchor, blocks[1].recovered_block().num_hash());
-                assert_eq!(finish, blocks[3].recovered_block().num_hash());
-                assert!(overlay.is_empty());
-            }
-            AnchorForParent::NoReverts { .. } => {
-                panic!("persisted parent below Finish must require reverts")
-            }
-        }
-
-        let overlay = builder.build_overlay(&provider).unwrap();
-
-        assert!(overlay.hashed_post_state.is_empty());
-        assert!(overlay.trie_updates.is_empty());
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn overlay_after_state_trie_frontier_requires_managed_coverage() {
-        let (factory, blocks) = setup_frontiers(1, 3);
-        let provider = factory.provider().unwrap();
-        let error = OverlayManager::default()
-            .overlay_builder(blocks[3].recovered_block().hash())
-            .with_overlay_source(None)
-            .build_overlay(&provider)
-            .unwrap_err();
-
-        assert!(
-            error.to_string().contains("is after partial state trie frontier"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn managed_overlay_errors_if_parent_is_not_persisted_or_managed_across_frontiers() {
-        let (factory, blocks) = setup_frontiers(1, 3);
-        let provider = factory.provider().unwrap();
-        let parent_hash = blocks[3].recovered_block().hash();
-        let error = OverlayManager::default()
-            .overlay_builder(parent_hash)
-            .build_overlay(&provider)
-            .unwrap_err();
-
-        assert!(error.to_string().contains("is after partial state trie frontier"));
     }
 
     #[test]

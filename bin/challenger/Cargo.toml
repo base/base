@@ -16,7 +16,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-base-common-cli-support = { workspace = true }
+base-common-cli = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-base-proof-service-challenger = { workspace = true, features = ["metrics"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-proof-service-challenger = { workspace = true, features = ["metrics"] }

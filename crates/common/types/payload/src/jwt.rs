@@ -323,7 +323,7 @@ mod tests {
     #[cfg(feature = "std")]
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use assert_matches_1_5::assert_matches;
+    use assert_matches::assert_matches;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use similar_asserts::assert_eq;
     use tempfile::tempdir;

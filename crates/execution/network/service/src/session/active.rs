@@ -14,27 +14,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{PeerRequest, RequestMessage};
 use alloy_eips::merge::EPOCH_SLOTS;
 use base_common_observability_metrics::common::mpsc::MeteredPollSender;
-
-use base_execution_network_types::INITIAL_REQUEST_TIMEOUT;
-use base_execution_network_types::PeerId;
-use base_execution_network_wire::Capabilities;
-use base_execution_network_wire::DisconnectP2P;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::EthBroadcastMessage;
-use base_execution_network_wire::EthHandshakeError;
-use base_execution_network_wire::EthMessage;
-use base_execution_network_wire::EthSnapMessage;
-use base_execution_network_wire::EthStreamError;
-use base_execution_network_wire::MessageError;
-use base_execution_network_wire::NewBlockPayload;
-use base_execution_network_wire::NewPooledTransactionHashes;
-use base_execution_network_wire::RawCapabilityMessage;
-use base_execution_network_wire::RequestPair;
-use base_execution_network_wire::SnapProtocolMessage;
-use base_execution_network_wire::{RequestError, SnapResponse};
+use base_execution_network_wire::{
+    Capabilities, DisconnectP2P, DisconnectReason, EthBroadcastMessage, EthHandshakeError,
+    EthMessage, EthSnapMessage, EthStreamError, INITIAL_REQUEST_TIMEOUT, MessageError,
+    NewBlockPayload, NewPooledTransactionHashes, PeerId, RawCapabilityMessage, RequestError,
+    RequestPair, SnapProtocolMessage, SnapResponse,
+};
 use futures::{SinkExt, StreamExt, stream::Fuse};
 use metrics::{Counter, Gauge};
 use rustc_hash::FxHashMap;
@@ -47,6 +34,7 @@ use tokio_util::sync::PollSender;
 use tracing::{debug, trace};
 
 use crate::{
+    PeerRequest, RequestMessage,
     message::{NewBlockMessage, PeerMessage, PeerResponse, PeerResponseResult},
     session::{
         BlockRangeInfo, EthVersion, SessionId,
@@ -1312,28 +1300,13 @@ impl Drop for QueuedOutgoingMessages {
 mod tests {
     use alloy_eips::eip2124::ForkFilter;
     use alloy_primitives::B256;
-    use base_execution_network_types::PROTOCOL_BREACH_REQUEST_TIMEOUT;
-    use base_execution_network_types::pk2id;
-    use base_execution_network_wire::AccountRangeMessage;
-    use base_execution_network_wire::BlockAccessLists;
-    use base_execution_network_wire::BlockAccessListsMessage;
-    use base_execution_network_wire::ECIESStream;
-    use base_execution_network_wire::EthHandshake;
-    use base_execution_network_wire::EthMessageID;
-    use base_execution_network_wire::EthStream;
-    use base_execution_network_wire::GetAccountRangeMessage;
-    use base_execution_network_wire::GetBlockAccessLists;
-    use base_execution_network_wire::GetBlockAccessListsMessage;
-    use base_execution_network_wire::GetBlockBodies;
-    use base_execution_network_wire::HelloMessageWithProtocols;
-    use base_execution_network_wire::MAX_MESSAGE_SIZE;
-    use base_execution_network_wire::NewPooledTransactionHashes72;
-    use base_execution_network_wire::P2PStream;
-    use base_execution_network_wire::Protocol;
-    use base_execution_network_wire::RequestResult;
-    use base_execution_network_wire::UnauthedEthStream;
-    use base_execution_network_wire::UnauthedP2PStream;
-    use base_execution_network_wire::UnifiedStatus;
+    use base_execution_network_wire::{
+        AccountRangeMessage, BlockAccessLists, BlockAccessListsMessage, ECIESStream, EthHandshake,
+        EthMessageID, EthStream, GetAccountRangeMessage, GetBlockAccessLists,
+        GetBlockAccessListsMessage, GetBlockBodies, HelloMessageWithProtocols, MAX_MESSAGE_SIZE,
+        NewPooledTransactionHashes72, P2PStream, PROTOCOL_BREACH_REQUEST_TIMEOUT, Protocol,
+        RequestResult, UnauthedEthStream, UnauthedP2PStream, UnifiedStatus, pk2id,
+    };
     use futures::task::noop_waker;
     use secp256k1::{SECP256K1, SecretKey};
     use tokio::{

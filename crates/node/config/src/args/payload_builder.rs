@@ -1,7 +1,7 @@
 use std::{ffi::OsStr, sync::OnceLock, time::Duration};
 
 use alloy_primitives::Bytes;
-use base_common_cli_support::{
+use base_common_cli::{
     format_duration_as_secs_or_ms, parse_duration_from_secs, parse_duration_from_secs_or_ms,
 };
 use base_common_types_chain::constants::MAXIMUM_EXTRA_DATA_SIZE;

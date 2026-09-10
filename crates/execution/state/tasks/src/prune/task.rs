@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_common_runtime_tasks::shutdown::GracefulShutdown;
+use base_common_runtime::shutdown::GracefulShutdown;
 use base_execution_state_provider::BlockHashReader;
 use tokio::{
     time,

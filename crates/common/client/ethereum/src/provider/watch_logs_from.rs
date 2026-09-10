@@ -7,15 +7,13 @@ use std::{
     time::Duration,
 };
 
-use crate::{BlockResponse as _, Network};
 use alloy_eips::BlockNumberOrTag;
 use alloy_json_rpc::RpcError;
 use alloy_primitives::B256;
 use alloy_rpc_client::{RpcCall, RpcClientInner, WeakClient};
 use alloy_transport::{TransportError, TransportResult};
 use base_common_types_chain::BlockHeader;
-use base_common_types_rpc::{BlockTransactionsKind, HeaderResponse};
-use base_common_types_rpc::{Filter, Log};
+use base_common_types_rpc::{BlockTransactionsKind, Filter, HeaderResponse, Log};
 use futures::{Stream, ready};
 use pin_project::pin_project;
 
@@ -23,7 +21,7 @@ use super::{
     BlockFut, WatchCanonicalLogsFrom,
     watch_blocks_from::{DEFAULT_POLL_INTERVAL, FetchHeadFut, PollIntervalDelay},
 };
-use crate::transport::TransportErrorKind;
+use crate::{BlockResponse as _, Network, transport::TransportErrorKind};
 
 /// Logs matching a filter for a single block.
 ///
@@ -538,7 +536,6 @@ fn normalize_range_logs_if_matches(
 
 #[cfg(test)]
 mod tests {
-    use crate::Ethereum;
     use base_common_types_rpc::Block;
     use futures::{Stream, StreamExt};
     use tokio::time::timeout;
@@ -547,7 +544,7 @@ mod tests {
         super::watch_logs_test_utils::{MockChain, assert_batch, block, log},
         *,
     };
-    use crate::Provider;
+    use crate::{Ethereum, Provider};
 
     async fn next_batch<S>(stream: &mut S) -> BlockLogs<Ethereum>
     where

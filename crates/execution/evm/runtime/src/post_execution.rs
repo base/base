@@ -1,11 +1,8 @@
-use base_execution_evm_machine::{
-    Block, Cfg, ContextTr, Database, ExecutionResult, GasParams, HaltReason, HaltReasonTr,
-    JournalTr, JournaledAccountTr, LocalContextTr, ResultGas, Transaction,
+use base_execution_evm_runtime::{
+    Block, Cfg, ContextTr, Database, ExecutionResult, FrameResult, Gas, GasParams, HaltReason,
+    HaltReasonTr, InitialAndFloorGas, JournalTr, JournaledAccountTr, LocalContextTr, ResultGas,
+    SuccessOrHalt, Transaction, U256, hardfork::SpecId,
 };
-use base_execution_evm_machine::{Gas, InitialAndFloorGas, SuccessOrHalt};
-use base_execution_evm_primitives::{U256, hardfork::SpecId};
-
-use crate::FrameResult;
 
 /// Builds a [`ResultGas`] from the execution [`Gas`] struct and [`InitialAndFloorGas`].
 pub fn build_result_gas(
@@ -144,7 +141,7 @@ pub fn output<CTX: ContextTr, HALTREASON: HaltReasonTr>(
             // Bubble up precompile errors from context when available
             if matches!(
                 instruction_result.result,
-                base_execution_evm_machine::InstructionResult::PrecompileError
+                base_execution_evm_runtime::InstructionResult::PrecompileError
             ) {
                 if let Some(message) = context.local_mut().take_precompile_error_context() {
                     return ExecutionResult::Halt {

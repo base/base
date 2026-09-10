@@ -117,7 +117,7 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
     } else {
         quote! {
             #(
-                <#direct_tys as ::base_execution_evm_precompiles::StorableType>::IS_DYNAMIC
+                <#direct_tys as ::base_execution_evm_runtime::StorableType>::IS_DYNAMIC
             )||*
         }
     };
@@ -134,8 +134,8 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
         #packing_module
         #handler_struct
 
-        impl #impl_generics ::base_execution_evm_precompiles::StorableType for #strukt #ty_generics #where_clause {
-            const LAYOUT: ::base_execution_evm_precompiles::Layout = ::base_execution_evm_precompiles::Layout::Slots(#mod_ident::SLOT_COUNT);
+        impl #impl_generics ::base_execution_evm_runtime::StorableType for #strukt #ty_generics #where_clause {
+            const LAYOUT: ::base_execution_evm_runtime::Layout = ::base_execution_evm_runtime::Layout::Slots(#mod_ident::SLOT_COUNT);
             #namespace_consts
 
             const IS_DYNAMIC: bool = #is_dynamic;
@@ -144,22 +144,22 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
 
             fn handle<'a>(
                 slot: ::alloy_primitives::U256,
-                _ctx: ::base_execution_evm_precompiles::LayoutCtx,
+                _ctx: ::base_execution_evm_runtime::LayoutCtx,
                 address: ::alloy_primitives::Address,
-                storage: ::base_execution_evm_precompiles::StorageCtx<'a>,
+                storage: ::base_execution_evm_runtime::StorageCtx<'a>,
             ) -> Self::Handler<'a> {
                 #handler_name::new(slot, address, storage)
             }
         }
 
-        impl #impl_generics ::base_execution_evm_precompiles::Storable for #strukt #ty_generics #where_clause {
-            fn load<S: ::base_execution_evm_precompiles::StorageOps>(
+        impl #impl_generics ::base_execution_evm_runtime::Storable for #strukt #ty_generics #where_clause {
+            fn load<S: ::base_execution_evm_runtime::StorageOps>(
                 storage: &S,
                 base_slot: ::alloy_primitives::U256,
-                ctx: ::base_execution_evm_precompiles::LayoutCtx
-            ) -> ::base_execution_evm_precompiles::Result<Self> {
-                use ::base_execution_evm_precompiles::Storable;
-                debug_assert_eq!(ctx, ::base_execution_evm_precompiles::LayoutCtx::FULL, "Struct types can only be loaded with LayoutCtx::FULL");
+                ctx: ::base_execution_evm_runtime::LayoutCtx
+            ) -> ::base_execution_evm_runtime::Result<Self> {
+                use ::base_execution_evm_runtime::Storable;
+                debug_assert_eq!(ctx, ::base_execution_evm_runtime::LayoutCtx::FULL, "Struct types can only be loaded with LayoutCtx::FULL");
 
                 #load_impl
 
@@ -168,27 +168,27 @@ fn derive_struct_impl(input: &DeriveInput, data_struct: &DataStruct) -> syn::Res
                 })
             }
 
-            fn store<S: ::base_execution_evm_precompiles::StorageOps>(
+            fn store<S: ::base_execution_evm_runtime::StorageOps>(
                 &self,
                 storage: &mut S,
                 base_slot: ::alloy_primitives::U256,
-                ctx: ::base_execution_evm_precompiles::LayoutCtx
-            ) -> ::base_execution_evm_precompiles::Result<()> {
-                use ::base_execution_evm_precompiles::Storable;
-                debug_assert_eq!(ctx, ::base_execution_evm_precompiles::LayoutCtx::FULL, "Struct types can only be stored with LayoutCtx::FULL");
+                ctx: ::base_execution_evm_runtime::LayoutCtx
+            ) -> ::base_execution_evm_runtime::Result<()> {
+                use ::base_execution_evm_runtime::Storable;
+                debug_assert_eq!(ctx, ::base_execution_evm_runtime::LayoutCtx::FULL, "Struct types can only be stored with LayoutCtx::FULL");
 
                 #store_impl
 
                 Ok(())
             }
 
-            fn delete<S: ::base_execution_evm_precompiles::StorageOps>(
+            fn delete<S: ::base_execution_evm_runtime::StorageOps>(
                 storage: &mut S,
                 base_slot: ::alloy_primitives::U256,
-                ctx: ::base_execution_evm_precompiles::LayoutCtx
-            ) -> ::base_execution_evm_precompiles::Result<()> {
-                use ::base_execution_evm_precompiles::Storable;
-                debug_assert_eq!(ctx, ::base_execution_evm_precompiles::LayoutCtx::FULL, "Struct types can only be deleted with LayoutCtx::FULL");
+                ctx: ::base_execution_evm_runtime::LayoutCtx
+            ) -> ::base_execution_evm_runtime::Result<()> {
+                use ::base_execution_evm_runtime::Storable;
+                debug_assert_eq!(ctx, ::base_execution_evm_runtime::LayoutCtx::FULL, "Struct types can only be deleted with LayoutCtx::FULL");
 
                 #delete_impl
 
@@ -256,45 +256,45 @@ fn derive_unit_enum_impl(input: &DeriveInput, data_enum: &DataEnum) -> syn::Resu
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     Ok(quote! {
-        impl #impl_generics ::base_execution_evm_precompiles::StorableType for #enum_name #ty_generics #where_clause {
-            const LAYOUT: ::base_execution_evm_precompiles::Layout = ::base_execution_evm_precompiles::Layout::Bytes(1);
-            type Handler<'a> = ::base_execution_evm_precompiles::Slot<'a, Self>;
+        impl #impl_generics ::base_execution_evm_runtime::StorableType for #enum_name #ty_generics #where_clause {
+            const LAYOUT: ::base_execution_evm_runtime::Layout = ::base_execution_evm_runtime::Layout::Bytes(1);
+            type Handler<'a> = ::base_execution_evm_runtime::Slot<'a, Self>;
 
             fn handle<'a>(
                 slot: ::alloy_primitives::U256,
-                ctx: ::base_execution_evm_precompiles::LayoutCtx,
+                ctx: ::base_execution_evm_runtime::LayoutCtx,
                 address: ::alloy_primitives::Address,
-                storage: ::base_execution_evm_precompiles::StorageCtx<'a>,
+                storage: ::base_execution_evm_runtime::StorageCtx<'a>,
             ) -> Self::Handler<'a> {
-                ::base_execution_evm_precompiles::Slot::new_with_ctx(slot, ctx, address, storage)
+                ::base_execution_evm_runtime::Slot::new_with_ctx(slot, ctx, address, storage)
             }
         }
 
-        impl #impl_generics ::base_execution_evm_precompiles::Storable for #enum_name #ty_generics #where_clause {
+        impl #impl_generics ::base_execution_evm_runtime::Storable for #enum_name #ty_generics #where_clause {
             #[inline]
-            fn load<S: ::base_execution_evm_precompiles::StorageOps>(
+            fn load<S: ::base_execution_evm_runtime::StorageOps>(
                 storage: &S,
                 slot: ::alloy_primitives::U256,
-                ctx: ::base_execution_evm_precompiles::LayoutCtx
-            ) -> ::base_execution_evm_precompiles::Result<Self> {
-                let value = <u8 as ::base_execution_evm_precompiles::Storable>::load(storage, slot, ctx)?;
+                ctx: ::base_execution_evm_runtime::LayoutCtx
+            ) -> ::base_execution_evm_runtime::Result<Self> {
+                let value = <u8 as ::base_execution_evm_runtime::Storable>::load(storage, slot, ctx)?;
                 match value {
                     #(discriminant if discriminant == Self::#variant_names as u8 => Ok(Self::#variant_names),)*
-                    _ => Err(::base_execution_evm_precompiles::BasePrecompileError::enum_conversion_error()),
+                    _ => Err(::base_execution_evm_runtime::BasePrecompileError::enum_conversion_error()),
                 }
             }
 
             #[inline]
-            fn store<S: ::base_execution_evm_precompiles::StorageOps>(
+            fn store<S: ::base_execution_evm_runtime::StorageOps>(
                 &self,
                 storage: &mut S,
                 slot: ::alloy_primitives::U256,
-                ctx: ::base_execution_evm_precompiles::LayoutCtx
-            ) -> ::base_execution_evm_precompiles::Result<()> {
+                ctx: ::base_execution_evm_runtime::LayoutCtx
+            ) -> ::base_execution_evm_runtime::Result<()> {
                 let value = match self {
                     #(Self::#variant_names => Self::#variant_names as u8,)*
                 };
-                <u8 as ::base_execution_evm_precompiles::Storable>::store(&value, storage, slot, ctx)
+                <u8 as ::base_execution_evm_runtime::Storable>::store(&value, storage, slot, ctx)
             }
         }
     })
@@ -347,7 +347,7 @@ fn gen_packing_module_from_ir(fields: &[LayoutField<'_>], mod_ident: &Ident) -> 
 
             #packing_constants
             pub const SLOT_COUNT: usize = (#last_slot_const.saturating_add(
-                ::alloy_primitives::U256::from_limbs([<#last_type as ::base_execution_evm_precompiles::StorableType>::SLOTS as u64, 0, 0, 0])
+                ::alloy_primitives::U256::from_limbs([<#last_type as ::base_execution_evm_runtime::StorableType>::SLOTS as u64, 0, 0, 0])
             )).as_limbs()[0] as usize;
         }
     }
@@ -373,7 +373,7 @@ fn gen_handler_struct(
         pub struct #handler_name<'a> {
             address: ::alloy_primitives::Address,
             base_slot: ::alloy_primitives::U256,
-            storage: ::base_execution_evm_precompiles::StorageCtx<'a>,
+            storage: ::base_execution_evm_runtime::StorageCtx<'a>,
             #(#handler_fields,)*
         }
 
@@ -382,7 +382,7 @@ fn gen_handler_struct(
             pub fn new(
                 base_slot: ::alloy_primitives::U256,
                 address: ::alloy_primitives::Address,
-                storage: ::base_execution_evm_precompiles::StorageCtx<'a>,
+                storage: ::base_execution_evm_runtime::StorageCtx<'a>,
             ) -> Self {
                 Self {
                     base_slot,
@@ -398,8 +398,8 @@ fn gen_handler_struct(
             }
 
             #[inline]
-            fn as_slot(&self) -> ::base_execution_evm_precompiles::Slot<'a, #struct_name> {
-                ::base_execution_evm_precompiles::Slot::<#struct_name>::new(
+            fn as_slot(&self) -> ::base_execution_evm_runtime::Slot<'a, #struct_name> {
+                ::base_execution_evm_runtime::Slot::<#struct_name>::new(
                     self.base_slot,
                     self.address,
                     self.storage,
@@ -409,29 +409,29 @@ fn gen_handler_struct(
             #access_methods
         }
 
-        impl ::base_execution_evm_precompiles::Handler<#struct_name> for #handler_name<'_> {
+        impl ::base_execution_evm_runtime::StorageHandler<#struct_name> for #handler_name<'_> {
             #[inline]
-            fn read(&self) -> ::base_execution_evm_precompiles::Result<#struct_name> {
+            fn read(&self) -> ::base_execution_evm_runtime::Result<#struct_name> {
                 self.as_slot().read()
             }
             #[inline]
-            fn write(&mut self, value: #struct_name) -> ::base_execution_evm_precompiles::Result<()> {
+            fn write(&mut self, value: #struct_name) -> ::base_execution_evm_runtime::Result<()> {
                 self.as_slot().write(value)
             }
             #[inline]
-            fn delete(&mut self) -> ::base_execution_evm_precompiles::Result<()> {
+            fn delete(&mut self) -> ::base_execution_evm_runtime::Result<()> {
                 self.as_slot().delete()
             }
             #[inline]
-            fn t_read(&self) -> ::base_execution_evm_precompiles::Result<#struct_name> {
+            fn t_read(&self) -> ::base_execution_evm_runtime::Result<#struct_name> {
                 self.as_slot().t_read()
             }
             #[inline]
-            fn t_write(&mut self, value: #struct_name) -> ::base_execution_evm_precompiles::Result<()> {
+            fn t_write(&mut self, value: #struct_name) -> ::base_execution_evm_runtime::Result<()> {
                 self.as_slot().t_write(value)
             }
             #[inline]
-            fn t_delete(&mut self) -> ::base_execution_evm_precompiles::Result<()> {
+            fn t_delete(&mut self) -> ::base_execution_evm_runtime::Result<()> {
                 self.as_slot().t_delete()
             }
         }
@@ -502,8 +502,8 @@ fn gen_access_method(field: &AccessField, spec: &AccessSpec) -> syn::Result<Toke
     let doc = format!("Reads the `{}` storage field.", field.name);
     Ok(quote! {
         #[doc = #doc]
-        pub fn #name(&self, #(#args),*) -> ::base_execution_evm_precompiles::Result<#value_ty> {
-            ::base_execution_evm_precompiles::Handler::read(#target)
+        pub fn #name(&self, #(#args),*) -> ::base_execution_evm_runtime::Result<#value_ty> {
+            ::base_execution_evm_runtime::StorageHandler::read(#target)
         }
     })
 }
@@ -519,8 +519,8 @@ fn gen_mutate_method(field: &AccessField, spec: &AccessSpec) -> syn::Result<Toke
             &mut self,
             #(#args,)*
             #value: #value_ty,
-        ) -> ::base_execution_evm_precompiles::Result<()> {
-            ::base_execution_evm_precompiles::Handler::write(#target, #value)
+        ) -> ::base_execution_evm_runtime::Result<()> {
+            ::base_execution_evm_runtime::StorageHandler::write(#target, #value)
         }
     })
 }
@@ -599,16 +599,16 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
             packing::get_neighbor_slot_refs(idx, fields, packing, |(name, _)| name, false);
 
         let slot_addr = quote! { base_slot + ::alloy_primitives::U256::from(#packing::#loc_const.offset_slots) };
-        let packed_ctx = quote! { ::base_execution_evm_precompiles::LayoutCtx::packed(#packing::#loc_const.offset_bytes) };
+        let packed_ctx = quote! { ::base_execution_evm_runtime::LayoutCtx::packed(#packing::#loc_const.offset_bytes) };
 
         prev_slot_ref.map_or_else(
             || quote! {
-                let #name = if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE {
+                let #name = if <#ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE {
                     cached_slot = storage.load(#slot_addr)?;
-                    let packed = ::base_execution_evm_precompiles::PackedSlot(cached_slot);
-                    <#ty as ::base_execution_evm_precompiles::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
+                    let packed = ::base_execution_evm_runtime::PackedSlot(cached_slot);
+                    <#ty as ::base_execution_evm_runtime::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
                 } else {
-                    <#ty as ::base_execution_evm_precompiles::Storable>::load(storage, #slot_addr, ::base_execution_evm_precompiles::LayoutCtx::FULL)?
+                    <#ty as ::base_execution_evm_runtime::Storable>::load(storage, #slot_addr, ::base_execution_evm_runtime::LayoutCtx::FULL)?
                 };
             },
             |prev_slot_ref| quote! {
@@ -616,15 +616,15 @@ fn gen_load_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                     let curr_offset = #packing::#loc_const.offset_slots;
                     let prev_offset = #prev_slot_ref;
 
-                    if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE && curr_offset == prev_offset {
-                        let packed = ::base_execution_evm_precompiles::PackedSlot(cached_slot);
-                        <#ty as ::base_execution_evm_precompiles::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
-                    } else if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE {
+                    if <#ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE && curr_offset == prev_offset {
+                        let packed = ::base_execution_evm_runtime::PackedSlot(cached_slot);
+                        <#ty as ::base_execution_evm_runtime::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
+                    } else if <#ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE {
                         cached_slot = storage.load(#slot_addr)?;
-                        let packed = ::base_execution_evm_precompiles::PackedSlot(cached_slot);
-                        <#ty as ::base_execution_evm_precompiles::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
+                        let packed = ::base_execution_evm_runtime::PackedSlot(cached_slot);
+                        <#ty as ::base_execution_evm_runtime::Storable>::load(&packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?
                     } else {
-                        <#ty as ::base_execution_evm_precompiles::Storable>::load(storage, #slot_addr, ::base_execution_evm_precompiles::LayoutCtx::FULL)?
+                        <#ty as ::base_execution_evm_runtime::Storable>::load(storage, #slot_addr, ::base_execution_evm_runtime::LayoutCtx::FULL)?
                     }
                 };
             },
@@ -650,13 +650,13 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
             packing::get_neighbor_slot_refs(idx, fields, packing, |(name, _)| name, false);
 
         let slot_addr = quote! { base_slot + ::alloy_primitives::U256::from(#packing::#loc_const.offset_slots) };
-        let packed_ctx = quote! { ::base_execution_evm_precompiles::LayoutCtx::packed(#packing::#loc_const.offset_bytes) };
+        let packed_ctx = quote! { ::base_execution_evm_runtime::LayoutCtx::packed(#packing::#loc_const.offset_bytes) };
 
         let should_store = match (&next_slot_ref, next_ty) {
             (Some(next_slot), Some(next_ty)) => {
                 quote! {
                     #packing::#loc_const.offset_slots != #next_slot
-                        || !<#next_ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE
+                        || !<#next_ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE
                 }
             }
             _ => quote! { true },
@@ -664,12 +664,12 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
 
         prev_slot_ref.map_or_else(
             || quote! {{
-                if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE {
+                if <#ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE {
                     // Load the existing slot before packing so neighboring packed values are preserved.
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(#packing::#loc_const.offset_slots);
-                    let mut packed = ::base_execution_evm_precompiles::PackedSlot(pending_val);
-                    <#ty as ::base_execution_evm_precompiles::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
+                    let mut packed = ::base_execution_evm_runtime::PackedSlot(pending_val);
+                    <#ty as ::base_execution_evm_runtime::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
                     pending_val = packed.0;
 
                     if #should_store {
@@ -677,33 +677,33 @@ fn gen_store_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
                         pending_offset = None;
                     }
                 } else {
-                    <#ty as ::base_execution_evm_precompiles::Storable>::store(&self.#name, storage, #slot_addr, ::base_execution_evm_precompiles::LayoutCtx::FULL)?;
+                    <#ty as ::base_execution_evm_runtime::Storable>::store(&self.#name, storage, #slot_addr, ::base_execution_evm_runtime::LayoutCtx::FULL)?;
                 }
             }},
             |prev_slot_ref| quote! {{
                 let curr_offset = #packing::#loc_const.offset_slots;
                 let prev_offset = #prev_slot_ref;
 
-                if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE && curr_offset == prev_offset {
-                    let mut packed = ::base_execution_evm_precompiles::PackedSlot(pending_val);
-                    <#ty as ::base_execution_evm_precompiles::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
+                if <#ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE && curr_offset == prev_offset {
+                    let mut packed = ::base_execution_evm_runtime::PackedSlot(pending_val);
+                    <#ty as ::base_execution_evm_runtime::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
                     pending_val = packed.0;
-                } else if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_PACKABLE {
+                } else if <#ty as ::base_execution_evm_runtime::StorableType>::IS_PACKABLE {
                     if let Some(offset) = pending_offset {
                         storage.store(base_slot + ::alloy_primitives::U256::from(offset), pending_val)?;
                     }
                     // Load the existing slot before packing so neighboring packed values are preserved.
                     pending_val = storage.load(#slot_addr)?;
                     pending_offset = Some(curr_offset);
-                    let mut packed = ::base_execution_evm_precompiles::PackedSlot(pending_val);
-                    <#ty as ::base_execution_evm_precompiles::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
+                    let mut packed = ::base_execution_evm_runtime::PackedSlot(pending_val);
+                    <#ty as ::base_execution_evm_runtime::Storable>::store(&self.#name, &mut packed, ::alloy_primitives::U256::ZERO, #packed_ctx)?;
                     pending_val = packed.0;
                 } else {
                     if let Some(offset) = pending_offset {
                         storage.store(base_slot + ::alloy_primitives::U256::from(offset), pending_val)?;
                         pending_offset = None;
                     }
-                    <#ty as ::base_execution_evm_precompiles::Storable>::store(&self.#name, storage, #slot_addr, ::base_execution_evm_precompiles::LayoutCtx::FULL)?;
+                    <#ty as ::base_execution_evm_runtime::Storable>::store(&self.#name, storage, #slot_addr, ::base_execution_evm_runtime::LayoutCtx::FULL)?;
                 }
 
                 if let Some(offset) = pending_offset && (#should_store) {
@@ -729,11 +729,11 @@ fn gen_delete_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
     let dynamic_deletes = fields.iter().map(|(name, ty)| {
         let loc_const = PackingConstants::new(name).location();
         quote! {
-            if <#ty as ::base_execution_evm_precompiles::StorableType>::IS_DYNAMIC {
-                <#ty as ::base_execution_evm_precompiles::Storable>::delete(
+            if <#ty as ::base_execution_evm_runtime::StorableType>::IS_DYNAMIC {
+                <#ty as ::base_execution_evm_runtime::Storable>::delete(
                     storage,
                     base_slot + ::alloy_primitives::U256::from(#packing::#loc_const.offset_slots),
-                    ::base_execution_evm_precompiles::LayoutCtx::FULL
+                    ::base_execution_evm_runtime::LayoutCtx::FULL
                 )?;
             }
         }
@@ -742,9 +742,9 @@ fn gen_delete_impl(fields: &[(&Ident, &Type)], packing: &Ident) -> TokenStream {
     let is_static_slot = fields.iter().map(|(name, ty)| {
         let loc_const = PackingConstants::new(name).location();
         quote! {
-            ((#packing::#loc_const.offset_slots..#packing::#loc_const.offset_slots + <#ty as ::base_execution_evm_precompiles::StorableType>::SLOTS)
+            ((#packing::#loc_const.offset_slots..#packing::#loc_const.offset_slots + <#ty as ::base_execution_evm_runtime::StorableType>::SLOTS)
                 .contains(&slot_offset) &&
-             !<#ty as ::base_execution_evm_precompiles::StorableType>::IS_DYNAMIC)
+             !<#ty as ::base_execution_evm_runtime::StorableType>::IS_DYNAMIC)
         }
     });
 

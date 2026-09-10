@@ -4,30 +4,26 @@ use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_tracing::tracing::{debug, info};
+use base_common_types_payload::TreeConfig;
 pub use base_execution_engine_driver::tree::BasicEngineValidator;
-use base_execution_engine_types::TreeConfig;
-use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
-use base_execution_rpc_handlers::{
+use base_execution_payload::{BaseEngineValidator, PayloadBuilderHandle};
+use base_execution_rpc::{
     AdminApi, BaseEthApi, BaseEthApiBuilder, BaseEthConfigApiServer,
-    DebugExecutionWitnessApiServer, DevSigner, EthApiCtx, MinerApiExtServer,
+    DebugExecutionWitnessApiServer, DevSigner, Eip8130EthApiExt, Eip8130EthApiOverrideServer,
+    EthApiCtx, EthStateCache, MinerApiExtServer, RpcRegistryInner, RpcServerConfig,
+    RpcServerHandle, TransportRpcModules, cache::cache_new_blocks_task,
 };
-use base_execution_rpc_handlers::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
-use base_execution_rpc_handlers::{EthStateCache, cache::cache_new_blocks_task};
-use base_execution_rpc_server::{
-    RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
+use base_execution_state_provider::{
+    CanonStateSubscriptions, OverlayManager, providers::BlockchainProvider,
 };
-use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_state_provider::OverlayManager;
-use base_execution_state_provider::providers::BlockchainProvider;
+use base_execution_txpool::BaseTransactionPool;
 use base_node_config::NodeConfig;
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
-use {crate::AddOnsContext, base_execution_txpool_pool::BaseTransactionPool};
 
-use crate::RpcConfig;
-use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
+use crate::{AddOnsContext, InvalidBlockHookBuilder, RpcConfig, TxpoolPrewarmSource};
 
 /// Handles for the Base node's public RPC services.
 pub type BaseNodeRpcHandle = RpcHandle;
@@ -45,7 +41,7 @@ pub struct RethRpcServerHandles {
 /// their runtime configuration.
 ///
 /// This can be used to access installed modules, or create commonly used handlers like
-/// [`base_execution_rpc_handlers::EthApi`], and ultimately merge additional rpc handler into the configured
+/// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`].
 #[expect(missing_debug_implementations)]
 pub struct RpcContext<'a> {
@@ -222,7 +218,7 @@ impl BaseRpcServer {
 
         let eth_config = rpc_config.eth.max_batch_size(config.txpool.max_batch_size);
         let ctx = EthApiCtx {
-            components: base_execution_rpc_handlers::BaseRpcContext {
+            components: base_execution_rpc::BaseRpcContext {
                 provider: node.provider.clone(),
                 pool: node.transaction_pool.clone(),
                 network: node.network.clone(),
@@ -266,23 +262,23 @@ impl BaseRpcServer {
 
         services.register(&mut ctx)?;
 
-        let eth_config = base_execution_rpc_handlers::BaseEthConfigHandler::new(
+        let eth_config = base_execution_rpc::BaseEthConfigHandler::new(
             node.provider().clone(),
             node.evm_config().clone(),
         );
         ctx.modules.merge_configured(eth_config.into_rpc())?;
-        let payload = base_execution_payload_builder::BasePayloadBuilder::new(
+        let payload = base_execution_payload::BasePayloadBuilder::new(
             node.pool().clone(),
             node.provider().clone(),
             node.evm_config().clone(),
         );
-        let witness = base_execution_rpc_handlers::BaseDebugWitnessApi::new(
+        let witness = base_execution_rpc::BaseDebugWitnessApi::new(
             node.provider().clone(),
             node.task_executor().clone(),
             payload,
         );
         ctx.modules.merge_configured(witness.into_rpc())?;
-        let miner = base_execution_rpc_handlers::BaseMinerExtApi::new(
+        let miner = base_execution_rpc::BaseMinerExtApi::new(
             base.da_config.clone(),
             base.gas_limit_config.clone(),
         );
@@ -320,7 +316,7 @@ impl BasicEngineValidatorBuilder {
         ctx: &AddOnsContext<'_>,
         tree_config: TreeConfig,
         overlay_manager: OverlayManager,
-    ) -> eyre::Result<BasicEngineValidator<BlockchainProvider>> {
+    ) -> eyre::Result<BasicEngineValidator> {
         let validator = BaseEngineValidator::new(Arc::clone(&ctx.config.chain));
         let data_dir = ctx.config.datadir.clone().resolve_datadir(ctx.config.chain.chain());
         let invalid_block_hook = InvalidBlockHookBuilder::build(

@@ -4,7 +4,7 @@
 //! Submitting the missing sequence fills the gap, and duplicate later blocks
 //! remain harmless.
 
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,
@@ -123,7 +123,7 @@ async fn batcher_gap_fill_single_instance_reorg_signal() {
 /// Each `Batcher` instance starts with a clean [`BatchEncoder`], which
 /// is the state that results from the batcher's fresh-start path.
 ///
-/// [`BatchEncoder`]: base_batcher_encoding_channel::BatchEncoder
+/// [`BatchEncoder`]: base_batcher_encoding::BatchEncoder
 #[tokio::test]
 async fn batcher_gap_fill_separate_instances() {
     let batcher_cfg = BatcherConfig {

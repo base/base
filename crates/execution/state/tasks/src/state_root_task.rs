@@ -10,8 +10,7 @@
 use std::{fmt, sync::Arc};
 
 use alloy_primitives::{B256, keccak256, map::B256Map};
-use base_execution_evm_runtime::OnStateHook;
-use base_execution_evm_runtime::state::EvmState;
+use base_execution_evm_runtime::{EvmState, OnStateHook};
 use base_execution_state_trie::{
     HashedPostState, HashedStorage, MultiProofTargetsV2, ProofV2Target, updates::TrieUpdates,
 };
@@ -534,7 +533,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, U256};
-    use base_execution_evm_runtime::state::{Account, EvmStorageSlot, TransactionId};
+    use base_execution_evm_runtime::{Account, EvmStorageSlot, TransactionId};
 
     use super::*;
 

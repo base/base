@@ -1,6 +1,5 @@
 use alloy_primitives::{BlockNumber, U256};
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::{InMemorySize, SealedBlock, SealedHeader};
+use base_common_types_chain::{BlockHeader, InMemorySize, SealedBlock, SealedHeader};
 /// The block response
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum BlockResponse {

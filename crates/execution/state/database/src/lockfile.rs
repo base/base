@@ -1,7 +1,5 @@
 //! Storage lock utils.
 
-#![cfg_attr(feature = "disable-lock", allow(dead_code))]
-
 use std::{
     path::{Path, PathBuf},
     process,
@@ -30,20 +28,6 @@ impl StorageLock {
     /// Note: In-process exclusivity is not on scope. If called from the same process (or another
     /// with the same PID), it will succeed.
     pub fn try_acquire(path: &Path) -> Result<Self, StorageLockError> {
-        #[cfg(feature = "disable-lock")]
-        {
-            let file_path = path.join(LOCKFILE_NAME);
-            // Too expensive for ef-tests to write/read lock to/from disk.
-            Ok(Self(Arc::new(StorageLockInner { file_path })))
-        }
-
-        #[cfg(not(feature = "disable-lock"))]
-        Self::try_acquire_file_lock(path)
-    }
-
-    /// Acquire a file write lock.
-    #[cfg(any(test, not(feature = "disable-lock")))]
-    fn try_acquire_file_lock(path: &Path) -> Result<Self, StorageLockError> {
         let file_path = path.join(LOCKFILE_NAME);
         if let Some(process_lock) = ProcessUID::parse(&file_path)?
             && process_lock.pid != (process::id() as usize)
@@ -65,15 +49,13 @@ impl StorageLock {
 
 impl Drop for StorageLockInner {
     fn drop(&mut self) {
-        // The lockfile is not created in disable-lock mode, so we don't need to delete it.
-        #[cfg(any(test, not(feature = "disable-lock")))]
         {
             let file_path = &self.file_path;
             if file_path.exists() {
                 if let Ok(Some(process_uid)) = ProcessUID::parse(file_path) {
                     // Only remove if the lock file belongs to our process
                     if process_uid.pid == process::id() as usize {
-                        if let Err(err) = base_common_io_files::Files::remove_file(file_path) {
+                        if let Err(err) = base_common_io::Files::remove_file(file_path) {
                             base_common_observability_tracing::tracing::error!(%err, "Failed to delete lock file");
                         }
                     } else {
@@ -85,7 +67,7 @@ impl Drop for StorageLockInner {
                 } else {
                     // If we can't parse the lock file, still try to remove it
                     // as it might be corrupted or from a previous run
-                    if let Err(err) = base_common_io_files::Files::remove_file(file_path) {
+                    if let Err(err) = base_common_io::Files::remove_file(file_path) {
                         base_common_observability_tracing::tracing::error!(%err, "Failed to delete lock file");
                     }
                 }
@@ -104,7 +86,7 @@ impl StorageLockInner {
     fn new(file_path: PathBuf) -> Result<Self, StorageLockError> {
         // Create the directory if it doesn't exist
         if let Some(parent) = file_path.parent() {
-            base_common_io_files::Files::create_dir_all(parent).map_err(StorageLockError::other)?;
+            base_common_io::Files::create_dir_all(parent).map_err(StorageLockError::other)?;
         }
 
         // Write this process unique identifier (pid & start_time) to file
@@ -144,7 +126,7 @@ impl ProcessUID {
     /// Parses [`Self`] from a file.
     fn parse(path: &Path) -> Result<Option<Self>, StorageLockError> {
         if path.exists()
-            && let Ok(contents) = base_common_io_files::Files::read_to_string(path)
+            && let Ok(contents) = base_common_io::Files::read_to_string(path)
         {
             let mut lines = contents.lines();
             if let (Some(Ok(pid)), Some(Ok(start_time))) = (
@@ -168,7 +150,7 @@ impl ProcessUID {
 
     /// Writes `pid` and `start_time` to a file.
     fn write(&self, path: &Path) -> Result<(), StorageLockError> {
-        base_common_io_files::Files::write(path, format!("{}\n{}", self.pid, self.start_time))
+        base_common_io::Files::write(path, format!("{}\n{}", self.pid, self.start_time))
             .map_err(StorageLockError::other)
     }
 }
@@ -192,10 +174,10 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let lock = StorageLock::try_acquire_file_lock(temp_dir.path()).unwrap();
+        let lock = StorageLock::try_acquire(temp_dir.path()).unwrap();
 
         // Same process can re-acquire the lock
-        assert_eq!(Ok(lock.clone()), StorageLock::try_acquire_file_lock(temp_dir.path()));
+        assert_eq!(Ok(lock.clone()), StorageLock::try_acquire(temp_dir.path()));
 
         // A lock of a non existent PID can be acquired.
         let lock_file = temp_dir.path().join(LOCKFILE_NAME);
@@ -205,21 +187,18 @@ mod tests {
             fake_pid += 1;
         }
         ProcessUID { pid: fake_pid, start_time: u64::MAX }.write(&lock_file).unwrap();
-        assert_eq!(Ok(lock.clone()), StorageLock::try_acquire_file_lock(temp_dir.path()));
+        assert_eq!(Ok(lock.clone()), StorageLock::try_acquire(temp_dir.path()));
 
         let mut pid_1 = ProcessUID::new(1).unwrap();
 
         // If a parsed `ProcessUID` exists, the lock can NOT be acquired.
         pid_1.write(&lock_file).unwrap();
-        assert_eq!(
-            Err(StorageLockError::Taken(1)),
-            StorageLock::try_acquire_file_lock(temp_dir.path())
-        );
+        assert_eq!(Err(StorageLockError::Taken(1)), StorageLock::try_acquire(temp_dir.path()));
 
         // A lock of a different but existing PID can be acquired ONLY IF the start_time differs.
         pid_1.start_time += 1;
         pid_1.write(&lock_file).unwrap();
-        assert_eq!(Ok(lock), StorageLock::try_acquire_file_lock(temp_dir.path()));
+        assert_eq!(Ok(lock), StorageLock::try_acquire(temp_dir.path()));
     }
 
     #[test]
@@ -229,7 +208,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let lock_file = temp_dir.path().join(LOCKFILE_NAME);
 
-        let lock = StorageLock::try_acquire_file_lock(temp_dir.path()).unwrap();
+        let lock = StorageLock::try_acquire(temp_dir.path()).unwrap();
 
         assert!(lock_file.exists());
         drop(lock);

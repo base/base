@@ -14,9 +14,8 @@ mod common;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use base_common_client_ethereum::{Base, PrivateKeySigner};
-use base_common_client_ethereum::{Provider, RootProvider};
-use base_execution_evm_precompiles::{
+use base_common_client_ethereum::{Base, PrivateKeySigner, Provider, RootProvider};
+use base_execution_evm_runtime::{
     ActivationFeature, B20PolicyType, B20Variant, IB20, IPolicyRegistry, PolicyRegistryStorage,
 };
 use base_testing_devnet::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, ANVIL_ACCOUNT_7, B20PrecompileClient};

@@ -5,7 +5,6 @@ use std::{
     time::Duration,
 };
 
-use crate::BlockResponse as _;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U64};
 use alloy_rpc_client::RpcClient;
@@ -14,10 +13,9 @@ use alloy_transport::{
     layers::{RetryBackoffLayer, RetryPolicy},
 };
 use base_common_types_chain::BlockHeader;
-use base_common_types_rpc::HeaderResponse;
-use base_common_types_rpc::{Block, Filter, Log};
+use base_common_types_rpc::{Block, Filter, HeaderResponse, Log};
 
-use crate::{BlockLogs, Provider, ProviderBuilder};
+use crate::{BlockLogs, BlockResponse as _, Provider, ProviderBuilder};
 
 struct ChainState {
     blocks: HashMap<u64, Block>,

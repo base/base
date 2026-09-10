@@ -1,11 +1,8 @@
 //! Tests for the session handshake.
 
-use base_execution_network_types::pk2id;
-use base_execution_network_wire::Capability;
-use base_execution_network_wire::EthHandshake;
-use base_execution_network_wire::MAX_MESSAGE_SIZE;
-use base_execution_network_wire::Protocol;
-use base_execution_network_wire::UnauthedEthStream;
+use base_execution_network_wire::{
+    Capability, EthHandshake, MAX_MESSAGE_SIZE, Protocol, UnauthedEthStream, pk2id,
+};
 use futures::StreamExt;
 use secp256k1::SECP256K1;
 use tokio::net::TcpListener;

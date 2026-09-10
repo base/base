@@ -12,51 +12,50 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-rayon = {workspace = true}
 url = { workspace = true }
+rayon = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
-thiserror = {workspace = true}
+thiserror = { workspace = true }
 humantime = { workspace = true }
 rustc-hash = { workspace = true }
 alloy-genesis = { workspace = true }
-base-common-io-files = { workspace = true }
+base-common-io = { workspace = true }
+base-common-runtime = { workspace = true }
 boyer-moore-magiclen = { workspace = true }
-base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
-base-execution-state-api = { workspace = true }
-base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
-base-execution-state-database = {workspace = true}
-base-execution-state-provider = {workspace = true}
+base-execution-evm-runtime = { workspace = true }
 tar = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
+base-execution-state-database = { workspace = true }
+base-execution-state-provider = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 blake3 = { workspace = true, features = ["default"] }
-serde_json = {workspace = true, features = ["alloc"]}
+serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
-tracing = {workspace = true, features = ["attributes"]}
-base-common-types-chain = {features = ["k256", "reth"], workspace = true}
-alloy-primitives = {workspace = true, features = ["map-foldhash"]}
-base-execution-state-types = {workspace = true, features = ["std"]}
-base-common-observability-metrics = { workspace = true, features = ["metrics"]}
+tracing = { workspace = true, features = ["attributes"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash"] }
+base-execution-state-types = { workspace = true, features = ["std"] }
+base-common-types-chain = { features = ["k256", "reth"], workspace = true }
+base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 parking_lot = { workspace = true, features = ["default", "send_guard", "arc_lock"] }
 
 [dev-dependencies]
-assert_matches = {workspace = true}
-base-testing-support = {workspace = true}
+assert_matches = { workspace = true }
+base-common-runtime = { workspace = true }
+base-testing-support = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
-tempfile = {workspace = true, features = ["default"]}
+tempfile = { workspace = true, features = ["default"] }
+base-execution-sync = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
-base-execution-state-types = {workspace = true, features = ["arbitrary"]}
-base-execution-sync-pipeline = {workspace = true, features = ["test-utils"]}
+base-execution-state-types = { workspace = true, features = ["arbitrary"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "k256"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 
 [lints]
 workspace = true

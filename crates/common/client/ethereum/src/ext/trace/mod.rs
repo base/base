@@ -1,5 +1,4 @@
 //! This module extends the Ethereum JSON-RPC provider with the Trace namespace's RPC methods.
-use crate::Network;
 use alloy_eips::BlockId;
 use alloy_primitives::TxHash;
 use alloy_transport::TransportResult;
@@ -8,7 +7,7 @@ use base_common_types_rpc::{
     TraceType,
 };
 
-use crate::Provider;
+use crate::{Network, Provider};
 
 mod with_block;
 pub use with_block::{TraceBuilder, TraceParams};
@@ -164,14 +163,16 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::{EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, TransactionBuilder};
     use alloy_eips::{BlockNumberOrTag, Encodable2718};
-    use base_common_process_nodes::{Reth, utils::run_with_tempdir};
     use alloy_primitives::{U256, address};
+    use base_common_process::{Reth, utils::run_with_tempdir};
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;
-    use crate::{ProviderBuilder, ext::test::async_ci_only};
+    use crate::{
+        EthereumWallet, NetworkTransactionBuilder, PrivateKeySigner, ProviderBuilder,
+        TransactionBuilder, ext::test::async_ci_only,
+    };
 
     #[tokio::test]
     async fn trace_block() {

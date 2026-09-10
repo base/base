@@ -12,7 +12,7 @@ use std::{
 };
 
 use alloy_primitives::keccak256;
-use base_common_runtime_tasks::ratelimit::{Rate, RateLimit};
+use base_common_runtime::ratelimit::{Rate, RateLimit};
 use data_encoding::BASE32_NOPAD;
 use enr::EnrKeyUnambiguous;
 

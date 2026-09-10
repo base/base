@@ -9,7 +9,7 @@ use base_proof_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, TeeKind,
     TeeProofRequest,
 };
-use base_proof_types_protocol::ProofRequest as PrimitiveProofRequest;
+use base_proof_types::ProofRequest as PrimitiveProofRequest;
 use common::connect;
 use uuid::Uuid;
 

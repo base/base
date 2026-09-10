@@ -59,3 +59,12 @@ pub use nippy_jar::{
     NippyJar, NippyJarChecker, NippyJarCursor, NippyJarError, NippyJarHeader, NippyJarWriter,
     Zstd as NippyZstd, ZstdState as NippyZstdState,
 };
+
+mod database_provider;
+pub use database_provider::*;
+
+mod stats;
+pub use stats::*;
+
+mod noop;
+pub use noop::*;

@@ -4,39 +4,30 @@ use core::fmt::Debug;
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
-use base_common_chain_config::BaseChainSpec;
-use base_common_chain_config::Upgrades;
+use base_common_chain_config::{BaseChainSpec, Upgrades};
 #[cfg(feature = "std")]
 use base_common_types_chain::WithEncoded;
-use base_common_types_chain::{BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header};
+use base_common_types_chain::{
+    BaseTxEnvelope, BlockHeader, EIP1559ParamError, Header, SealedBlock, SealedHeader,
+    SignedTransaction,
+};
 #[cfg(not(feature = "std"))]
 use base_common_types_payload as _;
 #[cfg(feature = "std")]
 use base_common_types_payload::ExecutionData;
 use base_execution_evm_runtime::{
-    BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
-};
-use base_execution_evm_runtime::{
-    BlockExecutionError, BlockExecutorFactory, BlockExecutorFor, Database, EvmFactory, IntoTxEnv,
-};
-use base_execution_evm_runtime::{
-    database::State,
-    primitives::{Address, B256, Bytes as RevmBytes},
+    Address, B256, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
+    BlockExecutionError, Bytes as RevmBytes, Database, EvmFactory, IntoTxEnv, State,
 };
 #[cfg(not(feature = "std"))]
 use base_execution_state_types as _;
 #[cfg(feature = "std")]
 use base_execution_state_types::AnyError;
-use {
-    base_common_types_chain::SealedBlock, base_common_types_chain::SealedHeader,
-    base_common_types_chain::SignedTransaction,
-};
 
 #[cfg(feature = "std")]
 use crate::ExecutableTxIterator;
 use crate::{
-    BaseBlockAssembler, BaseEvmEnvBuilder, BlockExecutorForEvm, EvmEnv, EvmEnvFor, EvmFactoryFor,
-    EvmFor, InspectorFor, TxEnvFor,
+    BaseBlockAssembler, BaseEvmEnvBuilder, EvmEnv,
     execute::{BasicBlockBuilder, BasicBlockExecutor, BlockBuilder, Executor},
 };
 
@@ -58,11 +49,13 @@ pub struct BaseNextBlockEnvAttributes {
 }
 
 /// Executor factory used by the Base node.
-pub type BaseExecutorFactory = BaseBlockExecutorFactory<Arc<BaseChainSpec>, BaseEvmFactory>;
+pub type BaseExecutorFactory = BaseBlockExecutorFactory;
 
 /// Base EVM configuration.
 #[derive(Debug, Clone)]
 pub struct BaseEvmConfig {
+    /// Chain specification used to construct block environments.
+    pub chain_spec: Arc<BaseChainSpec>,
     /// Factory for Base block executors.
     pub executor_factory: BaseExecutorFactory,
     /// Base block assembler.
@@ -82,15 +75,16 @@ impl BaseEvmConfig {
         Self {
             block_assembler: BaseBlockAssembler::new(Arc::clone(&chain_spec)),
             executor_factory: BaseBlockExecutorFactory::new(
-                chain_spec,
+                chain_spec.config.clone(),
                 BaseEvmFactory::new(activation_admin_address),
             ),
+            chain_spec,
         }
     }
 
     /// Returns the chain specification used by this EVM configuration.
     pub const fn chain_spec(&self) -> &Arc<BaseChainSpec> {
-        self.executor_factory.spec()
+        &self.chain_spec
     }
 
     /// Returns the Base executor factory.
@@ -150,7 +144,13 @@ impl BaseEvmConfig {
     pub fn evm_env_for_payload(
         &self,
         payload: &ExecutionData,
-    ) -> Result<EvmEnvFor, EIP1559ParamError> {
+    ) -> Result<
+        base_execution_evm_runtime::EvmEnv<
+            base_execution_evm_runtime::BaseSpecId,
+            base_execution_evm_runtime::BlockEnv,
+        >,
+        EIP1559ParamError,
+    > {
         Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
     }
 
@@ -159,7 +159,7 @@ impl BaseEvmConfig {
     pub fn context_for_payload<'a>(
         &self,
         payload: &'a ExecutionData,
-    ) -> Result<crate::ExecutionCtxFor, EIP1559ParamError> {
+    ) -> Result<base_execution_evm_runtime::BaseBlockExecutionCtx, EIP1559ParamError> {
         Ok(BaseBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
@@ -186,20 +186,30 @@ impl BaseEvmConfig {
     }
 
     /// Returns a [`EvmFactory::Tx`] from a transaction.
-    pub fn tx_env(&self, transaction: impl IntoTxEnv<TxEnvFor>) -> TxEnvFor {
+    pub fn tx_env(
+        &self,
+        transaction: impl IntoTxEnv<base_execution_evm_runtime::BaseTransaction>,
+    ) -> base_execution_evm_runtime::BaseTransaction {
         transaction.into_tx_env()
     }
 
     /// Provides a reference to [`EvmFactory`] implementation.
-    pub fn evm_factory(&self) -> &EvmFactoryFor {
-        self.block_executor_factory().evm_factory()
+    pub fn evm_factory(&self) -> &base_execution_evm_runtime::BaseEvmFactory {
+        &self.executor_factory.evm_factory
     }
 
     /// Returns a new EVM with the given database configured with the given environment settings,
     /// including the spec id and transaction environment.
     ///
     /// This will preserve any handler modifications
-    pub fn evm_with_env<DB: Database>(&self, db: DB, evm_env: EvmEnvFor) -> EvmFor<DB> {
+    pub fn evm_with_env<DB: Database>(
+        &self,
+        db: DB,
+        evm_env: base_execution_evm_runtime::EvmEnv<
+            base_execution_evm_runtime::BaseSpecId,
+            base_execution_evm_runtime::BlockEnv,
+        >,
+    ) -> base_execution_evm_runtime::BaseEvm<DB, base_execution_evm_runtime::NoOpInspector> {
         self.evm_factory().create_evm(db, evm_env)
     }
 
@@ -214,7 +224,10 @@ impl BaseEvmConfig {
         &self,
         db: DB,
         header: &base_common_types_chain::Header,
-    ) -> Result<EvmFor<DB>, EIP1559ParamError> {
+    ) -> Result<
+        base_execution_evm_runtime::BaseEvm<DB, base_execution_evm_runtime::NoOpInspector>,
+        EIP1559ParamError,
+    > {
         let evm_env = self.evm_env(header)?;
         Ok(self.evm_with_env(db, evm_env))
     }
@@ -228,12 +241,15 @@ impl BaseEvmConfig {
     pub fn evm_with_env_and_inspector<DB, I>(
         &self,
         db: DB,
-        evm_env: EvmEnvFor,
+        evm_env: base_execution_evm_runtime::EvmEnv<
+            base_execution_evm_runtime::BaseSpecId,
+            base_execution_evm_runtime::BlockEnv,
+        >,
         inspector: I,
-    ) -> EvmFor<DB, I>
+    ) -> base_execution_evm_runtime::BaseEvm<DB, I>
     where
         DB: Database,
-        I: InspectorFor<DB>,
+        I: base_execution_evm_runtime::Inspector<base_execution_evm_runtime::BaseContext<DB>>,
     {
         self.evm_factory().create_evm_with_inspector(db, evm_env, inspector)
     }
@@ -241,12 +257,17 @@ impl BaseEvmConfig {
     /// Creates a strategy with given EVM and execution context.
     pub fn create_executor<'a, DB, I>(
         &'a self,
-        evm: EvmFor<&'a mut State<DB>, I>,
-        ctx: <BaseExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>,
-    ) -> BlockExecutorForEvm<'a, DB, I>
+        evm: base_execution_evm_runtime::BaseEvm<&'a mut State<DB>, I>,
+        ctx: BaseBlockExecutionCtx,
+    ) -> base_execution_evm_runtime::BaseBlockExecutor<
+        &'a mut base_execution_evm_runtime::State<DB>,
+        I,
+    >
     where
         DB: Database,
-        I: InspectorFor<&'a mut State<DB>> + 'a,
+        I: base_execution_evm_runtime::Inspector<
+                base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
+            > + 'a,
     {
         self.block_executor_factory().create_executor(evm, ctx)
     }
@@ -254,12 +275,14 @@ impl BaseEvmConfig {
     /// Creates a strategy with a DB state borrow that can be shorter than the execution context.
     pub fn create_executor_with_state<'a, 'db, DB, I>(
         &'a self,
-        evm: EvmFor<&'db mut State<DB>, I>,
-        ctx: <BaseExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>,
-    ) -> BlockExecutorFor<'a, BaseExecutorFactory, &'db mut State<DB>, I>
+        evm: base_execution_evm_runtime::BaseEvm<&'db mut State<DB>, I>,
+        ctx: BaseBlockExecutionCtx,
+    ) -> base_execution_evm_runtime::BaseBlockExecutor<&'db mut State<DB>, I>
     where
         DB: Database,
-        I: InspectorFor<&'db mut State<DB>>,
+        I: base_execution_evm_runtime::Inspector<
+                base_execution_evm_runtime::BaseContext<&'db mut State<DB>>,
+            >,
     {
         self.block_executor_factory().create_executor(evm, ctx)
     }
@@ -269,7 +292,13 @@ impl BaseEvmConfig {
         &'a self,
         db: &'a mut State<DB>,
         block: &'a SealedBlock,
-    ) -> Result<BlockExecutorForEvm<'a, DB>, EIP1559ParamError> {
+    ) -> Result<
+        base_execution_evm_runtime::BaseBlockExecutor<
+            &'a mut base_execution_evm_runtime::State<DB>,
+            base_execution_evm_runtime::NoOpInspector,
+        >,
+        EIP1559ParamError,
+    > {
         let evm = self.evm_for_block(db, block.header())?;
         let ctx = self.context_for_block(block)?;
         Ok(self.create_executor(evm, ctx))
@@ -292,13 +321,20 @@ impl BaseEvmConfig {
     /// ```
     pub fn create_block_builder<'a, DB, I>(
         &'a self,
-        evm: EvmFor<&'a mut State<DB>, I>,
+        evm: base_execution_evm_runtime::BaseEvm<&'a mut State<DB>, I>,
         parent: &'a SealedHeader,
-        ctx: <BaseExecutorFactory as BlockExecutorFactory>::ExecutionCtx<'a>,
-    ) -> impl BlockBuilder<Executor = BlockExecutorForEvm<'a, DB, I>>
+        ctx: BaseBlockExecutionCtx,
+    ) -> impl BlockBuilder<
+        Executor = base_execution_evm_runtime::BaseBlockExecutor<
+            &'a mut base_execution_evm_runtime::State<DB>,
+            I,
+        >,
+    >
     where
         DB: Database,
-        I: InspectorFor<&'a mut State<DB>> + 'a,
+        I: base_execution_evm_runtime::Inspector<
+                base_execution_evm_runtime::BaseContext<&'a mut State<DB>>,
+            > + 'a,
     {
         BasicBlockBuilder {
             executor: self.create_executor(evm, ctx.clone()),
@@ -343,7 +379,15 @@ impl BaseEvmConfig {
         db: &'a mut State<DB>,
         parent: &'a SealedHeader,
         attributes: BaseNextBlockEnvAttributes,
-    ) -> Result<impl BlockBuilder<Executor = BlockExecutorForEvm<'a, DB>>, EIP1559ParamError> {
+    ) -> Result<
+        impl BlockBuilder<
+            Executor = base_execution_evm_runtime::BaseBlockExecutor<
+                &'a mut base_execution_evm_runtime::State<DB>,
+                base_execution_evm_runtime::NoOpInspector,
+            >,
+        >,
+        EIP1559ParamError,
+    > {
         let evm_env = self.next_evm_env(parent, &attributes)?;
         let evm = self.evm_with_env(db, evm_env);
         let ctx = self.context_for_next_block(parent, attributes)?;
@@ -388,29 +432,21 @@ mod tests {
     use alloc::collections::BTreeMap;
     use std::sync::Arc;
 
-    use alloy_eips::eip7685::Requests;
+    use alloy_eips::{eip7685::Requests, eip7825::MAX_TX_GAS_LIMIT_OSAKA};
     use alloy_genesis::Genesis;
     use alloy_primitives::{
         Address, B256, LogData, U256, bytes,
         map::{AddressMap, B256Map, HashMap},
     };
-    use base_common_chain_config::BaseUpgrade;
-    use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
-    use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt};
-    use base_execution_evm_machine::{BlockEnv, CfgEnv};
-    use base_execution_evm_runtime::BaseSpecId;
-    use base_execution_evm_runtime::NoOpInspector;
+    use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder, BaseUpgrade};
+    use base_common_types_chain::{BaseBlock, BaseReceipt, Header, Receipt, RecoveredBlock};
     use base_execution_evm_runtime::{
-        database::EmptyDBTyped,
-        database::{BundleState, CacheDB},
-        primitives::Log,
-        state::AccountInfo,
+        AccountInfo, BaseSpecId, BlockEnv, BundleState, CacheDB, CfgEnv, EmptyDBTyped, Log,
+        NoOpInspector, StoredAccount as Account,
     };
-    use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
-    use {alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA, base_common_types_chain::RecoveredBlock};
 
     use super::BaseEvmConfig;
     use crate::{EvmEnv, execute::ProviderError};

@@ -1,8 +1,10 @@
 //! Combined consensus and execution bootnode command.
 
-use base_common_cli_support::CliRunner;
-use base_node_cli::commands::p2p::bootnode::Command as ExecutionBootnodeCommand;
-use base_node_cli::{BootnodeP2PArgs, CliMetrics, L2ConfigFile};
+use base_common_cli::CliRunner;
+use base_node_cli::{
+    BootnodeP2PArgs, CliMetrics, L2ConfigFile,
+    commands::p2p::bootnode::Command as ExecutionBootnodeCommand,
+};
 use clap::Args;
 use eyre::WrapErr;
 use tokio::task::JoinHandle;

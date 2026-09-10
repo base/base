@@ -61,18 +61,19 @@ use std::{
         Arc,
         mpsc::{self, RecvTimeoutError},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_primitives::B256;
-use base_common_runtime_tasks::utils::increase_thread_priority;
+use base_common_runtime::utils::increase_thread_priority;
+use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedHeader};
 use base_execution_evm_blocks::OnStateHook;
 use base_execution_state_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
-    HashedPostStateProvider, ProviderError, PruneCheckpointReader, StageCheckpointReader,
-    StateRootProvider, StorageSettingsCache, TryIntoHistoricalStateProvider,
+    HashedPostStateProvider, OverlayManager, OverlayStateProviderFactory, PreservedSparseTrie,
+    ProviderError, PruneCheckpointReader, StageCheckpointReader, StateRootProvider,
+    StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
 pub use base_execution_state_tasks::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
@@ -82,24 +83,12 @@ use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHa
 #[cfg(feature = "trie-debug")]
 use base_execution_state_trie::TrieDebugRecorder;
 use base_execution_state_trie::{
-    HashedPostState, hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory,
-    updates::TrieUpdates,
+    ArenaParallelSparseTrie, HashedPostState, RevealableSparseTrie, SparseStateTrie,
+    hashed_cursor::HashedCursorFactory, trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
-use base_execution_state_types::ProviderResult;
+use base_execution_state_types::{ExecutedBlock, ProviderResult, TrieNodeEpoch};
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use tracing::{Span, debug, debug_span, instrument, warn};
-use {
-    base_common_types_chain::BlockHeader, base_common_types_chain::RecoveredBlock,
-    base_common_types_chain::SealedHeader, std::time::Instant,
-};
-use {
-    base_execution_state_provider::PreservedSparseTrie, base_execution_state_types::ExecutedBlock,
-};
-use {
-    base_execution_state_trie::ArenaParallelSparseTrie,
-    base_execution_state_trie::RevealableSparseTrie, base_execution_state_trie::SparseStateTrie,
-    base_execution_state_types::TrieNodeEpoch,
-};
 
 use self::sparse_trie::{SparseTrieCacheTask, SparseTrieTaskMetrics};
 use crate::tree::{
@@ -108,15 +97,15 @@ use crate::tree::{
 };
 
 /// Handle to a [`HashedPostState`] computed on a background thread.
-pub type LazyHashedPostState = base_common_runtime_tasks::LazyHandle<Arc<HashedPostState>>;
+pub type LazyHashedPostState = base_common_runtime::LazyHandle<Arc<HashedPostState>>;
 
 /// Strategy used by engine-tree validation to prepare per-block state-root work.
-pub trait StateRootStrategy<P>: Send + Sync {
+pub trait StateRootStrategy: Send + Sync {
     /// Prepares a per-block state-root job before execution starts.
     ///
     /// A custom strategy that maintains a reusable sparse trie is responsible for consuming the
     /// pending prune request from the context when it starts the corresponding job.
-    fn prepare(&self, ctx: StateRootJobContext<'_, P>) -> ProviderResult<PreparedStateRootJob>;
+    fn prepare(&self, ctx: StateRootJobContext<'_>) -> ProviderResult<PreparedStateRootJob>;
 
     /// Prepares the optional payload-builder state-root handle used for FCU-triggered block
     /// building.
@@ -126,26 +115,26 @@ pub trait StateRootStrategy<P>: Send + Sync {
     /// synchronous MPT state root. The default implementation returns `None`.
     fn prepare_payload_builder(
         &self,
-        _ctx: PayloadStateRootJobContext<'_, P>,
+        _ctx: PayloadStateRootJobContext<'_>,
     ) -> ProviderResult<Option<PayloadStateRootHandle>> {
         Ok(None)
     }
 }
 
 /// Data available while preparing one payload-builder state-root handle.
-pub struct PayloadStateRootJobContext<'a, P> {
-    executor: &'a base_common_runtime_tasks::Runtime,
+pub struct PayloadStateRootJobContext<'a> {
+    executor: &'a base_common_runtime::Runtime,
     overlay_manager: &'a OverlayManager,
     parent_hash: B256,
     parent_header: &'a base_common_types_chain::Header,
     timestamp: u64,
     state: &'a mut EngineApiTreeState,
-    provider_builder: StateProviderBuilder<P>,
-    overlay_factory: OverlayStateProviderFactory<P>,
+    provider_builder: StateProviderBuilder,
+    overlay_factory: OverlayStateProviderFactory<base_execution_state_provider::BlockchainProvider>,
     config: &'a TreeConfig,
 }
 
-impl<P> fmt::Debug for PayloadStateRootJobContext<'_, P> {
+impl fmt::Debug for PayloadStateRootJobContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PayloadStateRootJobContext")
             .field("parent_hash", &self.parent_hash)
@@ -156,18 +145,20 @@ impl<P> fmt::Debug for PayloadStateRootJobContext<'_, P> {
     }
 }
 
-impl<'a, P> PayloadStateRootJobContext<'a, P> {
+impl<'a> PayloadStateRootJobContext<'a> {
     /// Creates a payload-builder state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
-        executor: &'a base_common_runtime_tasks::Runtime,
+        executor: &'a base_common_runtime::Runtime,
         overlay_manager: &'a OverlayManager,
         parent_hash: B256,
         parent_header: &'a base_common_types_chain::Header,
         timestamp: u64,
         state: &'a mut EngineApiTreeState,
-        provider_builder: StateProviderBuilder<P>,
-        overlay_factory: OverlayStateProviderFactory<P>,
+        provider_builder: StateProviderBuilder,
+        overlay_factory: OverlayStateProviderFactory<
+            base_execution_state_provider::BlockchainProvider,
+        >,
         config: &'a TreeConfig,
     ) -> Self {
         Self {
@@ -209,15 +200,12 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
     }
 
     /// Returns the task runtime used by state-root work.
-    pub const fn executor(&self) -> &base_common_runtime_tasks::Runtime {
+    pub const fn executor(&self) -> &base_common_runtime::Runtime {
         self.executor
     }
 
     /// Returns a clone of the state provider builder.
-    pub fn provider_builder(&self) -> StateProviderBuilder<P>
-    where
-        P: Clone,
-    {
+    pub fn provider_builder(&self) -> StateProviderBuilder {
         self.provider_builder.clone()
     }
 
@@ -231,19 +219,19 @@ impl<'a, P> PayloadStateRootJobContext<'a, P> {
 }
 
 /// Data available while preparing one state-root job.
-pub struct StateRootJobContext<'a, P> {
-    executor: &'a base_common_runtime_tasks::Runtime,
+pub struct StateRootJobContext<'a> {
+    executor: &'a base_common_runtime::Runtime,
     overlay_manager: &'a OverlayManager,
     env: &'a ExecutionEnv,
     parent_header: &'a SealedHeader,
-    provider_builder: StateProviderBuilder<P>,
-    overlay_factory: OverlayStateProviderFactory<P>,
+    provider_builder: StateProviderBuilder,
+    overlay_factory: OverlayStateProviderFactory<base_execution_state_provider::BlockchainProvider>,
     config: &'a TreeConfig,
     parallel_bal_execution: bool,
     state: &'a mut EngineApiTreeState,
 }
 
-impl<P> fmt::Debug for StateRootJobContext<'_, P> {
+impl fmt::Debug for StateRootJobContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StateRootJobContext")
             .field("parallel_bal_execution", &self.parallel_bal_execution)
@@ -252,16 +240,18 @@ impl<P> fmt::Debug for StateRootJobContext<'_, P> {
     }
 }
 
-impl<'a, P> StateRootJobContext<'a, P> {
+impl<'a> StateRootJobContext<'a> {
     /// Creates a new state-root job context.
     #[expect(clippy::too_many_arguments)]
     pub(crate) const fn new(
-        executor: &'a base_common_runtime_tasks::Runtime,
+        executor: &'a base_common_runtime::Runtime,
         overlay_manager: &'a OverlayManager,
         env: &'a ExecutionEnv,
         parent_header: &'a SealedHeader,
-        provider_builder: StateProviderBuilder<P>,
-        overlay_factory: OverlayStateProviderFactory<P>,
+        provider_builder: StateProviderBuilder,
+        overlay_factory: OverlayStateProviderFactory<
+            base_execution_state_provider::BlockchainProvider,
+        >,
         config: &'a TreeConfig,
         parallel_bal_execution: bool,
         state: &'a mut EngineApiTreeState,
@@ -290,7 +280,7 @@ impl<'a, P> StateRootJobContext<'a, P> {
     }
 
     /// Returns the task runtime used by state-root work.
-    pub const fn executor(&self) -> &base_common_runtime_tasks::Runtime {
+    pub const fn executor(&self) -> &base_common_runtime::Runtime {
         self.executor
     }
 
@@ -300,10 +290,7 @@ impl<'a, P> StateRootJobContext<'a, P> {
     }
 
     /// Returns a clone of the state provider builder.
-    pub fn provider_builder(&self) -> StateProviderBuilder<P>
-    where
-        P: Clone,
-    {
+    pub fn provider_builder(&self) -> StateProviderBuilder {
         self.provider_builder.clone()
     }
 
@@ -493,7 +480,7 @@ impl DefaultStateRootStrategy {
     #[instrument(level = "debug", target = "engine::tree::payload_processor", skip_all)]
     fn spawn_state_root<F>(
         &self,
-        executor: &base_common_runtime_tasks::Runtime,
+        executor: &base_common_runtime::Runtime,
         overlay_manager: &OverlayManager,
         multiproof_provider_factory: F,
         options: StateRootTaskOptions<'_>,
@@ -564,7 +551,7 @@ impl DefaultStateRootStrategy {
     #[expect(clippy::too_many_arguments)]
     fn spawn_sparse_trie_task(
         &self,
-        executor: &base_common_runtime_tasks::Runtime,
+        executor: &base_common_runtime::Runtime,
         overlay_manager: &OverlayManager,
         proof_worker_handle: ProofWorkerHandle,
         proof_result_tx: CrossbeamSender<ProofResultMessage>,
@@ -587,7 +574,7 @@ impl DefaultStateRootStrategy {
 
         let parent_span = Span::current();
         executor.clone().spawn_blocking_named("sparse-trie", move || {
-            base_common_runtime_tasks::once!(increase_thread_priority);
+            base_common_runtime::once!(increase_thread_priority);
 
             let parent_hash = parent_header.hash();
             let parent_state_root = parent_header.state_root();
@@ -791,20 +778,8 @@ fn published_sparse_trie_anchor_hash(
     oldest_prune_block.recovered_block().parent_hash()
 }
 
-impl<P> StateRootStrategy<P> for DefaultStateRootStrategy
-where
-    P: DatabaseProviderFactory + Clone + 'static,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
-        + Clone
-        + 'static,
-{
-    fn prepare(&self, mut ctx: StateRootJobContext<'_, P>) -> ProviderResult<PreparedStateRootJob> {
+impl StateRootStrategy for DefaultStateRootStrategy {
+    fn prepare(&self, mut ctx: StateRootJobContext<'_>) -> ProviderResult<PreparedStateRootJob> {
         if ctx.config.skip_state_root() {
             return Ok(PreparedStateRootJob::new(Box::new(SkippedStateRootJob {}), None));
         }
@@ -891,7 +866,7 @@ where
 
     fn prepare_payload_builder(
         &self,
-        mut ctx: PayloadStateRootJobContext<'_, P>,
+        mut ctx: PayloadStateRootJobContext<'_>,
     ) -> ProviderResult<Option<PayloadStateRootHandle>> {
         // Sharing the engine state-root task with the payload builder is opt-in, and needs a
         // host that can run the task pipeline at all.
@@ -953,20 +928,11 @@ impl StateRootJob for SkippedStateRootJob {
 }
 
 #[derive(Debug)]
-struct SynchronousStateRootJob<P> {
-    provider_builder: StateProviderBuilder<P>,
+struct SynchronousStateRootJob {
+    provider_builder: StateProviderBuilder,
 }
 
-impl<P> StateRootJob for SynchronousStateRootJob<P>
-where
-    P: DatabaseProviderFactory + Clone + 'static,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-{
+impl StateRootJob for SynchronousStateRootJob {
     fn name(&self) -> &'static str {
         "synchronous"
     }
@@ -985,32 +951,20 @@ where
 }
 
 #[derive(Debug)]
-struct SparseTrieStateRootJob<P> {
+struct SparseTrieStateRootJob {
     handle: StateRootHandle,
-    provider_builder: StateProviderBuilder<P>,
-    overlay_factory: OverlayStateProviderFactory<P>,
-    executor: base_common_runtime_tasks::Runtime,
+    provider_builder: StateProviderBuilder,
+    overlay_factory: OverlayStateProviderFactory<base_execution_state_provider::BlockchainProvider>,
+    executor: base_common_runtime::Runtime,
     timeout: Option<Duration>,
     compare_trie_updates: bool,
     metrics: BlockValidationMetrics,
 }
 
-impl<P> SparseTrieStateRootJob<P>
-where
-    P: DatabaseProviderFactory + Clone + 'static,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
-        + Clone
-        + 'static,
-{
+impl SparseTrieStateRootJob {
     fn serial_fallback(
-        executor: &base_common_runtime_tasks::Runtime,
-        provider_builder: StateProviderBuilder<P>,
+        executor: &base_common_runtime::Runtime,
+        provider_builder: StateProviderBuilder,
         output: Arc<BlockExecutionOutput>,
     ) -> ProviderResult<SerialFallbackRx> {
         let provider = provider_builder.build()?;
@@ -1101,19 +1055,7 @@ where
     }
 }
 
-impl<P> StateRootJob for SparseTrieStateRootJob<P>
-where
-    P: DatabaseProviderFactory + Clone + 'static,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-    OverlayStateProviderFactory<P>: DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>
-        + Clone
-        + 'static,
-{
+impl StateRootJob for SparseTrieStateRootJob {
     fn name(&self) -> &'static str {
         "sparse-trie"
     }
@@ -1200,23 +1142,12 @@ where
     }
 }
 
-fn compare_trie_updates_with_serial<P>(
-    state_provider_builder: StateProviderBuilder<P>,
-    overlay_factory: OverlayStateProviderFactory<P>,
+fn compare_trie_updates_with_serial(
+    state_provider_builder: StateProviderBuilder,
+    overlay_factory: OverlayStateProviderFactory<base_execution_state_provider::BlockchainProvider>,
     output: &BlockExecutionOutput,
     task_trie_updates: TrieUpdates,
-) -> bool
-where
-    P: DatabaseProviderFactory,
-    P::Provider: BlockNumReader
-        + PruneCheckpointReader
-        + StageCheckpointReader
-        + StorageSettingsCache
-        + TryIntoHistoricalStateProvider
-        + 'static,
-    OverlayStateProviderFactory<P>:
-        DatabaseProviderROFactory<Provider: TrieCursorFactory + HashedCursorFactory>,
-{
+) -> bool {
     debug!(target: "engine::tree::state_root_strategy", "Comparing trie updates with serial computation");
 
     match state_provider_builder.build().and_then(|provider| {
@@ -1306,17 +1237,16 @@ mod tests {
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_execution_evm_blocks::OnStateHook;
-    use base_execution_evm_runtime::state::{
-        AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, TransactionId,
+    use base_execution_evm_runtime::{
+        AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, StoredAccount as Account,
+        TransactionId,
     };
     use base_execution_state_maintenance::init::init_genesis;
-    use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_provider::test_utils::TestBlockBuilder;
     use base_execution_state_provider::{
-        HashingWriter, providers::BlockchainProvider,
-        test_utils::create_test_provider_factory_with_chain_spec,
+        HashingWriter, OverlayManager, OverlayStateProviderFactory,
+        providers::BlockchainProvider,
+        test_utils::{TestBlockBuilder, create_test_provider_factory_with_chain_spec},
     };
-    use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
     use base_execution_state_trie::test_utils::state_root;
     use base_execution_state_types::StorageEntry;
     use base_testing_support::generators;
@@ -1401,7 +1331,7 @@ mod tests {
                     }
                 }
 
-                let mut account = base_execution_evm_runtime::state::Account::default();
+                let mut account = base_execution_evm_runtime::Account::default();
                 account.info = AccountInfo {
                     balance: U256::from(rng.random::<u64>()),
                     nonce: rng.random::<u64>(),
@@ -1470,7 +1400,7 @@ mod tests {
 
         let provider_factory = BlockchainProvider::new(factory).unwrap();
         let env: ExecutionEnv = ExecutionEnv::test_default();
-        let runtime = base_common_runtime_tasks::Runtime::test();
+        let runtime = base_common_runtime::Runtime::test();
         let overlay_manager = OverlayManager::default();
         let mut state_root_handle = DefaultStateRootStrategy::default().spawn_state_root(
             &runtime,

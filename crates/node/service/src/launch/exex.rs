@@ -8,8 +8,7 @@ use base_execution_engine_observers::{
     DEFAULT_EXEX_MANAGER_CAPACITY, DEFAULT_WAL_BLOCKS_WARNING, ExExContext, ExExHandle,
     ExExManager, ExExManagerHandle, ExExNotificationSource, Wal,
 };
-use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_state_provider::ForkChoiceSubscriptions;
+use base_execution_state_provider::{CanonStateSubscriptions, ForkChoiceSubscriptions};
 use futures::future;
 use tracing::Instrument;
 

@@ -8,40 +8,25 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use crate::{PeerRequest, RequestMessage};
 use alloy_primitives::{B256, Bytes};
-
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, BlockHeader, EthereumTxEnvelope, ReceiptWithBloom,
     TxEip4844,
 };
-use base_execution_network_wire::BlockBodies;
-use base_execution_network_wire::BlockHeaders;
-use base_execution_network_wire::BlockRangeUpdate;
-use base_execution_network_wire::BroadcastPoolTransactions;
-use base_execution_network_wire::Cells;
-use base_execution_network_wire::EthMessage;
-use base_execution_network_wire::GetBlockAccessLists;
-use base_execution_network_wire::GetBlockBodies;
-use base_execution_network_wire::GetBlockHeaders;
-use base_execution_network_wire::GetReceipts;
-use base_execution_network_wire::NewBlock;
-use base_execution_network_wire::NewBlockHashes;
-use base_execution_network_wire::NewBlockPayload;
-use base_execution_network_wire::NewPooledTransactionHashes;
-use base_execution_network_wire::NodeData;
-use base_execution_network_wire::PooledTransactions;
-use base_execution_network_wire::RawCapabilityMessage;
-use base_execution_network_wire::Receipts;
-use base_execution_network_wire::RequestPair;
-use base_execution_network_wire::SharedTransactions;
-use base_execution_network_wire::SnapProtocolMessage;
-use base_execution_network_wire::Transactions;
-use base_execution_network_wire::{RequestError, RequestResult, SnapResponse};
+use base_execution_network_wire::{
+    BlockBodies, BlockHeaders, BlockRangeUpdate, BroadcastPoolTransactions, Cells, EthMessage,
+    GetBlockAccessLists, GetBlockBodies, GetBlockHeaders, GetReceipts, NewBlock, NewBlockHashes,
+    NewBlockPayload, NewPooledTransactionHashes, NodeData, PooledTransactions,
+    RawCapabilityMessage, Receipts, RequestError, RequestPair, RequestResult, SharedTransactions,
+    SnapProtocolMessage, SnapResponse, Transactions,
+};
 use futures::FutureExt;
 use tokio::sync::oneshot;
 
-use crate::types::{BlockAccessLists, Receipts69, Receipts70};
+use crate::{
+    PeerRequest, RequestMessage,
+    types::{BlockAccessLists, Receipts69, Receipts70},
+};
 
 /// Internal form of a `NewBlock` message
 #[derive(Debug, Clone)]

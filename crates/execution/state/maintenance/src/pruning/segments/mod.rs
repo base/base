@@ -9,11 +9,9 @@ use alloy_primitives::{BlockNumber, TxNumber};
 use base_execution_state_provider::{
     BlockReader, ProviderResult, PruneCheckpointWriter, StaticFileProviderFactory,
 };
-use base_execution_state_types::StageId;
-use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{
     PruneCheckpoint, PruneMode, PruneProgress, PrunePurpose, PruneSegment, SegmentOutput,
-    SegmentOutputCheckpoint,
+    SegmentOutputCheckpoint, StageId, StaticFileSegment,
 };
 pub use set::SegmentSet;
 use tracing::error;

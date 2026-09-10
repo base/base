@@ -1,12 +1,11 @@
 use alloy_primitives::BlockNumber;
-use base_execution_state_database::DatabaseEnv;
-use base_execution_state_database::{Database, TableImporter, tables};
+use base_execution_state_database::{Database, DatabaseEnv, TableImporter, tables};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},
 };
-use base_execution_sync_pipeline::{AccountHashingStage, Stage, StageCheckpoint, UnwindInput};
+use base_execution_sync::{AccountHashingStage, Stage, StageCheckpoint, UnwindInput};
 use base_node_config::{ChainPath, DataDirPath};
 use eyre::Result;
 use tracing::info;
@@ -19,7 +18,7 @@ pub(crate) async fn dump_hashing_account_stage(
     to: BlockNumber,
     output_datadir: ChainPath<DataDirPath>,
     should_run: bool,
-    runtime: base_common_runtime_tasks::Runtime,
+    runtime: base_common_runtime::Runtime,
 ) -> Result<()> {
     let (output_db, tip_block_number) = setup(from, to, &output_datadir.db(), db_tool)?;
 
@@ -87,7 +86,7 @@ fn dry_run(output_provider_factory: ProviderFactory, to: u64, from: u64) -> eyre
     };
 
     loop {
-        let input = base_execution_sync_pipeline::ExecInput {
+        let input = base_execution_sync::ExecInput {
             target: Some(to),
             checkpoint: Some(StageCheckpoint::new(from)),
         };

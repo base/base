@@ -1,15 +1,15 @@
 use std::marker::PhantomData;
 
 use alloy_primitives::{B256, U256};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_database::{
     Database, DatabaseEnv, DatabaseError, DbCursorRO, DbDupCursorRO, DbTx, DupSort, Table,
 };
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
 use base_execution_state_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
+use base_execution_state_types::{BranchNodeCompact, Nibbles, StoredNibbles};
 
 use crate::{
     BaseProofsStorageResult,
@@ -404,8 +404,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_execution_state_database::{Database, DbDupCursorRW, DbTx, DbTxMut};
-    use base_execution_state_database::{DatabaseEnv, mdbx::DatabaseArguments, mdbx::init_db_for};
+    use base_execution_state_database::{
+        Database, DatabaseEnv, DbDupCursorRW, DbTx, DbTxMut,
+        mdbx::{DatabaseArguments, init_db_for},
+    };
     use base_execution_state_trie::{BranchNodeCompact, Nibbles, StoredNibbles};
     use tempfile::TempDir;
 

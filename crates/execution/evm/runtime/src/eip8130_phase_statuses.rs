@@ -28,7 +28,7 @@
 //! current statuses as `execute`'s last step.
 //!
 //! [`BaseBlockExecutor`]: crate::BaseBlockExecutor
-//! [`ExecutionResult`]: base_execution_evm_machine::ExecutionResult
+//! [`ExecutionResult`]: base_execution_evm_runtime::ExecutionResult
 //! [`set`]: Eip8130PhaseStatuses::set
 //! [`take`]: Eip8130PhaseStatuses::take
 //! [`clear`]: Eip8130PhaseStatuses::clear

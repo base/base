@@ -1,15 +1,10 @@
 use std::boxed::Box;
 
-use base_execution_evm_machine::{
-    CallInput, CallInputs, CallScheme, CallValue, CreateInputs, CreateScheme, FrameInput,
-    GasTracker,
+use base_execution_evm_runtime::{
+    Bytecode, CallInput, CallInputs, CallScheme, CallValue, Cfg, ContextTr, CreateInputs,
+    CreateScheme, Database, FrameInput, GasTracker, JournalCheckpoint, JournalLoadError, JournalTr,
+    JournaledAccountTr, Transaction, TxKind,
 };
-use base_execution_evm_machine::{
-    Cfg, ContextTr, Database, JournalCheckpoint, JournalLoadError, JournalTr, JournaledAccountTr,
-    Transaction,
-};
-use base_execution_evm_primitives::TxKind;
-use base_execution_state_memory::Bytecode;
 
 /// Creates the first [`FrameInput`] from the transaction and the
 /// transaction-level `gas`, forwarding all remaining regular gas and the

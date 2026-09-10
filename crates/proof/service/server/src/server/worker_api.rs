@@ -1,9 +1,5 @@
 //! Implementation of the prover worker JSON-RPC endpoints.
 
-use crate::{
-    ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome, HeartbeatProofJob,
-    RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert, canonical_session_id,
-};
 use base_proof_service_protocol::{
     GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
     HeartbeatRequest, HeartbeatResponse, ProofJob as ProtocolProofJob, ProverWorkerApiServer,
@@ -18,7 +14,8 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::{
-    metrics,
+    ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome, HeartbeatProofJob,
+    RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert, canonical_session_id, metrics,
     server::{
         ProverServiceServer, WorkerApiConfig, failed_precondition, internal, invalid_argument,
         not_found, record_rpc_result, record_worker_rpc_result, rpc_status_code_str,

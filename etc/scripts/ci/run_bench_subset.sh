@@ -27,13 +27,13 @@ run() { echo "::group::$*"; "$@"; echo "::endgroup::"; }
 
 run cargo bench -p base-proof-witness-mpt --bench trie_node \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-consensus-batch-types --bench batch_transaction \
+run cargo bench -p base-consensus-batch --bench batch_transaction \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-consensus-derive-pipeline --bench batch_queue --features test-utils \
+run cargo bench -p base-consensus-derive --bench batch_queue --features test-utils \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-execution-evm-precompiles --bench base_precompiles --features test-utils \
+run cargo bench -p base-execution-evm-runtime --bench core_precompiles_base_precompiles --features test-utils \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-execution-evm-fees --bench flz \
+run cargo bench -p base-common-chain-config --bench flz \
   -- --save-baseline "$baseline" --noplot
-run cargo bench -p base-consensus-batch-types --bench frame_parse \
+run cargo bench -p base-consensus-batch --bench frame_parse \
   -- --save-baseline "$baseline" --noplot

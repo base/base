@@ -1,10 +1,7 @@
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_types_chain::add_arbitrary_tests;
-use base_execution_network_types::PeerId;
 
-use crate::Capability;
-use crate::EthVersion;
-use crate::ProtocolVersion;
+use crate::{Capability, EthVersion, PeerId, ProtocolVersion};
 
 /// Default advertised client version when no node-specific version is supplied.
 pub const DEFAULT_ETH_CLIENT_VERSION: &str = concat!("reth/v", env!("CARGO_PKG_VERSION"));
@@ -50,8 +47,8 @@ impl HelloMessageWithProtocols {
     /// Starts a new `HelloMessageProtocolsBuilder`
     ///
     /// ```
-    /// use base_execution_network_wire::HelloMessageWithProtocols;
-    /// use base_execution_network_types::pk2id;
+    /// use crate::HelloMessageWithProtocols;
+    /// use crate::pk2id;
     /// use secp256k1::{SecretKey, SECP256K1};
     /// let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     /// let id = pk2id(&secret_key.public_key(SECP256K1));
@@ -146,8 +143,8 @@ impl HelloMessage {
     /// Starts a new `HelloMessageBuilder`
     ///
     /// ```
-    /// use base_execution_network_wire::HelloMessage;
-    /// use base_execution_network_types::pk2id;
+    /// use crate::HelloMessage;
+    /// use crate::pk2id;
     /// use secp256k1::{SecretKey, SECP256K1};
     /// let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     /// let id = pk2id(&secret_key.public_key(SECP256K1));
@@ -236,15 +233,12 @@ impl HelloMessageBuilder {
 #[cfg(test)]
 mod tests {
     use alloy_rlp::{Decodable, EMPTY_STRING_CODE, Encodable};
-    use base_execution_network_types::pk2id;
     use secp256k1::{SECP256K1, SecretKey};
 
-    use crate::Capability;
-    use crate::EthVersion;
-    use crate::HelloMessage;
-    use crate::HelloMessageWithProtocols;
-    use crate::P2PMessage;
-    use crate::ProtocolVersion;
+    use crate::{
+        Capability, EthVersion, HelloMessage, HelloMessageWithProtocols, P2PMessage,
+        ProtocolVersion, pk2id,
+    };
 
     #[test]
     fn test_hello_encoding_round_trip() {

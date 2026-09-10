@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use base_execution_network_types::PeerId;
+use crate::PeerId;
 
 /// Generic download client for peer penalization
 #[auto_impl::auto_impl(&, Arc, Box)]

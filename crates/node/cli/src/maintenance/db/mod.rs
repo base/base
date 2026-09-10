@@ -4,10 +4,8 @@ use std::{
 };
 
 use base_common_chain_config::BaseChainSpec;
-use base_common_cli_support::CliContext;
-use base_execution_state_database::{
-    version::DB_VERSION, version::DatabaseVersionError, version::get_db_version,
-};
+use base_common_cli::CliContext;
+use base_execution_state_database::version::{DB_VERSION, DatabaseVersionError, get_db_version};
 use base_execution_state_maintenance::DbTool;
 use clap::{Parser, Subcommand};
 
@@ -15,8 +13,9 @@ use crate::{AccessRights, Environment, EnvironmentArgs};
 mod account_storage;
 pub use account_storage::Command as AccountStorageCommand;
 mod checksum;
-pub use checksum::RocksDbTable;
-pub use checksum::{ChecksumRocksDbTable, Command as ChecksumCommand, checksum_rocksdb};
+pub use checksum::{
+    ChecksumRocksDbTable, Command as ChecksumCommand, RocksDbTable, checksum_rocksdb,
+};
 mod clear;
 pub use clear::Command as ClearCommand;
 mod copy;
@@ -28,9 +27,9 @@ pub use get::{Command as GetCommand, RocksDbTable as GetRocksDbTable};
 mod list;
 pub use list::Command as ListCommand;
 mod prune_checkpoints;
-pub use prune_checkpoints::SetArgs;
 pub use prune_checkpoints::{
-    Command as PruneCheckpointsCommand, PruneModeArg, SegmentArg, SetArgs as PruneCheckpointSetArgs,
+    Command as PruneCheckpointsCommand, PruneModeArg, SegmentArg, SetArgs,
+    SetArgs as PruneCheckpointSetArgs,
 };
 mod repair_trie;
 pub use repair_trie::Command as RepairTrieCommand;

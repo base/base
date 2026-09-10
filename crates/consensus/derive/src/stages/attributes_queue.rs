@@ -1,0 +1,376 @@
+//! Contains the logic for the `AttributesQueue` stage.
+
+use alloc::{boxed::Box, sync::Arc};
+use core::fmt::Debug;
+
+use alloy_eips::BlockNumHash;
+use async_trait::async_trait;
+use base_common_chain_config::{RollupConfig, SystemConfig};
+use base_common_types_payload::BasePayloadAttributes;
+use base_consensus_batch::{AttributesWithParent, BlockInfo, L2BlockInfo, SingleBatch};
+
+use crate::{
+    Metrics,
+    errors::{PipelineError, ResetError},
+    traits::{
+        AttributesBuilder, AttributesProvider, NextAttributes, OriginAdvancer, OriginProvider,
+        StageReset,
+    },
+    types::PipelineResult,
+};
+
+/// [`AttributesQueue`] accepts batches from the [`BatchValidator`] stage
+/// and transforms them into [`BasePayloadAttributes`].
+///
+/// The outputted payload attributes cannot be buffered because each batch->attributes
+/// transformation pulls in data about the current L2 safe head.
+///
+/// [`AttributesQueue`] also buffers batches that have been output because
+/// multiple batches can be created at once.
+///
+/// This stage can be reset by clearing its batch buffer.
+/// This stage does not need to retain any references to L1 blocks.
+///
+/// [`BatchValidator`]: crate::stages::BatchValidator
+#[derive(Debug)]
+pub struct AttributesQueue<P, AB>
+where
+    P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
+    AB: AttributesBuilder + Debug,
+{
+    /// The rollup config.
+    pub cfg: Arc<RollupConfig>,
+    /// The previous stage of the derivation pipeline.
+    pub prev: P,
+    /// The current batch being processed.
+    pub batch: Option<SingleBatch>,
+    /// The attributes builder.
+    pub builder: AB,
+}
+
+impl<P, AB> AttributesQueue<P, AB>
+where
+    P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
+    AB: AttributesBuilder + Debug,
+{
+    /// Create a new [`AttributesQueue`] stage.
+    pub const fn new(cfg: Arc<RollupConfig>, prev: P, builder: AB) -> Self {
+        Self { cfg, prev, batch: None, builder }
+    }
+
+    /// Loads a [`SingleBatch`] from the [`AttributesProvider`] if needed.
+    pub async fn load_batch(&mut self, parent: L2BlockInfo) -> PipelineResult<SingleBatch> {
+        if self.batch.is_none() {
+            let batch = self.prev.next_batch(parent).await?;
+            self.batch = Some(batch);
+        }
+        self.batch.as_ref().cloned().ok_or(PipelineError::Eof.temp())
+    }
+
+    /// Returns the next [`AttributesWithParent`] from the current batch.
+    pub async fn next_attributes(
+        &mut self,
+        parent: L2BlockInfo,
+    ) -> PipelineResult<AttributesWithParent> {
+        let batch = match self.load_batch(parent).await {
+            Ok(batch) => batch,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+
+        // Construct the payload attributes from the loaded batch.
+        let mut timer = base_common_observability_metrics::timed!(
+            Metrics::pipeline_attributes_build_duration()
+        );
+        let attributes = match self.create_next_attributes(batch, parent).await {
+            Ok(attributes) => attributes,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        let populated_attributes = AttributesWithParent::new(attributes, parent, Some(origin));
+        timer.stop();
+
+        // Clear out the local state once payload attributes are prepared.
+        self.batch = None;
+        Ok(populated_attributes)
+    }
+
+    /// Creates the next attributes, transforming a [`SingleBatch`] into [`BasePayloadAttributes`].
+    /// This sets `no_tx_pool` and appends the batched txs to the attributes tx list.
+    pub async fn create_next_attributes(
+        &mut self,
+        batch: SingleBatch,
+        parent: L2BlockInfo,
+    ) -> PipelineResult<BasePayloadAttributes> {
+        // Sanity check parent hash
+        if batch.parent_hash != parent.block_info.hash {
+            return Err(ResetError::BadParentHash(batch.parent_hash, parent.block_info.hash).into());
+        }
+
+        // Prepare the payload attributes
+        let tx_count = batch.transactions.len();
+        let mut attributes = self.builder.prepare_payload_attributes(parent, batch.epoch()).await?;
+        attributes.no_tx_pool = Some(true);
+        match attributes.transactions {
+            Some(ref mut txs) => txs.extend(batch.transactions),
+            None => {
+                if !batch.transactions.is_empty() {
+                    attributes.transactions = Some(batch.transactions);
+                }
+            }
+        }
+
+        info!(
+            target: "attributes_queue",
+            txs = tx_count,
+            timestamp = batch.timestamp,
+            "generated attributes in payload queue",
+        );
+
+        Ok(attributes)
+    }
+}
+
+#[async_trait]
+impl<P, AB> OriginAdvancer for AttributesQueue<P, AB>
+where
+    P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Debug + Send,
+    AB: AttributesBuilder + Debug + Send,
+{
+    async fn advance_origin(&mut self) -> PipelineResult<()> {
+        self.prev.advance_origin().await
+    }
+}
+
+#[async_trait]
+impl<P, AB> NextAttributes for AttributesQueue<P, AB>
+where
+    P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Debug + Send,
+    AB: AttributesBuilder + Debug + Send,
+{
+    async fn next_attributes(
+        &mut self,
+        parent: L2BlockInfo,
+    ) -> PipelineResult<AttributesWithParent> {
+        self.next_attributes(parent).await
+    }
+}
+
+impl<P, AB> OriginProvider for AttributesQueue<P, AB>
+where
+    P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Debug,
+    AB: AttributesBuilder + Debug,
+{
+    fn origin(&self) -> Option<BlockInfo> {
+        self.prev.origin()
+    }
+}
+
+#[async_trait]
+impl<P, AB> StageReset for AttributesQueue<P, AB>
+where
+    P: AttributesProvider + OriginAdvancer + OriginProvider + StageReset + Send + Debug,
+    AB: AttributesBuilder + Send + Debug,
+{
+    async fn reset(
+        &mut self,
+        l1_origin: BlockNumHash,
+        system_config: SystemConfig,
+    ) -> PipelineResult<()> {
+        self.prev.reset(l1_origin, system_config).await?;
+        self.batch = None;
+        Ok(())
+    }
+
+    async fn activate(&mut self) -> PipelineResult<()> {
+        self.prev.activate().await?;
+        self.batch = None;
+        Ok(())
+    }
+
+    async fn flush_channel(&mut self) -> PipelineResult<()> {
+        // Clear batch first, then propagate.
+        self.batch = None;
+        self.prev.flush_channel().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{sync::Arc, vec, vec::Vec};
+
+    use alloy_eips::BlockNumHash;
+    use alloy_primitives::{Address, B256, Bytes, b256};
+    use base_common_chain_config::SystemConfig;
+    use base_common_types_payload::PayloadAttributes;
+
+    use super::*;
+    use crate::{
+        StageReset,
+        errors::{BuilderError, PipelineErrorKind},
+        test_utils::{TestAttributesBuilder, TestAttributesProvider, new_test_attributes_provider},
+    };
+
+    fn default_payload_attributes() -> BasePayloadAttributes {
+        BasePayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: 0,
+                suggested_fee_recipient: Address::default(),
+                prev_randao: B256::default(),
+                withdrawals: None,
+                parent_beacon_block_root: None,
+                slot_number: None,
+                target_gas_limit: None,
+            },
+            no_tx_pool: Some(false),
+            transactions: None,
+            gas_limit: None,
+            eip_1559_params: None,
+            min_base_fee: None,
+        }
+    }
+
+    fn new_attributes_queue(
+        cfg: Option<RollupConfig>,
+        origin: Option<BlockInfo>,
+        batches: Vec<PipelineResult<SingleBatch>>,
+        attributes: Vec<Result<BasePayloadAttributes, PipelineErrorKind>>,
+    ) -> AttributesQueue<TestAttributesProvider, TestAttributesBuilder> {
+        let cfg = cfg.unwrap_or_default();
+        let mock_batch_queue = new_test_attributes_provider(origin, batches);
+        let mock_attributes_builder = TestAttributesBuilder { attributes, ..Default::default() };
+        AttributesQueue::new(Arc::new(cfg), mock_batch_queue, mock_attributes_builder)
+    }
+
+    #[tokio::test]
+    async fn test_attributes_queue_flush() {
+        let mut attributes_queue = new_attributes_queue(None, None, vec![], vec![]);
+        attributes_queue.batch = Some(SingleBatch::default());
+        assert!(!attributes_queue.prev.flushed);
+        attributes_queue.flush_channel().await.unwrap();
+        assert!(attributes_queue.prev.flushed);
+        assert!(attributes_queue.batch.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_attributes_queue_reset() {
+        let cfg = RollupConfig::default();
+        let mock = new_test_attributes_provider(None, vec![]);
+        let mock_builder = TestAttributesBuilder::default();
+        let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
+        aq.batch = Some(SingleBatch::default());
+        assert!(!aq.prev.reset);
+        aq.reset(BlockNumHash::default(), SystemConfig::default()).await.unwrap();
+        assert!(aq.batch.is_none());
+        assert!(aq.prev.reset);
+    }
+
+    #[tokio::test]
+    async fn test_load_batch_eof() {
+        let mut attributes_queue = new_attributes_queue(None, None, vec![], vec![]);
+        let parent = L2BlockInfo::default();
+        let result = attributes_queue.load_batch(parent).await.unwrap_err();
+        assert_eq!(result, PipelineError::Eof.temp());
+    }
+
+    #[tokio::test]
+    async fn test_load_batch_retains_batch() {
+        let mut attributes_queue =
+            new_attributes_queue(None, None, vec![Ok(Default::default())], vec![]);
+        let parent = L2BlockInfo::default();
+        let result = attributes_queue.load_batch(parent).await.unwrap();
+        assert_eq!(result, Default::default());
+    }
+
+    #[tokio::test]
+    async fn test_create_next_attributes_bad_parent_hash() {
+        let mut attributes_queue = new_attributes_queue(None, None, vec![], vec![]);
+        let bad_hash = b256!("6666666666666666666666666666666666666666666666666666666666666666");
+        let parent = L2BlockInfo {
+            block_info: BlockInfo { hash: bad_hash, ..Default::default() },
+            ..Default::default()
+        };
+        let batch = SingleBatch::default();
+        let result = attributes_queue.create_next_attributes(batch, parent).await.unwrap_err();
+        assert_eq!(
+            result,
+            PipelineErrorKind::Reset(ResetError::BadParentHash(Default::default(), bad_hash))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_next_attributes_preparation_fails() {
+        let mut attributes_queue = new_attributes_queue(
+            None,
+            None,
+            vec![],
+            vec![Err(PipelineErrorKind::Critical(BuilderError::AttributesUnavailable.into()))],
+        );
+        let parent = L2BlockInfo::default();
+        let batch = SingleBatch::default();
+        let result = attributes_queue.create_next_attributes(batch, parent).await.unwrap_err();
+        assert_eq!(
+            result,
+            PipelineError::AttributesBuilder(BuilderError::AttributesUnavailable).crit()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_next_attributes_success() {
+        let cfg = RollupConfig::default();
+        let mock = new_test_attributes_provider(None, vec![]);
+        let mut payload_attributes = default_payload_attributes();
+        let mock_builder = TestAttributesBuilder {
+            attributes: vec![Ok(payload_attributes.clone())],
+            ..Default::default()
+        };
+        let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
+        let parent = L2BlockInfo::default();
+        let txs = vec![Bytes::default(), Bytes::default()];
+        let batch = SingleBatch { transactions: txs.clone(), ..Default::default() };
+        let attributes = aq.create_next_attributes(batch, parent).await.unwrap();
+        // update the expected attributes
+        payload_attributes.no_tx_pool = Some(true);
+        match payload_attributes.transactions {
+            Some(ref mut t) => t.extend(txs),
+            None => payload_attributes.transactions = Some(txs),
+        }
+        assert_eq!(attributes, payload_attributes);
+    }
+
+    #[tokio::test]
+    async fn test_next_attributes_load_batch_eof() {
+        let mut attributes_queue = new_attributes_queue(None, None, vec![], vec![]);
+        let parent = L2BlockInfo::default();
+        let result = attributes_queue.next_attributes(parent).await.unwrap_err();
+        assert_eq!(result, PipelineError::Eof.temp());
+    }
+
+    #[tokio::test]
+    async fn test_next_attributes_consumes_loaded_batch() {
+        let cfg = RollupConfig::default();
+        let mock =
+            new_test_attributes_provider(Some(Default::default()), vec![Ok(Default::default())]);
+        let mut pa = default_payload_attributes();
+        let mock_builder =
+            TestAttributesBuilder { attributes: vec![Ok(pa.clone())], ..Default::default() };
+        let mut aq = AttributesQueue::new(Arc::new(cfg), mock, mock_builder);
+        // Loading retains the batch until attributes are successfully built.
+        let _ = aq.load_batch(L2BlockInfo::default()).await.unwrap();
+        assert!(aq.batch.is_some());
+        // This should successfully construct the next payload attributes.
+        // Successful construction clears the batch.
+        let attributes = aq.next_attributes(L2BlockInfo::default()).await.unwrap();
+        pa.no_tx_pool = Some(true);
+        let populated_attributes = AttributesWithParent {
+            attributes: pa,
+            parent: L2BlockInfo::default(),
+            derived_from: Some(BlockInfo::default()),
+        };
+        assert_eq!(attributes, populated_attributes);
+        assert!(aq.batch.is_none());
+    }
+}

@@ -7,11 +7,7 @@ use secp256k1::SecretKey;
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{instrument, trace};
 
-use crate::ECIES;
-use crate::ECIESError;
-use crate::ECIESErrorImpl;
-use crate::EgressECIESValue;
-use crate::IngressECIESValue;
+use crate::{ECIES, ECIESError, ECIESErrorImpl, EgressECIESValue, IngressECIESValue};
 
 /// The max size that the initial handshake packet can be. Currently 2KiB.
 const MAX_INITIAL_HANDSHAKE_SIZE: usize = 2048;

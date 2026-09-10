@@ -4,20 +4,19 @@ use std::{
         mpsc::{Receiver, SendError, Sender},
     },
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use alloy_eips::BlockNumHash;
-use base_common_runtime_tasks::spawn_os_thread;
+use base_common_runtime::spawn_os_thread;
 use base_execution_state_maintenance::{PrunerError, PrunerWithFactory};
 use base_execution_state_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
 };
 use base_execution_state_types::ProviderError;
-use base_execution_sync_pipeline::{MetricEvent, MetricEventsSender};
+use base_execution_sync::{MetricEvent, MetricEventsSender};
 use crossbeam_channel::Sender as CrossbeamSender;
-use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
 
@@ -403,22 +402,16 @@ mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
     use base_execution_state_database::Database;
-    use base_execution_state_maintenance::Pruner;
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_maintenance::{Pruner, init::init_genesis};
     use base_execution_state_provider::{
         AccountReader, BalConfig, BalNotificationStream, BalStore, BalStoreHandle,
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,
         StorageSettingsCache, TryIntoHistoricalStateProvider,
         providers::{ReadOnlyConfig, RocksDBProvider, StaticFileProvider},
-        test_utils::create_test_provider_factory,
+        test_utils::{TestBlockBuilder, create_test_provider_factory},
     };
-    use base_execution_state_types::FinishedExExHeight;
-    use base_execution_state_types::PruneMode;
+    use base_execution_state_types::{ExecutedBlock, FinishedExExHeight, PruneMode};
     use tokio::sync::mpsc::unbounded_channel;
-    use {
-        base_execution_state_provider::test_utils::TestBlockBuilder,
-        base_execution_state_types::ExecutedBlock,
-    };
 
     use super::*;
 
@@ -661,7 +654,7 @@ mod tests {
                 .with_read_only(true)
                 .build()
                 .unwrap(),
-            base_common_runtime_tasks::Runtime::test(),
+            base_common_runtime::Runtime::test(),
         )
         .unwrap()
         .with_read_only_sync(true);

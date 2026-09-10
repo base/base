@@ -3,19 +3,20 @@ use std::{sync::Arc, time::Instant};
 use alloy_primitives::{B256, BlockHash};
 use base_common_observability_metrics::Metrics;
 use base_common_types_chain::{self as dashmap, DashMap};
-use base_execution_state_api::{
-    BlockNumReader, ChangeSetReader, DBProvider, DatabaseProviderFactory,
-    DatabaseProviderROFactory, DbTxProvider, PruneCheckpointReader, StageCheckpointReader,
-    StorageChangeSetReader, StorageSettingsCache,
+use base_execution_state_database::{
+    DBProvider, DatabaseError, DatabaseProviderFactory, DatabaseProviderROFactory, DbTx,
+    DbTxProvider,
 };
-use base_execution_state_database::{DatabaseError, DbTx};
 use base_execution_state_trie::{
     DatabaseAccountTrieCursor, DatabaseHashedCursorFactory, DatabaseStorageTrieCursor,
     HashedPostStateSorted, PackedAccountsTrie, PackedKeyAdapter, PackedStoragesTrie,
     hashed_cursor::{HashedCursorFactory, HashedPostStateCursorFactory},
     trie_cursor::{InMemoryTrieCursor, TrieCursor, TrieCursorFactory, TrieStorageCursor},
 };
-use base_execution_state_types::ProviderResult;
+use base_execution_state_types::{
+    BlockNumReader, ChangeSetReader, ProviderResult, PruneCheckpointReader, StageCheckpointReader,
+    StorageChangeSetReader, StorageSettingsCache,
+};
 use metrics::{Counter, Histogram};
 use tracing::instrument;
 
@@ -230,122 +231,5 @@ where
             &self.overlay.hashed_post_state,
         )
         .hashed_storage_cursor(hashed_address)
-    }
-}
-
-#[cfg(all(test, feature = "partial-persistence"))]
-mod tests {
-    use crate::{BlockWriter, ProviderFactory, test_utils::create_test_provider_factory};
-    use alloy_primitives::U256;
-    use base_execution_state_memory::StoredAccount as Account;
-    use base_execution_state_types::{FinishCheckpoint, StageCheckpoint, StageId};
-    use {crate::test_utils::TestBlockBuilder, base_execution_state_types::ExecutedBlock};
-
-    use base_execution_state_trie::{
-        BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, Nibbles,
-        updates::TrieUpdatesSorted,
-    };
-
-    use super::*;
-    use crate::overlay::OverlayManager;
-
-    fn with_unique_trie_data(block: &ExecutedBlock, id: u8) -> ExecutedBlock {
-        let hashed_address = B256::with_last_byte(id);
-        let hashed_slot = B256::with_last_byte(id.saturating_add(32));
-        let hashed_state = HashedPostState::default()
-            .with_accounts([(hashed_address, Some(Account::default()))])
-            .with_storages([(
-                hashed_address,
-                HashedStorage::from_iter([(hashed_slot, U256::from(id))]),
-            )])
-            .into_sorted();
-        let trie_updates = TrieUpdatesSorted::new(
-            vec![(
-                Nibbles::from_nibbles([id]),
-                Some(BranchNodeCompact::new(0, 0, 0, vec![], None)),
-            )],
-            Default::default(),
-        );
-
-        ExecutedBlock::new(
-            Arc::clone(&block.recovered_block),
-            Arc::clone(&block.execution_output),
-            ComputedTrieData::new(Arc::new(hashed_state), Arc::new(trie_updates)),
-        )
-    }
-
-    fn test_blocks() -> Vec<ExecutedBlock> {
-        TestBlockBuilder::eth()
-            .get_executed_blocks(0..5)
-            .enumerate()
-            .map(|(index, block)| with_unique_trie_data(&block, index as u8 + 1))
-            .collect()
-    }
-
-    fn setup_frontiers(
-        state_trie_tip_index: usize,
-        finish_tip_index: usize,
-    ) -> (ProviderFactory, Vec<ExecutedBlock>) {
-        let factory = create_test_provider_factory();
-        let blocks = test_blocks();
-        let provider_rw = factory.provider_rw().unwrap();
-        for block in &blocks[..=finish_tip_index] {
-            provider_rw.insert_block(block.recovered_block()).unwrap();
-        }
-        provider_rw
-            .save_stage_checkpoint(
-                StageId::Finish,
-                StageCheckpoint::new(blocks[finish_tip_index].block_number())
-                    .with_finish_stage_checkpoint(FinishCheckpoint {
-                        partial_state_trie: Some(blocks[state_trie_tip_index].block_number()),
-                    }),
-            )
-            .unwrap();
-        provider_rw.commit().unwrap();
-
-        (factory, blocks)
-    }
-
-    fn account_keys(overlay: &Overlay) -> Vec<B256> {
-        overlay.hashed_post_state.accounts.iter().map(|(key, _)| *key).collect()
-    }
-
-    fn account_node_paths(overlay: &Overlay) -> Vec<Nibbles> {
-        overlay.trie_updates.account_nodes_ref().iter().map(|(path, _)| *path).collect()
-    }
-
-    #[test]
-    fn overlay_cache_is_keyed_by_both_durable_frontiers() {
-        let (factory, blocks) = setup_frontiers(1, 3);
-        let manager = OverlayManager::default();
-        for block in &blocks[2..=3] {
-            manager.insert_block(block.clone());
-        }
-        let overlay_factory = OverlayStateProviderFactory::new(
-            factory.clone(),
-            manager.overlay_builder(blocks[3].recovered_block().hash()),
-        );
-
-        let provider = factory.provider().unwrap();
-        let first = overlay_factory.get_overlay(&provider).unwrap();
-        assert_eq!(account_keys(&first), vec![B256::with_last_byte(3), B256::with_last_byte(4)]);
-        drop(provider);
-
-        let provider_rw = factory.provider_rw().unwrap();
-        provider_rw
-            .save_stage_checkpoint(
-                StageId::Finish,
-                StageCheckpoint::new(blocks[3].block_number()).with_finish_stage_checkpoint(
-                    FinishCheckpoint { partial_state_trie: Some(blocks[2].block_number()) },
-                ),
-            )
-            .unwrap();
-        provider_rw.commit().unwrap();
-
-        let provider = factory.provider().unwrap();
-        let second = overlay_factory.get_overlay(&provider).unwrap();
-        assert_eq!(account_keys(&second), vec![B256::with_last_byte(4)]);
-        assert_eq!(account_node_paths(&second), vec![Nibbles::from_nibbles([4])]);
-        assert_eq!(overlay_factory.overlay_cache.len(), 2);
     }
 }

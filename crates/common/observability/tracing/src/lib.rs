@@ -9,15 +9,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Re-export tracing crates
-pub use tracing;
-#[cfg(feature = "std")]
-pub use tracing_appender;
-#[cfg(feature = "std")]
-pub use tracing_subscriber;
-
-#[cfg(all(feature = "tracy", feature = "std"))]
-tracy_client::register_demangler!();
-
 // Re-export our types
 #[cfg(feature = "std")]
 pub use formatter::LogFormat;
@@ -30,6 +21,11 @@ pub use log_handle::{
 };
 #[cfg(feature = "std")]
 pub use test_tracer::TestTracer;
+pub use tracing;
+#[cfg(feature = "std")]
+pub use tracing_appender;
+#[cfg(feature = "std")]
+pub use tracing_subscriber;
 
 #[cfg(feature = "std")]
 #[doc(hidden)]

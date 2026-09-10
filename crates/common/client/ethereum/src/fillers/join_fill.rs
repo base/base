@@ -1,9 +1,8 @@
-use crate::Network;
 use alloy_transport::TransportResult;
 use futures::try_join;
 
 use crate::{
-    Provider, ProviderLayer,
+    Network, Provider, ProviderLayer,
     fillers::{FillProvider, FillerControlFlow, TxFiller},
     provider::SendableTx,
 };

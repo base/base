@@ -1,5 +1,9 @@
 # Vendored Reth crate removal review
 
+This is a historical review of the earlier vendor consolidation. Several retained
+crates below have since been merged; see the [Base-only simplification](base-only-simplification.md)
+for current ownership and the subsequent changes.
+
 Initial review against `8425d3a07`; updated after the authorized ERA and Ethereum implementation removals.
 
 ## Scope and result
@@ -54,11 +58,11 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 
 | Current crates | Proposed direction |
 | --- | --- |
-| `reth-cli`, `base-node-cli`, `reth-cli-runner`, `base-common-cli-support` | Move the Base parser, selected maintenance commands, runtime setup, and CLI utilities into Base CLI libraries. Specialize `ChainSpecParser` and generic command parameters. Keep database init, stage maintenance, prune, and re-execute: `bin/base/src/commands/reth.rs` dispatches them today. |
+| `reth-cli`, `base-node-cli`, `reth-cli-runner`, `base-common-cli` | Move the Base parser, selected maintenance commands, runtime setup, and CLI utilities into Base CLI libraries. Specialize `ChainSpecParser` and generic command parameters. Keep database init, stage maintenance, prune, and re-execute: `bin/base/src/commands/reth.rs` dispatches them today. |
 | `reth-node-api`, `reth-node-types` | Consolidate node type bundles and adapters in a lower-level Base execution API crate; remove arbitrary-network type builders after concrete Base types are wired through. Do not move them into an upper-level node crate that already consumes provider/engine crates. |
 | `reth-chainspec`, `reth-ethereum-forks` | Deleted after consolidating configuration in `ChainConfig` and execution metadata in `BaseChainSpec`. Base upgrades use a typed schedule; fork IDs, Ethereum rule traits, and fee parameters come directly from Alloy. |
 | `reth-ethereum-primitives` | Replace wrapper aliases with direct Alloy types where appropriate and replace `EthPrimitives` defaults with Base primitives in execution code. Preserve ordinary Ethereum transaction compatibility and L1 use. This small crate is largely aliases, but many storage/network/default/test types still reference it. |
-| `reth-payload-builder-primitives`, `base-execution-txpool-pool` | Fold payload events and transaction iteration helpers into a compatible payload library. Base's payload builder and debug RPC use the iteration helpers. |
+| `reth-payload-builder-primitives`, `base-execution-txpool` | Fold payload events and transaction iteration helpers into a compatible payload library. Base's payload builder and debug RPC use the iteration helpers. |
 | `reth-rpc-traits` | Fold conversion traits into an appropriate lower-level RPC conversion/types crate if its `no_std` consumers remain supported. |
 | `reth-errors` | Replace the facade's re-exports with direct imports; move its aggregate error/result types to a compatible lower-level error module if still needed. |
 | `base-execution-state-types` | Consider consolidating storage model types with a lower-level storage/codec package. Preserve persisted encodings and avoid database/provider dependency cycles. |
@@ -86,9 +90,9 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-cli](../../vendor/reth-cli/Cargo.toml) | Consolidate; retain required code |
 | [base-node-cli](../../crates/node/cli/Cargo.toml) | Consolidate; retain required code |
 | [reth-cli-runner](../../vendor/reth-cli-runner/Cargo.toml) | Consolidate; retain required code |
-| [base-common-cli-support](../../crates/common/cli/support/Cargo.toml) | Consolidate; retain required code |
+| [base-common-cli](../../crates/common/cli/Cargo.toml) | Consolidate; retain required code |
 | `reth-codecs` | Merged into [base-common-types-chain](../../crates/common/types/chain/Cargo.toml) with the consensus types it encodes |
-| [base-common-codec-macros](../../crates/common/codec/macros/Cargo.toml) | Retain shared infrastructure |
+| [base-common-codec](../../crates/common/codec/Cargo.toml) | Retain shared infrastructure |
 | [reth-config](../../crates/node/config/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus](../../vendor/reth-consensus/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus-common](../../vendor/reth-consensus-common/Cargo.toml) | Retain shared infrastructure |
@@ -100,7 +104,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
-| [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-sync](../../crates/execution/sync/Cargo.toml) | Retain shared infrastructure |
 | [base-testing-devnet](../../crates/testing/devnet/Cargo.toml) | Test support; retain or migrate |
 | [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Optional capability; separate removal decision |
@@ -127,7 +131,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-engine-observers](../../crates/execution/engine/observers/Cargo.toml) | Retain shared infrastructure |
 | [reth-exex-test-utils](../../vendor/reth-exex-test-utils/Cargo.toml) | Test support; retain or migrate |
 | [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
-| [base-common-io-files](../../crates/common/io/files/Cargo.toml) | Retain shared infrastructure |
+| [base-common-io](../../crates/common/io/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-engine-observers](../../crates/execution/engine/observers/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-ipc](../../vendor/reth-ipc/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-database](../../crates/execution/state/database/Cargo.toml) | Retain shared infrastructure |
@@ -152,7 +156,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-payload-builder](../../vendor/reth-payload-builder/Cargo.toml) | Retain shared infrastructure |
 | [reth-payload-builder-primitives](../../vendor/reth-payload-builder-primitives/Cargo.toml) | Consolidate; retain required code |
 | [reth-payload-primitives](../../vendor/reth-payload-primitives/Cargo.toml) | Retain shared infrastructure |
-| [base-execution-txpool-pool](../../crates/execution/txpool/pool/Cargo.toml) | Consolidate; retain required code |
+| [base-execution-txpool](../../crates/execution/txpool/Cargo.toml) | Consolidate; retain required code |
 | [reth-payload-validator](../../vendor/reth-payload-validator/Cargo.toml) | Retain shared infrastructure |
 | [base-common-types-chain](../../vendor/base-common-types-chain/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |
@@ -162,24 +166,24 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-rpc](../../vendor/reth-rpc/Cargo.toml) | Retain shared infrastructure |
 | [reth-rpc-api](../../vendor/reth-rpc-api/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-rpc-server](../../crates/execution/rpc/server/Cargo.toml) | Retain shared infrastructure |
-| [base-execution-rpc-handlers](../../crates/execution/rpc/handlers/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-rpc](../../crates/execution/rpc/Cargo.toml) | Retain shared infrastructure |
 | [reth-rpc-engine-api](../../vendor/reth-rpc-engine-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-rpc-eth-api](../../vendor/reth-rpc-eth-api/Cargo.toml) | Retain shared infrastructure |
-| [base-execution-rpc-handlers](../../crates/execution/rpc/handlers/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-rpc](../../crates/execution/rpc/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-rpc-server](../../crates/execution/rpc/server/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-rpc-server](../../crates/execution/rpc/server/Cargo.toml) | Retain shared infrastructure |
 | [reth-rpc-traits](../../vendor/reth-rpc-traits/Cargo.toml) | Consolidate; retain required code |
-| [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
-| [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-sync](../../crates/execution/sync/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-sync](../../crates/execution/sync/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-api](../../crates/execution/state/api/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-provider](../../crates/execution/state/provider/Cargo.toml) | Retain shared infrastructure |
-| [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
+| [base-common-runtime](../../crates/common/runtime/Cargo.toml) | Retain shared infrastructure |
 | [base-testing-support](../../crates/testing/support/Cargo.toml) | Test support; retain or migrate |
-| [base-common-runtime-tasks](../../crates/common/runtime/tasks/Cargo.toml) | Retain shared infrastructure |
+| [base-common-runtime](../../crates/common/runtime/Cargo.toml) | Retain shared infrastructure |
 | [base-common-observability-tracing](../../crates/common/observability/tracing/Cargo.toml) | Retain shared infrastructure |
 | [base-common-observability-tracing](../../crates/common/observability/tracing/Cargo.toml) | Retain shared infrastructure |
 | [reth-transaction-pool](../../vendor/reth-transaction-pool/Cargo.toml) | Retain shared infrastructure |
@@ -199,8 +203,8 @@ Initial ERA cleanup passed:
 - `cargo check --offline --locked -p base-bin-base --all-targets`
 - `cargo test --offline -p reth-config --features serde --lib` — 16 tests, including loading and saving old ERA configuration.
 - `cargo test --offline -p base-execution-state-types --features reth-codecs/alloy --lib` — 17 tests. The explicit codec feature supplies the Alloy codec implementations needed by this isolated test build.
-- `cargo test --offline -p base-execution-sync-pipeline --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
-- `cargo test --offline --locked -p base-execution-sync-pipeline --features test-utils --test preimage` — 7 storage/preimage pipeline tests.
+- `cargo test --offline -p base-execution-sync --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
+- `cargo test --offline --locked -p base-execution-sync --features test-utils --test preimage` — 7 storage/preimage pipeline tests.
 - `cargo test --offline -p base-node-cli --lib node::tests` — 37 matching tests, including rejection of ERA CLI flags.
 - Formatting of affected packages and `git diff --check`.
 - Dependency-tree comparison confirms all six named crates are absent from Base's normal/build graph. Searches found no remaining ERA production references.

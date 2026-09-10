@@ -6,11 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{DnsDiscoveryConfig, ParseDnsEntryError};
-
-use crate::dns::sync::DnsSyncTree;
 use alloy_eip2124::{EnrForkIdEntry, ForkId};
-use base_execution_network_types::NodeRecord;
+use base_execution_network_wire::NodeRecord;
 use enr::Enr;
 use schnellru::{ByLength, LruMap};
 use secp256k1::SecretKey;
@@ -28,12 +25,14 @@ use tokio_stream::{
 };
 use tracing::{debug, trace};
 
-use crate::dns::{
-    query::{DnsQueryOutcome, DnsQueryPool, DnsResolveEntryResult, DnsResolveRootResult},
-    sync::{DnsResolveKind, DnsSyncAction},
-    tree::{DnsEntry, DnsLinkEntry},
+use crate::{
+    DnsDiscoveryConfig, DnsLookup, DnsResolver, ParseDnsEntryError,
+    dns::{
+        query::{DnsQueryOutcome, DnsQueryPool, DnsResolveEntryResult, DnsResolveRootResult},
+        sync::{DnsResolveKind, DnsSyncAction, DnsSyncTree},
+        tree::{DnsEntry, DnsLinkEntry},
+    },
 };
-use crate::{DnsLookup, DnsResolver};
 
 /// [`DnsDiscoveryService`] front-end.
 #[derive(Clone, Debug)]
@@ -97,7 +96,7 @@ impl<R: DnsLookup> DnsDiscoveryService<R> {
     /// Creates a new instance of the [`DnsDiscoveryService`] using the given settings.
     ///
     /// ```
-    /// use base_execution_network_discovery::{DnsDiscoveryService, DnsResolver};
+    /// use crate::{DnsDiscoveryService, DnsResolver};
     /// use std::sync::Arc;
     /// # fn t() {
     /// let service = DnsDiscoveryService::new(
@@ -389,9 +388,7 @@ mod tests {
         net::{IpAddr, Ipv4Addr},
     };
 
-    use crate::DnsMapResolver;
     use alloy_chains::Chain;
-
     use alloy_eip2124::ForkHash;
     use alloy_hardforks::EthereumHardfork;
     use alloy_primitives::keccak256;
@@ -401,7 +398,7 @@ mod tests {
     use secp256k1::rand::thread_rng;
 
     use super::*;
-    use crate::dns::tree::DnsTreeRootEntry;
+    use crate::{DnsMapResolver, dns::tree::DnsTreeRootEntry};
 
     fn entry_hash(entry_txt: &str) -> String {
         BASE32_NOPAD.encode(&keccak256(entry_txt.as_bytes()).as_slice()[..16])

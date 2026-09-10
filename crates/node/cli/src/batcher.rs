@@ -6,16 +6,15 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use base_batcher_service_driver::ThrottleConfig;
-use base_batcher_service_driver::{BatcherConfig, BatcherService};
-use base_common_cli_support::RuntimeManager;
-use base_common_l1_transactions::{SignerConfig, TxManagerConfig};
-use base_common_runtime_tasks::TokioRuntime;
+use base_batcher_service::{BatcherConfig, BatcherService, ThrottleConfig};
+use base_common_cli::RuntimeManager;
+use base_common_l1::{SignerConfig, TxManagerConfig};
+use base_common_runtime::TokioRuntime;
 use clap::Parser;
 use tracing::info;
 use url::Url;
 
-base_common_l1_transactions::define_signer_cli!("BASE_BATCHER");
+base_common_l1::define_signer_cli!("BASE_BATCHER");
 
 /// CLI arguments for the batcher.
 #[derive(Parser, Clone, Debug)]
@@ -115,7 +114,7 @@ pub struct BatcherArgs {
     /// Brotli quality (`0..=11`).
     #[arg(
         long = "brotli-quality",
-        default_value_t = base_batcher_encoding_channel::BrotliLevel::DEFAULT.as_u32() as u8,
+        default_value_t = base_batcher_encoding::BrotliLevel::DEFAULT.as_u32() as u8,
         env = "BASE_BATCHER_BROTLI_QUALITY",
         value_parser = clap::value_parser!(u8).range(0..=11)
     )]
@@ -129,7 +128,7 @@ pub struct BatcherArgs {
         default_value = "blobs",
         env = "BASE_BATCHER_DATA_AVAILABILITY_TYPE"
     )]
-    pub da_type: base_batcher_encoding_channel::DaType,
+    pub da_type: base_batcher_encoding::DaType,
 
     /// Maximum number of in-flight (unconfirmed) transactions.
     #[arg(
@@ -274,18 +273,19 @@ impl BatcherArgs {
         // Blob frames use the full protocol packing limit. Calldata reserves
         // one byte for the derivation version outside the encoded frame.
         let max_frame_size = match self.da_type {
-            base_batcher_encoding_channel::DaType::Blob => {
-                base_batcher_encoding_channel::EncoderConfig::MAX_BLOB_FRAME_SIZE
+            base_batcher_encoding::DaType::Blob => {
+                base_batcher_encoding::EncoderConfig::MAX_BLOB_FRAME_SIZE
             }
-            base_batcher_encoding_channel::DaType::Calldata => self.max_calldata_size_bytes.map_or(
-                base_batcher_encoding_channel::EncoderConfig::MAX_BLOB_FRAME_SIZE,
-                |size| size.saturating_sub(1),
-            ),
+            base_batcher_encoding::DaType::Calldata => self
+                .max_calldata_size_bytes
+                .map_or(base_batcher_encoding::EncoderConfig::MAX_BLOB_FRAME_SIZE, |size| {
+                    size.saturating_sub(1)
+                }),
         };
 
-        let brotli_level = base_batcher_encoding_channel::BrotliLevel::from_u8(self.brotli_quality)
+        let brotli_level = base_batcher_encoding::BrotliLevel::from_u8(self.brotli_quality)
             .expect("clap restricts Brotli quality to 0..=11");
-        let encoder_config = base_batcher_encoding_channel::EncoderConfig {
+        let encoder_config = base_batcher_encoding::EncoderConfig {
             compressed_size_target: self.compressed_size_target,
             max_frame_size,
             max_channel_duration: self.max_channel_duration,
@@ -453,7 +453,7 @@ mod tests {
         let cli = parse_cli(&[]);
         let config = cli.into_config(false).expect("config should build");
 
-        assert_eq!(config.encoder_config.da_type, base_batcher_encoding_channel::DaType::Blob);
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoding::DaType::Blob);
     }
 
     #[test]
@@ -463,13 +463,13 @@ mod tests {
 
         assert_eq!(
             config.encoder_config.max_frame_size,
-            base_batcher_encoding_channel::EncoderConfig::MAX_BLOB_FRAME_SIZE
+            base_batcher_encoding::EncoderConfig::MAX_BLOB_FRAME_SIZE
         );
         assert_eq!(config.encoder_config.compressed_size_target, None);
         assert_eq!(config.encoder_config.max_blobs_per_tx, 6);
         assert_eq!(
             config.encoder_config.brotli_level,
-            base_batcher_encoding_channel::BrotliLevel::Brotli10
+            base_batcher_encoding::BrotliLevel::Brotli10
         );
     }
 
@@ -487,10 +487,7 @@ mod tests {
         let cli = parse_cli(&["--brotli-quality", "9"]);
         let config = cli.into_config(false).expect("config should build");
 
-        assert_eq!(
-            config.encoder_config.brotli_level,
-            base_batcher_encoding_channel::BrotliLevel::Brotli9
-        );
+        assert_eq!(config.encoder_config.brotli_level, base_batcher_encoding::BrotliLevel::Brotli9);
     }
 
     #[test]
@@ -506,7 +503,7 @@ mod tests {
         let cli = parse_cli(&["--data-availability-type", "calldata"]);
         let config = cli.into_config(false).expect("config should build");
 
-        assert_eq!(config.encoder_config.da_type, base_batcher_encoding_channel::DaType::Calldata);
+        assert_eq!(config.encoder_config.da_type, base_batcher_encoding::DaType::Calldata);
     }
 
     #[test]

@@ -9,23 +9,23 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-tracing = {workspace = true}
+tracing = { workspace = true }
 metrics = { workspace = true }
-serde_json = {workspace = true}
 thiserror = { workspace = true }
+serde_json = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
-anyhow = {workspace = true, features = ["default"]}
 serde = { workspace = true, features = ["derive"] }
+anyhow = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default", "serde"] }
-uuid = {workspace = true, features = ["default", "serde", "v4"]}
-base-proof-service-protocol = {workspace = true, features = ["default"]}
+uuid = { workspace = true, features = ["default", "serde", "v4"] }
+base-proof-service-protocol = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "sync", "time"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
 
 [dev-dependencies]
 alloy-primitives = { workspace = true }
-base-proof-types-protocol = { workspace = true }
+base-proof-types = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }

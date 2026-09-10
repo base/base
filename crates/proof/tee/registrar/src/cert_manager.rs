@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolCall;
-use base_common_l1_transactions::{TxCandidate, TxManager, TxManagerError};
-use base_proof_l1_submission::{
+use base_common_l1::{TxCandidate, TxManager, TxManagerError};
+use base_proof_l1::{
     INitroEnclaveVerifier, NitroEnclaveVerifierClient, caller_not_owner_or_revoker_selector,
 };
 use base_proof_tee_nitro_verifier::AttestationReport;
@@ -192,8 +192,8 @@ mod tests {
 
     use alloy_primitives::{Address, B256, Bytes};
     use async_trait::async_trait;
-    use base_common_l1_transactions::TxManagerError;
-    use base_proof_l1_submission::ContractError;
+    use base_common_l1::TxManagerError;
+    use base_proof_l1::ContractError;
 
     use super::*;
     use crate::test_utils::{EP1, NoopTxManager, healthy_prover_instance};

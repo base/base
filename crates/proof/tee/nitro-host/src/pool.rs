@@ -2,8 +2,8 @@
 
 use std::{fmt, sync::Arc};
 
-use base_proof_host_service::{ProverConfig, ProverError, ProverService};
-use base_proof_types_protocol::{ProofRequest, ProofResult};
+use base_proof_host::{ProverConfig, ProverError, ProverService};
+use base_proof_types::{ProofRequest, ProofResult};
 use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;

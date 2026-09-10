@@ -2195,7 +2195,8 @@ impl BlobsBundleV2 {
     #[cfg(feature = "kzg")]
     pub fn try_into_sidecar(
         self,
-    ) -> Result<BlobTransactionSidecarEip7594, base_common_types_chain::error::ValueError<Self>> {
+    ) -> Result<BlobTransactionSidecarEip7594, base_common_types_chain::error::ValueError<Self>>
+    {
         let expected_cell_proofs_len = self.blobs.len() * CELLS_PER_EXT_BLOB;
         if self.proofs.len() != expected_cell_proofs_len {
             let msg = format!(

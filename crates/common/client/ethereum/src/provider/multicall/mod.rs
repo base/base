@@ -1,6 +1,5 @@
 //! A Multicall Builder
 
-use crate::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, address};
 use alloy_sol_types::SolCall;
 use base_common_types_rpc::{BlockId, TransactionInputKind, state::StateOverride};
@@ -9,7 +8,7 @@ use bindings::IMulticall3::{
     tryBlockAndAggregateCall, tryBlockAndAggregateReturn,
 };
 
-use crate::{PendingTransactionBuilder, Provider};
+use crate::{Network, PendingTransactionBuilder, Provider, TransactionBuilder};
 
 /// Multicall bindings
 pub mod bindings;

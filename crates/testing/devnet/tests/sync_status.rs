@@ -2,8 +2,7 @@
 
 use std::sync::Arc;
 
-use base_consensus_driver_service::L1WatcherQueries;
-use base_consensus_driver_service::L1WatcherQueryExecutor;
+use base_consensus_driver::{L1WatcherQueries, L1WatcherQueryExecutor};
 use base_testing_devnet::{ActionL1BlockFetcher, ActionTestHarness, SharedL1Chain};
 use tokio::sync::{oneshot, watch};
 

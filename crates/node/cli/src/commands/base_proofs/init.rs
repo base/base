@@ -2,7 +2,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{AccessRights, Environment, EnvironmentArgs};
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::ChainInfo;
 use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
@@ -14,6 +13,8 @@ use base_node_config::version_metadata;
 use base_node_service::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use tracing::info;
+
+use crate::{AccessRights, Environment, EnvironmentArgs};
 
 /// Initializes the proofs storage with the current state of the chain.
 ///
@@ -52,7 +53,7 @@ pub struct InitCommand {
 
 impl InitCommand {
     /// Execute the `proofs init` command.
-    pub async fn execute(self, runtime: base_common_runtime_tasks::Runtime) -> eyre::Result<()> {
+    pub async fn execute(self, runtime: base_common_runtime::Runtime) -> eyre::Result<()> {
         let Self { env, storage_path, proofs_history_db, proofs_history_rocksdb } = self;
 
         info!(target: "reth::cli", version = %version_metadata().short_version, "reth starting");

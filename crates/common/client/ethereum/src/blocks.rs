@@ -7,7 +7,6 @@ use std::{
     },
 };
 
-use crate::{Ethereum, Network};
 use alloy_primitives::{BlockNumber, U64};
 use alloy_rpc_client::{NoParams, PollerBuilder, WeakClient};
 use alloy_transport::RpcError;
@@ -16,6 +15,8 @@ use async_stream::stream;
 use futures::{FutureExt, future::Either};
 use futures::{Stream, StreamExt};
 use lru_0_18_2::LruCache;
+
+use crate::{Ethereum, Network};
 
 /// The size of the block cache.
 const BLOCK_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(10).unwrap();
@@ -236,7 +237,7 @@ impl<N: Network> NewBlocks<N> {
 mod tests {
     use std::{future::Future, time::Duration};
 
-    use base_common_process_nodes::Anvil;
+    use base_common_process::Anvil;
 
     use super::*;
     use crate::{Provider, ProviderBuilder, ext::AnvilApi};

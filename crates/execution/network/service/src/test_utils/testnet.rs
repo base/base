@@ -8,24 +8,17 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::{
-    NetworkEvent, NetworkEventListenerProvider, NetworkInfo, PeerEvent, Peers, PeersHandle,
-    PeersHandleProvider, SessionInfo,
-};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
-use base_common_runtime_tasks::EventStream;
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::{EventStream, Runtime};
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_network_types::PeerId;
-use base_execution_network_wire::DisconnectReason;
-use base_execution_network_wire::HelloMessageWithProtocols;
-use base_execution_network_wire::Protocol;
-use base_execution_state_api::{
-    BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, NoopProvider, StateProviderFactory,
+use base_execution_network_wire::{DisconnectReason, HelloMessageWithProtocols, PeerId, Protocol};
+use base_execution_state_database::NoopProvider;
+use base_execution_state_types::{
+    BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, StateProviderFactory,
     StateRangeProviderFactory,
 };
-use base_execution_txpool_pool::{
+use base_execution_txpool::{
     EthTransactionPool, InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
 };
 use futures::{FutureExt, StreamExt};
@@ -38,7 +31,9 @@ use tokio::{
 
 use super::{NetworkTestData, TestPool};
 use crate::{
-    NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersConfig,
+    NetworkConfig, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider, NetworkHandle,
+    NetworkInfo, NetworkManager, PeerEvent, Peers, PeersConfig, PeersHandle, PeersHandleProvider,
+    SessionInfo,
     builder::ETH_REQUEST_CHANNEL_CAPACITY,
     error::NetworkError,
     eth_requests::EthRequestHandler,
@@ -195,9 +190,9 @@ where
                 BaseEvmConfig::default(),
                 Runtime::test(),
             );
-            peer.map_transactions_manager(base_execution_txpool_pool::Pool::new(
+            peer.map_transactions_manager(base_execution_txpool::Pool::new(
                 pool,
-                base_execution_txpool_pool::BaseOrdering::default(),
+                base_execution_txpool::BaseOrdering::default(),
                 blob_store,
                 Default::default(),
             ))
@@ -227,9 +222,9 @@ where
             );
 
             peer.map_transactions_manager_with(
-                base_execution_txpool_pool::Pool::new(
+                base_execution_txpool::Pool::new(
                     pool,
-                    base_execution_txpool_pool::BaseOrdering::default(),
+                    base_execution_txpool::BaseOrdering::default(),
                     blob_store,
                     Default::default(),
                 ),

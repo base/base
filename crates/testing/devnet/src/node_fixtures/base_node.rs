@@ -6,7 +6,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256};
 use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_types_payload::PayloadAttributes;
-use base_execution_payload_builder::{
+use base_execution_payload::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, payload::EthPayloadBuilderAttributes,
 };
 use base_node_service::BaseNode;

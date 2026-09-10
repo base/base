@@ -15,19 +15,15 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, B64, B256, BlockNumber, Bytes, TxKind, U256};
 use base_common_types_chain::{
-    EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header,
-    SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
+    EthereumReceipt as Receipt, EthereumTxEnvelope, EthereumTypedTransaction, Header, Log,
+    SealedBlock, SealedHeader, SignableTransaction, Transaction as _, TxEip4844, TxLegacy,
+    crypto::secp256k1::sign_message, proofs,
 };
-use base_execution_state_memory::StoredAccount as Account;
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_types::StorageEntry;
 pub use rand::Rng;
 use rand::{SeedableRng, distr::uniform::SampleRange, rngs::StdRng};
 use secp256k1::{Keypair, Secp256k1};
-use {
-    base_common_types_chain::Log, base_common_types_chain::SealedBlock,
-    base_common_types_chain::SealedHeader,
-    base_common_types_chain::crypto::secp256k1::sign_message, base_common_types_chain::proofs,
-};
 
 /// Used to pass arguments for random block generation function in tests
 #[derive(Debug, Default)]
@@ -499,10 +495,9 @@ mod tests {
 
     use alloy_eips::eip2930::AccessList;
     use alloy_primitives::{Signature, hex};
-    use base_common_types_chain::TxEip1559;
     use base_common_types_chain::{
-        SignerRecoverable, crypto::secp256k1::public_key_to_address,
-        crypto::secp256k1::sign_message,
+        SignerRecoverable, TxEip1559,
+        crypto::secp256k1::{public_key_to_address, sign_message},
     };
 
     use super::*;

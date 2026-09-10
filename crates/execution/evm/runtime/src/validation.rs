@@ -1,11 +1,9 @@
 use core::cmp;
 
-use base_execution_evm_machine::InitialAndFloorGas;
-use base_execution_evm_machine::{
-    Block, Cfg, ContextTr, GasParams, InvalidHeader, InvalidTransaction, Transaction,
-    TransactionType,
+use base_execution_evm_runtime::{
+    B256, Block, Cfg, ContextTr, GasParams, InitialAndFloorGas, InvalidHeader, InvalidTransaction,
+    Transaction, TransactionType, eip4844, hardfork::SpecId,
 };
-use base_execution_evm_primitives::{B256, eip4844, hardfork::SpecId};
 
 /// Validates the execution environment including block and transaction parameters.
 pub fn validate_env<CTX: ContextTr, ERROR: From<InvalidHeader> + From<InvalidTransaction>>(
@@ -246,7 +244,7 @@ pub fn validate_initial_tx_gas(
     is_eip7623_disabled: bool,
     is_amsterdam_eip8037_enabled: bool,
     tx_gas_limit_cap: u64,
-    eip2780: Option<base_execution_evm_machine::Eip2780TxInfo>,
+    eip2780: Option<base_execution_evm_runtime::Eip2780TxInfo>,
 ) -> Result<InitialAndFloorGas, InvalidTransaction> {
     validate_initial_tx_gas_with_gas_params(
         tx,
@@ -268,7 +266,7 @@ pub fn validate_initial_tx_gas_with_gas_params(
     is_eip7623_disabled: bool,
     is_amsterdam_eip8037_enabled: bool,
     tx_gas_limit_cap: u64,
-    eip2780: Option<base_execution_evm_machine::Eip2780TxInfo>,
+    eip2780: Option<base_execution_evm_runtime::Eip2780TxInfo>,
 ) -> Result<InitialAndFloorGas, InvalidTransaction> {
     let mut gas = gas_params.initial_tx_gas_for_tx(&tx, eip2780);
 
@@ -315,24 +313,18 @@ pub fn validate_initial_tx_gas_with_gas_params(
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_machine::{
-        Context, ContextTr, EVMError, ExecutionResult, HaltReason, InvalidTransaction, Output,
-        TxEnv,
+    use base_execution_evm_runtime::{
+        AccountInfo, B256, Bytecode, Bytes, CacheDB, ContextTr, EVMError, EmptyDB,
+        ExecuteCommitEvm, ExecutionResult, HaltReason, InvalidTransaction, MainBuilder,
+        MainContext, Output, TxEnv, TxKind, address, eip3860, eip7954, execution_api::ExecuteEvm,
+        hardfork::SpecId, opcode,
     };
-    use base_execution_evm_primitives::opcode;
-    use base_execution_evm_primitives::{
-        B256, Bytes, TxKind, address, eip3860, eip7954, hardfork::SpecId,
-    };
-    use base_execution_state_memory::{AccountInfo, Bytecode};
-    use base_execution_state_memory::{CacheDB, EmptyDB};
-
-    use crate::{ExecuteCommitEvm, MainBuilder, MainContext, execution_api::ExecuteEvm};
 
     fn deploy_contract(
         bytecode: Bytes,
         spec_id: Option<SpecId>,
     ) -> Result<ExecutionResult, EVMError<core::convert::Infallible>> {
-        let ctx = Context::mainnet()
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
             .modify_cfg_chained(|c| {
                 if let Some(spec_id) = spec_id {
                     c.set_spec_and_mainnet_gas_params(spec_id);
@@ -520,7 +512,7 @@ mod tests {
 
         // call factory contract to create sub contract
         let tx_caller = address!("0x0000000000000000000000000000000000100000");
-        let call_result = Context::mainnet()
+        let call_result = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_db(CacheDB::<EmptyDB>::default())
             .build_mainnet()
             .transact_commit(
@@ -601,7 +593,7 @@ mod tests {
 
         // call factory contract to create sub contract
         let tx_caller = address!("0x0000000000000000000000000000000000100000");
-        let call_result = Context::mainnet()
+        let call_result = base_execution_evm_runtime::ReferenceContext::mainnet()
             .with_db(CacheDB::<EmptyDB>::default())
             .build_mainnet()
             .transact_commit(
@@ -632,9 +624,10 @@ mod tests {
 
     #[test]
     fn test_transact_many_with_transaction_index_error() {
-        use base_execution_evm_machine::TransactionIndexedError;
+        use base_execution_evm_runtime::TransactionIndexedError;
 
-        let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();
 
         // Create a transaction that will fail (invalid gas limit)
@@ -657,9 +650,10 @@ mod tests {
 
     #[test]
     fn test_transact_many_success() {
-        use base_execution_evm_primitives::{U256, address};
+        use base_execution_evm_runtime::{U256, address};
 
-        let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();
 
         // Add balance to the caller account
@@ -697,9 +691,10 @@ mod tests {
 
     #[test]
     fn test_transact_many_finalize_with_error() {
-        use base_execution_evm_machine::TransactionIndexedError;
+        use base_execution_evm_runtime::TransactionIndexedError;
 
-        let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();
 
         // Create transactions where the second one fails
@@ -717,9 +712,10 @@ mod tests {
 
     #[test]
     fn test_transact_many_commit_with_error() {
-        use base_execution_evm_machine::TransactionIndexedError;
+        use base_execution_evm_runtime::TransactionIndexedError;
 
-        let ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(CacheDB::<EmptyDB>::default());
         let mut evm = ctx.build_mainnet();
 
         // Create transactions where the first one fails

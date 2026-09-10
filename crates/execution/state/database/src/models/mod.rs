@@ -2,8 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::{Compact, add_arbitrary_tests, impl_compression_for_compact};
-use base_execution_state_types::PruneSegment;
-use base_execution_state_types::{StoredNibbles, StoredNibblesSubKey, *};
+use base_execution_state_types::{PruneSegment, StoredNibbles, StoredNibblesSubKey, *};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -261,13 +260,13 @@ mod tests {
     #[test]
     fn test_ensure_backwards_compatibility() {
         use base_common_types_chain::{test_utils::UnusedBits, validate_bitflag_backwards_compat};
-        use base_execution_state_memory::StoredAccount as Account;
+        use base_execution_evm_runtime::StoredAccount as Account;
         use base_execution_state_types::{
             AccountHashingCheckpoint, CheckpointBlockRange, EntitiesCheckpoint,
-            ExecutionCheckpoint, HeadersCheckpoint, IndexHistoryCheckpoint, StageCheckpoint,
-            StageUnitCheckpoint, StorageHashingCheckpoint,
+            ExecutionCheckpoint, HeadersCheckpoint, IndexHistoryCheckpoint, PruneCheckpoint,
+            PruneMode, PruneSegment, StageCheckpoint, StageUnitCheckpoint,
+            StorageHashingCheckpoint,
         };
-        use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
 
         use super::*;
         assert_eq!(Account::bitflag_encoded_bytes(), 2);

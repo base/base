@@ -5,15 +5,15 @@ use std::{fmt::Debug, time::Duration};
 use alloy_eips::{BlockNumHash, eip1898::BlockWithParent};
 use alloy_primitives::{B256, U256};
 use auto_impl::auto_impl;
-use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::{
-    BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
-};
-use derive_more::{AddAssign, Constructor};
+use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_trie::{
     hashed_cursor::{HashedCursor, HashedStorageCursor},
     trie_cursor::{TrieCursor, TrieStorageCursor},
 };
+use base_execution_state_types::{
+    BranchNodeCompact, HashedPostStateSorted, Nibbles, StoredNibbles, updates::TrieUpdatesSorted,
+};
+use derive_more::{AddAssign, Constructor};
 
 use crate::{
     BaseProofsStorageResult,

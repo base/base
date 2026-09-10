@@ -1,10 +1,9 @@
 //! This modules extends the Ethereum JSON-RPC provider with the `txpool` namespace.
-use crate::{Ethereum, Network};
 use alloy_primitives::Address;
 use alloy_transport::TransportResult;
 use base_common_types_rpc::{TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolStatus};
 
-use crate::Provider;
+use crate::{Ethereum, Network, Provider};
 
 /// Txpool namespace rpc interface.
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
@@ -74,7 +73,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_common_process_nodes::{Geth, utils::run_with_tempdir};
+    use base_common_process::{Geth, utils::run_with_tempdir};
 
     use super::*;
     use crate::{ProviderBuilder, ext::test::async_ci_only};

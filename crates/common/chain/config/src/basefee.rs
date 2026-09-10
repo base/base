@@ -84,13 +84,12 @@ where
 mod tests {
     use alloc::sync::Arc;
 
-    use crate::BaseUpgrade;
     use alloy_hardforks::ForkCondition;
     use alloy_primitives::Bytes;
     use base_common_types_chain::JovianExtraData;
 
     use super::*;
-    use crate::BaseChainSpec;
+    use crate::{BaseChainSpec, BaseUpgrade};
 
     const JOVIAN_TIMESTAMP: u64 = 1900000000;
 

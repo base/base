@@ -20,7 +20,7 @@ The `Network` is made up of several, separate tasks:
        * Responds to incoming transaction related requests
        * Requests missing transactions from the `Network`
        * Broadcasts new transactions received from the
-         [`TransactionPool`](base_execution_txpool_pool::TransactionPool) over the `Network`
+         [`TransactionPool`](base_execution_txpool::TransactionPool) over the `Network`
 
    - `ETH request Task`: is a spawned
      [`EthRequestHandler`](crate::eth_requests::EthRequestHandler) future that:
@@ -53,7 +53,7 @@ use base_execution_network_service::{
 };
 use base_execution_network_types::mainnet_nodes;
 use base_execution_state_api::{NoopProvider};
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 
 // This block provider implementation is used for testing purposes.
 let client = NoopProvider::default();
@@ -83,8 +83,8 @@ use base_execution_network_service::{
 };
 use base_execution_network_types::mainnet_nodes;
 use base_execution_state_api::{NoopProvider};
-use base_common_runtime_tasks::Runtime;
-use base_execution_txpool_pool::TransactionPool;
+use base_common_runtime::Runtime;
+use base_execution_txpool::TransactionPool;
 async fn launch<Pool: TransactionPool>(pool: Pool) {
     // This block provider implementation is used for testing purposes.
     let client = NoopProvider::default();

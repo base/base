@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes, keccak256};
 use alloy_signer::SignerSync;
 use base_common_client_ethereum::PrivateKeySigner;
-use base_proof_types_protocol::ECDSA_SIGNATURE_LENGTH;
+use base_proof_types::ECDSA_SIGNATURE_LENGTH;
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey, signature::hazmat::PrehashVerifier};
 use rand_08::CryptoRng;
 
@@ -90,7 +90,7 @@ impl Signing {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{address, b256};
-    use base_proof_types_protocol::{PROOF_JOURNAL_BASE_LENGTH, ProofJournal};
+    use base_proof_types::{PROOF_JOURNAL_BASE_LENGTH, ProofJournal};
     use rand_08::rngs::OsRng;
 
     use super::*;

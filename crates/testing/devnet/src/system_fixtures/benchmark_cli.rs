@@ -13,10 +13,9 @@ use std::{
     time::Duration,
 };
 
-use base_common_client_ethereum::{Base, PrivateKeySigner};
-use base_common_client_ethereum::{Provider, RootProvider};
+use base_common_client_ethereum::{Base, PrivateKeySigner, Provider, RootProvider};
 use base_common_types_rpc::BlockNumberOrTag;
-use base_testing_load_service::{
+use base_testing_load::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
     MetricsSummary, TestConfig,
 };

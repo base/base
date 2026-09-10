@@ -1,4 +1,4 @@
-use base_consensus_driver_service::ConductorError;
+use base_consensus_driver::ConductorError;
 
 /// Error type returned by [`crate::action_fixtures::L2Sequencer`].
 #[derive(Debug, thiserror::Error)]
@@ -8,7 +8,7 @@ pub enum L2SequencerError {
     MissingL1Block(u64),
     /// Failed to build the L1 info deposit transaction.
     #[error("failed to build L1 info deposit: {0}")]
-    L1Info(#[from] base_consensus_batch_types::BlockInfoError),
+    L1Info(#[from] base_consensus_batch::BlockInfoError),
     /// Transaction signing failed.
     #[error("signing failed: {0}")]
     Signing(#[from] alloy_signer::Error),

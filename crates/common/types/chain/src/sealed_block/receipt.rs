@@ -1,6 +1,7 @@
 //! Receipt gas accounting.
 
 use alloc::vec::Vec;
+
 use base_common_types_chain::TxReceipt;
 
 /// Retrieves gas spent by transactions as a vector of tuples (transaction index, gas used).

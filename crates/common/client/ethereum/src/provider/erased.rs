@@ -1,6 +1,5 @@
 use std::{borrow::Cow, sync::Arc};
 
-use crate::{Ethereum, Network};
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{
     Address, B256, BlockHash, BlockNumber, Bytes, StorageKey, StorageValue, TxHash, U64, U128, U256,
@@ -25,8 +24,8 @@ use super::{
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;
 use crate::{
-    EthCall, PendingTransaction, PendingTransactionBuilder, PendingTransactionConfig, Provider,
-    ProviderCall, RootProvider, RpcWithBlock, SendableTx,
+    EthCall, Ethereum, Network, PendingTransaction, PendingTransactionBuilder,
+    PendingTransactionConfig, Provider, ProviderCall, RootProvider, RpcWithBlock, SendableTx,
     heart::PendingTransactionError,
     utils::{Eip1559Estimation, Eip1559Estimator},
 };

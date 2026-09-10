@@ -1,18 +1,16 @@
-use base_execution_evm_machine as gas_params;
-use base_execution_evm_machine::{
-    Cfg, ContextError, ContextTr, Database, ExecutionResult, FromStringError, HaltReasonTr,
-    InvalidHeader, InvalidTransaction, JournalCheckpoint, JournalTr, LocalContextTr, ResultGas,
-    Transaction, take_error,
-};
-use base_execution_evm_machine::{
-    GasTracker, InitialAndFloorGas, SharedMemory, interpreter_action::FrameInit,
-};
-use base_execution_evm_primitives::{TxKind, U256};
-
-use crate::{
-    EvmTr, FrameResult, ItemOrResult, execution, frame::handle_reservoir_remaining_gas,
-    post_execution, post_execution::build_result_gas, pre_execution,
-    pre_execution::PreExecutionOutput, pre_execution::apply_eip7702_auth_list, validation,
+use base_execution_evm_runtime as gas_params;
+use base_execution_evm_runtime::{
+    Cfg, ContextError, ContextTr, Database, EvmTr, ExecutionResult, FrameResult, FromStringError,
+    GasTracker, HaltReasonTr, InitialAndFloorGas, InvalidHeader, InvalidTransaction, ItemOrResult,
+    JournalCheckpoint, JournalTr, LocalContextTr, ResultGas, SharedMemory, Transaction, TxKind,
+    U256, execution,
+    frame::handle_reservoir_remaining_gas,
+    interpreter_action::FrameInit,
+    post_execution,
+    post_execution::build_result_gas,
+    pre_execution,
+    pre_execution::{PreExecutionOutput, apply_eip7702_auth_list},
+    take_error, validation,
 };
 
 /// Trait for errors that can occur during EVM execution.
@@ -400,7 +398,7 @@ pub trait Handler {
 
     /* PRE EXECUTION */
 
-    /// Loads access list and beneficiary account, marking them as warm in the [`base_execution_evm_machine::Journal`].
+    /// Loads access list and beneficiary account, marking them as warm in the [`base_execution_evm_runtime::Journal`].
     #[inline]
     fn load_accounts(&self, evm: &mut Self::Evm) -> Result<(), Self::Error> {
         pre_execution::load_accounts(evm)

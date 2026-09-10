@@ -3,9 +3,9 @@
 use std::{net::SocketAddr, time::Duration};
 
 use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
-use base_proof_service_server::{DatabaseConfig, ProofRequestRepo};
 use base_proof_service_server::{
-    ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig,
+    DatabaseConfig, ProofRequestRepo, ProverServiceServer, ServerConfig, WorkerApiConfig,
+    WorkerQueueConfig,
 };
 use eyre::{Result, WrapErr};
 use jsonrpsee::server::{Server, ServerHandle};

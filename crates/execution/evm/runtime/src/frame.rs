@@ -1,25 +1,19 @@
 use core::cmp::min;
 use std::{borrow::ToOwned, boxed::Box, vec::Vec};
 
-use base_execution_evm_machine::{
-    CallInput, CallInputs, CallOutcome, CallValue, CreateInputs, CreateOutcome, CreateScheme,
-    FrameInput, Gas, GasTracker, InputsImpl, InstructionResult, Interpreter, InterpreterAction,
-    InterpreterResult, SharedMemory, interpreter::ExtBytecode, interpreter_action::FrameInit,
-};
-use base_execution_evm_machine::{
-    Cfg, ContextError, ContextTr, Database, FrameToken, FromStringError, JournalCheckpoint,
-    JournalTr, JournaledAccountTr, OutFrame, take_error,
-};
-use base_execution_evm_primitives::{
-    Address, Bytes, U256,
+use base_execution_evm_runtime::{
+    Address, Bytecode, Bytes, CallFrame, CallInput, CallInputs, CallOutcome, CallValue, Cfg,
+    ContextError, ContextTr, CreateFrame, CreateInputs, CreateOutcome, CreateScheme, Database,
+    FrameData, FrameInput, FrameResult, FrameToken, FromStringError, Gas, GasTracker, InputsImpl,
+    InstructionResult, Interpreter, InterpreterAction, InterpreterResult, ItemOrResult,
+    JournalCheckpoint, JournalTr, JournaledAccountTr, OutFrame, PrecompileProvider, SharedMemory,
+    U256,
     constants::CALL_STACK_LIMIT,
     hardfork::SpecId::{self, HOMESTEAD, LONDON, SPURIOUS_DRAGON},
-};
-use base_execution_state_memory::Bytecode;
-
-use crate::{
-    CallFrame, CreateFrame, FrameData, FrameResult, ItemOrResult, PrecompileProvider,
+    interpreter::ExtBytecode,
+    interpreter_action::FrameInit,
     item_or_result::FrameInitOrResult,
+    take_error,
 };
 
 /// Frame implementation for Ethereum.

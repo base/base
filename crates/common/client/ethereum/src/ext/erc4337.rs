@@ -1,11 +1,10 @@
-use crate::Network;
 use alloy_primitives::{Address, Bytes};
 use alloy_transport::TransportResult;
 use base_common_types_rpc::erc4337::{
     SendUserOperation, SendUserOperationResponse, UserOperationGasEstimation, UserOperationReceipt,
 };
 
-use crate::Provider;
+use crate::{Network, Provider};
 
 /// ERC-4337 Account Abstraction API
 ///

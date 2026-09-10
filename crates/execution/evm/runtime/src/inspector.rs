@@ -1,11 +1,8 @@
 use auto_impl::auto_impl;
-use base_execution_evm_machine::{
-    CallInputs, CallOutcome, CreateInputs, CreateOutcome, FrameInput, Interpreter,
+use base_execution_evm_runtime::{
+    Address, CallInputs, CallOutcome, CreateInputs, CreateOutcome, Database, EvmState, FrameInput,
+    FrameResult, Interpreter, Journal, JournalEntry, JournalTr, Log, U256,
 };
-use base_execution_evm_machine::{Database, Journal, JournalEntry, JournalTr};
-use base_execution_evm_primitives::{Address, Log, U256};
-use base_execution_evm_runtime::FrameResult;
-use base_execution_state_memory::EvmState;
 
 /// EVM hooks into execution.
 ///
@@ -14,7 +11,7 @@ use base_execution_state_memory::EvmState;
 /// Object that is implemented this trait is used in `InspectorHandler` to trace the EVM execution.
 /// And API that allow calling the inspector can be found in [`crate::InspectEvm`] and [`crate::InspectCommitEvm`].
 #[auto_impl(&mut, Box)]
-pub trait Inspector<CTX, FI = FrameInput, FR = FrameResult> {
+pub trait Inspector<CTX> {
     /// Called before the interpreter is initialized.
     ///
     /// If `interp.bytecode.set_action` is set the execution of the interpreter is skipped.
@@ -71,7 +68,11 @@ pub trait Inspector<CTX, FI = FrameInput, FR = FrameResult> {
     /// Returning `Some(FrameResult)` will skip execution of the frame entirely,
     /// and also skips calling `call()`/`create()`. `frame_end` will still be called.
     #[inline]
-    fn frame_start(&mut self, context: &mut CTX, frame_input: &mut FI) -> Option<FR> {
+    fn frame_start(
+        &mut self,
+        context: &mut CTX,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
         let _ = context;
         let _ = frame_input;
         None
@@ -81,7 +82,12 @@ pub trait Inspector<CTX, FI = FrameInput, FR = FrameResult> {
     ///
     /// Allows transformation of the final result regardless of frame kind.
     #[inline]
-    fn frame_end(&mut self, context: &mut CTX, frame_input: &FI, frame_result: &mut FR) {
+    fn frame_end(
+        &mut self,
+        context: &mut CTX,
+        frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
         let _ = context;
         let _ = frame_input;
         let _ = frame_result;
@@ -145,10 +151,10 @@ pub trait Inspector<CTX, FI = FrameInput, FR = FrameResult> {
     }
 }
 
-impl<CTX, FI, FR, L, R> Inspector<CTX, FI, FR> for (L, R)
+impl<CTX, L, R> Inspector<CTX> for (L, R)
 where
-    L: Inspector<CTX, FI, FR>,
-    R: Inspector<CTX, FI, FR>,
+    L: Inspector<CTX>,
+    R: Inspector<CTX>,
 {
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut CTX) {
         self.0.initialize_interp(interp, context);
@@ -175,13 +181,22 @@ where
         self.1.log_full(interp, context, log);
     }
 
-    fn frame_start(&mut self, context: &mut CTX, frame_input: &mut FI) -> Option<FR> {
+    fn frame_start(
+        &mut self,
+        context: &mut CTX,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
         let first = self.0.frame_start(context, frame_input);
         let second = self.1.frame_start(context, frame_input);
         first.or(second)
     }
 
-    fn frame_end(&mut self, context: &mut CTX, frame_input: &FI, frame_result: &mut FR) {
+    fn frame_end(
+        &mut self,
+        context: &mut CTX,
+        frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
         self.0.frame_end(context, frame_input, frame_result);
         self.1.frame_end(context, frame_input, frame_result);
     }
@@ -237,11 +252,10 @@ impl<DB: Database> JournalExt for Journal<DB> {
 #[cfg(test)]
 mod tests {
     use ::base_execution_evm_runtime::{InspectEvm, MainBuilder, MainContext};
-    use base_execution_evm_machine::InstructionResult;
-    use base_execution_evm_machine::{CfgEnv, Context, TxEnv};
-    use base_execution_evm_primitives::TxKind;
-    use base_execution_state_memory::{BENCH_CALLER, BENCH_TARGET, BenchmarkDB};
-    use base_execution_state_memory::{Bytecode, bytecode::opcode};
+    use base_execution_evm_runtime::{
+        BENCH_CALLER, BENCH_TARGET, BenchmarkDB, Bytecode, CfgEnv, InstructionResult, TxEnv,
+        TxKind, opcode,
+    };
 
     use super::*;
 
@@ -249,7 +263,7 @@ mod tests {
     impl<CTX> Inspector<CTX> for HaltInspector {
         fn step(
             &mut self,
-            interp: &mut base_execution_evm_machine::Interpreter,
+            interp: &mut base_execution_evm_runtime::Interpreter,
             _context: &mut CTX,
         ) {
             interp.halt(InstructionResult::Stop);
@@ -265,10 +279,13 @@ mod tests {
 
     fn run(
         bytecode: &[u8],
-        inspector: impl Inspector<Context<TxEnv, CfgEnv, BenchmarkDB, ()>>,
-    ) -> base_execution_evm_machine::ExecutionResult {
+        inspector: impl Inspector<
+            base_execution_evm_runtime::ReferenceContext<TxEnv, CfgEnv, BenchmarkDB, ()>,
+        >,
+    ) -> base_execution_evm_runtime::ExecutionResult {
         let bytecode = Bytecode::new_raw(bytecode.to_vec().into());
-        let ctx = Context::mainnet().with_db(BenchmarkDB::new_bytecode(bytecode));
+        let ctx = base_execution_evm_runtime::ReferenceContext::mainnet()
+            .with_db(BenchmarkDB::new_bytecode(bytecode));
         let mut evm = ctx.build_mainnet_with_inspector(inspector);
         evm.inspect_one_tx(
             TxEnv::builder()

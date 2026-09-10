@@ -4,14 +4,12 @@ use core::{fmt::Debug, hash::Hash};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_common_types_chain::transaction::TxHashRef;
-use base_execution_evm_machine::{
-    CfgEnv, ContextTr, DBErrorMarker, ExecutionResult, HaltReasonTr, ResultAndState,
+pub(crate) use base_execution_evm_runtime::Database;
+use base_execution_evm_runtime::{
+    BlockEnvironment, CfgEnv, ContextTr, DBErrorMarker, DatabaseCommit, EvmEnv, EvmError,
+    ExecutionResult, HaltReasonTr, Inspector, IntoTxEnv, NoOpInspector, ResultAndState,
+    tracing::TxTracer,
 };
-use base_execution_evm_runtime::NoOpInspector;
-use base_execution_evm_runtime::{DatabaseCommit, Inspector};
-pub use base_execution_state_memory::Database;
-
-use crate::{BlockEnvironment, EvmEnv, EvmError, IntoTxEnv, tracing::TxTracer};
 
 /// An instance of an ethereum virtual machine.
 ///
@@ -25,13 +23,13 @@ pub trait Evm {
     /// The transaction object that the EVM will execute.
     ///
     /// This type represents the transaction environment that the EVM operates on internally.
-    /// Typically this is [`base_execution_evm_machine::TxEnv`], which contains all necessary transaction
+    /// Typically this is [`base_execution_evm_runtime::TxEnv`], which contains all necessary transaction
     /// data like sender, gas limits, value, and calldata.
     ///
     /// The EVM accepts flexible transaction inputs through the [`IntoTxEnv`] trait. This means
     /// that while the EVM internally works with `Self::Tx` (usually `TxEnv`), users can pass
     /// various transaction formats to [`Evm::transact`], including:
-    /// - Direct [`TxEnv`](base_execution_evm_machine::TxEnv) instances
+    /// - Direct [`TxEnv`](base_execution_evm_runtime::TxEnv) instances
     /// - [`Recovered<T>`](base_common_types_chain::transaction::Recovered) where `T` implements
     ///   [`crate::FromRecoveredTx`]
     /// - [`WithEncoded<Recovered<T>>`](alloy_eips::eip2718::WithEncoded) where `T` implements
@@ -75,7 +73,7 @@ pub trait Evm {
     ///
     /// This is the primary method for executing transactions. It accepts flexible input types
     /// that can be converted to the EVM's transaction environment, including:
-    /// - [`TxEnv`](base_execution_evm_machine::TxEnv) - Direct transaction environment
+    /// - [`TxEnv`](base_execution_evm_runtime::TxEnv) - Direct transaction environment
     /// - [`Recovered<T>`](base_common_types_chain::transaction::Recovered) - Consensus transaction with
     ///   recovered sender
     /// - [`WithEncoded<Recovered<T>>`](alloy_eips::eip2718::WithEncoded) - Transaction with sender
@@ -92,7 +90,7 @@ pub trait Evm {
     /// Executes a system call.
     ///
     /// Note: this will only keep the target `contract` in the state. This is done because revm is
-    /// loading [`base_execution_evm_machine::Block::beneficiary`] into state by default, and we need to avoid it
+    /// loading [`base_execution_evm_runtime::Block::beneficiary`] into state by default, and we need to avoid it
     /// by also covering edge cases when beneficiary is set to the system contract address.
     fn transact_system_call(
         &mut self,

@@ -1,7 +1,7 @@
 //! Derivation-layer rejection of pre-Zenith EIP-8130 transactions.
 
 use alloy_primitives::B256;
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_testing_devnet::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
     TestRollupConfigBuilder,

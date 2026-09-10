@@ -120,7 +120,7 @@ service crate. Let's walk through each one from the bottom up.
 
 ### Peers: the foundation
 
-The [`base-consensus-network-service`](https://github.com/base/base/tree/main/crates/consensus/network/service) crate
+The [`base-consensus-network`](https://github.com/base/base/tree/main/crates/consensus/network) crate
 provides the fundamental types for identifying and managing peers on the consensus network.
 
 The most important concept here is the ENR, which stands for Ethereum Node Record (defined in
@@ -145,7 +145,7 @@ different chains (say, Base Mainnet vs Base Sepolia) can tell each other apart d
 The textual representation of an ENR is a base64-encoded string
 prefixed with `enr:`, which you will see in configuration files and bootnode lists.
 
-The [`BaseEnr`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/enr.rs) struct
+The [`BaseEnr`](https://github.com/base/base/blob/main/crates/consensus/network/src/enr.rs) struct
 handles this encoding:
 
 ```rust
@@ -169,13 +169,13 @@ impl BaseEnr {
 ```
 
 When a node discovers another node's ENR, it validates it using
-[`EnrValidation`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/enr.rs). The
+[`EnrValidation`](https://github.com/base/base/blob/main/crates/consensus/network/src/enr.rs). The
 validation checks that the `opstack` key is present, that it decodes correctly, and that the chain
 ID matches. If a node on Base Mainnet (chain ID 8453) encounters an ENR with a different chain ID,
 it simply ignores it.
 
 The peers crate also provides a
-[`BootStore`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/store.rs), which is
+[`BootStore`](https://github.com/base/base/blob/main/crates/consensus/network/src/store.rs), which is
 a simple JSON file that persists discovered ENRs to disk. This way, when a node restarts, it doesn't
 have to start discovery from scratch. The boot store caps out at 2048 entries and prunes the oldest
 ones when full.
@@ -183,7 +183,7 @@ ones when full.
 
 ### Discovery: finding peers with discv5
 
-The [`base-consensus-network-service`](https://github.com/base/base/tree/main/crates/consensus/network/service) crate
+The [`base-consensus-network`](https://github.com/base/base/tree/main/crates/consensus/network) crate
 implements peer discovery using the discv5 protocol. Discv5 is a UDP-based protocol that maintains a
 distributed hash table (DHT) of node records. It is the successor to discv4 (used by the EL) and was
 designed specifically for the consensus layer's needs.
@@ -221,7 +221,7 @@ hardcoded into the client. The bootnode responds to FINDNODE requests, giving th
 set of peers. From there, the new node performs several random lookups to fill its routing table,
 and within minutes it has a healthy set of diverse peers.
 
-The [`Discv5Driver`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs)
+The [`Discv5Driver`](https://github.com/base/base/blob/main/crates/consensus/network/src/driver.rs)
 orchestrates the discovery process. When it starts, it goes through a clear sequence. First, it
 initializes the discv5 UDP service with exponential backoff retries (waiting progressively longer
 between attempts — e.g. 1s, 2s, 4s, 8s). If that succeeds, it then starts the
@@ -257,7 +257,7 @@ single receiver — it is the primary way components communicate in async Rust. 
 persists the current set of known ENRs to the boot store every 60 seconds.
 
 The driver communicates with the rest of the system through a
-[`Discv5Handler`](../../crates/consensus/network/service/src/handler.rs),
+[`Discv5Handler`](../../crates/consensus/network/src/handler.rs),
 which is just a thin wrapper around an `mpsc::Sender`. Other parts of the system can request
 metrics, peer lists, the local ENR, or ask the discovery service to ban specific addresses. This
 channel-based design avoids the need for shared mutable state across async boundaries.
@@ -265,7 +265,7 @@ channel-based design avoids the need for shared mutable state across async bound
 
 ### Gossip: broadcasting blocks with libp2p and gossipsub
 
-The [`base-consensus-network-service`](https://github.com/base/base/tree/main/crates/consensus/network/service) crate
+The [`base-consensus-network`](https://github.com/base/base/tree/main/crates/consensus/network) crate
 is where the real action happens. This is the layer that actually receives and broadcasts L2 blocks
 across the network.
 
@@ -303,7 +303,7 @@ all connected peers, not just mesh peers), though Base has this disabled by defa
 bandwidth.
 
 The gossipsub configuration in Base is defined in
-[`gossip/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/config.rs).
+[`gossip/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/config.rs).
 The key parameters are:
 
 ```rust
@@ -329,7 +329,7 @@ decompressed content, with a domain prefix (a few extra bytes prepended before h
 distinguish valid from invalid encodings). This is how the network deduplicates messages.
 
 The gossip topics are where Base's L2-specific design becomes apparent. The
-[`BlockHandler`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/handler.rs)
+[`BlockHandler`](https://github.com/base/base/blob/main/crates/consensus/network/src/handler.rs)
 manages four versioned topics, each corresponding to a different protocol version:
 
 ```rust
@@ -348,7 +348,7 @@ subscribes to the gossip network, it subscribes to all four topics simultaneousl
 blocks from any protocol version.
 
 The `BlockHandler` implements the
-[`Handler`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/handler.rs) trait,
+[`Handler`](https://github.com/base/base/blob/main/crates/consensus/network/src/handler.rs) trait,
 which has two methods: `handle()` for processing incoming messages and `topics()` for declaring
 which topics it cares about. When a gossip message arrives, the handler first checks which topic it
 came from to determine the correct decoding version, then decodes the payload, and then validates
@@ -386,7 +386,7 @@ peer's score takes a hit. `Ignore` is used for already-seen blocks, which don't 
 ### Block validation: how gossip keeps the network honest
 
 The block validation logic in
-[`block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/block_validity.rs)
+[`block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/block_validity.rs)
 is one of the most important pieces of the P2P stack because it determines what the node will accept
 from the network. The validation performs several checks in sequence, and the order matters.
 
@@ -438,7 +438,7 @@ competing blocks.
 
 ### Connection gating: controlling who connects
 
-The [`ConnectionGater`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/gater.rs)
+The [`ConnectionGater`](https://github.com/base/base/blob/main/crates/consensus/network/src/gater.rs)
 is a rate-limiting layer that controls which peers can connect. It tracks dial attempts per peer
 address and enforces a configurable dial period (default: 1 hour). By default, redialing is disabled
 entirely — a peer can only be dialed once per period. The CLI overrides this to allow up to 500
@@ -453,7 +453,7 @@ gossip level.
 
 ### The libp2p Behaviour: combining protocols
 
-The [`Behaviour`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/behaviour.rs)
+The [`Behaviour`](https://github.com/base/base/blob/main/crates/consensus/network/src/behaviour.rs)
 struct is a libp2p `NetworkBehaviour` that combines several sub-protocols into a single swarm
 (libp2p's term for the combination of a transport layer, a set of protocol behaviors, and connection
 management — essentially the "networking engine"):
@@ -477,7 +477,7 @@ implementation responds with "not found" to all requests, but it is still presen
 peers don't penalize Base nodes for not supporting it.
 
 The `GossipDriver`
-([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs))
+([`gossip/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/driver.rs))
 wraps the swarm and provides higher-level operations. Its `start()` method binds the swarm to a TCP
 address (default `0.0.0.0:9222`), waits for the `NewListenAddr` event confirming
 the listener is up,
@@ -493,12 +493,12 @@ libp2p, e.g. `/ip4/192.168.1.1/tcp/9222`), checks the connection gate, and initi
 ### Putting it all together: the Network Actor
 
 The
-[`NetworkActor`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/actor.rs)
+[`NetworkActor`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/actor.rs)
 in the service crate ties everything together. It follows the actor pattern, a concurrency design
 where each component runs as an independent task that communicates with other components exclusively
 through message channels, avoiding shared mutable state. It is the top-level component that the
 consensus node's main loop interacts with. The actor is generic over a
-[`GossipTransport`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/transport.rs)
+[`GossipTransport`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/transport.rs)
 trait, which allows swapping out the real networking stack for an in-process test transport:
 
 ```rust
@@ -514,7 +514,7 @@ pub trait GossipTransport: Send + 'static {
 ```
 
 The production implementation is
-[`NetworkHandler`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/handler.rs),
+[`NetworkHandler`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/handler.rs),
 which composes the `GossipDriver` and `Discv5Handler` together. It runs a `tokio::select!` loop that
 simultaneously handles several things: receiving ENRs from discovery and dialing them as new gossip
 peers, receiving blocks from gossip and forwarding them to the consensus engine, publishing blocks
@@ -523,7 +523,7 @@ banning low-scoring peers (disconnecting them from gossip and banning their addr
 and handling administrative RPC requests.
 
 The
-[`NetworkDriver`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/driver.rs)
+[`NetworkDriver`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/driver.rs)
 handles the startup sequence. It starts the gossip swarm first, gets back the actual listen address,
 optionally updates the local ENR with that address (so that other nodes discover the correct port),
 and then starts the discovery service. This ordering matters because the ENR needs to contain the
@@ -531,7 +531,7 @@ real TCP port that gossip is listening on.
 
 The `NetworkActor` communicates with the rest of the consensus node through `mpsc` channels bundled
 in a
-[`NetworkInboundData`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/actor.rs)
+[`NetworkInboundData`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/actor.rs)
 struct:
 
 ```rust
@@ -661,11 +661,11 @@ the local enode record (the DevP2P equivalent of an ENR — a URL-formatted node
 ### Transaction pool and gossip
 
 The Base transaction pool is defined in
-[`crates/execution/txpool/pool/`](https://github.com/base/base/tree/main/crates/execution/txpool/pool). It
+[`crates/execution/txpool/`](https://github.com/base/base/tree/main/crates/execution/txpool). It
 extends reth's standard transaction pool with rollup-specific validation and ordering.
 
 The
-[`BaseTransactionValidator`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/validator.rs)
+[`BaseTransactionValidator`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
 wraps reth's `EthTransactionValidator` and adds L1 data gas fee checks. Every transaction on Base
 incurs both an L2 execution gas cost and an L1 data fee (the cost of posting the transaction data to
 Ethereum L1). The validator ensures that the sender's balance covers both fees. It also rejects
@@ -673,7 +673,7 @@ EIP-4844 blob transactions (a special transaction type used on L1 to carry large
 rollups, which are not meaningful on the L2 itself).
 
 The ordering strategy is configurable via `--rollup.txpool-ordering` and defined in
-[`ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/ordering.rs):
+[`ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs):
 
 ```rust
 pub enum BaseOrdering<T> {
@@ -694,10 +694,10 @@ For non-sequencer nodes, transactions received in the mempool need to be forward
 for inclusion. This is handled by the reader/forwarder pipeline in the tx-forwarding crate.
 
 The
-[`DestinationReader`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/reader/task.rs)
+[`DestinationReader`](https://github.com/base/base/blob/main/crates/execution/txpool/src/reader/task.rs)
 polls the transaction pool for new pending transactions and queues them through a bounded
 `tokio::mpsc` channel. The
-[`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/forwarder/task.rs)
+[`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/txpool/src/forwarder/task.rs)
 receives queued transactions and forwards them via a custom JSON-RPC method
 (`base_insertValidatedTransactions`) to configured builder endpoints. One forwarder task is spawned
 per builder URL, so multiple downstream builders can receive transactions simultaneously. This
@@ -751,52 +751,52 @@ networks are completely separate and serve different purposes.
 **Consensus layer peers and ENR management:**
 
 -
-  [`crates/consensus/network/service/src/enr.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/enr.rs)
+  [`crates/consensus/network/src/enr.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/enr.rs)
   — BaseEnr encoding and validation
 -
-  [`crates/consensus/network/service/src/store.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/store.rs)
+  [`crates/consensus/network/src/store.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/store.rs)
   — BootStore persistence
 
 **Consensus layer discovery:**
 
 -
-  [`crates/consensus/network/service/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs)
+  [`crates/consensus/network/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/driver.rs)
   — Discv5Driver event loop and bootstrap
 
 **Consensus layer gossip:**
 
 -
-  [`crates/consensus/network/service/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/config.rs)
+  [`crates/consensus/network/src/config.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/config.rs)
   — Gossipsub constants and configuration
 -
-  [`crates/consensus/network/service/src/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/handler.rs)
+  [`crates/consensus/network/src/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/handler.rs)
   — BlockHandler and topic management
 -
-  [`crates/consensus/network/service/src/block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/block_validity.rs)
+  [`crates/consensus/network/src/block_validity.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/block_validity.rs)
   — Block validation rules
 -
-  [`crates/consensus/network/service/src/behaviour.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/behaviour.rs)
+  [`crates/consensus/network/src/behaviour.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/behaviour.rs)
   — libp2p Behaviour composition
 -
-  [`crates/consensus/network/service/src/gater.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/gater.rs)
+  [`crates/consensus/network/src/gater.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/gater.rs)
   — Connection rate limiting
 -
-  [`crates/consensus/network/service/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/service/src/driver.rs)
+  [`crates/consensus/network/src/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/network/src/driver.rs)
   — GossipDriver swarm management
 
 **Consensus layer orchestration:**
 
 -
-  [`crates/consensus/driver/service/src/actors/network/actor.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/actor.rs)
+  [`crates/consensus/driver/src/actors/network/actor.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/actor.rs)
   — NetworkActor definition
 -
-  [`crates/consensus/driver/service/src/actors/network/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/handler.rs)
+  [`crates/consensus/driver/src/actors/network/handler.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/handler.rs)
   — Production NetworkHandler transport
 -
-  [`crates/consensus/driver/service/src/actors/network/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/driver.rs)
+  [`crates/consensus/driver/src/actors/network/driver.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/driver.rs)
   — Network startup sequence
 -
-  [`crates/consensus/driver/service/src/actors/network/transport.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/service/src/actors/network/transport.rs)
+  [`crates/consensus/driver/src/actors/network/transport.rs`](https://github.com/base/base/blob/main/crates/consensus/driver/src/actors/network/transport.rs)
   — GossipTransport trait
 
 **Execution layer node and networking:**
@@ -811,16 +811,16 @@ networks are completely separate and serve different purposes.
 **Execution layer transaction pool:**
 
 -
-  [`crates/execution/txpool/pool/src/validator.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/validator.rs)
+  [`crates/execution/txpool/src/validator.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
   — BaseTransactionValidator with L1 data gas checks
 -
-  [`crates/execution/txpool/pool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/ordering.rs)
+  [`crates/execution/txpool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs)
   — BaseOrdering (fee-based vs FIFO)
 -
-  [`crates/execution/txpool/pool/src/reader/`](https://github.com/base/base/tree/main/crates/execution/txpool/pool/src/reader)
+  [`crates/execution/txpool/src/reader/`](https://github.com/base/base/tree/main/crates/execution/txpool/src/reader)
   — Transaction pool reader
 -
-  [`crates/execution/txpool/pool/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/txpool/pool/src/forwarder)
+  [`crates/execution/txpool/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/txpool/src/forwarder)
   — Transaction forwarder to sequencer
 
 

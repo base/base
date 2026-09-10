@@ -7,7 +7,7 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{Address, TxKind};
 use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_client_ethereum::TxSignerSync;
-use base_common_runtime_tasks::Runtime;
+use base_common_runtime::Runtime;
 use base_common_types_chain::{SignableTransaction, Transaction, TxEip1559};
 use base_execution_state_database::test_utils::create_test_rw_db_with_path;
 use base_node_config::DatadirArgs;

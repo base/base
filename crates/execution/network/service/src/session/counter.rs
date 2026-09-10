@@ -1,7 +1,7 @@
-use crate::Direction;
-use base_execution_network_types::SessionLimits;
+use base_execution_network_wire::SessionLimits;
 
 use super::ExceedsSessionLimit;
+use crate::Direction;
 
 /// Keeps track of all sessions.
 #[derive(Debug)]

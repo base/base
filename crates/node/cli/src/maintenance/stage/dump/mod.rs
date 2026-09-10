@@ -3,9 +3,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
 use base_execution_state_database::{
-    Database, DbCursorRO, DbTx, TableImporter, models::ClientVersion, tables,
+    Database, DatabaseEnv, DbCursorRO, DbTx, TableImporter, init_db, mdbx::DatabaseArguments,
+    models::ClientVersion, tables,
 };
-use base_execution_state_database::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use base_execution_state_maintenance::DbTool;
 use base_node_config::{DataDirPath, DatadirArgs, PlatformPath};
 use clap::Parser;
@@ -92,7 +92,7 @@ impl Command {
     pub async fn execute<F>(
         self,
         components: F,
-        runtime: base_common_runtime_tasks::Runtime,
+        runtime: base_common_runtime::Runtime,
     ) -> eyre::Result<()>
     where
         F: FnOnce(Arc<BaseChainSpec>) -> CliNodeComponents,

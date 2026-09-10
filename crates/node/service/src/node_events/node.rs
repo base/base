@@ -14,12 +14,12 @@ use base_common_types_chain::{
     BlockHeader,
     constants::{GWEI_TO_WEI, MGAS_TO_GAS},
 };
-use base_common_types_payload::ForkchoiceState;
-use base_execution_engine_types::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
+use base_common_types_payload::{
+    ConsensusEngineEvent, ForkchoiceState, ForkchoiceStatus, SlowBlockInfo,
+};
 use base_execution_network_service::PeersInfo;
-use base_execution_state_types::PrunerEvent;
-use base_execution_state_types::StaticFileProducerEvent;
-use base_execution_sync_pipeline::{
+use base_execution_state_types::{PrunerEvent, StaticFileProducerEvent};
+use base_execution_sync::{
     EntitiesCheckpoint, ExecOutput, PipelineEvent, StageCheckpoint, StageId,
 };
 use futures::Stream;

@@ -13,13 +13,12 @@ use alloy_rlp::{
     Decodable, Encodable, Header, RlpDecodable, RlpDecodableWrapper, RlpEncodable,
     RlpEncodableWrapper, decode_append,
 };
-use base_common_codec_macros::{add_arbitrary_tests, generate_tests};
-use base_common_types_chain::{EthereumTxEnvelope, TxEip4844, transaction::TxHashRef};
-use derive_more::{Constructor, Deref, DerefMut, From, IntoIterator};
-use {
-    base_common_types_chain::InMemorySize, base_common_types_chain::OnceLock,
-    base_common_types_chain::SignedTransaction,
+use base_common_codec::{add_arbitrary_tests, generate_tests};
+use base_common_types_chain::{
+    EthereumTxEnvelope, InMemorySize, OnceLock, SignedTransaction, TxEip4844,
+    transaction::TxHashRef,
 };
+use derive_more::{Constructor, Deref, DerefMut, From, IntoIterator};
 
 use crate::{EthMessage, EthVersion};
 

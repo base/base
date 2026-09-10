@@ -8,12 +8,11 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::PrivateKeySigner;
 use base_common_types_chain::{BaseBlock, BaseReceipt, BaseTxEnvelope};
-use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
-use base_consensus_derive_pipeline::StatefulAttributesBuilder;
-use base_consensus_driver_service::SequencerAdminAPIError;
-use base_consensus_driver_service::{
+use base_consensus_batch::{BlockInfo, L2BlockInfo};
+use base_consensus_derive::StatefulAttributesBuilder;
+use base_consensus_driver::{
     Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
-    SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
+    SequencerActorError, SequencerAdminAPIError, SequencerAdminQuery, SequencerEngineClient,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -280,7 +279,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             shadow_funding: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),
-            seal_offset: base_consensus_batch_types::DEFAULT_SEAL_OFFSET,
+            seal_offset: base_consensus_batch::DEFAULT_SEAL_OFFSET,
             unsafe_payload_gossip_client: ActionUnsafePayloadGossipClient,
             sealer: None,
             pending_stop: None,

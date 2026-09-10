@@ -317,7 +317,7 @@ mod tests {
     use alloy_trie::{
         BranchNodeCompact, EMPTY_ROOT_HASH, HashBuilder, Nibbles, TrieAccount, TrieMask,
     };
-    use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_evm_runtime::StoredAccount as Account;
     use base_execution_state_types::{
         BranchNode, HashedPostState, LeafNode, RlpNode, prefix_set::PrefixSetMut,
         updates::TrieUpdates,

@@ -1,7 +1,7 @@
 //! Header types.
 
 use alloy_rlp::{Decodable, Encodable};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 use bytes::BufMut;
 
 /// Represents the direction for a headers request depending on the `reverse` field of the request.

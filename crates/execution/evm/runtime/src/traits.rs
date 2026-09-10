@@ -1,13 +1,9 @@
-use base_execution_evm_machine::{CallOutcome, FrameInput, interpreter_action::FrameInit};
-use base_execution_evm_machine::{ContextTr, FrameStack, JournalTr};
-use base_execution_evm_runtime::EthInstructions;
 use base_execution_evm_runtime::{
-    ContextDbError, EthFrame, EvmTr, FrameInitOrResult, FrameInitResult, FrameResult, ItemOrResult,
-};
-
-use crate::{
-    Inspector, inspect_instructions, inspector_handler::frame_end, inspector_handler::frame_start,
-    inspector_handler::inspect_logs,
+    CallOutcome, ContextDbError, ContextTr, EthFrame, EthInstructions, EvmTr, FrameInitOrResult,
+    FrameInitResult, FrameResult, FrameStack, Inspector, ItemOrResult, JournalTr,
+    inspect_instructions,
+    inspector_handler::{frame_end, frame_start, inspect_logs},
+    interpreter_action::FrameInit,
 };
 
 /// Inspector EVM trait. Extends the [`EvmTr`] trait with inspector related methods.
@@ -17,7 +13,7 @@ use crate::{
 /// It is used inside [`crate::InspectorHandler`] to extend evm with support for inspection.
 pub trait InspectorEvmTr: EvmTr<Context: ContextTr> {
     /// The inspector type used for EVM execution inspection.
-    type Inspector: Inspector<Self::Context, FrameInput, FrameResult>;
+    type Inspector: Inspector<Self::Context>;
 
     /// Returns a tuple of mutable references to the context, the inspector, the frame and the instructions.
     ///

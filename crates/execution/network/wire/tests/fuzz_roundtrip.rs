@@ -51,25 +51,12 @@ macro_rules! fuzz_type_and_name {
 pub mod fuzz_rlp {
     use alloy_rlp::{RlpDecodableWrapper, RlpEncodableWrapper};
     use base_common_types_chain::add_arbitrary_tests;
-    use base_execution_network_wire::BlockBodies;
-    use base_execution_network_wire::BlockHeaders;
-    use base_execution_network_wire::DisconnectReason;
-    use base_execution_network_wire::GetBlockBodies;
-    use base_execution_network_wire::GetBlockHeaders;
-    use base_execution_network_wire::GetNodeData;
-    use base_execution_network_wire::GetPooledTransactions;
-    use base_execution_network_wire::GetReceipts;
-    use base_execution_network_wire::HelloMessage;
-    use base_execution_network_wire::NewBlock;
-    use base_execution_network_wire::NewBlockHashes;
-    use base_execution_network_wire::NewPooledTransactionHashes66;
-    use base_execution_network_wire::NewPooledTransactionHashes68;
-    use base_execution_network_wire::NodeData;
-    use base_execution_network_wire::P2PMessage;
-    use base_execution_network_wire::PooledTransactions;
-    use base_execution_network_wire::Receipts;
-    use base_execution_network_wire::Status;
-    use base_execution_network_wire::Transactions;
+    use base_execution_network_wire::{
+        BlockBodies, BlockHeaders, DisconnectReason, GetBlockBodies, GetBlockHeaders, GetNodeData,
+        GetPooledTransactions, GetReceipts, HelloMessage, NewBlock, NewBlockHashes,
+        NewPooledTransactionHashes66, NewPooledTransactionHashes68, NodeData, P2PMessage,
+        PooledTransactions, Receipts, Status, Transactions,
+    };
     use serde::{Deserialize, Serialize};
     use test_fuzz::test_fuzz;
 

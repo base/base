@@ -1,16 +1,11 @@
-use base_execution_evm_runtime::EvmMachine;
 use std::vec::Vec;
 
-use base_execution_evm_machine::InterpreterResult;
-use base_execution_evm_machine::{
-    Block, ContextSetters, ContextTr, Database, EVMError, ExecResultAndState, ExecutionResult,
-    HaltReason, InvalidTransaction, JournalTr, ResultAndState, ResultVecAndState, Transaction,
-    TransactionIndexedError,
+use base_execution_evm_runtime::{
+    Block, ContextSetters, ContextTr, Database, DatabaseCommit, EVMError, EvmMachine, EvmState,
+    ExecResultAndState, ExecutionResult, HaltReason, Handler, InterpreterResult,
+    InvalidTransaction, JournalTr, MainnetHandler, PrecompileProvider, ResultAndState,
+    ResultVecAndState, Transaction, TransactionIndexedError,
 };
-use base_execution_state_memory::DatabaseCommit;
-use base_execution_state_memory::EvmState;
-
-use crate::{Handler, MainnetHandler, PrecompileProvider};
 
 /// Type alias for the result of transact_many_finalize to reduce type complexity.
 type TransactManyFinalizeResult<ExecutionResult, State, Error> =
@@ -186,7 +181,7 @@ where
     type State = EvmState;
     type Error = EVMError<<CTX::Db as Database>::Error, InvalidTransaction>;
     type Tx = <CTX as ContextTr>::Tx;
-    type Block = base_execution_evm_machine::BlockEnv;
+    type Block = base_execution_evm_runtime::BlockEnv;
 
     #[inline]
     fn transact_one(&mut self, tx: Self::Tx) -> Result<Self::ExecutionResult, Self::Error> {

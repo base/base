@@ -4,8 +4,8 @@ use std::{path::PathBuf, sync::OnceLock, time::Duration};
 
 use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::Address;
-use base_common_cli_support::{format_duration_as_secs_or_ms, parse_duration_from_secs_or_ms};
-use base_execution_txpool_pool::{
+use base_common_cli::{format_duration_as_secs_or_ms, parse_duration_from_secs_or_ms};
+use base_execution_txpool::{
     DEFAULT_MAX_CACHED_BLOBS, DEFAULT_MAX_TX_INPUT_BYTES, DEFAULT_PRICE_BUMP,
     DEFAULT_TXPOOL_ADDITIONAL_VALIDATION_TASKS, LocalTransactionConfig,
     MAX_NEW_PENDING_TXS_NOTIFICATIONS, MAX_QUEUED_TRANSACTION_LIFETIME,

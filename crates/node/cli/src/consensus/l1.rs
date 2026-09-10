@@ -4,7 +4,7 @@ use std::{num::ParseIntError, time::Duration};
 
 use alloy_primitives::Address;
 use base_common_chain_config::RollupConfig;
-use base_consensus_source_providers::L1_RPC_TIMEOUT;
+use base_consensus_source::L1_RPC_TIMEOUT;
 use tracing::warn;
 use url::Url;
 

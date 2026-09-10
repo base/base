@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use alloy_primitives::{B256, Bytes, KECCAK256_EMPTY, U256};
 use alloy_rlp::{BufMut, Decodable, Encodable, RlpDecodable, RlpEncodable};
 use alloy_trie::{EMPTY_ROOT_HASH, TrieAccount};
-use base_common_codec_macros::add_arbitrary_tests;
+use base_common_codec::add_arbitrary_tests;
 
 use crate::BlockAccessLists;
 

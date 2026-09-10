@@ -2,8 +2,9 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use base_execution_state_database::DbTx;
-use base_execution_state_database::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
+use base_execution_state_database::{
+    Database, DbTx, mdbx::DatabaseArguments, open_db_read_only, tables,
+};
 use base_execution_state_maintenance::{
     ManifestGenerationParams, SnapshotGenerator, SnapshotManifest,
 };

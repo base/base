@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Bytes, U256};
 use alloy_signer::SignerSync;
-use base_batcher_encoding_channel::{DaType, EncoderConfig};
+use base_batcher_encoding::{DaType, EncoderConfig};
 use base_common_types_chain::{
     BaseBlock, BaseReceipt, BaseTxEnvelope, Call, Eip8130Signed, TxEip8130,
 };

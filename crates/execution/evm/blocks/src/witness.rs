@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{B256, Bytes, keccak256};
-use base_execution_evm_runtime::database::State;
+use base_execution_evm_runtime::State;
 use base_execution_state_trie::{ExecutionWitnessMode, HashedPostState, HashedStorage};
 
 /// Borrows finalized execution state for witness generation.
@@ -32,10 +32,10 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
         mode: ExecutionWitnessMode,
     ) -> base_execution_state_types::ProviderResult<alloy_rpc_types_debug::ExecutionWitness>
     where
-        SP: base_execution_state_api::HashedPostStateProvider
-            + base_execution_state_api::StateProofProvider
+        SP: base_execution_state_types::HashedPostStateProvider
+            + base_execution_state_types::StateProofProvider
             + ?Sized,
-        HP: base_execution_state_api::HeaderProvider + ?Sized,
+        HP: base_execution_state_types::HeaderProvider + ?Sized,
     {
         let codes = match mode {
             ExecutionWitnessMode::Legacy => self
@@ -96,7 +96,7 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
         state_provider: &SP,
     ) -> base_execution_state_types::ProviderResult<(HashedPostState, Vec<Bytes>)>
     where
-        SP: base_execution_state_api::HashedPostStateProvider + ?Sized,
+        SP: base_execution_state_types::HashedPostStateProvider + ?Sized,
     {
         let mut hashed_state = HashedPostState::default();
         let mut keys = Vec::new();
@@ -136,11 +136,9 @@ impl<'a, DB> ExecutionWitnessRecord<'a, DB> {
 mod tests {
     use alloy_primitives::{Address, U256};
     use base_execution_evm_runtime::{
-        database::{AccountStatus, BundleAccount, CacheAccount, EmptyDB},
-        state::AccountInfo,
+        AccountInfo, AccountStatus, BundleAccount, CacheAccount, EmptyDB,
     };
-    use base_execution_state_api::HashedPostStateProvider;
-    use base_execution_state_types::ProviderResult;
+    use base_execution_state_types::{HashedPostStateProvider, ProviderResult};
 
     use super::*;
 
@@ -150,7 +148,7 @@ mod tests {
     impl HashedPostStateProvider for ExpandedStateProvider {
         fn hashed_post_state(
             &self,
-            bundle_state: &base_execution_evm_runtime::database::BundleState,
+            bundle_state: &base_execution_evm_runtime::BundleState,
         ) -> ProviderResult<HashedPostState> {
             assert!(bundle_state.state.values().any(BundleAccount::was_destroyed));
             Ok(self.0.clone())

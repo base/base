@@ -3,7 +3,7 @@ use std::{fmt::Debug, str::FromStr};
 
 use alloy_eips::eip2718::IsTyped2718;
 use alloy_primitives::B256;
-use base_execution_network_types::PeerKind;
+use base_execution_network_wire::PeerKind;
 use derive_more::{Constructor, Display};
 
 use super::{

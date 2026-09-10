@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use alloy_primitives::{BlockHash, BlockNumber};
-use base_common_types_chain::BlockHeader;
-use base_common_types_chain::SealedBlock;
+use base_common_types_chain::{BlockHeader, SealedBlock};
 use indexmap::IndexSet;
 
 use crate::tree::metrics::BlockBufferMetrics;
@@ -190,7 +189,10 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use alloy_primitives::BlockHash;
-    use base_testing_support::{generators, generators::BlockParams, generators::Rng};
+    use base_testing_support::{
+        generators,
+        generators::{BlockParams, Rng},
+    };
 
     use super::*;
 

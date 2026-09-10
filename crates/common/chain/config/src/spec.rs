@@ -1,7 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
 
-use crate::{BaseUpgrade, FeeConfig, UpgradeActivation, UpgradeActivationSink};
-use crate::{ChainConfig, ChainUpgrades, ExecutionFork, Upgrades};
 use alloy_chains::Chain;
 use alloy_eip2124::{ForkFilter, ForkId, Head};
 use alloy_eips::{
@@ -11,13 +9,15 @@ use alloy_eips::{
 use alloy_genesis::Genesis;
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::{Address, B256};
-use base_common_types_chain::OutputRoot;
-use base_common_types_chain::SealedHeader;
 use base_common_types_chain::{
-    BlockHeader, EMPTY_ROOT_HASH, Header, Predeploys, proofs::storage_root_unhashed,
+    BlockHeader, EMPTY_ROOT_HASH, Header, OutputRoot, Predeploys, SealedHeader,
+    proofs::storage_root_unhashed,
 };
 
-use crate::{compute_jovian_base_fee, decode_holocene_base_fee};
+use crate::{
+    BaseUpgrade, ChainConfig, ChainUpgrades, ExecutionFork, FeeConfig, UpgradeActivation,
+    UpgradeActivationSink, Upgrades, compute_jovian_base_fee, decode_holocene_base_fee,
+};
 
 /// Error constructing a [`BaseChainSpec`].
 #[derive(Debug, thiserror::Error)]
@@ -655,8 +655,6 @@ mod tests {
     };
     use core::str::FromStr;
 
-    use crate::{BaseUpgrade, RuntimeUpgradeRegistry};
-    use crate::{ChainConfig, Upgrades};
     use alloy_chains::Chain;
     use alloy_eip2124::{ForkHash, ForkId, Head};
     use alloy_genesis::{ChainConfig as AlloyChainConfig, Genesis};
@@ -665,7 +663,10 @@ mod tests {
     use base_common_types_chain::proofs::storage_root_unhashed;
     use base_common_types_rpc::FeeInfo;
 
-    use crate::{BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, GenesisInfo};
+    use crate::{
+        BaseChainSpec, BaseChainSpecBuilder, BaseChainSpecError, BaseUpgrade, ChainConfig,
+        GenesisInfo, RuntimeUpgradeRegistry, Upgrades,
+    };
 
     fn test_fork_ids(spec: &BaseChainSpec, cases: &[(Head, ForkId)]) {
         for (head, expected) in cases {

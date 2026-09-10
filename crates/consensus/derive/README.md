@@ -1,0 +1,76 @@
+# `base-consensus-derive`
+
+<a href="https://crates.io/crates/base-consensus-derive"><img src="https://img.shields.io/crates/v/base-consensus-derive.svg?label=base-consensus-derive&labelColor=2a2f35" alt="base-consensus-derive"></a>
+
+A `no_std` compatible implementation of Base's [derivation pipeline][derive].
+
+[derive]: https://specs.base.org/protocol/consensus/derivation#l2-chain-derivation-specification
+
+## Overview
+
+Implements L2 chain derivation with Azul as the minimum supported rule set. Earlier upgrade
+transitions and pre-Azul replay are not supported. Azul and subsequent scheduled upgrades remain
+configurable. The
+`DerivationPipeline` steps through L1 data to produce `BasePayloadAttributes` for each L2 block.
+`EthereumDataSource` fetches batch data from calldata or blobs, `StatefulAttributesBuilder`
+constructs payload attributes with deposits and sequencer configuration, and `PipelineBuilder`
+wires all stages together. The crate is `no_std` compatible for use in fault proof VMs.
+
+## Usage
+
+The intended way of working with `base-consensus-derive` is to use the [`DerivationPipeline`][dp] which implements the [`Pipeline`][p] trait. To create an instance of the [`DerivationPipeline`][dp], it's recommended to use the [`PipelineBuilder`][pb] as follows.
+
+```rust,ignore
+use std::sync::Arc;
+use base_common_chain_config::RollupConfig;
+use base_consensus_derive::EthereumDataSource;
+use base_consensus_derive::PipelineBuilder;
+use base_consensus_derive::StatefulAttributesBuilder;
+
+let chain_provider = todo!();
+let l2_chain_provider = todo!();
+let blob_provider = todo!();
+let l1_origin = todo!();
+
+let cfg = Arc::new(RollupConfig::default());
+let attributes = StatefulAttributesBuilder::new(
+   cfg.clone(),
+   l2_chain_provider.clone(),
+   chain_provider.clone(),
+);
+let dap = EthereumDataSource::new(
+   chain_provider.clone(),
+   blob_provider,
+   cfg.as_ref()
+);
+
+// Construct a new derivation pipeline.
+let pipeline = PipelineBuilder::new()
+   .rollup_config(cfg)
+   .dap_source(dap)
+   .l2_chain_provider(l2_chain_provider)
+   .chain_provider(chain_provider)
+   .builder(attributes)
+   .origin(l1_origin)
+   .build();
+```
+
+[p]: ./src/traits/pipeline.rs
+[pb]: ./src/pipeline/builder.rs
+[dp]: ./src/pipeline/core.rs
+
+## Features
+
+The most up-to-date feature list will be available in the [`Cargo.toml`][ff] of the `base-consensus-derive` crate.
+
+Some features include the following.
+- `serde`: Serialization and Deserialization support for `base-consensus-derive` types.
+- `test-utils`: Test utilities for downstream libraries.
+
+By default, `base-consensus-derive` enables the `serde` feature.
+
+[ff]: https://github.com/base/base/blob/main/crates/consensus/derive/Cargo.toml
+
+## License
+
+Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).

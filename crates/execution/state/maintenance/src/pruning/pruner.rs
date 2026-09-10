@@ -1,17 +1,16 @@
 //! Support for pruning.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::BlockNumber;
-use base_common_runtime_tasks::{EventSender, EventStream};
+use base_common_runtime::{EventSender, EventStream};
 use base_execution_state_provider::{
     DBProvider, DatabaseProviderFactory, PruneCheckpointReader, PruneCheckpointWriter,
     StageCheckpointReader,
 };
-use base_execution_state_types::FinishedExExHeight;
-use base_execution_state_types::StageId;
-use base_execution_state_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
-use std::time::Instant;
+use base_execution_state_types::{
+    FinishedExExHeight, PruneProgress, PrunedSegmentInfo, PrunerOutput, StageId,
+};
 use tokio::sync::watch;
 use tracing::{debug, instrument};
 

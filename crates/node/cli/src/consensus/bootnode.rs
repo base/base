@@ -8,13 +8,10 @@ use std::{
 
 use alloy_primitives::B256;
 use base_common_chain_config::RollupConfig;
-use base_common_cli_support::{LogConfig, RuntimeManager};
-use base_consensus_network_service::BootNode;
-use base_consensus_network_service::BootNodes;
-use base_consensus_network_service::BootStoreFile;
-use base_consensus_network_service::Discv5Builder;
-use base_consensus_network_service::LocalNode;
-use base_consensus_network_service::SecretKeyLoader;
+use base_common_cli::{LogConfig, RuntimeManager};
+use base_consensus_network::{
+    BootNode, BootNodes, BootStoreFile, Discv5Builder, LocalNode, SecretKeyLoader,
+};
 use clap::Args;
 use discv5::{Config, ConfigBuilder, Enr, enr::k256};
 use eyre::Context;
@@ -61,15 +58,15 @@ pub struct BootnodeEnr {
 impl Bootnode {
     /// Runs the CLI.
     pub fn run(self, chain: ConsensusChainArgs) -> eyre::Result<()> {
-        base_common_cli_support::init_tracing!(
+        base_common_cli::init_tracing!(
             LogConfig::from(self.logging.clone()),
             ["libp2p_gossipsub=error"]
         )?;
 
         let cfg = self.l2_config.load(&chain.l2_chain_id).map_err(|e| eyre::eyre!(e))?;
 
-        base_common_cli_support::MetricsConfig::from(self.metrics.clone()).init_with(|| {
-            base_common_cli_support::register_version_metrics!();
+        base_common_cli::MetricsConfig::from(self.metrics.clone()).init_with(|| {
+            base_common_cli::register_version_metrics!();
             CliMetrics::init_rollup_config(&cfg);
             CliMetrics::init_bootnode_p2p(&self.p2p);
         })?;
@@ -230,7 +227,7 @@ impl BootnodeP2PArgs {
     pub fn discovery_driver(
         &self,
         chain_id: u64,
-    ) -> eyre::Result<base_consensus_network_service::Discv5Driver> {
+    ) -> eyre::Result<base_consensus_network::Discv5Driver> {
         let keypair = self.keypair(chain_id)?;
         let local_node_key = Self::local_node_key(keypair)?;
         let advertised = self.advertised_node(local_node_key);
@@ -399,7 +396,7 @@ mod tests {
     use std::{net::Ipv4Addr, path::PathBuf};
 
     use alloy_primitives::b256;
-    use base_consensus_network_service::EnrValidation;
+    use base_consensus_network::EnrValidation;
     use clap::Parser;
 
     use super::*;

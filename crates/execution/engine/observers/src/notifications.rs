@@ -9,7 +9,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use base_common_observability_tracing::tracing::debug;
 use base_common_types_chain::BlockHeader;
-use base_execution_engine_types::ExExHead;
+use base_common_types_payload::ExExHead;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory,
@@ -533,12 +533,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use base_common_types_chain::BaseBlock;
     use std::collections::BTreeMap;
 
     use alloy_eips::BlockNumHash;
-
-    use base_common_types_chain::Header;
+    use base_common_types_chain::{BaseBlock, Header};
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,

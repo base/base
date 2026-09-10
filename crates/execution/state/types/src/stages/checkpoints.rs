@@ -3,10 +3,10 @@ use alloc::vec;
 use alloc::{format, string::String, vec::Vec};
 use core::ops::RangeInclusive;
 
-use crate::{StoredSubNode, hash_builder::HashBuilderState};
 use alloy_primitives::{Address, B256, BlockNumber, U256};
 
 use super::StageId;
+use crate::{StoredSubNode, hash_builder::HashBuilderState};
 
 /// Saves the progress of Merkle stage.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -471,14 +471,6 @@ base_common_types_chain::impl_compression_for_compact!(StageCheckpoint);
 /// Saves the progress of the Finish stage.
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(any(test, feature = "test-utils"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(
-    all(any(test, feature = "reth-codec"), feature = "partial-persistence"),
-    derive(base_common_types_chain::Compact)
-)]
-#[cfg_attr(
-    all(any(test, feature = "reth-codec"), feature = "partial-persistence"),
-    base_common_types_chain::add_arbitrary_tests(compact)
-)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FinishCheckpoint {
     /// The highest block with a partially persisted state and trie.
@@ -488,28 +480,23 @@ pub struct FinishCheckpoint {
 impl FinishCheckpoint {
     /// Returns the highest block with a partially persisted state and trie, if enabled.
     pub const fn partial_state_trie(&self) -> Option<BlockNumber> {
-        #[cfg(feature = "partial-persistence")]
-        {
-            self.partial_state_trie
-        }
-        #[cfg(not(feature = "partial-persistence"))]
-        {
-            None
-        }
+        None
     }
 }
 
-#[cfg(all(any(test, feature = "reth-codec"), not(feature = "partial-persistence")))]
+#[cfg(any(test, feature = "reth-codec"))]
 impl base_common_types_chain::Compact for FinishCheckpoint {
     fn to_compact<B>(&self, _buf: &mut B) -> usize
     where
         B: bytes::BufMut + AsMut<[u8]>,
     {
-        panic!("serializing FinishCheckpoint requires the `partial-persistence` feature")
+        panic!("serializing FinishCheckpoint is unsupported: partial persistence has been removed")
     }
 
     fn from_compact(_buf: &[u8], _len: usize) -> (Self, &[u8]) {
-        panic!("deserializing FinishCheckpoint requires the `partial-persistence` feature")
+        panic!(
+            "deserializing FinishCheckpoint is unsupported: partial persistence has been removed"
+        )
     }
 }
 
@@ -543,10 +530,7 @@ pub enum StageUnitCheckpoint {
     /// The `MerkleChangeSets` stage has been removed.
     MerkleChangeSets(MerkleChangeSetsCheckpoint),
     /// Saves the progress of the Finish stage.
-    #[cfg_attr(
-        all(any(test, feature = "test-utils"), not(feature = "partial-persistence")),
-        arbitrary(skip)
-    )]
+    #[cfg_attr(any(test, feature = "test-utils"), arbitrary(skip))]
     Finish(FinishCheckpoint),
 }
 
@@ -758,24 +742,9 @@ mod tests {
         assert_eq!(decoded, checkpoint);
     }
 
-    #[cfg(feature = "partial-persistence")]
-    #[test]
-    fn finish_checkpoint_roundtrip() {
-        let finish_checkpoint = FinishCheckpoint { partial_state_trie: Some(21) };
-        let checkpoint = StageCheckpoint::new(42).with_finish_stage_checkpoint(finish_checkpoint);
-
-        let mut buf = Vec::new();
-        let encoded = checkpoint.to_compact(&mut buf);
-        let (decoded, _) = StageCheckpoint::from_compact(&buf, encoded);
-
-        assert_eq!(decoded, checkpoint);
-        assert_eq!(decoded.finish_stage_checkpoint().unwrap().partial_state_trie(), Some(21));
-    }
-
-    #[cfg(not(feature = "partial-persistence"))]
     #[test]
     #[should_panic(
-        expected = "serializing FinishCheckpoint requires the `partial-persistence` feature"
+        expected = "serializing FinishCheckpoint is unsupported: partial persistence has been removed"
     )]
     fn finish_checkpoint_serialization_requires_partial_persistence() {
         let finish_checkpoint = FinishCheckpoint { partial_state_trie: Some(21) };
@@ -785,10 +754,9 @@ mod tests {
         checkpoint.to_compact(&mut Vec::new());
     }
 
-    #[cfg(not(feature = "partial-persistence"))]
     #[test]
     #[should_panic(
-        expected = "deserializing FinishCheckpoint requires the `partial-persistence` feature"
+        expected = "deserializing FinishCheckpoint is unsupported: partial persistence has been removed"
     )]
     fn finish_checkpoint_deserialization_requires_partial_persistence() {
         let _ = FinishCheckpoint::from_compact(&[], 0);

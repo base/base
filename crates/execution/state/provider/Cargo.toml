@@ -16,42 +16,39 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-rayon = {workspace = true }
-metrics = {workspace = true}
+rayon = { workspace = true }
 strum = { workspace = true }
-alloy-eips = {workspace = true}
+metrics = { workspace = true }
 smallvec = { workspace = true }
 itertools = { workspace = true }
+alloy-eips = { workspace = true }
 pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
-base-common-io-files = { workspace = true }
-base-common-chain-config = {workspace = true }
-base-execution-evm-runtime = {workspace = true}
-base-common-types-payload = { workspace = true }
+base-common-io = { workspace = true }
+base-common-chain-config = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 alloy-signer = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"] }
 rocksdb = { workspace = true, features = ["default"] }
 alloy-hardforks = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["full"] }
-tracing = {workspace = true, features = ["attributes"]}
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
-parking_lot = {workspace = true, features = ["default"]}
-tokio = {workspace = true, features = ["macros", "sync"] }
+tracing = { workspace = true, features = ["attributes"] }
+parking_lot = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["macros", "sync"] }
 notify = { workspace = true, features = ["macos_fsevent"] }
-base-common-types-chain = {features = ["dashmap", "k256", "reth", "reth-codec", "secp256k1", "std"], workspace = true}
+base-common-runtime = { workspace = true, features = ["rayon"] }
 base-common-client-ethereum = { workspace = true, optional = true }
 tokio-stream = { workspace = true, features = ["default", "sync"] }
 rand = { workspace = true, optional = true, features = ["default"] }
-base-common-runtime-tasks = {workspace = true,  features = ["rayon"]}
-base-execution-state-trie = {features = ["metrics"], workspace = true}
-base-execution-state-database = {workspace = true, features = ["mdbx"]}
-alloy-primitives = {workspace = true, features = ["map-foldhash", "std"]}
-base-execution-state-api = {workspace = true, features = ["db-api", "std"]}
-base-common-observability-metrics = {workspace = true, features = ["metrics"]}
-base-execution-state-types = {workspace = true, features = ["reth-codec", "std"]}
-base-execution-state-memory = {workspace = true, features = ["reth-codec", "std"]}
+base-execution-state-trie = { features = ["metrics"], workspace = true }
+base-execution-state-database = { workspace = true, features = ["mdbx"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "std"] }
+base-common-observability-metrics = { workspace = true, features = ["metrics"] }
+base-execution-evm-runtime = { workspace = true, features = ["reth-codec", "std"] }
+base-execution-state-types = { workspace = true, features = ["reth-codec", "std", "db-api"] }
+base-common-types-chain = { features = ["dashmap", "k256", "reth", "reth-codec", "secp256k1", "std"], workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, features = ["default"] }
@@ -59,22 +56,42 @@ libc = { workspace = true, features = ["default"] }
 alloy-signer = { workspace = true }
 assert_matches = { workspace = true }
 alloy-hardforks = { workspace = true }
+base-testing-support = { workspace = true }
 base-common-chain-config = { workspace = true }
-rand = {workspace = true, features = ["default"]}
 base-common-client-ethereum = { workspace = true }
+rand = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
-base-common-types-chain = {features = ["arbitrary", "k256", "serde", "test-utils"], workspace = true}
 tokio-stream = { workspace = true, features = ["default", "sync"] }
-base-execution-state-trie = {workspace = true, features = ["test-utils"]}
-base-execution-state-database = {workspace = true, features = ["test-utils"]}
+base-execution-state-trie = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["sync", "macros", "rt-multi-thread"] }
-base-execution-state-types = {workspace = true, features = ["arbitrary", "test-utils"]}
-base-execution-state-memory = {workspace = true, features = ["arbitrary", "test-utils"]}
-base-testing-support = {workspace = true}
+base-execution-state-database = { workspace = true, features = ["test-utils"] }
+base-execution-state-types = { workspace = true, features = ["arbitrary", "test-utils"] }
+base-execution-evm-runtime = { workspace = true, features = ["arbitrary", "test-utils"] }
+base-common-types-chain = { features = ["arbitrary", "k256", "serde", "test-utils"], workspace = true }
 
 [features]
 jemalloc = ["rocksdb/jemalloc"]
-partial-persistence = ["base-execution-state-types/partial-persistence"]
-test-utils = ["base-execution-state-database/test-utils", "base-execution-state-trie/test-utils", "base-common-types-chain/test-utils", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-state-memory/test-utils", "dep:alloy-hardforks", "alloy-primitives/getrandom", "alloy-signer", "base-common-client-ethereum", "rand"]
+test-utils = [
+    "base-execution-state-database/test-utils",
+    "base-execution-state-trie/test-utils",
+    "base-common-types-chain/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-common-runtime/test-utils",
+    "base-execution-evm-runtime/test-utils",
+    "dep:alloy-hardforks",
+    "alloy-primitives/getrandom",
+    "alloy-signer",
+    "base-common-client-ethereum",
+    "rand",
+]
 rayon = []
-serde = ["base-common-types-chain/serde", "alloy-eips/serde", "alloy-primitives/serde", "parking_lot/serde", "rand?/serde", "base-execution-state-types/serde", "base-common-types-chain/serde", "base-execution-state-trie/serde", "base-execution-evm-runtime/serde", "base-execution-state-api/serde", "base-execution-state-memory/serde"]
+serde = [
+    "base-common-types-chain/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "parking_lot/serde",
+    "rand?/serde",
+    "base-execution-state-types/serde",
+    "base-execution-state-trie/serde",
+    "base-execution-evm-runtime/serde",
+]

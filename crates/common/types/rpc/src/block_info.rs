@@ -1,7 +1,8 @@
 //! Block-reference conversions for RPC responses.
 
-use crate::Block as RpcBlock;
 use base_common_types_chain::BlockInfo;
+
+use crate::Block as RpcBlock;
 
 impl<T> From<RpcBlock<T>> for BlockInfo {
     fn from(block: RpcBlock<T>) -> Self {
@@ -27,9 +28,10 @@ impl<T> From<&RpcBlock<T>> for BlockInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloy_primitives::b256;
     use base_common_types_chain::BaseTxEnvelope;
+
+    use super::*;
 
     #[test]
     fn test_rpc_block_into_info() {

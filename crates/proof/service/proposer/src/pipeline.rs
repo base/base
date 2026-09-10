@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use base_proof_client_providers::RollupProvider;
+use base_proof_client::RollupProvider;
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -210,7 +210,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256};
     use async_trait::async_trait;
-    use base_proof_l1_submission::{AnchorStateRegistryClient, DisputeGameFactoryClient};
+    use base_proof_l1::{AnchorStateRegistryClient, DisputeGameFactoryClient};
     use base_proof_service_client::{ProofRequesterProvider, ProverServiceClientError};
     use base_proof_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,

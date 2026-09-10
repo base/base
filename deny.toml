@@ -208,7 +208,7 @@ skip = [
     "if-addrs",
     "yamux",
 
-    # spin version mismatch: base-consensus-batch-types uses 0.9.x, buddy_system_allocator uses 0.10.x
+    # spin version mismatch: base-consensus-batch uses 0.9.x, buddy_system_allocator uses 0.10.x
     "spin",
 
     # mach2 version mismatch: tracing-samply uses 0.5.0, metrics-process uses 0.6.0
@@ -264,7 +264,7 @@ skip = [
 
     # Alloy and other upstream transitive dependency mismatches
     "alloy-eips",
-    # base-common-process-nodes (anvil harness for base-challenger-e2e) pins an older
+    # base-common-process (anvil harness for base-challenger-e2e) pins an older
     # alloy-hardforks than the rest of the workspace.
     "alloy-hardforks",
     "alloy-json-rpc",

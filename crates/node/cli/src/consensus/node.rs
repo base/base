@@ -7,9 +7,8 @@ use base_common_chain_activation::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
     UpgradeSignalRuntimeApplier, UpgradeSignalSchedule, UpgradeSignalStartupMode,
 };
-use base_common_chain_config::ChainConfig;
-use base_common_chain_config::RollupConfig;
-use base_consensus_driver_service::{
+use base_common_chain_config::{ChainConfig, RollupConfig};
+use base_consensus_driver::{
     EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
     UpgradeSignalBuilderConfig,
 };
@@ -29,7 +28,7 @@ use crate::consensus::{
 #[derive(Clone, Debug, Default)]
 pub struct ConsensusNodeOverrides {
     /// Execution services supplied by the unified node.
-    pub execution: Option<base_consensus_driver_service::LocalEngineClient>,
+    pub execution: Option<base_consensus_driver::LocalEngineClient>,
     /// Override for the L1 RPC endpoint used by consensus upgrade-signal reads.
     pub upgrade_signal_l1_rpc: Option<Url>,
 }
@@ -39,7 +38,7 @@ impl ConsensusNodeOverrides {
     ///
     /// Consensus uses the same upgrade-signal L1 RPC as execution when one is configured.
     pub const fn embedded_execution(
-        execution: base_consensus_driver_service::LocalEngineClient,
+        execution: base_consensus_driver::LocalEngineClient,
         upgrade_signal_l1_rpc: Option<Url>,
     ) -> Self {
         Self { execution: Some(execution), upgrade_signal_l1_rpc }

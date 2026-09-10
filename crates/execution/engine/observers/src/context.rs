@@ -1,5 +1,5 @@
 use alloy_eips::BlockNumHash;
-use base_common_runtime_tasks::TaskExecutor;
+use base_common_runtime::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_service::NetworkHandle;
 use base_execution_state_provider::providers::BlockchainProvider;

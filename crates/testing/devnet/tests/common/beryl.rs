@@ -1,7 +1,6 @@
 //! Beryl stack helpers. Path-included only by tests that activate Beryl.
 
-use base_common_client_ethereum::Base;
-use base_common_client_ethereum::RootProvider;
+use base_common_client_ethereum::{Base, RootProvider};
 use base_testing_devnet::{SystemTestStack, SystemTestStackBuilder};
 use eyre::Result;
 
