@@ -2,9 +2,9 @@
 
 use std::{num::NonZeroUsize, sync::OnceLock, time::Duration};
 
+use base_execution_engine_types::DEFAULT_DEV_FINALITY_DEPTH;
 use clap::{Args, builder::Resettable};
 use humantime::{format_duration, parse_duration};
-use reth_engine_local::DEFAULT_FINALITY_DEPTH;
 
 const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -161,7 +161,7 @@ impl Default for DefaultDevArgs {
             dev: false,
             block_max_transactions: None,
             block_time: None,
-            finality_depth: DEFAULT_FINALITY_DEPTH,
+            finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
             payload_wait_time: None,
             dev_mnemonic: DEFAULT_MNEMONIC.to_string(),
         }
@@ -211,7 +211,7 @@ mod tests {
                 dev: false,
                 block_max_transactions: None,
                 block_time: None,
-                finality_depth: DEFAULT_FINALITY_DEPTH,
+                finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
                 payload_wait_time: None,
                 dev_mnemonic: DEFAULT_MNEMONIC.to_string(),
             }
@@ -224,7 +224,7 @@ mod tests {
                 dev: true,
                 block_max_transactions: None,
                 block_time: None,
-                finality_depth: DEFAULT_FINALITY_DEPTH,
+                finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
                 payload_wait_time: None,
                 dev_mnemonic: DEFAULT_MNEMONIC.to_string(),
             }
@@ -237,7 +237,7 @@ mod tests {
                 dev: true,
                 block_max_transactions: None,
                 block_time: None,
-                finality_depth: DEFAULT_FINALITY_DEPTH,
+                finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
                 payload_wait_time: None,
                 dev_mnemonic: DEFAULT_MNEMONIC.to_string(),
             }
@@ -256,7 +256,7 @@ mod tests {
                 dev: true,
                 block_max_transactions: Some(2),
                 block_time: None,
-                finality_depth: DEFAULT_FINALITY_DEPTH,
+                finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
                 payload_wait_time: None,
                 dev_mnemonic: DEFAULT_MNEMONIC.to_string(),
             }
@@ -270,7 +270,7 @@ mod tests {
                 dev: true,
                 block_max_transactions: None,
                 block_time: Some(std::time::Duration::from_secs(1)),
-                finality_depth: DEFAULT_FINALITY_DEPTH,
+                finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
                 payload_wait_time: None,
                 dev_mnemonic: DEFAULT_MNEMONIC.to_string(),
             }

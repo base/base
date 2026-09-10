@@ -14151,7 +14151,6 @@ dependencies = [
  "proptest",
  "reth-cli-util",
  "reth-config",
- "reth-engine-local",
  "reth-primitives-traits",
  "secp256k1 0.30.0",
  "serde",

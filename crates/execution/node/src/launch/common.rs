@@ -66,12 +66,10 @@ use base_execution_sync_pipeline::{
     DefaultStages, MerkleStage, MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet,
 };
 use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
-use base_execution_txpool::TransactionPool;
 use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_engine_local::MiningMode;
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},
@@ -414,14 +412,6 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     /// Returns an initialized [`PrunerBuilder`] based on the configured [`PruneConfig`]
     pub fn pruner_builder(&self) -> PrunerBuilder {
         PrunerBuilder::new(self.prune_config())
-    }
-
-    /// Returns the [`MiningMode`] intended for --dev mode.
-    pub fn dev_mining_mode<Pool>(&self, pool: Pool) -> MiningMode<Pool>
-    where
-        Pool: TransactionPool + Unpin,
-    {
-        self.node_config().dev_mining_mode(pool)
     }
 }
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use base_common_client_ethereum::Base;
 use base_execution_payload_types::BaseBuiltPayload;
 use reth_consensus_debug_client::{DebugConsensusClient, EtherscanBlockProvider, RpcBlockProvider};
-use reth_engine_local::LocalMiner;
+use reth_engine_local::{LocalMiner, MiningMode};
 use reth_primitives_traits::SealedBlock;
 use tracing::info;
 
@@ -92,7 +92,11 @@ impl BaseDebugServices {
             let payload_builder_handle = handle.node.payload_builder_handle.clone();
 
             let builder = crate::BaseLocalPayloadAttributesBuilder::new(chain_spec);
-            let dev_mining_mode = config.dev_mining_mode(pool);
+            let dev_mining_mode = if let Some(interval) = config.dev.block_time {
+                MiningMode::interval(interval)
+            } else {
+                MiningMode::instant(pool, config.dev.block_max_transactions)
+            };
             let finality_depth = config.dev.finality_depth;
             let payload_wait_time = config.dev.payload_wait_time;
             if let (Some(wait_time), Some(block_time)) = (payload_wait_time, config.dev.block_time)

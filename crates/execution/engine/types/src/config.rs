@@ -1,8 +1,11 @@
 //! Engine tree configuration.
 
-use core::time::Duration;
+use core::{num::NonZeroUsize, time::Duration};
 
 use alloy_eips::merge::EPOCH_SLOTS;
+
+/// Default confirmations required before finalizing a block in development mode.
+pub const DEFAULT_DEV_FINALITY_DEPTH: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 
 /// Triggers persistence when the number of canonical blocks in memory exceeds this threshold.
 pub const DEFAULT_PERSISTENCE_THRESHOLD: u64 = 7;

@@ -10,4 +10,4 @@
 
 pub mod miner;
 
-pub use miner::{DEFAULT_FINALITY_DEPTH, LocalMiner, MiningMode};
+pub use miner::{LocalMiner, MiningMode};

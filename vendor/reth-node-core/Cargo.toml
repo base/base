@@ -25,7 +25,6 @@ alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 reth-cli-util = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-engine-local = { workspace = true }
 base-common-types-rpc = {workspace = true}
 base-execution-txpool = { workspace = true }
 base-common-chain-config = { workspace = true }

@@ -12,7 +12,7 @@ use std::{
 
 use alloy_primitives::{B256, TxHash};
 use base_common_types_payload::ForkchoiceState;
-use base_execution_engine_types::ConsensusEngineHandle;
+use base_execution_engine_types::{ConsensusEngineHandle, DEFAULT_DEV_FINALITY_DEPTH};
 use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
@@ -24,9 +24,6 @@ use futures_util::{Stream, StreamExt, stream::Fuse};
 use tokio::time::Interval;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
-
-/// Default number of confirmations required before a block is finalized in dev mode.
-pub const DEFAULT_FINALITY_DEPTH: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 
 /// A mining mode for the local dev engine.
 pub enum MiningMode<Pool: TransactionPool + Unpin> {
@@ -176,7 +173,7 @@ where
             mode,
             payload_builder,
             last_block_hashes: VecDeque::from([last_header.hash()]),
-            finality_depth: DEFAULT_FINALITY_DEPTH,
+            finality_depth: DEFAULT_DEV_FINALITY_DEPTH,
             last_header,
             payload_wait_time: None,
         }

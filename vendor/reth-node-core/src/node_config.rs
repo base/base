@@ -23,9 +23,7 @@ use base_execution_state_api::{
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::PruneConfig;
 use base_execution_state_types::StageId;
-use base_execution_txpool::TransactionPool;
 use eyre::eyre;
-use reth_engine_local::MiningMode;
 use reth_primitives_traits::SealedHeader;
 use serde::{Serialize, de::DeserializeOwned};
 use tracing::*;
@@ -493,18 +491,6 @@ impl NodeConfig {
                 Ok(cfg)
             }
             Err(e) => Err(eyre!("Failed to load configuration: {e}")),
-        }
-    }
-
-    /// Returns the [`MiningMode`] intended for --dev mode.
-    pub fn dev_mining_mode<Pool>(&self, pool: Pool) -> MiningMode<Pool>
-    where
-        Pool: TransactionPool + Unpin,
-    {
-        if let Some(interval) = self.dev.block_time {
-            MiningMode::interval(interval)
-        } else {
-            MiningMode::instant(pool, self.dev.block_max_transactions)
         }
     }
 }
