@@ -8,8 +8,10 @@ use base_common_types_chain::{
     constants::ETH_TO_WEI,
 };
 use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionOutput, Executor};
+use base_execution_state_provider::{
+    BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory,
+};
 use reth_primitives_traits::{Block as _, RecoveredBlock};
-use base_execution_state_provider::{BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory};
 use secp256k1::Keypair;
 
 pub(crate) fn to_execution_outcome(

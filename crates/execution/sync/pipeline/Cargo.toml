@@ -23,7 +23,6 @@ alloy-eips = {workspace = true}
 auto_impl = { workspace = true }
 page_size = { workspace = true }
 reth-config = {workspace = true}
-reth-exex = { workspace = true }
 aquamarine = { workspace = true }
 futures-util = {workspace = true}
 pin-project = { workspace = true }
@@ -38,6 +37,7 @@ base-execution-network-types = { workspace = true }
 base-execution-state-provider = {workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-maintenance = {workspace = true}
+base-execution-engine-observers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 tracing = {workspace = true, features = ["attributes"]}
 alloy-rlp = {workspace = true, features = ["core-net"] }

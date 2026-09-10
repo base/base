@@ -17,6 +17,9 @@ use alloy_primitives::BlockNumber;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_metrics::GasDisplay;
 use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_execution_engine_observers::{
+    ExExManagerHandle, ExExNotification, ExExNotificationSource,
+};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor, ExecutorMetrics};
 use base_execution_state_database::{static_file::HeaderMask, tables};
@@ -31,7 +34,6 @@ use base_execution_state_types::Chain;
 use base_execution_state_types::StaticFileSegment;
 use num_traits::Zero;
 use reth_config::config::ExecutionConfig;
-use reth_exex::{ExExManagerHandle, ExExNotification, ExExNotificationSource};
 use tracing::*;
 
 use super::missing_static_data_error;

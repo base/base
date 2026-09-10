@@ -1,8 +1,8 @@
 //! Canonical block processors shipped with Base.
 
+use base_execution_engine_observers::ExExContext;
 use base_execution_state_indexer::ShadowIndexerExEx;
 use futures::future::BoxFuture;
-use reth_exex::ExExContext;
 
 use crate::ProofHistory;
 

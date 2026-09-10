@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 metrics = { workspace = true, optional = true }
-reth-exex = { workspace = true, optional = true}
 tracing = {features = ["std"], workspace = true}
 alloy-eips = { workspace = true, optional = true}
 async-trait = { workspace = true, optional = true}
@@ -26,6 +25,7 @@ base-common-types-chain = {features = ["reth"], workspace = true}
 reth-primitives-traits = {features = ["serde"], workspace = true}
 eyre = { workspace = true, features = ["default"], optional = true}
 base-execution-network-service = { workspace = true, optional = true}
+base-execution-engine-observers = { workspace = true, optional = true}
 futures = { workspace = true, features = ["default"], optional = true}
 base-common-observability-metrics = { workspace = true, optional = true}
 base-execution-state-types = { workspace = true, features = ["default"], optional = true}
@@ -46,7 +46,7 @@ base-execution-state-provider = {workspace = true, features = ["test-utils"]}
 default = ["metrics"]
 metrics = ["base-common-observability-metrics/metrics", "dep:metrics"]
 service = [
-    "dep:reth-exex",
+    "dep:base-execution-engine-observers",
     "dep:alloy-eips",
     "dep:async-trait",
     "dep:base-execution-network-service",

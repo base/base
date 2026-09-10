@@ -8,6 +8,7 @@ use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use base_cli_utils::CliContext;
 use base_common_chain_config::BaseChainSpec;
+use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_network_service::BlockDownloaderProvider;
 use base_execution_network_wire::HeadersClient;
 use base_execution_state_provider::{
@@ -25,7 +26,6 @@ use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::get_secret_key;
 use reth_config::config::{HashingConfig, SenderRecoveryConfig, TransactionLookupConfig};
-use reth_exex::ExExManagerHandle;
 use reth_node_core::{
     args::{NetworkArgs, StageEnum},
     version::version_metadata,

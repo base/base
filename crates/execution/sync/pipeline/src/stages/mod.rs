@@ -53,6 +53,7 @@ mod tests {
     use alloy_rlp::Decodable;
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::{BaseReceipt, BaseTxEnvelope, SignableTransaction, TxLegacy};
+    use base_execution_engine_observers::ExExManagerHandle;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_api::StorageSettingsCache;
@@ -70,7 +71,6 @@ mod tests {
     };
     use base_execution_state_types::StaticFileSegment;
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
-    use reth_exex::ExExManagerHandle;
     use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_testing_utils::generators::{self, BlockRangeParams};
 

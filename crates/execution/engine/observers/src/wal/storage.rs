@@ -219,7 +219,7 @@ mod tests {
     ///
     /// Run this test with `--ignored` to generate a new test WAL file:
     /// ```sh
-    /// cargo test -p reth-exex generate_test_wal -- --ignored --nocapture
+    /// cargo test -p base-execution-engine-observers generate_test_wal -- --ignored --nocapture
     /// ```
     #[test]
     #[ignore]

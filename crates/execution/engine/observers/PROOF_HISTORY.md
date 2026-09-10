@@ -1,4 +1,4 @@
-# `base-execution-exex`
+# `base-execution-engine-observers`
 
 Execution extensions (`ExEx`) for Base.
 
@@ -53,7 +53,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-execution-exex = { workspace = true }
+base-execution-engine-observers = { workspace = true }
 ```
 
 The `ExEx` is installed into the node builder during node setup and runs automatically as blocks

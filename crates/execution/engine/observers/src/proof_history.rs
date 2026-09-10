@@ -1,15 +1,7 @@
-#![doc = include_str!("../README.md")]
-#![doc(
-    html_logo_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
-    html_favicon_url = "https://avatars.githubusercontent.com/u/16627100?s=200&v=4",
-    issue_tracker_base_url = "https://github.com/base/base/issues/"
-)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
-
 mod sync_target;
 use std::{sync::Arc, time::Duration};
 
+use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
 use base_execution_state_provider::{
@@ -24,7 +16,6 @@ use base_execution_state_tasks::{
 };
 use base_execution_state_types::Chain;
 use futures::TryStreamExt;
-use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
 pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
@@ -750,7 +741,7 @@ mod tests {
         init_storage(proofs.clone());
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 
@@ -780,7 +771,7 @@ mod tests {
         store_blocks(1, 5, &proofs);
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 
@@ -812,7 +803,7 @@ mod tests {
         store_blocks(1, 10, &proofs);
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 
@@ -856,7 +847,7 @@ mod tests {
         store_blocks(1, 10, &proofs);
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 
@@ -896,7 +887,7 @@ mod tests {
         store_blocks(1, 10, &proofs);
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 
@@ -934,7 +925,7 @@ mod tests {
         store_blocks(1, 5, &proofs);
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 
@@ -969,7 +960,7 @@ mod tests {
         let proofs: BaseProofsStorage<Arc<RocksdbProofsStorage>> = Arc::clone(&store).into();
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
         let _ = exex.ensure_initialized().expect_err("should return error");
@@ -997,7 +988,7 @@ mod tests {
         }
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
         let _ = exex.ensure_initialized().expect_err("should return error");
@@ -1013,7 +1004,7 @@ mod tests {
         init_storage(proofs.clone());
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
         exex.ensure_initialized().expect("should not return error");
@@ -1029,7 +1020,7 @@ mod tests {
         init_storage(proofs.clone());
 
         let (ctx, _handle) =
-            reth_exex_test_utils::test_exex_context().await.expect("exex test context");
+            crate::test_utils::TestExExHandle::create().await.expect("exex test context");
 
         let exex = build_test_exex(ctx, proofs.clone());
 

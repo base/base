@@ -42,6 +42,7 @@ use base_common_observability_tracing::{
     tracing::{debug, error, info, warn},
 };
 use base_common_runtime_tasks::TaskExecutor;
+use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_wire::HeadersClient;
@@ -71,7 +72,6 @@ use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
 use reth_engine_local::MiningMode;
-use reth_exex::ExExManagerHandle;
 use reth_node_core::{
     args::PruneConfigKind,
     dirs::{ChainPath, DataDirPath},

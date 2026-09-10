@@ -55,7 +55,6 @@ members = [
   "crates/consensus/driver/service",
   "crates/execution/cli",
   "crates/execution/evm/blocks",
-  "crates/execution/exex",
   "crates/execution/metering",
   "crates/execution/node",
   "crates/execution/node-context",
@@ -127,8 +126,7 @@ members = [
   "vendor/reth-engine-tree",
   "vendor/reth-engine-util",
   "crates/execution/network/wire",
-  "vendor/reth-exex",
-  "vendor/reth-exex-test-utils",
+  "crates/execution/engine/observers",
   "crates/common/io/files",
   "vendor/reth-invalid-block-hooks",
   "crates/execution/state/mdbx-sys",
@@ -311,7 +309,6 @@ base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-feat
 base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
 base-metering = { path = "crates/execution/metering", default-features = false }
 base-node-runner = { path = "crates/execution/runner", default-features = false }
-base-execution-exex = { path = "crates/execution/exex", default-features = false }
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-txpool = { path = "crates/execution/txpool", default-features = false }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
@@ -415,7 +412,7 @@ alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, packag
 # reth
 base-execution-state-database = { path = "crates/execution/state/database", default-features = false }
 base-execution-state-trie = { path = "crates/execution/state/trie", default-features = false }
-reth-exex = { path = "vendor/reth-exex", default-features = false }
+base-execution-engine-observers = { path = "crates/execution/engine/observers", default-features = false }
 base-execution-sync-pipeline = { path = "crates/execution/sync/pipeline", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
@@ -443,7 +440,6 @@ reth-node-ethstats = { path = "vendor/reth-node-ethstats", default-features = fa
 base-common-codec-macros = { path = "crates/common/codec/macros", default-features = false }
 reth-e2e-test-utils = { path = "vendor/reth-e2e-test-utils", default-features = false }
 base-execution-network-wire = { path = "crates/execution/network/wire", default-features = false }
-reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
 base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 base-execution-engine-types = { path = "crates/execution/engine/types", default-features = false }

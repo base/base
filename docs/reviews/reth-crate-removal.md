@@ -68,7 +68,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 ## Shared infrastructure to retain
 
 - **Execution and consensus:** `reth-consensus-common` supplies validation routines used directly by Base consensus; generic EVM/execution/revm code remains essential.
-- **ExEx:** `base-execution-exex` uses `reth-exex` for proof history, and `base-execution-state-indexer` also consumes ExEx. The manager, notifications, WAL, and pruning coordination are not unused plugin machinery.
+- **ExEx:** `base-execution-engine-observers` uses `base-execution-engine-observers` for proof history, and `base-execution-state-indexer` also consumes ExEx. The manager, notifications, WAL, and pruning coordination are not unused plugin machinery.
 - **Networking:** discovery v4/v5, DNS discovery, peer handling, ETH wire protocol, ECIES, downloads, NAT, and ban lists support Base's execution network. Remove unrelated bootnode presets inside `base-execution-network-types`, not the whole crate.
 - **Storage:** provider, DB APIs/backends, codecs, ETL, pruning, stage processing, trie implementations, static files, and compression remain active. A single supported network does not remove the need for sync, recovery, persisted formats, or historical reads.
 - **RPC and payload services:** Base reuses the shared engines, servers, caches, transaction pool, payload scheduling, and RPC implementation pieces.
@@ -124,7 +124,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-state-tasks](../../crates/execution/state/tasks/Cargo.toml) | Retain shared infrastructure |
 | [reth-execution-errors](../../vendor/reth-execution-errors/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
-| [reth-exex](../../vendor/reth-exex/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-engine-observers](../../crates/execution/engine/observers/Cargo.toml) | Retain shared infrastructure |
 | [reth-exex-test-utils](../../vendor/reth-exex-test-utils/Cargo.toml) | Test support; retain or migrate |
 | [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
 | [base-common-io-files](../../crates/common/io/files/Cargo.toml) | Retain shared infrastructure |

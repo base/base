@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_primitives::{Address, BlockNumber};
+use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::DatabaseEnv;
@@ -17,7 +18,6 @@ use base_execution_sync_pipeline::{
     StorageHashingStage, UnwindInput,
 };
 use eyre::Result;
-use reth_exex::ExExManagerHandle;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use tracing::info;
 

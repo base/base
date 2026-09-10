@@ -5,13 +5,13 @@ use std::sync::Arc;
 use alloy_primitives::{B256, BlockNumber};
 use base_common_observability_tracing::tracing::debug;
 use base_common_runtime_tasks::TaskExecutor;
+use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::ProviderFactory;
 use base_execution_sync_pipeline::{BodiesDownloaderBuilder, ReverseHeadersDownloaderBuilder};
 use base_execution_sync_pipeline::{DefaultStages, ExecutionStage, Pipeline, StageId, StageSet};
-use reth_exex::ExExManagerHandle;
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,

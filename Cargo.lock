@@ -3237,6 +3237,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-execution-engine-observers"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-hardforks 0.4.7",
+ "alloy-primitives",
+ "base-common-chain-config",
+ "base-common-io-files",
+ "base-common-observability-metrics",
+ "base-common-observability-tracing",
+ "base-common-runtime-tasks",
+ "base-common-types-chain",
+ "base-execution-engine-types",
+ "base-execution-evm-blocks",
+ "base-execution-network-service",
+ "base-execution-state-database",
+ "base-execution-state-maintenance",
+ "base-execution-state-memory",
+ "base-execution-state-provider",
+ "base-execution-state-tasks",
+ "base-execution-state-trie",
+ "base-execution-state-types",
+ "eyre",
+ "futures",
+ "futures-util",
+ "itertools 0.14.0",
+ "metrics",
+ "parking_lot",
+ "rand 0.9.5",
+ "reth-primitives-traits",
+ "reth-testing-utils",
+ "rmp-serde",
+ "secp256k1 0.30.0",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "base-execution-engine-types"
 version = "0.0.0"
 dependencies = [
@@ -3454,29 +3496,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
-name = "base-execution-exex"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "base-common-chain-config",
- "base-common-types-chain",
- "base-execution-state-database",
- "base-execution-state-provider",
- "base-execution-state-tasks",
- "base-execution-state-trie",
- "base-execution-state-types",
- "base-node-core",
- "eyre",
- "futures",
- "reth-exex",
- "reth-exex-test-utils",
- "reth-primitives-traits",
- "tempfile",
- "tokio",
  "tracing",
 ]
 
@@ -3976,6 +3995,7 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-execution-engine-observers",
  "base-execution-evm-blocks",
  "base-execution-network-service",
  "base-execution-state-maintenance",
@@ -3986,7 +4006,6 @@ dependencies = [
  "futures",
  "metrics",
  "mockall",
- "reth-exex",
  "reth-primitives-traits",
  "serde",
  "serde_json",
@@ -4267,6 +4286,7 @@ dependencies = [
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-execution-engine-observers",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-service",
@@ -4291,7 +4311,6 @@ dependencies = [
  "rand 0.9.5",
  "rayon",
  "reth-config",
- "reth-exex",
  "reth-primitives-traits",
  "reth-testing-utils",
  "tempfile",
@@ -4494,10 +4513,10 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-batch-types",
+ "base-execution-engine-observers",
  "base-execution-engine-types",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
- "base-execution-exex",
  "base-execution-network-discovery",
  "base-execution-network-discv5",
  "base-execution-network-service",
@@ -4536,7 +4555,6 @@ dependencies = [
  "reth-engine-local",
  "reth-engine-tree",
  "reth-engine-util",
- "reth-exex",
  "reth-invalid-block-hooks",
  "reth-node-core",
  "reth-node-ethstats",
@@ -13827,6 +13845,7 @@ dependencies = [
  "base-common-observability-metrics",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-execution-engine-observers",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-network-discovery",
@@ -13862,7 +13881,6 @@ dependencies = [
  "reqwest",
  "reth-cli-util",
  "reth-config",
- "reth-exex",
  "reth-node-core",
  "reth-node-events",
  "reth-node-metrics",
@@ -14087,69 +14105,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "reth-exex"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-genesis",
- "alloy-hardforks 0.4.7",
- "alloy-primitives",
- "base-common-chain-config",
- "base-common-io-files",
- "base-common-observability-metrics",
- "base-common-observability-tracing",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-execution-engine-types",
- "base-execution-evm-blocks",
- "base-execution-network-service",
- "base-execution-state-maintenance",
- "base-execution-state-memory",
- "base-execution-state-provider",
- "base-execution-state-types",
- "eyre",
- "futures",
- "itertools 0.14.0",
- "metrics",
- "parking_lot",
- "rand 0.9.5",
- "reth-primitives-traits",
- "reth-testing-utils",
- "rmp-serde",
- "secp256k1 0.30.0",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "reth-exex-test-utils"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "base-common-chain-config",
- "base-common-runtime-tasks",
- "base-execution-evm-blocks",
- "base-execution-network-service",
- "base-execution-payload-builder",
- "base-execution-state-database",
- "base-execution-state-maintenance",
- "base-execution-state-provider",
- "base-execution-state-types",
- "base-execution-txpool",
- "base-node-context",
- "eyre",
- "futures-util",
- "reth-exex",
- "reth-primitives-traits",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
 ]
 
 [[package]]

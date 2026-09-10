@@ -2,15 +2,17 @@
 
 use std::{sync::Arc, time::Duration};
 
-use base_execution_exex::BaseProofsExEx;
-use base_execution_rpc_handlers::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
+use base_execution_engine_observers::BaseProofsExEx;
+use base_execution_engine_observers::ExExContext;
+use base_execution_rpc_handlers::{
+    DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer,
+};
 use base_execution_state_database::DatabaseMetrics;
 use base_execution_state_tasks::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, ProofsProgress,
     RocksdbProofsStorage,
 };
 use futures::future::BoxFuture;
-use reth_exex::ExExContext;
 
 use crate::{FullNode, ProofsHistoryDbBackend, RollupArgs, RpcContext};
 

@@ -1,12 +1,12 @@
 use crate::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use alloy_eips::BlockNumHash;
 use base_common_types_chain::BaseReceipt;
+use base_execution_engine_observers::{ExExContext, ExExEvent, ExExNotification};
 use base_execution_network_service::NetworkInfo;
 use base_execution_state_types::Chain;
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
-use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_primitives_traits::{AlloyBlockHeader, RecoveredBlock};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -257,6 +257,7 @@ mod tests {
 
     use alloy_primitives::B256;
     use base_common_types_chain::Receipt;
+    use base_execution_engine_observers::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::ForkChoiceStream;
@@ -265,7 +266,6 @@ mod tests {
     };
     use base_execution_state_types::{Chain, ExecutionOutcome};
     use futures::TryStreamExt;
-    use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use tokio::{
         sync::{mpsc, watch},
         time::timeout,

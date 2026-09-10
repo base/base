@@ -3,6 +3,7 @@
 use base_common_observability_tracing::tracing::{debug, error, info};
 use base_common_runtime_tasks::EventSender;
 use base_common_types_chain::BlockHeader;
+use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_engine_types::ConsensusEngineHandle;
 use base_execution_network_service::BlockDownloaderProvider;
 use base_execution_network_service::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
@@ -17,7 +18,6 @@ use reth_engine_tree::{
     launch::build_engine_orchestrator,
 };
 use reth_engine_util::EngineMessageStreamExt;
-use reth_exex::ExExManagerHandle;
 use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::Head};
 use reth_node_events::node;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};

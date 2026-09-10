@@ -16,7 +16,6 @@ fdlimit = { workspace = true }
 alloy-rlp = { workspace = true }
 humantime = { workspace = true }
 jsonrpsee = { workspace = true }
-reth-exex = { workspace = true }
 reth-config = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
@@ -51,7 +50,6 @@ serde_json = { workspace = true,  features = ["alloc"]}
 tracing = { workspace = true, features = ["attributes"]}
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-execution-exex = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-state-types = {workspace = true, features = ["std"]}
@@ -67,6 +65,7 @@ base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-network-service = {features = ["default"], workspace = true}
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
+base-execution-engine-observers = {features = ["metrics"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
@@ -134,7 +133,7 @@ js-tracer = ["base-execution-rpc-handlers/js-tracer"]
 test-utils = [
     "base-common-chain-config/test-utils",
     "base-common-types-chain/arbitrary",
-    "base-execution-exex/test-utils",
+    "base-execution-engine-observers/test-utils",
     "base-execution-state-provider/test-utils",
     "reth-codec",
     "base-execution-state-database/test-utils",
