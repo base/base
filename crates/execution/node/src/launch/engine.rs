@@ -3,7 +3,7 @@
 use base_common_observability_tracing::tracing::{debug, error, info};
 use base_common_runtime_tasks::EventSender;
 use base_common_types_chain::BlockHeader;
-use base_execution_engine_driver::EngineMessageStreamExt;
+use base_execution_engine_driver::EngineMessageStream;
 use base_execution_engine_driver::{
     chain::{ChainEvent, FromOrchestrator},
     engine::{EngineApiKind, EngineApiRequest},
@@ -142,20 +142,26 @@ impl crate::NodeLaunch {
         )
         .await?;
 
-        // Create the consensus engine stream with optional reorg
-        let consensus_engine_stream = UnboundedReceiverStream::from(consensus_engine_rx)
-            .maybe_skip_fcu(node_config.debug.skip_fcu)
-            .maybe_skip_new_payload(node_config.debug.skip_new_payload)
-            .maybe_reorg(
-                ctx.blockchain_db().clone(),
-                ctx.node_adapter().evm_config().clone(),
-                node_config.debug.reorg_frequency,
-                node_config.debug.reorg_depth,
-            )
-            // Store messages _after_ skipping so that `replay-engine` command
-            // would replay only the messages that were observed by the engine
-            // during this run.
-            .maybe_store_messages(node_config.debug.engine_api_store.clone());
+        let consensus_engine_stream = EngineMessageStream::skip_fcu(
+            UnboundedReceiverStream::from(consensus_engine_rx),
+            node_config.debug.skip_fcu,
+        );
+        let consensus_engine_stream = EngineMessageStream::skip_new_payload(
+            consensus_engine_stream,
+            node_config.debug.skip_new_payload,
+        );
+        let consensus_engine_stream = EngineMessageStream::reorg(
+            consensus_engine_stream,
+            ctx.blockchain_db().clone(),
+            ctx.node_adapter().evm_config().clone(),
+            node_config.debug.reorg_frequency,
+            node_config.debug.reorg_depth,
+        );
+        // Record after filtering so replay sees the same messages as the execution driver.
+        let consensus_engine_stream = EngineMessageStream::store(
+            consensus_engine_stream,
+            node_config.debug.engine_api_store.clone(),
+        );
 
         let engine_kind = EngineApiKind::OpStack;
 

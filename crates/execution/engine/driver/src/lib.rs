@@ -48,4 +48,4 @@ mod skip_fcu;
 pub use skip_fcu::EngineSkipFcu;
 
 mod message_stream;
-pub use message_stream::EngineMessageStreamExt;
+pub use message_stream::EngineMessageStream;

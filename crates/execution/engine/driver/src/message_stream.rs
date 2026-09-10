@@ -7,134 +7,67 @@ use base_execution_payload_builder::BaseEngineValidator;
 use futures::Stream;
 use tokio_util::either::Either;
 
-use crate::EngineStoreStream;
+use crate::{EngineReorg, EngineSkipFcu, EngineSkipNewPayload, EngineStoreStream};
 
-use crate::EngineSkipFcu;
+/// Configures debugging and recording of execution-driver messages.
+#[derive(Debug)]
+pub struct EngineMessageStream;
 
-use crate::EngineSkipNewPayload;
-
-use crate::EngineReorg;
-
-/// The collection of stream extensions for engine API message stream.
-pub trait EngineMessageStreamExt: Stream<Item = BeaconEngineMessage> {
-    /// Skips the specified number of [`BeaconEngineMessage::ForkchoiceUpdated`] messages from the
-    /// engine message stream.
-    fn skip_fcu(self, count: usize) -> EngineSkipFcu<Self>
-    where
-        Self: Sized,
-    {
-        EngineSkipFcu::new(self, count)
-    }
-
-    /// If the count is [Some], returns the stream that skips the specified number of
-    /// [`BeaconEngineMessage::ForkchoiceUpdated`] messages. Otherwise, returns `Self`.
-    fn maybe_skip_fcu(self, maybe_count: Option<usize>) -> Either<EngineSkipFcu<Self>, Self>
-    where
-        Self: Sized,
-    {
-        if let Some(count) = maybe_count {
-            Either::Left(self.skip_fcu(count))
-        } else {
-            Either::Right(self)
+impl EngineMessageStream {
+    /// Skips fork-choice messages when a skip count is configured.
+    pub fn skip_fcu<S: Stream<Item = BeaconEngineMessage>>(
+        stream: S,
+        count: Option<usize>,
+    ) -> Either<EngineSkipFcu<S>, S> {
+        match count {
+            Some(count) => Either::Left(EngineSkipFcu::new(stream, count)),
+            None => Either::Right(stream),
         }
     }
 
-    /// Skips the specified number of [`BeaconEngineMessage::NewPayload`] messages from the
-    /// engine message stream.
-    fn skip_new_payload(self, count: usize) -> EngineSkipNewPayload<Self>
-    where
-        Self: Sized,
-    {
-        EngineSkipNewPayload::new(self, count)
-    }
-
-    /// If the count is [Some], returns the stream that skips the specified number of
-    /// [`BeaconEngineMessage::NewPayload`] messages. Otherwise, returns `Self`.
-    fn maybe_skip_new_payload(
-        self,
-        maybe_count: Option<usize>,
-    ) -> Either<EngineSkipNewPayload<Self>, Self>
-    where
-        Self: Sized,
-    {
-        if let Some(count) = maybe_count {
-            Either::Left(self.skip_new_payload(count))
-        } else {
-            Either::Right(self)
+    /// Skips payload messages when a skip count is configured.
+    pub fn skip_new_payload<S: Stream<Item = BeaconEngineMessage>>(
+        stream: S,
+        count: Option<usize>,
+    ) -> Either<EngineSkipNewPayload<S>, S> {
+        match count {
+            Some(count) => Either::Left(EngineSkipNewPayload::new(stream, count)),
+            None => Either::Right(stream),
         }
     }
 
-    /// Stores engine messages at the specified location.
-    fn store_messages(self, path: PathBuf) -> EngineStoreStream<Self>
-    where
-        Self: Sized,
-    {
-        EngineStoreStream::new(self, path)
-    }
-
-    /// If the path is [Some], returns the stream that stores engine messages at the specified
-    /// location. Otherwise, returns `Self`.
-    fn maybe_store_messages(
-        self,
-        maybe_path: Option<PathBuf>,
-    ) -> Either<EngineStoreStream<Self>, Self>
-    where
-        Self: Sized,
-    {
-        if let Some(path) = maybe_path {
-            Either::Left(self.store_messages(path))
-        } else {
-            Either::Right(self)
+    /// Records messages after preceding filters have run, when a directory is configured.
+    pub fn store<S: Stream<Item = BeaconEngineMessage>>(
+        stream: S,
+        path: Option<PathBuf>,
+    ) -> Either<EngineStoreStream<S>, S> {
+        match path {
+            Some(path) => Either::Left(EngineStoreStream::new(stream, path)),
+            None => Either::Right(stream),
         }
     }
 
-    /// Creates reorgs with specified frequency.
-    fn reorg<Provider>(
-        self,
-        provider: Provider,
-        evm_config: BaseEvmConfig,
-        payload_validator: BaseEngineValidator,
-        frequency: usize,
-        depth: Option<usize>,
-    ) -> EngineReorg<Self, Provider>
-    where
-        Self: Sized,
-    {
-        EngineReorg::new(
-            self,
-            provider,
-            evm_config,
-            payload_validator,
-            frequency,
-            depth.unwrap_or_default(),
-        )
-    }
-
-    /// Adds synthetic reorgs when a frequency is configured.
-    fn maybe_reorg<Provider: ChainSpecProvider>(
-        self,
-        provider: Provider,
+    /// Injects synthetic reorgs when a frequency is configured.
+    pub fn reorg<S: Stream<Item = BeaconEngineMessage>, P: ChainSpecProvider>(
+        stream: S,
+        provider: P,
         evm_config: BaseEvmConfig,
         frequency: Option<usize>,
         depth: Option<usize>,
-    ) -> Either<EngineReorg<Self, Provider>, Self>
-    where
-        Self: Sized,
-    {
-        if let Some(frequency) = frequency {
-            let validator = BaseEngineValidator::new(provider.chain_spec());
-            Either::Left(EngineReorg::new(
-                self,
-                provider,
-                evm_config,
-                validator,
-                frequency,
-                depth.unwrap_or_default(),
-            ))
-        } else {
-            Either::Right(self)
+    ) -> Either<EngineReorg<S, P>, S> {
+        match frequency {
+            Some(frequency) => {
+                let validator = BaseEngineValidator::new(provider.chain_spec());
+                Either::Left(EngineReorg::new(
+                    stream,
+                    provider,
+                    evm_config,
+                    validator,
+                    frequency,
+                    depth.unwrap_or_default(),
+                ))
+            }
+            None => Either::Right(stream),
         }
     }
 }
-
-impl<S> EngineMessageStreamExt for S where S: Stream<Item = BeaconEngineMessage> {}
