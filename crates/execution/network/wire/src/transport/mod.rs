@@ -22,7 +22,10 @@ mod eth_snap;
 pub use eth_snap::{EthSnapMessage, EthSnapStream};
 
 mod hello;
-pub use hello::{DEFAULT_TCP_PORT, HelloMessage, HelloMessageBuilder, HelloMessageWithProtocols};
+pub use hello::{
+    DEFAULT_ETH_CLIENT_VERSION, DEFAULT_TCP_PORT, HelloMessage, HelloMessageBuilder,
+    HelloMessageWithProtocols,
+};
 
 mod pinger;
 pub use pinger::{PingState, Pinger, PingerEvent};

@@ -107,9 +107,6 @@
 
 extern crate alloc;
 
-/// Common constants.
-pub mod constants;
-
 pub mod receipt;
 
 pub mod transaction;

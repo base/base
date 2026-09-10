@@ -1,3 +1,4 @@
+use alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA;
 use alloy_primitives::U256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
@@ -8,7 +9,6 @@ use base_execution_evm_machine::{BlobExcessGasAndPrice, BlockEnv, CfgEnv};
 use base_execution_evm_runtime::BaseSpecId;
 use base_execution_evm_runtime::EvmEnv;
 use base_execution_evm_runtime::primitives::hardfork::SpecId;
-use reth_primitives_traits::constants::MAX_TX_GAS_LIMIT_OSAKA;
 
 use crate::BaseNextBlockEnvAttributes;
 

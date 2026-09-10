@@ -16,7 +16,6 @@ use base_execution_state_provider::{
 };
 pub use event::*;
 use futures_util::Future;
-use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
 use tokio::sync::watch;
 use tracing::*;
 
@@ -97,6 +96,9 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    /// Initial unwind depth when reconnecting a detached canonical head.
+    pub const REORG_UNWIND_DEPTH: u64 = 3;
+
     /// Construct a pipeline using a [`PipelineBuilder`].
     pub fn builder() -> PipelineBuilder<<ProviderFactory as DatabaseProviderFactory>::ProviderRW> {
         PipelineBuilder::default()
@@ -530,7 +532,7 @@ impl Pipeline {
                 .block
                 .number
                 .saturating_sub(
-                    BEACON_CONSENSUS_REORG_UNWIND_DEPTH.saturating_mul(self.detached_head_attempts),
+                    Self::REORG_UNWIND_DEPTH.saturating_mul(self.detached_head_attempts),
                 )
                 .max(1);
 

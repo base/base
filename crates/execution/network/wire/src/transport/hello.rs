@@ -1,11 +1,13 @@
 use alloy_rlp::{RlpDecodable, RlpEncodable};
 use base_common_types_chain::add_arbitrary_tests;
 use base_execution_network_types::PeerId;
-use reth_primitives_traits::constants::RETH_CLIENT_VERSION;
 
 use crate::Capability;
 use crate::EthVersion;
 use crate::ProtocolVersion;
+
+/// Default advertised client version when no node-specific version is supplied.
+pub const DEFAULT_ETH_CLIENT_VERSION: &str = concat!("reth/v", env!("CARGO_PKG_VERSION"));
 
 /// The default tcp port for p2p.
 ///
@@ -214,13 +216,14 @@ impl HelloMessageBuilder {
     ///
     /// Unset fields will be set to their default values:
     /// - `protocol_version`: [`ProtocolVersion::V5`]
-    /// - `client_version`: [`RETH_CLIENT_VERSION`]
+    /// - `client_version`: [`DEFAULT_ETH_CLIENT_VERSION`]
     /// - `capabilities`: All [`EthVersion`]
     pub fn build(self) -> HelloMessageWithProtocols {
         let Self { protocol_version, client_version, protocols, port, id } = self;
         HelloMessageWithProtocols {
             protocol_version: protocol_version.unwrap_or_default(),
-            client_version: client_version.unwrap_or_else(|| RETH_CLIENT_VERSION.to_string()),
+            client_version: client_version
+                .unwrap_or_else(|| DEFAULT_ETH_CLIENT_VERSION.to_string()),
             protocols: protocols.unwrap_or_else(|| {
                 EthVersion::ALL_VERSIONS.iter().copied().map(Into::into).collect()
             }),

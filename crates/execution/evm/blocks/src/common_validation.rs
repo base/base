@@ -5,9 +5,11 @@ use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader as _, EMPTY_OMMER_ROOT_HASH};
-use reth_primitives_traits::{
-    BlockBody, BlockHeader, GotExpected, SealedBlock, SealedHeader,
-    constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
+use {
+    crate::MAXIMUM_GAS_LIMIT_BLOCK, crate::MINIMUM_GAS_LIMIT,
+    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR, reth_primitives_traits::BlockBody,
+    reth_primitives_traits::BlockHeader, reth_primitives_traits::GotExpected,
+    reth_primitives_traits::SealedBlock, reth_primitives_traits::SealedHeader,
 };
 
 use crate::ConsensusError;

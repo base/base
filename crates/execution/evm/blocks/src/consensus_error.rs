@@ -10,6 +10,13 @@ use core::{error::Error, fmt::Display};
 use alloy_eip7928::BlockAccessListGasError;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bloom};
 
+use {
+    crate::MAXIMUM_GAS_LIMIT_BLOCK, crate::MINIMUM_GAS_LIMIT,
+    alloy_eips::eip1559::GAS_LIMIT_BOUND_DIVISOR, reth_primitives_traits::GotExpected,
+    reth_primitives_traits::GotExpectedBoxed, reth_primitives_traits::SealedHeader,
+    reth_primitives_traits::transaction::error::InvalidTransactionError,
+};
+
 /// Pre-computed receipt root and logs bloom.
 ///
 /// When provided to [`BaseBeaconConsensus::validate_block_post_execution`], this allows skipping
@@ -21,11 +28,6 @@ pub type ReceiptRootBloom = (B256, Bloom);
 /// When provided to [`Consensus::validate_block_pre_execution_with_tx_root`], this allows
 /// skipping transaction trie reconstruction from the block body.
 pub type TransactionRoot = B256;
-use reth_primitives_traits::{
-    GotExpected, GotExpectedBoxed, SealedHeader,
-    constants::{GAS_LIMIT_BOUND_DIVISOR, MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT},
-    transaction::error::InvalidTransactionError,
-};
 
 /// Consensus Errors
 #[derive(Debug, Clone, thiserror::Error)]

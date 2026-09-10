@@ -96,3 +96,6 @@ pub use test_consensus::TestConsensus;
 mod ethereum_test_consensus;
 #[cfg(any(test, feature = "test-utils"))]
 pub use ethereum_test_consensus::EthereumTestConsensus;
+
+mod gas_limits;
+pub use gas_limits::{MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT};

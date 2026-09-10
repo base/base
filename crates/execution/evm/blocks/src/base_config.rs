@@ -27,7 +27,10 @@ use base_execution_state_types as _;
 use base_execution_state_types::AnyError;
 #[cfg(feature = "std")]
 use reth_primitives_traits::WithEncoded;
-use reth_primitives_traits::{SealedBlock, SealedHeader, SignedTransaction};
+use {
+    reth_primitives_traits::SealedBlock, reth_primitives_traits::SealedHeader,
+    reth_primitives_traits::SignedTransaction,
+};
 
 #[cfg(feature = "std")]
 use crate::ExecutableTxIterator;
@@ -407,7 +410,7 @@ mod tests {
     use base_execution_state_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
     };
-    use reth_primitives_traits::{RecoveredBlock, constants::MAX_TX_GAS_LIMIT_OSAKA};
+    use {alloy_eips::eip7825::MAX_TX_GAS_LIMIT_OSAKA, reth_primitives_traits::RecoveredBlock};
 
     use super::BaseEvmConfig;
     use crate::{EvmEnv, execute::ProviderError};
