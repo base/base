@@ -6,14 +6,14 @@
 use alloy_sol_macro::sol;
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     DoubleCounter,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/DoubleCounter.sol/DoubleCounter.json")
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[allow(clippy::too_many_arguments)]
     #[sol(rpc)]
     MockERC20,
@@ -21,7 +21,7 @@ sol!(
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     TransparentUpgradeableProxy,
     concat!(
@@ -31,7 +31,7 @@ sol!(
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     Minimal7702Account,
     concat!(
@@ -41,35 +41,35 @@ sol!(
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     AccessListContract,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/AccessList.sol/AccessList.json")
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     ContractFactory,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/ContractFactory.sol/ContractFactory.json")
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     SimpleStorage,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/ContractFactory.sol/SimpleStorage.json")
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     Proxy,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Proxy.json")
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     MockProtocolVersions,
     concat!(
@@ -79,7 +79,7 @@ sol!(
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     ParentBlockhashGuard,
     concat!(
@@ -89,14 +89,14 @@ sol!(
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     Logic,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Logic.json")
 );
 
 sol!(
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     Logic2,
     concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/Proxy.sol/Logic2.json")

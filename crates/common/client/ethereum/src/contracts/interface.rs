@@ -7,7 +7,7 @@ use alloy_primitives::{
     map::{FbHashMap, SelectorHashMap},
 };
 
-use crate::{ContractInstance, Error, Result};
+use crate::contracts::{ContractInstance, Error, Result};
 
 /// A smart contract interface.
 #[derive(Clone, Debug)]
@@ -58,7 +58,7 @@ impl Interface {
     /// # Examples
     ///
     /// ```
-    /// use base_common_client_contracts::Interface;
+    /// use crate::contracts::Interface;
     /// use alloy_dyn_abi::DynSolValue;
     /// use alloy_json_abi::JsonAbi;
     /// use alloy_primitives::U256;

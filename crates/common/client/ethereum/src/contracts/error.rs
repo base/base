@@ -2,9 +2,10 @@ use alloy_dyn_abi::Error as AbiError;
 use alloy_primitives::{Bytes, Selector};
 use alloy_sol_types::{SolError, SolInterface};
 use alloy_transport::{RpcError, TransportError, TransportErrorKind};
-use base_common_client_ethereum::{MulticallError, PendingTransactionError};
 use serde_json::value::RawValue;
 use thiserror::Error;
+
+use crate::{MulticallError, PendingTransactionError};
 
 /// Dynamic contract result type.
 pub type Result<T, E = Error> = core::result::Result<T, E>;
@@ -87,11 +88,11 @@ impl Error {
     /// # Examples
     ///
     /// ```no_run
-    /// use base_common_client_ethereum::ProviderBuilder;
+    /// use crate::ProviderBuilder;
     /// use alloy_sol_types::sol;
     ///
     /// sol! {
-    ///     #![sol(alloy_contract = base_common_client_contracts)]
+    ///     #![sol(alloy_contract = base_common_client_ethereum)]
     ///     #[derive(Debug, PartialEq, Eq)]
     ///     #[sol(rpc, bytecode = "694207")]
     ///     contract ThrowsError {
@@ -133,7 +134,7 @@ impl Error {
     ///
     /// ```ignore
     /// sol! {
-    ///     #![sol(alloy_contract = base_common_client_contracts)]
+    ///     #![sol(alloy_contract = base_common_client_ethereum)]
     ///    library ErrorLib {
     ///       error SomeError(uint256 code);
     ///    }
@@ -162,11 +163,11 @@ impl Error {
     /// # Examples
     ///
     /// ```no_run
-    /// use base_common_client_ethereum::ProviderBuilder;
+    /// use crate::ProviderBuilder;
     /// use alloy_sol_types::sol;
     /// use ThrowsError::SomeCustomError;
     /// sol! {
-    ///     #![sol(alloy_contract = base_common_client_contracts)]
+    ///     #![sol(alloy_contract = base_common_client_ethereum)]
     ///     #[derive(Debug, PartialEq, Eq)]
     ///     #[sol(rpc, bytecode = "694207")]
     ///     contract ThrowsError {

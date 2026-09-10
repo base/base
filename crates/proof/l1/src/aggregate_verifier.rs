@@ -18,7 +18,7 @@ use crate::{
 };
 
 sol! {
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     /// `AggregateVerifier` (dispute game) contract interface.
     ///
     /// Each game instance is a clone created by `DisputeGameFactory.create()`.

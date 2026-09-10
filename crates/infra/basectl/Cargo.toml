@@ -18,7 +18,6 @@ base-common-client-rollup = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 base-proof-service-client = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
-base-common-client-contracts = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["default"] }

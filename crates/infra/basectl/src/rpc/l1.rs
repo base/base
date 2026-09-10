@@ -17,7 +17,7 @@ use url::Url;
 use crate::tui::Toast;
 
 sol! {
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     #[sol(rpc)]
     interface ISystemConfig {
         function gasLimit() external view returns (uint64);

@@ -41,6 +41,7 @@ alloy-signer = { workspace = true }
 alloy-chains = { workspace = true }
 async-stream = { workspace = true }
 alloy-json-rpc = { workspace = true }
+alloy-json-abi = { workspace = true }
 alloy-sol-types = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-rpc-client = { workspace = true }
@@ -53,11 +54,12 @@ thiserror = { workspace = true, features = ["std"] }
 alloy-pubsub = { workspace = true, optional = true }
 futures = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"] }
+alloy-dyn-abi = { workspace = true, features = ["std"] }
 lru_0_18_2 = { workspace = true, features = ["default"] }
 alloy-transport-ws = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map"] }
 base-common-process = { workspace = true, optional = true }
+futures-util = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "alloc"] }
 tracing = { workspace = true, features = ["default", "std"] }
@@ -65,6 +67,7 @@ alloy-rpc-types-admin = { workspace = true, optional = true }
 alloy-rpc-types-debug = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["serde", "std"] }
 futures-utils-wasm = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc", "raw_value"] }
 http = { workspace = true, optional = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client", "macros"] }
 tokio = { workspace = true, features = ["default", "sync", "macros"] }
@@ -90,10 +93,12 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 http-body-util = { workspace = true, features = ["default"] }
 similar-asserts = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["reqwest"] }
+tracing-subscriber = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["reqwest"] }
 tokio-tungstenite_0_29_0 = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["k256", "kzg", "std"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
+base-common-client-ethereum = { workspace = true, features = ["anvil-node", "ws"] }
 base-common-types-payload = { workspace = true, features = ["jwt-aws-lc-rs", "serde"] }
 tower-http = { workspace = true, features = ["default", "set-header", "sensitive-headers"] }
 

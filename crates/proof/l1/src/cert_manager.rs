@@ -11,7 +11,7 @@ use base_common_client_ethereum::RootProvider;
 use crate::ContractError;
 
 sol! {
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     /// Raw metadata stored for a verified certificate.
     struct CertManagerVerifiedCert {
         bool ca;

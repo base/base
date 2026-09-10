@@ -38,7 +38,7 @@ pub trait CallTuple: Sealed {
     /// ```ignore
     /// use alloy_sol_types::sol;
     /// use alloy_primitives::Address;
-    /// use base_common_client_ethereum::{CallItem, Provider, ProviderBuilder, Result, Failure};
+    /// use base_common_client_ethereum::{CallItem, Provider, ProviderBuilder, MulticallResult as Result, Failure};
     /// use base_common_client_ethereum::SomeContract::failureCall;
     /// sol! {
     ///     #[derive(Debug)]

@@ -21,7 +21,6 @@ alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-types-rpc = { workspace = true }
 url = { workspace = true, features = ["default"] }
-base-common-client-contracts = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
 

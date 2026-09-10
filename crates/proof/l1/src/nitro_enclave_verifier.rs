@@ -15,7 +15,7 @@ use crate::ContractError;
 // Interface mirrored from the canonical contract source:
 // https://github.com/base/contracts/blob/main/src/L1/proofs/tee/NitroEnclaveVerifier.sol
 sol! {
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     /// `NitroEnclaveVerifier` contract interface (revocation subset).
     #[sol(rpc)]
     interface INitroEnclaveVerifier {

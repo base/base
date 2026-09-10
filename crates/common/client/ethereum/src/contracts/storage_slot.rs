@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolValue, sol};
 use alloy_transport::TransportError;
-use base_common_client_ethereum::{Network, Provider, TransactionBuilder};
 use base_common_types_rpc::state::{AccountOverride, StateOverridesBuilder};
+
+use crate::{Network, Provider, TransactionBuilder};
 
 /// A utility for finding storage slots in smart contracts, particularly useful for ERC20 tokens.
 ///
@@ -15,9 +16,9 @@ use base_common_types_rpc::state::{AccountOverride, StateOverridesBuilder};
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use base_common_client_contracts::StorageSlotFinder;
+/// use crate::contracts::StorageSlotFinder;
 /// use alloy_primitives::{address, U256};
-/// use base_common_client_ethereum::ProviderBuilder;
+/// use crate::ProviderBuilder;
 ///
 /// let provider = ProviderBuilder::new().connect_anvil();
 /// let token = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");
@@ -83,7 +84,7 @@ where
     /// * `user` - The address of the user whose balance slot we're finding
     pub fn balance_of(provider: P, token_address: Address, user: Address) -> Self {
         sol! {
-            #![sol(alloy_contract = base_common_client_contracts)]
+            #![sol(alloy_contract = base_common_client_ethereum)]
             contract IERC20 {
                 function balanceOf(address target) external view returns (uint256);
             }
@@ -193,12 +194,11 @@ where
 mod tests {
     use alloy_primitives::{Address, B256, U256, address};
     use alloy_sol_types::sol;
-    use base_common_client_ethereum::{
-        Provider, ProviderBuilder, TransactionBuilder, ext::AnvilApi,
-    };
     use base_common_types_rpc::TransactionRequest;
 
-    use crate::StorageSlotFinder;
+    use crate::{
+        Provider, ProviderBuilder, TransactionBuilder, contracts::StorageSlotFinder, ext::AnvilApi,
+    };
     const FORK_URL: &str = "https://ethereum.reth.rs/rpc";
     use alloy_sol_types::SolCall;
 
@@ -215,7 +215,7 @@ mod tests {
             .unwrap();
 
         sol! {
-            #![sol(alloy_contract = base_common_client_contracts)]
+            #![sol(alloy_contract = base_common_client_ethereum)]
             function balanceOf(address owner) view returns (uint256);
         }
 

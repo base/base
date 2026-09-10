@@ -28,7 +28,7 @@ pub use heart::*;
 pub mod layers;
 
 mod provider;
-pub use provider::*;
+pub use provider::{EthCall, Result as MulticallResult, *};
 
 pub mod utils;
 
@@ -47,3 +47,9 @@ pub use networks::*;
 mod auth_client;
 #[cfg(feature = "jwt-client")]
 pub use auth_client::{AuthClientLayer, AuthClientService};
+
+mod contracts;
+pub use contracts::{EthCall as ContractEthCall, Result, *};
+
+#[cfg(test)]
+extern crate self as base_common_client_ethereum;

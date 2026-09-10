@@ -14,7 +14,7 @@ use base_common_client_ethereum::RootProvider;
 use crate::ContractError;
 
 alloy_sol_types::sol! {
-    #![sol(alloy_contract = base_common_client_contracts)]
+    #![sol(alloy_contract = base_common_client_ethereum)]
     /// `DelayedWETH` contract interface (read-only subset).
     #[sol(rpc)]
     interface IDelayedWETH {

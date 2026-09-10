@@ -483,8 +483,8 @@ impl GamesClient {
         let source = match source {
             ContractError::Call { context, source } => {
                 let source = match *source {
-                    base_common_client_contracts::Error::TransportError(error) => {
-                        base_common_client_contracts::Error::TransportError(sanitize_transport(
+                    base_common_client_ethereum::Error::TransportError(error) => {
+                        base_common_client_ethereum::Error::TransportError(sanitize_transport(
                             error,
                         ))
                     }

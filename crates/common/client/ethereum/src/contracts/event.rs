@@ -3,14 +3,13 @@ use std::{fmt, marker::PhantomData};
 use alloy_primitives::{Address, B256, LogData};
 use alloy_sol_types::SolEvent;
 use alloy_transport::{BoxFuture, RpcError, TransportResult};
-use base_common_client_ethereum::{Ethereum, FilterPollerBuilder, Network, Provider};
 use base_common_types_rpc::{
     BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic, ValueOrArray,
 };
 use futures::Stream;
 use futures_util::StreamExt;
 
-use crate::Error;
+use crate::{Ethereum, FilterPollerBuilder, Network, Provider, contracts::Error};
 
 /// Helper for managing the event filter before querying or streaming its logs
 #[must_use = "event filters do nothing unless you `query`, `watch`, or `stream` them"]
@@ -498,12 +497,12 @@ pub(crate) mod subscription {
 mod tests {
     use alloy_primitives::U256;
     use alloy_sol_types::sol;
-    use base_common_client_ethereum::{EthereumWallet, PrivateKeySigner};
 
     use super::*;
+    use crate::{EthereumWallet, PrivateKeySigner};
 
     sol! {
-        #![sol(alloy_contract = base_common_client_contracts)]
+        #![sol(alloy_contract = base_common_client_ethereum)]
         // solc v0.8.24; solc a.sol --via-ir --optimize --bin
         #[sol(rpc, bytecode = "60808060405234601557610147908161001a8239f35b5f80fdfe6080806040526004361015610012575f80fd5b5f3560e01c908163299d8665146100a7575063ffdf4f1b14610032575f80fd5b346100a3575f3660031901126100a357602a7f6d10b8446ff0ac11bb95d154e7b10a73042fb9fc3bca0c92de5397b2fe78496c6040518061009e819060608252600560608301526468656c6c6f60d81b608083015263deadbeef604060a0840193600160208201520152565b0390a2005b5f80fd5b346100a3575f3660031901126100a3577f4e4cd44610926680098f1b54e2bdd1fb952659144c471173bbb9cf966af3a988818061009e602a949060608252600560608301526468656c6c6f60d81b608083015263deadbeef604060a084019360016020820152015256fea26469706673582212202e640cd14a7310d4165f902d2721ef5b4640a08f5ae38e9ae5c315a9f9f4435864736f6c63430008190033")]
         #[allow(dead_code)]
@@ -533,9 +532,8 @@ mod tests {
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(pk);
-        let provider = base_common_client_ethereum::ProviderBuilder::new()
-            .wallet(wallet.clone())
-            .connect_http(anvil.endpoint_url());
+        let provider =
+            crate::ProviderBuilder::new().wallet(wallet.clone()).connect_http(anvil.endpoint_url());
 
         // let from = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let contract = MyContract::deploy(&provider).await.unwrap();
@@ -591,7 +589,7 @@ mod tests {
 
         #[cfg(feature = "pubsub")]
         {
-            let provider = base_common_client_ethereum::ProviderBuilder::new()
+            let provider = crate::ProviderBuilder::new()
                 .wallet(wallet)
                 .connect(&anvil.ws_endpoint())
                 .await
@@ -641,9 +639,8 @@ mod tests {
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
         let wallet = EthereumWallet::from(pk);
-        let provider = base_common_client_ethereum::ProviderBuilder::new()
-            .wallet(wallet.clone())
-            .connect_http(anvil.endpoint_url());
+        let provider =
+            crate::ProviderBuilder::new().wallet(wallet.clone()).connect_http(anvil.endpoint_url());
 
         let contract = MyContract::deploy(&provider).await.unwrap();
 
@@ -697,7 +694,7 @@ mod tests {
 
         #[cfg(feature = "pubsub")]
         {
-            let provider = base_common_client_ethereum::ProviderBuilder::new()
+            let provider = crate::ProviderBuilder::new()
                 .wallet(wallet)
                 .connect(&anvil.ws_endpoint())
                 .await
@@ -744,14 +741,14 @@ mod tests {
     /// block ordering when events are spread across a range requiring multiple chunks.
     #[tokio::test]
     async fn chunked_query_collects_and_orders_logs() {
-        use base_common_client_ethereum::ext::AnvilApi;
+        use crate::ext::AnvilApi;
 
         let _ = tracing_subscriber::fmt::try_init();
 
         let anvil = base_common_process::Anvil::new().spawn();
         let pk: PrivateKeySigner =
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".parse().unwrap();
-        let provider = base_common_client_ethereum::ProviderBuilder::new()
+        let provider = crate::ProviderBuilder::new()
             .wallet(EthereumWallet::from(pk))
             .connect_http(anvil.endpoint_url());
 

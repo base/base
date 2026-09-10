@@ -4,10 +4,12 @@ use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector};
 use alloy_sol_types::SolEvent;
-use base_common_client_ethereum::{Ethereum, Network, Provider};
 use base_common_types_rpc::Filter;
 
-use crate::{CallBuilder, Event, Interface, Result};
+use crate::{
+    Ethereum, Network, Provider,
+    contracts::{CallBuilder, Event, Interface, Result},
+};
 
 /// A handle to an Ethereum contract at a specific address.
 ///
@@ -121,10 +123,10 @@ impl<P, N> std::fmt::Debug for ContractInstance<P, N> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{U256, hex};
-    use base_common_client_ethereum::{ProviderBuilder, TransactionBuilder};
     use base_common_types_rpc::TransactionRequest;
 
     use super::*;
+    use crate::{ProviderBuilder, TransactionBuilder};
 
     #[tokio::test]
     async fn contract_interface() {

@@ -4,7 +4,6 @@ use alloy_dyn_abi::{DynSolValue, FunctionExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
-use base_common_client_ethereum::Network;
 use base_common_types_rpc::{
     BlockId, BlockOverrides,
     state::{AccountOverride, StateOverride},
@@ -14,7 +13,10 @@ use tokio::time::{Timeout, timeout as timeout_future};
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasmtimer::tokio::{Timeout, timeout as timeout_future};
 
-use crate::{Error, Result};
+use crate::{
+    Network,
+    contracts::{Error, Result},
+};
 
 /// Raw coder.
 const RAW_CODER: () = ();
@@ -27,7 +29,7 @@ mod private {
     impl Sealed for () {}
 }
 
-/// An [`base_common_client_ethereum::EthCall`] with an abi decoder.
+/// An [`crate::EthCall`] with an abi decoder.
 #[must_use = "EthCall must be awaited to execute the call"]
 #[derive(Clone, Debug)]
 pub struct EthCall<'coder, D, N>
@@ -35,7 +37,7 @@ where
     N: Network,
     D: CallDecoder,
 {
-    inner: base_common_client_ethereum::EthCall<N, Bytes>,
+    inner: crate::EthCall<N, Bytes>,
 
     decoder: &'coder D,
 }
@@ -46,10 +48,7 @@ where
     D: CallDecoder,
 {
     /// Create a new [`EthCall`].
-    pub const fn new(
-        inner: base_common_client_ethereum::EthCall<N, Bytes>,
-        decoder: &'coder D,
-    ) -> Self {
+    pub const fn new(inner: crate::EthCall<N, Bytes>, decoder: &'coder D) -> Self {
         Self { inner, decoder }
     }
 }
@@ -59,7 +58,7 @@ where
     N: Network,
 {
     /// Create a new [`EthCall`].
-    pub const fn new_raw(inner: base_common_client_ethereum::EthCall<N, Bytes>) -> Self {
+    pub const fn new_raw(inner: crate::EthCall<N, Bytes>) -> Self {
         Self::new(inner, &RAW_CODER)
     }
 }
@@ -83,7 +82,7 @@ where
     /// so the two error cases can be handled separately.
     ///
     /// ```no_run
-    /// # async fn example<P: base_common_client_ethereum::Provider>(
+    /// # async fn example<P: crate::Provider>(
     /// #     provider: P,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_primitives::Address;
@@ -91,7 +90,7 @@ where
     /// use std::time::Duration;
     ///
     /// sol! {
-    ///     #![sol(alloy_contract = base_common_client_contracts)]
+    ///     #![sol(alloy_contract = base_common_client_ethereum)]
     ///     #[sol(rpc)]
     ///     contract Token {
     ///         function balanceOf(address owner) external view returns (uint256);
@@ -155,11 +154,11 @@ where
     }
 }
 
-impl<N> From<base_common_client_ethereum::EthCall<N, Bytes>> for EthCall<'static, (), N>
+impl<N> From<crate::EthCall<N, Bytes>> for EthCall<'static, (), N>
 where
     N: Network,
 {
-    fn from(inner: base_common_client_ethereum::EthCall<N, Bytes>) -> Self {
+    fn from(inner: crate::EthCall<N, Bytes>) -> Self {
         Self { inner, decoder: &RAW_CODER }
     }
 }
@@ -188,7 +187,7 @@ where
     N: Network,
     D: CallDecoder,
 {
-    inner: <base_common_client_ethereum::EthCall<N, Bytes> as IntoFuture>::IntoFuture,
+    inner: <crate::EthCall<N, Bytes> as IntoFuture>::IntoFuture,
     decoder: &'coder D,
 }
 
@@ -220,7 +219,7 @@ where
 /// This trait is sealed and cannot be implemented manually.
 /// It is an implementation detail of [`CallBuilder`].
 ///
-/// [`CallBuilder`]: crate::CallBuilder
+/// [`CallBuilder`]: crate::contracts::CallBuilder
 pub trait CallDecoder: private::Sealed {
     // Not public API.
 

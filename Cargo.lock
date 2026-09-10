@@ -2313,35 +2313,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-client-contracts"
-version = "0.0.0"
-dependencies = [
- "alloy-dyn-abi",
- "alloy-json-abi",
- "alloy-primitives",
- "alloy-pubsub",
- "alloy-sol-types",
- "alloy-transport",
- "base-common-client-ethereum",
- "base-common-process",
- "base-common-types-chain",
- "base-common-types-rpc",
- "futures",
- "futures-util",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "wasmtimer",
-]
-
-[[package]]
 name = "base-common-client-ethereum"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "alloy-dyn-abi",
  "alloy-eips",
+ "alloy-json-abi",
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-pubsub",
@@ -2358,6 +2336,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "auto_impl",
+ "base-common-client-ethereum",
  "base-common-process",
  "base-common-types-chain",
  "base-common-types-payload",
@@ -2368,6 +2347,7 @@ dependencies = [
  "dashmap",
  "either",
  "futures",
+ "futures-util",
  "futures-utils-wasm",
  "http 1.4.2",
  "http-body-util",
@@ -2390,6 +2370,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "url",
  "wasmtimer",
  "zeroize",
@@ -3932,7 +3913,6 @@ dependencies = [
  "axum",
  "base-common-chain-activation",
  "base-common-chain-config",
- "base-common-client-contracts",
  "base-common-client-ethereum",
  "base-common-client-rollup",
  "base-common-l1",
@@ -4425,7 +4405,6 @@ dependencies = [
  "alloy-sol-types",
  "alloy-transport",
  "async-trait",
- "base-common-client-contracts",
  "base-common-client-ethereum",
  "base-common-l1",
  "base-common-types-chain",
@@ -5021,7 +5000,6 @@ dependencies = [
  "alloy-signer",
  "alloy-sol-macro",
  "alloy-sol-types",
- "base-common-client-contracts",
  "base-common-client-ethereum",
  "base-common-types-chain",
  "base-common-types-rpc",
