@@ -24,7 +24,7 @@ pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
-use {base_execution_txpool_pool::BaseTransactionPool, base_node_context::AddOnsContext};
+use {crate::AddOnsContext, base_execution_txpool_pool::BaseTransactionPool};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
@@ -49,7 +49,7 @@ pub struct RethRpcServerHandles {
 #[expect(missing_debug_implementations)]
 pub struct RpcContext<'a> {
     /// The node components.
-    pub(crate) node: base_node_context::BaseNodeContext,
+    pub(crate) node: crate::BaseNodeContext,
 
     /// Gives access to the node configuration.
     pub(crate) config: &'a NodeConfig,
@@ -73,7 +73,7 @@ impl RpcContext<'_> {
     /// Returns a reference to the configured node.
     ///
     /// This gives access to the node's components.
-    pub const fn node(&self) -> &base_node_context::BaseNodeContext {
+    pub const fn node(&self) -> &crate::BaseNodeContext {
         &self.node
     }
 
@@ -156,7 +156,7 @@ impl RpcHandle {
 
 /// Prepared public RPC modules and configuration.
 pub struct RpcSetupContext<'a> {
-    pub node: base_node_context::BaseNodeContext,
+    pub node: crate::BaseNodeContext,
     pub config: &'a NodeConfig,
     pub modules: TransportRpcModules,
     pub registry: RpcRegistryInner,

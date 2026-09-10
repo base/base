@@ -24,7 +24,6 @@ alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
-base-node-context = { workspace = true }
 reth-cli-commands = { workspace = true }
 base-common-cli-support = {workspace = true}
 reth-primitives-traits = { workspace = true }
@@ -66,7 +65,7 @@ tokio-util = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 base-node-config = { workspace = true, features = ["otlp"] }
 clap_builder = { workspace = true, features = ["default"] }
-base-node-service = { workspace = true, features = ["default"] }
+base-node-service = {features = ["default"], workspace = true}
 jsonrpsee-core = { workspace = true, features = ["default"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }

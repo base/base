@@ -6,7 +6,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_node_context::BaseNodeContext;
+use base_node_service::BaseNodeContext;
 use node::NodeTestContext;
 use wallet::Wallet;
 

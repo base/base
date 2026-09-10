@@ -194,7 +194,7 @@ impl BaseNode {
         &self,
         ctx: &BuilderContext,
         payload: Option<BasePayloadServiceConfig>,
-    ) -> eyre::Result<base_node_context::BaseNodeContext> {
+    ) -> eyre::Result<crate::BaseNodeContext> {
         let evm_config = BaseEvmConfig::new(ctx.chain_spec());
         let pool = self.build_pool(ctx, evm_config.clone()).await?;
         let network = self.build_network(ctx, pool.clone()).await?;
@@ -210,7 +210,7 @@ impl BaseNode {
             ..Default::default()
         });
         let payload_builder_handle = payload.start(ctx, pool.clone(), evm_config.clone()).await?;
-        Ok(base_node_context::BaseNodeContext {
+        Ok(crate::BaseNodeContext {
             provider: ctx.provider().clone(),
             task_executor: ctx.task_executor().clone(),
             transaction_pool: pool,

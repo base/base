@@ -32,6 +32,7 @@
 use base_execution_state_provider::DatabaseProviderROFactory;
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
+use crate::BaseNodeContext;
 use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
@@ -67,7 +68,6 @@ use base_execution_sync_pipeline::{
 };
 use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
 use base_node_config::{ChainPath, DataDirPath, NodeConfig, PruneConfigKind, version_metadata};
-use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;

@@ -1,5 +1,4 @@
-#![doc = include_str!("../README.md")]
-#![cfg_attr(not(test), warn(unused_crate_dependencies))]
+//! Components available while launching and running a Base node.
 
 mod components;
 pub use components::BaseNodeContext;

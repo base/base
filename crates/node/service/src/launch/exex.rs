@@ -19,7 +19,7 @@ use crate::WithConfigs;
 pub struct ExExLauncher {
     head: Head,
     extensions: Vec<crate::BaseExecutionService>,
-    components: base_node_context::BaseNodeContext,
+    components: crate::BaseNodeContext,
     config_container: WithConfigs,
     /// The threshold for the number of blocks in the WAL before emitting a warning.
     wal_blocks_warning: usize,
@@ -31,7 +31,7 @@ impl ExExLauncher {
     /// Create a new `ExExLauncher` with the given extensions.
     pub const fn new(
         head: Head,
-        components: base_node_context::BaseNodeContext,
+        components: crate::BaseNodeContext,
         extensions: Vec<crate::BaseExecutionService>,
         config_container: WithConfigs,
     ) -> Self {
