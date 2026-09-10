@@ -31,17 +31,17 @@ pub trait BaseEthConfigApi {
 ///
 /// Ref: <https://eips.ethereum.org/EIPS/eip-7910>
 #[derive(Debug, Clone)]
-pub struct BaseEthConfigHandler<Provider> {
-    provider: Provider,
+pub struct BaseEthConfigHandler {
+    provider: base_execution_state_provider::BlockchainProvider,
     evm_config: BaseEvmConfig,
 }
 
-impl<Provider> BaseEthConfigHandler<Provider>
-where
-    Provider: ChainSpecProvider + BlockReaderIdExt + 'static,
-{
+impl BaseEthConfigHandler {
     /// Creates a new [`BaseEthConfigHandler`].
-    pub const fn new(provider: Provider, evm_config: BaseEvmConfig) -> Self {
+    pub const fn new(
+        provider: base_execution_state_provider::BlockchainProvider,
+        evm_config: BaseEvmConfig,
+    ) -> Self {
         Self { provider, evm_config }
     }
 
@@ -121,16 +121,13 @@ where
     }
 }
 
-impl<Provider> BaseEthConfigApiServer for BaseEthConfigHandler<Provider>
-where
-    Provider: ChainSpecProvider + BlockReaderIdExt + 'static,
-{
+impl BaseEthConfigApiServer for BaseEthConfigHandler {
     fn config(&self) -> RpcResult<EthConfig> {
         Ok(self.config().map_err(EthApiError::from)?)
     }
 }
 
-impl<Provider> BaseEthConfigHandler<Provider> {
+impl BaseEthConfigHandler {
     /// Lists the precompiles available in an execution environment.
     pub fn evm_to_precompiles_map(
         evm: impl Evm<Precompiles = PrecompilesMap>,
