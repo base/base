@@ -25,9 +25,6 @@ mod standard_node;
 pub use base_node_service::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, RuntimeForkFilterNetwork,
 };
-// This allows us to manually enable node metrics features, required for proper jemalloc metric
-// reporting
-use reth_node_metrics as _;
 pub use standard_node::{
     MeteringArgs, ResourceMeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs,
     StandardBaseRethNode, StandardNodeArgs,

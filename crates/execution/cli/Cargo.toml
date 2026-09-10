@@ -18,7 +18,6 @@ serde_json = { workspace = true }
 base-reth-cli = { workspace = true }
 base-node-config = { workspace = true }
 reth-cli-commands = { workspace = true }
-reth-node-metrics = { workspace = true }
 base-common-cli-support = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-state-tasks = { workspace = true }
@@ -27,19 +26,20 @@ base-execution-network-discv5 = {workspace = true}
 base-execution-rpc-handlers = { workspace = true }
 tar = { workspace = true, features = ["default"] }
 url = { workspace = true, features = ["default"] }
+base-execution-payload-builder = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 base-execution-network-service = { workspace = true }
-base-execution-payload-builder = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-node-service = { workspace = true, features = ["default"] }
+base-node-service = {features = ["default"], workspace = true}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-execution-txpool-pool = {features = ["default"], workspace = true}
 proptest = { workspace = true, optional = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json", "stream"] }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
@@ -50,7 +50,6 @@ tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 base-execution-state-indexer = {features = ["default", "service"], workspace = true}
 base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
-base-execution-txpool-pool = {features = ["default"], workspace = true}
 
 [dev-dependencies]
 alloy-chains = { workspace = true }
@@ -79,11 +78,18 @@ asm-keccak = ["base-node-service/asm-keccak", "base-node-config/asm-keccak"]
 keccak-cache-global = ["base-node-service/keccak-cache-global", "base-node-config/keccak-cache-global"]
 
 # Jemalloc allocator support
-jemalloc = ["base-node-config/jemalloc", "reth-node-metrics/jemalloc"]
-jemalloc-prof = ["jemalloc", "reth-node-metrics/jemalloc-prof"]
-jemalloc-symbols = ["jemalloc-prof", "reth-node-metrics/jemalloc-symbols"]
+jemalloc = ["base-node-config/jemalloc", "base-node-service/jemalloc"]
+jemalloc-prof = ["jemalloc", "base-node-service/jemalloc-prof"]
+jemalloc-symbols = ["jemalloc-prof", "base-node-service/jemalloc-symbols"]
 
 
 dev = ["base-common-types-chain/arbitrary", "dep:proptest", "reth-cli-commands/arbitrary"]
 
-serde = ["alloy-eips/serde", "base-common-chain-config/serde", "base-common-types-chain/serde", "base-execution-network-service/serde", "secp256k1/serde", "url/serde"]
+serde = [
+    "alloy-eips/serde",
+    "base-common-chain-config/serde",
+    "base-common-types-chain/serde",
+    "base-execution-network-service/serde",
+    "secp256k1/serde",
+    "url/serde",
+]

@@ -33,6 +33,10 @@ use base_execution_state_provider::DatabaseProviderROFactory;
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
 use crate::BaseNodeContext;
+use crate::{
+    ChainSpecInfo, Hooks, MetricServer, MetricServerConfig, StorageSettingsInfo, VersionInfo,
+    install_prometheus_recorder,
+};
 use crate::{ConsensusLayerHealthEvents, NodeEvent};
 use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
@@ -73,14 +77,6 @@ use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
 use reth_node_ethstats::EthStatsService;
-use reth_node_metrics::{
-    chain::ChainSpecInfo,
-    hooks::Hooks,
-    recorder::install_prometheus_recorder,
-    server::{MetricServer, MetricServerConfig},
-    storage::StorageSettingsInfo,
-    version::VersionInfo,
-};
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,

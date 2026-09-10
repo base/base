@@ -89,3 +89,6 @@ pub use context::*;
 
 mod node_events;
 pub use node_events::*;
+
+mod node_metrics;
+pub use node_metrics::*;

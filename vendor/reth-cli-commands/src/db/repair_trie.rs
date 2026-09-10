@@ -18,14 +18,9 @@ use base_execution_state_trie::{
 };
 use base_execution_sync_pipeline::StageId;
 use base_node_config::{ChainPath, DataDirPath, version_metadata};
+use base_node_service::{ChainSpecInfo, Hooks, MetricServer, MetricServerConfig, VersionInfo};
 use clap::Parser;
 use metrics::{self, Counter};
-use reth_node_metrics::{
-    chain::ChainSpecInfo,
-    hooks::Hooks,
-    server::{MetricServer, MetricServerConfig},
-    version::VersionInfo,
-};
 use tracing::{info, warn};
 
 const PROGRESS_PERIOD: Duration = Duration::from_secs(5);

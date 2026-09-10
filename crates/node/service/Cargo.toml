@@ -11,16 +11,20 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+bytes = { workspace = true }
 rayon = { workspace = true }
+tower = { workspace = true }
 fdlimit = { workspace = true }
 humantime = {workspace = true}
+metrics = { workspace = true }
 alloy-rlp = { workspace = true }
 jsonrpsee = { workspace = true }
 pin-project = { workspace = true }
 alloy-chains = { workspace = true }
+metrics-util = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-node-config = {workspace = true}
-reth-node-metrics = { workspace = true }
+jsonrpsee-server = { workspace = true }
 reth-node-ethstats = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
@@ -29,21 +33,25 @@ base-execution-engine-types = {workspace = true}
 base-execution-rpc-server = { workspace = true }
 base-execution-engine-driver = {workspace = true}
 base-execution-payload-types = {workspace = true}
+eyre = {features = ["default"], workspace = true}
 base-execution-network-discv5 = {workspace = true}
+metrics-exporter-prometheus = { workspace = true }
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
 alloy-eips = {workspace = true, features = ["kzg"]}
 clap = { workspace = true, features = ["default"] }
-eyre = { workspace = true, features = ["default"] }
+http = { workspace = true, features = ["default"] }
 futures = {workspace = true, features = ["default"]}
 base-execution-state-maintenance = {workspace = true}
-base-common-observability-metrics = {workspace = true}
 base-execution-network-discovery = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 serde_json = { workspace = true,  features = ["alloc"]}
-tracing = {workspace = true, features = ["attributes"]}
+tracing = {features = ["attributes"], workspace = true}
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
+http-body-util = { workspace = true, features = ["default"] }
+metrics-process = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["rustls", "stream"] }
 base-common-types-chain = {workspace = true, features = ["reth"]}
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
 base-execution-state-api = { workspace = true, features = ["std"] }
@@ -62,16 +70,18 @@ base-execution-network-types = { workspace = true, features = ["default"] }
 base-execution-payload-builder = {features = ["default"], workspace = true}
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-evm-blocks = {features = ["default", "std"], workspace = true}
+base-common-observability-metrics = {features = ["metrics"], workspace = true}
 reth-primitives-traits = { workspace = true, features = ["secp256k1", "rayon"] }
 base-execution-rpc-handlers = {workspace = true, features = ["client", "default"]}
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-tracing = { workspace = true, features = ["default", "std"] }
 base-execution-engine-observers = {workspace = true, features = ["metrics", "witness"]}
-tokio = {workspace = true, features = ["default", "macros", "rt-multi-thread", "sync", "time"]}
+tokio = {features = ["default", "macros", "rt-multi-thread", "sync", "time"], workspace = true}
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256-aws-lc-rs", "secp256k1"], workspace = true}
 
 [dev-dependencies]
+socket2 = { workspace = true }
 alloy-genesis = { workspace = true  }
 alloy-hardforks = { workspace = true }
 reth-e2e-test-utils = { workspace = true  }
@@ -120,11 +130,48 @@ name = "testsuite_framework"
 path = "tests/testsuite-framework/main.rs"
 required-features = ["test-utils"]
 
+[target."cfg(unix)".dependencies]
+mappings = { workspace = true, optional = true }
+pprof_util = { workspace = true, optional = true }
+base-common-io-files = { workspace = true, optional = true }
+jemalloc_pprof = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true, features = ["default"] }
+tikv-jemalloc-ctl = { workspace = true, features = ["default", "stats"], optional = true }
+
+[target."cfg(target_os = \"linux\")".dependencies]
+procfs = { workspace = true, features = ["default"] }
+
 [features]
 default = ["reth-codec"]
 asm-keccak = ["alloy-primitives/asm-keccak", "base-node-config/asm-keccak", "base-execution-evm-runtime/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global", "base-node-config/keccak-cache-global"]
 js-tracer = ["base-execution-rpc-handlers/js-tracer"]
-test-utils = ["base-common-chain-config/test-utils", "base-common-types-chain/arbitrary", "base-execution-engine-observers/test-utils", "base-execution-state-provider/test-utils", "reth-codec", "base-execution-state-database/test-utils", "base-execution-network-service/test-utils", "base-execution-payload-builder/test-utils", "reth-primitives-traits/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-types/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool-pool/test-utils", "base-execution-state-trie/test-utils", "base-execution-engine-driver/test-utils", "base-execution-sync-pipeline/test-utils"]
+test-utils = [
+    "base-common-chain-config/test-utils",
+    "base-common-types-chain/arbitrary",
+    "base-execution-engine-observers/test-utils",
+    "base-execution-state-provider/test-utils",
+    "reth-codec",
+    "base-execution-state-database/test-utils",
+    "base-execution-network-service/test-utils",
+    "base-execution-payload-builder/test-utils",
+    "reth-primitives-traits/test-utils",
+    "base-execution-evm-blocks/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-common-runtime-tasks/test-utils",
+    "base-execution-txpool-pool/test-utils",
+    "base-execution-state-trie/test-utils",
+    "base-execution-engine-driver/test-utils",
+    "base-execution-sync-pipeline/test-utils",
+]
 reth-codec = []
 trie-debug = ["base-execution-engine-driver/trie-debug", "base-execution-engine-types/trie-debug", "base-node-config/trie-debug"]
+jemalloc = ["dep:tikv-jemalloc-ctl"]
+jemalloc-prof = [
+    "jemalloc",
+    "dep:jemalloc_pprof",
+    "dep:mappings",
+    "dep:pprof_util",
+    "dep:tempfile",
+]
+jemalloc-symbols = ["jemalloc-prof", "jemalloc_pprof?/symbolize"]

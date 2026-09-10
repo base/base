@@ -10,7 +10,7 @@ use metrics::describe_gauge;
 use metrics_process::Collector;
 use reqwest::Client;
 
-use crate::{
+use crate::node_metrics::{
     chain::ChainSpecInfo,
     hooks::{Hook, Hooks},
     process::register_process_metrics,
@@ -358,7 +358,7 @@ async fn handle_request<F: Hook>(
     path: &str,
     hook: Arc<F>,
     executor: TaskExecutor,
-    handle: &crate::recorder::PrometheusRecorder,
+    handle: &crate::node_metrics::recorder::PrometheusRecorder,
     pprof_dump_dir: &PathBuf,
 ) -> Response<Full<Bytes>> {
     match path {

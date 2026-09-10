@@ -27,7 +27,6 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 base-node-config = {workspace = true}
 alloy-hardforks = { workspace = true }
-reth-node-metrics = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-cli-support = {workspace = true}
 reth-primitives-traits = { workspace = true }
@@ -57,7 +56,7 @@ tracing = { workspace = true, features = ["attributes"] }
 comfy-table = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-node-service = {workspace = true, features = ["default"]}
+base-node-service = {features = ["default"], workspace = true}
 base-execution-evm-blocks = {features = ["std"], workspace = true}
 proptest-arbitrary-interop = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -83,4 +82,18 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 
 [features]
-arbitrary = ["dep:proptest", "dep:arbitrary", "dep:proptest-arbitrary-interop", "base-execution-state-database/arbitrary", "base-execution-network-wire/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary", "base-common-types-chain/test-utils", "base-execution-state-types/test-utils", "base-common-types-chain/arbitrary", "base-execution-state-types/arbitrary", "reth-primitives-traits/arbitrary", "base-execution-state-memory/arbitrary"]
+arbitrary = [
+    "dep:proptest",
+    "dep:arbitrary",
+    "dep:proptest-arbitrary-interop",
+    "base-execution-state-database/arbitrary",
+    "base-execution-network-wire/arbitrary",
+    "alloy-eips/arbitrary",
+    "alloy-primitives/arbitrary",
+    "base-common-types-chain/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-common-types-chain/arbitrary",
+    "base-execution-state-types/arbitrary",
+    "reth-primitives-traits/arbitrary",
+    "base-execution-state-memory/arbitrary",
+]

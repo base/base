@@ -10,12 +10,8 @@ use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::RocksDBProviderFactory;
 use base_node_config::{MetricArgs, version_metadata};
 use base_node_service::metrics_hooks;
+use base_node_service::{ChainSpecInfo, MetricServer, MetricServerConfig, VersionInfo};
 use clap::Parser;
-use reth_node_metrics::{
-    chain::ChainSpecInfo,
-    server::{MetricServer, MetricServerConfig},
-    version::VersionInfo,
-};
 use tracing::info;
 
 use crate::common::{AccessRights, EnvironmentArgs};

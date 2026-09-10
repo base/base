@@ -147,7 +147,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | `reth-node-ethereum` | Deleted after fixture migration |
 | [reth-node-ethstats](../../vendor/reth-node-ethstats/Cargo.toml) | Optional capability; separate removal decision |
 | [base-node-service](../../crates/node/service/Cargo.toml) | Retain shared infrastructure |
-| [reth-node-metrics](../../vendor/reth-node-metrics/Cargo.toml) | Retain shared infrastructure |
+| [base-node-service](../../crates/node/service/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-types](../../vendor/reth-node-types/Cargo.toml) | Consolidate; retain required code |
 | [reth-payload-builder](../../vendor/reth-payload-builder/Cargo.toml) | Retain shared infrastructure |
 | [reth-payload-builder-primitives](../../vendor/reth-payload-builder-primitives/Cargo.toml) | Consolidate; retain required code |
