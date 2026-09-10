@@ -75,7 +75,6 @@ impl DownloadClient for TestBodiesClient {
 }
 
 impl BodiesClient for TestBodiesClient {
-    type Body = BlockBody;
     type Output = BodiesFut;
 
     fn get_block_bodies_with_priority_and_range_hint(

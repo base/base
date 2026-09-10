@@ -56,7 +56,7 @@ pub async fn get_single_body<Client>(
     consensus: BaseBeaconConsensus,
 ) -> Result<SealedBlock>
 where
-    Client: BodiesClient<Body = base_common_types_chain::BaseBlockBody>,
+    Client: BodiesClient,
 {
     let (peer_id, response) = client.get_block_body(header.hash()).await?.split();
 

@@ -100,8 +100,7 @@ impl HeadersClient for FetchClient {
 }
 
 impl BodiesClient for FetchClient {
-    type Body = base_common_types_chain::BaseBlockBody;
-    type Output = BodiesFut<base_common_types_chain::BaseBlockBody>;
+    type Output = BodiesFut;
 
     /// Sends a `GetBlockBodies` request to an available peer.
     fn get_block_bodies_with_priority_and_range_hint(

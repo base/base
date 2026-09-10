@@ -1,7 +1,5 @@
 //! API related to syncing blocks.
 
-use std::fmt::Debug;
-
 use base_execution_network_wire::{BlockAccessListsClient, BlockClient};
 use futures::Future;
 use tokio::sync::oneshot;
@@ -10,7 +8,7 @@ use tokio::sync::oneshot;
 #[auto_impl::auto_impl(&, Arc)]
 pub trait BlockDownloaderProvider {
     /// The client this type can provide.
-    type Client: BlockClient<Body: Debug> + BlockAccessListsClient + Send + Sync + Clone + 'static;
+    type Client: BlockClient + BlockAccessListsClient + Send + Sync + Clone + 'static;
 
     /// Returns a new [`BlockClient`], used for fetching blocks from peers.
     ///

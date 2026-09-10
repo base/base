@@ -135,7 +135,6 @@ impl HeadersClient for TestFullBlockClient {
 
 /// Implements the `BodiesClient` trait for the `TestFullBlockClient` struct.
 impl BodiesClient for TestFullBlockClient {
-    type Body = BlockBody;
     /// Defines the output type of the function.
     type Output = futures::future::Ready<PeerRequestResult<Vec<BlockBody>>>;
 

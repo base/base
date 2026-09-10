@@ -31,9 +31,8 @@ where
 impl<A, B> BodiesClient for Either<A, B>
 where
     A: BodiesClient,
-    B: BodiesClient<Body = A::Body>,
+    B: BodiesClient,
 {
-    type Body = A::Body;
     type Output = Either<A::Output, B::Output>;
 
     fn get_block_bodies_with_priority_and_range_hint(

@@ -393,8 +393,7 @@ impl HeadersClient for FileClient {
 }
 
 impl BodiesClient for FileClient {
-    type Body = base_common_types_chain::BaseBlockBody;
-    type Output = BodiesFut<base_common_types_chain::BaseBlockBody>;
+    type Output = BodiesFut;
 
     fn get_block_bodies_with_priority_and_range_hint(
         &self,

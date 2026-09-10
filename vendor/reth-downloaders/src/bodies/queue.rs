@@ -21,8 +21,7 @@ use crate::metrics::BodyDownloaderMetrics;
 /// The wrapper around [`FuturesUnordered`] that keeps information
 /// about the blocks currently being requested.
 #[derive(Debug)]
-pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>>
-{
+pub(crate) struct BodiesRequestQueue<C: BodiesClient> {
     /// Inner body request queue.
     inner: FuturesUnordered<BodiesRequestFuture<C>>,
     /// The downloader metrics.
@@ -33,7 +32,7 @@ pub(crate) struct BodiesRequestQueue<C: BodiesClient<Body = base_common_types_ch
 
 impl<C> BodiesRequestQueue<C>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
 {
     /// Create new instance of request queue.
     pub(crate) fn new(metrics: BodyDownloaderMetrics) -> Self {
@@ -82,7 +81,7 @@ where
 
 impl<C> Stream for BodiesRequestQueue<C>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
 {
     type Item = DownloadResult<Vec<BlockResponse>>;
 

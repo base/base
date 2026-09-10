@@ -11,7 +11,7 @@ use std::{
 
 use alloy_eip7928::bal::RawBal;
 use alloy_primitives::{B256, Bytes};
-use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BaseBlockBody, BlockHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_types::{PeerId, WithPeerId};
 use base_execution_network_wire::BlockAccessLists;
@@ -194,7 +194,7 @@ where
     hash: B256,
     request: FullBlockRequest<Client>,
     header: Option<SealedHeader>,
-    body: Option<BodyResponse<Client::Body>>,
+    body: Option<BodyResponse<BaseBlockBody>>,
 }
 
 impl<Client> FetchFullBlockFuture<Client>
@@ -250,7 +250,7 @@ where
         }
     }
 
-    fn on_block_response(&mut self, resp: WithPeerId<Client::Body>) {
+    fn on_block_response(&mut self, resp: WithPeerId<BaseBlockBody>) {
         if let Some(ref header) = self.header {
             if let Err(err) = self.consensus.validate_body_against_header(resp.data(), header) {
                 debug!(target: "downloaders", %err, hash=?header.hash(), "Received wrong body");
@@ -618,7 +618,7 @@ enum OptionalBlockAccessListsState<Req> {
 
 impl<Client> Debug for FetchFullBlockFuture<Client>
 where
-    Client: BlockClient<Body: Debug>,
+    Client: BlockClient,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FetchFullBlockFuture")
@@ -644,7 +644,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<ResponseResult<base_common_types_chain::Header, Client::Body>> {
+    ) -> Poll<ResponseResult<base_common_types_chain::Header, BaseBlockBody>> {
         if let Some(fut) = Pin::new(&mut self.header).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -711,7 +711,7 @@ where
     /// The next headers to request bodies for. This is drained as responses are received.
     pending_headers: VecDeque<SealedHeader>,
     /// The bodies that have been received so far.
-    bodies: HashMap<SealedHeader, BodyResponse<Client::Body>>,
+    bodies: HashMap<SealedHeader, BodyResponse<BaseBlockBody>>,
 }
 
 impl<Client> FetchFullBlockRangeFuture<Client>
@@ -726,14 +726,14 @@ where
     /// Inserts a block body, matching it with the `next_header`.
     ///
     /// Note: this assumes the response matches the next header in the queue.
-    fn insert_body(&mut self, body_response: BodyResponse<Client::Body>) {
+    fn insert_body(&mut self, body_response: BodyResponse<BaseBlockBody>) {
         if let Some(header) = self.pending_headers.pop_front() {
             self.bodies.insert(header, body_response);
         }
     }
 
     /// Inserts multiple block bodies.
-    fn insert_bodies(&mut self, bodies: impl IntoIterator<Item = BodyResponse<Client::Body>>) {
+    fn insert_bodies(&mut self, bodies: impl IntoIterator<Item = BodyResponse<BaseBlockBody>>) {
         for body in bodies {
             self.insert_body(body);
         }
@@ -979,7 +979,7 @@ where
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<RangeResponseResult<base_common_types_chain::Header, Client::Body>> {
+    ) -> Poll<RangeResponseResult<base_common_types_chain::Header, BaseBlockBody>> {
         if let Some(fut) = Pin::new(&mut self.headers).as_pin_mut()
             && let Poll::Ready(res) = fut.poll(cx)
         {
@@ -1032,9 +1032,8 @@ impl DownloadClient for NoopFullBlockClient {
 
 /// Implements the `BodiesClient` trait for the `NoopFullBlockClient` struct.
 impl BodiesClient for NoopFullBlockClient {
-    type Body = base_common_types_chain::BaseBlockBody;
     /// Defines the output type of the function.
-    type Output = futures::future::Ready<PeerRequestResult<Vec<Self::Body>>>;
+    type Output = futures::future::Ready<PeerRequestResult<Vec<BaseBlockBody>>>;
 
     /// Retrieves block bodies based on provided hashes and priority.
     ///
@@ -1557,7 +1556,6 @@ mod tests {
     }
 
     impl BodiesClient for FullBlockWithAccessListsClient {
-        type Body = <TestFullBlockClient as BodiesClient>::Body;
         type Output = <TestFullBlockClient as BodiesClient>::Output;
 
         fn get_block_bodies_with_priority_and_range_hint(
@@ -1676,7 +1674,6 @@ mod tests {
     }
 
     impl BodiesClient for FailingBodiesClient {
-        type Body = <TestFullBlockClient as BodiesClient>::Body;
         type Output = <TestFullBlockClient as BodiesClient>::Output;
 
         fn get_block_bodies_with_priority_and_range_hint(

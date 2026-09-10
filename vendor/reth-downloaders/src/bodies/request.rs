@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::B256;
-use base_common_types_chain::BlockHeader;
+use base_common_types_chain::{BaseBlockBody, BlockHeader};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_network_types::{PeerId, WithPeerId};
 use futures::{Future, FutureExt};
@@ -38,9 +38,7 @@ use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 /// All errors regarding the response cause the peer to get penalized, meaning that adversaries
 /// that try to give us bodies that do not match the requested order are going to be penalized
 /// and eventually disconnected.
-pub(crate) struct BodiesRequestFuture<
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>,
-> {
+pub(crate) struct BodiesRequestFuture<C: BodiesClient> {
     client: Arc<C>,
     consensus: Arc<BaseBeaconConsensus>,
     metrics: BodyDownloaderMetrics,
@@ -58,7 +56,7 @@ pub(crate) struct BodiesRequestFuture<
 
 impl<C> BodiesRequestFuture<C>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
 {
     /// Returns an empty future. Use [`BodiesRequestFuture::with_headers`] to set the request.
     pub(crate) fn new(
@@ -120,7 +118,7 @@ where
     /// Returns an error if the response is invalid.
     fn on_block_response(
         &mut self,
-        response: WithPeerId<Vec<base_common_types_chain::BaseBlockBody>>,
+        response: WithPeerId<Vec<BaseBlockBody>>,
     ) -> DownloadResult<()> {
         let (peer_id, bodies) = response.split();
         let request_len = self.last_request_len.unwrap_or_default();
@@ -164,10 +162,7 @@ where
     ///
     /// This method removes headers from the internal collection.
     /// If the response fails validation, then the header will be put back.
-    fn try_buffer_blocks(&mut self, bodies: Vec<C::Body>) -> DownloadResult<()>
-    where
-        C::Body: InMemorySize,
-    {
+    fn try_buffer_blocks(&mut self, bodies: Vec<BaseBlockBody>) -> DownloadResult<()> {
         let bodies_len = bodies.len();
         let mut bodies = bodies.into_iter().peekable();
 
@@ -214,7 +209,7 @@ where
 
 impl<C> Future for BodiesRequestFuture<C>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
 {
     type Output = DownloadResult<Vec<BlockResponse>>;
 

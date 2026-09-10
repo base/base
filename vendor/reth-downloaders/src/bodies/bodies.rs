@@ -33,10 +33,7 @@ use crate::{bodies::task::TaskDownloader, metrics::BodyDownloaderMetrics};
 /// All blocks in a batch are fetched at the same time.
 #[must_use = "Stream does nothing unless polled"]
 #[derive(Debug)]
-pub struct BodiesDownloader<
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody>,
-    Provider: HeaderProvider,
-> {
+pub struct BodiesDownloader<C: BodiesClient, Provider: HeaderProvider> {
     /// The bodies client
     client: Arc<C>,
     /// The consensus client
@@ -69,7 +66,7 @@ pub struct BodiesDownloader<
 
 impl<C, Provider> BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     /// Returns the next contiguous request.
@@ -279,7 +276,7 @@ where
 
 impl<C, Provider> BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     /// Convert the downloader into a [`TaskDownloader`] by spawning it via the given [`Runtime`].
@@ -290,7 +287,7 @@ where
 
 impl<C, Provider> BodyDownloader for BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     /// Set a new download range (inclusive).
@@ -346,7 +343,7 @@ where
 
 impl<C, Provider> Stream for BodiesDownloader<C, Provider>
 where
-    C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+    C: BodiesClient + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
     type Item = BodyDownloaderResult;
@@ -568,7 +565,7 @@ impl BodiesDownloaderBuilder {
         provider: Provider,
     ) -> BodiesDownloader<C, Provider>
     where
-        C: BodiesClient<Body = base_common_types_chain::BaseBlockBody> + 'static,
+        C: BodiesClient + 'static,
         Provider: HeaderProvider,
     {
         let Self {

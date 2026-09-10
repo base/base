@@ -5,22 +5,20 @@ use std::{
 };
 
 use alloy_primitives::B256;
+use base_common_types_chain::BaseBlockBody;
 use futures::{Future, FutureExt};
-use reth_primitives_traits::BlockBody;
 
 use crate::{DownloadClient, PeerRequestResult, Priority};
 
 /// The bodies future type
-pub type BodiesFut<B = base_common_types_chain::BaseBlockBody> =
-    Pin<Box<dyn Future<Output = PeerRequestResult<Vec<B>>> + Send + Sync>>;
+pub type BodiesFut =
+    Pin<Box<dyn Future<Output = PeerRequestResult<Vec<BaseBlockBody>>> + Send + Sync>>;
 
 /// A client capable of downloading block bodies.
 #[auto_impl::auto_impl(&, Arc, Box)]
 pub trait BodiesClient: DownloadClient {
-    /// The body type this client fetches.
-    type Body: BlockBody;
     /// The output of the request future for querying block bodies.
-    type Output: Future<Output = PeerRequestResult<Vec<Self::Body>>> + Sync + Send + Unpin;
+    type Output: Future<Output = PeerRequestResult<Vec<BaseBlockBody>>> + Sync + Send + Unpin;
 
     /// Fetches the block body for the requested block.
     fn get_block_bodies(&self, hashes: Vec<B256>) -> Self::Output {
