@@ -83,7 +83,7 @@ impl RpcModuleConfig {
 pub struct RpcRegistryInner {
     provider: BlockchainProvider,
     pool: BaseTransactionPool<BlockchainProvider>,
-    network: reth_network::NetworkHandle,
+    network: base_execution_network_service::NetworkHandle,
     executor: Runtime,
     evm_config: BaseEvmConfig,
     consensus: Arc<BaseBeaconConsensus>,
@@ -107,7 +107,7 @@ impl RpcRegistryInner {
     pub fn new(
         provider: BlockchainProvider,
         pool: BaseTransactionPool<BlockchainProvider>,
-        network: reth_network::NetworkHandle,
+        network: base_execution_network_service::NetworkHandle,
         executor: Runtime,
         consensus: Arc<BaseBeaconConsensus>,
         config: RpcModuleConfig,
@@ -185,12 +185,15 @@ impl RpcRegistryInner {
     /// Instantiates `AdminApi`
     pub fn admin_api(
         &self,
-    ) -> AdminApi<reth_network::NetworkHandle, BaseTransactionPool<BlockchainProvider>> {
+    ) -> AdminApi<
+        base_execution_network_service::NetworkHandle,
+        BaseTransactionPool<BlockchainProvider>,
+    > {
         AdminApi::new(self.network.clone(), self.provider.chain_spec(), self.pool.clone())
     }
 
     /// Instantiates `Web3Api`
-    pub fn web3_api(&self) -> Web3Api<reth_network::NetworkHandle> {
+    pub fn web3_api(&self) -> Web3Api<base_execution_network_service::NetworkHandle> {
         Web3Api::new(self.network.clone())
     }
 }
@@ -250,7 +253,7 @@ impl RpcRegistryInner {
     /// # Panics
     ///
     /// If called outside of the tokio runtime. See also [`Self::eth_api`]
-    pub fn net_api(&self) -> NetApi<reth_network::NetworkHandle> {
+    pub fn net_api(&self) -> NetApi<base_execution_network_service::NetworkHandle> {
         let eth_api = self.eth_api().clone();
         NetApi::new(self.network.clone(), eth_api)
     }

@@ -126,9 +126,9 @@ pub use txpool::*;
 mod update;
 pub use update::{Destination, PoolUpdate, UpdateOutcome};
 
-/// Bound on number of pending transactions from `reth_network::TransactionsManager` to buffer.
+/// Bound on number of pending transactions from `base_execution_network_service::TransactionsManager` to buffer.
 pub const PENDING_TX_LISTENER_BUFFER_SIZE: usize = 2048;
-/// Bound on number of new transactions from `reth_network::TransactionsManager` to buffer.
+/// Bound on number of new transactions from `base_execution_network_service::TransactionsManager` to buffer.
 pub const NEW_TX_LISTENER_BUFFER_SIZE: usize = 1024;
 
 const BLOB_SIDECAR_LISTENER_BUFFER_SIZE: usize = 512;

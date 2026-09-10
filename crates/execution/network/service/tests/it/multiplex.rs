@@ -3,15 +3,15 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
+use base_execution_network_service::{
+    BlockDownloaderProvider,
+    test_utils::{PeerConfig, TestPool, Testnet},
+};
 use base_execution_network_wire::BodiesClient;
 use base_execution_network_wire::Capability;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::Protocol;
 use base_execution_state_provider::test_utils::MockEthProvider;
-use reth_network::{
-    BlockDownloaderProvider,
-    test_utils::{PeerConfig, TestPool, Testnet},
-};
 use reth_network_api::Peers;
 
 #[tokio::test(flavor = "multi_thread")]

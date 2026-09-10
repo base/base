@@ -1,5 +1,5 @@
-use reth_network_api::Direction;
 use base_execution_network_types::SessionLimits;
+use reth_network_api::Direction;
 
 use super::ExceedsSessionLimit;
 

@@ -6,6 +6,11 @@ use std::sync::Arc;
 use alloy_eips::NumHash;
 use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes};
 use base_common_types_chain::{BaseBlock as Block, Header};
+use base_execution_network_service::{
+    BlockDownloaderProvider, NetworkEventListenerProvider,
+    eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
+    test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
+};
 use base_execution_network_wire::BlockAccessLists;
 use base_execution_network_wire::EthVersion;
 use base_execution_network_wire::GetBlockAccessLists;
@@ -19,11 +24,6 @@ use base_execution_state_provider::{
 };
 use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
-use reth_network::{
-    BlockDownloaderProvider, NetworkEventListenerProvider,
-    eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
-    test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
-};
 use reth_network_api::{NetworkInfo, Peers};
 use tokio::sync::oneshot;
 
@@ -345,7 +345,7 @@ async fn test_eth68_get_receipts() {
         let (tx, rx) = oneshot::channel();
         handle0.send_request(
             *handle1.peer_id(),
-            reth_network::PeerRequest::GetReceipts {
+            base_execution_network_service::PeerRequest::GetReceipts {
                 request: base_execution_network_wire::GetReceipts(vec![block_hash]),
                 response: tx,
             },
@@ -518,7 +518,7 @@ async fn test_eth69_get_receipts() {
         let (tx, rx) = oneshot::channel();
         handle0.send_request(
             *handle1.peer_id(),
-            reth_network::PeerRequest::GetReceipts69 {
+            base_execution_network_service::PeerRequest::GetReceipts69 {
                 request: base_execution_network_wire::GetReceipts(vec![block_hash]),
                 response: tx,
             },
@@ -738,7 +738,7 @@ async fn request_block_access_lists(net: &BalTestnetHandle, hashes: Vec<B256>) -
 
     requester.network().send_request(
         *responder.peer_id(),
-        reth_network::PeerRequest::GetBlockAccessLists {
+        base_execution_network_service::PeerRequest::GetBlockAccessLists {
             request: GetBlockAccessLists(hashes),
             response: tx,
         },

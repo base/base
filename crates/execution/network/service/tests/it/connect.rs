@@ -6,6 +6,11 @@ use alloy_primitives::map::HashSet;
 use base_common_observability_tracing::init_test_tracing;
 use base_common_runtime_tasks::Runtime;
 use base_execution_network_discovery::Discv4Config;
+use base_execution_network_service::{
+    BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
+    NetworkManager, PeersConfig,
+    test_utils::{NetworkEventStream, NetworkTestData, PeerConfig, Testnet},
+};
 use base_execution_network_types::{NodeRecord, TrustedPeer, mainnet_nodes};
 use base_execution_network_wire::DisconnectReason;
 use base_execution_network_wire::HeadersDirection;
@@ -13,11 +18,6 @@ use base_execution_network_wire::{HeadersClient, HeadersRequest, NetworkSyncUpda
 use base_execution_state_api::NoopProvider;
 use base_execution_state_provider::test_utils::MockEthProvider;
 use futures::StreamExt;
-use reth_network::{
-    BlockDownloaderProvider, NetworkConfigBuilder, NetworkEvent, NetworkEventListenerProvider,
-    NetworkManager, PeersConfig,
-    test_utils::{NetworkEventStream, NetworkTestData, PeerConfig, Testnet},
-};
 use reth_network_api::{
     NetworkInfo, PeerKind, Peers, PeersInfo,
     events::{PeerEvent, SessionInfo},

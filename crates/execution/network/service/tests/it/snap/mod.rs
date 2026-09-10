@@ -16,6 +16,11 @@ use base_common_types_chain::{
     BaseBlock, Header,
     constants::{EMPTY_ROOT_HASH, KECCAK_EMPTY},
 };
+use base_execution_network_service::{
+    BlockDownloaderProvider,
+    eth_requests::SOFT_RESPONSE_LIMIT,
+    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
+};
 use base_execution_network_wire::AccountData;
 use base_execution_network_wire::AccountRangeMessage;
 use base_execution_network_wire::BlockAccessLists;
@@ -40,11 +45,6 @@ use base_execution_state_provider::{
 use base_execution_state_trie::{HashedPostState, HashedStorage};
 use base_execution_state_types::StorageEntry;
 use base_execution_state_types::{StageCheckpoint, StageId};
-use reth_network::{
-    BlockDownloaderProvider,
-    eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
-};
 use reth_primitives_traits::Block as _;
 use reth_testing_utils::generators::{self, BlockParams};
 

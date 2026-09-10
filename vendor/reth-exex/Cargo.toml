@@ -22,7 +22,6 @@ rmp-serde = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-config = { workspace = true }
-reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
 base-node-context = { workspace = true }
@@ -34,6 +33,7 @@ base-execution-evm-blocks = { workspace = true }
 base-execution-state-types = { workspace = true }
 base-execution-state-provider = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
+base-execution-network-service = { workspace = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 itertools = { workspace = true, features = ["use_std"] }

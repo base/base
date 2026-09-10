@@ -976,7 +976,7 @@ impl PeersManager {
     }
 
     /// Connect to the given peer. NOTE: if the maximum number of outbound sessions is reached,
-    /// this won't do anything. See `reth_network::SessionManager::dial_outbound`.
+    /// this won't do anything. See `base_execution_network_service::SessionManager::dial_outbound`.
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn add_and_connect(
         &mut self,

@@ -6,16 +6,16 @@ use base_common_types_chain::BlockHeader;
 use base_common_types_payload::ForkchoiceState;
 use base_common_types_rpc::BlockNumberOrTag;
 use base_execution_payload_types::{BaseBuiltPayload, BasePayloadBuilderAttributes};
+use base_execution_state_provider::{
+    BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
+    StageCheckpointReader,
+};
 use base_execution_state_types::StageId;
 use base_node_core::FullNode;
 use eyre::Ok;
 use futures_util::Future;
 use jsonrpsee::http_client::HttpClient;
 use reth_primitives_traits::Block;
-use base_execution_state_provider::{
-    BlockReaderIdExt, CanonStateNotificationStream, CanonStateSubscriptions, HeaderProvider,
-    StageCheckpointReader,
-};
 use tokio_stream::StreamExt;
 use url::Url;
 
@@ -29,7 +29,7 @@ pub struct NodeTestContext {
     /// Context for testing payload-related features.
     pub payload: PayloadTestContext,
     /// Context for testing network functionalities.
-    pub network: NetworkTestContext<reth_network::NetworkHandle>,
+    pub network: NetworkTestContext<base_execution_network_service::NetworkHandle>,
     /// Context for testing RPC features.
     pub rpc: RpcTestContext,
     /// Canonical state events.

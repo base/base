@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
-reth-network = { workspace = true, optional = true }
 base-metering = { workspace = true, optional = true }
 reth-node-core = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
@@ -30,6 +29,7 @@ base-execution-payload-types = { workspace = true, optional = true}
 base-execution-rpc-handlers = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["default"], optional = true }
 alloy-eips = { workspace = true, features = ["std"], optional = true }
+base-execution-network-service = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
 base-common-client-ethereum = {workspace = true,  features = ["default"]}
 base-execution-state-database = { workspace = true, features = ["default"] }
@@ -61,7 +61,7 @@ test-utils = [
     "dep:base-common-types-chain",
     "dep:base-execution-evm-runtime",
     "dep:base-consensus-batch-types",
-    "dep:reth-network",
+    "dep:base-execution-network-service",
     "dep:tokio",
     "base-node-core/test-utils",
     "dep:alloy-eips",

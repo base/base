@@ -16,7 +16,7 @@ pub struct BaseNodeContext {
     /// The Base consensus validator.
     pub consensus: std::sync::Arc<base_execution_evm_blocks::BaseBeaconConsensus>,
     /// The network handle.
-    pub network: reth_network::NetworkHandle,
+    pub network: base_execution_network_service::NetworkHandle,
     /// The payload service handle.
     pub payload_builder_handle: base_execution_payload_builder::PayloadBuilderHandle,
     /// The task executor for the node.
@@ -42,7 +42,7 @@ impl BaseNodeContext {
     }
 
     /// Returns the network handle.
-    pub fn network(&self) -> &reth_network::NetworkHandle {
+    pub fn network(&self) -> &base_execution_network_service::NetworkHandle {
         &self.network
     }
 

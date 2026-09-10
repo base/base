@@ -62,9 +62,9 @@ pub struct PoolConfig {
     /// How to handle locally received transactions:
     /// [`TransactionOrigin::Local`](TransactionOrigin).
     pub local_transactions_config: LocalTransactionConfig,
-    /// Bound on number of pending transactions from `reth_network::TransactionsManager` to buffer.
+    /// Bound on number of pending transactions from `base_execution_network_service::TransactionsManager` to buffer.
     pub pending_tx_listener_buffer_size: usize,
-    /// Bound on number of new transactions from `reth_network::TransactionsManager` to buffer.
+    /// Bound on number of new transactions from `base_execution_network_service::TransactionsManager` to buffer.
     pub new_tx_listener_buffer_size: usize,
     /// How many new pending transactions to buffer and send iterators in progress.
     pub max_new_pending_txs_notifications: usize,

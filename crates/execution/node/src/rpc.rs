@@ -88,7 +88,7 @@ impl RpcContext<'_> {
     }
 
     /// Returns the handle to the network
-    pub fn network(&self) -> &reth_network::NetworkHandle {
+    pub fn network(&self) -> &base_execution_network_service::NetworkHandle {
         self.node.network()
     }
 
@@ -146,7 +146,10 @@ impl RpcHandle {
     /// Returns an instance of the [`AdminApi`] for the rpc server.
     pub fn admin_api(
         &self,
-    ) -> AdminApi<reth_network::NetworkHandle, BaseTransactionPool<BlockchainProvider>> {
+    ) -> AdminApi<
+        base_execution_network_service::NetworkHandle,
+        BaseTransactionPool<BlockchainProvider>,
+    > {
         self.rpc_registry.admin_api()
     }
 }

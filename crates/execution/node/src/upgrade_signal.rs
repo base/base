@@ -11,10 +11,10 @@ use base_common_chain_activation::{
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader;
 use base_execution_network_discovery::NetworkStackId;
+use base_execution_network_service::NetworkHandle;
 use base_execution_network_wire::NetworkSyncUpdater;
 use base_execution_state_provider::{BlockNumReader, HeaderProvider};
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
-use reth_network::NetworkHandle;
 use tokio::sync::Notify;
 use tracing::{info, warn};
 use url::Url;
@@ -859,7 +859,7 @@ mod tests {
         use base_common_runtime_tasks::Runtime;
         use base_execution_network_discv5::ConfigBuilder as Discv5ConfigBuilder;
         use base_execution_network_discv5::ListenConfig;
-        use reth_network::{NetworkConfigBuilder, NetworkManager};
+        use base_execution_network_service::{NetworkConfigBuilder, NetworkManager};
 
         // Use a scheduled fork so startup and the later runtime update advertise different IDs.
         // Concrete Base specs always use the opel discovery entry, including custom chain IDs.

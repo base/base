@@ -3,19 +3,19 @@ use std::sync::Arc;
 
 use alloy_primitives::{Signature, U256};
 use base_common_types_chain::TxLegacy;
-use base_execution_txpool::{
-    AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
-};
-use futures::StreamExt;
-use reth_network::{
+use base_execution_network_service::{
     NetworkEvent, NetworkEventListenerProvider, Peers,
     test_utils::{NetworkEventStream, Testnet},
     transactions::config::{
         TransactionIngressPolicy, TransactionPropagationKind, TransactionsManagerConfig,
     },
 };
-use reth_network_api::{PeerKind, PeersInfo, events::PeerEvent};
 use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
+use base_execution_txpool::{
+    AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
+};
+use futures::StreamExt;
+use reth_network_api::{PeerKind, PeersInfo, events::PeerEvent};
 use tokio::join;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -39,7 +39,9 @@ async fn test_tx_gossip() {
     let mut peer1_tx_listener = peer1.pool().unwrap().pending_transactions_listener();
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
+    let tx = base_execution_network_service::test_utils::NetworkTestData::transaction(
+        tx_gen.gen_eip1559_pooled(),
+    );
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -79,7 +81,9 @@ async fn test_tx_propagation_policy_trusted_only() {
     let mut peer1_tx_listener = peer_1_handle.pool().unwrap().pending_transactions_listener();
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
+    let tx = base_execution_network_service::test_utils::NetworkTestData::transaction(
+        tx_gen.gen_eip1559_pooled(),
+    );
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -106,7 +110,9 @@ async fn test_tx_propagation_policy_trusted_only() {
     join!(event_stream_0.next_session_established(), event_stream_1.next_session_established());
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
+    let tx = base_execution_network_service::test_utils::NetworkTestData::transaction(
+        tx_gen.gen_eip1559_pooled(),
+    );
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -150,7 +156,9 @@ async fn test_tx_ingress_policy_trusted_only() {
     let mut peer0_tx_listener = peer_0_handle.pool().unwrap().pending_transactions_listener();
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
+    let tx = base_execution_network_service::test_utils::NetworkTestData::transaction(
+        tx_gen.gen_eip1559_pooled(),
+    );
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -174,7 +182,9 @@ async fn test_tx_ingress_policy_trusted_only() {
     join!(event_stream_0.next_session_established(), event_stream_1.next_session_established());
 
     let mut tx_gen = TransactionGenerator::new(rand::rng());
-    let tx = reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
+    let tx = base_execution_network_service::test_utils::NetworkTestData::transaction(
+        tx_gen.gen_eip1559_pooled(),
+    );
 
     // ensure the sender has balance
     let sender = tx.sender();
@@ -208,7 +218,7 @@ async fn rejects_blob_transaction_gossip() {
     let encoded = alloy_rlp::encode(base_execution_network_wire::Transactions(vec![blob]));
     peer0.network().send_eth_message(
         *peer1.peer_id(),
-        reth_network::message::PeerMessage::Other(
+        base_execution_network_service::message::PeerMessage::Other(
             base_execution_network_wire::RawCapabilityMessage::eth(
                 base_execution_network_wire::EthMessageID::Transactions,
                 encoded.into(),

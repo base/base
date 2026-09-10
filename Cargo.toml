@@ -135,7 +135,7 @@ members = [
   "vendor/reth-invalid-block-hooks",
   "crates/execution/state/mdbx-sys",
   "crates/execution/network/discovery",
-  "vendor/reth-network",
+  "crates/execution/network/service",
   "vendor/reth-network-api",
   "vendor/reth-network-p2p",
   "crates/execution/network/types",
@@ -425,7 +425,7 @@ reth-stages = { path = "vendor/reth-stages", default-features = false }
 reth-config = { path = "vendor/reth-config", default-features = false }
 base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
-reth-network = { path = "vendor/reth-network", default-features = false }
+base-execution-network-service = { path = "crates/execution/network/service", default-features = false }
 base-common-io-files = { path = "crates/common/io/files", default-features = false }
 reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
 base-execution-state-provider = { path = "crates/execution/state/provider", default-features = false }

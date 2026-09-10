@@ -158,7 +158,7 @@ impl NetworkManager {
     /// ```no_run
     /// # async fn f() {
     ///
-    /// use reth_network::{NetworkConfig, NetworkManager};
+    /// use base_execution_network_service::{NetworkConfig, NetworkManager};
     /// use base_common_runtime_tasks::Runtime;
     /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
     ///     .build_with_noop_provider(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
@@ -368,7 +368,7 @@ impl NetworkManager {
     /// components of the network
     ///
     /// ```
-    /// use reth_network::{
+    /// use base_execution_network_service::{
     ///     config::rng_secret_key, NetworkConfig, NetworkManager,
     /// };
     /// use base_execution_network_types::mainnet_nodes;

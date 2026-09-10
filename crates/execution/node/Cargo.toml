@@ -20,7 +20,6 @@ reth-exex = { workspace = true }
 reth-config = { workspace = true }
 reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
-reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
 reth-node-core = { workspace = true }
@@ -47,6 +46,7 @@ url = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
+base-execution-network-service = { workspace = true }
 base-execution-state-maintenance = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 base-execution-network-discovery = { workspace = true }
@@ -141,7 +141,7 @@ test-utils = [
     "base-execution-state-provider/test-utils",
     "reth-codec",
     "base-execution-state-database/test-utils",
-    "reth-network/test-utils",
+    "base-execution-network-service/test-utils",
     "base-execution-payload-builder/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-evm-blocks/test-utils",

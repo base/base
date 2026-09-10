@@ -20,7 +20,6 @@ metrics = { workspace = true }
 dyn-clone = { workspace = true }
 pin-project = {workspace = true}
 thiserror = { workspace = true }
-reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 base-execution-txpool = {workspace = true}
 reth-engine-primitives = { workspace = true }
@@ -33,6 +32,7 @@ http = {workspace = true, features = ["default"]}
 serde = {workspace = true, features = ["derive"]}
 strum = { workspace = true, features = ["derive"] }
 base-execution-state-provider = { workspace = true }
+base-execution-network-service = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 tracing = { workspace = true, features = ["attributes"] }
 tower-http = {workspace = true, features = ["default", "full"]}

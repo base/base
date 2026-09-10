@@ -21,16 +21,7 @@ use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_ADDR as DEFAULT_D
 use base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT as DEFAULT_DISCOVERY_PORT;
 use base_execution_network_discovery::{DEFAULT_NET_IF_NAME, NatResolver};
 use base_execution_network_discv5::ListenConfig;
-use base_execution_network_types::IpFilter;
-use base_execution_network_types::NodeRecord;
-use base_execution_network_types::{TrustedPeer, mainnet_nodes};
-use clap::{
-    Args,
-    builder::{OsStr, Resettable},
-};
-use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
-use reth_config::Config;
-use reth_network::{
+use base_execution_network_service::{
     HelloMessageWithProtocols, NetworkConfigBuilder,
     transactions::{
         DEFAULT_SOFT_LIMIT_BYTE_SIZE_POOLED_TRANSACTIONS_RESP_ON_PACK_GET_POOLED_TRANSACTIONS_REQ,
@@ -50,6 +41,15 @@ use reth_network::{
         },
     },
 };
+use base_execution_network_types::IpFilter;
+use base_execution_network_types::NodeRecord;
+use base_execution_network_types::{TrustedPeer, mainnet_nodes};
+use clap::{
+    Args,
+    builder::{OsStr, Resettable},
+};
+use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
+use reth_config::Config;
 use secp256k1::SecretKey;
 use tracing::error;
 

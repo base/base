@@ -19,24 +19,26 @@ use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime_tasks::Runtime;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_network_service::{
+    NetworkConfigBuilder, NetworkManager, config::rng_secret_key,
+};
 use base_execution_payload_builder::NoopPayloadBuilderService;
 use base_execution_state_database::{
     DatabaseEnv, test_utils::TempDatabase, test_utils::create_test_rocksdb_dir,
     test_utils::create_test_rw_db, test_utils::create_test_static_files_dir,
 };
-use base_execution_state_types::Chain;
-use base_execution_txpool::Pool;
-use base_node_context::BaseNodeContext;
-use futures_util::FutureExt;
 use base_execution_state_maintenance::init::init_genesis;
-use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
-use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
-use reth_node_core::node_config::NodeConfig;
-use reth_primitives_traits::{Block as _, RecoveredBlock};
 use base_execution_state_provider::{
     BlockReader, ProviderFactory,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
+use base_execution_state_types::Chain;
+use base_execution_txpool::Pool;
+use base_node_context::BaseNodeContext;
+use futures_util::FutureExt;
+use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
+use reth_node_core::node_config::NodeConfig;
+use reth_primitives_traits::{Block as _, RecoveredBlock};
 use tempfile::TempDir;
 use thiserror::Error;
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};

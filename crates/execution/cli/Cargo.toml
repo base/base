@@ -15,7 +15,6 @@ tracing = { workspace = true }
 humantime = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-reth-network = { workspace = true }
 base-metering = { workspace = true }
 base-reth-cli = { workspace = true }
 reth-cli-util = { workspace = true }
@@ -34,6 +33,7 @@ eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 backon = { workspace = true, features = ["default"] }
+base-execution-network-service = { workspace = true }
 base-execution-payload-builder = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-events = { workspace = true }
@@ -93,7 +93,7 @@ serde = [
     "alloy-eips/serde",
     "base-common-chain-config/serde",
     "base-common-types-chain/serde",
-    "reth-network/serde",
+    "base-execution-network-service/serde",
     "secp256k1/serde",
     "url/serde",
 ]

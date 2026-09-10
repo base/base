@@ -1,5 +1,5 @@
 [package]
-name = "reth-network"
+name = "base-execution-network-service"
 description = "Ethereum network support"
 version.workspace = true
 edition.workspace = true
@@ -72,12 +72,12 @@ base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
 base-execution-state-types = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
-reth-network = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
 reth-network-p2p = { workspace = true, features = ["default", "test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
+base-execution-network-service = { workspace = true, features = ["test-utils"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "rand"] }
 base-execution-network-types = { workspace = true, features = ["std", "test-utils"] }
 base-execution-network-discovery = { workspace = true, features = ["default", "test-utils"] }
@@ -99,7 +99,7 @@ serde = [
     "smallvec/serde",
     "url/serde",
     "reth-primitives-traits/serde",
-    "reth-network/serde",
+    "base-execution-network-service/serde",
     "base-execution-txpool/serde",
     "reth-network-api/serde",
     "rand_08/serde",
@@ -115,7 +115,7 @@ test-utils = [
     "base-execution-network-types/test-utils",
     "base-execution-evm-blocks/test-utils",
     "base-execution-network-discovery/test-utils",
-    "reth-network/test-utils",
+    "base-execution-network-service/test-utils",
     "reth-network-p2p/test-utils",
     "reth-primitives-traits/test-utils",
     "base-execution-state-provider/test-utils",

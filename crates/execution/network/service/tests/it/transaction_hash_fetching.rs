@@ -1,11 +1,11 @@
 use alloy_primitives::U256;
-use base_execution_txpool::{TransactionPool, test_utils::TransactionGenerator};
-use reth_network::{
+use base_common_observability_tracing::init_test_tracing;
+use base_execution_network_service::{
     test_utils::Testnet,
     transactions::{TransactionPropagationMode::Max, TransactionsManagerConfig},
 };
 use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use base_common_observability_tracing::init_test_tracing;
+use base_execution_txpool::{TransactionPool, test_utils::TransactionGenerator};
 use tokio::time::Duration;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -40,8 +40,9 @@ async fn transaction_hash_fetching() {
 
         for _ in 0..num_tx_per_peer {
             let mut tx_gen = TransactionGenerator::new(rand::rng());
-            let tx =
-                reth_network::test_utils::NetworkTestData::transaction(tx_gen.gen_eip1559_pooled());
+            let tx = base_execution_network_service::test_utils::NetworkTestData::transaction(
+                tx_gen.gen_eip1559_pooled(),
+            );
             let sender = tx.sender();
             provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
             peer_pool.add_external_transaction(tx).await.unwrap();

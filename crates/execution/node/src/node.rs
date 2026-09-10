@@ -16,6 +16,9 @@ use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_discv5::enr::IP_ENR_KEY;
 use base_execution_network_discv5::enr::IP6_ENR_KEY;
+use base_execution_network_service::{
+    NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo,
+};
 use base_execution_network_types::NodeRecord;
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, RejectionCache,
@@ -28,7 +31,6 @@ use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
-use reth_network::{NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, PeersInfo};
 use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use tokio_stream::wrappers::BroadcastStream;
@@ -543,7 +545,7 @@ mod tests {
 
     use base_execution_network_discovery::build_local_enr;
     use base_execution_network_discv5::ListenConfig;
-    use reth_network::{NetworkConfigBuilder, config::rng_secret_key};
+    use base_execution_network_service::{NetworkConfigBuilder, config::rng_secret_key};
     use rstest::rstest;
 
     use super::*;

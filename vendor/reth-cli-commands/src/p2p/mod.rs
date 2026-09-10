@@ -7,11 +7,11 @@ use alloy_eips::BlockHashOrNumber;
 use backon::{ConstantBuilder, Retryable};
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
+use base_execution_network_service::{BlockDownloaderProvider, NetworkConfigBuilder};
 use base_execution_network_wire::BodiesClient;
 use clap::{Parser, Subcommand};
 use reth_cli_util::hash_or_num_value_parser;
 use reth_config::Config;
-use reth_network::{BlockDownloaderProvider, NetworkConfigBuilder};
 use reth_node_core::{
     args::{DatadirArgs, NetworkArgs},
     utils::get_single_header,
@@ -172,7 +172,9 @@ pub struct DownloadArgs<C: ChainSpecParser> {
 
 impl<C: ChainSpecParser> DownloadArgs<C> {
     /// Creates and spawns the network and returns the handle.
-    pub async fn launch_network(&self) -> eyre::Result<reth_network::NetworkHandle> {
+    pub async fn launch_network(
+        &self,
+    ) -> eyre::Result<base_execution_network_service::NetworkHandle> {
         let data_dir = self.datadir.clone().resolve_datadir(self.chain.chain());
         let config_path = self.config.clone().unwrap_or_else(|| data_dir.config());
 

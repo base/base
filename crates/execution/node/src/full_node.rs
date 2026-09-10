@@ -31,7 +31,7 @@ pub struct FullNode {
     /// The node's transaction pool.
     pub pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     /// Handle to the node's network.
-    pub network: reth_network::NetworkHandle,
+    pub network: base_execution_network_service::NetworkHandle,
     /// Provider to interact with the node's database
     pub provider: BlockchainProvider,
     /// Handle to the node's payload builder service.

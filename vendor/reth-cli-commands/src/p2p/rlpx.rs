@@ -1,11 +1,11 @@
 //! RLPx subcommand of P2P Debugging tool.
 
+use base_execution_network_service::config::rng_secret_key;
 use base_execution_network_types::{AnyNode, pk2id};
 use base_execution_network_wire::ECIESStream;
 use base_execution_network_wire::HelloMessage;
 use base_execution_network_wire::UnauthedP2PStream;
 use clap::{Parser, Subcommand};
-use reth_network::config::rng_secret_key;
 use secp256k1::SECP256K1;
 use tokio::net::TcpStream;
 

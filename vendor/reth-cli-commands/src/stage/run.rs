@@ -8,6 +8,7 @@ use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use base_cli_utils::CliContext;
 use base_common_chain_config::BaseChainSpec;
+use base_execution_network_service::BlockDownloaderProvider;
 use base_execution_network_wire::HeadersClient;
 use base_execution_state_provider::{
     ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
@@ -22,7 +23,6 @@ use reth_downloaders::{
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
 use reth_exex::ExExManagerHandle;
-use reth_network::BlockDownloaderProvider;
 use reth_node_core::{
     args::{NetworkArgs, StageEnum},
     version::version_metadata,

@@ -56,7 +56,6 @@ crossterm = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["crossterm"] }
 reth-config = { workspace = true, features = ["serde"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-reth-network = { workspace = true, features = ["serde"] }
 tracing = { workspace = true, features = ["attributes"] }
 comfy-table = { workspace = true, features = ["default"] }
 human_bytes = { workspace = true, features = ["default"] }
@@ -70,6 +69,7 @@ clap = { workspace = true, features = ["default", "derive", "env"] }
 base-execution-state-database = {workspace = true, features = ["mdbx"]}
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
+base-execution-network-service = { workspace = true, features = ["serde"] }
 base-execution-state-types = {features = ["clap", "std"], workspace = true}
 reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }

@@ -1,12 +1,12 @@
-//! Interaction with `reth_network::PeersManager`, for integration testing. Otherwise
-//! `reth_network::NetworkManager` manages `reth_network::PeersManager`.
+//! Interaction with `base_execution_network_service::PeersManager`, for integration testing. Otherwise
+//! `base_execution_network_service::NetworkManager` manages `base_execution_network_service::PeersManager`.
 
 use std::net::SocketAddr;
 
-use derive_more::Constructor;
-use base_execution_network_types::{NodeRecord, PeerId};
 use base_execution_network_types::Peer;
 use base_execution_network_types::ReputationChangeKind;
+use base_execution_network_types::{NodeRecord, PeerId};
+use derive_more::Constructor;
 use tokio::sync::{mpsc, oneshot};
 
 /// Provides an API for managing the peers of the network.

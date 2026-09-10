@@ -1,6 +1,6 @@
-//! Reth interface definitions and commonly used types for the reth-network crate.
+//! Reth interface definitions and commonly used types for the base-execution-network-service crate.
 //!
-//! Provides abstractions for the reth-network crate.
+//! Provides abstractions for the base-execution-network-service crate.
 //!
 //! ## Feature Flags
 //!
@@ -193,7 +193,7 @@ pub trait Peers: PeersInfo {
     fn unban_peer(&self, peer: PeerId);
 
     /// Connect to the given peer. NOTE: if the maximum number of outbound sessions is reached,
-    /// this won't do anything. See `reth_network::SessionManager::dial_outbound`.
+    /// this won't do anything. See `base_execution_network_service::SessionManager::dial_outbound`.
     fn connect_peer(&self, peer: PeerId, tcp_addr: SocketAddr) {
         self.connect_peer_kind(peer, PeerKind::Static, tcp_addr, None)
     }

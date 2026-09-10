@@ -97,7 +97,7 @@ impl BaseEthApi {
     }
 
     #[inline]
-    pub fn network(&self) -> &reth_network::NetworkHandle {
+    pub fn network(&self) -> &base_execution_network_service::NetworkHandle {
         self.inner.network()
     }
 

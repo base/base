@@ -80,13 +80,14 @@ pub async fn test_rpc_registry() -> RpcRegistryInner {
         ),
     );
     let mut context = base_execution_rpc_handlers::test_utils::RpcTestUtils::context(mock);
-    let manager = reth_network::NetworkConfig::builder_with_rng_secret_key(Runtime::test())
-        .disable_discovery()
-        .listener_addr(test_address())
-        .build(context.provider.clone())
-        .manager()
-        .await
-        .expect("local fixture network");
+    let manager =
+        base_execution_network_service::NetworkConfig::builder_with_rng_secret_key(Runtime::test())
+            .disable_discovery()
+            .listener_addr(test_address())
+            .build(context.provider.clone())
+            .manager()
+            .await
+            .expect("local fixture network");
     context.network = manager.handle().clone();
     tokio::spawn(manager);
     let eth_api =

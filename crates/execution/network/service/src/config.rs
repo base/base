@@ -328,7 +328,7 @@ impl NetworkConfigBuilder {
     ///
     /// ```
     /// # use base_execution_network_wire::HelloMessage;
-    /// # use reth_network::NetworkConfigBuilder;
+    /// # use base_execution_network_service::NetworkConfigBuilder;
     /// # fn builder(builder: NetworkConfigBuilder) {
     /// let peer_id = builder.get_peer_id();
     /// builder.hello_message(HelloMessage::builder(peer_id).build());

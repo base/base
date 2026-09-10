@@ -135,7 +135,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-common-observability-metrics](../../crates/common/observability/metrics/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
-| [reth-network](../../vendor/reth-network/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-network-service](../../crates/execution/network/service/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-api](../../vendor/reth-network-api/Cargo.toml) | Retain shared infrastructure |
 | [reth-network-p2p](../../vendor/reth-network-p2p/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-types](../../crates/execution/network/types/Cargo.toml) | Retain shared infrastructure |
@@ -213,7 +213,7 @@ Follow-up removals:
 - The first batch passed 13 Base engine scenarios, 10 RocksDB scenarios, six harness scenarios, and 313 shared engine/stage/RPC/node unit tests.
 - The second batch passed 578 provider, engine, payload scheduler, node configuration, and RPC unit tests, plus the payload-builder documentation example.
 - The EVM batch passed 614 shared pool, RPC, engine, stages, ExEx, invalid-block-hook, and node-builder unit tests (two existing ignored tests).
-- A broader network library test check hits lifetime errors in unchanged discovery tests at `vendor/reth-network/src/discovery.rs:635` and `:706`, where `Discv5::send_ping` is returned through `with_discv5`. Network test-utils compile in the Base integration build.
+- A broader network library test check hits lifetime errors in unchanged discovery tests at `crates/execution/network/service/src/discovery.rs:635` and `:706`, where `Discv5::send_ping` is returned through `with_discv5`. Network test-utils compile in the Base integration build.
 - The final Base node run passed 70 unit tests, two existing mining scenarios, and all 29 migrated engine/RocksDB/harness scenarios (one existing ignored P2P scenario).
 - RPC-builder integration tests passed (68), as did live-trie integration tests (five). Test targets for Base shadow-indexer/trie, RPC builder, and stages compile.
 - `reth-evm` checks passed with `--no-default-features` and with `--no-default-features --features test-utils`.

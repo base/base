@@ -1,12 +1,12 @@
 //! Session tests
 
-use base_execution_network_wire::EthVersion;
-use base_execution_state_api::NoopProvider;
-use futures::StreamExt;
-use reth_network::{
+use base_execution_network_service::{
     NetworkEvent, NetworkEventListenerProvider,
     test_utils::{NetworkEventStream, PeerConfig, Testnet},
 };
+use base_execution_network_wire::EthVersion;
+use base_execution_state_api::NoopProvider;
+use futures::StreamExt;
 use reth_network_api::{
     NetworkInfo, Peers,
     events::{PeerEvent, SessionInfo},

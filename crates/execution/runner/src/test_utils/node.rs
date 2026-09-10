@@ -28,7 +28,7 @@ pub struct LocalNode {
     /// In-process execution services.
     pub execution: base_execution_payload_builder::BaseExecutionHandle,
     /// Execution network and synchronization status.
-    pub network: reth_network::NetworkHandle,
+    pub network: base_execution_network_service::NetworkHandle,
     /// HTTP API address of the local node.
     pub http_api_addr: SocketAddr,
     /// WebSocket API address of the local node.
@@ -172,13 +172,13 @@ mod tests {
         BaseExecutionPayloadEnvelopeV4, BasePayloadAttributes, ForkchoiceState, PayloadAttributes,
     };
     use base_execution_payload_types::BasePayloadBuilderAttributes;
+    use base_execution_state_provider::{DatabaseProviderROFactory, HeaderProvider};
     use base_node_core::{BaseNode, NodeConfig, RollupArgs};
     use base_testing_support::build_test_genesis;
     use reth_node_core::{
         args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
         dirs::{DataDirPath, MaybePlatformPath},
     };
-    use base_execution_state_provider::{DatabaseProviderROFactory, HeaderProvider};
 
     use super::LocalNode;
     use crate::test_utils::engine::EngineApi;
