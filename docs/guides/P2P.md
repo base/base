@@ -661,11 +661,11 @@ the local enode record (the DevP2P equivalent of an ENR — a URL-formatted node
 ### Transaction pool and gossip
 
 The Base transaction pool is defined in
-[`crates/execution/txpool/`](https://github.com/base/base/tree/main/crates/execution/txpool). It
+[`crates/execution/txpool/pool/`](https://github.com/base/base/tree/main/crates/execution/txpool/pool). It
 extends reth's standard transaction pool with rollup-specific validation and ordering.
 
 The
-[`BaseTransactionValidator`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
+[`BaseTransactionValidator`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/validator.rs)
 wraps reth's `EthTransactionValidator` and adds L1 data gas fee checks. Every transaction on Base
 incurs both an L2 execution gas cost and an L1 data fee (the cost of posting the transaction data to
 Ethereum L1). The validator ensures that the sender's balance covers both fees. It also rejects
@@ -673,7 +673,7 @@ EIP-4844 blob transactions (a special transaction type used on L1 to carry large
 rollups, which are not meaningful on the L2 itself).
 
 The ordering strategy is configurable via `--rollup.txpool-ordering` and defined in
-[`ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs):
+[`ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/ordering.rs):
 
 ```rust
 pub enum BaseOrdering<T> {
@@ -811,10 +811,10 @@ networks are completely separate and serve different purposes.
 **Execution layer transaction pool:**
 
 -
-  [`crates/execution/txpool/src/validator.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/validator.rs)
+  [`crates/execution/txpool/pool/src/validator.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/validator.rs)
   — BaseTransactionValidator with L1 data gas checks
 -
-  [`crates/execution/txpool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/src/ordering.rs)
+  [`crates/execution/txpool/pool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/ordering.rs)
   — BaseOrdering (fee-based vs FIFO)
 -
   [`crates/execution/tx-forwarding/src/reader/`](https://github.com/base/base/tree/main/crates/execution/tx-forwarding/src/reader)

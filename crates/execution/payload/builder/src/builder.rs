@@ -32,7 +32,7 @@ use base_execution_state_api::{BlockReader, ProviderError, StateProvider, StateP
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_state_tasks::PayloadStateRootHandle;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BasePooledTransaction, BestTransactionsAttributes, DataAvailabilitySized, GuardMetrics,
     ParkableTransactionPool, PredicateContext, TransactionPool,
 };
@@ -227,7 +227,7 @@ where
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
 
         let builder = Builder::new(|_| {
-            NoopPayloadTransactions::<base_execution_txpool::BasePooledTransaction>::default()
+            NoopPayloadTransactions::<base_execution_txpool_pool::BasePooledTransaction>::default()
         });
         builder.witness(state_provider, &self.client, &ctx)
     }
@@ -263,7 +263,7 @@ where
             best_payload: None,
         };
         self.build_payload(args, |_| {
-            NoopPayloadTransactions::<base_execution_txpool::BasePooledTransaction>::default()
+            NoopPayloadTransactions::<base_execution_txpool_pool::BasePooledTransaction>::default()
         })?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
@@ -1379,7 +1379,7 @@ mod tests {
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,
     };
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool_pool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{SealedHeader, SignedTransaction, WithEncoded};
     use base_execution_state_provider::NoopProvider;

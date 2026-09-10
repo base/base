@@ -26,7 +26,7 @@ use base_execution_state_api::{
     BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, NoopProvider, StateProviderFactory,
     StateRangeProviderFactory,
 };
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     EthTransactionPool, InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
 };
 use futures::{FutureExt, StreamExt};
@@ -196,9 +196,9 @@ where
                 BaseEvmConfig::default(),
                 Runtime::test(),
             );
-            peer.map_transactions_manager(base_execution_txpool::Pool::new(
+            peer.map_transactions_manager(base_execution_txpool_pool::Pool::new(
                 pool,
-                base_execution_txpool::BaseOrdering::default(),
+                base_execution_txpool_pool::BaseOrdering::default(),
                 blob_store,
                 Default::default(),
             ))
@@ -228,9 +228,9 @@ where
             );
 
             peer.map_transactions_manager_with(
-                base_execution_txpool::Pool::new(
+                base_execution_txpool_pool::Pool::new(
                     pool,
-                    base_execution_txpool::BaseOrdering::default(),
+                    base_execution_txpool_pool::BaseOrdering::default(),
                     blob_store,
                     Default::default(),
                 ),

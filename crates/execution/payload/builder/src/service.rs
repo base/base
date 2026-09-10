@@ -215,8 +215,8 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::TransactionPool + Unpin + 'static,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
 {
     /// The type that knows how to create new payloads.
     generator: BasicPayloadJobGenerator<Client, Pool>,
@@ -253,8 +253,8 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::TransactionPool + Unpin + 'static,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
 {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
     /// with it.
@@ -407,8 +407,8 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: base_execution_txpool::TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::TransactionPool + Unpin + 'static,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
     St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
 {
     type Output = ();
@@ -683,7 +683,7 @@ mod tests {
     use base_common_types_payload::PayloadAttributes as EthPayloadAttributes;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_provider::test_utils::MockEthProvider;
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         BaseOrdering, BaseTransactionPool, BaseTransactionValidator,
         EthTransactionValidatorBuilder, InMemoryBlobStore, Pool,
     };

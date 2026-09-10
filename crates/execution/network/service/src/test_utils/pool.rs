@@ -6,7 +6,7 @@ use base_execution_network_wire::UnifiedStatus;
 
 use crate::NetworkConfigBuilder;
 
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BaseOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
     test_utils::BaseTestTransaction,
 };

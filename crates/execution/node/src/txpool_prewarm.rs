@@ -7,7 +7,7 @@ use base_execution_engine_driver::tree::{
     TxPoolPrewarmSource as PrewarmSource, TxPoolPrewarmTransaction as Transaction,
     TxPoolPrewarmTransactions as Transactions,
 };
-use base_execution_txpool::{BestTransactions, BestTransactionsAttributes, TransactionPool};
+use base_execution_txpool_pool::{BestTransactions, BestTransactionsAttributes, TransactionPool};
 
 /// [`TransactionPool`]-backed [`PrewarmSource`].
 #[derive(Debug)]

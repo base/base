@@ -1,7 +1,7 @@
 use std::{future::poll_fn, task::Poll};
 
 use assert_matches::assert_matches;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     FullTransactionEvent, MockTransactionValidator, TransactionEvent, TransactionListenerKind,
     TransactionOrigin, TransactionPool,
     test_utils::{MockTransactionFactory, TestPoolBuilder},

@@ -1,7 +1,7 @@
 //! Trait bounds for Base builder components.
 
 use base_execution_payload_builder::ParkablePayloadTransactions;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BasePooledTransaction, StateDiffInvalidation, TransactionPool, TransactionPoolExt,
 };
 use base_execution_state_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
@@ -10,7 +10,7 @@ use base_execution_state_provider::{BlockReaderIdExt, ChainSpecProvider, StatePr
 pub trait PoolBounds:
     TransactionPool
     + TransactionPoolExt
-    + base_execution_txpool::ParkableTransactionPool
+    + base_execution_txpool_pool::ParkableTransactionPool
     + StateDiffInvalidation
     + Unpin
     + 'static
@@ -20,7 +20,7 @@ pub trait PoolBounds:
 impl<T> PoolBounds for T where
     T: TransactionPool
         + TransactionPoolExt
-        + base_execution_txpool::ParkableTransactionPool
+        + base_execution_txpool_pool::ParkableTransactionPool
         + StateDiffInvalidation
         + Unpin
         + 'static

@@ -1,4 +1,4 @@
-# `base-execution-txpool`
+# `base-execution-txpool-pool`
 
 Transaction pool for Base.
 
@@ -20,7 +20,7 @@ Downstream node builds substitute their own payload by implementing
 `ValidatedTransactionExtensions<T>`, then registering the generic monomorphizations:
 
 ```rust,ignore
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BuilderApiImpl, BuilderApiServer, ExtensionError, ValidatedTransactionExtensions,
 };
 
@@ -51,11 +51,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-execution-txpool = { workspace = true }
+base-execution-txpool-pool = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_txpool::{BaseOrdering, BaseTransactionPool, BaseTransactionValidator};
+use base_execution_txpool_pool::{BaseOrdering, BaseTransactionPool, BaseTransactionValidator};
 
 let pool = Pool::new(
     BaseTransactionValidator::new(client, evm),

@@ -15,7 +15,7 @@ workspace = true
 serde_json = { workspace = true }
 base-execution-state-provider = { workspace = true }
 alloy-primitives = { workspace = true }
-base-execution-txpool = { workspace = true }
+base-execution-txpool-pool = { workspace = true }
 metrics = { workspace = true, optional = true }
 lru = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default"] }
@@ -34,7 +34,7 @@ eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["std"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
-base-execution-txpool = { workspace = true, features = ["test-utils"] }
+base-execution-txpool-pool = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 
 [features]

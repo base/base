@@ -9,7 +9,7 @@ use base_common_observability_events::{
 };
 use base_common_types_chain::{BlockHeader, EIP8130_TX_TYPE_ID, Typed2718};
 use base_execution_state_api::BlockReaderIdExt;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, TransactionOrigin, TransactionPool,
     ValidityPredicate,
 };
@@ -310,7 +310,7 @@ mod tests {
         TxEip1559, TxEip8130,
     };
     use base_execution_state_provider::test_utils::MockEthProvider;
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         NoopTransactionPool, TransactionOrigin,
         test_utils::{MockTransaction, testing_pool},
     };
@@ -346,7 +346,7 @@ mod tests {
                     address: Address::repeat_byte(0xab),
                     slot: U256::from(1),
                     mask: U256::MAX,
-                    op: base_execution_txpool::ValidityOperator::Equal,
+                    op: base_execution_txpool_pool::ValidityOperator::Equal,
                     value: U256::from(0x789),
                 }],
             },
@@ -357,18 +357,18 @@ mod tests {
         vec![
             ValidityPredicate::Balance {
                 address: Address::repeat_byte(0x11),
-                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                op: base_execution_txpool_pool::ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(1),
             },
             ValidityPredicate::Storage {
                 address: Address::repeat_byte(0xab),
                 slot: U256::from(1),
                 mask: U256::MAX,
-                op: base_execution_txpool::ValidityOperator::Equal,
+                op: base_execution_txpool_pool::ValidityOperator::Equal,
                 value: U256::from(0x789),
             },
             ValidityPredicate::BlockNumber {
-                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+                op: base_execution_txpool_pool::ValidityOperator::GreaterThanOrEqual,
                 value: U256::from(100),
             },
         ]
@@ -623,7 +623,7 @@ mod tests {
             address: Address::repeat_byte(0xab),
             slot: U256::from(1),
             mask: U256::from(0xff),
-            op: base_execution_txpool::ValidityOperator::Equal,
+            op: base_execution_txpool_pool::ValidityOperator::Equal,
             value: U256::from(0x1ff),
         }];
 

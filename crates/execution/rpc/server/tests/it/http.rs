@@ -176,7 +176,7 @@ where
     let call_request = BaseTransactionRequest::default();
     let transaction_request = BaseTransactionRequest::default();
     let bytes = Bytes::default();
-    let tx = base_execution_txpool::test_utils::TransactionBuilder::default()
+    let tx = base_execution_txpool_pool::test_utils::TransactionBuilder::default()
         .signer(B256::repeat_byte(1))
         .chain_id(8453)
         .nonce(0)

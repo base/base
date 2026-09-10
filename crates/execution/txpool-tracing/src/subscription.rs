@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use base_execution_txpool::{FullTransactionEvent, TransactionPool};
+use base_execution_txpool_pool::{FullTransactionEvent, TransactionPool};
 use futures::StreamExt;
 use base_execution_state_provider::CanonStateNotification;
 use base_common_observability_tracing::tracing::debug;

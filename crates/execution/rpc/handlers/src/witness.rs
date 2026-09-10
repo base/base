@@ -12,7 +12,7 @@ use base_execution_payload_builder::BasePayloadBuilder;
 use base_execution_state_api::{
     BlockReaderIdExt, ProviderError, ProviderResult, StateProviderFactory,
 };
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;

@@ -2,7 +2,7 @@ use std::{fmt, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     NoExtensions, TransactionPool, ValidPoolTransaction, ValidatedTransaction,
     ValidatedTransactionExtensions,
 };
@@ -190,7 +190,7 @@ mod tests {
 
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_types_chain::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         BasePooledTransaction, NoopTransactionPool, TransactionId, TransactionOrigin,
     };
 

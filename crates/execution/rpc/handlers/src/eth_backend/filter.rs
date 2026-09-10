@@ -28,8 +28,8 @@ use base_execution_state_api::{
 };
 use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderError;
-use base_execution_txpool::BaseTransactionPool;
-use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
+use base_execution_txpool_pool::BaseTransactionPool;
+use base_execution_txpool_pool::{NewSubpoolTransactionStream, TransactionPool};
 use futures::{
     Future,
     stream::{FuturesOrdered, StreamExt},

@@ -12,7 +12,7 @@ use std::{
 
 use alloy_primitives::{TxHash, U256};
 use base_common_types_chain::{CoinbaseTip, Transaction};
-use base_execution_txpool::{Priority, ValidPoolTransaction};
+use base_execution_txpool_pool::{Priority, ValidPoolTransaction};
 
 /// Complete priority key used when merging best-transaction sources.
 ///
@@ -203,7 +203,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
         Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
     };
-    use base_execution_txpool::{BaseOrdering, test_utils::TransactionBuilder};
+    use base_execution_txpool_pool::{BaseOrdering, test_utils::TransactionBuilder};
     use base_testing_support::Account;
     use reth_primitives_traits::Recovered;
 

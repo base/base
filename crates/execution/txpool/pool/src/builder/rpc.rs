@@ -3,7 +3,7 @@ use std::{marker::PhantomData, time::Instant};
 use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
 use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
-use base_execution_txpool::{TransactionOrigin, TransactionPool};
+use base_execution_txpool_pool::{TransactionOrigin, TransactionPool};
 use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -201,7 +201,7 @@ mod tests {
     use base_common_types_chain::{
         BaseTransactionSigned, BaseTypedTransaction, TxDeposit, TxEip1559,
     };
-    use base_execution_txpool::NoopTransactionPool;
+    use base_execution_txpool_pool::NoopTransactionPool;
 
     use super::*;
     use crate::{BasePooledTransaction, NoExtensions, ValidatedTransaction};
@@ -277,7 +277,7 @@ mod tests {
             self.reject.is_none()
         }
 
-        fn extract(_tx: &base_execution_txpool::ValidPoolTransaction) -> Self {
+        fn extract(_tx: &base_execution_txpool_pool::ValidPoolTransaction) -> Self {
             Self::default()
         }
 

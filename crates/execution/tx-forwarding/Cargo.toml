@@ -26,7 +26,7 @@ base-common-observability-events = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 
 [dev-dependencies]

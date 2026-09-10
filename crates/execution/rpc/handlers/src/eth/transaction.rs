@@ -14,7 +14,7 @@ use base_common_types_rpc::BaseTransactionReceipt;
 use base_execution_state_api::{BlockReaderIdExt, ProviderTx, TransactionsProvider};
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
+use base_execution_txpool_pool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
 use futures::StreamExt;
 use reth_primitives_traits::{SignerRecoverable, WithEncoded};
 use tracing::{debug, instrument, warn};
@@ -40,7 +40,7 @@ impl BaseEthApi {
     pub async fn send_pool_transaction(
         &self,
         origin: TransactionOrigin,
-        tx: WithEncoded<base_execution_txpool::BasePooledTransaction>,
+        tx: WithEncoded<base_execution_txpool_pool::BasePooledTransaction>,
     ) -> Result<B256, BaseEthApiError> {
         let (tx, pool_transaction) = tx.split();
 

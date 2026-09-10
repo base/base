@@ -13,7 +13,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_execution_network_service::{NetworkInfo, Peers};
 use base_execution_network_types::PeerKind;
 use base_execution_network_types::{AnyNode, NodeRecord};
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use jsonrpsee::core::RpcResult;
 
 /// `admin` API implementation.

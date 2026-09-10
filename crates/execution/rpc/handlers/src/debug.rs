@@ -24,7 +24,7 @@ use base_execution_state_provider::{
 };
 use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
 use base_execution_state_types::ExecutionWitnessMode;
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool_pool::BasePooledTransaction;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use reth_payload_util::NoopPayloadTransactions;

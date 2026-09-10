@@ -24,7 +24,7 @@ use base_execution_state_provider::{
     BalNotificationStream, BalStore, BalStoreHandle, InMemoryBalStore, ProviderError,
     ProviderResult, RawBal, test_utils::MockEthProvider,
 };
-use base_execution_txpool::test_utils::TransactionGenerator;
+use base_execution_txpool_pool::test_utils::TransactionGenerator;
 use rand::Rng;
 use tokio::sync::oneshot;
 

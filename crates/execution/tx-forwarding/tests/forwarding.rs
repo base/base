@@ -11,7 +11,7 @@ use base_common_client_ethereum::TransactionBuilder;
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
 use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
 };
 use base_node_runner::test_utils::TestHarness;

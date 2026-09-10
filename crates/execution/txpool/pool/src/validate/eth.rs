@@ -226,7 +226,7 @@ impl<Client> EthTransactionValidator<Client> {
     /// # Example
     ///
     /// ```ignore
-    /// use reth_transaction_pool::{error::InvalidPoolTransactionError, TransactionOrigin};
+    /// use base_execution_txpool_pool::{error::InvalidPoolTransactionError, TransactionOrigin};
     ///
     /// let mut validator = builder.build(blob_store);
     /// // Reject external transactions with input data exceeding 1KB
@@ -287,7 +287,7 @@ impl<Client> EthTransactionValidator<Client> {
     /// # Example
     ///
     /// ```ignore
-    /// use reth_transaction_pool::{error::InvalidPoolTransactionError, TransactionOrigin};
+    /// use base_execution_txpool_pool::{error::InvalidPoolTransactionError, TransactionOrigin};
     ///
     /// let mut validator = builder.build(blob_store);
     /// // Reject transactions from accounts with zero balance

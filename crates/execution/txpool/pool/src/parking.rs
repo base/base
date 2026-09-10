@@ -9,7 +9,7 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{HashMap, hash_map::Entry},
 };
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
     ValidPoolTransaction,
 };
@@ -68,7 +68,7 @@ pub trait ParkableBestTransactions: BestTransactions<Item = Arc<ValidPoolTransac
 /// A transaction pool that can create lane-aware parkable best iterators.
 pub trait ParkableTransactionPool: TransactionPool
 where
-    Self: base_execution_txpool::TransactionPool,
+    Self: base_execution_txpool_pool::TransactionPool,
 {
     /// Returns a parkable best iterator using the supplied fee attributes.
     fn best_transactions_with_attributes_and_parking(
@@ -344,7 +344,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Constants, Eip8130Signed,
         TxEip8130,
     };
-    use base_execution_txpool::{TransactionId, TransactionOrigin};
+    use base_execution_txpool_pool::{TransactionId, TransactionOrigin};
     use reth_primitives_traits::Recovered;
 
     use super::*;

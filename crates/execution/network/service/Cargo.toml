@@ -30,7 +30,7 @@ pin-project = { workspace = true }
 base-common-io-files = { workspace = true }
 reth-primitives-traits = {workspace = true}
 alloy-rpc-types-admin = { workspace = true }
-base-execution-txpool = { workspace = true }
+base-execution-txpool-pool = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
@@ -76,7 +76,7 @@ tokio = { workspace = true, features = ["full"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
 parking_lot = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
-base-execution-txpool = { workspace = true, features = ["test-utils"] }
+base-execution-txpool-pool = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
@@ -103,7 +103,7 @@ serde = [
     "url/serde",
     "reth-primitives-traits/serde",
     "base-execution-network-service/serde",
-    "base-execution-txpool/serde",
+    "base-execution-txpool-pool/serde",
     "rand_08/serde",
     "base-execution-state-api/serde",
     "base-execution-network-types/serde",
@@ -113,7 +113,7 @@ serde = [
     "base-execution-state-memory/serde",
 ]
 test-utils = [
-    "base-execution-txpool/test-utils",
+    "base-execution-txpool-pool/test-utils",
     "base-execution-network-types/test-utils",
     "base-execution-evm-blocks/test-utils",
     "base-execution-network-discovery/test-utils",

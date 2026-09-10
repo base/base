@@ -61,7 +61,7 @@ base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-prover-service = { workspace = true, features = ["default"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
-base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 prometheus-scraper = { version = "0.2.0", default-features = false }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }

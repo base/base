@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, TxHash};
 use base_common_types_chain::Transaction;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BasePooledTransaction, BestTransactions, InvalidPoolTransactionError, ParkableBestTransactions,
     PoolTransactionError, ValidPoolTransaction,
 };
@@ -67,7 +67,7 @@ where
 }
 
 impl ParkablePayloadTransactions
-    for reth_payload_util::NoopPayloadTransactions<base_execution_txpool::BasePooledTransaction>
+    for reth_payload_util::NoopPayloadTransactions<base_execution_txpool_pool::BasePooledTransaction>
 {
     fn park_current(&mut self) -> bool {
         false

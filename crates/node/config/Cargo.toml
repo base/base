@@ -25,7 +25,7 @@ alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-types-rpc = {workspace = true}
-base-execution-txpool = { workspace = true }
+base-execution-txpool-pool = { workspace = true }
 base-common-cli-support = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }

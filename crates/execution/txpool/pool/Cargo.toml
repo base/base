@@ -1,5 +1,5 @@
 [package]
-name = "base-execution-txpool"
+name = "base-execution-txpool-pool"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 imbl = { workspace = true }
+aquamarine = {workspace = true}
 bitflags = { workspace = true }
 metrics = { workspace = true  }
 smallvec = { workspace = true }
@@ -73,8 +74,8 @@ proptest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-chain-config = { workspace = true, features = ["std"] }
-base-execution-txpool = {workspace = true, features = ["test-utils"]}
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = {workspace = true, features = ["test-utils"]}
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "rand"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }

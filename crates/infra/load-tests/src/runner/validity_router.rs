@@ -7,7 +7,7 @@
 //! each transaction's `from`/`to` at prepare time.
 
 use alloy_primitives::{Address, B256, U256, keccak256};
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool_pool::ValidityPredicate;
 
 use super::{
     BlockNumberBound, LoadConfig, PredicateAddress, SlotTemplate, SubmitCohort,
@@ -198,7 +198,7 @@ fn sender_in_fraction(sender: Address, seed: u64, salt: u64, fraction: f64) -> b
 
 #[cfg(test)]
 mod tests {
-    use base_execution_txpool::ValidityOperator;
+    use base_execution_txpool_pool::ValidityOperator;
 
     use super::*;
     use crate::PredicateValue;

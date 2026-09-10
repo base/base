@@ -16,9 +16,9 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-base-execution-txpool = { workspace = true }
+base-execution-txpool-pool = { workspace = true }
 base-common-types-chain = { workspace = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 [dev-dependencies]
-base-execution-txpool = { workspace = true, features = ["test-utils"] }
+base-execution-txpool-pool = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }

@@ -91,7 +91,7 @@ impl<B: PayloadTransactions, A: PayloadTransactions> PayloadTransactionsChain<B,
 
 impl<A, B> PayloadTransactions for PayloadTransactionsChain<A, B>
 where
-    A: PayloadTransactions<Transaction = base_execution_txpool::BasePooledTransaction>,
+    A: PayloadTransactions<Transaction = base_execution_txpool_pool::BasePooledTransaction>,
     B: PayloadTransactions<Transaction = A::Transaction>,
 {
     type Transaction = A::Transaction;

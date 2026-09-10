@@ -8,7 +8,7 @@ use alloy_primitives::U256;
 use base_common_types_chain::BlockHeader;
 use base_execution_network_service::{NetworkInfo, Peers};
 use base_execution_state_api::{BlockReader, BlockReaderIdExt};
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use chrono::Local;
 use reth_primitives_traits::{Block, BlockBody};
 use serde_json::Value;
@@ -759,7 +759,7 @@ where
 mod tests {
     use base_execution_network_service::NoopNetwork;
     use base_execution_state_api::NoopProvider;
-    use base_execution_txpool::NoopTransactionPool;
+    use base_execution_txpool_pool::NoopTransactionPool;
     use futures_util::{SinkExt, StreamExt};
     use serde_json::json;
     use tokio::{net::TcpListener, sync::Notify};

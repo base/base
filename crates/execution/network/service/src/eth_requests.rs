@@ -45,7 +45,7 @@ use base_execution_state_api::{
     BalProvider, BlockReader, BytecodeReader, GetBlockAccessListLimit, HeaderProvider,
     ProviderResult, RangeEnd, RangeResponse, StateProviderFactory, StateRangeProviderFactory,
 };
-use base_execution_txpool::{BlobStore, NoopBlobStore};
+use base_execution_txpool_pool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use reth_primitives_traits::Block;
 use tokio::sync::{mpsc::Receiver, oneshot};
@@ -843,7 +843,7 @@ mod tests {
     use base_execution_state_api::NoopProvider;
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
+    use base_execution_txpool_pool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use test_case::test_case;
     use tokio::sync::mpsc;
 

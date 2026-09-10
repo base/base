@@ -18,7 +18,7 @@ use base_execution_payload_types::{
     BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
 };
 use base_execution_state_api::BlockReader;
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use eyre::OptionExt;
 use futures_util::{Stream, StreamExt, stream::Fuse};
 use tokio::time::Interval;

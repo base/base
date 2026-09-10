@@ -373,7 +373,7 @@ impl NetworkManager {
     /// use base_execution_network_types::mainnet_nodes;
     /// use base_execution_state_api::{NoopProvider};
     /// use base_common_runtime_tasks::Runtime;
-    /// use base_execution_txpool::TransactionPool;
+    /// use base_execution_txpool_pool::TransactionPool;
     /// async fn launch<Pool: TransactionPool>(pool: Pool) {
     ///     // This block provider implementation is used for testing purposes.
     ///     let client = NoopProvider::default();

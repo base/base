@@ -8,7 +8,7 @@ use base_execution_rpc_handlers::{
     SendRawTransactionValidityApiServer, ShadowValidityBuilderApi, TransactionStatusApiImpl,
     TransactionStatusApiServer,
 };
-use base_execution_txpool::BuilderApiServer;
+use base_execution_txpool_pool::BuilderApiServer;
 use base_metering::{
     BaseApiExtServer, MeteringApiImpl, MeteringApiServer, MeteringConfig, MeteringStoreExt,
 };

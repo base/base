@@ -424,7 +424,7 @@ mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
-    use base_execution_txpool::{NoExtensions, ValidatedTransaction};
+    use base_execution_txpool_pool::{NoExtensions, ValidatedTransaction};
     use jsonrpsee::{
         RpcModule, core::params::ArrayParams, http_client::HttpClientBuilder, server::Server,
     };

@@ -12,7 +12,7 @@ use base_execution_state_provider::{
     test_utils::{MockEthProvider, create_test_provider_factory_with_chain_spec},
 };
 use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore,
     EthTransactionValidatorBuilder, Pool,
 };

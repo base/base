@@ -10,7 +10,7 @@ use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
 use base_common_types_chain::Transaction;
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, AddedTransactionState, AllPoolTransactions, AllTransactionsEvents,
     BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
     FullTransactionEvent, GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool,
@@ -202,7 +202,7 @@ where
     fn limit_rejection_error(
         hash: TxHash,
         rejection: LimitRejection,
-    ) -> base_execution_txpool::PoolError {
+    ) -> base_execution_txpool_pool::PoolError {
         GuardMetrics::admission_rejected(GuardMetrics::rejection_reason(rejection)).increment(1);
         let reason = match rejection {
             LimitRejection::SenderLimit => "sender EIP-8130 signature limit reached",
@@ -211,7 +211,7 @@ where
             LimitRejection::PayerBalance => "payer cannot fund another EIP-8130 transaction",
         };
         debug!(reason = GuardMetrics::rejection_reason(rejection), "EIP-8130 admission rejected");
-        base_execution_txpool::PoolError::other(hash, reason)
+        base_execution_txpool_pool::PoolError::other(hash, reason)
     }
 
     /// Applies canonical state changes and evicts affected EIP-8130 transactions.
@@ -422,8 +422,8 @@ where
             .map(|existing| *existing.hash())
     }
 
-    fn stale_classification_error(hash: TxHash) -> base_execution_txpool::PoolError {
-        base_execution_txpool::PoolError::other(
+    fn stale_classification_error(hash: TxHash) -> base_execution_txpool_pool::PoolError {
+        base_execution_txpool_pool::PoolError::other(
             hash,
             "EIP-8130 admission classification changed during validation",
         )
@@ -499,7 +499,7 @@ where
                 if pre_admitted {
                     self.guard.write().release(&hash);
                 }
-                return Err(base_execution_txpool::PoolError::other(
+                return Err(base_execution_txpool_pool::PoolError::other(
                     hash,
                     "inner pool returned no outcome",
                 ));
@@ -696,20 +696,20 @@ where
                 Ok(outcome.outcome)
             }
             TransactionValidationOutcome::Invalid(transaction, error) => {
-                Err(base_execution_txpool::PoolError::new(
+                Err(base_execution_txpool_pool::PoolError::new(
                     *transaction.hash(),
-                    base_execution_txpool::PoolErrorKind::InvalidTransaction(error),
+                    base_execution_txpool_pool::PoolErrorKind::InvalidTransaction(error),
                 ))
             }
             TransactionValidationOutcome::Error(hash, error) => {
-                Err(base_execution_txpool::PoolError::other(hash, error.to_string()))
+                Err(base_execution_txpool_pool::PoolError::other(hash, error.to_string()))
             }
         }
     }
 
     fn validated_pool_transaction(
         &self,
-        transaction: base_execution_txpool::ValidTransaction,
+        transaction: base_execution_txpool_pool::ValidTransaction,
         origin: TransactionOrigin,
         propagate: bool,
         authorities: Option<Vec<Address>>,
@@ -725,7 +725,7 @@ where
         });
 
         ValidPoolTransaction {
-            transaction_id: base_execution_txpool::TransactionId::new(
+            transaction_id: base_execution_txpool_pool::TransactionId::new(
                 sender_id,
                 transaction.nonce(),
             ),
@@ -1417,7 +1417,7 @@ where
         self.protocol_pool.set_block_info(info)
     }
 
-    fn on_canonical_state_change(&self, update: base_execution_txpool::CanonicalStateUpdate<'_>) {
+    fn on_canonical_state_change(&self, update: base_execution_txpool_pool::CanonicalStateUpdate<'_>) {
         let block_hash = update.hash();
         let now = update.timestamp();
         let block_number = update.number();
@@ -1737,7 +1737,7 @@ mod tests {
     };
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         CanonicalStateUpdate, EthTransactionValidatorBuilder, InMemoryBlobStore, PoolConfig,
         PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,
     };

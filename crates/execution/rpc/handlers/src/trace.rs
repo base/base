@@ -24,7 +24,7 @@ use base_execution_evm_inspectors::{
 use base_execution_evm_runtime::DatabaseCommit;
 use base_execution_state_api::{BlockNumReader, BlockReader};
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::PoolPooledTx;
+use base_execution_txpool_pool::PoolPooledTx;
 use futures::StreamExt;
 use jsonrpsee::core::RpcResult;
 use serde::{Deserialize, Serialize};
@@ -111,7 +111,7 @@ impl TraceApi {
         block_id: Option<BlockId>,
     ) -> Result<TraceResults, BaseEthApiError> {
         let tx = recover_raw_transaction::<PoolPooledTx>(&tx)?
-            .map(base_execution_txpool::BasePooledTransaction::pooled_into_consensus);
+            .map(base_execution_txpool_pool::BasePooledTransaction::pooled_into_consensus);
 
         let (evm_env, at) = self.eth_api().evm_env_at(block_id.unwrap_or_default()).await?;
 

@@ -5,7 +5,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use base_execution_evm_runtime::{Database, state::EvmState};
-use base_execution_txpool::{PredicateContext, ValidityPredicate};
+use base_execution_txpool_pool::{PredicateContext, ValidityPredicate};
 
 /// Location that currently blocks a parked validity predicate.
 ///
@@ -221,7 +221,7 @@ mod tests {
         database::InMemoryDB,
         state::{Account, EvmState, EvmStorageSlot},
     };
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool_pool::{PredicateContext, ValidityOperator, ValidityPredicate};
 
     use super::{ParkedPredicateIndex, StateChangeEffects, ValidityPredicateKey};
 

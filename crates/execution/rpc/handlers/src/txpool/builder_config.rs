@@ -1,6 +1,6 @@
 //! Sequencer transaction ingress settings.
 
-use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+use base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES;
 
 use crate::txpool::{ShadowValidityConfig, ShadowValidityConfigError};
 

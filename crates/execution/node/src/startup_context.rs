@@ -11,7 +11,7 @@ use base_execution_network_service::{
     transactions::config::StrictEthAnnouncementFilter,
 };
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
-use base_execution_txpool::{PoolConfig, TransactionPool};
+use base_execution_txpool_pool::{PoolConfig, TransactionPool};
 use base_node_config::{ChainPath, DataDirPath, NodeConfig};
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
@@ -111,7 +111,7 @@ impl BuilderContext {
     pub fn start_network(
         &self,
         builder: NetworkBuilder<(), ()>,
-        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
+        pool: base_execution_txpool_pool::BaseTransactionPool<BlockchainProvider>,
     ) -> NetworkHandle {
         let (handle, network, txpool, eth) = builder
             .transactions_with_policies(

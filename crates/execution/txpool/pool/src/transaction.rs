@@ -479,7 +479,7 @@ mod tests {
         TxEip1559, TxEip2930, TxEip4844, TxEip7702, TxEip8130, TxLegacy, transaction::Recovered,
     };
     use base_execution_evm_blocks::BaseEvmConfig;
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use reth_primitives_traits::InMemorySize;

@@ -15,7 +15,7 @@ use base_execution_evm_blocks::Evm;
 use base_execution_evm_machine::{Block, ResultAndState};
 use base_execution_evm_runtime::BlockEnvironment;
 use base_execution_evm_runtime::{DatabaseCommit, DatabaseRef};
-use base_execution_txpool::PoolPooledTx;
+use base_execution_txpool_pool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 
 use crate::{BaseEthApi, EthCallBundleApiServer};

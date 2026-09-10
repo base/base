@@ -37,7 +37,7 @@ use base_consensus_driver_service::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool_pool::BasePooledTransaction;
 
 use super::ExecutionPayloadConverter;
 use crate::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry};

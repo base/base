@@ -3,7 +3,7 @@
 use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::{Address, B256};
 use base_common_types_chain::Transaction;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, BlockInfo, PoolConfig, PoolErrorKind, SubPoolLimit, TransactionOrigin,
     TransactionPool, TransactionPoolExt,
     test_utils::{

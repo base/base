@@ -10,7 +10,7 @@ use base_builder_core::{
 use base_common_client_ethereum::Provider;
 use base_common_client_ethereum::TransactionResponse;
 use base_common_types_chain::Transaction;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use futures::{StreamExt, future::join_all, stream};

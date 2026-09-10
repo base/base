@@ -136,7 +136,7 @@ mod tests {
         database::{InMemoryDB, State},
         state::AccountInfo,
     };
-    use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
+    use base_execution_txpool_pool::{PredicateContext, ValidityOperator, ValidityPredicate};
 
     use super::{PredicateLoadTracker, PredicateReadRecorder};
     use crate::ValidityPredicateKey;

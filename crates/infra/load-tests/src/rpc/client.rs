@@ -6,7 +6,7 @@ use base_common_client_ethereum::{
     Identity, Provider, ProviderBuilder, RootProvider,
     fillers::{ChainIdFiller, FillProvider, JoinFill, WalletFiller},
 };
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool_pool::ValidityPredicate;
 use futures::future::join_all;
 use tokio::sync::Semaphore;
 use tracing::{instrument, warn};
@@ -456,7 +456,7 @@ mod tests {
     use std::net::TcpListener;
 
     use alloy_primitives::{U256, address};
-    use base_execution_txpool::ValidityOperator;
+    use base_execution_txpool_pool::ValidityOperator;
 
     use super::*;
 
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn validity_predicate_serializes_to_server_wire_shape() {
-        // Guards against drift from the canonical base-execution-txpool type.
+        // Guards against drift from the canonical base-execution-txpool-pool type.
         let json = serde_json::to_value(balance_predicate()).unwrap();
         assert_eq!(json["type"], "balance");
         assert_eq!(json["params"]["op"], ">=");

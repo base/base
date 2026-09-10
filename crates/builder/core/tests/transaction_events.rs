@@ -11,7 +11,7 @@ use base_builder_core::{
 use base_common_client_ethereum::Provider;
 use base_common_client_ethereum::TransactionResponse;
 use base_common_observability_events::{TransactionEventCapture, TransactionEventType};
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 

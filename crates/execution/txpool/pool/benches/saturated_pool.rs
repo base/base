@@ -5,7 +5,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use base_execution_state_types::ChangedAccount;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     CanonicalStateUpdate, InMemoryBlobStore, MockTransactionValidator, PoolConfig, PoolInner,
     PoolUpdateKind, TransactionOrigin, TransactionValidationOutcome, ValidTransaction,
     test_utils::{MockOrdering, MockTransaction},

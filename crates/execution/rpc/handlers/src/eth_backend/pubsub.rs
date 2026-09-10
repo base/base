@@ -14,7 +14,7 @@ use base_common_types_rpc::{
 use base_execution_network_service::NetworkInfo;
 use base_execution_state_api::BlockNumReader;
 use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_txpool::{NewTransactionEvent, TransactionPool};
+use base_execution_txpool_pool::{NewTransactionEvent, TransactionPool};
 use futures::StreamExt;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink, server::SubscriptionMessage, types::ErrorObject,

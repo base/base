@@ -77,7 +77,7 @@ base-execution-engine-driver = {workspace = true, optional = true}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-execution-evm-runtime = {features = ["std"], workspace = true}
 tar = { workspace = true, optional = true, features = ["default"] }
-base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
@@ -134,4 +134,4 @@ min-warn-logs = ["tracing/release_max_level_warn"]
 min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
-test-utils = ["base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-evm-precompiles/test-utils", "base-execution-rpc-handlers/client", "base-node-core/test-utils", "base-node-runner/test-utils", "base-common-observability-events/test-utils", "ctor", "http-body-util", "hyper", "hyper-util", "nanoid", "base-execution-state-provider/test-utils", "base-execution-state-database/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-tasks/test-utils", "base-execution-payload-builder/test-utils", "reth-primitives-traits/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool/test-utils", "base-execution-state-trie/test-utils", "rlimit", "testcontainers", "dep:base-execution-engine-driver"]
+test-utils = ["base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-evm-precompiles/test-utils", "base-execution-rpc-handlers/client", "base-node-core/test-utils", "base-node-runner/test-utils", "base-common-observability-events/test-utils", "ctor", "http-body-util", "hyper", "hyper-util", "nanoid", "base-execution-state-provider/test-utils", "base-execution-state-database/test-utils", "base-execution-evm-blocks/test-utils", "base-execution-state-tasks/test-utils", "base-execution-payload-builder/test-utils", "reth-primitives-traits/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool-pool/test-utils", "base-execution-state-trie/test-utils", "rlimit", "testcontainers", "dep:base-execution-engine-driver"]

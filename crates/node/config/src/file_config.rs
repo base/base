@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_load_config_with_removed_era_stage() {
+    fn test_load_config_with_removed_era_stage() {
         with_tempdir("reth", |path| {
             std::fs::write(
                 path,

@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     TransactionOrigin, TransactionPool,
     test_utils::{MockTransactionFactory, TestPoolBuilder},
 };

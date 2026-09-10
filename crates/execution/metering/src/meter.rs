@@ -877,7 +877,7 @@ mod tests {
         Account as RevmAccount, EvmStorageSlot, TransactionId,
     };
     use base_execution_payload_types::{Bundle, ParsedBundle};
-    use base_execution_txpool::test_utils::TransactionBuilder;
+    use base_execution_txpool_pool::test_utils::TransactionBuilder;
     use base_node_runner::test_utils::TestHarness;
     use base_testing_support::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,

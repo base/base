@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::Address;
 use base_execution_state_tasks::{MdbxProofsStorageOptions, RocksdbProofsStorageOptions};
-use base_execution_txpool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
+use base_execution_txpool_pool::{DEFAULT_PAYMENT_LIMIT, DEFAULT_SIGNATURE_LIMIT};
 use base_common_chain_activation::{UpgradeSignalArgs, UpgradeSignalL1RpcArgs};
 use clap::{ArgAction, ValueEnum, builder::ArgPredicate};
 

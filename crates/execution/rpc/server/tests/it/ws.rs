@@ -149,11 +149,11 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
     use base_common_runtime_tasks::Runtime;
     use base_execution_evm_blocks::BaseBeaconConsensus;
     use base_execution_rpc_server::RpcRegistryInner;
-    use base_execution_txpool::{TransactionOrigin, TransactionPool};
+    use base_execution_txpool_pool::{TransactionOrigin, TransactionPool};
 
     base_common_observability_tracing::init_test_tracing();
 
-    let signed = base_execution_txpool::test_utils::TransactionBuilder::default()
+    let signed = base_execution_txpool_pool::test_utils::TransactionBuilder::default()
         .chain_id(8453)
         .nonce(0)
         .gas_limit(21_000)
@@ -171,7 +171,7 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
             alloy_primitives::U256::MAX,
         ),
     );
-    let tx = base_execution_txpool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
+    let tx = base_execution_txpool_pool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
     let context = base_execution_rpc_handlers::test_utils::RpcTestUtils::context(mock);
     let pool_clone = context.pool.clone();
     let eth_api =

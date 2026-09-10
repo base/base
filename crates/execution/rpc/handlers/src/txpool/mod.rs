@@ -8,7 +8,7 @@ use base_common_types_chain::Transaction;
 use base_common_types_rpc::{
     TxpoolContent, TxpoolContentFrom, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus,
 };
-use base_execution_txpool::{AllPoolTransactions, TransactionPool};
+use base_execution_txpool_pool::{AllPoolTransactions, TransactionPool};
 use jsonrpsee::core::RpcResult;
 use tracing::trace;
 
@@ -47,7 +47,7 @@ where
     ) -> Result<TxpoolContent<base_common_types_rpc::BaseTransaction>, crate::BaseEthApiError> {
         #[inline]
         fn insert<RpcTxB>(
-            tx: &base_execution_txpool::BasePooledTransaction,
+            tx: &base_execution_txpool_pool::BasePooledTransaction,
             content: &mut BTreeMap<
                 Address,
                 BTreeMap<String, base_common_types_rpc::BaseTransaction>,
@@ -123,7 +123,7 @@ where
 
         #[inline]
         fn insert(
-            tx: &base_execution_txpool::BasePooledTransaction,
+            tx: &base_execution_txpool_pool::BasePooledTransaction,
             inspect: &mut BTreeMap<Address, BTreeMap<String, TxpoolInspectSummary>>,
         ) {
             let entry = inspect.entry(tx.sender()).or_default();
@@ -178,7 +178,7 @@ impl<Pool, Eth> fmt::Debug for TxPoolApi<Pool, Eth> {
 }
 
 mod extensions;
-pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+pub use base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES;
 pub use extensions::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
     SendRawTransactionValidityApiServer, SendRawTransactionValidityOptions, Status,

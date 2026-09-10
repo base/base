@@ -3,7 +3,7 @@
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::BaseTransactionPool;
+use base_execution_txpool_pool::BaseTransactionPool;
 
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.

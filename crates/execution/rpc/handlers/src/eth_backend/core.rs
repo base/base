@@ -14,8 +14,8 @@ use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_api::BlockReaderIdExt;
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::BaseTransactionPool;
-use base_execution_txpool::{
+use base_execution_txpool_pool::BaseTransactionPool;
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
@@ -310,11 +310,11 @@ impl BaseEthApiInner {
     #[inline]
     pub async fn add_pool_transaction(
         &self,
-        origin: base_execution_txpool::TransactionOrigin,
-        transaction: base_execution_txpool::BasePooledTransaction,
+        origin: base_execution_txpool_pool::TransactionOrigin,
+        transaction: base_execution_txpool_pool::BasePooledTransaction,
     ) -> Result<AddedTransactionOutcome, EthApiError> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        let request = base_execution_txpool::BatchTxRequest::new(origin, transaction, response_tx);
+        let request = base_execution_txpool_pool::BatchTxRequest::new(origin, transaction, response_tx);
 
         self.tx_batch_sender().send(request).map_err(|_| crate::EthApiError::BatchTxSendError)?;
 

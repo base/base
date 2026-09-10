@@ -17,7 +17,7 @@ use base_execution_evm_machine::{Block, ResultAndState};
 use base_execution_evm_runtime::{DatabaseCommit, DatabaseRef};
 use base_execution_state_api::ProviderTx;
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::PoolPooledTx;
+use base_execution_txpool_pool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use tracing::trace;
@@ -225,7 +225,7 @@ impl EthSimBundle {
                     BundleItem::Tx { tx, can_revert } => {
                         let recovered_tx = recover_raw_transaction::<PoolPooledTx>(tx)?;
                         let tx = recovered_tx.map(
-                            base_execution_txpool::BasePooledTransaction::pooled_into_consensus,
+                            base_execution_txpool_pool::BasePooledTransaction::pooled_into_consensus,
                         );
 
                         let refund_percent =

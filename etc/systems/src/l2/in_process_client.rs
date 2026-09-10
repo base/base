@@ -210,7 +210,7 @@ impl InProcessClient {
         rpc.sequencer = Some(config.builder_rpc_url.clone());
         rpc.validity = config
             .enable_experimental_validity_transactions
-            .then_some(base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES);
+            .then_some(base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES);
         let mut builder = base_node_core::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         builder.base = base_node;
         builder.rpc = rpc;

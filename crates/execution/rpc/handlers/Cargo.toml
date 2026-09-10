@@ -65,7 +65,7 @@ tracing = {workspace = true, features = ["attributes", "std"]}
 jsonrpsee = {workspace = true, features = ["macros", "server"]}
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
-base-execution-txpool = {workspace = true, features = ["default"]}
+base-execution-txpool-pool = {workspace = true, features = ["default"]}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-runtime-tasks = {features = ["rayon"], workspace = true}
 base-common-chain-config = {workspace = true, features = ["default"]}
@@ -109,7 +109,7 @@ alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["std"]}
 base-node-runner = { workspace = true, features = ["test-utils"] }
 base-execution-state-api = { workspace = true, features = ["std"] }
-base-execution-txpool = {workspace = true, features = ["test-utils"]}
+base-execution-txpool-pool = {workspace = true, features = ["test-utils"]}
 base-execution-evm-runtime = {workspace = true, features = ["default"]}
 base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-common-types-chain = {workspace = true, features = ["reth", "serde"]}

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_execution_txpool::{BestTransactions, InvalidPoolTransactionError, ValidPoolTransaction};
+use base_execution_txpool_pool::{BestTransactions, InvalidPoolTransactionError, ValidPoolTransaction};
 
 use crate::BestTransactionPriority;
 
@@ -117,7 +117,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, Transaction, TxEip8130,
         transaction::Recovered,
     };
-    use base_execution_txpool::{TransactionId, TransactionOrigin};
+    use base_execution_txpool_pool::{TransactionId, TransactionOrigin};
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};

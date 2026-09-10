@@ -1,7 +1,7 @@
 //! Unsupported blob transactions are rejected before entering the Base pool.
 
 use alloy_eips::eip2718::Encodable2718;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BasePooledTransaction, RawPoolTransactionError,
     test_utils::{TestPoolBuilder, TransactionBuilder},
 };

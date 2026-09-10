@@ -32,7 +32,7 @@ use base_execution_rpc_handlers::{
 };
 use base_execution_rpc_handlers::{EthConfig, EthSubscriptionIdProvider};
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::BaseTransactionPool;
+use base_execution_txpool_pool::BaseTransactionPool;
 use http::{HeaderMap, header::AUTHORIZATION};
 use jsonrpsee::server::ServerBuilder;
 use jsonrpsee::{

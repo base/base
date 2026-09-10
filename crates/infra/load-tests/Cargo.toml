@@ -38,7 +38,7 @@ parking_lot = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default", "json"] }
 tokio = { workspace = true, features = ["default", "signal"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
-base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = ["serde", "std"] }
 tracing-subscriber = { workspace = true, features = ["default", "fmt", "env-filter"] }
 base-common-client-ethereum = {workspace = true, features = ["default", "mnemonic", "pubsub", "ws"]}

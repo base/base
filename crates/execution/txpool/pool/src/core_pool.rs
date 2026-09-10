@@ -119,22 +119,19 @@ where
     /// use base_execution_state_api::{BlockReaderIdExt, StateProviderFactory};
     /// use base_common_runtime_tasks::Runtime;
     /// use base_common_chain_config::ChainSpecProvider;
-    /// use reth_transaction_pool::{
-    ///     blobstore::InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
+    /// use base_execution_txpool_pool::{
+    ///     InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
-    /// use alloy_hardforks::{EthereumHardforks};
     /// use base_execution_evm_blocks::BaseEvmConfig;
-    /// use base_common_types_chain::Header;
     /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
     /// # where
-    /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt<Header = Header> + Clone + 'static,
+    /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Clone + 'static,
     /// # {
     /// let blob_store = InMemoryBlobStore::default();
     /// let pool = Pool::eth_pool(
     ///     TransactionValidationTaskExecutor::eth(
     ///         client,
     ///         evm_config,
-    ///         blob_store.clone(),
     ///         runtime,
     ///     ),
     ///     blob_store,

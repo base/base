@@ -34,7 +34,7 @@ use base_execution_evm_runtime::{BaseSpecId, L1BlockInfo};
 use base_execution_state_api::{
     AccountInfoReader, AccountReader, BlockReaderIdExt, StateProvider, StateProviderFactory,
 };
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     EthTransactionValidator, InvalidPoolTransactionError, PoolTransactionError, TransactionOrigin,
     TransactionValidationOutcome, TransactionValidator, ValidTransaction,
 };
@@ -2174,7 +2174,7 @@ mod tests {
     };
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_evm_precompiles::{AccountChangeApplier, ConfigChangeAuthorizer};
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use base_testing_support::{Account, build_test_genesis_zenith};

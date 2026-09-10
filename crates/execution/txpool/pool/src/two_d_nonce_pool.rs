@@ -10,7 +10,7 @@ use alloy_primitives::{
     map::{B256Map, HashMap},
 };
 use base_common_types_chain::Eip8130Constants;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, AddedTransactionState, BestTransactions, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolResult, PriceBumpConfig, QueuedReason, SenderIdentifiers,
     TransactionId, ValidPoolTransaction,
@@ -217,7 +217,7 @@ impl TwoDNoncePool {
     }
 
     /// Returns or creates the sender id for the given address.
-    pub fn sender_id_or_create(&mut self, address: Address) -> base_execution_txpool::SenderId {
+    pub fn sender_id_or_create(&mut self, address: Address) -> base_execution_txpool_pool::SenderId {
         self.senders.sender_id_or_create(address)
     }
 
@@ -635,7 +635,7 @@ mod tests {
         BasePooledTransaction as ConsensusPooledTransaction, Eip8130Signed, Transaction, TxEip8130,
         transaction::Recovered,
     };
-    use base_execution_txpool::{PriceBumpConfig, TransactionOrigin};
+    use base_execution_txpool_pool::{PriceBumpConfig, TransactionOrigin};
 
     use super::*;
     use crate::{BaseOrdering, BasePooledTransaction};

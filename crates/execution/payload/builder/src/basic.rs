@@ -20,7 +20,7 @@ use base_execution_state_memory::CachedReads;
 use base_execution_state_tasks::PayloadStateRootHandle;
 use base_execution_state_tasks::SavedCache;
 use base_execution_state_types::CanonStateNotification;
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use futures_core::ready;
 use futures_util::FutureExt;
 use reth_primitives_traits::SealedHeader;
@@ -138,7 +138,7 @@ impl<Client, Pool> BasicPayloadJobGenerator<Client, Pool>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
 {
     /// Starts building a payload against its requested parent.
     pub fn new_payload_job(
@@ -388,7 +388,7 @@ impl<Pool, Client> BasicPayloadJob<Pool, Client>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
 {
     /// Spawns a new payload build task.
     fn spawn_build_job(&mut self) {
@@ -433,7 +433,7 @@ impl<Pool, Client> Future for BasicPayloadJob<Pool, Client>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
 {
     type Output = Result<(), PayloadBuilderError>;
 
@@ -503,7 +503,7 @@ impl<Pool, Client> PayloadJob for BasicPayloadJob<Pool, Client>
 where
     Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
-    Pool: base_execution_txpool::ParkableTransactionPool,
+    Pool: base_execution_txpool_pool::ParkableTransactionPool,
 {
     type ResolvePayloadFuture = ResolveBestPayload;
 

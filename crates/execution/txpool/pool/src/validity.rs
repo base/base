@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use base_execution_evm_runtime::Database;
-use base_execution_txpool::ValidPoolTransaction;
+use base_execution_txpool_pool::ValidPoolTransaction;
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 

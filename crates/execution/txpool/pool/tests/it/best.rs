@@ -1,6 +1,6 @@
 //! Best transaction and filter testing
 
-use base_execution_txpool::{BestTransactions, NoopTransactionPool, TransactionPool};
+use base_execution_txpool_pool::{BestTransactions, NoopTransactionPool, TransactionPool};
 
 #[test]
 fn test_best_transactions() {

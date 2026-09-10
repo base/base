@@ -18,7 +18,7 @@ use base_execution_evm_machine::{
 };
 use base_execution_evm_runtime::{database::EvmDatabaseError, state::bal::BalError};
 use base_execution_state_types::ProviderError;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
 };

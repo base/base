@@ -18,7 +18,7 @@ use base_common_client_ethereum::{Ethereum, PrivateKeySigner, TransactionBuilder
 use base_common_l1_transactions::NonceManager;
 use base_common_types_chain::transaction::SignableTransaction;
 use base_common_types_rpc::TransactionRequest;
-use base_execution_txpool::ValidityPredicate;
+use base_execution_txpool_pool::ValidityPredicate;
 use tokio::{
     sync::{Mutex, Semaphore, mpsc},
     task::JoinHandle,

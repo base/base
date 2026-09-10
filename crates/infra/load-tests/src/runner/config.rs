@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use alloy_primitives::{Address, U256};
 use base_execution_evm_runtime::precompile::PrecompileId;
-use base_execution_txpool::ValidityOperator;
+use base_execution_txpool_pool::ValidityOperator;
 use url::Url;
 
 use crate::{
@@ -395,10 +395,10 @@ impl LoadConfig {
         if self.validity_priority_fee_divisor < 1 {
             return Err(BaselineError::Config("validity_priority_fee_divisor must be >= 1".into()));
         }
-        if self.validity_predicates.len() > base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES {
+        if self.validity_predicates.len() > base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES {
             return Err(BaselineError::Config(format!(
                 "validity_predicates exceeds the maximum of {}",
-                base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES
+                base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES
             )));
         }
         if self.validity_ratio > 0.0 && self.validity_predicates.is_empty() {

@@ -27,7 +27,7 @@ use base_execution_payload_builder::{
 use base_execution_payload_types::PayloadAttributesBuilder;
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::providers::{BlockchainProvider, ProviderFactoryBuilder};
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
@@ -303,7 +303,7 @@ impl BaseNode {
         let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;
 
-        let transaction_pool = base_execution_txpool::Pool::new(
+        let transaction_pool = base_execution_txpool_pool::Pool::new(
             validator,
             ordering.clone(),
             blob_store,
@@ -525,7 +525,7 @@ impl BaseNode {
     pub async fn build_network(
         &self,
         ctx: &BuilderContext,
-        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
+        pool: base_execution_txpool_pool::BaseTransactionPool<BlockchainProvider>,
     ) -> eyre::Result<NetworkHandle> {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;

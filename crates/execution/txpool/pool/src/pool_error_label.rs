@@ -1,6 +1,6 @@
 //! Shared pool-error label classification for metrics.
 
-use base_execution_txpool::{PoolError, PoolErrorKind};
+use base_execution_txpool_pool::{PoolError, PoolErrorKind};
 
 /// Maps [`PoolErrorKind`] variants to static metric label strings.
 #[derive(Debug)]

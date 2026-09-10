@@ -57,7 +57,7 @@ use base_execution_network_wire::RequestTxHashes;
 use base_execution_network_wire::Transactions;
 use base_execution_network_wire::ValidAnnouncementData;
 use base_execution_network_wire::{RequestError, RequestResult, SyncStateProvider};
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
     PropagatedTransactions, TransactionPool, ValidPoolTransaction,
 };
@@ -308,7 +308,7 @@ pub struct TransactionsManager<Pool> {
     /// The import process includes:
     ///  - validation of the transactions, e.g. transaction is well formed: valid tx type, fees are
     ///    valid, or for 4844 transaction the blobs are valid. See also
-    ///    [`EthTransactionValidator`](base_execution_txpool::EthTransactionValidator)
+    ///    [`EthTransactionValidator`](base_execution_txpool_pool::EthTransactionValidator)
     /// - if the transaction is valid, it is added into the pool.
     ///
     /// Once the new transaction reaches the __pending__ state it will be emitted by the pool via
@@ -1460,9 +1460,9 @@ where
 
         let recover = |tx| {
             let recovered = if let Some(cache) = &self.sender_recovery_cache {
-                base_execution_txpool::BasePooledTransaction::try_recover_with_cache(tx, cache)
+                base_execution_txpool_pool::BasePooledTransaction::try_recover_with_cache(tx, cache)
             } else {
-                base_execution_txpool::BasePooledTransaction::try_recover(tx)
+                base_execution_txpool_pool::BasePooledTransaction::try_recover(tx)
             };
             match recovered {
                 Ok(tx) => Some(tx),
@@ -2352,7 +2352,7 @@ mod tests {
     };
     use base_execution_network_wire::{NetworkSyncUpdater, RequestError, RequestResult, SyncState};
     use base_execution_state_api::NoopProvider;
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError, InMemoryBlobStore,
         InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
         ValidPoolTransaction,
@@ -2405,7 +2405,7 @@ mod tests {
     }
 
     fn valid_pool_transaction(
-        transaction: base_execution_txpool::BasePooledTransaction,
+        transaction: base_execution_txpool_pool::BasePooledTransaction,
     ) -> Arc<ValidPoolTransaction> {
         let mut ids = SenderIdentifiers::default();
         let transaction_id =
@@ -2911,7 +2911,7 @@ mod tests {
         let tx = NetworkTestData::transaction(MockTransaction::eip1559());
         let _ = transactions
             .pool
-            .add_transaction(base_execution_txpool::TransactionOrigin::External, tx.clone())
+            .add_transaction(base_execution_txpool_pool::TransactionOrigin::External, tx.clone())
             .await;
 
         let request = GetPooledTransactions(vec![*tx.hash()]);
@@ -3354,7 +3354,7 @@ mod tests {
         let tx_hash = *tx.hash();
         tx_manager
             .pool
-            .add_transaction(base_execution_txpool::TransactionOrigin::External, tx.clone())
+            .add_transaction(base_execution_txpool_pool::TransactionOrigin::External, tx.clone())
             .await
             .expect("transaction should be accepted into the pool");
 

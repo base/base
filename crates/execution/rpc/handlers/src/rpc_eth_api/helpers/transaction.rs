@@ -23,7 +23,7 @@ use base_execution_state_api::{
     BlockNumReader, BlockReaderIdExt, ProviderTx, ReceiptProvider, TransactionsProvider,
 };
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, PoolPooledTx, PoolTx, TransactionOrigin, TransactionPool,
 };
 use futures::Future;
@@ -87,7 +87,7 @@ impl BaseEthApi {
         async move {
             let (encoded, recovered) = tx.split();
             let pool_transaction =
-                base_execution_txpool::BasePooledTransaction::from_pooled(recovered);
+                base_execution_txpool_pool::BasePooledTransaction::from_pooled(recovered);
 
             self.send_pool_transaction(origin, WithEncoded::new(encoded, pool_transaction)).await
         }
@@ -404,7 +404,7 @@ impl BaseEthApi {
             let transaction = self.sign_request(&from, request).await?.with_signer(from);
 
             let pool_transaction =
-                base_execution_txpool::BasePooledTransaction::try_from_consensus(transaction)
+                base_execution_txpool_pool::BasePooledTransaction::try_from_consensus(transaction)
                     .map_err(|e| {
                         BaseEthApiError::from_eth_err(TransactionConversionError::Other(
                             e.to_string(),
@@ -641,7 +641,7 @@ mod tests {
     use base_common_types_chain::{Block, Header, Transaction};
     use base_common_types_rpc::request::TransactionRequest;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use base_execution_txpool::{
+    use base_execution_txpool_pool::{
         TransactionOrigin, TransactionPool, test_utils::TransactionBuilder,
     };
 
@@ -658,7 +658,7 @@ mod tests {
         let mock_provider = MockEthProvider::default()
             .with_chain_spec(BaseChainSpecBuilder::base_mainnet().ecotone_activated().build());
         mock_provider.extend_accounts(accounts);
-        let sender = base_execution_txpool::BasePooledTransaction::recover_raw_transaction(
+        let sender = base_execution_txpool_pool::BasePooledTransaction::recover_raw_transaction(
             &raw_transfer_tx(),
         )
         .unwrap()

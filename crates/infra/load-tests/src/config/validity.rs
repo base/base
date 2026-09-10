@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use base_execution_txpool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
+use base_execution_txpool_pool::{DEFAULT_MAX_VALIDITY_PREDICATES, ValidityOperator};
 use serde::{Deserialize, Serialize};
 
 use super::parsing::parse_address;

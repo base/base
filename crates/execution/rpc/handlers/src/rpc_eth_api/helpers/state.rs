@@ -17,7 +17,7 @@ use base_execution_state_api::{
     BlockIdReader, BlockReaderIdExt, StateProviderBox, StateProviderFactory,
 };
 use base_execution_state_types::MultiProofTargets;
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use futures::Future;
 use reth_primitives_traits::RecoveredBlock;
 

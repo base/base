@@ -24,7 +24,7 @@ pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
-use {base_execution_txpool::BaseTransactionPool, base_node_context::AddOnsContext};
+use {base_execution_txpool_pool::BaseTransactionPool, base_node_context::AddOnsContext};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 

@@ -289,7 +289,7 @@ pub enum InvalidPoolTransactionError {
     /// Thrown if the transaction's would require an account to be overdrawn
     #[error("transaction overdraws from account, balance: {balance}, cost: {cost}")]
     Overdraft {
-        /// Cost transaction is allowed to consume. See `base_execution_txpool::PoolTransaction`.
+        /// Cost transaction is allowed to consume. See `base_execution_txpool_pool::PoolTransaction`.
         cost: U256,
         /// Balance of account.
         balance: U256,

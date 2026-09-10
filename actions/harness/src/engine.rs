@@ -40,7 +40,7 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::HashedStorage;
-use base_execution_txpool::NoopTransactionPool;
+use base_execution_txpool_pool::NoopTransactionPool;
 use base_testing_support::build_test_genesis;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 

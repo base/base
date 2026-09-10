@@ -7,7 +7,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-extern crate self as base_execution_txpool;
+extern crate self as base_execution_txpool_pool;
 
 pub use imbl::OrdMap;
 
@@ -124,3 +124,5 @@ mod validate;
 pub use pool::BestTransactions as PendingBestTransactions;
 pub use traits::BestTransactions;
 pub use validate::*;
+
+use aquamarine as _;

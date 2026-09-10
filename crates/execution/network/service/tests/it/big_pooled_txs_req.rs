@@ -9,7 +9,7 @@ use base_execution_network_wire::GetPooledTransactions;
 use base_execution_network_wire::PooledTransactions;
 use base_execution_network_wire::{NetworkSyncUpdater, SyncState};
 use base_execution_state_provider::test_utils::MockEthProvider;
-use base_execution_txpool::{TransactionPool, test_utils::MockTransaction};
+use base_execution_txpool_pool::{TransactionPool, test_utils::MockTransaction};
 use reth_primitives_traits::SignedTransaction;
 use tokio::sync::oneshot;
 // peer0: `GetPooledTransactions` requester

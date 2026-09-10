@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256};
 use base_common_types_chain::{CoinbaseTip, Transaction};
 use base_execution_evm_precompiles::FeeCheck;
 use base_execution_evm_runtime::Database;
-use base_execution_txpool::BasePooledTransaction;
+use base_execution_txpool_pool::BasePooledTransaction;
 
 /// Whether a statically decoded coinbase tip can be paid with worst-case gas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

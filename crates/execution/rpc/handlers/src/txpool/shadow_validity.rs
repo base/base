@@ -1,7 +1,7 @@
 //! Shadow-builder validity predicate injection for forwarded transactions.
 
 use alloy_primitives::U256;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BuilderApiImpl, BuilderApiServer, TransactionPool, TransactionValidity, ValidatedTransaction,
     ValidityOperator, ValidityPredicate,
 };

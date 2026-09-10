@@ -38,7 +38,7 @@ tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
-base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 base-consensus-batch-types = { workspace = true, features = ["std"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 base-common-client-ethereum = {workspace = true, features = ["default"]}

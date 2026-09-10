@@ -24,7 +24,7 @@ use base_execution_state_api::{BlockReader, BlockReaderIdExt, NoopProvider, Stat
 use base_execution_state_types::ComputedTrieData;
 use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::ProviderError;
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     BestTransactions, BestTransactionsAttributes, InvalidPoolTransactionError, TransactionPool,
 };
 use futures::Future;

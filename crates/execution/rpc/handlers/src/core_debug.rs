@@ -38,7 +38,7 @@ use base_execution_state_types::{
     ExecutionWitnessMode, HashedPostState, HashedStorage, root::storage_root_unsorted,
     updates::TrieUpdates,
 };
-use base_execution_txpool::TransactionPool;
+use base_execution_txpool_pool::TransactionPool;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;

@@ -19,7 +19,7 @@ url = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
-base-execution-txpool = { workspace = true }
+base-execution-txpool-pool = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-state-api = { workspace = true }

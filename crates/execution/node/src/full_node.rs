@@ -27,7 +27,7 @@ pub struct FullNode {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
-    pub pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
+    pub pool: base_execution_txpool_pool::BaseTransactionPool<BlockchainProvider>,
     /// Handle to the node's network.
     pub network: base_execution_network_service::NetworkHandle,
     /// Provider to interact with the node's database

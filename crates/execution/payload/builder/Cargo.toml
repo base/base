@@ -37,7 +37,7 @@ futures-core = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
-base-execution-txpool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
 base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-state-tasks = {features = ["default"], workspace = true}

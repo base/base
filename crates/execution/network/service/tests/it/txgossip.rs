@@ -11,7 +11,7 @@ use base_execution_network_service::{
 };
 use base_execution_network_service::{PeerEvent, PeerKind, PeersInfo};
 use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use base_execution_txpool::{
+use base_execution_txpool_pool::{
     AddedTransactionOutcome, TransactionPool, test_utils::TransactionGenerator,
 };
 use futures::StreamExt;

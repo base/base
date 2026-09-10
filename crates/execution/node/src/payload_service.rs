@@ -54,7 +54,7 @@ impl BasePayloadServiceConfig {
     pub async fn start(
         self,
         ctx: &BuilderContext,
-        pool: base_execution_txpool::BaseTransactionPool<
+        pool: base_execution_txpool_pool::BaseTransactionPool<
             base_execution_state_provider::providers::BlockchainProvider,
         >,
         evm_config: BaseEvmConfig,

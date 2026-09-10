@@ -68,7 +68,7 @@ pub async fn launch_http_ws_same_port() -> RpcServerHandle {
 /// Returns an [`RpcRegistryInner`] with testing components.
 pub async fn test_rpc_registry() -> RpcRegistryInner {
     let mock = base_execution_state_provider::test_utils::MockEthProvider::default();
-    let transaction = base_execution_txpool::test_utils::TransactionBuilder::default()
+    let transaction = base_execution_txpool_pool::test_utils::TransactionBuilder::default()
         .signer(alloy_primitives::B256::repeat_byte(1))
         .into_eip1559();
     let sender = transaction.try_into_recovered().unwrap().signer();
