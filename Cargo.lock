@@ -6201,16 +6201,19 @@ dependencies = [
  "aws-sdk-s3",
  "base-reth-cli",
  "bollard",
+ "bytes",
  "clap",
  "futures",
  "serde_json",
  "serial_test",
+ "tar",
  "tempfile",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
  "tracing",
  "url",
+ "zstd",
 ]
 
 [[package]]
