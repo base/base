@@ -157,7 +157,8 @@ mod tests {
 
     fn simulation(request: serde_json::Value) -> BaseRevm {
         let request = serde_json::from_value::<BaseTransactionRequest>(request).unwrap();
-        crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).unwrap()
+        crate::conversion::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP)
+            .unwrap()
     }
 
     fn signed(tx: &BaseRevm) -> &Eip8130Signed {
@@ -189,14 +190,20 @@ mod tests {
             "calls": []
         }))
         .unwrap();
-        assert!(crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).is_none());
+        assert!(
+            crate::conversion::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP)
+                .is_none()
+        );
     }
 
     #[test]
     fn missing_sender_is_rejected() {
         let request =
             serde_json::from_value::<BaseTransactionRequest>(json!({ "calls": [] })).unwrap();
-        assert!(crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).is_none());
+        assert!(
+            crate::conversion::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP)
+                .is_none()
+        );
     }
 
     #[test]
@@ -217,7 +224,10 @@ mod tests {
             "senderAuth": auth
         }))
         .unwrap();
-        assert!(crate::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP).is_none());
+        assert!(
+            crate::conversion::Eip8130TransactionConverter::convert(&request, CHAIN_ID, GAS_CAP)
+                .is_none()
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::TransactionConversionError;
 use crate::{
     BaseEthApiError,
     EthApiError::{self},
@@ -27,7 +28,6 @@ use base_execution_txpool::{
 };
 use futures::Future;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SignedTransaction, WithEncoded};
-use reth_rpc_convert::TransactionConversionError;
 
 use super::EthSigner;
 use crate::BaseEthApi;

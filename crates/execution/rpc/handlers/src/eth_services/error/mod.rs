@@ -9,6 +9,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{ContractError, RevertReason};
 use alloy_transport::{RpcError, TransportErrorKind};
 
+use crate::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use base_common_types_rpc::{BlockError, error::EthRpcErrorCode, request::TransactionInputError};
 use base_execution_evm_inspectors::tracing::{DebugInspectorError, MuxError};
 use base_execution_evm_machine::{
@@ -21,15 +22,13 @@ use base_execution_txpool::{
     PoolError, PoolErrorKind, PoolTransactionError, RawPoolTransactionError,
 };
 use reth_primitives_traits::transaction::{error::InvalidTransactionError, signed::RecoveryError};
-use reth_rpc_convert::{CallFeesError, EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{
     block_id_to_str, internal_rpc_err, invalid_params_rpc_err, rpc_err, rpc_error_with_code,
 };
 use tokio::sync::oneshot::error::RecvError;
 use {
-    base_execution_evm_runtime::BlockExecutionError,
-    base_execution_evm_runtime::BlockValidationError, reth_rpc_convert::CallError,
-    reth_rpc_convert::StateOverrideError,
+    crate::CallError, crate::StateOverrideError, base_execution_evm_runtime::BlockExecutionError,
+    base_execution_evm_runtime::BlockValidationError,
 };
 
 /// A trait to convert an error to an RPC error.

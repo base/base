@@ -11,8 +11,8 @@ use base_execution_rpc_handlers::BaseEthApi;
 use base_execution_rpc_handlers::BaseEthApiError;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use {
-    base_execution_evm_runtime::EvmFactory, reth_rpc_convert::apply_block_overrides,
-    reth_rpc_convert::apply_state_overrides,
+    base_execution_evm_runtime::EvmFactory, base_execution_rpc_handlers::apply_block_overrides,
+    base_execution_rpc_handlers::apply_state_overrides,
 };
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
@@ -75,7 +75,7 @@ impl Eip8130GasEstimator {
         // Bound execution by the block gas limit when the request omits `gas`.
         let gas_cap = Block::gas_limit(&evm_env.block_env);
 
-        let sim_tx = reth_rpc_convert::Eip8130TransactionConverter::convert(
+        let sim_tx = base_execution_rpc_handlers::Eip8130TransactionConverter::convert(
             &request, chain_id, gas_cap,
         )
         .ok_or_else(|| {

@@ -1,9 +1,9 @@
 //! Loads and formats Base block RPC response.
 
+use crate::RpcBlockConverter;
 use alloy_eips::BlockId;
 use base_common_types_rpc::{BaseBlockResponse, Header};
 use reth_primitives_traits::AlloyBlockHeader;
-use reth_rpc_convert::RpcBlockConverter;
 
 use crate::{BaseEthApi, BaseEthApiError};
 

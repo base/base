@@ -37,10 +37,7 @@ use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_primitives_traits::Recovered;
 use tracing::{trace, warn};
-use {
-    reth_rpc_convert::OverrideBlockHashes, reth_rpc_convert::apply_block_overrides,
-    reth_rpc_convert::apply_state_overrides,
-};
+use {crate::OverrideBlockHashes, crate::apply_block_overrides, crate::apply_state_overrides};
 
 use crate::BaseEthApi;
 
@@ -479,8 +476,7 @@ impl BaseEthApi {
         _evm_env: &EvmEnvFor,
         tx_env: &TxEnvFor,
     ) -> Result<u64, BaseEthApiError> {
-        reth_rpc_convert::caller_gas_allowance(&mut db, tx_env)
-            .map_err(BaseEthApiError::from_eth_err)
+        crate::caller_gas_allowance(&mut db, tx_env).map_err(BaseEthApiError::from_eth_err)
     }
 
     /// Executes the `TxEnv` against the given [Database] without committing state

@@ -63,7 +63,6 @@ reth-primitives-traits = {features = [], workspace = true}
 tokio = {features = ["default", "sync"], workspace = true}
 jsonrpsee-core = {features = ["default"], workspace = true}
 opentelemetry = { workspace = true, features = ["default"] }
-reth-rpc-convert = {features = ["default"], workspace = true}
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 jsonrpsee = { workspace = true, features = ["macros", "server"] }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
@@ -89,14 +88,15 @@ base-execution-state-types = {features = ["default", "eip1186", "serde"], worksp
 base-execution-evm-runtime = {features = ["memory_limit", "optional_block_gas_limit", "optional_eip3607", "optional_fee_charge", "optional_no_base_fee"], workspace = true}
 
 [dev-dependencies]
+alloy-primitives = {workspace = true}
 assert_matches = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-execution-state-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
+serde_json = {features = ["alloc"], workspace = true}
 base-execution-state-maintenance = { workspace = true }
 jsonrpsee = { workspace = true, features = ["client"] }
-serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-types-rpc = { workspace = true, features = [] }
 reth-network = { workspace = true, features = ["test-utils"] }
@@ -104,6 +104,7 @@ base-common-types-chain = {workspace = true, features = ["serde"]}
 base-common-chain-config = { workspace = true, features = ["std"] }
 base-execution-state-api = { workspace = true, features = ["std"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"]}
+base-execution-evm-runtime = {workspace = true, features = ["default"]}
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }

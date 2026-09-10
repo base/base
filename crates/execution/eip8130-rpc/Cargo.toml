@@ -16,7 +16,6 @@ workspace = true
 [dependencies]
 jsonrpsee = { workspace = true }
 alloy-eips = { workspace = true }
-reth-rpc-convert = {workspace = true}
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
 base-common-types-chain = { workspace = true }

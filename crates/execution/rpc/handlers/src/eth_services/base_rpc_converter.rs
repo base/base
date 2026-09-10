@@ -1,5 +1,6 @@
 //! Concrete Base transaction, receipt, log, and header conversion.
 
+use crate::{ConvertReceiptInput, TransactionConversionError, TryIntoTxEnv};
 use alloy_primitives::{Signature, U256};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{
@@ -12,9 +13,6 @@ use base_common_types_rpc::{
 use base_execution_evm_blocks::{EvmEnvFor, TxEnvFor};
 use base_execution_state_api::BlockReader;
 use reth_primitives_traits::SealedBlock;
-use reth_rpc_convert::{
-    TransactionConversionError, TryIntoTxEnv, transaction::ConvertReceiptInput,
-};
 
 use crate::eth_services::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper};
 

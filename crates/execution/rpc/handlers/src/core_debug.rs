@@ -1,4 +1,4 @@
-use reth_rpc_convert::RpcBlockConverter;
+use crate::RpcBlockConverter;
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::DebugApiServer;

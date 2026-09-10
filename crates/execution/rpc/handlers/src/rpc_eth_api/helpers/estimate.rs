@@ -17,7 +17,7 @@ use base_execution_state_types::ProviderError;
 use futures::Future;
 use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use tracing::trace;
-use {reth_rpc_convert::apply_block_overrides, reth_rpc_convert::apply_state_overrides};
+use {crate::apply_block_overrides, crate::apply_state_overrides};
 
 use crate::BaseEthApi;
 

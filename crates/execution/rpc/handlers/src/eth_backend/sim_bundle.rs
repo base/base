@@ -21,7 +21,7 @@ use base_execution_txpool::PoolPooledTx;
 use jsonrpsee::core::RpcResult;
 use reth_primitives_traits::Recovered;
 use tracing::trace;
-use {base_execution_evm_runtime::BlockEnvironment, reth_rpc_convert::apply_block_overrides};
+use {crate::apply_block_overrides, base_execution_evm_runtime::BlockEnvironment};
 
 use crate::BaseEthApi;
 

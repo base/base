@@ -3267,7 +3267,6 @@ dependencies = [
  "eyre",
  "jsonrpsee",
  "jsonrpsee-types",
- "reth-rpc-convert",
  "serde_json",
  "tokio",
  "tracing",
@@ -3789,7 +3788,6 @@ dependencies = [
  "reth-network-api",
  "reth-payload-util",
  "reth-primitives-traits",
- "reth-rpc-convert",
  "reth-rpc-server-types",
  "reth-testing-utils",
  "schnellru",
@@ -14463,20 +14461,6 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
-]
-
-[[package]]
-name = "reth-rpc-convert"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-execution-evm-machine",
- "base-execution-evm-runtime",
- "reth-primitives-traits",
- "serde_json",
- "thiserror 2.0.19",
 ]
 
 [[package]]

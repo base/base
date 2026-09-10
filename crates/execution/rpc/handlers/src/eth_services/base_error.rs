@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 
+use crate::{EthTxEnvError, TransactionConversionError};
 use alloy_json_rpc::ErrorPayload;
 use alloy_primitives::Bytes;
 use alloy_transport::{RpcError, TransportErrorKind};
@@ -10,7 +11,6 @@ use base_execution_evm_blocks::{BaseBlockExecutionError, ProviderError};
 use base_execution_evm_machine::{EVMError, ExecutionResult, InvalidTransaction};
 use base_execution_evm_runtime::{BaseHaltReason, BaseTransactionError};
 use jsonrpsee_types::error::INTERNAL_ERROR_CODE;
-use reth_rpc_convert::{EthTxEnvError, TransactionConversionError};
 use reth_rpc_server_types::result::{internal_rpc_err, rpc_err};
 
 use crate::eth_services::{

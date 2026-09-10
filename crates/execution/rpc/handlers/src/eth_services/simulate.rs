@@ -1,5 +1,6 @@
 //! Utilities for serving `eth_simulateV1`
 
+use crate::RpcBlockConverter;
 use alloy_chains::Chain;
 use alloy_eips::eip2718::WithEncoded;
 use base_common_client_ethereum::{NetworkTransactionBuilder, TransactionBuilder};
@@ -21,7 +22,6 @@ use base_execution_evm_runtime::{PrecompilesMap, TxResult};
 use base_execution_state_api::{NoopProvider, StateProvider};
 use jsonrpsee_types::{ErrorObject, error::INTERNAL_ERROR_CODE};
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
-use reth_rpc_convert::RpcBlockConverter;
 use reth_rpc_server_types::result::{block_id_to_str, rpc_err};
 
 use crate::eth_services::{EthApiError, error::ToRpcError};

@@ -5,7 +5,7 @@ use base_common_types_rpc::request::{TransactionInputError, TransactionRequest};
 use base_execution_evm_machine::{TxEnv, either::Either};
 use thiserror::Error;
 
-use crate::{CallFees, CallFeesError};
+use crate::conversion::{CallFees, CallFeesError};
 use base_execution_evm_runtime::{BlockEnvironment, EvmEnv};
 
 /// Converts `self` into `T`.
