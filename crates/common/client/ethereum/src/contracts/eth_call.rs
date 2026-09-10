@@ -82,7 +82,7 @@ where
     /// so the two error cases can be handled separately.
     ///
     /// ```no_run
-    /// # async fn example<P: crate::Provider>(
+    /// # async fn example<P: base_common_client_ethereum::Provider>(
     /// #     provider: P,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use alloy_primitives::Address;

@@ -117,23 +117,19 @@ where
     S: BlobStore,
 {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when
-    /// validating [`BasePooledTransaction`]s and ords via [`BaseOrdering`]
+    /// validating [`BasePooledTransaction`]s and orders via [`BaseOrdering`]
     ///
     /// # Example
     ///
     /// ```
     ///
-    /// use base_execution_state_types::{BlockReaderIdExt, StateProviderFactory};
+    /// use base_execution_state_provider::BlockchainProvider;
     /// use base_common_runtime::Runtime;
-    /// use base_common_chain_config::ChainSpecProvider;
     /// use base_execution_txpool::{
     ///     InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
     /// };
     /// use base_execution_evm_blocks::BaseEvmConfig;
-    /// # fn t<C>(client: C, evm_config: BaseEvmConfig, runtime: Runtime)
-    /// # where
-    /// #     C: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Clone + 'static,
-    /// # {
+    /// # fn t(client: BlockchainProvider, evm_config: BaseEvmConfig, runtime: Runtime) {
     /// let blob_store = InMemoryBlobStore::default();
     /// let pool = Pool::eth_pool(
     ///     TransactionValidationTaskExecutor::eth(

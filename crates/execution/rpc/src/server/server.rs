@@ -777,7 +777,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
 /// Configure a http transport only
 ///
 /// ```
-/// use crate::server::{RpcNamespace, TransportRpcModuleConfig};
+/// use base_execution_rpc::TransportRpcModuleConfig;
 /// let config =
 ///     TransportRpcModuleConfig::default().with_http();
 /// ```

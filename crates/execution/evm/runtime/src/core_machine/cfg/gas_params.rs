@@ -107,8 +107,8 @@ impl GasParams {
     /// Use to override default gas cost
     ///
     /// ```rust
-    /// use crate::core_machine::{GasParams, GasId};
-    /// use crate::hardfork::SpecId;
+    /// use base_execution_evm_runtime::{GasParams, GasId};
+    /// use base_execution_evm_runtime::hardfork::SpecId;
     ///
     /// let mut gas_table = GasParams::new_spec(SpecId::default());
     /// gas_table.override_gas([(GasId::memory_linear_cost(), 2), (GasId::memory_quadratic_reduction(), 512)].into_iter());
@@ -923,8 +923,8 @@ impl GasParams {
     /// # Examples
     ///
     /// ```
-    /// use crate::core_machine::GasParams;
-    /// use crate::hardfork::SpecId;
+    /// use base_execution_evm_runtime::GasParams;
+    /// use base_execution_evm_runtime::hardfork::SpecId;
     ///
     /// let gas_params = GasParams::new_spec(SpecId::BERLIN);
     /// // Calculate cost for 2 addresses and 5 storage keys
@@ -1201,7 +1201,7 @@ impl GasId {
     /// # Examples
     ///
     /// ```
-    /// use crate::core_machine::GasId;
+    /// use base_execution_evm_runtime::GasId;
     ///
     /// assert_eq!(GasId::exp_byte_gas().name(), "exp_byte_gas");
     /// assert_eq!(GasId::memory_linear_cost().name(), "memory_linear_cost");
@@ -1290,7 +1290,7 @@ impl GasId {
     /// # Examples
     ///
     /// ```
-    /// use crate::core_machine::GasId;
+    /// use base_execution_evm_runtime::GasId;
     ///
     /// assert_eq!(GasId::from_name("exp_byte_gas"), Some(GasId::exp_byte_gas()));
     /// assert_eq!(GasId::from_name("memory_linear_cost"), Some(GasId::memory_linear_cost()));

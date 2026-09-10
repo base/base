@@ -193,9 +193,9 @@ impl Drop for GethInstance {
 /// # Example
 ///
 /// ```no_run
-/// use crate::node_bindings::Geth;
+/// use base_common_client_ethereum::Geth;
 ///
-/// # fn main() -> Result<(), crate::node_bindings::NodeError> {
+/// # fn main() -> Result<(), base_common_client_ethereum::NodeError> {
 /// let geth = Geth::new().block_time(1).try_spawn()?;
 /// println!("Geth is listening at {}", geth.endpoint());
 ///
@@ -233,7 +233,7 @@ impl Geth {
     /// # Example
     ///
     /// ```
-    /// use crate::node_bindings::Geth;
+    /// use base_common_client_ethereum::Geth;
     /// # fn a() {
     /// let geth = Geth::at("../go-ethereum/build/bin/geth").spawn();
     ///

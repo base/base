@@ -23,7 +23,8 @@ use serde_json::json;
 /// supplied genesis.
 async fn setup_with(genesis: Genesis) -> eyre::Result<(TestHarness, RpcClient)> {
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
-    let harness = TestHarness::builder().with_chain_spec(chain_spec).build().await?;
+    // Keep the large node-startup future off the test thread stack.
+    let harness = Box::pin(TestHarness::builder().with_chain_spec(chain_spec).build()).await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
 }

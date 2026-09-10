@@ -1,6 +1,6 @@
 # Execution networking service
 
-reth P2P networking.
+Base execution-layer peer discovery, sessions, request serving, and transaction gossip.
 
 Ethereum's networking protocol is specified in [devp2p](https://github.com/ethereum/devp2p).
 
@@ -44,15 +44,15 @@ The `Network` is made up of several, separate tasks:
 ### Configure and launch a standalone network
 
 The [`NetworkConfig`] is used to configure the network.
-It requires an instance of [`BlockReader`](base_execution_state_api::BlockReader).
+A block reader is attached separately when the network starts.
 
 ```
 # async fn launch() {
 use base_execution_network_service::{
     config::rng_secret_key, NetworkConfig, NetworkManager,
 };
-use base_execution_network_types::mainnet_nodes;
-use base_execution_state_api::{NoopProvider};
+use base_execution_network_wire::mainnet_nodes;
+use base_execution_state_database::NoopProvider;
 use base_common_runtime::Runtime;
 
 // This block provider implementation is used for testing purposes.
@@ -61,12 +61,12 @@ let client = NoopProvider::default();
 // The key that's used for encrypting sessions and to identify our node.
 let local_key = rng_secret_key();
 
-let config = NetworkConfig::<_>::builder(local_key, Runtime::test())
+let config = NetworkConfig::builder(local_key, Runtime::test())
     .boot_nodes(mainnet_nodes())
-    .build(client);
+    .build(client.clone());
 
 // create the network instance
-let network = NetworkManager::new(config).await.unwrap();
+let network = NetworkManager::new(config, client).await.unwrap();
 
 // keep a handle to the network and spawn it
 let handle = network.handle().clone();
@@ -77,38 +77,26 @@ tokio::task::spawn(network);
 
 ### Configure all components of the Network with the [`NetworkBuilder`]
 
-```
-use base_execution_network_service::{
-    config::rng_secret_key, NetworkConfig, NetworkManager,
-};
-use base_execution_network_types::mainnet_nodes;
-use base_execution_state_api::{NoopProvider};
+```rust
+use base_execution_network_service::{NetworkConfig, NetworkManager};
+use base_execution_state_provider::BlockchainProvider;
+use base_execution_txpool::BaseTransactionPool;
 use base_common_runtime::Runtime;
-use base_execution_txpool::TransactionPool;
-async fn launch<Pool: TransactionPool>(pool: Pool) {
-    // This block provider implementation is used for testing purposes.
-    let client = NoopProvider::default();
 
-    // The key that's used for encrypting sessions and to identify our node.
-    let local_key = rng_secret_key();
-
-    let config = NetworkConfig::<_>::builder(local_key, Runtime::test())
-        .boot_nodes(mainnet_nodes())
+async fn launch(client: BlockchainProvider, pool: BaseTransactionPool) {
+    let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
         .build(client.clone());
-    let transactions_manager_config = config.transactions_manager_config.clone();
-
-    // create the network instance
-    let (handle, network, transactions, request_handler) = NetworkManager::builder(config)
-        .await
-        .unwrap()
-        .transactions(pool, transactions_manager_config)
-        .request_handler(client)
-        .split_with_handle();
+    let transactions_config = config.transactions_manager_config.clone();
+    let (handle, network, transactions, request_handler) =
+        NetworkManager::builder(config, client.clone()).await.unwrap()
+            .transactions(pool, transactions_config)
+            .request_handler(client)
+            .split_with_handle();
 }
 ```
 
 # Feature Flags
 
-- `serde` (default): Enable serde support for configuration types.
+- `serde`: Enable serde support for configuration types.
 - `test-utils`: Various utilities helpful for writing tests
 

@@ -58,7 +58,7 @@ impl Interface {
     /// # Examples
     ///
     /// ```
-    /// use crate::contracts::Interface;
+    /// use base_common_client_ethereum::Interface;
     /// use alloy_dyn_abi::DynSolValue;
     /// use alloy_json_abi::JsonAbi;
     /// use alloy_primitives::U256;

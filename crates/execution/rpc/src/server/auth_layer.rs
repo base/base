@@ -19,7 +19,7 @@ use crate::server::JwtAuthValidator;
 /// ```rust
 /// async fn build_layered_rpc_server() {
 ///     use jsonrpsee::server::ServerBuilder;
-///     use crate::server::{AuthLayer, JwtAuthValidator, JwtSecret};
+///     use base_execution_rpc::{AuthLayer, JwtAuthValidator, JwtSecret};
 ///     use std::net::SocketAddr;
 ///
 ///     const AUTH_PORT: u32 = 8551;

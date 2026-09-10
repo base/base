@@ -145,9 +145,9 @@ impl Drop for RethInstance {
 /// # Example
 ///
 /// ```no_run
-/// use crate::node_bindings::Reth;
+/// use base_common_client_ethereum::Reth;
 ///
-/// # fn main() -> Result<(), crate::node_bindings::NodeError> {
+/// # fn main() -> Result<(), base_common_client_ethereum::NodeError> {
 /// let reth = Reth::new().dev().block_time("12s").try_spawn()?;
 /// println!("Reth is listening at {}", reth.endpoint());
 ///
@@ -216,8 +216,8 @@ impl Reth {
     /// # Example
     ///
     /// ```no_run
-    /// use crate::node_bindings::Reth;
-    /// # fn main() -> Result<(), crate::node_bindings::NodeError> {
+    /// use base_common_client_ethereum::Reth;
+    /// # fn main() -> Result<(), base_common_client_ethereum::NodeError> {
     /// let reth = Reth::at("/path/to/reth").dev().try_spawn()?;
     ///
     /// println!("Reth running at `{}`", reth.endpoint());

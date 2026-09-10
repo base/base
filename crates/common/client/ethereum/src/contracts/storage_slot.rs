@@ -16,9 +16,9 @@ use crate::{Network, Provider, TransactionBuilder};
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use crate::contracts::StorageSlotFinder;
+/// use base_common_client_ethereum::StorageSlotFinder;
 /// use alloy_primitives::{address, U256};
-/// use crate::ProviderBuilder;
+/// use base_common_client_ethereum::ProviderBuilder;
 ///
 /// let provider = ProviderBuilder::new().connect_anvil();
 /// let token = address!("0x6B175474E89094C44Da98b954EedeAC495271d0F");

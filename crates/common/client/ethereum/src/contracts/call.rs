@@ -68,8 +68,8 @@ impl<'a, N: Network> SendSyncFut<'a, N> {
     /// # Examples
     ///
     /// ```no_run
-    /// # async fn example<P: crate::Provider>(
-    /// #     call: &crate::contracts::RawCallBuilder<P>,
+    /// # async fn example<P: base_common_client_ethereum::Provider>(
+    /// #     call: &base_common_client_ethereum::RawCallBuilder<P>,
     /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// use std::time::Duration;
     ///
@@ -132,8 +132,8 @@ impl<N: Network> Future for SendSyncFut<'_, N> {
 /// Using [`sol!`][sol]:
 ///
 /// ```no_run
-/// # async fn test<P: crate::Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
-/// use crate::contracts::SolCallBuilder;
+/// # async fn test<P: base_common_client_ethereum::Provider>(provider: P) -> Result<(), Box<dyn std::error::Error>> {
+/// use base_common_client_ethereum::SolCallBuilder;
 /// use alloy_primitives::{Address, U256};
 /// use alloy_sol_types::sol;
 ///
@@ -169,10 +169,10 @@ impl<N: Network> Future for SendSyncFut<'_, N> {
 /// Using [`ContractInstance`](crate::contracts::ContractInstance):
 ///
 /// ```no_run
-/// # async fn test<P: crate::Provider>(provider: P, dynamic_abi: alloy_json_abi::JsonAbi) -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn test<P: base_common_client_ethereum::Provider>(provider: P, dynamic_abi: alloy_json_abi::JsonAbi) -> Result<(), Box<dyn std::error::Error>> {
 /// use alloy_primitives::{Address, Bytes, U256};
 /// use alloy_dyn_abi::DynSolValue;
-/// use crate::contracts::{CallBuilder, ContractInstance, DynCallBuilder, Interface, RawCallBuilder};
+/// use base_common_client_ethereum::{CallBuilder, ContractInstance, DynCallBuilder, Interface, RawCallBuilder};
 ///
 /// # stringify!(
 /// let dynamic_abi: JsonAbi = ...;
@@ -235,7 +235,7 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     ///
     /// ```no_run
     /// # use alloy_primitives::Address;
-    /// # use crate::ProviderBuilder;
+    /// # use base_common_client_ethereum::ProviderBuilder;
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -287,8 +287,8 @@ impl<P, D, N: Network> CallBuilder<P, D, N> {
     ///
     /// ```no_run
     /// # use alloy_primitives::Address;
-    /// # use crate::{Provider, ProviderBuilder};
-    /// # use crate::PrivateKeySigner;
+    /// # use base_common_client_ethereum::{Provider, ProviderBuilder};
+    /// # use base_common_client_ethereum::PrivateKeySigner;
     /// # use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -423,7 +423,7 @@ impl<P: Provider<N>, N: Network> RawCallBuilder<P, N> {
     /// # stringify!(
     /// let provider = ...;
     /// # );
-    /// # let provider = crate::ProviderBuilder::new().connect_anvil();
+    /// # let provider = base_common_client_ethereum::ProviderBuilder::new().connect_anvil();
     /// let call_builder = MyContract::deploy_builder(&provider)
     ///     .with_sol_decoder::<MyContract::constructorReturnCall>();
     /// let result = call_builder.call().await?;

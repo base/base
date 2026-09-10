@@ -22,7 +22,7 @@ use crate::{
 /// # Example
 ///
 /// ```
-/// use crate::core_memory::{CachedReads, Database, DatabaseRef};
+/// use base_execution_evm_runtime::{CachedReads, Database, DatabaseRef};
 /// use alloy_primitives::Address;
 ///
 /// fn build_payload<DB: DatabaseRef>(db: DB) {

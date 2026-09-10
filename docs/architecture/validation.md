@@ -1,5 +1,74 @@
 # Consolidation validation
 
+## Second Base-only simplification pass
+
+Validated on 2026-09-10. All 50 suggestions have separate commits, listed in the
+[implementation checklist](../reviews/next-50-simplifications.md).
+The workspace now has **90 packages and 612 internal dependency edges**, down
+from 94 and 642 at the start of this pass.
+
+### Build and behavior checks
+
+- The complete workspace passes `cargo check --workspace --all-targets --features
+  base-execution-rpc/js-tracer --offline`.
+- The production node passes `cargo check -p base-bin-base --locked --offline`
+  without test utilities. The four proof libraries pass the bare-metal command below.
+- The crate dependency checker and all **22** policy regression tests pass.
+- Documentation tests for the Ethereum client, EVM runtime/blocks, RPC, txpool, and
+  network service pass: **77 examples passed, 39 ignored**. Public examples now
+  use the consolidated crate paths and concrete Base constructors.
+- `cargo +nightly-2026-09-01 fmt --all -- --check` and `git diff --check` pass.
+- The expanded nextest selection exercises **7,343 distinct tests** across 25
+  affected crates, with **21 skipped**. The main run passed 7,342 cases and exposed
+  a stack overflow in one EIP-8130 fixture under the combined feature set. Boxing
+  the fixture's node-startup future fixes that failure; all 13 EIP-8130 tests then
+  passed with the same 25-package feature graph. No production stack limit was changed.
+- This selection covers the client/contract/process merge, proof clients, state
+  operations, EVM and JS tracing, RPC servers, pool validation/forwarding, network
+  requests/gossip/snap proofs, engine persistence, node lifecycle, and proof execution.
+- Compiler documentation/import warnings and upstream future-compatibility notices
+  remain. This is not a warning-free Clippy audit.
+
+The regression command selects the original 17 packages listed below plus
+`base-common-client-ethereum`, `base-proof-client`, `base-execution-state-operations`,
+`base-common-observability-metrics`, `base-execution-engine-observers`,
+`base-execution-network-service`, `base-node-service`, and `base-node-cli`, using
+`cargo nextest run --tests --all-features --offline --no-fail-fast --test-threads 8`.
+
+### Fresh HA devnet and persistence
+
+The standard HA devnet was rebuilt with Rust 1.96.0 and fresh chain data. After
+validation fixes, the images were rebuilt again and all six nodes were recreated
+against their existing data. The final Base image is:
+
+`sha256:522aa7f22449e00613f63292c49a8bbed3efb9919f85fa4c40488c10241896be`
+
+L1 value and blob transactions succeeded (blob gas `0x20000`), and the portal,
+system config, and L1 bridge contracts were deployed. An L2 value transfer through
+the client RPC succeeded in block **345**:
+
+`0x4112f5197b8c221af1f7798822e191002d5919496837a357f5ef74711d934a90`
+
+All six nodes returned the same successful receipt and canonical block hash,
+advanced their safe head beyond the transfer, and retained the receipt after
+restart. The RPC call tracer returned a successful CALL using 21,000 gas before
+and after restart. The initial stock smoke script printed an empty client receipt
+once during propagation; a subsequent direct submission returned the receipt
+that was independently checked across all nodes.
+
+| Node | Unsafe head after restart | Safe head after restart |
+|---|---:|---:|
+| builder | 2901 | 2802 |
+| client | 2901 | 1904 |
+| rpc | 2901 | 1904 |
+| sequencer-1 | 2901 | 2802 |
+| sequencer-2 | 2901 | 2802 |
+| shadow-validator | 2901 | 1901 |
+
+Node, bootnode, and batcher log scans before and after recreation found no
+ERROR/FATAL/panic entries. The devnet is left running. These checks validate the
+local HA topology and smoke workload, not every deployment or feature combination.
+
 ## Crate directory flattening
 
 The subsequent [32-crate path flattening](../reviews/crate-directory-flattening.md)

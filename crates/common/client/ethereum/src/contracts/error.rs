@@ -88,7 +88,7 @@ impl Error {
     /// # Examples
     ///
     /// ```no_run
-    /// use crate::ProviderBuilder;
+    /// use base_common_client_ethereum::ProviderBuilder;
     /// use alloy_sol_types::sol;
     ///
     /// sol! {
@@ -163,7 +163,7 @@ impl Error {
     /// # Examples
     ///
     /// ```no_run
-    /// use crate::ProviderBuilder;
+    /// use base_common_client_ethereum::ProviderBuilder;
     /// use alloy_sol_types::sol;
     /// use ThrowsError::SomeCustomError;
     /// sol! {

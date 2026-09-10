@@ -128,9 +128,9 @@ impl Drop for AnvilInstance {
 /// # Example
 ///
 /// ```no_run
-/// use crate::node_bindings::Anvil;
+/// use base_common_client_ethereum::Anvil;
 ///
-/// # fn main() -> Result<(), crate::node_bindings::NodeError> {
+/// # fn main() -> Result<(), base_common_client_ethereum::NodeError> {
 /// let anvil = Anvil::new()
 ///     .mnemonic("abstract vacuum mammal awkward pudding scene penalty purchase dinner depart evoke puzzle")
 ///     .try_spawn()?;
@@ -169,7 +169,7 @@ impl Anvil {
     /// # Example
     ///
     /// ```
-    /// # use crate::node_bindings::Anvil;
+    /// # use base_common_client_ethereum::Anvil;
     /// fn a() {
     ///  let anvil = Anvil::default().spawn();
     ///
@@ -187,8 +187,8 @@ impl Anvil {
     /// Paths are passed directly to [`Command`], so shell expansions such as `~` are not performed.
     ///
     /// ```no_run
-    /// # use crate::node_bindings::Anvil;
-    /// # fn main() -> Result<(), crate::node_bindings::NodeError> {
+    /// # use base_common_client_ethereum::Anvil;
+    /// # fn main() -> Result<(), base_common_client_ethereum::NodeError> {
     /// let anvil = Anvil::at("/path/to/anvil").try_spawn()?;
     ///
     /// println!("Anvil running at `{}`", anvil.endpoint());

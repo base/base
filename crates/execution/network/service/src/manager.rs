@@ -362,32 +362,19 @@ impl NetworkManager {
     /// components of the network
     ///
     /// ```
-    /// use base_execution_network_service::{
-    ///     config::rng_secret_key, NetworkConfig, NetworkManager,
-    /// };
-    /// use base_execution_network_wire::mainnet_nodes;
-    /// use base_execution_state_types::{NoopProvider};
+    /// use base_execution_network_service::{NetworkConfig, NetworkManager};
+    /// use base_execution_state_provider::BlockchainProvider;
     /// use base_common_runtime::Runtime;
-    /// use base_execution_txpool::TransactionPool;
-    /// async fn launch<Pool: TransactionPool>(pool: Pool) {
-    ///     // This block provider implementation is used for testing purposes.
-    ///     let client = NoopProvider::default();
-    ///
-    ///     // The key that's used for encrypting sessions and to identify our node.
-    ///     let local_key = rng_secret_key();
-    ///
-    ///     let config = NetworkConfig::<_>::builder(local_key, Runtime::test())
-    ///         .boot_nodes(mainnet_nodes())
+    /// use base_execution_txpool::BaseTransactionPool;
+    /// async fn launch(client: BlockchainProvider, pool: BaseTransactionPool) {
+    ///     let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
     ///         .build(client.clone());
-    ///     let transactions_manager_config = config.transactions_manager_config.clone();
-    ///
-    ///     // create the network instance
-    ///     let (handle, network, transactions, request_handler) = NetworkManager::builder(config, client.clone())
-    ///         .await
-    ///         .unwrap()
-    ///         .transactions(pool, transactions_manager_config)
-    ///         .request_handler(client)
-    ///         .split_with_handle();
+    ///     let transactions_config = config.transactions_manager_config.clone();
+    ///     let (handle, network, transactions, request_handler) =
+    ///         NetworkManager::builder(config, client.clone()).await.unwrap()
+    ///             .transactions(pool, transactions_config)
+    ///             .request_handler(client)
+    ///             .split_with_handle();
     /// }
     /// ```
     pub async fn builder<C: BlockNumReader + 'static>(
