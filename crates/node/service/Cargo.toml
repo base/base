@@ -38,7 +38,7 @@ base-execution-payload-types = {workspace = true}
 eyre = {features = ["default"], workspace = true}
 base-execution-network-discv5 = {workspace = true}
 metrics-exporter-prometheus = { workspace = true }
-reth-consensus-debug-client = { workspace = true }
+base-testing-debug-client = { workspace = true }
 alloy-eips = {workspace = true, features = ["kzg"]}
 clap = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }

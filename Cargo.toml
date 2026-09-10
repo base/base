@@ -103,7 +103,7 @@ members = [
   "vendor/reth-cli-commands",
   "crates/common/cli/support",
   "crates/common/codec/macros",
-  "vendor/reth-consensus-debug-client",
+  "crates/testing/debug/client",
   "crates/execution/state/database",
   "crates/execution/state/maintenance",
   "vendor/reth-e2e-test-utils",
@@ -401,7 +401,7 @@ base-execution-network-wire = { path = "crates/execution/network/wire", default-
 base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
 base-execution-engine-types = { path = "crates/execution/engine/types", default-features = false }
-reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
+base-testing-debug-client = { path = "crates/testing/debug/client", default-features = false }
 
 # tokio
 tokio = { version = "1.53.1", default-features = false }

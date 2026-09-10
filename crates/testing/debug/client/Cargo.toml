@@ -1,5 +1,5 @@
 [package]
-name = "reth-consensus-debug-client"
+name = "base-testing-debug-client"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -35,6 +35,7 @@ base-common-client-ethereum = { workspace = true, features = ["reqwest", "debug-
 
 [dependencies.base-execution-engine-types]
 workspace = true
+features = ["std"]
 
 [dependencies.base-execution-payload-types]
 workspace = true

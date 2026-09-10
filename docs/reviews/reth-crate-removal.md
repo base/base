@@ -42,7 +42,7 @@ Removed the unused Ethereum local payload-attribute builder and the Ethereum-onl
 
 | Crate | Actual dependency and removal condition |
 | --- | --- |
-| `reth-consensus-debug-client` | Used by `reth-node-builder/src/launch/debug.rs` for fetching payloads from RPC/Etherscan and driving Engine API calls. Base's proof-history launch uses debug capabilities. Remove only with the corresponding debug launch modes. |
+| `base-testing-debug-client` | Used by `reth-node-builder/src/launch/debug.rs` for fetching payloads from RPC/Etherscan and driving Engine API calls. Base's proof-history launch uses debug capabilities. Remove only with the corresponding debug launch modes. |
 | `base-execution-engine-driver` | Generic local mining, mining mode, and finality defaults are wired into node configuration and debug launch. Base has its own local attributes builder. Remove the Ethereum attributes implementation first; removing the entire crate also removes or relocates Base local-mining support. |
 | `base-node-service` | Launched through `spawn_ethstats` in the engine launcher and exposed by `--ethstats`. Optional telemetry, not multi-network machinery. Delete if this integration is unwanted. |
 | `base-execution-engine-observers` | Node builder installs invalid-block witness hooks. This is useful for Base execution diagnostics; deletion removes that behavior. |
@@ -92,7 +92,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-config](../../crates/node/config/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus](../../vendor/reth-consensus/Cargo.toml) | Retain shared infrastructure |
 | [reth-consensus-common](../../vendor/reth-consensus-common/Cargo.toml) | Retain shared infrastructure |
-| [reth-consensus-debug-client](../../vendor/reth-consensus-debug-client/Cargo.toml) | Optional capability; separate removal decision |
+| [base-testing-debug-client](../../crates/testing/debug/client/Cargo.toml) | Optional capability; separate removal decision |
 | [base-execution-state-database](../../crates/execution/state/database/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-database](../../crates/execution/state/database/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |

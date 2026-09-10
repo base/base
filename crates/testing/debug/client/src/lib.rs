@@ -1,9 +1,4 @@
-//! Debug consensus client.
-//!
-//! This is a worker that sends FCUs and new payloads by fetching recent payloads from an external
-//! provider like Etherscan or an RPC endpoint. This allows to quickly test the execution client
-//! without running a consensus node.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -13,7 +8,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod client;
-mod providers;
-
 pub use client::{DebugConsensusClient, PayloadProvider};
+mod providers;
 pub use providers::{EtherscanBlockProvider, RpcBlockProvider};

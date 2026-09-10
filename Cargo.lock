@@ -4591,6 +4591,7 @@ dependencies = [
  "base-execution-txpool-pool",
  "base-node-config",
  "base-node-service",
+ "base-testing-debug-client",
  "bytes",
  "chrono",
  "clap",
@@ -4617,7 +4618,6 @@ dependencies = [
  "procfs",
  "rayon",
  "reqwest",
- "reth-consensus-debug-client",
  "reth-e2e-test-utils",
  "reth-primitives-traits",
  "rstest",
@@ -5290,6 +5290,31 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "base-testing-debug-client"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-json-rpc",
+ "alloy-primitives",
+ "alloy-transport",
+ "auto_impl",
+ "base-common-client-ethereum",
+ "base-common-observability-tracing",
+ "base-common-types-chain",
+ "base-common-types-payload",
+ "base-execution-engine-types",
+ "base-execution-payload-types",
+ "derive_more",
+ "eyre",
+ "futures",
+ "reqwest",
+ "ringbuffer",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -13759,31 +13784,6 @@ dependencies = [
  "tracing",
  "url",
  "zstd",
-]
-
-[[package]]
-name = "reth-consensus-debug-client"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-json-rpc",
- "alloy-primitives",
- "alloy-transport",
- "auto_impl",
- "base-common-client-ethereum",
- "base-common-observability-tracing",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-engine-types",
- "base-execution-payload-types",
- "derive_more",
- "eyre",
- "futures",
- "reqwest",
- "ringbuffer",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
