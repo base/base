@@ -22,7 +22,6 @@ thiserror = {workspace = true}
 alloy-eips = {workspace = true}
 auto_impl = { workspace = true }
 page_size = { workspace = true }
-reth-config = {workspace = true}
 aquamarine = { workspace = true }
 futures-util = {workspace = true}
 pin-project = { workspace = true }
@@ -37,6 +36,7 @@ base-execution-network-types = { workspace = true }
 base-execution-state-provider = {workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-maintenance = {workspace = true}
+humantime-serde = {workspace = true, optional = true}
 base-execution-engine-observers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 tracing = {workspace = true, features = ["attributes"]}
@@ -47,6 +47,7 @@ tokio-stream = { workspace = true, features = ["default"] }
 tokio = {workspace = true, features = ["fs", "io-util", "sync"]}
 base-common-types-chain = {workspace = true, features = ["reth"]}
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
+serde = {workspace = true, optional = true, features = ["derive"]}
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-execution-state-memory = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true, features = ["std"]}
@@ -113,3 +114,4 @@ test-utils = [
 ]
 default = []
 file-client = ["dep:async-compression", "dep:itertools"]
+serde = ["dep:serde", "dep:humantime-serde", "base-execution-state-types/serde"]

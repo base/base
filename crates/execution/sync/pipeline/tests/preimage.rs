@@ -27,12 +27,12 @@ use base_execution_state_provider::{
 };
 use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use base_execution_state_types::PruneModes;
+use base_execution_sync_pipeline::StageConfig;
 use base_execution_sync_pipeline::{
     BodiesDownloaderBuilder, FileClient, ReverseHeadersDownloaderBuilder,
 };
 use base_execution_sync_pipeline::{ExecutionStages, FinishStage, HashingStages, OnlineStages};
 use base_execution_sync_pipeline::{Pipeline, StageSet};
-use reth_config::config::StageConfig;
 use reth_primitives_traits::{
     RecoveredBlock, SealedBlock,
     crypto::secp256k1::public_key_to_address,

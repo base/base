@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::ExecutionConfig;
 use crate::{
     BlockErrorKind, CheckpointBlockRange, EntitiesCheckpoint, ExecInput, ExecOutput,
     ExecutionCheckpoint, ExecutionStageThresholds, Stage, StageCheckpoint, StageError, StageId,
@@ -33,7 +34,6 @@ use base_execution_state_provider::{
 use base_execution_state_types::Chain;
 use base_execution_state_types::StaticFileSegment;
 use num_traits::Zero;
-use reth_config::config::ExecutionConfig;
 use tracing::*;
 
 use super::missing_static_data_error;

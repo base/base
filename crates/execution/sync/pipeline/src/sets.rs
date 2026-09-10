@@ -18,7 +18,7 @@
 //! # use base_execution_state_provider::StaticFileProviderFactory;
 //! # use base_execution_state_provider::test_utils::create_test_provider_factory;
 //! # use base_execution_state_maintenance::StaticFileProducer;
-//! # use reth_config::config::StageConfig;
+//! # use base_execution_sync_pipeline::StageConfig;
 //! # use std::sync::Arc;
 //! # use base_execution_evm_blocks::BaseBeaconConsensus;
 //!
@@ -37,12 +37,12 @@
 use std::sync::Arc;
 
 use crate::Stage;
+use crate::StageConfig;
 use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::HeaderSyncGapProvider;
 use base_execution_state_types::{PruneMode, PruneModes};
-use reth_config::config::StageConfig;
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,

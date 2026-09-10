@@ -7,7 +7,7 @@ use crate::{
 use base_execution_state_database::{DbTxMut, tables};
 use base_execution_state_provider::{DBProvider, HashingWriter, StatsReader};
 use base_execution_state_types::ProviderResult;
-use {base_execution_state_types::EtlConfig, reth_config::config::HashingConfig};
+use {crate::HashingConfig, base_execution_state_types::EtlConfig};
 
 /// Advances the hashed-state checkpoint and restores hashed account state during unwind.
 #[derive(Clone, Debug)]

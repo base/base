@@ -20,3 +20,6 @@ pub use pruning::*;
 
 mod static_files;
 pub use static_files::*;
+
+mod static_file_config;
+pub use static_file_config::{BlocksPerFileConfig, StaticFilesConfig};

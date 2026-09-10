@@ -30,7 +30,7 @@ add, disable and replace stages in the set.
 # use base_execution_state_provider::StaticFileProviderFactory;
 # use base_execution_state_provider::test_utils::create_test_provider_factory;
 # use base_execution_state_maintenance::StaticFileProducer;
-# use reth_config::config::StageConfig;
+# use base_execution_sync_pipeline::StageConfig;
 # use base_execution_evm_blocks::BaseBeaconConsensus;
 #
 # let chain_spec = std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet());

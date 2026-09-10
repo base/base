@@ -11,7 +11,7 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use tracing::info;
-use {base_execution_state_types::EtlConfig, reth_config::config::IndexHistoryConfig};
+use {crate::IndexHistoryConfig, base_execution_state_types::EtlConfig};
 
 use super::collect_storage_history_indices;
 use crate::{

@@ -13,7 +13,7 @@ use base_execution_state_provider::{
 use base_execution_state_types::ProviderError;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
 use tracing::*;
-use {base_execution_state_types::EtlConfig, reth_config::config::TransactionLookupConfig};
+use {crate::TransactionLookupConfig, base_execution_state_types::EtlConfig};
 
 /// The transaction lookup stage.
 ///

@@ -40,3 +40,11 @@ pub use base_execution_state_types::*;
 
 mod downloads;
 pub use downloads::*;
+
+mod config;
+#[cfg(feature = "serde")]
+pub use config::ExecutionDuration;
+pub use config::{
+    BodiesConfig, ExecutionConfig, HashingConfig, HeadersConfig, IndexHistoryConfig, MerkleConfig,
+    PruneStageConfig, SenderRecoveryConfig, StageConfig, TransactionLookupConfig,
+};

@@ -17,7 +17,7 @@ use {
     base_execution_network_service::BodyDownloader,
     base_execution_network_service::HeaderDownloader, base_execution_network_wire::BlockClient,
 };
-use {base_execution_state_types::PruneConfig, reth_config::config::StageConfig};
+use {base_execution_state_types::PruneConfig, base_execution_sync_pipeline::StageConfig};
 
 /// Constructs a [Pipeline] that's wired to the network
 #[expect(clippy::too_many_arguments)]

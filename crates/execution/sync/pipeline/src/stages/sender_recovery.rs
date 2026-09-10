@@ -1,5 +1,6 @@
 use std::{fmt::Debug, ops::Range, sync::mpsc};
 
+use crate::SenderRecoveryConfig;
 use crate::{
     BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError,
     StageId, UnwindInput, UnwindOutput,
@@ -16,7 +17,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_config::config::SenderRecoveryConfig;
 use thiserror::Error;
 use tracing::*;
 use {

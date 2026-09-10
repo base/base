@@ -8,8 +8,9 @@ use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
 use reth_node_core::args::DefaultPruningValues;
 use tracing::info;
 use {
-    base_execution_state_types::PruneConfig, reth_config::config::BlocksPerFileConfig,
-    reth_config::config::Config, reth_config::config::StaticFilesConfig,
+    base_execution_state_maintenance::BlocksPerFileConfig,
+    base_execution_state_maintenance::StaticFilesConfig, base_execution_state_types::PruneConfig,
+    reth_config::config::Config,
 };
 
 use crate::download::{

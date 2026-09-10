@@ -36,6 +36,7 @@ base-execution-network-discv5 = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
 ipnet = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 derive_more = { workspace = true, features = ["full"] }
 reth-config = { workspace = true, features = ["serde"] }
