@@ -6,16 +6,12 @@ use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::CliContext;
 use base_execution_state_database::init_db;
+use base_node_config::{
+    DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs, NodeConfig,
+    PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
+};
 use base_node_core::{NodeHandle, NodeLaunch};
 use clap::{Args, value_parser};
-use reth_node_core::{
-    args::{
-        DatabaseArgs, DatadirArgs, DebugArgs, DevArgs, EngineArgs, MetricArgs, NetworkArgs,
-        PruningArgs, RpcServerArgs, StaticFilesArgs, StorageArgs, TxPoolArgs,
-    },
-    node_config::NodeConfig,
-    version,
-};
 use tracing::info;
 
 use crate::{MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs};
@@ -205,8 +201,8 @@ impl ExecutionNodeRuntimeConfig {
     pub fn into_launch(mut self, ctx: CliContext) -> eyre::Result<NodeLaunch> {
         info!(
             target: "reth::cli",
-            version = ?version::version_metadata().short_version,
-            client = %version::version_metadata().name_client,
+            version = ?base_node_config::version_metadata().short_version,
+            client = %base_node_config::version_metadata().name_client,
             "Starting client"
         );
 

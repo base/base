@@ -157,7 +157,7 @@ impl Default for DebugArgs {
 /// Create a [`InvalidBlockSelection`] from a selection.
 ///
 /// ```
-/// use reth_node_core::args::{InvalidBlockHookType, InvalidBlockSelection};
+/// use base_node_config::{InvalidBlockHookType, InvalidBlockSelection};
 /// let config: InvalidBlockSelection = vec![InvalidBlockHookType::Witness].into();
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Deref)]
@@ -181,7 +181,7 @@ impl InvalidBlockSelection {
     /// Create a selection from the [`InvalidBlockHookType`] string identifiers
     ///
     /// ```
-    /// use reth_node_core::args::{InvalidBlockHookType, InvalidBlockSelection};
+    /// use base_node_config::{InvalidBlockHookType, InvalidBlockSelection};
     /// let selection = vec!["witness", "prestate", "opcode"];
     /// let config = InvalidBlockSelection::try_from_selection(selection).unwrap();
     /// assert_eq!(
@@ -197,7 +197,7 @@ impl InvalidBlockSelection {
     /// Create a unique selection from the [`InvalidBlockHookType`] string identifiers
     ///
     /// ```
-    /// use reth_node_core::args::{InvalidBlockHookType, InvalidBlockSelection};
+    /// use base_node_config::{InvalidBlockHookType, InvalidBlockSelection};
     /// let selection = vec!["witness", "prestate", "opcode", "witness", "prestate"];
     /// let config = InvalidBlockSelection::try_from_selection(selection).unwrap();
     /// assert_eq!(

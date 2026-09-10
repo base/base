@@ -5,7 +5,7 @@ use base_execution_state_database::tables;
 use base_execution_state_database::{DbTx, DbTxMut};
 use base_execution_state_types::StageCheckpoint;
 use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneSegment};
-use reth_node_core::args::DefaultPruningValues;
+use base_node_config::DefaultPruningValues;
 use tracing::info;
 use {
     base_execution_state_maintenance::BlocksPerFileConfig,

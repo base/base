@@ -65,7 +65,7 @@ secp256k1 = { workspace = true, features = ["default"] }
 serde_with = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
-reth-node-core = { workspace = true, features = ["otlp"] }
+base-node-config = { workspace = true, features = ["otlp"] }
 clap_builder = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
 jsonrpsee-core = { workspace = true, features = ["default"] }

@@ -7,8 +7,8 @@ use base_builder_core::{
         setup_test_instance_with_node_config,
     },
 };
+use base_node_config::TxPoolArgs;
 use base_node_core::NodeConfig;
-use reth_node_core::args::TxPoolArgs;
 
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {

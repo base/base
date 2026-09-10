@@ -107,6 +107,7 @@ use base_common_io_files as fs;
 use base_execution_state_database::DbTx;
 use base_execution_state_database::{Database, init_db};
 use base_execution_state_types::PruneMode;
+use base_node_config::DefaultPruningValues;
 use clap::{Parser, builder::RangedU64ValueParser};
 use config_gen::{config_for_selections, write_config};
 use extract::stream_and_extract;
@@ -115,7 +116,6 @@ use manifest::{ComponentSelection, SnapshotComponentType, SnapshotManifest};
 pub use planning::{DownloadPlan, DownloadPlanArchive};
 use planning::{PlannedDownloads, collect_planned_archives, summarize_download_startup};
 use progress::{DownloadProgress, DownloadRequestLimiter};
-use reth_node_core::args::DefaultPruningValues;
 use source::{
     discover_manifest_url, fetch_manifest_from_source, fetch_snapshot_api_entries,
     print_snapshot_listing, resolve_manifest_base_url,

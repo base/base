@@ -727,7 +727,7 @@ pub fn generate_manifest(
         storage_version: 2,
         timestamp,
         base_url: base_url.map(str::to_owned),
-        reth_version: Some(reth_node_core::version::version_metadata().short_version.to_string()),
+        reth_version: Some(base_node_config::version_metadata().short_version.to_string()),
         components,
     })
 }

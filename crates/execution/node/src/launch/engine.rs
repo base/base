@@ -1,5 +1,6 @@
 //! Engine node related functionality.
 
+use alloy_eip2124::Head;
 use base_common_observability_tracing::tracing::{debug, error, info};
 use base_common_runtime_tasks::EventSender;
 use base_common_types_chain::BlockHeader;
@@ -17,9 +18,9 @@ use base_execution_network_service::{NetworkSyncUpdater, SyncState, types::Block
 use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{BlockNumReader, StorageSettingsCache};
+use base_node_config::{NodeExitFuture, PruneConfigKind};
 use base_node_context::AddOnsContext;
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
-use reth_node_core::{args::PruneConfigKind, exit::NodeExitFuture, primitives::Head};
 use reth_node_events::node;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;

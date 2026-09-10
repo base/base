@@ -128,7 +128,7 @@ members = [
   "crates/execution/network/discovery",
   "crates/execution/network/service",
   "crates/execution/network/types",
-  "vendor/reth-node-core",
+  "crates/node/config",
   "vendor/reth-node-ethstats",
   "vendor/reth-node-events",
   "vendor/reth-node-metrics",
@@ -415,7 +415,7 @@ base-common-io-files = { path = "crates/common/io/files", default-features = fal
 base-common-cli-support = { path = "crates/common/cli/support", default-features = false }
 base-execution-state-provider = { path = "crates/execution/state/provider", default-features = false }
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
-reth-node-core = { path = "vendor/reth-node-core", default-features = false }
+base-node-config = { path = "crates/node/config", default-features = false }
 base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }

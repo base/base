@@ -31,7 +31,7 @@ use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
     TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
 };
-use reth_node_core::args::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
+use base_node_config::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use reth_primitives_traits::SealedHeader;
 use tokio_stream::wrappers::BroadcastStream;
 

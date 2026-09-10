@@ -1,6 +1,6 @@
 //! Reth version initialization utilities.
 
-use reth_node_core::version::{
+use base_node_config::{
     RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
 };
 

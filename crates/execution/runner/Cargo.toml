@@ -15,7 +15,7 @@ workspace = true
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 base-metering = { workspace = true, optional = true }
-reth-node-core = { workspace = true, optional = true }
+base-node-config = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
 base-tx-forwarding = { workspace = true, optional = true }
 base-testing-support = { workspace = true, optional = true }
@@ -73,7 +73,7 @@ test-utils = [
     "dep:base-common-types-rpc",
     "dep:base-common-types-payload",
     "dep:base-testing-support",
-    "dep:reth-node-core",
+    "dep:base-node-config",
     "dep:base-common-runtime-tasks",
     "dep:tracing-subscriber",
     "base-execution-state-database/test-utils",

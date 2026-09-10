@@ -69,4 +69,5 @@ mod storage;
 pub use storage::StorageArgs;
 
 mod error;
-pub mod types;
+mod types;
+pub use types::*;

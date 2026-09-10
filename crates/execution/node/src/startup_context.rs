@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use alloy_eip2124::Head;
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::TaskExecutor;
@@ -11,11 +12,7 @@ use base_execution_network_service::{
 };
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use base_execution_txpool::{PoolConfig, TransactionPool};
-use reth_node_core::{
-    dirs::{ChainPath, DataDirPath},
-    node_config::NodeConfig,
-    primitives::Head,
-};
+use base_node_config::{ChainPath, DataDirPath, NodeConfig};
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 

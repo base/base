@@ -6,11 +6,8 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
 use base_execution_network_service::types::NatResolver;
 use base_execution_rpc_handlers::AdminApiServer;
+use base_node_config::{NetworkArgs, NodeConfig, RpcServerArgs};
 use base_node_core::NodeHandle;
-use reth_node_core::{
-    args::{NetworkArgs, RpcServerArgs},
-    node_config::NodeConfig,
-};
 
 // <https://github.com/paradigmxyz/reth/issues/19765>
 #[tokio::test(flavor = "multi_thread")]

@@ -3,12 +3,8 @@
 use base_execution_engine_observers::InvalidBlockWitnessHook;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc_handlers::EthApiClient;
+use base_node_config::{ChainPath, DataDirPath, InvalidBlockHookType, NodeConfig};
 use eyre::OptionExt;
-use reth_node_core::{
-    args::InvalidBlockHookType,
-    dirs::{ChainPath, DataDirPath},
-    node_config::NodeConfig,
-};
 
 /// Constructs the configured invalid block diagnostics during node startup.
 #[derive(Debug)]

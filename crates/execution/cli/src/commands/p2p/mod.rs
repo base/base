@@ -8,9 +8,9 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::hash_or_num_value_parser;
 use base_execution_network_service::{BlockDownloaderProvider, NetworkHandle};
 use base_execution_network_wire::BodiesClient;
+use base_node_config::get_single_header;
 use clap::{Parser, Subcommand};
 use reth_cli_commands::p2p::{DownloadArgs, enode, rlpx};
-use reth_node_core::utils::get_single_header;
 
 pub mod bootnode;
 

@@ -9,7 +9,7 @@ use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, mdbx::KILOBYTE, mdbx::MEGABYTE,
     mdbx::MaxReadTransactionDuration, test_utils::ERROR_DB_CREATION, test_utils::TempDatabase,
 };
-use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
+use base_node_config::{DataDirPath, DatadirArgs, NodeConfig};
 
 use super::{
     BUILDER_PRIVATE_KEY, FUNDED_PRIVATE_KEY, PrivateKeySigner, TransactionBuilder,
@@ -178,7 +178,7 @@ impl AsTxs for Vec<TxHash> {
 
 /// Creates a temporary MDBX database suitable for tests.
 pub fn create_test_db(config: NodeConfig) -> Arc<TempDatabase<DatabaseEnv>> {
-    let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
+    let path = base_node_config::MaybePlatformPath::<DataDirPath>::from(
         base_execution_state_database::test_utils::tempdir_path(),
     );
     let db_config =
@@ -205,7 +205,7 @@ pub fn create_test_db(config: NodeConfig) -> Arc<TempDatabase<DatabaseEnv>> {
 /// database; the caller is responsible for removing it once the database has been dropped.
 pub fn create_test_db_env(config: NodeConfig) -> eyre::Result<(DatabaseEnv, PathBuf)> {
     let root = base_execution_state_database::test_utils::tempdir_path();
-    let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(root.clone());
+    let path = base_node_config::MaybePlatformPath::<DataDirPath>::from(root.clone());
     let db_config =
         config.with_datadir_args(DatadirArgs { datadir: path.clone(), ..Default::default() });
     let data_dir = path.unwrap_or_chain_default(db_config.chain.chain(), db_config.datadir.clone());

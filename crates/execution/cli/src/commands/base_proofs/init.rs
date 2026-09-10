@@ -4,16 +4,16 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::ChainInfo;
+use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use base_execution_state_tasks::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
     MdbxProofsStorage, RocksdbProofsStorage,
 };
+use base_node_config::version_metadata;
 use base_node_core::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
-use reth_node_core::version::version_metadata;
-use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use tracing::info;
 
 /// Initializes the proofs storage with the current state of the chain.

@@ -45,9 +45,9 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 ///
 /// # Example
 /// ```rust
-/// # use reth_node_core::{
-/// #     node_config::NodeConfig,
-/// #     args::RpcServerArgs,
+/// # use base_node_config::{
+/// #     NodeConfig,
+/// #     RpcServerArgs,
 /// # };
 /// # use tokio::runtime::Handle;
 ///
@@ -66,9 +66,9 @@ pub const DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB: usize = 4 * 1024;
 ///
 /// # Example
 /// ```rust
-/// # use reth_node_core::{
-/// #     node_config::NodeConfig,
-/// #     args::RpcServerArgs,
+/// # use base_node_config::{
+/// #     NodeConfig,
+/// #     RpcServerArgs,
 /// # };
 /// # use tokio::runtime::Handle;
 ///

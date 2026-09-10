@@ -25,7 +25,7 @@ libp2p = { workspace = true }
 nanoid = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-reth-node-core = { workspace = true }
+base-node-config = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }

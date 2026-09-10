@@ -9,13 +9,13 @@ use base_common_types_chain::BlockHeader;
 use base_common_types_payload::ForkchoiceState;
 use base_common_types_rpc::BlockNumberOrTag;
 use base_execution_state_database::test_utils::create_test_rw_db_with_path;
+use base_execution_state_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
 use base_execution_state_types::StageId;
+use base_node_config::DatadirArgs;
 use base_node_core::NodeConfig;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils, node::NodeTestContext, transaction::TransactionTestContext, wallet::Wallet,
 };
-use reth_node_core::args::DatadirArgs;
-use base_execution_state_provider::{BlockReaderIdExt, HeaderProvider, StageCheckpointReader};
 use tokio::sync::Mutex;
 
 /// Tests that a Base node can initialize with a custom genesis block number.

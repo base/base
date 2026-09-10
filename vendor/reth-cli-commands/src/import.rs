@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use crate::ChainSpecParser;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
+use base_node_config::version_metadata;
 use clap::Parser;
-use reth_node_core::version::version_metadata;
 use tracing::info;
 
 pub use crate::import_core::build_import_pipeline_impl as build_import_pipeline;

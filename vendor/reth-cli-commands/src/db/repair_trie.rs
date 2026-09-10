@@ -17,12 +17,9 @@ use base_execution_state_trie::{
     verify::{Output, Verifier},
 };
 use base_execution_sync_pipeline::StageId;
+use base_node_config::{ChainPath, DataDirPath, version_metadata};
 use clap::Parser;
 use metrics::{self, Counter};
-use reth_node_core::{
-    dirs::{ChainPath, DataDirPath},
-    version::version_metadata,
-};
 use reth_node_metrics::{
     chain::ChainSpecInfo,
     hooks::Hooks,

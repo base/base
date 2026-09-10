@@ -22,7 +22,7 @@ alloy-eips = { workspace = true }
 alloy-genesis = {workspace = true}
 alloy-signer = { workspace = true }
 futures-util = { workspace = true }
-reth-node-core = { workspace = true }
+base-node-config = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-node-context = { workspace = true }
 base-common-types-rpc = { workspace = true }

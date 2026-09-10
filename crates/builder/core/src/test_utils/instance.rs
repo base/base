@@ -16,14 +16,11 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Identity, ProviderBuilder, RootProvider};
 use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use base_execution_txpool::{BasePooledTransaction, TransactionPool};
+use base_node_config::{DatadirArgs, NetworkArgs, NodeExitFuture, RpcServerArgs};
 use base_node_core::{BaseNode, NodeConfig, RollupArgs};
 use base_node_runner::test_utils::init_silenced_tracing;
 use futures::FutureExt;
 use nanoid::nanoid;
-use reth_node_core::{
-    args::{DatadirArgs, NetworkArgs, RpcServerArgs},
-    exit::NodeExitFuture,
-};
 
 use crate::{
     BuilderConfig, SharedMeteringStore,

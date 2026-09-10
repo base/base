@@ -11,7 +11,8 @@ use base_execution_state_types::{
 };
 use clap::{Args, builder::RangedU64ValueParser};
 
-use crate::{args::error::ReceiptsLogError, primitives::EthereumHardfork};
+use crate::args::error::ReceiptsLogError;
+use alloy_hardforks::EthereumHardfork;
 
 /// Global static pruning defaults
 static PRUNING_DEFAULTS: OnceLock<DefaultPruningValues> = OnceLock::new();

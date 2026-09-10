@@ -3,15 +3,16 @@
 use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
+use base_execution_state_provider::{BlockReader, TransactionVariant};
 use base_execution_state_tasks::{
     BaseProofsStorage, BaseProofsStore, MdbxProofsStorage, RocksdbProofsStorage,
 };
+use base_node_config::version_metadata;
 use base_node_core::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
-use reth_node_core::{primitives::AlloyBlockHeader as _, version::version_metadata};
-use base_execution_state_provider::{BlockReader, TransactionVariant};
+use base_common_types_chain::BlockHeader as _;
 use tracing::{info, warn};
 
 /// Unwinds the proofs storage to a specific block number.

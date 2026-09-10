@@ -1,6 +1,6 @@
 use std::fmt;
 
-use reth_node_core::exit::NodeExitFuture;
+use base_node_config::NodeExitFuture;
 
 use crate::FullNode;
 

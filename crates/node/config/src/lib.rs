@@ -1,5 +1,4 @@
-//! The core of the Ethereum node. Collection of utilities and libraries that are used by the node.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -8,17 +7,20 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-pub mod args;
-pub use args::ByteSize;
+mod args;
+pub use args::*;
 
-pub mod dirs;
-pub mod exit;
-pub mod node_config;
-pub mod utils;
-pub mod version;
+mod dirs;
+pub use dirs::*;
 
-/// Re-exported primitive types
-pub mod primitives {
-    pub use alloy_hardforks::*;
-    pub use reth_primitives_traits::*;
-}
+mod exit;
+pub use exit::*;
+
+mod node_config;
+pub use node_config::*;
+
+mod utils;
+pub use utils::*;
+
+mod version;
+pub use version::*;

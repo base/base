@@ -17,7 +17,7 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 base-metering = { workspace = true }
 base-reth-cli = { workspace = true }
-reth-node-core = { workspace = true }
+base-node-config = { workspace = true }
 reth-cli-commands = { workspace = true }
 reth-node-metrics = { workspace = true }
 base-common-cli-support = {workspace = true}
@@ -69,19 +69,19 @@ tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] 
 base-common-chain-config = { workspace = true, features = ["std", "std"] }
 
 [features]
-otlp = ["reth-node-core/otlp"]
-otlp-logs = ["reth-node-core/otlp-logs"]
-tracy = ["reth-node-core/tracy"]
+otlp = ["base-node-config/otlp"]
+otlp-logs = ["base-node-config/otlp-logs"]
+tracy = ["base-node-config/tracy"]
 default = []
 
 # Opentelemetry feature to activate tracing and logs export
 
-asm-keccak = ["base-node-core/asm-keccak", "reth-node-core/asm-keccak"]
+asm-keccak = ["base-node-core/asm-keccak", "base-node-config/asm-keccak"]
 
-keccak-cache-global = ["base-node-core/keccak-cache-global", "reth-node-core/keccak-cache-global"]
+keccak-cache-global = ["base-node-core/keccak-cache-global", "base-node-config/keccak-cache-global"]
 
 # Jemalloc allocator support
-jemalloc = ["reth-node-core/jemalloc", "reth-node-metrics/jemalloc"]
+jemalloc = ["base-node-config/jemalloc", "reth-node-metrics/jemalloc"]
 jemalloc-prof = ["jemalloc", "reth-node-metrics/jemalloc-prof"]
 jemalloc-symbols = ["jemalloc-prof", "reth-node-metrics/jemalloc-symbols"]
 

@@ -63,7 +63,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 | `reth-errors` | Replace the facade's re-exports with direct imports; move its aggregate error/result types to a compatible lower-level error module if still needed. |
 | `base-execution-state-types` | Consider consolidating storage model types with a lower-level storage/codec package. Preserve persisted encodings and avoid database/provider dependency cycles. |
 
-`reth-node-builder` and `reth-node-core` also contain substantial network-agnostic construction abstractions worth specializing. Their engine launch, RPC/network setup, configuration, and task lifecycle code remains required; they are not whole-crate deletion candidates in the first pass.
+`reth-node-builder` and `base-node-config` also contain substantial network-agnostic construction abstractions worth specializing. Their engine launch, RPC/network setup, configuration, and task lifecycle code remains required; they are not whole-crate deletion candidates in the first pass.
 
 ## Shared infrastructure to retain
 
@@ -143,7 +143,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-state-database](../../crates/execution/state/database/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-api](../../vendor/reth-node-api/Cargo.toml) | Consolidate; retain required code |
 | [reth-node-builder](../../vendor/reth-node-builder/Cargo.toml) | Retain shared infrastructure |
-| [reth-node-core](../../vendor/reth-node-core/Cargo.toml) | Retain shared infrastructure |
+| [base-node-config](../../crates/node/config/Cargo.toml) | Retain shared infrastructure |
 | `reth-node-ethereum` | Deleted after fixture migration |
 | [reth-node-ethstats](../../vendor/reth-node-ethstats/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-node-events](../../vendor/reth-node-events/Cargo.toml) | Retain shared infrastructure |

@@ -20,7 +20,7 @@ metrics = { workspace = true }
 dyn-clone = { workspace = true }
 pin-project = {workspace = true}
 thiserror = { workspace = true }
-reth-node-core = { workspace = true }
+base-node-config = { workspace = true }
 base-execution-txpool = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }

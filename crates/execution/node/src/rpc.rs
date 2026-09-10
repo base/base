@@ -19,11 +19,11 @@ use base_execution_rpc_server::{
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::providers::BlockchainProvider;
+use base_node_config::NodeConfig;
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
-use reth_node_core::node_config::NodeConfig;
 use {base_execution_txpool::BaseTransactionPool, base_node_context::AddOnsContext};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};

@@ -10,13 +10,12 @@ use base_common_runtime_tasks::Runtime;
 use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments, test_utils::tempdir_path,
 };
+use base_node_config::{
+    DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, NetworkArgs, NodeExitFuture,
+    RpcServerArgs,
+};
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::Result;
-use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, NetworkArgs, RpcServerArgs},
-    dirs::{DataDirPath, MaybePlatformPath},
-    exit::NodeExitFuture,
-};
 
 use crate::test_utils::engine::EngineApi;
 
@@ -173,12 +172,11 @@ mod tests {
     };
     use base_execution_payload_types::BasePayloadBuilderAttributes;
     use base_execution_state_provider::{DatabaseProviderROFactory, HeaderProvider};
+    use base_node_config::{
+        DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, NetworkArgs,
+    };
     use base_node_core::{BaseNode, NodeConfig, RollupArgs};
     use base_testing_support::build_test_genesis;
-    use reth_node_core::{
-        args::{DatadirArgs, DiscoveryArgs, NetworkArgs},
-        dirs::{DataDirPath, MaybePlatformPath},
-    };
 
     use super::LocalNode;
     use crate::test_utils::engine::EngineApi;

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use crate::download::DownloadDefaults;
 use base_execution_state_types::PruneMode;
-use reth_node_core::args::DefaultPruningValues;
+use base_node_config::DefaultPruningValues;
 
 pub const DEFAULT_DOWNLOAD_URL: &str = "https://chain.base.org/8453";
 const SNAPSHOT_API_URL: &str = "https://chain.base.org/api/snapshots";

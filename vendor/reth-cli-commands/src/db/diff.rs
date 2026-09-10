@@ -9,12 +9,9 @@ use std::{
 
 use base_execution_state_database::{Database, DbCursorRO, DbTx, Table, Tables};
 use base_execution_state_database::{open_db_read_only, tables_to_generic};
-use clap::Parser;
 use base_execution_state_maintenance::DbTool;
-use reth_node_core::{
-    args::DatabaseArgs,
-    dirs::{DataDirPath, PlatformPath},
-};
+use base_node_config::{DataDirPath, DatabaseArgs, PlatformPath};
+use clap::Parser;
 use tracing::{info, warn};
 
 #[derive(Parser, Debug)]

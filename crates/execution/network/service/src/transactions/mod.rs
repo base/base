@@ -1566,7 +1566,7 @@ where
 ///
 /// This should be spawned or used as part of `tokio::select!`.
 //
-// spawned in `NodeConfig::start_network`(reth_node_core::NodeConfig) and
+// spawned in `NodeConfig::start_network`(base_node_config::NodeConfig) and
 // `NetworkConfig::start_network`(base_execution_network_service::NetworkConfig)
 impl<Pool: TransactionPool + Unpin + 'static> Future for TransactionsManager<Pool> {
     type Output = ();

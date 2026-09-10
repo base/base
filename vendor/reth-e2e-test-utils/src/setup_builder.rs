@@ -8,9 +8,9 @@ use std::{fmt::Debug, sync::Arc};
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::Runtime;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
+use base_node_config::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use base_node_core::{NodeConfig, NodeHandle};
 use futures_util::future::TryJoinAll;
-use reth_node_core::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth_primitives_traits::AlloyBlockHeader;
 use tracing::{Instrument, Level, span};
 
@@ -91,7 +91,7 @@ where
     }
 
     /// Sets the pruning arguments for the test nodes.
-    pub fn with_pruning(self, pruning: reth_node_core::args::PruningArgs) -> Self {
+    pub fn with_pruning(self, pruning: base_node_config::PruningArgs) -> Self {
         self.with_node_config_modifier(move |config| config.with_pruning(pruning.clone()))
     }
 

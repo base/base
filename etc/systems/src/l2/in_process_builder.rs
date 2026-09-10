@@ -15,13 +15,12 @@ use base_execution_state_database::{
     mdbx::MaxReadTransactionDuration,
 };
 use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+use base_node_config::{
+    DataDirPath, DatadirArgs, MaybePlatformPath, MetricArgs, NetworkArgs, NodeExitFuture,
+    RpcServerArgs,
+};
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use eyre::{Result, WrapErr, eyre};
-use reth_node_core::{
-    args::{DatadirArgs, MetricArgs, NetworkArgs, RpcServerArgs},
-    dirs::{DataDirPath, MaybePlatformPath},
-    exit::NodeExitFuture,
-};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;

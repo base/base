@@ -9,14 +9,13 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use base_execution_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
 use base_execution_state_database::{ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments};
+use base_node_config::{
+    DataDirPath, DatadirArgs, DiscoveryArgs, MaybePlatformPath, MetricArgs, NetworkArgs,
+    NodeExitFuture, RpcServerArgs,
+};
 use base_node_core::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
 use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Context, Result, eyre};
-use reth_node_core::{
-    args::{DatadirArgs, DiscoveryArgs, MetricArgs, NetworkArgs, RpcServerArgs},
-    dirs::{DataDirPath, MaybePlatformPath},
-    exit::NodeExitFuture,
-};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;

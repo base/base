@@ -74,8 +74,8 @@ pub use launch_components::*;
 
 mod handle;
 
+pub use base_node_config::NodeConfig;
 pub use handle::*;
-pub use reth_node_core::node_config::NodeConfig;
 
 mod rpc_services;
 pub use rpc_services::BaseRpcServices;

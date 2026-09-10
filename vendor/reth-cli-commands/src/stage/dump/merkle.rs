@@ -17,8 +17,8 @@ use base_execution_sync_pipeline::{
     MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD, MerkleStage, Stage, StageCheckpoint,
     StorageHashingStage, UnwindInput,
 };
+use base_node_config::{ChainPath, DataDirPath};
 use eyre::Result;
-use reth_node_core::dirs::{ChainPath, DataDirPath};
 use tracing::info;
 
 use super::setup;

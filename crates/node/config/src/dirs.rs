@@ -93,7 +93,7 @@ pub trait XdgPath {
 /// # Example
 ///
 /// ```
-/// use reth_node_core::dirs::{DataDirPath, PlatformPath};
+/// use base_node_config::{DataDirPath, PlatformPath};
 /// use std::str::FromStr;
 ///
 /// // Resolves to the platform-specific database path

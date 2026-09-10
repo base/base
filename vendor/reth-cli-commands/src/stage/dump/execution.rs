@@ -11,7 +11,7 @@ use base_execution_state_provider::{
     providers::{RocksDBProvider, StaticFileProvider},
 };
 use base_execution_sync_pipeline::{ExecutionStage, Stage, StageCheckpoint, UnwindInput};
-use reth_node_core::dirs::{ChainPath, DataDirPath};
+use base_node_config::{ChainPath, DataDirPath};
 use tracing::info;
 
 use super::setup;

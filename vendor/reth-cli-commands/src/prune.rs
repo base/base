@@ -8,9 +8,9 @@ use base_common_cli_support::CliContext;
 use base_execution_state_maintenance::PrunerBuilder;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::RocksDBProviderFactory;
+use base_node_config::{MetricArgs, version_metadata};
 use base_node_core::metrics_hooks;
 use clap::Parser;
-use reth_node_core::{args::MetricArgs, version::version_metadata};
 use reth_node_metrics::{
     chain::ChainSpecInfo,
     server::{MetricServer, MetricServerConfig},

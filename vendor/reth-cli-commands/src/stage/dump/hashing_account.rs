@@ -7,8 +7,8 @@ use base_execution_state_provider::{
     providers::{RocksDBProvider, StaticFileProvider},
 };
 use base_execution_sync_pipeline::{AccountHashingStage, Stage, StageCheckpoint, UnwindInput};
+use base_node_config::{ChainPath, DataDirPath};
 use eyre::Result;
-use reth_node_core::dirs::{ChainPath, DataDirPath};
 use tracing::info;
 
 use super::setup;

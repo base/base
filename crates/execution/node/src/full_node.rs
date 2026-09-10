@@ -15,10 +15,7 @@ use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_rpc_server::RpcServerHandle;
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
-use reth_node_core::{
-    dirs::{ChainPath, DataDirPath},
-    node_config::NodeConfig,
-};
+use base_node_config::{ChainPath, DataDirPath, NodeConfig};
 
 use crate::EngineShutdown;
 

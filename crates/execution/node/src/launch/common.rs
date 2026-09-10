@@ -66,16 +66,11 @@ use base_execution_sync_pipeline::{
     DefaultStages, MerkleStage, MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet,
 };
 use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
+use base_node_config::{ChainPath, DataDirPath, NodeConfig, PruneConfigKind, version_metadata};
 use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_node_core::{
-    args::PruneConfigKind,
-    dirs::{ChainPath, DataDirPath},
-    node_config::NodeConfig,
-    version::version_metadata,
-};
 use reth_node_ethstats::EthStatsService;
 use reth_node_events::{cl::ConsensusLayerHealthEvents, node::NodeEvent};
 use reth_node_metrics::{
@@ -1257,8 +1252,8 @@ mod tests {
     use base_execution_state_database::models::PartialStateTrieUnwindMarker;
     use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
     use base_execution_sync_pipeline::{FinishCheckpoint, StageCheckpoint, StageId};
+    use base_node_config::PruningArgs;
     use reth_config::Config;
-    use reth_node_core::args::PruningArgs;
 
     use super::{LaunchContext, NodeConfig, get_partial_trie_unwind_marker};
 

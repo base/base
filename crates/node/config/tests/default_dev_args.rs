@@ -2,8 +2,8 @@
 
 use std::{num::NonZeroUsize, time::Duration};
 
+use base_node_config::{DefaultDevArgs, DevArgs};
 use clap::{Args, Parser};
-use reth_node_core::args::{DefaultDevArgs, DevArgs};
 
 #[derive(Parser)]
 struct CommandParser<T: Args> {

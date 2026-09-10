@@ -10,7 +10,7 @@ use base_execution_engine_types::TreeConfig;
 use base_execution_evm_runtime::state::EvmState;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use eyre::{Result, eyre};
-use reth_node_core::primitives::RecoveredBlock;
+use reth_primitives_traits::RecoveredBlock;
 use tokio::{
     sync::mpsc,
     time::{Duration, sleep},

@@ -19,8 +19,8 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::StaticFileSegment;
 use base_execution_sync_pipeline::StageId;
+use base_node_config::StageEnum;
 use clap::Parser;
-use reth_node_core::args::StageEnum;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};
 

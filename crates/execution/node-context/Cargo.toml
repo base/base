@@ -16,7 +16,7 @@ description = "Shared Base node components and launch context."
 workspace = true
 
 [dependencies]
-reth-node-core = { workspace = true }
+base-node-config = { workspace = true }
 base-execution-txpool = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-execution-evm-blocks = {workspace = true}

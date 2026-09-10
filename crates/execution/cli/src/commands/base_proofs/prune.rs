@@ -7,6 +7,7 @@ use base_execution_state_tasks::{
     BaseProofStoragePruner, BaseProofsStorage, BaseProofsStore, MdbxProofsStorage,
     RocksdbProofsStorage,
 };
+use base_node_config::version_metadata;
 use base_node_core::{
     DEFAULT_PROOFS_HISTORY_WINDOW_BLOCKS, ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs,
     TWELVE_HOURS_IN_BLOCKS,
@@ -14,7 +15,6 @@ use base_node_core::{
 use clap::Parser;
 use reth_cli_commands::ChainSpecParser;
 use reth_cli_commands::common::{AccessRights, Environment, EnvironmentArgs};
-use reth_node_core::version::version_metadata;
 use tracing::info;
 
 /// Prunes the proofs storage by removing old proof history and state updates.
