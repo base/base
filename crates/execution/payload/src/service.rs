@@ -18,8 +18,8 @@ use base_common_types_payload::{
     PayloadId, PayloadKind,
 };
 use base_execution_state_operations::{PayloadStateRootHandle, SavedCache};
-use base_execution_state_types::CanonStateNotification;
-use futures_util::{Stream, StreamExt, future::FutureExt};
+use base_execution_state_provider::CanonStateNotificationStream;
+use futures_util::{StreamExt, future::FutureExt};
 use tokio::sync::{
     broadcast, mpsc,
     oneshot::{self, Receiver},
@@ -204,7 +204,7 @@ impl Clone for PayloadBuilderHandle {
 /// does know nothing about how to build them, it just drives their jobs to completion.
 #[derive(Debug)]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct PayloadBuilderService<St> {
+pub struct PayloadBuilderService {
     /// The type that knows how to create new payloads.
     generator: BasicPayloadJobGenerator,
     /// All active payload jobs, each accompanied by its id and the caller's tracing span
@@ -218,7 +218,7 @@ pub struct PayloadBuilderService<St> {
     /// Metrics for the payload builder service
     metrics: PayloadBuilderServiceMetrics,
     /// Chain events notification stream
-    chain_events: St,
+    chain_events: CanonStateNotificationStream,
     /// Payload events handler, used to broadcast and subscribe to payload events.
     payload_events: broadcast::Sender<Events>,
     /// We retain latest resolved payload just to make sure that we can handle repeating
@@ -232,7 +232,7 @@ const PAYLOAD_EVENTS_BUFFER_SIZE: usize = 20;
 
 // === impl PayloadBuilderService ===
 
-impl<St> PayloadBuilderService<St> {
+impl PayloadBuilderService {
     /// Creates a new payload builder service and returns the [`PayloadBuilderHandle`] to interact
     /// with it.
     ///
@@ -241,7 +241,7 @@ impl<St> PayloadBuilderService<St> {
     /// [`BasicPayloadJobGenerator::on_new_state`].
     pub fn new(
         generator: BasicPayloadJobGenerator,
-        chain_events: St,
+        chain_events: CanonStateNotificationStream,
     ) -> (Self, PayloadBuilderHandle) {
         let (service_tx, command_rx) = mpsc::unbounded_channel();
         let (payload_events, _) = broadcast::channel(PAYLOAD_EVENTS_BUFFER_SIZE);
@@ -372,10 +372,7 @@ impl<St> PayloadBuilderService<St> {
     }
 }
 
-impl<St> Future for PayloadBuilderService<St>
-where
-    St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
-{
+impl Future for PayloadBuilderService {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -704,8 +701,10 @@ mod tests {
                     BasicPayloadJobGeneratorConfig::default(),
                     builder,
                 );
-                let (service, handle) =
-                    PayloadBuilderService::new(generator, futures_util::stream::empty());
+                let (service, handle) = PayloadBuilderService::new(
+                    generator,
+                    CanonStateNotificationStream::new(broadcast::channel(1).1),
+                );
                 let service = tokio::spawn(service);
                 let dropped = Arc::new(AtomicBool::new(false));
                 let lease = PayloadBuilderLease::new(DropProbe(Arc::clone(&dropped)));

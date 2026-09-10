@@ -55,6 +55,13 @@ pub struct CanonStateNotificationStream {
     st: BroadcastStream<CanonStateNotification>,
 }
 
+impl CanonStateNotificationStream {
+    /// Wraps a canonical-state subscription as a stream, skipping lag notifications.
+    pub fn new(receiver: CanonStateNotifications) -> Self {
+        Self { st: BroadcastStream::new(receiver) }
+    }
+}
+
 impl Stream for CanonStateNotificationStream {
     type Item = CanonStateNotification;
 
