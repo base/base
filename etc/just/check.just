@@ -3,7 +3,7 @@ default:
     @just --justfile {{source_file()}} --list --list-prefix '  check::'
 
 # Runs formatting, clippy, udeps, and deny checks
-all: format clippy udeps deny
+all: crate-deps format clippy udeps deny
 
 # Checks formatting
 format:
@@ -51,8 +51,9 @@ no-std:
 no-std-proof:
     {{justfile_directory()}}/etc/scripts/ci/check-no-std-proof.sh
 
-# Checks crate dependency boundary rules
+# Checks crate names, locations and dependency boundaries
 crate-deps:
+    python3 {{justfile_directory()}}/etc/scripts/ci/test-crate-deps.py
     {{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
 
 # Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
