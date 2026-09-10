@@ -28,7 +28,8 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
-    /// Resource metering and throttling configuration for payload admission.
+    /// Resource-unit metering used to throttle transactions in the native
+    /// payload builder.
     pub resource_metering: ResourceMeteringConfig,
     /// Shared, cross-job cache of permanently rejected transaction hashes.
     ///
@@ -69,7 +70,8 @@ impl BaseBuilderConfig {
         }
     }
 
-    /// Sets resource metering and throttling for payload admission.
+    /// Sets resource-unit metering used to throttle transactions in the native
+    /// payload builder.
     pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
         self.resource_metering = resource_metering;
         self
@@ -118,23 +120,29 @@ impl Default for ResourceMeteringConfig {
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
     ///
-    /// Enabling metering without a non-empty schedule file fails closed so
-    /// operators cannot boot with `--enable-metering` and silently admit every
-    /// transaction.
+    /// `--enable-metering` turns on `base_meterBundle`. The native payload
+    /// builder throttles transactions against resource-unit budgets only when
+    /// that flag is set and a non-empty schedule file is loaded. A missing
+    /// schedule leaves those budgets inactive so mempool clients can serve
+    /// meterBundle without a builder schedule. An empty schedule file fails
+    /// closed because the operator asked to load a schedule and it has no
+    /// dimensions.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
         provider: SharedMeteringProvider,
     ) -> Result<Self, ResourceMeteringError> {
         let schedule = if enabled {
-            let Some(path) = schedule_path else {
-                return Err(ResourceMeteringError::MissingSchedule);
-            };
-            let schedule = ResourceMeteringSchedule::from_file(path)?;
-            if schedule.is_empty() {
-                return Err(ResourceMeteringError::EmptySchedule);
+            match schedule_path {
+                Some(path) => {
+                    let schedule = ResourceMeteringSchedule::from_file(path)?;
+                    if schedule.is_empty() {
+                        return Err(ResourceMeteringError::EmptySchedule);
+                    }
+                    schedule
+                }
+                None => ResourceMeteringSchedule::default(),
             }
-            schedule
         } else {
             if let Some(path) = schedule_path {
                 warn!(
@@ -463,10 +471,12 @@ mod tests {
     }
 
     #[test]
-    fn enabled_metering_without_schedule_fails_closed() {
-        let err = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
-            .expect_err("enable-metering without a schedule must fail");
-        assert!(matches!(err, ResourceMeteringError::MissingSchedule));
+    fn enabled_metering_without_schedule_leaves_resource_throttling_inactive() {
+        let config = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
+            .expect("enable-metering without a schedule must still boot");
+        assert!(config.enabled);
+        assert!(config.schedule.is_empty());
+        assert!(!config.is_active());
     }
 
     #[test]
