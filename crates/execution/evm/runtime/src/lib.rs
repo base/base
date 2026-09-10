@@ -74,11 +74,6 @@ pub use execution_api::*;
 mod count_inspector;
 pub use count_inspector::*;
 
-#[cfg(feature = "tracer")]
-mod eip3155;
-#[cfg(feature = "tracer")]
-pub use eip3155::*;
-
 #[path = "either.rs"]
 mod either_impl;
 

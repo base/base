@@ -57,7 +57,6 @@ serde = { features = ["derive", "rc"], optional = true, workspace = true }
 aws-lc-rs = { workspace = true, features = ["aws-lc-sys"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-indexmap", "rlp", "map"] }
 c-kzg = { workspace = true, features = ["ethereum_kzg_settings"], optional = true }
-serde_json = { workspace = true, features = ["alloc", "preserve_order"], optional = true }
 derive_more = { workspace = true, features = ["full", "deref", "debug", "from", "try_into"] }
 secp256k1_0_31_1 = { workspace = true, features = ["alloc", "recovery", "rand", "global-context"], optional = true }
 
@@ -145,8 +144,6 @@ std = [
     "derive_more/std",
     "either/std",
     "serde?/std",
-    "serde_json?/preserve_order",
-    "serde_json?/std",
     "thiserror/std",
     "tracing/std",
     "once_cell/std",
@@ -208,8 +205,6 @@ optional_eip3607 = []
 optional_fee_charge = []
 optional_balance_check = []
 optional_block_gas_limit = []
-serde-json = ["serde", "tracer"]
-tracer = ["dep:serde", "dep:serde_json", "serde", "std"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 arbitrary = ["std", "alloy-primitives/arbitrary", "dep:arbitrary"]
 dev = [
