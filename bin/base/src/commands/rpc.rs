@@ -5,13 +5,13 @@ use std::sync::Arc;
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::CliRunner;
-use base_consensus_cli::{
+use base_consensus_driver_service::LocalEngineClient;
+use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
+use base_node_cli::{
     CliMetrics, ConsensusFollowNodeArgs, ConsensusNodeArgs, ConsensusNodeConfigArgs,
     ConsensusNodeOverrides, ConsensusNodeStartOptions, EmbeddedConsensusNodeConfigArgs,
     EmbeddedFollowArgs,
 };
-use base_consensus_driver_service::LocalEngineClient;
-use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
 use base_node_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::Args;
 use tokio_util::sync::CancellationToken;
@@ -174,7 +174,7 @@ mod tests {
     use std::process::Command;
 
     use base_common_chain_config::BaseChainSpec;
-    use base_consensus_cli::ConsensusNodeConfigArgs;
+    use base_node_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
     use crate::{cli::BaseCli, commands::BaseCommand, config::ChainArg};

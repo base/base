@@ -11,7 +11,7 @@ use clap::Args;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::{
+use crate::consensus::{
     ConsensusChainArgs, ConsensusNodeConfigArgs, L1ClientArgs, L1ConfigFile, L2ConfigFile, RpcArgs,
 };
 

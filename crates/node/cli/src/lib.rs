@@ -35,3 +35,14 @@ pub use batcher::{BatcherArgs, SignerCli};
 
 mod builder;
 pub use builder::{BuilderArgs, TransactionEventsArgs};
+
+mod consensus;
+pub use consensus::{
+    Bootnode, BootnodeEnr, BootnodeP2PArgs, CliMetrics, ConfigError, ConsensusChainArgs,
+    ConsensusFollowNodeArgs, ConsensusFollowNodeConfigArgs, ConsensusNodeArgs,
+    ConsensusNodeConfigArgs, ConsensusNodeOverrides, ConsensusNodeStartOptions,
+    EmbeddedConsensusNodeConfigArgs, EmbeddedFollowArgs, EmbeddedP2PArgs, EmbeddedRpcArgs,
+    EmbeddedSequencerConsensusNodeConfigArgs, L1ClientArgs, L1ConfigFile, L2ConfigFile, LogArgs,
+    MetricsArgs, P2PArgs, P2PConfigError, P2PNetworkArgs, RpcArgs, SequencerArgs, SignerArgs,
+    SignerArgsParseError, resolve_host,
+};

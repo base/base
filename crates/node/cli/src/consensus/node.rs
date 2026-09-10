@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::{
+use crate::consensus::{
     ConsensusChainArgs, EmbeddedP2PArgs, EmbeddedRpcArgs, L1ClientArgs, L1ConfigFile, L2ConfigFile,
     P2PArgs, RpcArgs, SequencerArgs,
 };
@@ -583,7 +583,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::SignerArgs;
+    use crate::consensus::SignerArgs;
 
     const SIGNER_ENV_KEYS: &[&str] = &[
         "BASE_NODE_P2P_SEQUENCER_KEY",

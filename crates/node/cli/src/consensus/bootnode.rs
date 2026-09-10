@@ -22,7 +22,9 @@ use libp2p::identity::Keypair;
 use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
-use crate::{ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics};
+use crate::consensus::{
+    ConsensusChainArgs, L2ConfigFile, LogArgs, MetricsArgs, metrics::CliMetrics,
+};
 
 /// Base consensus bootnode arguments.
 #[derive(Args, Clone, Debug)]

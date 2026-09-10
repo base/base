@@ -44,7 +44,6 @@ members = [
   "crates/common/types/rpc",
   "crates/common/types/payload",
   "crates/execution/state/memory",
-  "crates/consensus/cli",
   "crates/consensus/derive/pipeline",
   "crates/consensus/network/service",
   "crates/consensus/batch/types",
@@ -267,7 +266,6 @@ base-common-observability-events = { path = "crates/common/observability/events"
 # Builder
 
 # Consensus
-base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
 base-consensus-batch-types = { path = "crates/consensus/batch/types", default-features = false }
 base-consensus-network-service = { path = "crates/consensus/network/service", default-features = false }
 base-consensus-driver-service = { path = "crates/consensus/driver/service", default-features = false }

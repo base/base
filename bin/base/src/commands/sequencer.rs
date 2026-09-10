@@ -4,13 +4,13 @@ use std::sync::Arc;
 use base_common_chain_activation::UpgradeSignalStartupMode;
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::CliRunner;
-use base_consensus_cli::{
-    CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
-    ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
-};
 use base_consensus_driver_service::LocalEngineClient;
 use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
 use base_node_cli::BuilderArgs;
+use base_node_cli::{
+    CliMetrics, ConsensusNodeArgs, ConsensusNodeConfigArgs, ConsensusNodeOverrides,
+    ConsensusNodeStartOptions, EmbeddedSequencerConsensusNodeConfigArgs,
+};
 use base_node_cli::{ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser};
 use base_node_service::BaseNode;
 use clap::Args;
@@ -164,7 +164,7 @@ impl SequencerCommand {
 
 #[cfg(test)]
 mod tests {
-    use base_consensus_cli::ConsensusNodeConfigArgs;
+    use base_node_cli::ConsensusNodeConfigArgs;
     use clap::Parser;
 
     use crate::{cli::BaseCli, commands::BaseCommand};

@@ -8,7 +8,7 @@ use std::{
 use base_common_chain_config::{BaseUpgrade, RollupConfig};
 use tokio::task::JoinHandle;
 
-use crate::{P2PArgs, bootnode::BootnodeP2PArgs};
+use crate::consensus::{P2PArgs, bootnode::BootnodeP2PArgs};
 
 /// Metrics to record various CLI options.
 #[derive(Debug, Clone, PartialEq, Eq)]

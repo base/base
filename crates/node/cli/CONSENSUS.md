@@ -1,4 +1,4 @@
-# `base-consensus-cli`
+# `base-node-cli`
 
 CLI argument types for Base consensus clients.
 
@@ -15,7 +15,7 @@ This crate provides reusable CLI argument types for configuring Base consensus c
 
 ```toml
 [dependencies]
-base-consensus-cli = { workspace = true }
+base-node-cli = { workspace = true }
 ```
 
 ```rust

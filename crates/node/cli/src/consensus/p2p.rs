@@ -16,6 +16,7 @@ use base_common_client_ethereum::PrivateKeySigner;
 use base_common_client_ethereum::Provider;
 use base_common_runtime_tasks::RetryConfig;
 use base_consensus_derive_pipeline::ChainProvider;
+use base_consensus_driver_service::NetworkConfig;
 use base_consensus_network_service::BootNode;
 use base_consensus_network_service::BootStoreFile;
 use base_consensus_network_service::ConnectionLimitsConfig;
@@ -26,7 +27,6 @@ use base_consensus_network_service::GaterConfig;
 use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::PeerMonitoring;
 use base_consensus_network_service::PeerScoreLevel;
-use base_consensus_driver_service::NetworkConfig;
 use base_consensus_source_providers::{AlloyChainProvider, L1RpcProvider};
 use clap::Parser;
 use discv5::enr::k256;
@@ -36,7 +36,7 @@ use tokio::time::Duration;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::signer::{SignerArgs, SignerArgsParseError};
+use crate::consensus::signer::{SignerArgs, SignerArgsParseError};
 
 /// Resolves a hostname or IP address string to an [`IpAddr`].
 ///
