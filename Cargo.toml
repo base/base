@@ -123,7 +123,7 @@ members = [
   "vendor/reth-e2e-test-utils",
   "vendor/reth-engine-local",
   "crates/execution/engine/types",
-  "vendor/reth-engine-tree",
+  "crates/execution/engine/driver",
   "vendor/reth-engine-util",
   "crates/execution/network/wire",
   "crates/execution/engine/observers",
@@ -427,7 +427,7 @@ base-execution-state-types = { path = "crates/execution/state/types", default-fe
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }
 reth-engine-util = { path = "vendor/reth-engine-util", default-features = false }
-reth-engine-tree = { path = "vendor/reth-engine-tree", default-features = false }
+base-execution-engine-driver = { path = "crates/execution/engine/driver", default-features = false }
 reth-node-events = { path = "vendor/reth-node-events", default-features = false }
 reth-payload-util = { path = "vendor/reth-payload-util", default-features = false }
 reth-node-metrics = { path = "vendor/reth-node-metrics", default-features = false }

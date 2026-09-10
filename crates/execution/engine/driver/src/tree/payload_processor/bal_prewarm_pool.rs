@@ -7,10 +7,10 @@ use std::{
 };
 
 use alloy_primitives::{Address, StorageKey};
-use base_execution_state_tasks::{CachedStateProvider, ExecutionCache, TxPoolPrewarmCacheSnapshot};
 use base_execution_state_provider::{
     AccountReader, BytecodeReader, ProviderResult, StateProviderBox, StateReadProvider,
 };
+use base_execution_state_tasks::{CachedStateProvider, ExecutionCache, TxPoolPrewarmCacheSnapshot};
 use tokio::sync::oneshot;
 use tracing::trace;
 

@@ -1,5 +1,7 @@
 //! Configuration files.
-use std::{path::Path, time::Duration};
+use std::time::Duration;
+#[cfg(feature = "serde")]
+use std::path::Path;
 
 use base_execution_network_types::PeersConfig;
 use base_execution_network_types::SessionsConfig;

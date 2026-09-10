@@ -105,7 +105,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-local](../../vendor/reth-engine-local/Cargo.toml) | Optional capability; separate removal decision |
 | [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
-| [reth-engine-tree](../../vendor/reth-engine-tree/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-engine-driver](../../crates/execution/engine/driver/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-util](../../vendor/reth-engine-util/Cargo.toml) | Optional capability; separate removal decision |
 | reth-era | Deleted |
 | reth-era-downloader | Deleted |

@@ -4,6 +4,7 @@ use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_tracing::tracing::{debug, info};
+pub use base_execution_engine_driver::tree::BasicEngineValidator;
 use base_execution_engine_types::TreeConfig;
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc_handlers::{
@@ -22,7 +23,6 @@ pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
 };
-pub use reth_engine_tree::tree::BasicEngineValidator;
 use reth_node_core::node_config::NodeConfig;
 use {base_execution_txpool::BaseTransactionPool, base_node_context::AddOnsContext};
 

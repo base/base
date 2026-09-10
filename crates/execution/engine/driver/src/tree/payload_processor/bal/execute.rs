@@ -35,8 +35,8 @@ use base_execution_evm_runtime::{
     database::{BundleRetention, State},
     state::bal::Bal as RevmBal,
 };
-use crossbeam_channel::{Receiver, Sender};
 use base_execution_state_provider::BlockExecutionOutput;
+use crossbeam_channel::{Receiver, Sender};
 
 use super::{BalExecutionError, ordered_outputs::ordered_worker_outputs, worker};
 use crate::tree::payload_processor::receipt_root_task::IndexedReceipt;

@@ -5,7 +5,7 @@
 //! the input messages, the [`StateRootSink`](crate::state_root_task::StateRootSink) and
 //! stream views that feed it, and the handles
 //! that await its result. The per-block strategy abstraction that decides whether and how the
-//! task runs lives in `reth-engine-tree` under `tree::state_root_strategy`.
+//! task runs lives in `base-execution-engine-driver` under `tree::state_root_strategy`.
 
 use std::{fmt, sync::Arc};
 
