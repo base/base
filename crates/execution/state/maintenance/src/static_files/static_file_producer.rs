@@ -13,14 +13,13 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::PruneModes;
-use base_execution_state_types::StageId;
 use base_execution_state_types::{HighestStaticFiles, StaticFileTargets};
+use base_execution_state_types::{StageId, StaticFileSegment};
 use parking_lot::Mutex;
-use rayon::prelude::*;
 use reth_primitives_traits::FastInstant as Instant;
 use tracing::{debug, trace};
 
-use crate::static_files::{StaticFileProducerEvent, segments, segments::Segment};
+use crate::static_files::{StaticFileProducerEvent, segments::Receipts};
 
 /// Result of [`StaticFileProducerInner::run`] execution.
 pub type StaticFileProducerResult = ProviderResult<StaticFileTargets>;
@@ -101,13 +100,8 @@ where
 
     /// Run the `static_file_producer`.
     ///
-    /// For each [Some] target in [`StaticFileTargets`], initializes a corresponding [Segment] and
-    /// runs it with the provided block range using [`base_execution_state_provider::providers::StaticFileProvider`]
-    /// and a read-only database transaction from [`DatabaseProviderFactory`]. All segments are run
-    /// in parallel.
-    ///
-    /// NOTE: it doesn't delete the data from database, and the actual deleting (aka pruning) logic
-    /// lives in the `prune` crate.
+    /// Copies the requested receipt range using a read-only database transaction, commits the
+    /// static files, and updates their index. Database deletion is handled by the pruning jobs.
     pub fn run(&self, targets: StaticFileTargets) -> StaticFileProducerResult {
         // If there are no targets, do not produce any static files and return early
         if !targets.any() {
@@ -123,33 +117,21 @@ where
         debug!(target: "static_file", ?targets, "StaticFileProducer started");
         let start = Instant::now();
 
-        let mut segments =
-            Vec::<(Box<dyn Segment<Provider::Provider>>, RangeInclusive<BlockNumber>)>::new();
-
         if let Some(block_range) = targets.receipts.clone() {
-            segments.push((Box::new(segments::Receipts), block_range));
+            debug!(target: "static_file", segment = %StaticFileSegment::Receipts, ?block_range, "StaticFileProducer segment");
+            let start = Instant::now();
+            let provider =
+                self.provider.database_provider_ro()?.disable_long_read_transaction_safety();
+            Receipts::copy_to_static_files(provider, block_range.clone())?;
+            let elapsed = start.elapsed();
+            debug!(target: "static_file", segment = %StaticFileSegment::Receipts, ?block_range, ?elapsed, "Finished StaticFileProducer segment");
         }
 
-        segments.par_iter().try_for_each(|(segment, block_range)| -> ProviderResult<()> {
-            debug!(target: "static_file", segment = %segment.segment(), ?block_range, "StaticFileProducer segment");
-            let start = Instant::now();
-
-            // Create a new database transaction on every segment to prevent long-lived read-only
-            // transactions
-            let provider = self.provider.database_provider_ro()?.disable_long_read_transaction_safety();
-            segment.copy_to_static_files(provider,  block_range.clone())?;
-
-            let elapsed = start.elapsed(); // TODO(alexey): track in metrics
-            debug!(target: "static_file", segment = %segment.segment(), ?block_range, ?elapsed, "Finished StaticFileProducer segment");
-
-            Ok(())
-        })?;
-
         self.provider.static_file_provider().commit()?;
-        for (segment, block_range) in segments {
+        if let Some(block_range) = &targets.receipts {
             self.provider
                 .static_file_provider()
-                .update_index(segment.segment(), Some(*block_range.end()))?;
+                .update_index(StaticFileSegment::Receipts, Some(*block_range.end()))?;
         }
 
         let elapsed = start.elapsed(); // TODO(alexey): track in metrics

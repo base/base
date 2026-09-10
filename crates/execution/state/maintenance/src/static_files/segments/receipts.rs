@@ -7,25 +7,19 @@ use base_execution_state_provider::{BlockReader, DBProvider, StaticFileProviderF
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{ProviderError, ProviderResult};
 
-use crate::static_files::segments::Segment;
-
 /// Static File segment responsible for [`StaticFileSegment::Receipts`] part of data.
 #[derive(Debug, Default)]
 pub struct Receipts;
 
-impl<Provider> Segment<Provider> for Receipts
-where
-    Provider: StaticFileProviderFactory + DBProvider + BlockReader,
-{
-    fn segment(&self) -> StaticFileSegment {
-        StaticFileSegment::Receipts
-    }
-
-    fn copy_to_static_files(
-        &self,
+impl Receipts {
+    /// Copy the requested receipt range from the database into static files.
+    pub fn copy_to_static_files<Provider>(
         provider: Provider,
         block_range: RangeInclusive<BlockNumber>,
-    ) -> ProviderResult<()> {
+    ) -> ProviderResult<()>
+    where
+        Provider: StaticFileProviderFactory + DBProvider + BlockReader,
+    {
         let mut static_file_writer =
             provider.get_static_file_writer(*block_range.start(), StaticFileSegment::Receipts)?;
 
