@@ -344,6 +344,7 @@ mod tests {
                 config: Some(
                     TestConfig::from_yaml(
                         r#"
+transaction_submission_rpcs: http://127.0.0.1:1
 transactions:
   - weight: 100
     type: precompile

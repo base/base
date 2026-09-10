@@ -6,7 +6,7 @@ use super::accounts;
 
 /// Generates the L2 intent configuration for op-deployer as TOML.
 pub fn l2_intent_toml(l1_chain_id: u64, l2_chain_id: u64) -> String {
-    let l2_chain_id_hex = format!("{l2_chain_id:#x}");
+    let l2_chain_id_hex = chain_id_hash(l2_chain_id);
     let deployer = format_address(accounts::DEPLOYER.address);
     let sequencer = format_address(accounts::SEQUENCER.address);
     let batcher = format_address(accounts::BATCHER.address);
@@ -53,6 +53,27 @@ l2ContractsLocator = "embedded"
     )
 }
 
+fn chain_id_hash(value: u64) -> String {
+    format!("0x{value:064x}")
+}
+
 fn format_address(address: Address) -> String {
     format!("{address:#x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::chain_id_hash;
+
+    #[test]
+    fn chain_ids_use_hash_encoding() {
+        assert_eq!(
+            chain_id_hash(84_538_453),
+            "0x000000000000000000000000000000000000000000000000000000000509f455"
+        );
+        assert_eq!(
+            chain_id_hash(8453),
+            "0x0000000000000000000000000000000000000000000000000000000000002105"
+        );
+    }
 }
