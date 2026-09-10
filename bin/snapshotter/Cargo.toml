@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 rayon = { workspace = true }
 tracing = { workspace = true }
-base-snapshotter = { workspace = true }
+base-infra-snapshotter-service = { workspace = true }
 aws-credential-types = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }

@@ -87,7 +87,7 @@ target "snapshotter" {
     CARGO_CHEF_ARGS = "--package base-snapshotter-bin"
     SCCACHE_CACHE_ID = "rust-services-snapshotter-sccache"
   }
-  tags = ["base-snapshotter:local"]
+  tags = ["base-infra-snapshotter-service:local"]
 }
 
 target "proposer" {

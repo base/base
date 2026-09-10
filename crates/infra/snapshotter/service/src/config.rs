@@ -21,7 +21,7 @@ pub enum S3ConfigType {
 /// Configuration for the snapshotter sidecar.
 #[derive(Debug, Parser)]
 #[command(
-    name = "base-snapshotter",
+    name = "base-infra-snapshotter-service",
     about = "Snapshot and upload reth node data to S3-compatible storage"
 )]
 pub struct SnapshotterConfig {

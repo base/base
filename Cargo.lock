@@ -4501,6 +4501,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-infra-snapshotter-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "anyhow",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "base-common-client-ethereum",
+ "base-reth-cli",
+ "bollard",
+ "clap",
+ "futures",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "testcontainers",
+ "testcontainers-modules",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-infra-telemetry-service"
 version = "0.0.0"
 dependencies = [
@@ -5312,30 +5336,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-snapshotter"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "anyhow",
- "async-trait",
- "aws-config",
- "aws-sdk-s3",
- "base-common-client-ethereum",
- "base-reth-cli",
- "bollard",
- "clap",
- "futures",
- "serde_json",
- "serial_test",
- "tempfile",
- "testcontainers",
- "testcontainers-modules",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-snapshotter-bin"
 version = "0.0.0"
 dependencies = [
@@ -5343,7 +5343,7 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
- "base-snapshotter",
+ "base-infra-snapshotter-service",
  "clap",
  "rayon",
  "tokio",

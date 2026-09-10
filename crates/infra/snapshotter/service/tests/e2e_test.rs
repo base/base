@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::Result;
 use async_trait::async_trait;
-use base_snapshotter::{
+use base_infra_snapshotter_service::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
     SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
@@ -142,12 +142,12 @@ impl TipChecker for MockTipChecker {
 
 /// Builds a `SnapshotterConfig` for orchestrator tests. `source_datadir` is set
 /// to a nonexistent path so `generate_and_upload` fails deterministically.
-fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig {
-    base_snapshotter::SnapshotterConfig {
+fn test_config(bucket: &str, tmp: &Path) -> base_infra_snapshotter_service::SnapshotterConfig {
+    base_infra_snapshotter_service::SnapshotterConfig {
         container_name: "fake-el".to_string(),
         consensus_container_name: "fake-cl".to_string(),
         el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
-        tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
+        tip_threshold_secs: base_infra_snapshotter_service::DEFAULT_TIP_THRESHOLD_SECS,
         source_datadir: tmp.join("nonexistent-datadir"),
         output_dir: tmp.join("output"),
         upload_existing_run_timestamp: None,
@@ -159,7 +159,7 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         snapshot_threads: None,
         retain_runs: NonZeroUsize::new(3).expect("retain runs should be non-zero"),
         docker_socket: "/var/run/docker.sock".to_string(),
-        s3_config_type: base_snapshotter::S3ConfigType::Aws,
+        s3_config_type: base_infra_snapshotter_service::S3ConfigType::Aws,
         s3_endpoint: None,
         s3_region: "us-east-1".to_string(),
         s3_access_key_id: None,
@@ -1228,7 +1228,7 @@ async fn orchestrator_always_restarts_on_failure() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let config = test_config(&harness.bucket_name, tmp.path());
 
-    let snapshotter = base_snapshotter::Snapshotter::new(
+    let snapshotter = base_infra_snapshotter_service::Snapshotter::new(
         std::sync::Arc::clone(&manager),
         MockTipChecker::new(true),
         uploader,
@@ -1264,7 +1264,7 @@ async fn orchestrator_skips_when_not_at_tip() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let config = test_config(&harness.bucket_name, tmp.path());
 
-    let snapshotter = base_snapshotter::Snapshotter::new(
+    let snapshotter = base_infra_snapshotter_service::Snapshotter::new(
         std::sync::Arc::clone(&manager),
         MockTipChecker::new(false),
         uploader,
@@ -1301,7 +1301,7 @@ async fn upload_existing_run_skips_container_lifecycle() -> Result<()> {
     config.output_dir = output_dir;
     config.upload_existing_run_timestamp = Some(run_timestamp);
 
-    let snapshotter = base_snapshotter::Snapshotter::new(
+    let snapshotter = base_infra_snapshotter_service::Snapshotter::new(
         std::sync::Arc::clone(&manager),
         MockTipChecker::new(true),
         uploader,
@@ -1332,7 +1332,7 @@ async fn orchestrator_proceeds_when_at_tip() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let config = test_config(&harness.bucket_name, tmp.path());
 
-    let snapshotter = base_snapshotter::Snapshotter::new(
+    let snapshotter = base_infra_snapshotter_service::Snapshotter::new(
         std::sync::Arc::clone(&manager),
         MockTipChecker::new(true),
         uploader,
