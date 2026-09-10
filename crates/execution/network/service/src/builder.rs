@@ -150,6 +150,7 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
         let (tx, rx) = memory_bounded_channel(
             transactions_manager_config.tx_channel_memory_limit_bytes,
             NETWORK_POOL_TRANSACTIONS_SCOPE,
+            base_common_types_chain::InMemorySize::size,
         );
         network.set_transactions(tx);
         let handle = network.handle().clone();

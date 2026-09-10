@@ -456,6 +456,7 @@ where
         let (tx, rx) = memory_bounded_channel(
             DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
             "test_tx_channel",
+            base_common_types_chain::InMemorySize::size,
         );
         self.network.set_transactions(tx);
         let transactions_manager = TransactionsManager::new(
@@ -477,6 +478,7 @@ where
         let (tx, rx) = memory_bounded_channel(
             DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
             "test_tx_channel",
+            base_common_types_chain::InMemorySize::size,
         );
         network.set_transactions(tx);
         let transactions_manager = TransactionsManager::new(
@@ -521,6 +523,7 @@ where
         let (tx, rx) = memory_bounded_channel(
             DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
             "test_tx_channel",
+            base_common_types_chain::InMemorySize::size,
         );
         network.set_transactions(tx);
 

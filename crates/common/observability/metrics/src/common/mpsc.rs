@@ -10,7 +10,6 @@ use std::{
     task::{Context, Poll, ready},
 };
 
-use base_common_types_chain::InMemorySize;
 use futures::Stream;
 use metrics::Counter;
 use tokio::sync::mpsc::{
@@ -459,19 +458,21 @@ struct Budgeted<T> {
 /// pattern can never race with itself. The atomic is still used so the receiver can
 /// release budget from a different task.
 #[derive(Debug, Clone)]
-pub struct MemoryBoundedSender<T: InMemorySize> {
+pub struct MemoryBoundedSender<T> {
     /// The underlying unbounded metered sender
     inner: UnboundedMeteredSender<Budgeted<T>>,
     /// Shared memory budget tracker
     budget: Arc<MemoryBudget>,
+    /// Computes the bytes reserved for each queued message.
+    message_size: fn(&T) -> usize,
 }
 
-impl<T: InMemorySize> MemoryBoundedSender<T> {
+impl<T> MemoryBoundedSender<T> {
     /// Tries to send a message if there is sufficient budget.
     ///
     /// Returns `TrySendError::Full` if insufficient budget is available.
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        let size = msg.size();
+        let size = (self.message_size)(&msg);
 
         // Reserve budget: add first, check after
         let prev = self.budget.used.fetch_add(size, Ordering::Relaxed);
@@ -538,15 +539,36 @@ impl<T> Stream for MemoryBoundedReceiver<T> {
 /// The budget tracks bytes currently buffered in the channel; it is reserved on
 /// [`MemoryBoundedSender::try_send`] and released as soon as the receiver dequeues
 /// the message.
-pub fn memory_bounded_channel<T: InMemorySize>(
+pub fn memory_bounded_channel<T>(
     max_bytes: usize,
     scope: &'static str,
+    message_size: fn(&T) -> usize,
 ) -> (MemoryBoundedSender<T>, MemoryBoundedReceiver<T>) {
     let (tx, rx) = metered_unbounded_channel(scope);
     let budget = Arc::new(MemoryBudget { used: AtomicUsize::new(0), max_bytes });
 
-    let sender = MemoryBoundedSender { inner: tx, budget };
+    let sender = MemoryBoundedSender { inner: tx, budget, message_size };
     let receiver = MemoryBoundedReceiver { inner: rx };
 
     (sender, receiver)
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc::error::TrySendError;
+
+    use super::memory_bounded_channel;
+
+    #[tokio::test]
+    async fn byte_budget_releases_on_receive_and_failed_send() {
+        let (sender, mut receiver) = memory_bounded_channel(4, "budget_test", Vec::<u8>::len);
+        sender.try_send(vec![1; 4]).unwrap();
+        assert!(matches!(sender.try_send(vec![2]), Err(TrySendError::Full(_))));
+        assert_eq!(receiver.recv().await, Some(vec![1; 4]));
+        sender.try_send(vec![3; 4]).unwrap();
+        assert_eq!(receiver.recv().await, Some(vec![3; 4]));
+        drop(receiver);
+        assert!(matches!(sender.try_send(vec![4; 4]), Err(TrySendError::Closed(_))));
+        assert!(matches!(sender.try_send(vec![5; 4]), Err(TrySendError::Closed(_))));
+    }
 }

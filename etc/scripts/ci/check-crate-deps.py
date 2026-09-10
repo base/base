@@ -98,6 +98,8 @@ def violations(metadata):
             target_parts = Path(target_package["manifest_path"]).relative_to(root).parent.parts
             target = target_parts[1] if target_parts[0] == "crates" else "bin"
             edge = f"{name} -> {target_package['name']} ({dependency['kind'] or 'normal'})"
+            if name == "base-common-observability-metrics" and target_parts[1:3] == ("common", "types"):
+                errors.append(f"{edge}: generic metrics cannot depend on chain schemas")
             if source == target == "execution":
                 source_subsystem = parts[2] if len(parts) > 2 else None
                 target_subsystem = target_parts[2] if len(target_parts) > 2 else None

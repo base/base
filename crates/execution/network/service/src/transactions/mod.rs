@@ -3372,6 +3372,7 @@ mod tests {
             base_common_observability_metrics::common::mpsc::memory_bounded_channel::<NetworkTransactionEvent>(
                 crate::transactions::constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
                 "test_tx_channel",
+            base_common_types_chain::InMemorySize::size,
             );
         network_manager.set_transactions(to_tx_manager_tx);
         let network_handle = network_manager.handle().clone();

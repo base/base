@@ -15,7 +15,6 @@ workspace = true
 [dependencies]
 metrics = { optional = true, workspace = true }
 metrics-derive = { workspace = true, optional = true }
-base-common-types-chain = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["full"], optional = true }
 ctor = { workspace = true, optional = true, features = ["default"] }
 futures = { workspace = true, optional = true, features = ["default"] }
@@ -40,4 +39,4 @@ required-features = ["metrics"]
 [features]
 std = ["dep:libc"]
 metrics = ["dep:ctor", "dep:metrics", "std", "dep:metrics-derive"]
-common = ["tokio", "futures", "tokio-util", "base-common-types-chain", "metrics"]
+common = ["tokio", "futures", "tokio-util", "metrics"]

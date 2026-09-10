@@ -28,6 +28,12 @@ def check(*packages):
 
 
 class ArchitectureTests(unittest.TestCase):
+    def test_metrics_do_not_depend_on_chain_schemas(self):
+        for kind in [None, "dev", "build"]:
+            self.assertTrue(check(
+                package("crates/common/observability/metrics", [dependency("crates/common/types/chain", kind)]),
+                package("crates/common/types/chain")))
+
     def test_state_cannot_import_rpc_servers_through_any_dependency_kind(self):
         for kind in [None, "dev", "build"]:
             for optional in [False, True]:
