@@ -4,6 +4,10 @@
 mod config;
 pub use config::L1ContainerConfig;
 
+/// Container log capture for L1 failure diagnostics.
+mod logs;
+pub use logs::ContainerLogs;
+
 /// Lighthouse beacon and validator containers.
 mod lighthouse;
 pub use lighthouse::{LighthouseBeaconContainer, LighthouseValidatorContainer};

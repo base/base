@@ -130,6 +130,11 @@ impl RethContainer {
         Ok(Self { container, name, reorg_control_enabled: config.enable_reorg_control })
     }
 
+    /// Returns the container's trailing output for failure diagnostics.
+    pub async fn logs(&self) -> Result<String> {
+        super::ContainerLogs::tail(&self.container).await
+    }
+
     /// Returns the public RPC URL of the container.
     pub async fn rpc_url(&self) -> Result<Url> {
         self.host_url(HTTP_PORT).await

@@ -1,7 +1,9 @@
 //! L1 stack orchestration (Reth + Lighthouse).
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
+use alloy_network::Ethereum;
+use alloy_provider::{Provider, RootProvider};
 use eyre::{Result, WrapErr};
 use url::Url;
 
@@ -114,6 +116,53 @@ impl L1Stack {
     /// Returns a reference to the Lighthouse beacon container.
     pub const fn beacon(&self) -> &LighthouseBeaconContainer {
         &self.beacon
+    }
+
+    /// How long the chain may stay at block zero before its client logs are captured.
+    pub const STALL_DIAGNOSTIC_DELAY: Duration = Duration::from_secs(60);
+
+    /// Poll interval while watching for the first L1 block.
+    const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+    /// Captures L1 client logs when the chain never leaves block zero.
+    ///
+    /// Purely diagnostic and never fails a caller. Both L1 clients run in Docker, so a devnet
+    /// that serves RPC while never advancing leaves no trace in the harness's own output; the
+    /// tests that depend on it just time out somewhere further downstream.
+    pub async fn log_diagnostics_if_stalled(&self) {
+        let Ok(rpc_url) = self.rpc_url().await else {
+            return;
+        };
+        let provider = RootProvider::<Ethereum>::new_http(rpc_url);
+        let advanced = tokio::time::timeout(Self::STALL_DIAGNOSTIC_DELAY, async {
+            loop {
+                if provider.get_block_number().await.is_ok_and(|number| number > 0) {
+                    return;
+                }
+                tokio::time::sleep(Self::BLOCK_POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .is_ok();
+
+        if advanced {
+            return;
+        }
+
+        eprintln!(
+            "L1 stalled at block 0 for {:?}; capturing client logs",
+            Self::STALL_DIAGNOSTIC_DELAY
+        );
+        for (client, logs) in [
+            ("reth", self.reth.logs().await),
+            ("beacon", self.beacon.logs().await),
+            ("validator", self.validator.logs().await),
+        ] {
+            match logs {
+                Ok(logs) => eprintln!("===== L1 {client} =====\n{logs}"),
+                Err(error) => eprintln!("===== L1 {client} ===== unavailable: {error}"),
+            }
+        }
     }
 
     /// Returns the public RPC URL of the Reth container.

@@ -690,6 +690,7 @@ impl SystemTestStackBuilder {
             L1Execution::start(l1_config).await.wrap_err("Failed to start L1 execution layer")?;
         let l1_stack =
             l1_execution.start_consensus().await.wrap_err("Failed to start L1 consensus")?;
+        l1_stack.log_diagnostics_if_stalled().await;
 
         let jwt_secret = JwtSecret::random();
 

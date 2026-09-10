@@ -85,6 +85,11 @@ impl LighthouseBeaconContainer {
         Ok(Self { container, name })
     }
 
+    /// Returns the container's trailing output for failure diagnostics.
+    pub async fn logs(&self) -> Result<String> {
+        super::ContainerLogs::tail(&self.container).await
+    }
+
     /// Returns the beacon API URL (host-accessible).
     pub async fn beacon_url(&self) -> Result<String> {
         let host = self.container.get_host().await?;
@@ -111,6 +116,11 @@ pub struct LighthouseValidatorContainer {
 }
 
 impl LighthouseValidatorContainer {
+    /// Returns the container's trailing output for failure diagnostics.
+    pub async fn logs(&self) -> Result<String> {
+        super::ContainerLogs::tail(&self.container).await
+    }
+
     /// Starts a Lighthouse validator client.
     pub async fn start(
         testnet_dir: impl AsRef<Path>,
