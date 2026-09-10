@@ -5,7 +5,7 @@ use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_client_ethereum::ExecutionWitnessClient;
 use base_common_observability_tracing::tracing::warn;
 use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedHeader};
-use base_execution_evm_blocks::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_runtime::{
     AccountInfo, AccountInfoRevert, AccountStatus, BundleState, Bytecode, RevertToSlot, State,
     StorageSlot,

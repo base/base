@@ -5,7 +5,7 @@ use alloy_primitives::{U64, U256, map::AddressMap};
 use async_trait::async_trait;
 use base_common_runtime::{Runtime, pool::BlockingTaskGuard};
 use base_common_types_chain::{BlockHeader, SealedHeader};
-use base_execution_evm_blocks::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::{
     CanonStateSubscriptions, ForkChoiceSubscriptions, PersistedBlockSubscriptions,
 };

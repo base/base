@@ -22,124 +22,6 @@ use base_execution_state_types::{
 
 use crate::{Database, OnStateHook};
 
-/// A type that knows how to execute a block. It is assumed to operate on a
-/// [`crate::Evm`] internally and use [`State`] as database.
-pub trait Executor<DB: Database>: Sized {
-    /// The error type returned by the executor.
-    type Error;
-
-    /// Executes a single block and returns [`BlockExecutionResult`], without the state changes.
-    fn execute_one(
-        &mut self,
-        block: &RecoveredBlock,
-    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>;
-
-    /// Executes the EVM with the given input and accepts a state hook closure that is invoked with
-    /// the EVM state after execution.
-    fn execute_one_with_state_hook<F>(
-        &mut self,
-        block: &RecoveredBlock,
-        state_hook: F,
-    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
-    where
-        F: OnStateHook + 'static;
-
-    /// Consumes the type and executes the block.
-    ///
-    /// # Note
-    /// Execution happens without any validation of the output.
-    ///
-    /// # Returns
-    /// The output of the block execution.
-    fn execute(mut self, block: &RecoveredBlock) -> Result<BlockExecutionOutput, Self::Error> {
-        let result = self.execute_one(block)?;
-        let mut state = self.into_state();
-        Ok(BlockExecutionOutput { state: state.take_bundle(), result })
-    }
-
-    /// Executes multiple inputs in the batch, and returns an aggregated [`ExecutionOutcome`].
-    fn execute_batch<'a, I>(mut self, blocks: I) -> Result<ExecutionOutcome, Self::Error>
-    where
-        I: IntoIterator<Item = &'a RecoveredBlock>,
-    {
-        let blocks_iter = blocks.into_iter();
-        let capacity = blocks_iter.size_hint().0;
-        let mut results = Vec::with_capacity(capacity);
-        let mut first_block = None;
-        for block in blocks_iter {
-            if first_block.is_none() {
-                first_block = Some(block.header().number());
-            }
-            results.push(self.execute_one(block)?);
-        }
-
-        Ok(ExecutionOutcome::from_blocks(
-            first_block.unwrap_or_default(),
-            self.into_state().take_bundle(),
-            results,
-        ))
-    }
-
-    /// Executes the EVM with the given input and accepts a state closure that is invoked with
-    /// the EVM state after execution.
-    fn execute_with_state_closure<F>(
-        mut self,
-        block: &RecoveredBlock,
-        mut f: F,
-    ) -> Result<BlockExecutionOutput, Self::Error>
-    where
-        F: FnMut(&State<DB>),
-    {
-        let result = self.execute_one(block)?;
-        let mut state = self.into_state();
-        f(&state);
-        Ok(BlockExecutionOutput { state: state.take_bundle(), result })
-    }
-
-    /// Executes the EVM with the given input and accepts a state closure that is always invoked
-    /// with the EVM state after execution, even after failure.
-    fn execute_with_state_closure_always<F>(
-        mut self,
-        block: &RecoveredBlock,
-        mut f: F,
-    ) -> Result<BlockExecutionOutput, Self::Error>
-    where
-        F: FnMut(&State<DB>),
-    {
-        let result = self.execute_one(block);
-        let mut state = self.into_state();
-        f(&state);
-
-        Ok(BlockExecutionOutput { state: state.take_bundle(), result: result? })
-    }
-
-    /// Executes the EVM with the given input and accepts a state hook closure that is invoked with
-    /// the EVM state after execution.
-    fn execute_with_state_hook<F>(
-        mut self,
-        block: &RecoveredBlock,
-        state_hook: F,
-    ) -> Result<BlockExecutionOutput, Self::Error>
-    where
-        F: OnStateHook + 'static,
-    {
-        let result = self.execute_one_with_state_hook(block, state_hook)?;
-        let mut state = self.into_state();
-        Ok(BlockExecutionOutput { state: state.take_bundle(), result })
-    }
-
-    /// Consumes the executor and returns the [`State`] containing all state changes.
-    fn into_state(self) -> State<DB>;
-
-    /// The size hint of the batch's tracked state size.
-    ///
-    /// This is used to optimize DB commits depending on the size of the state.
-    fn size_hint(&self) -> usize;
-
-    /// Takes built [`BlockAccessList`] from executor.
-    fn take_bal(&mut self) -> Option<BlockAccessList>;
-}
-
 /// Input for block building. Consumed by [`crate::BaseBlockAssembler`].
 ///
 /// This struct contains all the data needed by the [`crate::BaseBlockAssembler`] to create
@@ -458,16 +340,15 @@ impl<DB: Database> BasicBlockExecutor<DB> {
     }
 }
 
-impl<DB> Executor<DB> for BasicBlockExecutor<DB>
+impl<DB> BasicBlockExecutor<DB>
 where
     DB: Database,
 {
-    type Error = BlockExecutionError;
-
-    fn execute_one(
+    /// Executes a single block and returns [`BlockExecutionResult`], without the state changes.
+    pub fn execute_one(
         &mut self,
         block: &RecoveredBlock,
-    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
+    ) -> Result<BlockExecutionResult<BaseReceipt>, BlockExecutionError> {
         let mut executor = self
             .strategy_factory
             .executor_for_block(&mut self.db, block)
@@ -501,11 +382,13 @@ where
         Ok(result)
     }
 
-    fn execute_one_with_state_hook<H>(
+    /// Executes the EVM with the given input and accepts a state hook closure that is invoked with
+    /// the EVM state after execution.
+    pub fn execute_one_with_state_hook<H>(
         &mut self,
         block: &RecoveredBlock,
         state_hook: H,
-    ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
+    ) -> Result<BlockExecutionResult<BaseReceipt>, BlockExecutionError>
     where
         H: OnStateHook + 'static,
     {
@@ -524,16 +407,111 @@ where
         result
     }
 
-    fn into_state(self) -> State<DB> {
+    /// Consumes the executor and returns the [`State`] containing all state changes.
+    pub fn into_state(self) -> State<DB> {
         self.db
     }
 
-    fn size_hint(&self) -> usize {
+    /// The size hint of the batch's tracked state size.
+    ///
+    /// This is used to optimize DB commits depending on the size of the state.
+    pub fn size_hint(&self) -> usize {
         self.db.bundle_state.size_hint()
     }
 
-    fn take_bal(&mut self) -> Option<BlockAccessList> {
+    /// Takes built [`BlockAccessList`] from executor.
+    pub fn take_bal(&mut self) -> Option<BlockAccessList> {
         self.db.take_built_alloy_bal()
+    }
+
+    /// Consumes the type and executes the block.
+    ///
+    /// # Note
+    /// Execution happens without any validation of the output.
+    ///
+    /// # Returns
+    /// The output of the block execution.
+    pub fn execute(
+        mut self,
+        block: &RecoveredBlock,
+    ) -> Result<BlockExecutionOutput, BlockExecutionError> {
+        let result = self.execute_one(block)?;
+        let mut state = self.into_state();
+        Ok(BlockExecutionOutput { state: state.take_bundle(), result })
+    }
+
+    /// Executes multiple inputs in the batch, and returns an aggregated [`ExecutionOutcome`].
+    pub fn execute_batch<'a, I>(
+        mut self,
+        blocks: I,
+    ) -> Result<ExecutionOutcome, BlockExecutionError>
+    where
+        I: IntoIterator<Item = &'a RecoveredBlock>,
+    {
+        let blocks_iter = blocks.into_iter();
+        let capacity = blocks_iter.size_hint().0;
+        let mut results = Vec::with_capacity(capacity);
+        let mut first_block = None;
+        for block in blocks_iter {
+            if first_block.is_none() {
+                first_block = Some(block.header().number());
+            }
+            results.push(self.execute_one(block)?);
+        }
+
+        Ok(ExecutionOutcome::from_blocks(
+            first_block.unwrap_or_default(),
+            self.into_state().take_bundle(),
+            results,
+        ))
+    }
+
+    /// Executes the EVM with the given input and accepts a state closure that is invoked with
+    /// the EVM state after execution.
+    pub fn execute_with_state_closure<F>(
+        mut self,
+        block: &RecoveredBlock,
+        mut f: F,
+    ) -> Result<BlockExecutionOutput, BlockExecutionError>
+    where
+        F: FnMut(&State<DB>),
+    {
+        let result = self.execute_one(block)?;
+        let mut state = self.into_state();
+        f(&state);
+        Ok(BlockExecutionOutput { state: state.take_bundle(), result })
+    }
+
+    /// Executes the EVM with the given input and accepts a state closure that is always invoked
+    /// with the EVM state after execution, even after failure.
+    pub fn execute_with_state_closure_always<F>(
+        mut self,
+        block: &RecoveredBlock,
+        mut f: F,
+    ) -> Result<BlockExecutionOutput, BlockExecutionError>
+    where
+        F: FnMut(&State<DB>),
+    {
+        let result = self.execute_one(block);
+        let mut state = self.into_state();
+        f(&state);
+
+        Ok(BlockExecutionOutput { state: state.take_bundle(), result: result? })
+    }
+
+    /// Executes the EVM with the given input and accepts a state hook closure that is invoked with
+    /// the EVM state after execution.
+    pub fn execute_with_state_hook<F>(
+        mut self,
+        block: &RecoveredBlock,
+        state_hook: F,
+    ) -> Result<BlockExecutionOutput, BlockExecutionError>
+    where
+        F: OnStateHook + 'static,
+    {
+        let result = self.execute_one_with_state_hook(block, state_hook)?;
+        let mut state = self.into_state();
+        Ok(BlockExecutionOutput { state: state.take_bundle(), result })
     }
 }
 
@@ -598,71 +576,5 @@ impl<T: RecoveredTx<Tx>, Tx> ExecutableTxParts<base_execution_evm_runtime::BaseT
 
     fn into_parts(self) -> (base_execution_evm_runtime::BaseTransaction, Self::Recovered) {
         (self.tx_env, self.tx)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use core::marker::PhantomData;
-
-    use base_common_types_chain::BaseReceipt;
-    use base_execution_evm_runtime::{CacheDB, EmptyDB};
-
-    use super::*;
-
-    #[derive(Clone, Debug, Default)]
-    struct TestExecutorProvider;
-
-    impl TestExecutorProvider {
-        fn executor<DB>(&self, _db: DB) -> TestExecutor<DB>
-        where
-            DB: Database,
-        {
-            TestExecutor(PhantomData)
-        }
-    }
-
-    struct TestExecutor<DB>(PhantomData<DB>);
-
-    impl<DB: Database> Executor<DB> for TestExecutor<DB> {
-        type Error = BlockExecutionError;
-
-        fn execute_one(
-            &mut self,
-            _block: &RecoveredBlock,
-        ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error> {
-            Err(BlockExecutionError::msg("execution unavailable for tests"))
-        }
-
-        fn execute_one_with_state_hook<F>(
-            &mut self,
-            _block: &RecoveredBlock,
-            _state_hook: F,
-        ) -> Result<BlockExecutionResult<BaseReceipt>, Self::Error>
-        where
-            F: OnStateHook + 'static,
-        {
-            Err(BlockExecutionError::msg("execution unavailable for tests"))
-        }
-
-        fn into_state(self) -> State<DB> {
-            unreachable!()
-        }
-
-        fn size_hint(&self) -> usize {
-            0
-        }
-
-        fn take_bal(&mut self) -> Option<BlockAccessList> {
-            None
-        }
-    }
-
-    #[test]
-    fn test_provider() {
-        let provider = TestExecutorProvider;
-        let db = CacheDB::<EmptyDB>::default();
-        let executor = provider.executor(db);
-        let _ = executor.execute(&Default::default());
     }
 }

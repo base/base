@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 
 use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
 use base_common_types_chain::{BlockHeader as AlloyBlockHeader, RecoveredBlock};
-use base_execution_evm_blocks::{BaseEvmConfig, Executor};
+use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::{
     DatabaseProviderFactory, HashedPostStateProvider, StateProviderFactory, StateReader,
     StateRootProvider,

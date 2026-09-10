@@ -28,7 +28,7 @@ use base_execution_state_types::AnyError;
 use crate::ExecutableTxIterator;
 use crate::{
     BaseBlockAssembler, BaseEvmEnvBuilder, EvmEnv,
-    execute::{BasicBlockBuilder, BasicBlockExecutor, Executor},
+    execute::{BasicBlockBuilder, BasicBlockExecutor},
 };
 
 /// Context relevant for execution of a next Base block.
@@ -372,7 +372,7 @@ impl BaseEvmConfig {
         Ok(self.create_block_builder(evm, parent, ctx))
     }
 
-    /// Returns a new [`Executor`] for executing blocks.
+    /// Returns a new [`BasicBlockExecutor`] for executing blocks.
     ///
     /// The executor processes complete blocks including:
     /// - All transactions in order
@@ -392,15 +392,12 @@ impl BaseEvmConfig {
     /// // Execute multiple blocks
     /// let batch_output = executor.execute_batch(&blocks)?;
     /// ```
-    pub fn executor<DB: Database>(&self, db: DB) -> impl Executor<DB, Error = BlockExecutionError> {
+    pub fn executor<DB: Database>(&self, db: DB) -> BasicBlockExecutor<DB> {
         BasicBlockExecutor::new(self.clone(), db)
     }
 
     /// Returns a new [`BasicBlockExecutor`].
-    pub fn batch_executor<DB: Database>(
-        &self,
-        db: DB,
-    ) -> impl Executor<DB, Error = BlockExecutionError> {
+    pub fn batch_executor<DB: Database>(&self, db: DB) -> BasicBlockExecutor<DB> {
         BasicBlockExecutor::new(self.clone(), db)
     }
 }

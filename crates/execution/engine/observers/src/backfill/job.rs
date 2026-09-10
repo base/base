@@ -8,9 +8,7 @@ use alloy_primitives::BlockNumber;
 use base_common_observability_metrics::GasDisplay;
 use base_common_observability_tracing::tracing::{debug, trace};
 use base_common_types_chain::{BlockBodyExt as _, BlockHeader, RecoveredBlock};
-use base_execution_evm_blocks::{
-    BaseEvmConfig, BlockExecutionError, BlockExecutionOutput, Executor,
-};
+use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionError, BlockExecutionOutput};
 use base_execution_state_provider::{
     BlockReader, Chain, ExecutionOutcome, HeaderProvider, ProviderError, StateProviderFactory,
     TransactionVariant,

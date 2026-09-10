@@ -15,7 +15,7 @@ use base_common_types_chain::BlockHeader;
 use base_execution_engine_observers::{
     ExExManagerHandle, ExExNotification, ExExNotificationSource,
 };
-use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig, Executor, ExecutorMetrics};
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig, ExecutorMetrics};
 use base_execution_state_database::{static_file::HeaderMask, tables};
 use base_execution_state_provider::{
     BlockHashReader, BlockReader, DBProvider, EitherWriter, ExecutionOutcome,

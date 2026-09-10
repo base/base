@@ -9,9 +9,7 @@ use base_common_types_chain::{
     SignableTransaction, SystemAddresses, TxDeposit, TxEip1559,
 };
 use base_consensus_batch::BaseTimeUpdateTx;
-use base_execution_evm_blocks::{
-    BaseEvmConfig, BasicBlockExecutor, Executor, test_utils::StateProviderTest,
-};
+use base_execution_evm_blocks::{BaseEvmConfig, BasicBlockExecutor, test_utils::StateProviderTest};
 use base_execution_evm_runtime::{BaseTime, StoredAccount as Account};
 
 const BASE_TIME_READER: Address = address!("0x1000000000000000000000000000000000000000");

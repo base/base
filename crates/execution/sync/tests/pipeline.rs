@@ -13,7 +13,7 @@ use base_common_types_chain::{
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig, Executor};
+use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_service::{BodyDownloader, HeaderDownloader, SyncTarget};
 use base_execution_state_operations::{StaticFileProducer, init::init_genesis};
 use base_execution_state_provider::{

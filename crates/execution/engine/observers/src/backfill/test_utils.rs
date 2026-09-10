@@ -7,7 +7,7 @@ use base_common_types_chain::{
     BaseBlock, BaseBlockBody, BaseTypedTransaction, BlockHeader, Header, RecoveredBlock, TxEip2930,
     constants::ETH_TO_WEI,
 };
-use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionOutput, Executor};
+use base_execution_evm_blocks::{BaseEvmConfig, BlockExecutionOutput};
 use base_execution_state_provider::{
     BlockWriter as _, ExecutionOutcome, LatestStateProvider, ProviderFactory,
 };

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use base_common_runtime::Runtime;
 use base_common_types_chain::{BlockHeader, SealedHeader};
 use base_common_types_payload::{BasePayloadAttributes, PayloadBuilderError};
-use base_execution_evm_blocks::{BaseEvmConfig, ExecutionWitnessRecord, Executor};
+use base_execution_evm_blocks::{BaseEvmConfig, ExecutionWitnessRecord};
 use base_execution_evm_runtime::State;
 use base_execution_payload::{
     BasePayloadBuilderAttributes, PayloadConfig,

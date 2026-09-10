@@ -1031,6 +1031,7 @@ impl SparseTrieStateRootJob {
             hashed_state: _hashed_state,
             #[cfg(feature = "trie-debug")]
             debug_recorders,
+            ..
         } = outcome;
 
         if self.compare_trie_updates {

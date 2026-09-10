@@ -367,14 +367,14 @@ impl SparseTrieCacheTask {
         self.storage_cache_hits = 0;
         self.storage_cache_misses = 0;
 
-        Ok(StateRootComputeOutcome {
+        let outcome = StateRootComputeOutcome::new(
             state_root,
-            trie_updates: Arc::new(trie_updates),
-            hashed_state: finalized_hashed_state
-                .expect("finished state updates publish the hashed post state"),
-            #[cfg(feature = "trie-debug")]
-            debug_recorders,
-        })
+            Arc::new(trie_updates),
+            finalized_hashed_state.expect("finished state updates publish the hashed post state"),
+        );
+        #[cfg(feature = "trie-debug")]
+        let outcome = StateRootComputeOutcome { debug_recorders, ..outcome };
+        Ok(outcome)
     }
 
     /// Handles a received proof result: coalesces everything already queued, reveals the

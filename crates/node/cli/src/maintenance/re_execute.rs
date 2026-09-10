@@ -14,7 +14,6 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_cli::CancellationToken;
 use base_common_observability_metrics::GasDisplay;
 use base_common_types_chain::{BlockHeader, GotExpected, TxReceipt};
-use base_execution_evm_blocks::Executor;
 use base_execution_evm_runtime::{
     AccountInfoRevert, BundleState, RevertToSlot, StoredAccount as Account,
 };
