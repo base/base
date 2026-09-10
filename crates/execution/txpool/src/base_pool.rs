@@ -15,9 +15,8 @@ use base_execution_txpool::{
     BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
     FullTransactionEvent, GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool,
     PoolResult, PoolSize, PropagatedTransactions, SubPool, TransactionEvent, TransactionEvents,
-    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionPoolExt,
-    TransactionValidationOutcome, TransactionValidationTaskExecutor, TransactionValidator,
-    ValidPoolTransaction,
+    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionValidationOutcome,
+    TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
 };
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -1378,15 +1377,20 @@ where
     }
 }
 
-impl<S> TransactionPoolExt for BaseTransactionPool<S>
+impl<S> BaseTransactionPool<S>
 where
     S: BlobStore + Clone,
 {
-    fn set_block_info(&self, info: BlockInfo) {
-        self.protocol_pool.set_block_info(info)
+    /// Sets the block context used for pool validation and ordering.
+    pub fn set_block_info(&self, info: BlockInfo) {
+        self.protocol_pool.pool.set_block_info(info)
     }
 
-    fn on_canonical_state_change(&self, update: base_execution_txpool::CanonicalStateUpdate<'_>) {
+    /// Applies canonical chain updates to the protocol pool and Base admission ledger.
+    pub fn on_canonical_state_change(
+        &self,
+        update: base_execution_txpool::CanonicalStateUpdate<'_>,
+    ) {
         let block_hash = update.hash();
         let now = update.timestamp();
         let block_number = update.number();
@@ -1405,7 +1409,7 @@ where
                 block_expiry.remove(hash);
             }
         }
-        self.protocol_pool.on_canonical_state_change(update);
+        self.protocol_pool.pool.on_canonical_state_change(update);
         {
             let mut nonce_pool = self.nonce_pool.write();
             let pruned = nonce_pool.prune_mined(&mined_transactions);
@@ -1434,7 +1438,8 @@ where
         GuardMetrics::tracked().set(self.guard.read().len() as f64);
     }
 
-    fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
+    /// Updates account state and invalidates transactions across both pool lanes.
+    pub fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
         // Serialize balance invalidation with protocol pre-admission so a
         // dropped reservation cannot be recreated from an older validation
         // snapshot after reth publishes the transaction.
@@ -1460,7 +1465,7 @@ where
             .flat_map(|account| self.protocol_pool.get_transactions_by_sender(account.address))
             .map(|transaction| *transaction.hash())
             .collect();
-        self.protocol_pool.update_accounts(accounts);
+        self.protocol_pool.pool.update_accounts(accounts);
         let discarded: Vec<_> = discard_candidates
             .into_iter()
             .filter(|hash| self.protocol_pool.get(hash).is_none())
@@ -1471,16 +1476,19 @@ where
         }
     }
 
-    fn delete_blob(&self, tx: B256) {
-        self.protocol_pool.delete_blob(tx)
+    /// Deletes the blob sidecar for a transaction.
+    pub fn delete_blob(&self, tx: B256) {
+        self.protocol_pool.pool.delete_blob(tx)
     }
 
-    fn delete_blobs(&self, txs: Vec<B256>) {
-        self.protocol_pool.delete_blobs(txs)
+    /// Deletes blob sidecars for the supplied transactions.
+    pub fn delete_blobs(&self, txs: Vec<B256>) {
+        self.protocol_pool.pool.delete_blobs(txs)
     }
 
-    fn cleanup_blobs(&self) {
-        self.protocol_pool.cleanup_blobs()
+    /// Cleans up blob sidecars that are no longer needed.
+    pub fn cleanup_blobs(&self) {
+        self.protocol_pool.pool.cleanup_blobs()
     }
 }
 

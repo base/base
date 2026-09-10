@@ -81,7 +81,7 @@ use crate::{
     pool::{
         BestTransactionFilter, NewTransactionEvent, TransactionEvents, TransactionListenerKind,
     },
-    validate::{TransactionValidationOutcome, TransactionValidator, ValidPoolTransaction},
+    validate::ValidPoolTransaction,
 };
 
 /// The `PeerId` type.
@@ -707,66 +707,6 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
 
     /// Returns the blob store used by the pool.
     fn blob_store(&self) -> Box<dyn BlobStore>;
-}
-
-/// Extension for [`TransactionPool`] trait that allows to set the current block info.
-#[auto_impl::auto_impl(&, Arc)]
-pub trait TransactionPoolExt: TransactionPool {
-    /// Sets the current block info for the pool.
-    fn set_block_info(&self, info: BlockInfo);
-
-    /// Event listener for when the pool needs to be updated.
-    ///
-    /// Implementers need to update the pool accordingly:
-    ///
-    /// ## Fee changes
-    ///
-    /// The [`CanonicalStateUpdate`] includes the base and blob fee of the pending block, which
-    /// affects the dynamic fee requirement of pending transactions in the pool.
-    ///
-    /// ## EIP-4844 Blob transactions
-    ///
-    /// Mined blob transactions need to be removed from the pool, but from the pool only. The blob
-    /// sidecar must not be removed from the blob store. Only after a blob transaction is
-    /// finalized, its sidecar is removed from the blob store. This ensures that in case of a reorg,
-    /// the sidecar is still available.
-    fn on_canonical_state_change(&self, update: CanonicalStateUpdate<'_>);
-
-    /// Updates the accounts in the pool
-    fn update_accounts(&self, accounts: Vec<ChangedAccount>);
-
-    /// Deletes the blob sidecar for the given transaction from the blob store
-    fn delete_blob(&self, tx: B256);
-
-    /// Deletes multiple blob sidecars from the blob store
-    fn delete_blobs(&self, txs: Vec<B256>);
-
-    /// Maintenance function to cleanup blobs that are no longer needed.
-    fn cleanup_blobs(&self);
-}
-
-/// Extension for [`TransactionPool`] that exposes the pool's underlying [`TransactionValidator`].
-///
-/// This is implemented by pools that validate transactions through a single validator before
-/// insertion (e.g. [`Pool`](crate::Pool)). It lets consumers and wrapper pools reach the validator
-/// directly, for example to validate a transaction without inserting it into the pool.
-pub trait ValidatingPool: TransactionPool {
-    /// The validator used to validate transactions before they are inserted into the pool.
-    type Validator: TransactionValidator;
-
-    /// Returns a reference to the pool's transaction validator.
-    fn validator(&self) -> &Self::Validator;
-
-    /// Validates the given transaction without inserting it into the pool.
-    ///
-    /// This is a convenience wrapper around [`TransactionValidator::validate_transaction`].
-    fn validate(
-        &self,
-        origin: TransactionOrigin,
-        transaction: crate::BasePooledTransaction,
-    ) -> impl Future<Output = TransactionValidationOutcome> + Send {
-        self.validator().validate_transaction(origin, transaction)
-    }
 }
 
 /// A Helper type that bundles all transactions in the pool.

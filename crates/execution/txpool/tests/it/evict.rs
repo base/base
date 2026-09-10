@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256};
 use base_common_types_chain::Transaction;
 use base_execution_txpool::{
     AddedTransactionOutcome, BlockInfo, PoolConfig, PoolErrorKind, SubPoolLimit, TransactionOrigin,
-    TransactionPool, TransactionPoolExt,
+    TransactionPool,
     test_utils::{
         MockFeeRange, MockTransactionDistribution, MockTransactionRatio, TestPool, TestPoolBuilder,
     },
@@ -33,7 +33,7 @@ async fn dynamic_fee_eviction() {
         pending_basefee: 10,
         pending_blob_fee: Some(10),
     };
-    pool.set_block_info(block_info);
+    pool.pool.set_block_info(block_info);
 
     // this is how many times the test will regenerate transactions and insert them into the pool
     let total_txs = 1000;
@@ -164,7 +164,7 @@ async fn mixed_eviction() {
         pending_basefee: 10,
         pending_blob_fee: Some(20),
     };
-    pool.set_block_info(block_info);
+    pool.pool.set_block_info(block_info);
 
     let total_txs = 100;
     let size_range = 10..1100;
@@ -281,7 +281,7 @@ async fn nonce_gaps_eviction() {
         pending_basefee: 10,
         pending_blob_fee: Some(20),
     };
-    pool.set_block_info(block_info);
+    pool.pool.set_block_info(block_info);
 
     let total_txs = 100;
     let size_range = 10..1100;

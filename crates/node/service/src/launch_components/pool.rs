@@ -1,7 +1,7 @@
 //! Pool component for the node builder.
 
 use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_txpool::{DiskFileBlobStore, PoolConfig, TransactionPool};
+use base_execution_txpool::{BaseTransactionPool, DiskFileBlobStore, PoolConfig};
 
 use crate::BuilderContext;
 
@@ -13,10 +13,7 @@ pub fn create_blob_store(ctx: &BuilderContext) -> eyre::Result<DiskFileBlobStore
 }
 
 /// Spawn local transaction backup task if enabled.
-fn spawn_local_backup_task<Pool>(ctx: &BuilderContext, pool: Pool) -> eyre::Result<()>
-where
-    Pool: TransactionPool + Clone + 'static,
-{
+fn spawn_local_backup_task(ctx: &BuilderContext, pool: BaseTransactionPool) -> eyre::Result<()> {
     if !ctx.config().txpool.disable_transactions_backup {
         let data_dir = ctx.config().datadir();
         let transactions_path = ctx
@@ -46,20 +43,17 @@ where
 }
 
 /// Spawn the main maintenance task for transaction pool.
-fn spawn_pool_maintenance_task<Pool>(
+fn spawn_pool_maintenance_task(
     ctx: &BuilderContext,
-    pool: Pool,
+    pool: BaseTransactionPool,
     pool_config: &PoolConfig,
-) -> eyre::Result<()>
-where
-    Pool: base_execution_txpool::TransactionPoolExt + Clone + 'static,
-{
+) -> eyre::Result<()> {
     let chain_events = ctx.provider().canonical_state_stream();
     let client = ctx.provider().clone();
 
     ctx.task_executor().spawn_critical_task(
         "txpool maintenance task",
-        base_execution_txpool::maintain_transaction_pool_future(
+        base_execution_txpool::maintain_transaction_pool(
             client,
             pool,
             chain_events,
@@ -76,14 +70,11 @@ where
 }
 
 /// Spawn all maintenance tasks for a transaction pool (backup + main maintenance).
-pub fn spawn_maintenance_tasks<Pool>(
+pub fn spawn_maintenance_tasks(
     ctx: &BuilderContext,
-    pool: Pool,
+    pool: BaseTransactionPool,
     pool_config: &PoolConfig,
-) -> eyre::Result<()>
-where
-    Pool: base_execution_txpool::TransactionPoolExt + Clone + 'static,
-{
+) -> eyre::Result<()> {
     spawn_local_backup_task(ctx, pool.clone())?;
     spawn_pool_maintenance_task(ctx, pool, pool_config)?;
     Ok(())

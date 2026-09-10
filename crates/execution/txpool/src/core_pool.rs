@@ -10,9 +10,8 @@ use alloy_primitives::{Address, B128, B256, TxHash, map::AddressSet};
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::Recovered;
 use base_execution_network_wire::HandleMempoolData;
-use base_execution_state_types::{BlockReaderIdExt, ChangedAccount, StateProviderFactory};
+use base_execution_state_types::{BlockReaderIdExt, StateProviderFactory};
 use tokio::sync::mpsc::Receiver;
-use tracing::{instrument, trace};
 
 use crate::{
     BaseOrdering, BaseTransactionValidator,
@@ -31,7 +30,7 @@ use crate::{
     },
 };
 
-/// A shareable, generic, customizable `TransactionPool` implementation.
+/// Shared protocol transaction pool used by the Base admission layer.
 #[derive(Debug)]
 pub struct Pool<S> {
     /// Arc'ed instance of the pool internals
@@ -486,48 +485,6 @@ where
 
     fn blob_store(&self) -> Box<dyn BlobStore> {
         Box::new(self.pool.blob_store().clone())
-    }
-}
-
-impl<S> TransactionPoolExt for Pool<S>
-where
-    S: BlobStore + Clone,
-{
-    #[instrument(skip(self), target = "txpool")]
-    fn set_block_info(&self, info: BlockInfo) {
-        trace!(target: "txpool", "updating pool block info");
-        self.pool.set_block_info(info)
-    }
-
-    fn on_canonical_state_change(&self, update: CanonicalStateUpdate<'_>) {
-        self.pool.on_canonical_state_change(update);
-    }
-
-    fn update_accounts(&self, accounts: Vec<ChangedAccount>) {
-        self.pool.update_accounts(accounts);
-    }
-
-    fn delete_blob(&self, tx: TxHash) {
-        self.pool.delete_blob(tx)
-    }
-
-    fn delete_blobs(&self, txs: Vec<TxHash>) {
-        self.pool.delete_blobs(txs)
-    }
-
-    fn cleanup_blobs(&self) {
-        self.pool.cleanup_blobs()
-    }
-}
-
-impl<S> ValidatingPool for Pool<S>
-where
-    S: BlobStore + Clone,
-{
-    type Validator = crate::PoolValidator;
-
-    fn validator(&self) -> &Self::Validator {
-        self.inner().validator()
     }
 }
 

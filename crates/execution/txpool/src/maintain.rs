@@ -17,12 +17,14 @@ use base_common_runtime::Runtime;
 use base_common_types_chain::{
     BlockHeader, SealedHeader, SignedTransaction, transaction::TxHashRef,
 };
+use base_execution_state_provider::{BlockchainProvider, CanonStateNotificationStream};
 use base_execution_state_types::{
-    BlockReaderIdExt, CanonStateNotification, ChangedAccount, ProviderError, StateProviderFactory,
+    BlockIdReader, BlockReaderIdExt, CanonStateNotification, ChangedAccount, ProviderError,
+    StateProviderFactory,
 };
 use futures_util::{
-    FutureExt, Stream, StreamExt,
-    future::{BoxFuture, Fuse, FusedFuture},
+    FutureExt, StreamExt,
+    future::{Fuse, FusedFuture},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -32,11 +34,11 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    BlockInfo, PoolUpdateKind, TransactionOrigin,
+    BaseTransactionPool, BlobStore, BlockInfo, PoolUpdateKind, TransactionOrigin,
     blobstore::{BlobStoreCanonTracker, BlobStoreUpdates},
     error::PoolError,
     metrics::MaintainPoolMetrics,
-    traits::{CanonicalStateUpdate, TransactionPool, TransactionPoolExt},
+    traits::{CanonicalStateUpdate, TransactionPool},
 };
 
 /// Maximum amount of time non-executable transaction are queued.
@@ -92,38 +94,17 @@ impl LocalTransactionBackupConfig {
     }
 }
 
-/// Returns a spawnable future for maintaining the state of the transaction pool.
-pub fn maintain_transaction_pool_future<Client, P, St>(
-    client: Client,
-    pool: P,
-    events: St,
-    task_spawner: Runtime,
-    config: MaintainPoolConfig,
-) -> BoxFuture<'static, ()>
-where
-    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + 'static,
-    P: TransactionPoolExt + 'static,
-    St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
-{
-    async move {
-        maintain_transaction_pool(client, pool, events, task_spawner, config).await;
-    }
-    .boxed()
-}
-
 /// Maintains the state of the transaction pool by handling new blocks and reorgs.
 ///
 /// This listens for any new blocks and reorgs and updates the transaction pool's state accordingly
-pub async fn maintain_transaction_pool<Client, P, St>(
-    client: Client,
-    pool: P,
-    mut events: St,
+pub async fn maintain_transaction_pool<S>(
+    client: BlockchainProvider,
+    pool: BaseTransactionPool<S>,
+    mut events: CanonStateNotificationStream,
     task_spawner: Runtime,
     config: MaintainPoolConfig,
 ) where
-    Client: StateProviderFactory + BlockReaderIdExt + ChainSpecProvider + Clone + 'static,
-    P: TransactionPoolExt + 'static,
-    St: Stream<Item = CanonStateNotification> + Send + Unpin + 'static,
+    S: BlobStore + Clone + 'static,
 {
     let metrics = MaintainPoolMetrics::default();
     let MaintainPoolConfig { max_update_depth, max_reload_accounts, .. } = config;
