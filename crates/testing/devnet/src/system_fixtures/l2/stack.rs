@@ -19,7 +19,7 @@ use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
 use base_consensus_driver_service::NodeMode;
-use base_execution_cli::ExecutionUpgradeSignalConfig;
+use base_node_cli::ExecutionUpgradeSignalConfig;
 use base_execution_txpool_pool::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};

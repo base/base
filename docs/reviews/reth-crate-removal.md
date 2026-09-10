@@ -201,7 +201,7 @@ Initial ERA cleanup passed:
 - `cargo test --offline -p base-execution-state-types --features reth-codecs/alloy --lib` — 17 tests. The explicit codec feature supplies the Alloy codec implementations needed by this isolated test build.
 - `cargo test --offline -p base-execution-sync-pipeline --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
 - `cargo test --offline --locked -p base-execution-sync-pipeline --features test-utils --test preimage` — 7 storage/preimage pipeline tests.
-- `cargo test --offline -p base-execution-cli --lib node::tests` — 37 matching tests, including rejection of ERA CLI flags.
+- `cargo test --offline -p base-node-cli --lib node::tests` — 37 matching tests, including rejection of ERA CLI flags.
 - Formatting of affected packages and `git diff --check`.
 - Dependency-tree comparison confirms all six named crates are absent from Base's normal/build graph. Searches found no remaining ERA production references.
 

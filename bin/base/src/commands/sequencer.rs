@@ -11,7 +11,7 @@ use base_consensus_cli::{
 };
 use base_consensus_driver_service::LocalEngineClient;
 use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
-use base_execution_cli::{
+use base_node_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_service::BaseNode;

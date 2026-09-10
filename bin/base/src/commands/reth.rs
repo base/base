@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli_support::CliRunner;
-use base_execution_cli::{
+use base_node_cli::{
     BaseCliComponents,
     chainspec::BaseChainSpecParser,
     commands::{GenesisOutputRootCommand, init_state, p2p},

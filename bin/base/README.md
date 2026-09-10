@@ -27,7 +27,7 @@ these shared or `BASE_BATCHER_*` names.
 consensus node in the same process. Consensus calls the execution driver and payload builder directly
 and reads canonical state from the local database.
 
-The execution CLI surface comes from `base-execution-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
+The execution CLI surface comes from `base-node-cli`. `base rpc` intentionally filters out flags for roles it does not run, including
 sequencer, builder, and conductor options.
 
 Supported forms:

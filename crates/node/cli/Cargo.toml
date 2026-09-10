@@ -1,5 +1,5 @@
 [package]
-name = "base-execution-cli"
+name = "base-node-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

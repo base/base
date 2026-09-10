@@ -52,7 +52,7 @@ members = [
   "crates/consensus/batch/types",
   "crates/consensus/source/providers",
   "crates/consensus/driver/service",
-  "crates/execution/cli",
+  "crates/node/cli",
   "crates/execution/evm/blocks",
   "crates/node/service",
   "crates/execution/payload/builder",
@@ -279,7 +279,7 @@ base-consensus-source-providers = { path = "crates/consensus/source/providers", 
 
 # Execution
 base-node-service = { path = "crates/node/service", default-features = false }
-base-execution-cli = { path = "crates/execution/cli", default-features = false }
+base-node-cli = { path = "crates/node/cli", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
 base-testing-devnet = { path = "crates/testing/devnet", default-features = false }

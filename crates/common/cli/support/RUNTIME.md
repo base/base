@@ -23,7 +23,7 @@ base-common-cli-support = { git = "https://github.com/base/base" }
 ### Example
 
 ```rust,ignore
-use base_execution_cli::Cli;
+use base_node_cli::Cli;
 
 fn main() {
     let cli = base_common_cli_support::parse_cli!(Cli<ChainSpecParser, Args>);

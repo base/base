@@ -7,7 +7,7 @@ use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
 };
-use base_execution_cli::ShadowIndexerArgs;
+use base_node_cli::ShadowIndexerArgs;
 use base_execution_payload_builder::MeteringStore;
 use base_execution_payload_builder::SharedMeteringStore;
 use base_execution_rpc_handlers::{

@@ -63,7 +63,7 @@ serde_json = {features = ["alloc", "std"], workspace = true}
 alloy-rpc-client = {workspace = true,  features = ["default"]}
 derive_more = {features = ["debug", "full"], workspace = true}
 tracing = {features = ["attributes", "std"], workspace = true}
-base-execution-cli = { workspace = true, features = ["default"] }
+base-node-cli = { workspace = true, features = ["default"] }
 alloy-primitives = { features = ["map-foldhash"], workspace = true}
 tar = { workspace = true, optional = true, features = ["default"] }
 base-execution-evm-runtime = {features = ["std"], workspace = true }

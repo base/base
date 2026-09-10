@@ -2,7 +2,7 @@
 
 use base_batcher_cli::BatcherArgs;
 use base_common_cli_support::CliRunner;
-use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
+use base_node_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use clap::Subcommand;
 
 use crate::{

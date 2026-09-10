@@ -12,7 +12,7 @@ use base_consensus_cli::{
 };
 use base_consensus_driver_service::LocalEngineClient;
 use base_consensus_source_providers::{L1RpcProvider, LocalL2Provider};
-use base_execution_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
+use base_node_cli::{ExecutionNodeArgs, chainspec::chain_value_parser};
 use clap::Args;
 use tokio_util::sync::CancellationToken;
 
