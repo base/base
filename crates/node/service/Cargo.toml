@@ -13,13 +13,13 @@ workspace = true
 [dependencies]
 rayon = { workspace = true }
 fdlimit = { workspace = true }
+humantime = {workspace = true}
 alloy-rlp = { workspace = true }
-humantime = { workspace = true }
 jsonrpsee = { workspace = true }
+pin-project = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-node-config = {workspace = true}
-reth-node-events = { workspace = true }
 reth-node-metrics = { workspace = true }
 reth-node-ethstats = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -32,18 +32,21 @@ base-execution-payload-types = {workspace = true}
 base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
+alloy-eips = {workspace = true, features = ["kzg"]}
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
-alloy-eips = { workspace = true, features = ["kzg"]}
+futures = {workspace = true, features = ["default"]}
 base-execution-state-maintenance = {workspace = true}
-futures = { workspace = true, features = ["default"] }
+base-common-observability-metrics = {workspace = true}
 base-execution-network-discovery = { workspace = true }
+derive_more = { workspace = true, features = ["full"] }
 serde_json = { workspace = true,  features = ["alloc"]}
-tracing = { workspace = true, features = ["attributes"]}
+tracing = {workspace = true, features = ["attributes"]}
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"]}
-base-common-types-chain = { workspace = true, features = ["reth"] }
+base-common-types-chain = {workspace = true, features = ["reth"]}
+alloy-primitives = {workspace = true, features = ["map-foldhash"]}
+base-execution-state-api = { workspace = true, features = ["std"] }
 base-execution-state-types = {workspace = true, features = ["std"]}
 base-common-runtime-tasks = {features = ["rayon"], workspace = true}
 base-execution-txpool-pool = {features = ["default"], workspace = true}
@@ -54,7 +57,7 @@ base-execution-state-tasks = { workspace = true, features = ["metrics"] }
 base-execution-sync-pipeline = {workspace = true, features = ["default"]}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
-base-execution-network-service = {features = ["default"], workspace = true}
+base-execution-network-service = {workspace = true, features = ["default"]}
 base-execution-network-types = { workspace = true, features = ["default"] }
 base-execution-payload-builder = {features = ["default"], workspace = true}
 base-common-chain-config = {features = ["default", "std"], workspace = true}
@@ -65,7 +68,7 @@ base-execution-state-database = {workspace = true, features = ["default", "mdbx"
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-common-observability-tracing = { workspace = true, features = ["default", "std"] }
 base-execution-engine-observers = {workspace = true, features = ["metrics", "witness"]}
-tokio = { workspace = true, features = ["default", "sync", "macros", "time", "rt-multi-thread"] }
+tokio = {workspace = true, features = ["default", "macros", "rt-multi-thread", "sync", "time"]}
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256-aws-lc-rs", "secp256k1"], workspace = true}
 
 [dev-dependencies]

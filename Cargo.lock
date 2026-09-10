@@ -4695,6 +4695,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-io-files",
+ "base-common-observability-metrics",
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
  "base-common-types-chain",
@@ -4715,6 +4716,7 @@ dependencies = [
  "base-execution-payload-types",
  "base-execution-rpc-handlers",
  "base-execution-rpc-server",
+ "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-indexer",
  "base-execution-state-maintenance",
@@ -4728,17 +4730,18 @@ dependencies = [
  "base-node-service",
  "clap",
  "criterion",
+ "derive_more",
  "eyre",
  "fdlimit",
  "futures",
  "humantime",
  "jsonrpsee",
  "parking_lot",
+ "pin-project",
  "rayon",
  "reth-consensus-debug-client",
  "reth-e2e-test-utils",
  "reth-node-ethstats",
- "reth-node-events",
  "reth-node-metrics",
  "reth-primitives-traits",
  "rstest",
@@ -13789,7 +13792,6 @@ dependencies = [
  "ratatui",
  "rayon",
  "reqwest",
- "reth-node-events",
  "reth-node-metrics",
  "reth-primitives-traits",
  "secp256k1 0.30.0",
@@ -13897,28 +13899,6 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "tracing",
  "url",
-]
-
-[[package]]
-name = "reth-node-events"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-observability-metrics",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-engine-types",
- "base-execution-network-service",
- "base-execution-state-api",
- "base-execution-state-types",
- "base-execution-sync-pipeline",
- "derive_more",
- "futures",
- "humantime",
- "pin-project",
- "tokio",
- "tracing",
 ]
 
 [[package]]

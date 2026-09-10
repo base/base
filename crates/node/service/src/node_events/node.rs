@@ -26,7 +26,7 @@ use futures::Stream;
 use tokio::time::Interval;
 use tracing::{debug, info, warn};
 
-use crate::cl::ConsensusLayerHealthEvent;
+use crate::node_events::cl::ConsensusLayerHealthEvent;
 
 /// Interval of reporting node state.
 const INFO_MESSAGE_INTERVAL: Duration = Duration::from_secs(25);

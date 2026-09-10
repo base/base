@@ -1,6 +1,7 @@
 //! Engine node related functionality.
 
 use crate::AddOnsContext;
+use crate::handle_node_events;
 use alloy_eip2124::Head;
 use base_common_observability_tracing::tracing::{debug, error, info};
 use base_common_runtime_tasks::EventSender;
@@ -21,7 +22,6 @@ use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{BlockNumReader, StorageSettingsCache};
 use base_node_config::{NodeExitFuture, PruneConfigKind};
 use futures::{FutureExt, StreamExt, stream::FusedStream, stream_select};
-use reth_node_events::node;
 use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -198,7 +198,7 @@ impl crate::NodeLaunch {
 
         ctx.task_executor().spawn_critical_task(
             "events task",
-            node::handle_events(
+            handle_node_events(
                 Some(Box::new(ctx.node_adapter().network().clone())),
                 Some(ctx.head().number),
                 events,
