@@ -100,7 +100,9 @@ pub use maintain::*;
 mod metrics;
 pub use metrics::*;
 
+#[cfg(any(test, feature = "test-utils"))]
 mod noop;
+#[cfg(any(test, feature = "test-utils"))]
 pub use noop::*;
 
 mod ordering;

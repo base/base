@@ -31,8 +31,6 @@ use crate::{
     },
 };
 
-pub type EthTransactionPool<S> = Pool<S>;
-
 /// A shareable, generic, customizable `TransactionPool` implementation.
 #[derive(Debug)]
 pub struct Pool<S> {
@@ -112,7 +110,7 @@ where
     }
 }
 
-impl<S> EthTransactionPool<S>
+impl<S> Pool<S>
 where
     S: BlobStore,
 {

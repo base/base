@@ -19,7 +19,7 @@ use base_execution_state_types::{
     StateRangeProviderFactory,
 };
 use base_execution_txpool::{
-    EthTransactionPool, InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
+    InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
 };
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
