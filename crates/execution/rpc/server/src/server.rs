@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::RpcNamespace;
+use crate::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 use crate::{
     CorsDomainError, EthHandlers, cors,
     error::{RpcError, ServerKind},
@@ -41,7 +42,6 @@ use jsonrpsee::{
     },
 };
 use reth_engine_primitives::ConsensusEngineEvent;
-use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 use serde::{Deserialize, Serialize};
 use tower::layer::util::Identity;
 use tower_http::cors::CorsLayer;

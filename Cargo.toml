@@ -147,7 +147,6 @@ members = [
   "vendor/reth-primitives-traits",
   "crates/execution/state/provider",
   "crates/execution/rpc/server",
-  "vendor/reth-rpc-layer",
   "vendor/reth-stages",
   "vendor/reth-stages-api",
   "crates/execution/state/api",
@@ -432,7 +431,6 @@ reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
 base-execution-state-provider = { path = "crates/execution/state/provider", default-features = false }
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
-reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
 base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }

@@ -3792,7 +3792,9 @@ dependencies = [
  "clap",
  "dyn-clone",
  "http 1.4.2",
+ "http-body-util",
  "jsonrpsee",
+ "jsonrpsee-http-client",
  "metrics",
  "pin-project",
  "reqwest",
@@ -3800,7 +3802,6 @@ dependencies = [
  "reth-network",
  "reth-node-core",
  "reth-primitives-traits",
- "reth-rpc-layer",
  "serde",
  "serde_json",
  "strum 0.27.2",
@@ -14393,23 +14394,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "reth-rpc-layer"
-version = "0.0.0"
-dependencies = [
- "base-common-types-payload",
- "http 1.4.2",
- "http-body-util",
- "jsonrpsee",
- "jsonrpsee-http-client",
- "pin-project",
- "reqwest",
- "tokio",
- "tower",
- "tower-http",
- "tracing",
 ]
 
 [[package]]

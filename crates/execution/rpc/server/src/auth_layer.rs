@@ -19,7 +19,7 @@ use super::AuthValidator;
 /// ```rust
 /// async fn build_layered_rpc_server() {
 ///     use jsonrpsee::server::ServerBuilder;
-///     use reth_rpc_layer::{AuthLayer, JwtAuthValidator, JwtSecret};
+///     use base_execution_rpc_server::{AuthLayer, JwtAuthValidator, JwtSecret};
 ///     use std::net::SocketAddr;
 ///
 ///     const AUTH_PORT: u32 = 8551;
