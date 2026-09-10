@@ -539,7 +539,6 @@ dependencies = [
  "derive_more",
  "futures",
  "futures-utils-wasm",
- "governor 0.10.4",
  "parking_lot",
  "serde",
  "serde_json",
@@ -4034,7 +4033,7 @@ dependencies = [
  "clap",
  "discv5",
  "futures",
- "governor 0.7.0",
+ "governor",
  "ipnet",
  "libp2p",
  "libp2p-identity",
@@ -8180,26 +8179,6 @@ dependencies = [
  "rand 0.8.7",
  "smallvec",
  "spinning_top",
-]
-
-[[package]]
-name = "governor"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9efcab3c1958580ff1f25a2a41be1668f7603d849bb63af523b208a3cc1223b8"
-dependencies = [
- "cfg-if",
- "futures-sink",
- "futures-timer",
- "futures-util",
- "hashbrown 0.16.1",
- "nonzero_ext",
- "parking_lot",
- "portable-atomic",
- "quanta",
- "smallvec",
- "spinning_top",
- "web-time",
 ]
 
 [[package]]
