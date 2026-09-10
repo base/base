@@ -168,8 +168,6 @@ pub use tx::*;
 mod tracing;
 pub use tracing::*;
 
-mod either_evm;
-
 mod base_transactions;
 
 mod eth_tx_result;

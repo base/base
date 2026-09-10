@@ -3025,7 +3025,6 @@ dependencies = [
  "base-execution-state-types",
  "derive_more",
  "fixed-cache",
- "futures-util",
  "metrics",
  "rand 0.9.5",
  "rayon",

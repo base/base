@@ -26,8 +26,6 @@ pub use base_env::BaseEvmEnvBuilder;
 
 mod base_payload_env;
 
-mod either;
-pub use either::Either;
 /// EVM environment configuration.
 mod execute;
 pub use execute::*;
