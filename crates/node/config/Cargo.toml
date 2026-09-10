@@ -65,11 +65,6 @@ keccak-cache-global = ["alloy-primitives/keccak-cache-global"]
 otlp = ["base-common-observability-tracing/otlp", "base-common-cli/otlp"]
 otlp-logs = ["base-common-observability-tracing/otlp-logs", "base-common-cli/otlp-logs"]
 
-min-error-logs = ["tracing/release_max_level_error"]
-min-warn-logs = ["tracing/release_max_level_warn"]
-min-info-logs = ["tracing/release_max_level_info"]
-min-debug-logs = ["tracing/release_max_level_debug"]
-min-trace-logs = ["tracing/release_max_level_trace"]
 
 
 # Debug recording for sparse trie mutations
