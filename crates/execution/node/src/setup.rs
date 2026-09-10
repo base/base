@@ -9,11 +9,8 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::ProviderFactory;
+use base_execution_sync_pipeline::{BodiesDownloaderBuilder, ReverseHeadersDownloaderBuilder};
 use base_execution_sync_pipeline::{DefaultStages, ExecutionStage, Pipeline, StageId, StageSet};
-use reth_downloaders::{
-    bodies::bodies::BodiesDownloaderBuilder,
-    headers::reverse_headers::ReverseHeadersDownloaderBuilder,
-};
 use reth_exex::ExExManagerHandle;
 use tokio::sync::watch;
 use {

@@ -12,14 +12,13 @@ use base_execution_state_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
     StageCheckpointReader,
 };
+use base_execution_sync_pipeline::{
+    BodiesDownloaderBuilder, ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient,
+    ReverseHeadersDownloaderBuilder,
+};
 use base_execution_sync_pipeline::{ControlFlow, Pipeline, StageId, StageSet, *};
 use futures::StreamExt;
 use reth_config::Config;
-use reth_downloaders::{
-    bodies::bodies::BodiesDownloaderBuilder,
-    file_client::{ChunkedFileReader, DEFAULT_BYTE_LEN_CHUNK_CHAIN_FILE, FileClient},
-    headers::reverse_headers::ReverseHeadersDownloaderBuilder,
-};
 use reth_node_events::node::NodeEvent;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};

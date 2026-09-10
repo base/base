@@ -20,14 +20,11 @@ use base_execution_sync_pipeline::{
     MerkleStage, SenderRecoveryStage, Stage, StageExt, StorageHashingStage, TransactionLookupStage,
     UnwindInput, UnwindOutput,
 };
+use base_execution_sync_pipeline::{BodiesDownloaderBuilder, ReverseHeadersDownloaderBuilder};
 use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::get_secret_key;
 use reth_config::config::{HashingConfig, SenderRecoveryConfig, TransactionLookupConfig};
-use reth_downloaders::{
-    bodies::bodies::BodiesDownloaderBuilder,
-    headers::reverse_headers::ReverseHeadersDownloaderBuilder,
-};
 use reth_exex::ExExManagerHandle;
 use reth_node_core::{
     args::{NetworkArgs, StageEnum},

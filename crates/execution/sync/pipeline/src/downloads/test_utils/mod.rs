@@ -9,7 +9,7 @@ use base_common_types_chain::BaseBlockBody as BlockBody;
 use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
 
 #[cfg(any(test, feature = "file-client"))]
-use crate::{bodies::test_utils::create_raw_bodies, file_codec::BlockFileCodec};
+use crate::downloads::{bodies::test_utils::create_raw_bodies, file_codec::BlockFileCodec};
 
 mod bodies_client;
 pub use bodies_client::TestBodiesClient;

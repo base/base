@@ -26,7 +26,7 @@ use {
 };
 
 use super::queue::BodiesRequestQueue;
-use crate::{bodies::task::TaskDownloader, metrics::BodyDownloaderMetrics};
+use crate::downloads::{bodies::task::BodyDownloadTask, metrics::BodyDownloaderMetrics};
 
 /// Downloads bodies in batches.
 ///
@@ -279,9 +279,9 @@ where
     C: BodiesClient + 'static,
     Provider: HeaderProvider + Unpin + 'static,
 {
-    /// Convert the downloader into a [`TaskDownloader`] by spawning it via the given [`Runtime`].
-    pub fn into_task_with(self, runtime: &Runtime) -> TaskDownloader {
-        TaskDownloader::spawn_with(self, runtime)
+    /// Convert the downloader into a [`BodyDownloadTask`] by spawning it via the given [`Runtime`].
+    pub fn into_task_with(self, runtime: &Runtime) -> BodyDownloadTask {
+        BodyDownloadTask::spawn_with(self, runtime)
     }
 }
 
@@ -604,7 +604,7 @@ mod tests {
     use reth_testing_utils::generators::{self, BlockRangeParams, random_block_range};
 
     use super::*;
-    use crate::{
+    use crate::downloads::{
         bodies::test_utils::{insert_headers, zip_blocks},
         test_utils::{TestBodiesClient, generate_bodies},
     };

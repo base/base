@@ -16,43 +16,52 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-rayon = { workspace = true }
-metrics = { workspace = true }
+rayon = {workspace = true}
+metrics = {workspace = true}
 thiserror = {workspace = true}
+alloy-eips = {workspace = true}
 auto_impl = { workspace = true }
 page_size = { workspace = true }
+reth-config = {workspace = true}
 reth-exex = { workspace = true }
-alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 futures-util = {workspace = true}
-reth-config = { workspace = true }
+pin-project = { workspace = true }
 alloy-hardforks = { workspace = true }
-reth-primitives-traits = { workspace = true }
+reth-primitives-traits = {workspace = true}
+base-execution-state-api = {workspace = true}
 base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
-base-execution-state-api = { workspace = true }
-tokio = {workspace = true, features = ["sync"]}
-base-execution-state-provider = {workspace = true}
+itertools = { workspace = true, optional = true }
+base-execution-network-types = { workspace = true }
+base-execution-state-provider = {workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-maintenance = {workspace = true}
+futures = { workspace = true, features = ["default"] }
 tracing = {workspace = true, features = ["attributes"]}
-alloy-rlp = { workspace = true, features = ["core-net"] }
+alloy-rlp = {workspace = true, features = ["core-net"] }
+reth-testing-utils = {workspace = true, optional = true}
 num-traits = { workspace = true, features = ["default"] }
-reth-testing-utils = { workspace = true, optional = true }
+tokio-stream = { workspace = true, features = ["default"] }
+tokio = {workspace = true, features = ["fs", "io-util", "sync"]}
 base-common-types-chain = {workspace = true, features = ["reth"]}
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
+tokio-util = { workspace = true, features = ["default", "codec"] }
 base-execution-state-memory = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true, features = ["std"]}
 base-execution-evm-blocks = {workspace = true, features = ["metrics"]}
+tempfile = {workspace = true, features = ["default"], optional = true}
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
-tempfile = { workspace = true, optional = true, features = ["default"] }
+base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-network-service = {workspace = true, features = ["default"]}
 base-common-observability-metrics = {workspace = true, features = ["metrics"]}
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
+async-compression = { workspace = true, features = ["gzip", "tokio"], optional = true }
 
 [dev-dependencies]
 paste = { workspace = true }
+itertools = { workspace = true }
 alloy-eips = { workspace = true }
 assert_matches = {workspace = true}
 alloy-genesis = { workspace = true }
@@ -60,21 +69,31 @@ reth-testing-utils = {workspace = true}
 base-common-chain-config = {workspace = true}
 base-execution-state-api = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
+rand = {workspace = true, features = ["default"]}
 base-execution-network-types = { workspace = true }
-rand = { workspace = true, features = ["default"] }
 base-execution-state-maintenance = {workspace = true}
-tempfile = { workspace = true, features = ["default"] }
+tempfile = {workspace = true, features = ["default"]}
+alloy-rlp = { workspace = true, features = ["core-net"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["serde"]}
+async-compression = { workspace = true, features = ["gzip", "tokio"] }
+base-execution-evm-blocks = {workspace = true, features = ["test-utils"]}
 base-execution-state-trie = { workspace = true, features = ["test-utils"] }
 base-execution-state-memory = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = {workspace = true, features = ["test-utils"]}
-reth-downloaders = { workspace = true, features = ["default", "file-client"] }
-base-common-observability-tracing = { workspace = true, features = ["default"] }
+base-common-observability-tracing = {workspace = true, features = ["default"]}
 tokio = {workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"]}
 base-execution-state-database = {workspace = true, features = ["mdbx", "test-utils"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom", "rand"] }
-base-execution-network-service = { workspace = true, features = ["default", "test-utils"] }
+base-execution-network-service = {workspace = true, features = ["default", "test-utils"]}
+
+[[test]]
+name = "pipeline"
+required-features = ["file-client"]
+
+[[test]]
+name = "preimage"
+required-features = ["file-client"]
 
 [features]
 test-utils = [
@@ -86,10 +105,11 @@ test-utils = [
     "dep:reth-testing-utils",
     "dep:tempfile",
     "base-execution-evm-blocks/test-utils",
-    "reth-downloaders/test-utils",
     "reth-primitives-traits/test-utils",
     "base-common-types-chain/test-utils",
     "base-execution-state-trie/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
 ]
+default = []
+file-client = ["dep:async-compression", "dep:itertools"]

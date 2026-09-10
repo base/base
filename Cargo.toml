@@ -121,7 +121,6 @@ members = [
   "vendor/reth-consensus-debug-client",
   "crates/execution/state/database",
   "crates/execution/state/maintenance",
-  "vendor/reth-downloaders",
   "vendor/reth-e2e-test-utils",
   "vendor/reth-engine-local",
   "vendor/reth-engine-primitives",
@@ -433,7 +432,6 @@ reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }
-reth-downloaders = { path = "vendor/reth-downloaders", default-features = false }
 reth-engine-util = { path = "vendor/reth-engine-util", default-features = false }
 reth-engine-tree = { path = "vendor/reth-engine-tree", default-features = false }
 reth-node-events = { path = "vendor/reth-node-events", default-features = false }

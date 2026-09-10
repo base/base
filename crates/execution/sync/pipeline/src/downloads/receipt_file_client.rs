@@ -6,7 +6,7 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::{Decoder, FramedRead};
 use tracing::{trace, warn};
 
-use crate::{DecodedFileChunk, FileClientError};
+use crate::downloads::{DecodedFileChunk, FileClientError};
 
 /// Helper trait implemented for [`Decoder`] that decodes the receipt type.
 pub trait ReceiptDecoder: Decoder<Item = Option<ReceiptWithBlockNumber<Self::Receipt>>> {
@@ -219,12 +219,12 @@ mod test {
         hex,
     };
     use alloy_rlp::{Decodable, RlpDecodable};
-    use base_common_types_chain::{EthereumReceipt as Receipt, TxType};
     use base_common_observability_tracing::init_test_tracing;
+    use base_common_types_chain::{EthereumReceipt as Receipt, TxType};
     use tokio_util::codec::Decoder;
 
     use super::{FromReceiptReader, ReceiptFileClient, ReceiptWithBlockNumber};
-    use crate::{DecodedFileChunk, FileClientError};
+    use crate::downloads::{DecodedFileChunk, FileClientError};
 
     #[derive(Debug, PartialEq, Eq, RlpDecodable)]
     struct MockReceipt {

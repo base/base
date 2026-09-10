@@ -44,7 +44,6 @@ base-execution-evm-runtime = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
 socket2 = { workspace = true, features = ["all"] }
 tar = { workspace = true, features = ["default"] }
-base-execution-sync-pipeline = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
@@ -74,12 +73,12 @@ reqwest = { workspace = true, features = ["rustls", "stream", "blocking"] }
 base-common-types-chain = { workspace = true, features = ["reth", "serde"] }
 base-execution-network-discovery = {features = ["default"], workspace = true}
 base-execution-network-types = { workspace = true, features = ["secp256k1"] }
-reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 backon = { workspace = true, features = ["std-blocking-sleep", "tokio-sleep"] }
 toml_0_9_12_spec_1_1_0 = { workspace = true, features = ["default", "display"] }
 secp256k1 = { workspace = true, features = ["global-context", "recovery", "std"] }
 base-execution-network-service = {features = ["default", "serde"], workspace = true}
 base-execution-network-wire = {workspace = true, features = ["transport", "requests"]}
+base-execution-sync-pipeline = {workspace = true, features = ["default", "file-client"]}
 
 [dev-dependencies]
 tempfile = { workspace = true, features = ["default"] }

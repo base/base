@@ -26,14 +26,14 @@ pub const BODIES_TASK_BUFFER_SIZE: usize = 4;
 /// A [BodyDownloader] that drives a spawned [BodyDownloader] on a spawned task.
 #[derive(Debug)]
 #[pin_project]
-pub struct TaskDownloader {
+pub struct BodyDownloadTask {
     #[pin]
     from_downloader: ReceiverStream<BodyDownloaderResult>,
     to_downloader: UnboundedSender<RangeInclusive<BlockNumber>>,
 }
 
-impl TaskDownloader {
-    /// Spawns the given `downloader` via the given [`Runtime`] and returns a [`TaskDownloader`]
+impl BodyDownloadTask {
+    /// Spawns the given `downloader` via the given [`Runtime`] and returns a [`BodyDownloadTask`]
     /// that's connected to that task.
     pub fn spawn_with<T>(downloader: T, runtime: &Runtime) -> Self
     where
@@ -54,14 +54,14 @@ impl TaskDownloader {
     }
 }
 
-impl BodyDownloader for TaskDownloader {
+impl BodyDownloader for BodyDownloadTask {
     fn set_download_range(&mut self, range: RangeInclusive<BlockNumber>) -> DownloadResult<()> {
         let _ = self.to_downloader.send(range);
         Ok(())
     }
 }
 
-impl Stream for TaskDownloader {
+impl Stream for BodyDownloadTask {
     type Item = BodyDownloaderResult;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -94,13 +94,13 @@ impl<T: BodyDownloader> Future for SpawnedDownloader<T> {
                         let forward_error_result = ready!(bodies_tx.poll_reserve(cx))
                             .and_then(|_| bodies_tx.send_item(Err(err)));
                         if forward_error_result.is_err() {
-                            // channel closed, this means [TaskDownloader] was dropped,
+                            // channel closed, this means [BodyDownloadTask] was dropped,
                             // so we can also exit
                             return Poll::Ready(());
                         }
                     }
                 } else {
-                    // channel closed, this means [TaskDownloader] was dropped, so we can also
+                    // channel closed, this means [BodyDownloadTask] was dropped, so we can also
                     // exit
                     return Poll::Ready(());
                 }
@@ -110,7 +110,7 @@ impl<T: BodyDownloader> Future for SpawnedDownloader<T> {
                 Ok(()) => match ready!(this.downloader.poll_next_unpin(cx)) {
                     Some(bodies) => {
                         if this.bodies_tx.send_item(bodies).is_err() {
-                            // channel closed, this means [TaskDownloader] was dropped, so we can
+                            // channel closed, this means [BodyDownloadTask] was dropped, so we can
                             // also exit
                             return Poll::Ready(());
                         }
@@ -118,7 +118,7 @@ impl<T: BodyDownloader> Future for SpawnedDownloader<T> {
                     None => return Poll::Pending,
                 },
                 Err(_) => {
-                    // channel closed, this means [TaskDownloader] was dropped, so we can also
+                    // channel closed, this means [BodyDownloadTask] was dropped, so we can also
                     // exit
                     return Poll::Ready(());
                 }
@@ -137,7 +137,7 @@ mod tests {
     use base_execution_state_provider::test_utils::create_test_provider_factory;
 
     use super::*;
-    use crate::{
+    use crate::downloads::{
         bodies::{
             bodies::BodiesDownloaderBuilder,
             test_utils::{insert_headers, zip_blocks},
@@ -163,7 +163,7 @@ mod tests {
             factory,
         );
         let runtime = Runtime::test();
-        let mut downloader = TaskDownloader::spawn_with(downloader, &runtime);
+        let mut downloader = BodyDownloadTask::spawn_with(downloader, &runtime);
 
         downloader.set_download_range(0..=19).expect("failed to set download range");
 
@@ -186,7 +186,7 @@ mod tests {
             factory,
         );
         let runtime = Runtime::test();
-        let mut downloader = TaskDownloader::spawn_with(downloader, &runtime);
+        let mut downloader = BodyDownloadTask::spawn_with(downloader, &runtime);
 
         downloader.set_download_range(1..=0).expect("failed to set download range");
         assert_matches!(downloader.next().await, Some(Err(DownloadError::InvalidBodyRange { .. })));

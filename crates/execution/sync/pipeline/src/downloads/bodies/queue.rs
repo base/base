@@ -16,7 +16,7 @@ use {
 };
 
 use super::request::BodiesRequestFuture;
-use crate::metrics::BodyDownloaderMetrics;
+use crate::downloads::metrics::BodyDownloaderMetrics;
 
 /// The wrapper around [`FuturesUnordered`] that keeps information
 /// about the blocks currently being requested.

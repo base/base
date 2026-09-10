@@ -399,11 +399,9 @@ mod tests {
     };
 
     mod test_runner {
+        use crate::{ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder};
         use base_execution_evm_blocks::BaseBeaconConsensus;
         use base_execution_state_provider::{BlockNumReader, HeaderProvider};
-        use reth_downloaders::headers::reverse_headers::{
-            ReverseHeadersDownloader, ReverseHeadersDownloaderBuilder,
-        };
         use tokio::sync::watch;
         use {
             base_execution_network_service::test_utils::TestHeaderDownloader,

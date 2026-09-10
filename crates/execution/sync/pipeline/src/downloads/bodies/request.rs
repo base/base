@@ -17,7 +17,7 @@ use {
     base_execution_network_wire::Priority,
 };
 
-use crate::metrics::{BodyDownloaderMetrics, ResponseMetrics};
+use crate::downloads::metrics::{BodyDownloaderMetrics, ResponseMetrics};
 
 /// Body request implemented as a [Future].
 ///
@@ -255,7 +255,7 @@ mod tests {
     use reth_testing_utils::{generators, generators::random_header_range};
 
     use super::*;
-    use crate::{
+    use crate::downloads::{
         bodies::test_utils::zip_blocks,
         test_utils::{TestBodiesClient, generate_bodies},
     };

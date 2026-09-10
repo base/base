@@ -41,7 +41,6 @@ base-execution-payload-types = {workspace = true}
 base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
-base-execution-sync-pipeline = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
@@ -52,7 +51,6 @@ serde_json = { workspace = true,  features = ["alloc"]}
 tracing = { workspace = true, features = ["attributes"]}
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-downloaders = { workspace = true, features = ["default"] }
 base-execution-exex = { workspace = true, features = ["metrics"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
@@ -63,6 +61,7 @@ base-execution-state-provider = {workspace = true, features = ["rayon"]}
 base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-state-indexer = {features = ["service"], workspace = true}
 base-execution-state-tasks = { workspace = true, features = ["metrics"] }
+base-execution-sync-pipeline = {workspace = true, features = ["default"]}
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}
 base-execution-network-service = {features = ["default"], workspace = true}
@@ -148,7 +147,6 @@ test-utils = [
     "base-execution-txpool/test-utils",
     "base-execution-state-trie/test-utils",
     "reth-engine-tree/test-utils",
-    "reth-downloaders/test-utils",
     "base-execution-sync-pipeline/test-utils",
 ]
 reth-codec = []

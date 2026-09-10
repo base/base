@@ -64,12 +64,12 @@ use base_execution_state_provider::{
 use base_execution_sync_pipeline::{
     DefaultStages, MerkleStage, MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet,
 };
+use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
 use base_execution_txpool::TransactionPool;
 use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_engine_local::MiningMode;
 use reth_exex::ExExManagerHandle;
 use reth_node_core::{

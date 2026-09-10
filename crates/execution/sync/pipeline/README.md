@@ -15,8 +15,8 @@ add, disable and replace stages in the set.
 
 ```
 # use std::sync::Arc;
-# use reth_downloaders::bodies::bodies::BodiesDownloaderBuilder;
-# use reth_downloaders::headers::reverse_headers::ReverseHeadersDownloaderBuilder;
+# use base_execution_sync_pipeline::BodiesDownloaderBuilder;
+# use base_execution_sync_pipeline::ReverseHeadersDownloaderBuilder;
 # use base_execution_network_service::test_utils::{TestBodiesClient, TestHeadersClient};
 # use alloy_primitives::B256;
 #
@@ -72,3 +72,6 @@ Pipeline::builder()
 
 - `test-utils`: Export utilities for testing
 
+
+The file-backed pipeline integration suites use `file-client`. Run the complete suite with
+`cargo test -p base-execution-sync-pipeline --features file-client -- --test-threads=4`.

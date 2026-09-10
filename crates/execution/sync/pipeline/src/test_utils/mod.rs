@@ -25,3 +25,5 @@ pub const TEST_STAGE_ID: StageId = StageId::Other("TestStage");
 
 mod stage;
 pub use stage::TestStage;
+
+pub use crate::downloads::{body_downloads, header_downloads, test_utils as downloads};

@@ -25,16 +25,16 @@ pub const HEADERS_TASK_BUFFER_SIZE: usize = 8;
 /// A [HeaderDownloader] that drives a spawned [HeaderDownloader] on a spawned task.
 #[derive(Debug)]
 #[pin_project]
-pub struct TaskDownloader {
+pub struct HeaderDownloadTask {
     #[pin]
     from_downloader: ReceiverStream<HeadersDownloaderResult<Vec<SealedHeader>>>,
     to_downloader: UnboundedSender<DownloaderUpdates>,
 }
 
-// === impl TaskDownloader ===
+// === impl HeaderDownloadTask ===
 
-impl TaskDownloader {
-    /// Spawns the given `downloader` via the given [`Runtime`] and returns a [`TaskDownloader`]
+impl HeaderDownloadTask {
+    /// Spawns the given `downloader` via the given [`Runtime`] and returns a [`HeaderDownloadTask`]
     /// that's connected to that task.
     pub fn spawn_with<T>(downloader: T, runtime: &Runtime) -> Self
     where
@@ -54,7 +54,7 @@ impl TaskDownloader {
     }
 }
 
-impl HeaderDownloader for TaskDownloader {
+impl HeaderDownloader for HeaderDownloadTask {
     fn update_sync_gap(&mut self, head: SealedHeader, target: SyncTarget) {
         let _ = self.to_downloader.send(DownloaderUpdates::UpdateSyncGap(head, target));
     }
@@ -72,7 +72,7 @@ impl HeaderDownloader for TaskDownloader {
     }
 }
 
-impl Stream for TaskDownloader {
+impl Stream for HeaderDownloadTask {
     type Item = HeadersDownloaderResult<Vec<SealedHeader>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -99,7 +99,7 @@ impl<T: HeaderDownloader> Future for SpawnedDownloader<T> {
                 match this.updates.poll_next_unpin(cx) {
                     Poll::Pending => break,
                     Poll::Ready(None) => {
-                        // channel closed, this means [TaskDownloader] was dropped, so we can also
+                        // channel closed, this means [HeaderDownloadTask] was dropped, so we can also
                         // exit
                         return Poll::Ready(());
                     }
@@ -125,7 +125,7 @@ impl<T: HeaderDownloader> Future for SpawnedDownloader<T> {
                     match ready!(this.downloader.poll_next_unpin(cx)) {
                         Some(headers) => {
                             if this.headers_tx.send_item(headers).is_err() {
-                                // channel closed, this means [TaskDownloader] was dropped, so we
+                                // channel closed, this means [HeaderDownloadTask] was dropped, so we
                                 // can also exit
                                 return Poll::Ready(());
                             }
@@ -134,7 +134,7 @@ impl<T: HeaderDownloader> Future for SpawnedDownloader<T> {
                     }
                 }
                 Err(_) => {
-                    // channel closed, this means [TaskDownloader] was dropped, so
+                    // channel closed, this means [HeaderDownloadTask] was dropped, so
                     // we can also exit
                     return Poll::Ready(());
                 }
@@ -160,7 +160,7 @@ mod tests {
     use base_execution_network_service::test_utils::TestHeadersClient;
 
     use super::*;
-    use crate::headers::{
+    use crate::downloads::headers::{
         reverse_headers::ReverseHeadersDownloaderBuilder, test_utils::child_header,
     };
 
@@ -180,7 +180,7 @@ mod tests {
             .build(Arc::clone(&client), Arc::new(BaseBeaconConsensus::test()));
 
         let runtime = Runtime::test();
-        let mut downloader = TaskDownloader::spawn_with(downloader, &runtime);
+        let mut downloader = HeaderDownloadTask::spawn_with(downloader, &runtime);
         downloader.update_local_head(p3.clone());
         downloader.update_sync_target(SyncTarget::Tip(p0.hash()));
 

@@ -16,8 +16,8 @@ use base_execution_state_provider::{
     providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
 };
 use base_execution_sync_pipeline::{DefaultStages, Pipeline, PipelineTarget};
+use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
 use clap::Parser;
-use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},

@@ -13,9 +13,9 @@ use base_execution_state_provider::{BlockNumReader, ProviderFactory};
 use base_execution_sync_pipeline::{
     DefaultStages, ExecutionStage, ExecutionStageThresholds, OfflineStages, Pipeline, StageSet,
 };
+use base_execution_sync_pipeline::{NoopBodiesDownloader, NoopHeaderDownloader};
 use clap::{Parser, Subcommand};
 use reth_config::Config;
-use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_exex::ExExManagerHandle;
 use tokio::sync::watch;
 use tracing::info;

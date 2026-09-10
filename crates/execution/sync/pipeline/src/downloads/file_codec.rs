@@ -4,7 +4,7 @@ use alloy_primitives::bytes::{Buf, BytesMut};
 use alloy_rlp::{Decodable, Encodable};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::file_client::FileClientError;
+use crate::downloads::file_client::FileClientError;
 
 /// Codec for reading raw block bodies from a file.
 ///

@@ -23,7 +23,7 @@ use tokio_util::codec::FramedRead;
 use tracing::{debug, trace, warn};
 
 use super::file_codec::BlockFileCodec;
-use crate::receipt_file_client::FromReceiptReader;
+use crate::downloads::receipt_file_client::FromReceiptReader;
 
 /// Default byte length of chunk to read from chain file.
 ///
@@ -720,12 +720,12 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
+    use crate::downloads::{
         bodies::{
-            bodies::BodiesDownloaderBuilder,
+            BodiesDownloaderBuilder,
             test_utils::{insert_headers, zip_blocks},
         },
-        headers::{reverse_headers::ReverseHeadersDownloaderBuilder, test_utils::child_header},
+        headers::{ReverseHeadersDownloaderBuilder, test_utils::child_header},
         test_utils::{generate_bodies, generate_bodies_file},
     };
 

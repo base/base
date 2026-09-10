@@ -33,8 +33,8 @@ use {
     base_execution_network_wire::Priority,
 };
 
-use super::task::TaskDownloader;
-use crate::metrics::HeaderDownloaderMetrics;
+use super::task::HeaderDownloadTask;
+use crate::downloads::metrics::HeaderDownloaderMetrics;
 
 /// A heuristic that is used to determine the number of requests that should be prepared for a peer.
 /// This should ensure that there are always requests lined up for peers to handle while the
@@ -697,9 +697,9 @@ where
     H: HeadersClient,
     Self: HeaderDownloader + 'static,
 {
-    /// Convert the downloader into a [`TaskDownloader`] by spawning it via the given [`Runtime`].
-    pub fn into_task_with(self, runtime: &Runtime) -> TaskDownloader {
-        TaskDownloader::spawn_with(self, runtime)
+    /// Convert the downloader into a [`HeaderDownloadTask`] by spawning it via the given [`Runtime`].
+    pub fn into_task_with(self, runtime: &Runtime) -> HeaderDownloadTask {
+        HeaderDownloadTask::spawn_with(self, runtime)
     }
 }
 
@@ -1294,7 +1294,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::headers::test_utils::child_header;
+    use crate::downloads::headers::test_utils::child_header;
 
     #[derive(Clone, Debug)]
     struct CappedHeadersClient {

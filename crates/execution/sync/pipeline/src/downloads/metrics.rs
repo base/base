@@ -8,7 +8,7 @@ use base_execution_network_service::DownloadError;
 ///
 /// These metrics will be initialized with the `downloaders.bodies` scope.
 /// ```
-/// use reth_downloaders::metrics::BodyDownloaderMetrics;
+/// use base_execution_sync_pipeline::BodyDownloaderMetrics;
 /// use base_execution_network_service::DownloadError;
 ///
 /// // Initialize metrics.
@@ -88,7 +88,7 @@ pub struct ResponseMetrics {
 ///
 /// These metrics will be initialized with the `downloaders.headers` scope.
 /// ```
-/// use reth_downloaders::metrics::HeaderDownloaderMetrics;
+/// use base_execution_sync_pipeline::HeaderDownloaderMetrics;
 /// use base_execution_network_service::DownloadError;
 ///
 /// // Initialize metrics.
