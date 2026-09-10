@@ -439,7 +439,7 @@ mod tests {
     #[cfg(feature = "metrics")]
     mod metrics_emission {
         use alloy_primitives::Bytes;
-        use base_proof_primitives::Proposal;
+        use base_proof_types_protocol::Proposal;
         use base_prover_service_protocol::{
             ProofResult as ApiProofResult, TeeKind, TeeProofResult,
         };

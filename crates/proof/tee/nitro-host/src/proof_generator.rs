@@ -3,7 +3,7 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
-use base_proof_primitives::ProofRequest as NitroProofRequest;
+use base_proof_types_protocol::ProofRequest as NitroProofRequest;
 use base_proof_worker::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
     ProofTaskController, WorkerHeartbeat,

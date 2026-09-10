@@ -1,5 +1,5 @@
 [package]
-name = "base-proof-primitives"
+name = "base-proof-types-protocol"
 description = "Shared primitive types and traits for the Base proof system"
 version.workspace = true
 edition.workspace = true

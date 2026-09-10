@@ -37,7 +37,7 @@ base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+base-proof-types-protocol = { workspace = true, features = ["rpc-client"] }
 base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 base-common-observability-health = { workspace = true, features = ["axum-server"] }

@@ -20,7 +20,7 @@ base-prover-service-protocol = { workspace = true, features = ["default"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
 [dev-dependencies]
 alloy-primitives = { workspace = true }
-base-proof-primitives = { workspace = true }
+base-proof-types-protocol = { workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 [lints]
 workspace = true

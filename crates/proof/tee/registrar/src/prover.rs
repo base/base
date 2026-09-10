@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 use alloy_signer::utils::public_key_to_address;
-use base_proof_primitives::EnclaveApiClient;
+use base_proof_types_protocol::EnclaveApiClient;
 use jsonrpsee::{
     core::client::ClientT,
     http_client::{HttpClient, HttpClientBuilder},

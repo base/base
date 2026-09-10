@@ -14,7 +14,7 @@ use std::{
 use alloy_primitives::{Address, B256};
 use base_common_l1_transactions::{TxManager, TxManagerError};
 use base_proof_contracts::{AggregateVerifierClient, GameStatus};
-use base_proof_primitives::ProofRequest as TeeProofRequest;
+use base_proof_types_protocol::ProofRequest as TeeProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;

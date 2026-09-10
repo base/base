@@ -14,7 +14,7 @@ serde = { workspace = true, features = ["derive"] }
 uuid = { workspace = true, features = ["default", "v5"] }
 alloy-primitives = { workspace = true, features = ["serde"] }
 chrono = { workspace = true, features = ["default", "serde"] }
-base-proof-primitives = { workspace = true, features = ["serde"] }
+base-proof-types-protocol = { workspace = true, features = ["serde"] }
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
 [lints]

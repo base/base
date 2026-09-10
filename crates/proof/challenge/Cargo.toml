@@ -21,7 +21,7 @@ alloy-eips = { workspace = true }
 base-proof-rpc = { workspace = true }
 alloy-primitives = { workspace = true }
 base-proof-contracts = { workspace = true }
-base-proof-primitives = { workspace = true }
+base-proof-types-protocol = { workspace = true }
 base-proof-submission = { workspace = true }
 base-common-cli-support = { workspace = true }
 base-common-types-chain = { workspace = true }

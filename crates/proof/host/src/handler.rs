@@ -1317,7 +1317,7 @@ mod tests {
     use base_common_client_ethereum::Base;
     use base_common_client_ethereum::{RootProvider, builder as provider_builder, mock::Asserter};
     use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
-    use base_proof_primitives::ProofRequest;
+    use base_proof_types_protocol::ProofRequest;
     use tokio::sync::RwLock;
 
     use super::*;

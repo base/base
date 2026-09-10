@@ -79,7 +79,7 @@ members = [
   "crates/proof/host",
   "crates/proof/mpt",
   "crates/proof/witness/preimage",
-  "crates/proof/primitives",
+  "crates/proof/types/protocol",
   "crates/proof/proof",
   "crates/proof/proposer",
   "crates/proof/prover-service",
@@ -326,7 +326,7 @@ base-proof-executor = { path = "crates/proof/executor", default-features = false
 base-proof-witness-preimage = { path = "crates/proof/witness/preimage", default-features = false }
 base-proof-contracts = { path = "crates/proof/contracts", default-features = false }
 base-proof-submission = { path = "crates/proof/submission", default-features = false }
-base-proof-primitives = { path = "crates/proof/primitives", default-features = false }
+base-proof-types-protocol = { path = "crates/proof/types/protocol", default-features = false }
 base-prover-service = { path = "crates/proof/prover-service", default-features = false }
 base-proof-tee-registrar = { path = "crates/proof/tee/registrar", default-features = false }
 base-prover-service-db = { path = "crates/proof/prover-service/db", default-features = false }

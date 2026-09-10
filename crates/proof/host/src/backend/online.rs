@@ -210,7 +210,7 @@ mod tests {
     use base_proof_witness_preimage::{
         HintRouter, PreimageFetcher, PreimageKey, errors::PreimageOracleError,
     };
-    use base_proof_primitives::ProofRequest;
+    use base_proof_types_protocol::ProofRequest;
     use tokio::sync::RwLock;
 
     use super::*;

@@ -11,7 +11,7 @@ existing dispute game:
 - Submitting proof-bearing `challenge()` and `nullify()` transactions.
 - Classifying known non-retryable revert selectors into structured errors.
 
-Proof byte encoding lives in `base-proof-primitives::ProofEncoder` so callers can
+Proof byte encoding lives in `base-proof-types-protocol::ProofEncoder` so callers can
 prepare TEE proof bytes before using this crate's submission path. SP1 receipt
 decoding has been removed; see [CAVEATS.md](../../../CAVEATS.md).
 

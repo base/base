@@ -5,7 +5,7 @@ use std::sync::Arc;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256};
 use base_common_client_rollup::{L1BlockRef, SyncStatus};
-use base_proof_primitives::ProofRequest;
+use base_proof_types_protocol::ProofRequest;
 use base_proof_rpc::{L1Provider, L2Provider, RollupProvider};
 use base_prover_service_client::ProofRequesterProvider;
 use tracing::{debug, info, warn};

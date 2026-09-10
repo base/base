@@ -26,7 +26,7 @@ proof_packages=(
   base-proof-executor
   base-proof-mpt
   base-proof-witness-preimage
-  base-proof-primitives
+  base-proof-types-protocol
 )
 
 for package in "${proof_packages[@]}"; do

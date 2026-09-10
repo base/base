@@ -1,7 +1,7 @@
 //! Adapters between proposer proof types and the shared prover-service protocol.
 
 use alloy_primitives::B256;
-use base_proof_primitives::ProofRequest as PrimitiveProofRequest;
+use base_proof_types_protocol::ProofRequest as PrimitiveProofRequest;
 use base_prover_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
     TeeProofRequest, TeeProofResult,
@@ -83,8 +83,8 @@ mod tests {
     use super::ProposerProofAdapter;
     use crate::{ProposerError, test_utils::test_proposal};
 
-    fn test_request(root: B256) -> base_proof_primitives::ProofRequest {
-        base_proof_primitives::ProofRequest {
+    fn test_request(root: B256) -> base_proof_types_protocol::ProofRequest {
+        base_proof_types_protocol::ProofRequest {
             l1_head: B256::repeat_byte(0x01),
             agreed_l2_head_hash: B256::repeat_byte(0x02),
             agreed_l2_output_root: B256::repeat_byte(0x03),

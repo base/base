@@ -33,7 +33,7 @@ k256 = { workspace = true, features = ["default", "ecdsa"] }
 jsonrpsee = { workspace = true, features = ["server", "macros"] }
 base-prover-service-protocol = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "io-util", "net"] }
-base-proof-primitives = { workspace = true, features = ["std", "serde", "rpc-server"] }
+base-proof-types-protocol = { workspace = true, features = ["std", "serde", "rpc-server"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock = { workspace = true }

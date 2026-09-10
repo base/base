@@ -2,7 +2,7 @@ use core::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base_proof_primitives::{ProofResult, ProverBackend};
+use base_proof_types_protocol::{ProofResult, ProverBackend};
 use base_proof_tee_nitro_enclave::Oracle;
 
 use super::transport::NitroTransport;

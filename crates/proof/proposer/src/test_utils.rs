@@ -16,7 +16,7 @@ use base_proof_contracts::{
     AnchorStateRegistryClient, ContractError, DisputeGameFactoryClient, GameAtIndex, GameInfo,
     GameStatus,
 };
-use base_proof_primitives::Proposal;
+use base_proof_types_protocol::Proposal;
 use base_proof_rpc::{
     BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
 };

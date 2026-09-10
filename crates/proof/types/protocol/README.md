@@ -1,4 +1,4 @@
-# `base-proof-primitives`
+# `base-proof-types-protocol`
 
 Shared primitive types and traits for the Base proof system.
 
@@ -20,11 +20,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-primitives = { workspace = true }
+base-proof-types-protocol = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_primitives::{Proposal, ProofBundle, ProofResult};
+use base_proof_types_protocol::{Proposal, ProofBundle, ProofResult};
 ```
 
 ## License

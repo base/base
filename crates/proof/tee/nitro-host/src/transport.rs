@@ -5,7 +5,7 @@ use alloy_signer::utils::public_key_to_address;
 #[cfg(feature = "metrics")]
 use base_proof_host::Metrics;
 use base_proof_witness_preimage::PreimageKey;
-use base_proof_primitives::ProofResult;
+use base_proof_types_protocol::ProofResult;
 use base_proof_tee_nitro_enclave::Server;
 use k256::ecdsa::VerifyingKey;
 

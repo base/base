@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use async_trait::async_trait;
 use base_common_l1_transactions::{TxCandidate, TxManager};
 use base_proof_contracts::{encode_create_calldata, encode_extra_data};
-use base_proof_primitives::{ProofEncoder, Proposal};
+use base_proof_types_protocol::{ProofEncoder, Proposal};
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
 use tracing::info;
 

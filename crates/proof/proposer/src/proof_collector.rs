@@ -434,7 +434,7 @@ mod tests {
     use base_proof_contracts::{
         AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key,
     };
-    use base_proof_primitives::ProofRequest;
+    use base_proof_types_protocol::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
     use base_prover_service_protocol::TeeKind;
     use tokio_util::sync::CancellationToken;

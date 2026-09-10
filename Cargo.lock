@@ -2402,9 +2402,9 @@ dependencies = [
  "base-common-types-rpc",
  "base-consensus-batch-types",
  "base-proof-contracts",
- "base-proof-primitives",
  "base-proof-rpc",
  "base-proof-submission",
+ "base-proof-types-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
  "clap",
@@ -4832,7 +4832,7 @@ dependencies = [
  "base-proof",
  "base-proof-client",
  "base-proof-mpt",
- "base-proof-primitives",
+ "base-proof-types-protocol",
  "base-proof-witness-preimage",
  "futures",
  "metrics",
@@ -4864,24 +4864,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.19",
  "tokio",
-]
-
-[[package]]
-name = "base-proof-primitives"
-version = "0.0.0"
-dependencies = [
- "alloy-chains",
- "alloy-eips",
- "alloy-primitives",
- "async-trait",
- "base-common-chain-config",
- "base-proof-witness-preimage",
- "hex",
- "jsonrpsee",
- "rstest",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -4938,7 +4920,7 @@ dependencies = [
  "base-execution-evm-runtime",
  "base-proof",
  "base-proof-client",
- "base-proof-primitives",
+ "base-proof-types-protocol",
  "base-proof-witness-preimage",
  "bincode 2.0.1",
  "eyre",
@@ -4967,8 +4949,8 @@ dependencies = [
  "base-common-observability-health",
  "base-proof-contracts",
  "base-proof-host",
- "base-proof-primitives",
  "base-proof-tee-nitro-enclave",
+ "base-proof-types-protocol",
  "base-proof-witness-preimage",
  "base-proof-worker",
  "base-prover-service-client",
@@ -5023,8 +5005,8 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-proof-contracts",
- "base-proof-primitives",
  "base-proof-tee-nitro-verifier",
+ "base-proof-types-protocol",
  "ciborium",
  "futures",
  "hex",
@@ -5060,6 +5042,24 @@ dependencies = [
  "serde",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "base-proof-types-protocol"
+version = "0.0.0"
+dependencies = [
+ "alloy-chains",
+ "alloy-eips",
+ "alloy-primitives",
+ "async-trait",
+ "base-common-chain-config",
+ "base-proof-witness-preimage",
+ "hex",
+ "jsonrpsee",
+ "rstest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -5110,9 +5110,9 @@ dependencies = [
  "base-common-types-chain",
  "base-common-types-rpc",
  "base-proof-contracts",
- "base-proof-primitives",
  "base-proof-rpc",
  "base-proof-submission",
+ "base-proof-types-protocol",
  "base-prover-service-client",
  "base-prover-service-protocol",
  "clap",
@@ -5231,7 +5231,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "anyhow",
- "base-proof-primitives",
+ "base-proof-types-protocol",
  "base-prover-service-protocol",
  "chrono",
  "futures",
@@ -5249,7 +5249,7 @@ name = "base-prover-service-protocol"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
- "base-proof-primitives",
+ "base-proof-types-protocol",
  "chrono",
  "jsonrpsee",
  "serde",

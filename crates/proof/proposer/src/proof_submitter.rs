@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, game_lookup_key};
-use base_proof_primitives::Proposal;
+use base_proof_types_protocol::Proposal;
 use base_proof_rpc::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use futures::{StreamExt, stream};

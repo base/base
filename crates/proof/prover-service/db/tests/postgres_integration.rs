@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use base_proof_primitives::Proposal;
+use base_proof_types_protocol::Proposal;
 use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,

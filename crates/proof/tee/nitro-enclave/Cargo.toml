@@ -29,7 +29,7 @@ parking_lot = { workspace = true, features = ["default"] }
 base-proof-client = { workspace = true, features = ["std"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 base-proof-witness-preimage = { workspace = true, features = ["serde"] }
-base-proof-primitives = { workspace = true, features = ["serde"] }
+base-proof-types-protocol = { workspace = true, features = ["serde"] }
 aws-nitro-enclaves-nsm-api = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa", "arithmetic"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "io-util"] }

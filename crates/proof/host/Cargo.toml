@@ -37,7 +37,7 @@ base-proof-client = { workspace = true, features = ["std"] }
 base-proof-witness-preimage = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
 base-common-client-ethereum = {workspace = true, features = ["default"]}
-base-proof-primitives = { workspace = true, features = ["serde", "std"] }
+base-proof-types-protocol = { workspace = true, features = ["serde", "std"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }

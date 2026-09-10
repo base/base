@@ -1,6 +1,6 @@
 use std::{fmt, sync::OnceLock};
 
-use base_proof_primitives::{ProofRequest, ProofResult, ProverBackend};
+use base_proof_types_protocol::{ProofRequest, ProofResult, ProverBackend};
 use tracing::{Instrument, info, info_span};
 
 use crate::{

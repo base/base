@@ -35,7 +35,7 @@ x509-parser = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
-base-proof-primitives = { workspace = true, features = ["rpc-client"] }
+base-proof-types-protocol = { workspace = true, features = ["rpc-client"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
 p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }

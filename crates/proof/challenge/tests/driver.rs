@@ -19,7 +19,7 @@ use base_challenger::{
 };
 use base_common_l1_transactions::TxManagerError;
 use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, GameStatus};
-use base_proof_primitives::Proposal;
+use base_proof_types_protocol::Proposal;
 use base_proof_rpc::L1Provider;
 use base_consensus_batch_types::OutputRoot;
 use base_prover_service_protocol::{
