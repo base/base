@@ -286,17 +286,17 @@ impl BaseNode {
                 .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
                 .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
                 .with_minimum_priority_fee(ctx.config().txpool.minimum_priority_fee)
-                .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
-                .build_with_tasks(ctx.task_executor().clone())
-                .map(|validator| {
-                    validator
-                        // In --dev mode we can't require gas fees because we're unable to decode
-                        // the L1 block info
-                        .require_l1_data_gas_fee(!ctx.config().dev.dev)
-                        .with_additional_trusted_delegation_targets(
-                            self.args.mempool_trusted_delegation_targets.iter().copied().collect(),
-                        )
-                });
+                .build()
+                // Dev chains lack the L1 block information needed for L1 data fees.
+                .require_l1_data_gas_fee(!ctx.config().dev.dev)
+                .with_additional_trusted_delegation_targets(
+                    self.args.mempool_trusted_delegation_targets.iter().copied().collect(),
+                );
+        let validator = TransactionValidationTaskExecutor::spawn(
+            validator,
+            ctx.task_executor(),
+            ctx.config().txpool.additional_validation_tasks,
+        );
 
         let mut final_pool_config = ctx.pool_config();
         final_pool_config.max_inflight_delegated_slot_limit = max_inflight_delegated_slots;

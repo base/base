@@ -1202,10 +1202,7 @@ impl BaseTransactionValidatorBuilder {
     /// The validator will spawn `additional_tasks` additional tasks for validation.
     ///
     /// By default this will spawn 1 additional task.
-    pub fn build_with_tasks(
-        self,
-        tasks: Runtime,
-    ) -> TransactionValidationTaskExecutor<BaseTransactionValidator> {
+    pub fn build_with_tasks(self, tasks: Runtime) -> TransactionValidationTaskExecutor {
         let additional_tasks = self.additional_tasks;
         let validator = self.build();
         TransactionValidationTaskExecutor::spawn(validator, &tasks, additional_tasks)

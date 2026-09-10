@@ -81,8 +81,13 @@ impl RpcTestUtils {
         .unwrap();
         let validator = BaseTransactionValidatorBuilder::new(provider, evm_config)
             .disable_balance_check()
-            .build_with_tasks(Runtime::test())
-            .map(|validator| validator.require_l1_data_gas_fee(false));
+            .build()
+            .require_l1_data_gas_fee(false);
+        let validator = base_execution_txpool::TransactionValidationTaskExecutor::spawn(
+            validator,
+            &Runtime::test(),
+            0,
+        );
         let ordering = BaseOrdering::default();
         BaseTransactionPool::new(
             Pool::new(validator, ordering.clone(), store, Default::default()),

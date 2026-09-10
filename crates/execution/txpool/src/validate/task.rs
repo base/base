@@ -100,14 +100,14 @@ impl ValidationJobSender {
 /// A [`TransactionValidator`] implementation that validates ethereum transaction.
 /// This validator is non-blocking, all validation work is done in a separate task.
 #[derive(Debug)]
-pub struct TransactionValidationTaskExecutor<V> {
+pub struct TransactionValidationTaskExecutor {
     /// The validator that will validate transactions on a separate task.
-    pub validator: Arc<V>,
+    pub validator: Arc<BaseTransactionValidator>,
     /// The sender half to validation tasks that perform the actual validation.
     pub to_validation_task: Arc<sync::Mutex<ValidationJobSender>>,
 }
 
-impl<V> Clone for TransactionValidationTaskExecutor<V> {
+impl Clone for TransactionValidationTaskExecutor {
     fn clone(&self) -> Self {
         Self {
             validator: self.validator.clone(),
@@ -118,7 +118,7 @@ impl<V> Clone for TransactionValidationTaskExecutor<V> {
 
 // === impl TransactionValidationTaskExecutor ===
 
-impl TransactionValidationTaskExecutor<()> {
+impl TransactionValidationTaskExecutor {
     /// Convenience method to create a [`BaseTransactionValidatorBuilder`]
     pub fn eth_builder(
         client: base_execution_state_provider::BlockchainProvider,
@@ -128,25 +128,14 @@ impl TransactionValidationTaskExecutor<()> {
     }
 }
 
-impl<V> TransactionValidationTaskExecutor<V> {
-    /// Maps the given validator to a new type.
-    pub fn map<F, T>(self, mut f: F) -> TransactionValidationTaskExecutor<T>
-    where
-        F: FnMut(V) -> T,
-    {
-        TransactionValidationTaskExecutor {
-            validator: Arc::new(f(Arc::into_inner(self.validator).unwrap())),
-            to_validation_task: self.to_validation_task,
-        }
-    }
-
+impl TransactionValidationTaskExecutor {
     /// Returns the validator.
-    pub fn validator(&self) -> &V {
+    pub fn validator(&self) -> &BaseTransactionValidator {
         &self.validator
     }
 }
 
-impl TransactionValidationTaskExecutor<BaseTransactionValidator> {
+impl TransactionValidationTaskExecutor {
     /// Creates a new instance for the given client
     ///
     /// This will spawn a single validation tasks that performs the actual validation.
@@ -180,12 +169,12 @@ impl TransactionValidationTaskExecutor<BaseTransactionValidator> {
     }
 }
 
-impl<V> TransactionValidationTaskExecutor<V> {
+impl TransactionValidationTaskExecutor {
     /// Creates a new executor instance with the given validator for transaction validation.
     ///
     /// Initializes the executor with the provided validator and sets up communication for
     /// validation tasks.
-    pub fn new(validator: V) -> (Self, ValidationTask) {
+    pub fn new(validator: BaseTransactionValidator) -> (Self, ValidationTask) {
         let (tx, task) = ValidationTask::new();
         (
             Self {
@@ -200,7 +189,11 @@ impl<V> TransactionValidationTaskExecutor<V> {
     ///
     /// This spawns `additional_tasks` extra blocking tasks plus one critical blocking task
     /// for the validation service.
-    pub fn spawn(validator: V, tasks: &Runtime, additional_tasks: usize) -> Self {
+    pub fn spawn(
+        validator: BaseTransactionValidator,
+        tasks: &Runtime,
+        additional_tasks: usize,
+    ) -> Self {
         let (tx, task) = ValidationTask::new();
 
         for _ in 0..additional_tasks {
@@ -218,10 +211,7 @@ impl<V> TransactionValidationTaskExecutor<V> {
     }
 }
 
-impl<V> TransactionValidator for TransactionValidationTaskExecutor<V>
-where
-    V: TransactionValidator + 'static,
-{
+impl TransactionValidator for TransactionValidationTaskExecutor {
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,
@@ -330,41 +320,35 @@ fn validation_service_error_outcomes(
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
 
     use super::*;
     use crate::{
-        TransactionOrigin,
-        test_utils::MockTransaction,
-        validate::{TransactionValidationOutcome, ValidTransaction},
+        TransactionOrigin, test_utils::MockTransaction, validate::TransactionValidationOutcome,
     };
 
-    #[derive(Debug)]
-    struct NoopValidator;
-
-    impl TransactionValidator for NoopValidator {
-        async fn validate_transaction(
-            &self,
-            _origin: TransactionOrigin,
-            transaction: crate::BasePooledTransaction,
-        ) -> TransactionValidationOutcome {
-            TransactionValidationOutcome::Valid {
-                balance: U256::ZERO,
-                state_nonce: 0,
-                bytecode_hash: None,
-                transaction: ValidTransaction::Valid(transaction),
-                propagate: false,
-                authorities: Some(Vec::<Address>::new()),
-            }
-        }
+    fn validator() -> BaseTransactionValidator {
+        let mut chain_spec = base_common_chain_config::BaseChainSpec::mainnet();
+        chain_spec.config.chain_id = 1;
+        let mock = base_execution_state_provider::test_utils::MockEthProvider::new()
+            .with_chain_spec(chain_spec.clone())
+            .with_genesis_block();
+        BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&mock),
+            BaseEvmConfig::new(Arc::new(chain_spec)),
+        )
+        .no_shanghai()
+        .no_cancun()
+        .disable_balance_check()
+        .build()
+        .require_l1_data_gas_fee(false)
     }
 
     #[tokio::test]
     async fn executor_new_spawns_and_validates_single() {
-        let validator = NoopValidator;
+        let validator = validator();
         let (executor, task) = TransactionValidationTaskExecutor::new(validator);
         tokio::spawn(task.run());
-        let tx = MockTransaction::legacy();
+        let tx = MockTransaction::legacy().with_gas_limit(21_000);
         let out = executor
             .validate_transaction(
                 TransactionOrigin::External,
@@ -376,12 +360,12 @@ mod tests {
 
     #[tokio::test]
     async fn executor_new_spawns_and_validates_batch() {
-        let validator = NoopValidator;
+        let validator = validator();
         let (executor, task) = TransactionValidationTaskExecutor::new(validator);
         tokio::spawn(task.run());
         let txs = vec![
-            (TransactionOrigin::External, MockTransaction::legacy()),
-            (TransactionOrigin::Local, MockTransaction::legacy()),
+            (TransactionOrigin::External, MockTransaction::legacy().with_gas_limit(21_000)),
+            (TransactionOrigin::Local, MockTransaction::legacy().with_gas_limit(21_000)),
         ];
         let out = executor
             .validate_transactions(
@@ -393,43 +377,15 @@ mod tests {
         assert!(out.iter().all(|o| matches!(o, TransactionValidationOutcome::Valid { .. })));
     }
 
-    #[derive(Debug)]
-    struct SameOriginBatchValidator;
-
-    impl TransactionValidator for SameOriginBatchValidator {
-        async fn validate_transaction(
-            &self,
-            _origin: TransactionOrigin,
-            _transaction: crate::BasePooledTransaction,
-        ) -> TransactionValidationOutcome {
-            panic!("same-origin batches must use the batch validator")
-        }
-
-        async fn validate_transactions_with_origin(
-            &self,
-            origin: TransactionOrigin,
-            transactions: impl IntoIterator<Item = crate::BasePooledTransaction, IntoIter: Send> + Send,
-        ) -> Vec<TransactionValidationOutcome> {
-            transactions
-                .into_iter()
-                .map(|transaction| TransactionValidationOutcome::Valid {
-                    balance: U256::ZERO,
-                    state_nonce: 0,
-                    bytecode_hash: None,
-                    transaction: ValidTransaction::Valid(transaction),
-                    propagate: matches!(origin, TransactionOrigin::Local),
-                    authorities: None,
-                })
-                .collect()
-        }
-    }
-
     #[tokio::test]
-    async fn executor_forwards_same_origin_batches() {
-        let (executor, task) = TransactionValidationTaskExecutor::new(SameOriginBatchValidator);
+    async fn executor_validates_same_origin_batches() {
+        let (executor, task) = TransactionValidationTaskExecutor::new(validator());
         tokio::spawn(task.run());
 
-        let transactions = vec![MockTransaction::legacy(), MockTransaction::eip1559()];
+        let transactions = vec![
+            MockTransaction::legacy().with_gas_limit(21_000),
+            MockTransaction::legacy().with_gas_limit(21_000),
+        ];
         let expected_hashes = transactions.iter().map(|tx| *tx.hash()).collect::<Vec<_>>();
         let outcomes = executor
             .validate_transactions_with_origin(

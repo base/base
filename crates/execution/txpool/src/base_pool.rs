@@ -76,7 +76,7 @@ pub struct BaseTransactionPool<S = crate::DiskFileBlobStore>
 where
     S: BlobStore + Clone,
 {
-    protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S>,
+    protocol_pool: Pool<TransactionValidationTaskExecutor, S>,
     ordering: crate::BaseOrdering,
     nonce_pool: Arc<RwLock<TwoDNoncePool>>,
     listeners: Arc<RwLock<SidecarListeners>>,
@@ -126,7 +126,7 @@ where
 {
     /// Creates a new wrapper around the reth protocol pool.
     pub fn new(
-        protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S>,
+        protocol_pool: Pool<TransactionValidationTaskExecutor, S>,
         ordering: crate::BaseOrdering,
     ) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
@@ -168,14 +168,12 @@ where
     }
 
     /// Returns the wrapped reth pool.
-    pub const fn protocol_pool(
-        &self,
-    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S> {
+    pub const fn protocol_pool(&self) -> &Pool<TransactionValidationTaskExecutor, S> {
         &self.protocol_pool
     }
 
     /// Returns the validator backing the wrapped reth pool.
-    pub fn validator(&self) -> &TransactionValidationTaskExecutor<BaseTransactionValidator> {
+    pub fn validator(&self) -> &TransactionValidationTaskExecutor {
         self.protocol_pool.validator()
     }
 
@@ -1939,11 +1937,11 @@ mod tests {
         let validator = BaseTransactionValidatorBuilder::new(client.clone(), evm_config)
             .no_shanghai()
             .no_cancun()
-            .build_with_tasks(Runtime::test())
-            .map(|inner| {
-                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                    .require_l1_data_gas_fee(false)
-            });
+            .build();
+        let validator =
+            BaseTransactionValidator::with_block_info(validator, BaseL1BlockInfo::default())
+                .require_l1_data_gas_fee(false);
+        let validator = TransactionValidationTaskExecutor::spawn(validator, &Runtime::test(), 0);
         let ordering = BaseOrdering::default();
         let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)

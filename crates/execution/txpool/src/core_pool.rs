@@ -31,8 +31,7 @@ use crate::{
     },
 };
 
-pub type EthTransactionPool<S> =
-    Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S>;
+pub type EthTransactionPool<S> = Pool<TransactionValidationTaskExecutor, S>;
 
 /// A shareable, generic, customizable `TransactionPool` implementation.
 #[derive(Debug)]
@@ -138,7 +137,7 @@ where
     /// # }
     /// ```
     pub fn eth_pool(
-        validator: TransactionValidationTaskExecutor<BaseTransactionValidator>,
+        validator: TransactionValidationTaskExecutor,
         blob_store: S,
         config: PoolConfig,
     ) -> Self {
