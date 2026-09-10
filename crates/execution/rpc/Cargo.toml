@@ -45,7 +45,7 @@ eyre = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }
-reth-db-common = { workspace = true, optional = true }
+base-execution-state-maintenance = { workspace = true, optional = true }
 base-common-observability-events = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -82,7 +82,7 @@ base-execution-evm-runtime = { workspace = true, features = ["overrides", "call-
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
@@ -114,6 +114,6 @@ test-utils = [
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-provider/test-utils",
     "reth-network/test-utils",
-    "dep:reth-db-common",
+    "dep:base-execution-state-maintenance",
 ]
 js-tracer = ["base-execution-evm-inspectors/js-tracer", "reth-rpc-eth-types/js-tracer"]

@@ -15,7 +15,7 @@ use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader};
 use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
-use reth_db_common::init::init_genesis;
+use base_execution_state_maintenance::init::init_genesis;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,

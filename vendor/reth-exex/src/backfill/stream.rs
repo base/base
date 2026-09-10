@@ -238,7 +238,7 @@ mod tests {
     };
     use eyre::Result;
     use futures::StreamExt;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use reth_primitives_traits::{Block as _, crypto::secp256k1::public_key_to_address};
     use base_execution_state_provider::{
         ProviderFactory, providers::BlockchainProvider,

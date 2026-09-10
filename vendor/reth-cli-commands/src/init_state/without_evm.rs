@@ -192,7 +192,7 @@ mod tests {
 
     use alloy_primitives::{address, b256};
     use base_common_types_chain::Header;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{DatabaseProviderFactory, test_utils::create_test_provider_factory};
     use tempfile::NamedTempFile;
 

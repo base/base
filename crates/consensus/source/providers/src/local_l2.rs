@@ -135,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn unset_safety_labels_are_optional_until_consensus_assigns_them() {
         let factory = create_test_provider_factory();
-        reth_db_common::init::init_genesis(&factory).unwrap();
+        base_execution_state_maintenance::init::init_genesis(&factory).unwrap();
         let provider = LocalL2Provider {
             provider: BlockchainProvider::new(factory).unwrap(),
             rollup_config: Arc::new(RollupConfig::default()),

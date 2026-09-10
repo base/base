@@ -34,7 +34,7 @@ base-execution-evm-blocks = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }

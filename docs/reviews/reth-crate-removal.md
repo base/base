@@ -95,7 +95,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-consensus-debug-client](../../vendor/reth-consensus-debug-client/Cargo.toml) | Optional capability; separate removal decision |
 | [base-execution-state-database](../../crates/execution/state/database/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-database](../../crates/execution/state/database/Cargo.toml) | Retain shared infrastructure |
-| [reth-db-common](../../vendor/reth-db-common/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Consolidate; retain required code |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-network-discovery](../../crates/execution/network/discovery/Cargo.toml) | Retain shared infrastructure |

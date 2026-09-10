@@ -2,7 +2,7 @@ use base_execution_state_database::static_file::iter_static_files;
 use base_execution_state_database::{Database, DbTx, DbTxMut, Table, TableViewer, Tables};
 use base_execution_state_types::StaticFileSegment;
 use clap::{Parser, Subcommand};
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::StaticFileProviderFactory;
 
 /// The arguments for the `reth db clear` command

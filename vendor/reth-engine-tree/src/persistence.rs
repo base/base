@@ -411,7 +411,7 @@ mod tests {
         test_utils::create_test_provider_factory,
     };
     use base_execution_state_types::PruneMode;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use reth_exex_types::FinishedExExHeight;
     use reth_prune::Pruner;
     use tokio::sync::mpsc::unbounded_channel;

@@ -557,7 +557,7 @@ mod tests {
     use base_common_types_chain::{BaseBlock, Header};
     use eyre::OptionExt;
     use futures::StreamExt;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use reth_primitives_traits::Block as _;
     use base_execution_state_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,

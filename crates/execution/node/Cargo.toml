@@ -24,7 +24,7 @@ alloy-chains = { workspace = true }
 reth-network = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 reth-node-core = { workspace = true }
 base-txpool-rpc = { workspace = true }
 reth-engine-tree = { workspace = true }
@@ -88,7 +88,7 @@ base-execution-evm-runtime = {features = ["blst", "c-kzg", "memory_limit", "p256
 
 [dev-dependencies]
 alloy-genesis = { workspace = true  }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-payload-util = { workspace = true }
 base-execution-rpc = { workspace = true }

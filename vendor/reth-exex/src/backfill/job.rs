@@ -226,7 +226,7 @@ impl<P> From<BackfillJob<P>> for SingleBlockBackfillJob<P> {
 mod tests {
     use base_common_types_chain::BlockHeader;
     use base_execution_evm_blocks::BaseEvmConfig;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use reth_primitives_traits::crypto::secp256k1::public_key_to_address;
     use base_execution_state_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory_with_chain_spec,

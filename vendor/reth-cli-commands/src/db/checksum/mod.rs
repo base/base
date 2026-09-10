@@ -11,7 +11,7 @@ use base_execution_state_database::{
 use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 use clap::Parser;
 use itertools::Itertools;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{DBProvider, StaticFileProviderFactory};
 use tracing::{info, warn};
 

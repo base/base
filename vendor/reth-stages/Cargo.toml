@@ -53,7 +53,7 @@ paste = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-genesis = { workspace = true }
 assert_matches = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 reth-static-file = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }

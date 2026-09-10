@@ -20,7 +20,7 @@ use base_execution_state_database::tables;
 use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
 use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
-use reth_db_common::init::{init_genesis, init_genesis_with_settings};
+use base_execution_state_maintenance::init::{init_genesis, init_genesis_with_settings};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,

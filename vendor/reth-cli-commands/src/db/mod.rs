@@ -10,7 +10,7 @@ use base_execution_state_database::{
     version::DB_VERSION, version::DatabaseVersionError, version::get_db_version,
 };
 use clap::{Parser, Subcommand};
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};
 mod account_storage;

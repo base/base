@@ -25,7 +25,7 @@ async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Resul
         );
         let wallet = Wallet::default().with_chain_id(chain.chain().into());
         let factory = create_test_provider_factory_with_chain_spec(chain.clone());
-        reth_db_common::init::init_genesis(&factory)?;
+        base_execution_state_maintenance::init::init_genesis(&factory)?;
         let genesis_hash = chain.genesis_hash();
         let mut config = NodeConfig::new(chain).with_unused_ports();
         config.network.discovery.disable_discovery = true;

@@ -36,7 +36,7 @@ use base_execution_state_types::ExecutionOutcome;
 use base_execution_state_types::HashedStorage;
 use base_execution_txpool::NoopTransactionPool;
 use base_testing_support::build_test_genesis;
-use reth_db_common::init::init_genesis;
+use base_execution_state_maintenance::init::init_genesis;
 use reth_primitives_traits::{SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,

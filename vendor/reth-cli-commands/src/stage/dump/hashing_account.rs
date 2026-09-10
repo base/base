@@ -2,7 +2,7 @@ use alloy_primitives::BlockNumber;
 use base_execution_state_database::DatabaseEnv;
 use base_execution_state_database::{Database, TableImporter, tables};
 use eyre::Result;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,

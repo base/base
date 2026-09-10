@@ -5,7 +5,7 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::DatabaseEnv;
 use base_execution_state_database::{Database, DbCursorRO, DbTx, TableImporter, tables};
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,

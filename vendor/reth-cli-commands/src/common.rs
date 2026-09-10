@@ -14,7 +14,7 @@ use base_execution_state_provider::{
     providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
 };
 use clap::Parser;
-use reth_db_common::init::init_genesis_with_settings;
+use base_execution_state_maintenance::init::init_genesis_with_settings;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},

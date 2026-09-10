@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use base_execution_state_types::StaticFileSegment;
 use clap::{Parser, Subcommand};
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::StaticFileProviderFactory;
 use tracing::warn;
 

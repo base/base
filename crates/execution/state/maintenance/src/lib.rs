@@ -1,4 +1,4 @@
-//! Common db operations
+#![doc = include_str!("../README.md")]
 
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",

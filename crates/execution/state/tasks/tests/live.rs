@@ -17,7 +17,7 @@ use base_execution_state_tasks::{
     live::LiveTrieCollector,
 };
 use derive_more::Constructor;
-use reth_db_common::init::init_genesis;
+use base_execution_state_maintenance::init::init_genesis;
 use reth_primitives_traits::{Block as _, RecoveredBlock, crypto::secp256k1::sign_message};
 use base_execution_state_provider::{
     BlockWriter as _, ExecutionOutcome, HashedPostStateProvider, LatestStateProviderRef,

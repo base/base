@@ -28,7 +28,7 @@ use base_execution_state_types::Chain;
 use base_execution_txpool::Pool;
 use base_node_context::BaseNodeContext;
 use futures_util::FutureExt;
-use reth_db_common::init::init_genesis;
+use base_execution_state_maintenance::init::init_genesis;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification, ExExNotifications, Wal};
 use reth_network::{NetworkConfigBuilder, NetworkManager, config::rng_secret_key};
 use reth_node_core::node_config::NodeConfig;

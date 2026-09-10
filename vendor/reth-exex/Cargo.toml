@@ -48,7 +48,7 @@ reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bin
 
 [dev-dependencies]
 alloy-genesis = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }

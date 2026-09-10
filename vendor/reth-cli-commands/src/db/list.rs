@@ -5,7 +5,7 @@ use base_execution_state_database::DbTx;
 use base_execution_state_database::{Database, RawValue, Table, TableViewer, Tables};
 use clap::{Parser, builder::RangedU64ValueParser};
 use eyre::WrapErr;
-use reth_db_common::{DbTool, ListFilter};
+use base_execution_state_maintenance::{DbTool, ListFilter};
 use tracing::error;
 
 use super::tui::DbListTUI;

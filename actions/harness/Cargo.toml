@@ -19,7 +19,7 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 base-testing-support = { workspace = true }

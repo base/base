@@ -22,7 +22,7 @@ alloy-eips = { workspace = true }
 reth-config = { workspace = true }
 futures-util = { workspace = true }
 reth-network = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 reth-node-core = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }

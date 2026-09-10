@@ -1120,7 +1120,7 @@ mod tests {
     use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
     use base_execution_state_tasks::ProofTaskCtx;
     use base_execution_state_trie::ArenaParallelSparseTrie;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
 
     use super::*;
 

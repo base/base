@@ -50,7 +50,7 @@ base-common-observability-metrics = {features = ["common", "metrics"], workspace
 mockall = { workspace = true }
 test-case = { workspace = true }
 alloy-genesis = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-primitives-traits = { workspace = true }

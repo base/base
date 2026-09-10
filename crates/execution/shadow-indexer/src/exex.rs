@@ -264,7 +264,7 @@ mod tests {
     };
     use base_execution_state_types::{Chain, ExecutionOutcome};
     use futures::TryStreamExt;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use tokio::{
         sync::{mpsc, watch},

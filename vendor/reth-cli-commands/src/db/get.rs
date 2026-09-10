@@ -13,7 +13,7 @@ use base_execution_state_database::{
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::ValueWithSubKey;
 use clap::Parser;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory};
 use tracing::error;
 

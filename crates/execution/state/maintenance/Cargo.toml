@@ -1,5 +1,5 @@
 [package]
-name = "reth-db-common"
+name = "base-execution-state-maintenance"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

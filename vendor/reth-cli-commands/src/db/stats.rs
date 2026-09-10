@@ -9,7 +9,7 @@ use comfy_table::{Cell, Row, Table as ComfyTable};
 use eyre::WrapErr;
 use human_bytes::human_bytes;
 use itertools::Itertools;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
 use base_execution_state_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
 

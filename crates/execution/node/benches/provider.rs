@@ -7,7 +7,7 @@ use base_common_types_chain::{BaseBlock as Block, Header};
 use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
 use base_execution_state_database::models::StorageSettings;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use reth_db_common::init::init_genesis_with_settings;
+use base_execution_state_maintenance::init::init_genesis_with_settings;
 use reth_primitives_traits::RecoveredBlock;
 use base_execution_state_provider::{
     AccountReader, BlockHashReader, BlockWriter, DBProvider, DatabaseProviderFactory,

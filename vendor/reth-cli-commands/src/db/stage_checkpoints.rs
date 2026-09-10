@@ -1,7 +1,7 @@
 //! `reth db stage-checkpoints` command for viewing and setting stage checkpoint values.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{DBProvider, DatabaseProviderFactory, StageCheckpointReader};
 use reth_stages::StageId;
 

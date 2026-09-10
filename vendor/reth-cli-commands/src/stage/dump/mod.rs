@@ -8,7 +8,7 @@ use base_execution_state_database::{
 };
 use base_execution_state_database::{DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use clap::Parser;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use reth_node_core::{
     args::DatadirArgs,
     dirs::{DataDirPath, PlatformPath},

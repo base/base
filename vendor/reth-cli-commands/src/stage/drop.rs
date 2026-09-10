@@ -8,7 +8,7 @@ use base_execution_state_database::{DatabaseError, mdbx::tx::Tx};
 use base_execution_state_database::{DbTx, DbTxMut, tables};
 use base_execution_state_types::StaticFileSegment;
 use clap::Parser;
-use reth_db_common::{
+use base_execution_state_maintenance::{
     DbTool,
     init::{
         insert_genesis_account_history, insert_genesis_header, insert_genesis_state,

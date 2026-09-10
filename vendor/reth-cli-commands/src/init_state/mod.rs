@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use clap::Parser;
-use reth_db_common::init::init_from_state_dump;
+use base_execution_state_maintenance::init::init_from_state_dump;
 use reth_primitives_traits::SealedHeader;
 use base_execution_state_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, StaticFileProviderFactory,

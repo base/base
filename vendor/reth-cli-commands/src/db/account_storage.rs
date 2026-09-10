@@ -5,7 +5,7 @@ use base_common_types_chain::Compact;
 use base_execution_state_database::{Database, DbDupCursorRO, DbTx, tables};
 use clap::Parser;
 use human_bytes::human_bytes;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use tracing::info;
 
 /// Log progress every 5 seconds

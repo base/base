@@ -52,7 +52,7 @@ base-common-client-ethereum = {workspace = true, features = ["default", "reqwest
 alloy-transport-http = {workspace = true, features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"]}
 
 [dev-dependencies]
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 base-common-types-rpc = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 httpmock = { workspace = true, features = ["default"] }

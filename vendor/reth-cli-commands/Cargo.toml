@@ -30,7 +30,7 @@ reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
 base-cli-utils = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-node-events = { workspace = true }

@@ -58,7 +58,7 @@ use base_node_context::BaseNodeContext;
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_db_common::init::{
+use base_execution_state_maintenance::init::{
     InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate,
 };
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};

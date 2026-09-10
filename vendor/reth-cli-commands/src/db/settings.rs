@@ -1,7 +1,7 @@
 //! `reth db settings` command for managing storage settings
 
 use clap::{Parser, Subcommand};
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::MetadataProvider;
 
 use crate::common::AccessRights;

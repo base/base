@@ -11,7 +11,7 @@ use base_execution_state_database::{
 use clap::Parser;
 use metrics::{self, Counter};
 use reth_cli_util::parse_socket_address;
-use reth_db_common::DbTool;
+use base_execution_state_maintenance::DbTool;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     version::version_metadata,

@@ -44,7 +44,7 @@ alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = {workspace = true}
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 base-execution-state-trie = {workspace = true}
 base-consensus-batch-types = { workspace = true }
 rand = { workspace = true, features = ["default"] }

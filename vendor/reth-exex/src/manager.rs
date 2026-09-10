@@ -680,7 +680,7 @@ mod tests {
     };
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
-    use reth_db_common::init::init_genesis;
+    use base_execution_state_maintenance::init::init_genesis;
     use reth_primitives_traits::RecoveredBlock;
     use reth_testing_utils::generators::{self, BlockParams};
 

@@ -35,7 +35,7 @@ base-execution-state-types = { workspace = true, features = ["default"] }
 
 [dev-dependencies]
 mockall = { workspace = true }
-reth-db-common = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 alloy-primitives = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }

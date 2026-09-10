@@ -123,7 +123,7 @@ members = [
   "vendor/reth-config",
   "vendor/reth-consensus-debug-client",
   "crates/execution/state/database",
-  "vendor/reth-db-common",
+  "crates/execution/state/maintenance",
   "vendor/reth-downloaders",
   "vendor/reth-e2e-test-utils",
   "vendor/reth-engine-local",
@@ -447,7 +447,7 @@ base-execution-state-provider = { path = "crates/execution/state/provider", defa
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 reth-rpc-layer = { path = "vendor/reth-rpc-layer", default-features = false }
-reth-db-common = { path = "vendor/reth-db-common", default-features = false }
+base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
 reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 reth-stages-api = { path = "vendor/reth-stages-api", default-features = false }
 reth-network-p2p = { path = "vendor/reth-network-p2p", default-features = false }
