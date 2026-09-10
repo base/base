@@ -41,3 +41,6 @@ pub use service::{ProverError, ProverService};
 mod precompiles;
 #[cfg(feature = "precompiles")]
 pub use precompiles::execute;
+
+mod worker;
+pub use worker::*;

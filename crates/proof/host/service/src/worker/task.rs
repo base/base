@@ -12,7 +12,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS, ProofSubmitter, ProofSubmitterError};
+use crate::worker::{
+    DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS, ProofSubmitter, ProofSubmitterError,
+};
 
 /// Default maximum number of in-flight proof submission tasks.
 pub const DEFAULT_MAX_PENDING_SUBMISSIONS: usize = DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS;

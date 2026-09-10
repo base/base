@@ -3,12 +3,11 @@
 use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
-use base_proof_types_protocol::ProofRequest as NitroProofRequest;
-use base_proof_worker::{
+use base_proof_host_service::{
     ClaimedProofJobHandler, ClaimedProofJobMetadata, ClaimedProofJobMetadataError, ProofSubmitter,
     ProofTaskController, WorkerHeartbeat,
 };
-pub use base_proof_worker::{
+pub use base_proof_host_service::{
     DEFAULT_WORKER_HEARTBEAT_INTERVAL as DEFAULT_PROOF_GENERATOR_HEARTBEAT_INTERVAL,
     DEFAULT_WORKER_HEARTBEAT_LOCK_DURATION_SECONDS as DEFAULT_PROOF_GENERATOR_HEARTBEAT_LOCK_DURATION_SECONDS,
     DEFAULT_WORKER_MAX_CONSECUTIVE_HEARTBEAT_FAILURES as DEFAULT_PROOF_GENERATOR_MAX_CONSECUTIVE_HEARTBEAT_FAILURES,
@@ -17,6 +16,7 @@ pub use base_proof_worker::{
 };
 use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
+use base_proof_types_protocol::ProofRequest as NitroProofRequest;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::task::JoinHandle;
@@ -355,9 +355,8 @@ mod tests {
     use alloy_genesis::ChainConfig;
     use async_trait::async_trait;
     use base_common_chain_config::RollupConfig;
+    use base_proof_host_service::ProofSubmitter;
     use base_proof_host_service::ProverConfig;
-    use base_proof_tee_nitro_enclave::Server as EnclaveServer;
-    use base_proof_worker::ProofSubmitter;
     use base_proof_service_client::ProverServiceClientError;
     use base_proof_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
@@ -365,6 +364,7 @@ mod tests {
         RecordProofSessionRequest, RecordProofSessionResponse, TeeKind, TeeProofRequest,
         WorkerSubmitProofRequest, WorkerSubmitProofResponse,
     };
+    use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use chrono::Utc;
     use tokio::time::sleep;
 

@@ -10,11 +10,13 @@ use std::sync::{
 };
 
 use backon::Retryable;
+use base_common_runtime_tasks::{
+    DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig,
+};
 use base_proof_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_proof_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
-use base_common_runtime_tasks::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
 use thiserror::Error;
 use tokio::{task::JoinHandle, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -329,7 +331,7 @@ mod tests {
     use tokio::{sync::Notify, time::timeout};
 
     use super::*;
-    use crate::ProofTaskController;
+    use crate::worker::ProofTaskController;
 
     #[derive(Clone, Debug)]
     struct MockWorkerClient {

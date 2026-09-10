@@ -1,6 +1,6 @@
 # `base-proof-host-service`
 
-Generic host-side infrastructure for the Base fault proof host.
+Host-side proof orchestration for Base, including preimage serving, job discovery, worker leases, heartbeat handling, and result submission.
 
 ## Overview
 

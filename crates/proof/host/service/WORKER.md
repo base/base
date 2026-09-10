@@ -1,4 +1,4 @@
-# base-proof-worker
+# base-proof-host-service
 
 Shared proof worker loop for prover-service hosts.
 

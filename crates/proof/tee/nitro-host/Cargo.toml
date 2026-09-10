@@ -18,9 +18,8 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 base-common-observability-health = { workspace = true }
 alloy-signer = { workspace = true }
-base-proof-host-service = { workspace = true }
+base-proof-host-service = {workspace = true}
 alloy-primitives = { workspace = true }
-base-proof-worker = { workspace = true }
 base-proof-witness-preimage = { workspace = true }
 base-proof-l1-submission = { workspace = true }
 base-proof-service-client = { workspace = true }

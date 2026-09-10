@@ -13,6 +13,12 @@ use base_common_chain_config::rollup_config;
 use base_common_cli_support::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_host_service::ProverConfig;
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_host_service::{
+    DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
+};
+#[cfg(any(target_os = "linux", feature = "local"))]
+use base_proof_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 #[cfg(feature = "local")]
 use base_proof_tee_nitro_enclave::Server as EnclaveServer;
 #[cfg(target_os = "linux")]
@@ -24,12 +30,6 @@ use base_proof_tee_nitro_host::{
     NitroProverServer, NitroTransport, ProofGeneratorHeartbeatConfig, RegistrationChecker,
     RegistrationHealthConfig,
 };
-#[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_worker::{
-    DEFAULT_JOB_DISCOVERY_LOCK_DURATION_SECONDS, DEFAULT_JOB_DISCOVERY_MAX_CONCURRENT_JOBS,
-};
-#[cfg(any(target_os = "linux", feature = "local"))]
-use base_proof_service_client::{ProverServiceClientConfig, ProverWorkerClient};
 use clap::{Parser, Subcommand};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use eyre::eyre;

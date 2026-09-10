@@ -22,7 +22,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::ClaimedProofJobHandler;
+use crate::worker::ClaimedProofJobHandler;
 
 /// Minimum delay used by the discovery loop when no job is available or an error occurs.
 pub const MIN_JOB_DISCOVERY_POLL_INTERVAL: Duration = Duration::from_millis(1);

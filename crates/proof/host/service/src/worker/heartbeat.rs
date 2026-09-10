@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use tokio::time::{Instant, sleep, timeout};
 use tracing::warn;
 
-use crate::{ClaimedProofJobMetadata, ProofSubmitter};
+use crate::worker::{ClaimedProofJobMetadata, ProofSubmitter};
 
 /// Minimum proof-generation heartbeat interval.
 pub const MIN_WORKER_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(1);
@@ -223,7 +223,7 @@ mod tests {
     use tokio::time::advance;
 
     use super::*;
-    use crate::ProofSubmitter;
+    use crate::worker::ProofSubmitter;
 
     #[derive(Clone, Debug)]
     struct HangingClient {

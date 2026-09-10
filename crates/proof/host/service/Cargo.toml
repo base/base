@@ -12,38 +12,45 @@ workspace = true
 
 [dependencies]
 serde = { workspace = true }
+tracing = {workspace = true}
 ark-ff = { workspace = true }
-tracing = { workspace = true }
+thiserror = {workspace = true}
 alloy-rlp = { workspace = true }
-thiserror = { workspace = true }
+async-trait = {workspace = true}
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
-async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
-base-proof-witness-mpt = { workspace = true }
 alloy-transport = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
+base-proof-witness-mpt = { workspace = true }
 metrics = { workspace = true, optional = true }
 base-common-client-rollup = { workspace = true }
+base-common-runtime-tasks = { workspace = true }
+base-proof-service-client = { workspace = true }
 base-consensus-batch-types = { workspace = true }
-tokio = { workspace = true, features = ["default"] }
+backon = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
 base-consensus-source-providers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-metrics = { workspace = true }
+tokio-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = []}
-base-proof-witness-preimage = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
+base-proof-execution-client = {workspace = true, features = ["std"]}
+base-proof-witness-preimage = { workspace = true, features = ["std"] }
 base-common-client-ethereum = {workspace = true, features = ["default"]}
-base-proof-types-protocol = { workspace = true, features = ["serde", "std"] }
+base-proof-service-protocol = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
+base-proof-types-protocol = { workspace = true, features = ["serde", "std"] }
+tokio = {features = ["default", "macros", "rt", "sync", "time"], workspace = true}
 rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }
 base-execution-evm-runtime = {features = ["blst", "c-kzg", "portable", "secp256k1", "std"],  workspace = true}
-base-proof-execution-client = {workspace = true, features = ["std"]}
 
 [dev-dependencies]
 proptest = { workspace = true, features = ["default"] }
+tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
 disk = ["dep:rocksdb"]

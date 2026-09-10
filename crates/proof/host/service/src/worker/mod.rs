@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+//! Proof job discovery, worker leases, and result submission.
 
 mod claimed_job;
 pub use claimed_job::{

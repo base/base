@@ -4760,10 +4760,12 @@ dependencies = [
  "alloy-transport",
  "ark-ff 0.6.0",
  "async-trait",
+ "backon",
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-client-rollup",
  "base-common-observability-metrics",
+ "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-common-types-rpc",
@@ -4771,9 +4773,12 @@ dependencies = [
  "base-consensus-source-providers",
  "base-execution-evm-runtime",
  "base-proof-execution-client",
+ "base-proof-service-client",
+ "base-proof-service-protocol",
  "base-proof-types-protocol",
  "base-proof-witness-mpt",
  "base-proof-witness-preimage",
+ "chrono",
  "futures",
  "metrics",
  "proptest",
@@ -4782,6 +4787,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -4885,7 +4891,6 @@ dependencies = [
  "base-proof-tee-nitro-enclave",
  "base-proof-types-protocol",
  "base-proof-witness-preimage",
- "base-proof-worker",
  "chrono",
  "eyre",
  "jsonrpsee",
@@ -5029,22 +5034,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-worker"
-version = "0.0.0"
-dependencies = [
- "async-trait",
- "backon",
- "base-common-runtime-tasks",
- "base-proof-service-client",
- "base-proof-service-protocol",
- "chrono",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "base-proposer"
 version = "0.0.0"
 dependencies = [
@@ -5114,7 +5103,6 @@ dependencies = [
  "base-proof-service-client",
  "base-proof-tee-nitro-enclave",
  "base-proof-tee-nitro-host",
- "base-proof-worker",
  "clap",
  "eyre",
  "serde",
