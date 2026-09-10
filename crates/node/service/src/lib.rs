@@ -92,3 +92,6 @@ pub use node_events::*;
 
 mod node_metrics;
 pub use node_metrics::*;
+
+mod ethstats;
+pub use ethstats::*;

@@ -44,7 +44,7 @@ Removed the unused Ethereum local payload-attribute builder and the Ethereum-onl
 | --- | --- |
 | `reth-consensus-debug-client` | Used by `reth-node-builder/src/launch/debug.rs` for fetching payloads from RPC/Etherscan and driving Engine API calls. Base's proof-history launch uses debug capabilities. Remove only with the corresponding debug launch modes. |
 | `base-execution-engine-driver` | Generic local mining, mining mode, and finality defaults are wired into node configuration and debug launch. Base has its own local attributes builder. Remove the Ethereum attributes implementation first; removing the entire crate also removes or relocates Base local-mining support. |
-| `reth-node-ethstats` | Launched through `spawn_ethstats` in the engine launcher and exposed by `--ethstats`. Optional telemetry, not multi-network machinery. Delete if this integration is unwanted. |
+| `base-node-service` | Launched through `spawn_ethstats` in the engine launcher and exposed by `--ethstats`. Optional telemetry, not multi-network machinery. Delete if this integration is unwanted. |
 | `base-execution-engine-observers` | Node builder installs invalid-block witness hooks. This is useful for Base execution diagnostics; deletion removes that behavior. |
 | `base-execution-engine-driver` | Engine launcher uses `EngineMessageStreamExt`; the crate implements engine-message recording/skipping/reorg debugging. Remove with those debugging features, or absorb the needed parts. |
 
@@ -145,7 +145,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-node-builder](../../vendor/reth-node-builder/Cargo.toml) | Retain shared infrastructure |
 | [base-node-config](../../crates/node/config/Cargo.toml) | Retain shared infrastructure |
 | `reth-node-ethereum` | Deleted after fixture migration |
-| [reth-node-ethstats](../../vendor/reth-node-ethstats/Cargo.toml) | Optional capability; separate removal decision |
+| [base-node-service](../../crates/node/service/Cargo.toml) | Optional capability; separate removal decision |
 | [base-node-service](../../crates/node/service/Cargo.toml) | Retain shared infrastructure |
 | [base-node-service](../../crates/node/service/Cargo.toml) | Retain shared infrastructure |
 | [reth-node-types](../../vendor/reth-node-types/Cargo.toml) | Consolidate; retain required code |

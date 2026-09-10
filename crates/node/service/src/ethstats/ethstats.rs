@@ -25,7 +25,7 @@ use {
     base_execution_state_types::CanonStateNotification,
 };
 
-use crate::{
+use crate::ethstats::{
     connection::ConnWrapper,
     credentials::EthstatsCredentials,
     error::EthStatsError,
@@ -628,7 +628,7 @@ where
                                 }
                             }
                             Err(e) => match e {
-                                crate::error::ConnectionError::Serialization(err) => {
+                                crate::ethstats::error::ConnectionError::Serialization(err) => {
                                     debug!(target: "ethstats", "JSON parse error from stats server: {}", err);
                                 }
                                 other => {

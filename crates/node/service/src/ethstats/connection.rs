@@ -12,7 +12,7 @@ use tokio_tungstenite_0_29_0::{
 };
 
 /// Abstractions for managing `WebSocket` connections in the ethstats service.
-use crate::error::ConnectionError;
+use crate::ethstats::error::ConnectionError;
 
 /// Type alias for a `WebSocket` stream that may be TLS or plain TCP
 pub(crate) type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;

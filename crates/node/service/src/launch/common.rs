@@ -33,6 +33,7 @@ use base_execution_state_provider::DatabaseProviderROFactory;
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
 use crate::BaseNodeContext;
+use crate::EthStatsService;
 use crate::{
     ChainSpecInfo, Hooks, MetricServer, MetricServerConfig, StorageSettingsInfo, VersionInfo,
     install_prometheus_recorder,
@@ -76,7 +77,6 @@ use base_node_config::{ChainPath, DataDirPath, NodeConfig, PruneConfigKind, vers
 use eyre::Context;
 use futures::{Stream, StreamExt, future::Either, stream};
 use rayon::ThreadPoolBuilder;
-use reth_node_ethstats::EthStatsService;
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,
