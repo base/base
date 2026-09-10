@@ -4,7 +4,7 @@ use std::{
 };
 
 use base_common_observability_tracing::tracing::debug;
-use reth_exex_types::ExExNotification;
+use base_execution_engine_types::ExExNotification;
 use tracing::instrument;
 
 use crate::wal::{WalError, WalResult};
@@ -132,7 +132,7 @@ impl Storage {
         let size = file.metadata().map_err(|err| WalError::FileMetadata(file_id, err))?.len();
 
         // Deserialize using the bincode- and msgpack-compatible serde wrapper
-        let notification: reth_exex_types::serde_bincode_compat::ExExNotification<'_> =
+        let notification: base_execution_engine_types::ExExNotificationBincode<'_> =
             rmp_serde::decode::from_read(&mut file)
                 .map_err(|err| WalError::Decode(file_id, file_path, err))?;
 
@@ -154,8 +154,7 @@ impl Storage {
         debug!(target: "exex::wal::storage", ?file_path, "Writing notification to WAL");
 
         // Serialize using the bincode- and msgpack-compatible serde wrapper
-        let notification =
-            reth_exex_types::serde_bincode_compat::ExExNotification::from(notification);
+        let notification = base_execution_engine_types::ExExNotificationBincode::from(notification);
 
         base_common_io_files::Files::atomic_write_file(&file_path, |file| {
             rmp_serde::encode::write(file, &notification)
@@ -174,13 +173,13 @@ mod tests {
         map::{HashMap, HashSet},
     };
     use base_common_types_chain::BlockHeader;
+    use base_execution_engine_types::ExExNotification;
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_provider::Chain;
     use base_execution_state_types::{
         BranchNodeCompact, ComputedTrieData, HashedPostState, HashedStorage, LazyTrieData, Nibbles,
         updates::{StorageTrieUpdates, TrieUpdates},
     };
-    use reth_exex_types::ExExNotification;
-    use base_execution_state_provider::Chain;
     use reth_testing_utils::generators::{self};
 
     use super::Storage;
@@ -231,7 +230,7 @@ mod tests {
 
         // Serialize the notification
         let notification_compat =
-            reth_exex_types::serde_bincode_compat::ExExNotification::from(&notification);
+            base_execution_engine_types::ExExNotificationBincode::from(&notification);
         let encoded = rmp_serde::encode::to_vec(&notification_compat)?;
 
         // Write to test-data directory

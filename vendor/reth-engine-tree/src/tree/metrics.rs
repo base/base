@@ -6,11 +6,11 @@ use base_common_observability_metrics::{
     thread::{ThreadResourceUsage, ThreadResourceUsageDelta},
 };
 use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
+use base_execution_engine_types::{ForkchoiceStatus, OnForkChoiceUpdated};
 use base_execution_evm_blocks::ExecutorMetrics;
 use base_execution_state_trie::updates::TrieUpdates;
 use base_execution_state_types::BlockExecutionOutput;
 use base_execution_state_types::ProviderError;
-use reth_engine_primitives::{ForkchoiceStatus, OnForkChoiceUpdated};
 use {base_common_observability_metrics::GasDisplay, std::time::Instant};
 
 use crate::tree::{TreeOutcome, error::InsertBlockFatalError};

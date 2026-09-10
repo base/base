@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use base_execution_state_types::CanonStateNotification;
 use base_execution_state_types::Chain;
@@ -71,8 +71,8 @@ impl From<CanonStateNotification> for ExExNotification {
 
 /// Bincode-compatible [`ExExNotification`] serde implementation.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(super) mod serde_bincode_compat {
-    use std::sync::Arc;
+mod serde_bincode_compat {
+    use alloc::sync::Arc;
 
     use base_execution_state_types::serde_bincode_compat::Chain;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -82,14 +82,14 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use reth_exex_types::{serde_bincode_compat, ExExNotification};
+    /// use base_execution_engine_types::{ExExNotificationBincode, ExExNotification};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
     /// #[serde_as]
     /// #[derive(Serialize, Deserialize)]
     /// struct Data {
-    ///     #[serde_as(as = "serde_bincode_compat::ExExNotification<'_>")]
+    ///     #[serde_as(as = "ExExNotificationBincode<'_>")]
     ///     notification: ExExNotification,
     /// }
     /// ```
@@ -179,50 +179,61 @@ pub(super) mod serde_bincode_compat {
     mod tests {
         use std::{collections::BTreeMap, sync::Arc};
 
-        use arbitrary::Arbitrary;
+        use alloy_primitives::{Address, U256};
+        use base_common_types_chain::{BaseBlock, BaseBlockBody, Header, TxDeposit};
         use base_execution_state_types::Chain;
-        use rand::Rng;
         use reth_primitives_traits::RecoveredBlock;
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
-        use super::super::{ExExNotification, serde_bincode_compat};
+        use crate::{ExExNotification, ExExNotificationBincode};
 
         #[test]
         fn test_exex_notification_bincode_roundtrip() {
             #[serde_as]
             #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
             struct Data {
-                #[serde_as(as = "serde_bincode_compat::ExExNotification<'_>")]
+                #[serde_as(as = "ExExNotificationBincode<'_>")]
                 notification: ExExNotification,
             }
 
-            let mut bytes = [0u8; 1024];
-            rand::rng().fill(bytes.as_mut_slice());
-            let data = Data {
-                notification: ExExNotification::ChainReorged {
-                    old: Arc::new(Chain::new(
-                        vec![
-                            RecoveredBlock::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
-                                .unwrap(),
+            let chain = |value| {
+                let block = BaseBlock {
+                    header: Header { number: 1, ..Default::default() },
+                    body: BaseBlockBody {
+                        transactions: vec![
+                            TxDeposit {
+                                from: Address::repeat_byte(1),
+                                value: U256::from(value),
+                                gas_limit: 21_000,
+                                ..Default::default()
+                            }
+                            .into(),
                         ],
-                        Default::default(),
-                        BTreeMap::new(),
-                    )),
-                    new: Arc::new(Chain::new(
-                        vec![
-                            RecoveredBlock::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
-                                .unwrap(),
-                        ],
-                        Default::default(),
-                        BTreeMap::new(),
-                    )),
-                },
+                        ..Default::default()
+                    },
+                };
+                Arc::new(Chain::new(
+                    vec![RecoveredBlock::try_recover(block).unwrap()],
+                    Default::default(),
+                    BTreeMap::new(),
+                ))
             };
-
-            let encoded = bincode_1_3_3::serialize(&data).unwrap();
-            let decoded: Data = bincode_1_3_3::deserialize(&encoded).unwrap();
-            assert_eq!(decoded, data);
+            let old = chain(1u64);
+            let new = chain(2u64);
+            for notification in [
+                ExExNotification::ChainCommitted { new: new.clone() },
+                ExExNotification::ChainReorged { old: old.clone(), new },
+                ExExNotification::ChainReverted { old },
+            ] {
+                let data = Data { notification };
+                let encoded = bincode_1_3_3::serialize(&data).unwrap();
+                let decoded: Data = bincode_1_3_3::deserialize(&encoded).unwrap();
+                assert_eq!(decoded, data);
+            }
         }
     }
 }
+
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub use serde_bincode_compat::ExExNotification as ExExNotificationBincode;

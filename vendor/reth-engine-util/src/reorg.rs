@@ -11,6 +11,9 @@ use alloy_primitives::Bytes;
 use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BaseBlock, BlockHeader, Transaction};
 use base_common_types_payload::{ForkchoiceState, PayloadStatus};
+use base_execution_engine_types::{
+    BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated,
+};
 use base_execution_evm_blocks::{BaseEvmConfig, BlockBuilder, BlockBuilderOutcome};
 use base_execution_evm_runtime::database::State;
 use base_execution_evm_runtime::{BlockExecutionError, BlockValidationError};
@@ -19,7 +22,6 @@ use base_execution_payload_types::BaseBuiltPayload;
 use base_execution_state_api::{BlockReader, ProviderError, StateProviderFactory};
 use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
 use itertools::Either;
-use reth_engine_primitives::{BeaconEngineMessage, BeaconOnNewPayloadError, OnForkChoiceUpdated};
 use reth_primitives_traits::{BlockBody as _, SealedBlock, SignedTransaction, block::Block as _};
 use tokio::sync::oneshot;
 use tracing::*;
@@ -33,7 +35,7 @@ enum EngineReorgState {
 type EngineReorgResponse = Result<
     Either<
         Result<PayloadStatus, BeaconOnNewPayloadError>,
-        Result<OnForkChoiceUpdated, reth_engine_primitives::EngineRequestError>,
+        Result<OnForkChoiceUpdated, base_execution_engine_types::EngineRequestError>,
     >,
     oneshot::error::RecvError,
 >;
@@ -222,14 +224,14 @@ fn create_reorg_head<Provider>(
     payload_validator: &BaseEngineValidator,
     mut depth: usize,
     next_payload: base_common_types_payload::ExecutionData,
-) -> Result<(SealedBlock, Option<Bytes>), reth_engine_primitives::EngineRequestError>
+) -> Result<(SealedBlock, Option<Bytes>), base_execution_engine_types::EngineRequestError>
 where
     Provider: BlockReader<Block = BaseBlock> + StateProviderFactory + ChainSpecProvider,
 {
     // Ensure next payload is valid.
-    let next_block = payload_validator
-        .convert_payload_to_block(next_payload)
-        .map_err(|error| reth_engine_primitives::EngineRequestError::from(error.to_string()))?;
+    let next_block = payload_validator.convert_payload_to_block(next_payload).map_err(|error| {
+        base_execution_engine_types::EngineRequestError::from(error.to_string())
+    })?;
 
     // Fetch reorg target block depending on its depth and its parent.
     let mut previous_hash = next_block.parent_hash();
@@ -265,10 +267,10 @@ where
 
     let ctx = evm_config
         .context_for_block(&reorg_target)
-        .map_err(reth_engine_primitives::EngineRequestError::from)?;
+        .map_err(base_execution_engine_types::EngineRequestError::from)?;
     let evm = evm_config
         .evm_for_block(&mut state, &reorg_target)
-        .map_err(reth_engine_primitives::EngineRequestError::from)?;
+        .map_err(base_execution_engine_types::EngineRequestError::from)?;
     let mut builder = evm_config.create_block_builder(evm, &reorg_target_parent, ctx);
 
     builder.apply_pre_execution_changes()?;

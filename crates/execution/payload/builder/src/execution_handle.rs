@@ -1,8 +1,8 @@
 use base_common_types_payload::{ForkchoiceState, ForkchoiceUpdated, PayloadId};
+use base_execution_engine_types::{BeaconForkChoiceUpdateError, ConsensusEngineHandle};
 use base_execution_payload_types::{
     InvalidPayloadAttributesError, PayloadBuilderError, PayloadKind,
 };
-use reth_engine_primitives::{BeaconForkChoiceUpdateError, ConsensusEngineHandle};
 
 use crate::{
     BaseBuiltPayload, BaseEngineValidator, BasePayloadBuilderAttributes, PayloadBuilderHandle,
@@ -78,7 +78,7 @@ mod tests {
     use alloy_primitives::B256;
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
-    use reth_engine_primitives::{BeaconEngineMessage, OnForkChoiceUpdated};
+    use base_execution_engine_types::{BeaconEngineMessage, OnForkChoiceUpdated};
     use tokio::sync::mpsc;
 
     use super::*;

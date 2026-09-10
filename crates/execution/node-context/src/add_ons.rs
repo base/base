@@ -1,8 +1,8 @@
 //! Traits for configuring a node.
 
-use reth_engine_primitives::{ConsensusEngineEvent, ConsensusEngineHandle};
-use reth_node_core::node_config::NodeConfig;
 use base_common_runtime_tasks::EventSender;
+use base_execution_engine_types::{ConsensusEngineEvent, ConsensusEngineHandle};
+use reth_node_core::node_config::NodeConfig;
 
 /// Components and configuration available while launching Base RPC services.
 #[derive(Debug, Clone)]

@@ -16,8 +16,8 @@ use std::sync::Arc;
 
 use base_common_client_ethereum::{Provider, ProviderBuilder};
 use base_common_types_payload::{ForkchoiceState, PayloadAttributes};
+use base_execution_engine_types::ConsensusEngineHandle;
 use base_execution_payload_builder::BaseExecutionHandle;
-use reth_engine_primitives::ConsensusEngineHandle;
 use url::Url;
 
 use crate::testsuite::setup::Setup;

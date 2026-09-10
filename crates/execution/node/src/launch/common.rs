@@ -1029,7 +1029,10 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     /// Spawns the [`EthStatsService`] service if configured.
     pub async fn spawn_ethstats<St>(&self, mut engine_events: St) -> eyre::Result<()>
     where
-        St: Stream<Item = reth_engine_primitives::ConsensusEngineEvent> + Send + Unpin + 'static,
+        St: Stream<Item = base_execution_engine_types::ConsensusEngineEvent>
+            + Send
+            + Unpin
+            + 'static,
     {
         let Some(url) = self.node_config().debug.ethstats.as_ref() else { return Ok(()) };
 
@@ -1046,7 +1049,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
         let task_executor = self.task_executor().clone();
         task_executor.spawn_task(async move {
             while let Some(event) = engine_events.next().await {
-                use reth_engine_primitives::ConsensusEngineEvent;
+                use base_execution_engine_types::ConsensusEngineEvent;
                 match event {
                     ConsensusEngineEvent::ForkBlockAdded(executed, duration)
                     | ConsensusEngineEvent::CanonicalBlockAdded(executed, duration) => {

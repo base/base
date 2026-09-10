@@ -12,6 +12,7 @@ use std::{
 
 use alloy_primitives::{B256, TxHash};
 use base_common_types_payload::ForkchoiceState;
+use base_execution_engine_types::ConsensusEngineHandle;
 use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_payload_types::{
     BasePayloadBuilderAttributes, PayloadAttributesBuilder, PayloadKind,
@@ -20,7 +21,6 @@ use base_execution_state_api::BlockReader;
 use base_execution_txpool::TransactionPool;
 use eyre::OptionExt;
 use futures_util::{Stream, StreamExt, stream::Fuse};
-use reth_engine_primitives::ConsensusEngineHandle;
 use tokio::time::Interval;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;

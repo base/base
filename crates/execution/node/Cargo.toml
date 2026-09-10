@@ -33,11 +33,11 @@ reth-node-ethstats = { workspace = true }
 base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
-reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 base-common-client-ethereum = {workspace = true}
 base-execution-rpc-server = { workspace = true }
 base-execution-payload-types = {workspace = true}
+base-execution-engine-types = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
@@ -93,8 +93,8 @@ base-execution-state-maintenance = { workspace = true }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }
-reth-engine-primitives = {workspace = true, features = ["test-utils"]}
 criterion = { workspace = true, features = ["default", "html_reports"] }
+base-execution-engine-types = {workspace = true, features = ["test-utils"]}
 base-node-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-batch-types = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
@@ -150,4 +150,4 @@ test-utils = [
     "base-execution-sync-pipeline/test-utils",
 ]
 reth-codec = []
-trie-debug = ["reth-engine-tree/trie-debug", "reth-engine-primitives/trie-debug", "reth-node-core/trie-debug"]
+trie-debug = ["reth-engine-tree/trie-debug", "base-execution-engine-types/trie-debug", "reth-node-core/trie-debug"]

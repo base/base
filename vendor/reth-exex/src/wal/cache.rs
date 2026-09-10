@@ -6,7 +6,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{B256, BlockNumber, map::FbHashMap};
 use base_common_types_chain::BlockHeader;
-use reth_exex_types::ExExNotification;
+use base_execution_engine_types::ExExNotification;
 
 /// The block cache of the WAL.
 ///

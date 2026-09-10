@@ -7,6 +7,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_payload::PayloadAttributes;
+use base_execution_engine_types::TreeConfig;
 use eyre::Result;
 use fixtures::BaseTestPayload;
 use reth_e2e_test_utils::{
@@ -20,7 +21,6 @@ use reth_e2e_test_utils::{
         setup::{NetworkSetup, Setup},
     },
 };
-use reth_engine_primitives::TreeConfig;
 
 #[tokio::test]
 async fn test_testsuite_produce_blocks() -> Result<()> {

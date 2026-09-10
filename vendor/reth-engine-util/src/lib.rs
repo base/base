@@ -11,10 +11,10 @@
 use std::path::PathBuf;
 
 use base_common_chain_config::ChainSpecProvider;
+use base_execution_engine_types::BeaconEngineMessage;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::BaseEngineValidator;
 use futures::Stream;
-use reth_engine_primitives::BeaconEngineMessage;
 use tokio_util::either::Either;
 
 pub mod engine_store;

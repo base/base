@@ -1,5 +1,4 @@
-//! Traits, validation methods, and helper types used to abstract over engine types.
-
+#![doc = include_str!("../README.md")]
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/paradigmxyz/reth/main/assets/reth-docs.png",
     html_favicon_url = "https://avatars0.githubusercontent.com/u/97369466?s=256",
@@ -31,5 +30,13 @@ pub use event::*;
 mod invalid_block_hook;
 pub use invalid_block_hook::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
 
-pub mod config;
+mod config;
 pub use config::*;
+
+mod head;
+pub use head::ExExHead;
+
+mod notification;
+pub use notification::ExExNotification;
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub use notification::ExExNotificationBincode;

@@ -28,11 +28,11 @@ alloy-hardforks = { workspace = true }
 reth-engine-local = { workspace = true }
 base-common-types-rpc = {workspace = true}
 base-execution-txpool = { workspace = true }
-reth-engine-primitives = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-types = {workspace = true}
 base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
+base-execution-engine-types = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
@@ -77,4 +77,4 @@ min-trace-logs = ["tracing/release_max_level_trace"]
 partial-persistence = ["base-execution-state-types/partial-persistence"]
 
 # Debug recording for sparse trie mutations
-trie-debug = ["reth-engine-primitives/trie-debug"]
+trie-debug = ["base-execution-engine-types/trie-debug"]

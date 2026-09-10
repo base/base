@@ -20,6 +20,7 @@ use base_common_types_rpc::{
     GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace,
     GethTraceResult as TraceResult, Index, StateContext, state::EvmOverrides,
 };
+use base_execution_engine_types::ConsensusEngineEvent;
 use base_execution_evm_blocks::{BlockExecutor, EvmEnvFor, ExecutionWitnessRecord, Executor};
 use base_execution_evm_inspectors::tracing::{DebugInspector, TransactionContext};
 use base_execution_evm_runtime::{BlockEnvironment, Evm};
@@ -41,7 +42,6 @@ use base_execution_txpool::TransactionPool;
 use futures::Stream;
 use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
-use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};

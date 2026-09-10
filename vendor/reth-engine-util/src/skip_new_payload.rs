@@ -6,8 +6,8 @@ use std::{
 };
 
 use base_common_types_payload::{PayloadStatus, PayloadStatusEnum};
+use base_execution_engine_types::BeaconEngineMessage;
 use futures::{Stream, StreamExt};
-use reth_engine_primitives::BeaconEngineMessage;
 
 /// Engine API stream wrapper that skips the specified number of new payload messages.
 #[derive(Debug)]

@@ -26,7 +26,7 @@ pub enum EngineClientError {
     Execution(#[from] base_execution_payload_builder::ExecutionCommandError),
     /// Submitting a block to the execution driver failed.
     #[error(transparent)]
-    Submit(#[from] reth_engine_primitives::BeaconOnNewPayloadError),
+    Submit(#[from] base_execution_engine_types::BeaconOnNewPayloadError),
     /// Native build attributes could not be decoded.
     #[error("invalid build attributes: {0}")]
     InvalidAttributes(String),
@@ -43,7 +43,7 @@ impl EngineClientError {
     pub fn is_invalid_forkchoice(&self) -> bool {
         match self {
             Self::Execution(base_execution_payload_builder::ExecutionCommandError::Forkchoice(
-                reth_engine_primitives::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
+                base_execution_engine_types::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
                     base_common_types_payload::ForkchoiceUpdateError::InvalidState,
                 ),
             )) => true,

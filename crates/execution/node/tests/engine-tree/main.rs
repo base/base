@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
 use base_common_types_payload::PayloadStatusEnum;
+use base_execution_engine_types::TreeConfig;
 use eyre::Result;
 use reth_e2e_test_utils::testsuite::{
     TestBuilder,
@@ -22,7 +23,6 @@ use reth_e2e_test_utils::testsuite::{
     },
     setup::{NetworkSetup, Setup},
 };
-use reth_engine_primitives::TreeConfig;
 
 /// Creates the standard setup for engine tree e2e tests.
 fn default_engine_tree_setup() -> Setup {

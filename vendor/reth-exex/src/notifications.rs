@@ -9,13 +9,13 @@ use std::{
 use alloy_eips::BlockNumHash;
 use base_common_observability_tracing::tracing::debug;
 use base_common_types_chain::{BaseBlock, BlockHeader};
+use base_execution_engine_types::ExExHead;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory,
 };
 use base_execution_state_types::ExecutionStageThresholds;
 use futures::{Stream, StreamExt};
-use reth_exex_types::ExExHead;
 use tokio::sync::mpsc::Receiver;
 
 use crate::{BackfillJobFactory, ExExNotification, StreamBackfillJob, WalHandle};

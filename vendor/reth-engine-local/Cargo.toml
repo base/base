@@ -22,8 +22,8 @@ eyre = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
-reth-engine-primitives = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
+base-execution-engine-types = { workspace = true, features = ["std"] }
 base-execution-payload-types = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
 

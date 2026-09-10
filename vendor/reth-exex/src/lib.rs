@@ -108,5 +108,5 @@ pub use notifications::*;
 mod wal;
 // Re-export exex types
 #[doc(inline)]
-pub use reth_exex_types::*;
+pub use base_execution_engine_types::{ExExHead, ExExNotification, ExExNotificationBincode};
 pub use wal::*;

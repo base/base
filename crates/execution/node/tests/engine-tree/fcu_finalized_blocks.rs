@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use base_common_chain_config::{BaseChainSpec, BaseChainSpecBuilder};
+use base_execution_engine_types::TreeConfig;
 use eyre::Result;
 use reth_e2e_test_utils::{
     BaseNodeTestUtils,
@@ -15,7 +16,6 @@ use reth_e2e_test_utils::{
         setup::{NetworkSetup, Setup},
     },
 };
-use reth_engine_primitives::TreeConfig;
 
 use crate::fixtures::BaseTestPayload;
 

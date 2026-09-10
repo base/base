@@ -18,10 +18,10 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
+use base_common_observability_tracing::tracing::{debug, instrument};
+use base_execution_engine_types::ExExNotification;
 pub use error::{WalError, WalResult};
 use parking_lot::{RwLock, RwLockReadGuard};
-use reth_exex_types::ExExNotification;
-use base_common_observability_tracing::tracing::{debug, instrument};
 
 /// WAL is a write-ahead log (WAL) that stores the notifications sent to ExExes.
 ///
@@ -226,9 +226,9 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use alloy_primitives::B256;
-    use itertools::Itertools;
-    use reth_exex_types::ExExNotification;
+    use base_execution_engine_types::ExExNotification;
     use base_execution_state_provider::Chain;
+    use itertools::Itertools;
     use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
 
     use crate::wal::{Wal, cache::CachedBlock, error::WalResult};

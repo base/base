@@ -26,13 +26,13 @@ reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-node-context = { workspace = true }
 base-common-types-rpc = { workspace = true }
-reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-execution-rpc-server = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-types = { workspace = true }
+base-execution-engine-types = { workspace = true }
 base-execution-network-service = {workspace = true}
 base-execution-network-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }

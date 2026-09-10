@@ -15,6 +15,10 @@ use base_common_types_chain::{BaseBlock, BlockHeader};
 use base_common_types_payload::{
     ForkchoiceState, PayloadStatus, PayloadStatusEnum, PayloadValidationError,
 };
+use base_execution_engine_types::{
+    BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
+    ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
+};
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError};
 use base_execution_evm_runtime::interpreter::debug_unreachable;
@@ -33,10 +37,6 @@ use base_execution_state_types::ProviderResult;
 use base_execution_sync_pipeline::ControlFlow;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
-use reth_engine_primitives::{
-    BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
-    ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
-};
 use state::TreeState;
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -79,6 +79,7 @@ mod trie_updates;
 mod txpool_prewarm;
 pub mod types;
 
+pub use base_execution_engine_types::TreeConfig;
 pub use base_execution_state_tasks::{
     CachedStateCacheMetrics, CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
     ExecutionCache, PayloadExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot,
@@ -89,7 +90,6 @@ pub use metrics::EngineApiMetrics;
 pub use payload_processor::*;
 pub use payload_validator::BasicEngineValidator;
 pub use persistence_state::PersistenceState;
-pub use reth_engine_primitives::TreeConfig;
 pub use txpool_prewarm::{
     Source as TxPoolPrewarmSource, Transaction as TxPoolPrewarmTransaction,
     Transactions as TxPoolPrewarmTransactions,

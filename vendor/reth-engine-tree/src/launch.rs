@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use base_common_runtime_tasks::Runtime;
+use base_execution_engine_types::BeaconEngineMessage;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_wire::BlockClient;
@@ -16,7 +17,6 @@ use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{ProviderFactory, providers::BlockchainProvider};
 use base_execution_sync_pipeline::{MetricEventsSender, Pipeline};
 use futures::Stream;
-use reth_engine_primitives::BeaconEngineMessage;
 
 use crate::{
     backfill::PipelineSync,

@@ -18,20 +18,20 @@ workspace = true
 serde = { workspace = true }
 jsonrpsee = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
-reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-state-trie = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
+base-execution-engine-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm-blocks = { workspace = true, features = ["serde"]}
+base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 
 [dev-dependencies]

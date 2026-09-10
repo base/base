@@ -38,12 +38,12 @@ parking_lot = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "sync"] }
 base-common-chain-config = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, features = ["default"] }
-reth-engine-primitives = { workspace = true, features = ["std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 base-execution-state-types = {features = ["rayon"], workspace = true}
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
+base-execution-engine-types = { workspace = true, features = ["std"] }
 base-execution-state-trie = {features = ["metrics"], workspace = true}
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-provider = {workspace = true, features = ["rayon"]}
@@ -70,8 +70,8 @@ rand_08 = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
+base-execution-engine-types = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = {workspace = true, features = ["test-utils"]}
 base-execution-sync-pipeline = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
@@ -98,6 +98,6 @@ test-utils = [
 trie-debug = [
     "base-execution-state-trie/trie-debug",
     "base-execution-state-tasks/trie-debug",
-    "reth-engine-primitives/trie-debug",
+    "base-execution-engine-types/trie-debug",
     "dep:serde_json",
 ]

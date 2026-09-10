@@ -1,9 +1,9 @@
 use std::future::Future;
 
 use alloy_primitives::B256;
-use base_execution_payload_types::ExecutionPayload;
-use reth_engine_primitives::ConsensusEngineHandle;
 use base_common_observability_tracing::tracing::warn;
+use base_execution_engine_types::ConsensusEngineHandle;
+use base_execution_payload_types::ExecutionPayload;
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use tokio::sync::mpsc;
 

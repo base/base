@@ -18,6 +18,7 @@ use base_common_client_ethereum::{Provider, ProviderBuilder, fillers::Recommende
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
 use base_common_types_rpc as constants;
+use base_execution_engine_types::ConsensusEngineEvent;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc_handlers::{
@@ -41,7 +42,6 @@ use jsonrpsee::{
         AlreadyStoppedError, ServerConfigBuilder, ServerHandle, middleware::rpc::RpcServiceBuilder,
     },
 };
-use reth_engine_primitives::ConsensusEngineEvent;
 use serde::{Deserialize, Serialize};
 use tower::layer::util::Identity;
 use tower_http::cors::CorsLayer;

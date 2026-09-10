@@ -10,9 +10,9 @@ use std::{
 
 use base_common_io_files as fs;
 use base_common_types_payload::ForkchoiceState;
+use base_execution_engine_types::BeaconEngineMessage;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 use futures::{Stream, StreamExt};
-use reth_engine_primitives::BeaconEngineMessage;
 use serde::{Deserialize, Serialize};
 use tracing::*;
 

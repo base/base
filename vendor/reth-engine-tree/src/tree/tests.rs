@@ -23,6 +23,7 @@ use base_common_types_payload::{
     ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
     PayloadAttributes as EthPayloadAttributes,
 };
+use base_execution_engine_types::{ForkchoiceStatus, NoopInvalidBlockHook};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadServiceCommand;
@@ -33,7 +34,6 @@ use base_execution_state_provider::{
 };
 use base_execution_state_provider::{BlockState, test_utils::TestBlockBuilder};
 use base_execution_state_types::ComputedTrieData;
-use reth_engine_primitives::{ForkchoiceStatus, NoopInvalidBlockHook};
 use reth_primitives_traits::Block as _;
 use tokio::sync::oneshot;
 

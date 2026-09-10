@@ -123,13 +123,12 @@ members = [
   "crates/execution/state/maintenance",
   "vendor/reth-e2e-test-utils",
   "vendor/reth-engine-local",
-  "vendor/reth-engine-primitives",
+  "crates/execution/engine/types",
   "vendor/reth-engine-tree",
   "vendor/reth-engine-util",
   "crates/execution/network/wire",
   "vendor/reth-exex",
   "vendor/reth-exex-test-utils",
-  "vendor/reth-exex-types",
   "crates/common/io/files",
   "vendor/reth-invalid-block-hooks",
   "crates/execution/state/mdbx-sys",
@@ -428,7 +427,6 @@ base-execution-state-provider = { path = "crates/execution/state/provider", defa
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }
 base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
-reth-exex-types = { path = "vendor/reth-exex-types", default-features = false }
 base-execution-state-types = { path = "crates/execution/state/types", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
 base-execution-rpc-server = { path = "crates/execution/rpc/server", default-features = false }
@@ -448,7 +446,7 @@ base-execution-network-wire = { path = "crates/execution/network/wire", default-
 reth-exex-test-utils = { path = "vendor/reth-exex-test-utils", default-features = false }
 base-common-codec-storage = { path = "crates/common/codec/storage", default-features = false }
 reth-primitives-traits = { path = "vendor/reth-primitives-traits", default-features = false }
-reth-engine-primitives = { path = "vendor/reth-engine-primitives", default-features = false }
+base-execution-engine-types = { path = "crates/execution/engine/types", default-features = false }
 reth-invalid-block-hooks = { path = "vendor/reth-invalid-block-hooks", default-features = false }
 reth-consensus-debug-client = { path = "vendor/reth-consensus-debug-client", default-features = false }
 

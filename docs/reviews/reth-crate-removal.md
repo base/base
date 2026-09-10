@@ -34,7 +34,7 @@ Shared execution, storage, networking, pool, RPC, and ExEx tests use the same co
 
 ### `reth-ethereum-engine-primitives` (completed)
 
-Deleted the crate and its production payload-builder re-exports. Shared provider, engine, and payload scheduling tests use feature-gated `TestEngineTypes` and `TestBuiltPayload` fixtures in `reth-engine-primitives`.
+Deleted the crate and its production payload-builder re-exports. Shared provider, engine, and payload scheduling tests use feature-gated `TestEngineTypes` and `TestBuiltPayload` fixtures in `base-execution-engine-types`.
 
 Removed the unused Ethereum local payload-attribute builder and the Ethereum-only testing RPC implementation, API definitions, namespace variant, flags, and E2E helper. Base keeps its local payload-attribute builder and engine payload types.
 
@@ -104,7 +104,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-e2e-test-utils](../../vendor/reth-e2e-test-utils/Cargo.toml) | Test support; retain or migrate |
 | [base-execution-network-wire](../../crates/execution/network/wire/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-local](../../vendor/reth-engine-local/Cargo.toml) | Optional capability; separate removal decision |
-| [reth-engine-primitives](../../vendor/reth-engine-primitives/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-tree](../../vendor/reth-engine-tree/Cargo.toml) | Retain shared infrastructure |
 | [reth-engine-util](../../vendor/reth-engine-util/Cargo.toml) | Optional capability; separate removal decision |
 | reth-era | Deleted |
@@ -126,7 +126,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [reth-exex](../../vendor/reth-exex/Cargo.toml) | Retain shared infrastructure |
 | [reth-exex-test-utils](../../vendor/reth-exex-test-utils/Cargo.toml) | Test support; retain or migrate |
-| [reth-exex-types](../../vendor/reth-exex-types/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-engine-types](../../crates/execution/engine/types/Cargo.toml) | Retain shared infrastructure |
 | [base-common-io-files](../../crates/common/io/files/Cargo.toml) | Retain shared infrastructure |
 | [reth-invalid-block-hooks](../../vendor/reth-invalid-block-hooks/Cargo.toml) | Optional capability; separate removal decision |
 | [reth-ipc](../../vendor/reth-ipc/Cargo.toml) | Retain shared infrastructure |
