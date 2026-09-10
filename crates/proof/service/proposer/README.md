@@ -1,4 +1,4 @@
-# `base-proposer`
+# `base-proof-service-proposer`
 
 TEE-based output proposer for Base.
 

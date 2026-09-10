@@ -1,7 +1,7 @@
 //! Proposer metrics.
 
 base_common_observability_metrics::define_metrics! {
-    base_proposer
+    base_proof_service_proposer
     #[describe("Proposer is running")]
     up: gauge,
 

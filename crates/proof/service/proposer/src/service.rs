@@ -78,7 +78,7 @@ impl ProposerService {
             .with_timeout(config.rpc_timeout)
             .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
-            .with_metrics_prefix("base_proposer");
+            .with_metrics_prefix("base_proof_service_proposer");
         let l1_client = Arc::new(L1Client::new(l1_config)?);
         info!(endpoint = %config.l1_eth_rpc, "L1 client initialized");
 
@@ -86,7 +86,7 @@ impl ProposerService {
             .with_timeout(config.rpc_timeout)
             .with_retry_config(config.retry)
             .with_skip_tls_verify(config.skip_tls_verify)
-            .with_metrics_prefix("base_proposer");
+            .with_metrics_prefix("base_proof_service_proposer");
         let l2_client = Arc::new(L2Client::new(l2_config)?);
         info!(endpoint = %config.l2_eth_rpc, "L2 client initialized");
 

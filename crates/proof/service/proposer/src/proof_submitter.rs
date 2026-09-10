@@ -524,7 +524,7 @@ mod tests {
         let snapshot = snapshotter.snapshot().into_vec();
         assert!(snapshot.iter().all(|(ck, _, _, value)| {
             ck.kind() != MetricKind::Counter
-                || ck.key().name() != "base_proposer.l2_output_proposals_total"
+                || ck.key().name() != "base_proof_service_proposer.l2_output_proposals_total"
                 || !matches!(value, DebugValue::Counter(value) if *value > 0)
         }));
     }

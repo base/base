@@ -9,13 +9,13 @@ use eyre::WrapErr;
 #[group(skip)]
 pub(crate) struct Cli {
     #[command(flatten)]
-    args: base_proposer::Cli,
+    args: base_proof_service_proposer::Cli,
 }
 
 impl Cli {
     /// Run the proposer service.
     pub(crate) async fn run(self) -> eyre::Result<()> {
-        let config = base_proposer::ProposerConfig::from_cli(self.args)?;
+        let config = base_proof_service_proposer::ProposerConfig::from_cli(self.args)?;
         config.log.init_tracing_subscriber()?;
         config
             .metrics
@@ -23,6 +23,6 @@ impl Cli {
                 base_common_cli_support::register_version_metrics!();
             })
             .wrap_err("failed to install Prometheus recorder")?;
-        base_proposer::ProposerService::run(config).await
+        base_proof_service_proposer::ProposerService::run(config).await
     }
 }

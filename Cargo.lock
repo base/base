@@ -4831,6 +4831,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-service-proposer"
+version = "0.0.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "async-trait",
+ "base-common-chain-config",
+ "base-common-cli-support",
+ "base-common-client-ethereum",
+ "base-common-client-rollup",
+ "base-common-l1-transactions",
+ "base-common-observability-health",
+ "base-common-observability-metrics",
+ "base-common-runtime-tasks",
+ "base-common-types-chain",
+ "base-common-types-rpc",
+ "base-proof-client-providers",
+ "base-proof-l1-submission",
+ "base-proof-service-client",
+ "base-proof-service-protocol",
+ "base-proof-types-protocol",
+ "clap",
+ "eyre",
+ "futures",
+ "humantime",
+ "jsonrpsee",
+ "metrics",
+ "metrics-util",
+ "rustls 0.23.43",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "base-proof-service-protocol"
 version = "0.0.0"
 dependencies = [
@@ -5057,50 +5096,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proposer"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "async-trait",
- "base-common-chain-config",
- "base-common-cli-support",
- "base-common-client-ethereum",
- "base-common-client-rollup",
- "base-common-l1-transactions",
- "base-common-observability-health",
- "base-common-observability-metrics",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-proof-client-providers",
- "base-proof-l1-submission",
- "base-proof-service-client",
- "base-proof-service-protocol",
- "base-proof-types-protocol",
- "clap",
- "eyre",
- "futures",
- "humantime",
- "jsonrpsee",
- "metrics",
- "metrics-util",
- "rustls 0.23.43",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "base-proposer-bin"
 version = "0.0.0"
 dependencies = [
  "base-common-cli-support",
- "base-proposer",
+ "base-proof-service-proposer",
  "clap",
  "eyre",
  "tokio",

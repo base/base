@@ -18,6 +18,6 @@ workspace = true
 [dependencies]
 base-common-cli-support = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-base-proposer = { workspace = true, features = ["metrics"] }
+base-proof-service-proposer = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["default", "full"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
