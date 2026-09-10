@@ -7,7 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 // For features.
-#[cfg(any(feature = "reqwest", feature = "hyper"))]
+#[cfg(feature = "reqwest")]
 use alloy_transport_http as _;
 
 #[macro_use]

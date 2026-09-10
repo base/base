@@ -66,8 +66,8 @@ base-common-types-rpc = { workspace = true, features = ["default", "serde", "std
 base-common-chain-config = { features = ["default", "serde", "std"], workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt", "rt-multi-thread", "time"] }
 derive_more = { features = ["constructor", "debug", "deref", "display", "eq", "from_str"], workspace = true }
-alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls", "hyper", "hyper-tls"] }
-base-common-client-ethereum = { features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"], workspace = true }
+alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
+base-common-client-ethereum = { features = ["default", "reqwest", "reqwest-rustls-tls"], workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }

@@ -1885,24 +1885,9 @@ mod tests {
     use alloy_rlp::Decodable;
     use alloy_rpc_client::{BuiltInConnectionString, RpcClient};
     use alloy_transport::layers::{RetryBackoffLayer, RetryPolicy};
-    #[cfg(feature = "hyper")]
-    use alloy_transport_http::{
-        Http, HyperClient, HyperResponse, HyperResponseFut, hyper,
-        hyper::body::Bytes as HyperBytes,
-        hyper_util::{
-            client::legacy::{Client, Error},
-            rt::TokioExecutor,
-        },
-    };
     use base_common_process::{Anvil, Reth, utils::run_with_tempdir};
     use base_common_types_chain::{Transaction, TxEnvelope, transaction::SignerRecoverable};
-    #[cfg(feature = "hyper")]
-    use base_common_types_payload::{Claims, JwtSecret};
     use base_common_types_rpc::{Block, request::TransactionRequest};
-    #[cfg(feature = "hyper")]
-    use http_body_util::Full;
-    #[cfg(feature = "hyper")]
-    use tower::{Layer, Service};
 
     use super::*;
     // For layer transport tests
@@ -1924,147 +1909,6 @@ mod tests {
         let provider = builder::<Ethereum>().with_recommended_fillers().connect_anvil();
         let num = provider.get_block_number().await.unwrap();
         assert_eq!(0, num);
-    }
-
-    #[cfg(feature = "hyper")]
-    #[tokio::test]
-    async fn test_default_hyper_transport() {
-        let anvil = Anvil::new().spawn();
-        let hyper_t = alloy_transport_http::HyperTransport::new_hyper(anvil.endpoint_url());
-
-        let rpc_client = alloy_rpc_client::RpcClient::new(hyper_t, true);
-
-        let provider = RootProvider::<Ethereum>::new(rpc_client);
-        let num = provider.get_block_number().await.unwrap();
-        assert_eq!(0, num);
-    }
-
-    #[cfg(feature = "hyper")]
-    #[tokio::test]
-    async fn test_hyper_layer_transport() {
-        struct LoggingLayer;
-
-        impl<S> Layer<S> for LoggingLayer {
-            type Service = LoggingService<S>;
-
-            fn layer(&self, inner: S) -> Self::Service {
-                LoggingService { inner }
-            }
-        }
-
-        #[derive(Clone)] // required
-        struct LoggingService<S> {
-            inner: S,
-        }
-
-        impl<S, B> Service<hyper::Request<B>> for LoggingService<S>
-        where
-            S: Service<hyper::Request<B>, Response = HyperResponse, Error = Error>
-                + Clone
-                + Send
-                + Sync
-                + 'static,
-            S::Future: Send,
-            S::Error: std::error::Error + Send + Sync + 'static,
-            B: From<Vec<u8>> + Send + 'static + Clone + Sync + std::fmt::Debug,
-        {
-            type Response = HyperResponse;
-            type Error = Error;
-            type Future = HyperResponseFut;
-
-            fn poll_ready(
-                &mut self,
-                cx: &mut std::task::Context<'_>,
-            ) -> std::task::Poll<Result<(), Self::Error>> {
-                self.inner.poll_ready(cx)
-            }
-
-            fn call(&mut self, req: hyper::Request<B>) -> Self::Future {
-                println!("Logging Layer - HyperRequest {req:?}");
-
-                let fut = self.inner.call(req);
-
-                Box::pin(fut)
-            }
-        }
-        use http::header::{self, HeaderValue};
-        use tower_http::{
-            sensitive_headers::SetSensitiveRequestHeadersLayer, set_header::SetRequestHeaderLayer,
-        };
-        let anvil = Anvil::new().spawn();
-        let hyper_client = Client::builder(TokioExecutor::new()).build_http::<Full<HyperBytes>>();
-
-        // Setup tower service with multiple layers modifying request headers
-        let service = tower::ServiceBuilder::new()
-            .layer(SetRequestHeaderLayer::if_not_present(
-                header::USER_AGENT,
-                HeaderValue::from_static("alloy app"),
-            ))
-            .layer(SetRequestHeaderLayer::overriding(
-                header::AUTHORIZATION,
-                HeaderValue::from_static("some-jwt-token"),
-            ))
-            .layer(SetRequestHeaderLayer::appending(
-                header::SET_COOKIE,
-                HeaderValue::from_static("cookie-value"),
-            ))
-            .layer(SetSensitiveRequestHeadersLayer::new([header::AUTHORIZATION])) // Hides the jwt token as sensitive.
-            .layer(LoggingLayer)
-            .service(hyper_client);
-
-        let layer_transport = alloy_transport_http::HyperClient::with_service(service);
-
-        let http_hyper =
-            alloy_transport_http::Http::with_client(layer_transport, anvil.endpoint_url());
-
-        let rpc_client = alloy_rpc_client::RpcClient::new(http_hyper, true);
-
-        let provider = RootProvider::<Ethereum>::new(rpc_client);
-        let num = provider.get_block_number().await.unwrap();
-        assert_eq!(0, num);
-
-        // Test Cloning with service
-        let cloned_t = provider.client().transport().clone();
-
-        let rpc_client = alloy_rpc_client::RpcClient::new(cloned_t, true);
-
-        let provider = RootProvider::<Ethereum>::new(rpc_client);
-        let num = provider.get_block_number().await.unwrap();
-        assert_eq!(0, num);
-    }
-
-    #[cfg(feature = "hyper")]
-    #[tokio::test]
-    #[cfg_attr(windows, ignore = "no reth on windows")]
-    async fn test_auth_layer_transport() {
-        crate::ext::test::async_ci_only(|| async move {
-            let secret = JwtSecret::random();
-
-            let reth =
-                Reth::new().arg("--rpc.jwtsecret").arg(hex::encode(secret.as_bytes())).spawn();
-
-            let mut authorization =
-                format!("Bearer {}", secret.encode(&Claims::default()).unwrap())
-                    .parse::<http::HeaderValue>()
-                    .unwrap();
-            authorization.set_sensitive(true);
-            let layer_transport = HyperClient::new().layer(
-                tower_http::set_header::SetRequestHeaderLayer::overriding(
-                    http::header::AUTHORIZATION,
-                    authorization,
-                ),
-            );
-
-            let http_hyper = Http::with_client(layer_transport, reth.endpoint_url());
-
-            let rpc_client = alloy_rpc_client::RpcClient::new(http_hyper, true);
-
-            let provider = RootProvider::<Ethereum>::new(rpc_client);
-
-            let num = provider.get_block_number().await.unwrap();
-            assert_eq!(0, num);
-        })
-        .await;
     }
 
     #[tokio::test]
@@ -2662,11 +2506,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(any(
-        feature = "reqwest-default-tls",
-        feature = "reqwest-rustls-tls",
-        feature = "reqwest-native-tls",
-    ))]
+    #[cfg(feature = "reqwest-rustls-tls")]
     #[ignore = "ignore until <https://github.com/paradigmxyz/reth/pull/14727> is in"]
     async fn call_mainnet() {
         use alloy_sol_types::SolValue;
@@ -2751,18 +2591,6 @@ mod tests {
 
         let results = provider.call_many(&b1).context(&context).extend_bundles(&b2).await.unwrap();
         assert_eq!(results, expected);
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "hyper-tls")]
-    async fn hyper_https() {
-        let url = "https://ethereum.reth.rs/rpc";
-
-        // With the `hyper` feature enabled .connect builds the provider based on
-        // `HyperTransport`.
-        let provider = ProviderBuilder::new().connect(url).await.unwrap();
-
-        let _num = provider.get_block_number().await.unwrap();
     }
 
     #[tokio::test]
@@ -2858,19 +2686,6 @@ mod tests {
             .await
         })
         .await;
-    }
-
-    #[tokio::test]
-    #[cfg(feature = "hyper")]
-    async fn test_connect_hyper_tls() {
-        let p = ProviderBuilder::new().connect("https://ethereum.reth.rs/rpc").await.unwrap();
-
-        let _num = p.get_block_number().await.unwrap();
-
-        let anvil = Anvil::new().spawn();
-        let p = ProviderBuilder::new().connect(&anvil.endpoint()).await.unwrap();
-
-        let _num = p.get_block_number().await.unwrap();
     }
 
     #[tokio::test]

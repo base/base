@@ -605,18 +605,6 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
     {
         self.connect_reqwest(builder(reqwest::ClientBuilder::default()), url)
     }
-
-    /// Build this provider with an Hyper HTTP transport.
-    #[cfg(feature = "hyper")]
-    pub fn connect_hyper_http(self, url: url::Url) -> F::Provider
-    where
-        L: ProviderLayer<crate::RootProvider<N>, N>,
-        F: TxFiller<N> + ProviderLayer<L::Provider, N>,
-        N: Network,
-    {
-        let client = ClientBuilder::default().hyper_http(url);
-        self.connect_client(client)
-    }
 }
 
 #[cfg(any(test, feature = "anvil-node"))]
