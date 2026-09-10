@@ -846,7 +846,7 @@ type SnapshotArchiveBuilder<'a> =
     tar::Builder<zstd::Encoder<'a, CountingWriter<Box<dyn SnapshotArchiveWriter>>>>;
 
 impl<W> CountingWriter<W> {
-    fn new(inner: W, compressed_bytes: Arc<AtomicU64>) -> Self {
+    const fn new(inner: W, compressed_bytes: Arc<AtomicU64>) -> Self {
         Self { inner, bytes_written: 0, compressed_bytes }
     }
 
