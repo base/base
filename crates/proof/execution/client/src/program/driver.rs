@@ -1,20 +1,20 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
+use crate::Driver;
+use crate::{
+    BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
+    OraclePipeline,
+};
 use alloy_primitives::B256;
 use base_consensus_derive_pipeline::EthereumDataSource;
 use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
-use base_proof_execution_client::Driver;
-use base_proof_execution_client::{
-    BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
-    OraclePipeline,
-};
 use base_proof_witness_preimage::{HintWriterClient, PreimageOracleClient};
 use spin::RwLock;
 
-use crate::{Epilogue, FaultProofProgramError};
+use crate::program::{Epilogue, FaultProofProgramError};
 
 type OracleL1Provider<P, H> = OracleL1ChainProvider<CachingOracle<P, H>>;
 type OracleL2Provider<P, H> = OracleL2ChainProvider<CachingOracle<P, H>>;
@@ -42,7 +42,7 @@ where
     rollup_config: Arc<base_common_chain_config::RollupConfig>,
     claimed_l2_block_number: u64,
     claimed_l2_output_root: B256,
-    cursor: Arc<RwLock<base_proof_execution_client::PipelineCursor>>,
+    cursor: Arc<RwLock<crate::PipelineCursor>>,
     pipeline: ConcreteOraclePipeline<P, H>,
     l2_provider: OracleL2Provider<P, H>,
     evm_factory: F,
@@ -64,7 +64,7 @@ where
         rollup_config: Arc<base_common_chain_config::RollupConfig>,
         claimed_l2_block_number: u64,
         claimed_l2_output_root: B256,
-        cursor: Arc<RwLock<base_proof_execution_client::PipelineCursor>>,
+        cursor: Arc<RwLock<crate::PipelineCursor>>,
         pipeline: ConcreteOraclePipeline<P, H>,
         l2_provider: OracleL2Provider<P, H>,
         evm_factory: F,

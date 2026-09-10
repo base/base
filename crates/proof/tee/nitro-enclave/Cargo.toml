@@ -25,7 +25,6 @@ serde = { workspace = true, features = ["derive"] }
 rand_08 = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["serde"] }
 parking_lot = { workspace = true, features = ["default"] }
-base-proof-client = { workspace = true, features = ["std"] }
 bincode = { workspace = true, features = ["default", "serde"] }
 base-proof-witness-preimage = { workspace = true, features = ["serde"] }
 base-proof-types-protocol = { workspace = true, features = ["serde"] }
@@ -33,7 +32,7 @@ aws-nitro-enclaves-nsm-api = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa", "arithmetic"] }
 tokio = { workspace = true, features = ["default", "rt", "time", "io-util"] }
 base-common-chain-config = {workspace = true, features = ["default", "serde"]}
-base-proof-execution-client = { workspace = true, features = ["std"] }
+base-proof-execution-client = {workspace = true, features = ["std"]}
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock = { workspace = true }

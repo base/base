@@ -4683,26 +4683,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-client"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-common-chain-config",
- "base-common-types-chain",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-execution-evm-machine",
- "base-execution-evm-runtime",
- "base-proof-execution-client",
- "base-proof-witness-preimage",
- "rstest",
- "spin 0.10.1",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-proof-contracts"
 version = "0.0.0"
 dependencies = [
@@ -4783,7 +4763,6 @@ dependencies = [
  "base-consensus-batch-types",
  "base-consensus-source-providers",
  "base-execution-evm-runtime",
- "base-proof-client",
  "base-proof-execution-client",
  "base-proof-types-protocol",
  "base-proof-witness-mpt",
@@ -4851,7 +4830,6 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-execution-evm-runtime",
- "base-proof-client",
  "base-proof-execution-client",
  "base-proof-types-protocol",
  "base-proof-witness-preimage",

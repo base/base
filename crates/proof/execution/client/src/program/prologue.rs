@@ -1,20 +1,20 @@
 use alloc::sync::Arc;
 use core::fmt::Debug;
 
+use crate::TrieDBProvider;
+use crate::{
+    BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
+    OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
+};
 use alloy_primitives::B256;
 use base_common_types_chain::Sealed;
 use base_consensus_derive_pipeline::EthereumDataSource;
 use base_execution_evm_runtime::BaseEvmFactory;
-use base_proof_execution_client::TrieDBProvider;
-use base_proof_execution_client::{
-    BootInfo, CachingOracle, HintType, OracleBlobProvider, OracleL1ChainProvider,
-    OracleL2ChainProvider, OraclePipeline, new_oracle_pipeline_cursor,
-};
 use base_proof_witness_preimage::{
     CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient,
 };
 
-use crate::{FaultProofDriver, FaultProofProgramError};
+use crate::program::{FaultProofDriver, FaultProofProgramError};
 
 /// The prologue phase — loads boot information and initializes the derivation pipeline.
 #[derive(Debug)]

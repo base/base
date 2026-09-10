@@ -1,10 +1,4 @@
-#![doc = include_str!("../README.md")]
-#![cfg_attr(not(test), no_std)]
-
-extern crate alloc;
-
-#[macro_use]
-extern crate tracing;
+//! Proof execution program.
 
 mod error;
 pub use error::FaultProofProgramError;

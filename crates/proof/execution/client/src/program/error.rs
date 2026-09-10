@@ -1,5 +1,5 @@
+use crate::OracleProviderError;
 use base_consensus_derive_pipeline::PipelineErrorKind;
-use base_proof_execution_client::OracleProviderError;
 use base_proof_witness_preimage::errors::PreimageOracleError;
 use thiserror::Error;
 
@@ -17,10 +17,7 @@ pub enum FaultProofProgramError {
     Pipeline(#[from] PipelineErrorKind),
     /// Driver execution error.
     #[error(transparent)]
-    Driver(
-        #[from]
-        base_proof_execution_client::DriverError<base_proof_execution_client::ExecutorError>,
-    ),
+    Driver(#[from] crate::DriverError<crate::ExecutorError>),
     /// The computed output root does not match the claimed output root.
     #[error("invalid claim: computed {computed}, claimed {claimed}")]
     InvalidClaim {

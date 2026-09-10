@@ -6,8 +6,8 @@ use base_common_client_ethereum::{Network, RootProvider};
 use base_common_client_rollup::OptimismRollupProviderExt;
 use base_consensus_source_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_execution_evm_runtime::BaseEvmFactory;
-use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_execution_client::HintType;
+use base_proof_execution_client::{FaultProofProgramError, Prologue};
 use base_proof_witness_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
     WitnessOracle,

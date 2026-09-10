@@ -1,6 +1,8 @@
 # `base-proof-execution-client`
 
-A `no_std` implementation of a stateless block executor for the Base rollup, backed by [`base-proof-witness-mpt`](../mpt)'s `TrieDB`.
+Fault-proof program execution for Base: stateless block execution, derivation driving, witness-oracle access, and verification of the claimed output. Trie witnesses come from [`base-proof-witness-mpt`](../../witness/mpt).
+
+The default profile supports `no_std` proof guests. `std` enables host runtime and KZG support; `evm-std` enables the EVM's host functionality without selecting Tokio. `test-utils` adds the database and provider fixtures used by execution tests.
 
 ## Overview
 

@@ -3,7 +3,7 @@ use std::array::TryFromSliceError;
 use alloy_primitives::B256;
 use alloy_rlp::Error as RlpError;
 use alloy_transport::TransportError;
-use base_proof_client::FaultProofProgramError;
+use base_proof_execution_client::FaultProofProgramError;
 use base_proof_witness_preimage::errors::{PreimageOracleError, WitnessOracleError};
 use thiserror::Error;
 

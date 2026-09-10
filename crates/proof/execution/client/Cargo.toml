@@ -1,6 +1,6 @@
 [package]
 name = "base-proof-execution-client"
-description = "A no_std stateless block builder for Base"
+description = "Base fault-proof execution, derivation driver, and witness-oracle client"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -27,9 +27,9 @@ c-kzg = { workspace = true, optional = true }
 base-consensus-batch-types = {workspace = true}
 base-execution-evm-machine = {workspace = true}
 base-execution-evm-runtime = {workspace = true}
+base-proof-witness-preimage = {workspace = true}
 serde_json = {workspace = true, optional = false}
 spin = {workspace = true, features = ["default"]}
-base-proof-witness-preimage = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 base-consensus-derive-pipeline = {workspace = true}
 alloy-transport = { workspace = true, optional = true }
@@ -49,7 +49,7 @@ alloy-transport-http = { workspace = true, optional = true, features = ["default
 base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"], optional = true }
 
 [features]
-std = ["base-common-types-chain/std", "alloy-eips/std", "base-execution-evm-runtime/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-payload/std", "alloy-trie/std", "base-common-chain-config/std", "base-proof-witness-mpt/std", "base-consensus-batch-types/std", "getrandom_0_2_17/std", "serde/std", "serde_json/std", "thiserror/std", "tracing/std", "spin/std", "alloy-eips/kzg", "alloy-genesis/std", "ark-bls12-381/std", "ark-ff/std", "base-proof-witness-preimage/std", "c-kzg?/std", "dep:c-kzg", "dep:tokio", "serde/std", "serde_json/std"]
+std = ["base-common-types-chain/std", "alloy-eips/std", "base-execution-evm-runtime/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-payload/std", "alloy-trie/std", "base-common-chain-config/std", "base-proof-witness-mpt/std", "base-consensus-batch-types/std", "getrandom_0_2_17/std", "serde/std", "serde_json/std", "thiserror/std", "tracing/std", "spin/std", "alloy-eips/kzg", "alloy-genesis/std", "ark-bls12-381/std", "ark-ff/std", "base-proof-witness-preimage/std", "c-kzg?/std", "dep:c-kzg", "dep:tokio"]
 test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils", "dep:base-common-client-ethereum", "dep:alloy-rpc-client", "dep:alloy-transport", "dep:alloy-transport-http", "dep:rand", "dep:rocksdb", "dep:tempfile", "dep:tokio", "std", "base-common-chain-config/serde"]
 evm-std = ["base-execution-evm-runtime/std"]
 
@@ -57,6 +57,6 @@ evm-std = ["base-execution-evm-runtime/std"]
 rayon = { workspace = true }
 c-kzg = { workspace = true, features = [] }
 rand = { workspace = true, features = ["default"] }
+rstest = {workspace = true, features = ["default"]}
 alloy-eips = { workspace = true, features = ["kzg"] }
-rstest = { workspace = true, features = ["default"] }
-tokio = { workspace = true, features = ["default", "full"] }
+tokio = {workspace = true, features = ["default", "full"]}

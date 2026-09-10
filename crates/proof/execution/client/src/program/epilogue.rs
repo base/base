@@ -3,7 +3,7 @@ use alloc::boxed::Box;
 use alloy_primitives::B256;
 use base_consensus_batch_types::L2BlockInfo;
 
-use crate::FaultProofProgramError;
+use crate::program::FaultProofProgramError;
 
 /// The result of executing the proof program.
 #[derive(Debug)]
@@ -54,7 +54,7 @@ mod tests {
     use rstest::rstest;
 
     use super::Epilogue;
-    use crate::FaultProofProgramError;
+    use crate::program::FaultProofProgramError;
 
     fn epilogue(computed: B256, claimed: B256) -> Epilogue {
         Epilogue {

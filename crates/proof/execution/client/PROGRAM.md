@@ -1,4 +1,4 @@
-# `base-proof-client`
+# `base-proof-execution-client`
 
 Oracle-backed derivation and execution orchestration for the Base ZK proof program.
 
