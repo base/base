@@ -290,10 +290,12 @@ impl<Executor: BlockExecutor> ExecutorTx<Executor>
     }
 }
 
-impl<Executor> ExecutorTx<Executor>
-    for WithTxEnv<<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>>
+impl<Executor> ExecutorTx<Executor> for WithTxEnv<Recovered<Executor::Transaction>>
 where
-    Executor: BlockExecutor<Transaction: Clone>,
+    Executor: BlockExecutor<
+            Transaction: Clone,
+            Evm: Evm<Tx = base_execution_evm_runtime::BaseTransaction>,
+        >,
 {
     fn into_parts(self) -> (<Executor::Evm as Evm>::Tx, Recovered<Executor::Transaction>) {
         (self.tx_env, Arc::unwrap_or_clone(self.tx))
@@ -556,37 +558,37 @@ impl<T> ExecutableTxFor for T where
 {
 }
 
-/// A transaction stored together with its `TxEnv`.
+/// A transaction stored together with its `base_execution_evm_runtime::BaseTransaction`.
 ///
 /// See also [`ExecutableTxParts`] for types that can be split into a transaction environment and
 /// recovered transaction.
 #[derive(Debug)]
-pub struct WithTxEnv<TxEnv, T> {
+pub struct WithTxEnv<T> {
     /// The transaction environment for EVM.
-    pub tx_env: TxEnv,
+    pub tx_env: base_execution_evm_runtime::BaseTransaction,
     /// The recovered transaction.
     pub tx: Arc<T>,
 }
 
-impl<TxEnv, T> WithTxEnv<TxEnv, T> {
+impl<T> WithTxEnv<T> {
     /// Creates a transaction/environment pair from a type that can be split with
     /// [`ExecutableTxParts::into_parts`].
     pub fn new<Tx, InnerTx>(tx: Tx) -> Self
     where
-        Tx: ExecutableTxParts<TxEnv, InnerTx, Recovered = T>,
+        Tx: ExecutableTxParts<base_execution_evm_runtime::BaseTransaction, InnerTx, Recovered = T>,
     {
         let (tx_env, tx) = tx.into_parts();
         Self { tx_env, tx: Arc::new(tx) }
     }
 }
 
-impl<TxEnv: Clone, T> Clone for WithTxEnv<TxEnv, T> {
+impl<T> Clone for WithTxEnv<T> {
     fn clone(&self) -> Self {
         Self { tx_env: self.tx_env.clone(), tx: self.tx.clone() }
     }
 }
 
-impl<TxEnv, Tx, T: RecoveredTx<Tx>> RecoveredTx<Tx> for WithTxEnv<TxEnv, T> {
+impl<Tx, T: RecoveredTx<Tx>> RecoveredTx<Tx> for WithTxEnv<T> {
     fn tx(&self) -> &Tx {
         self.tx.tx()
     }
@@ -596,10 +598,12 @@ impl<TxEnv, Tx, T: RecoveredTx<Tx>> RecoveredTx<Tx> for WithTxEnv<TxEnv, T> {
     }
 }
 
-impl<TxEnv, T: RecoveredTx<Tx>, Tx> ExecutableTxParts<TxEnv, Tx> for WithTxEnv<TxEnv, T> {
+impl<T: RecoveredTx<Tx>, Tx> ExecutableTxParts<base_execution_evm_runtime::BaseTransaction, Tx>
+    for WithTxEnv<T>
+{
     type Recovered = Arc<T>;
 
-    fn into_parts(self) -> (TxEnv, Self::Recovered) {
+    fn into_parts(self) -> (base_execution_evm_runtime::BaseTransaction, Self::Recovered) {
         (self.tx_env, self.tx)
     }
 }

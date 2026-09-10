@@ -50,6 +50,23 @@ pub struct StateRootComputeOutcome {
     pub debug_recorders: Vec<(Option<B256>, base_execution_state_trie::TrieDebugRecorder)>,
 }
 
+impl StateRootComputeOutcome {
+    /// Creates a computation outcome without captured trie debug recordings.
+    pub fn new(
+        state_root: B256,
+        trie_updates: Arc<TrieUpdates>,
+        hashed_state: Arc<HashedPostState>,
+    ) -> Self {
+        Self {
+            state_root,
+            trie_updates,
+            hashed_state,
+            #[cfg(feature = "trie-debug")]
+            debug_recorders: Vec::new(),
+        }
+    }
+}
+
 /// Handle to a background sparse trie state root computation.
 ///
 /// Used by both the engine (during `newPayload`) and the payload builder (during `FCU`-triggered

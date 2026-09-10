@@ -1412,11 +1412,11 @@ mod tests {
         fn on_hashed_state_update(&self, _state: HashedPostState) {}
 
         fn on_updates_finished(&self) {
-            _ = self.result.send(Ok(StateRootComputeOutcome {
-                state_root: B256::repeat_byte(0x42),
-                trie_updates: Arc::new(TrieUpdates::default()),
-                hashed_state: Arc::new(HashedPostState::default()),
-            }));
+            _ = self.result.send(Ok(StateRootComputeOutcome::new(
+                B256::repeat_byte(0x42),
+                Arc::new(TrieUpdates::default()),
+                Arc::new(HashedPostState::default()),
+            )));
         }
     }
 

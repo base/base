@@ -49,32 +49,22 @@ pub mod receipt_root_task;
 pub const SMALL_BLOCK_TX_THRESHOLD: usize = 5;
 
 /// Type alias for [`PayloadHandle`] returned by payload processor spawn methods.
-type IteratorTx<I> = RecoveredTx<
-    base_execution_evm_runtime::BaseTransaction,
-    <I as ExecutableTxIterator>::Recovered,
->;
+type IteratorTx<I> = RecoveredTx<<I as ExecutableTxIterator>::Recovered>;
 
 type IteratorPayloadHandle<I> = PayloadHandle<IteratorTx<I>, <I as ExecutableTxTuple>::Error>;
 
-type IteratorPrewarmTxReceiver<I> = PrewarmTxReceiver<
-    base_execution_evm_runtime::BaseTransaction,
-    <I as ExecutableTxIterator>::Recovered,
->;
+type IteratorPrewarmTxReceiver<I> = PrewarmTxReceiver<<I as ExecutableTxIterator>::Recovered>;
 
-type IteratorExecuteTxReceiver<I> = ExecuteTxReceiver<
-    base_execution_evm_runtime::BaseTransaction,
-    <I as ExecutableTxIterator>::Recovered,
-    <I as ExecutableTxTuple>::Error,
->;
+type IteratorExecuteTxReceiver<I> =
+    ExecuteTxReceiver<<I as ExecutableTxIterator>::Recovered, <I as ExecutableTxTuple>::Error>;
 
-type RecoveredTx<TxEnv, Recovered> = WithTxEnv<TxEnv, Recovered>;
+type RecoveredTx<Recovered> = WithTxEnv<Recovered>;
 type IndexedTxResult<Tx, Err> = (usize, Result<Tx, Err>);
 type IndexedTxReceiver<Tx, Err> = CrossbeamReceiver<IndexedTxResult<Tx, Err>>;
 type IndexedTxSender<Tx, Err> = CrossbeamSender<IndexedTxResult<Tx, Err>>;
-type PrewarmTxReceiver<TxEnv, Recovered> = mpsc::Receiver<(usize, RecoveredTx<TxEnv, Recovered>)>;
-type ExecuteTxReceiver<TxEnv, Recovered, Err> =
-    IndexedTxReceiver<RecoveredTx<TxEnv, Recovered>, Err>;
-type ExecuteTxSender<TxEnv, Recovered, Err> = IndexedTxSender<RecoveredTx<TxEnv, Recovered>, Err>;
+type PrewarmTxReceiver<Recovered> = mpsc::Receiver<(usize, RecoveredTx<Recovered>)>;
+type ExecuteTxReceiver<Recovered, Err> = IndexedTxReceiver<RecoveredTx<Recovered>, Err>;
+type ExecuteTxSender<Recovered, Err> = IndexedTxSender<RecoveredTx<Recovered>, Err>;
 
 /// Entrypoint for executing the payload.
 #[derive(Debug)]
@@ -449,14 +439,17 @@ impl PayloadProcessor {
 }
 
 /// Converts transactions sequentially and sends them to the prewarm and execute channels.
-fn convert_serial<RawTx, Tx, TxEnv, InnerTx, Recovered, Err, C>(
+fn convert_serial<RawTx, Tx, InnerTx, Recovered, Err, C>(
     iter: impl Iterator<Item = RawTx>,
     convert: &C,
-    prewarm_tx: &mpsc::SyncSender<(usize, WithTxEnv<TxEnv, Recovered>)>,
-    execute_tx: &ExecuteTxSender<TxEnv, Recovered, Err>,
+    prewarm_tx: &mpsc::SyncSender<(usize, WithTxEnv<Recovered>)>,
+    execute_tx: &ExecuteTxSender<Recovered, Err>,
 ) where
-    Tx: ExecutableTxParts<TxEnv, InnerTx, Recovered = Recovered>,
-    TxEnv: Clone,
+    Tx: ExecutableTxParts<
+            base_execution_evm_runtime::BaseTransaction,
+            InnerTx,
+            Recovered = Recovered,
+        >,
     C: ConvertTx<RawTx, Tx = Tx, Error = Err>,
 {
     for (idx, raw_tx) in iter.enumerate() {
