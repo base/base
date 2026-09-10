@@ -37,9 +37,7 @@ pub use cache::{
 pub use capabilities::{EthCapabilities, EthCapabilitiesHead, EthCapabilitiesResource};
 pub use error::{EthApiError, EthResult, RevertError, RpcInvalidTransactionError, SignError};
 pub use fee_history::{FeeHistoryCache, FeeHistoryCacheConfig, FeeHistoryEntry};
-pub use gas_oracle::{
-    GasCap, GasPriceOracle, GasPriceOracleConfig, GasPriceOracleResult, RPC_DEFAULT_GAS_CAP,
-};
+pub use gas_oracle::{GasCap, GasPriceOracle, GasPriceOracleResult, RPC_DEFAULT_GAS_CAP};
 pub use id_provider::EthSubscriptionIdProvider;
 pub use pending_block::{PendingBlock, PendingBlockEnv, PendingBlockEnvOrigin};
 pub use transaction::TransactionSource;
@@ -56,3 +54,5 @@ mod base_tx_info;
 pub use base_tx_info::BaseTxInfoMapper;
 mod base_rpc_converter;
 pub use base_rpc_converter::BaseRpcConverter;
+
+pub use base_common_types_rpc::GasPriceOracleConfig;

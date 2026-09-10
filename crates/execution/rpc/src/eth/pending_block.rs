@@ -2,8 +2,9 @@
 
 use alloy_eips::BlockNumberOrTag;
 use base_execution_state_api::{BlockReaderIdExt, StateProviderBox};
-use reth_rpc_eth_types::{
-    EthApiError, PendingBlock, block::BlockAndReceipts, builder::config::PendingBlockKind,
+use {
+    base_common_types_rpc::PendingBlockKind, reth_rpc_eth_types::EthApiError,
+    reth_rpc_eth_types::PendingBlock, reth_rpc_eth_types::block::BlockAndReceipts,
 };
 
 use crate::{BaseEthApi, BaseEthApiError};

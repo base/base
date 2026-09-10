@@ -7,12 +7,12 @@ use std::{
 };
 
 use base_common_types_payload::JwtSecret;
+use base_common_types_rpc::PendingBlockKind;
 use clap::{
     Args,
     builder::{RangedU64ValueParser, Resettable},
 };
 use reth_cli_util::{parse_duration_from_secs_or_ms, parse_ether_value};
-use reth_rpc_eth_types::builder::config::PendingBlockKind;
 use reth_rpc_server_types::constants;
 use url::Url;
 

@@ -13,16 +13,18 @@ use base_common_runtime_tasks::{
 use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_api::BlockReaderIdExt;
+use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };
 use base_node_context::BaseNodePool;
-use base_execution_state_provider::providers::BlockchainProvider;
-use reth_rpc_eth_types::{
-    EthApiError, EthStateCache, FeeHistoryCache, GasCap, GasPriceOracle, PendingBlock,
-    builder::config::PendingBlockKind,
-};
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
+use {
+    base_common_types_rpc::PendingBlockKind, reth_rpc_eth_types::EthApiError,
+    reth_rpc_eth_types::EthStateCache, reth_rpc_eth_types::FeeHistoryCache,
+    reth_rpc_eth_types::GasCap, reth_rpc_eth_types::GasPriceOracle,
+    reth_rpc_eth_types::PendingBlock,
+};
 
 use crate::{BaseRpcContext, BaseRpcConverter, BaseTimeCache, SequencerClient, SignersForRpc};
 
@@ -374,9 +376,9 @@ mod tests {
     use base_common_types_chain::{BaseTxEnvelope as TransactionSigned, Block, BlockBody, Header};
     use base_common_types_rpc::FeeHistory;
     use base_common_types_rpc::{Bundle, StateContext, TransactionRequest};
+    use base_execution_state_provider::test_utils::MockEthProvider;
     use jsonrpsee_types::error::INVALID_PARAMS_CODE;
     use rand::Rng;
-    use base_execution_state_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators;
 
     use crate::{BaseEthApi, EthApiServer};

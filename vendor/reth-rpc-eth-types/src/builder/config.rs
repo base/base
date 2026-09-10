@@ -18,45 +18,7 @@ use crate::{
 /// Default value for stale filter ttl
 pub const DEFAULT_STALE_FILTER_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// Config for the locally built pending block
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum PendingBlockKind {
-    /// Return a pending block with header only, no transactions included
-    Empty,
-    /// Return null/no pending block
-    None,
-    /// Return a pending block with all transactions from the mempool (default behavior)
-    #[default]
-    Full,
-}
-
-impl std::str::FromStr for PendingBlockKind {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "empty" => Ok(Self::Empty),
-            "none" => Ok(Self::None),
-            "full" => Ok(Self::Full),
-            _ => Err(format!(
-                "Invalid pending block kind: {s}. Valid options are: empty, none, full"
-            )),
-        }
-    }
-}
-
-impl PendingBlockKind {
-    /// Returns true if the pending block kind is `None`
-    pub const fn is_none(&self) -> bool {
-        matches!(self, Self::None)
-    }
-
-    /// Returns true if the pending block kind is `Empty`
-    pub const fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
-    }
-}
+pub use base_common_types_rpc::PendingBlockKind;
 
 /// Additional config values for the eth namespace.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]

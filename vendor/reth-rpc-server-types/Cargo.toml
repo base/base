@@ -19,6 +19,7 @@ workspace = true
 alloy-eips = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-network-api = { workspace = true }
+base-common-types-rpc = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-execution-state-types = {workspace = true}
 base-common-types-payload = { workspace = true }

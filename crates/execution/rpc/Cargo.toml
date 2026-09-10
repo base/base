@@ -45,7 +45,6 @@ eyre = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true, optional = true }
 base-common-observability-events = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
@@ -69,6 +68,7 @@ base-common-chain-config = {features = ["default"], workspace = true}
 alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 base-common-runtime-tasks = { workspace = true, features = ["rayon"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true, features = ["default"]}
 base-common-client-ethereum = { workspace = true, features = ["mnemonic"] }
 base-common-types-rpc = {workspace = true, features = ["default", "serde"]}
@@ -82,10 +82,10 @@ base-execution-evm-runtime = { workspace = true, features = ["overrides", "call-
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 reth-testing-utils = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
+base-execution-state-maintenance = { workspace = true }
 jsonrpsee = { workspace = true, features = ["client"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-types-rpc = { workspace = true, features = [] }

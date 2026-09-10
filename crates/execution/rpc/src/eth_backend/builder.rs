@@ -5,14 +5,17 @@ use std::{sync::Arc, time::Duration};
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskPool};
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::providers::BlockchainProvider;
-use reth_rpc_eth_types::{
-    EthStateCache, EthStateCacheConfig, FeeHistoryCache, FeeHistoryCacheConfig, ForwardConfig,
-    GasCap, GasPriceOracle, GasPriceOracleConfig, builder::config::PendingBlockKind,
-    fee_history::fee_history_cache_new_blocks_task,
-};
 use reth_rpc_server_types::constants::{
     DEFAULT_ETH_PROOF_WINDOW, DEFAULT_MAX_BLOCKING_IO_REQUEST, DEFAULT_MAX_SIMULATE_BLOCKS,
     DEFAULT_PROOF_PERMITS,
+};
+use {
+    base_common_types_rpc::GasPriceOracleConfig, base_common_types_rpc::PendingBlockKind,
+    reth_rpc_eth_types::EthStateCache, reth_rpc_eth_types::EthStateCacheConfig,
+    reth_rpc_eth_types::FeeHistoryCache, reth_rpc_eth_types::FeeHistoryCacheConfig,
+    reth_rpc_eth_types::ForwardConfig, reth_rpc_eth_types::GasCap,
+    reth_rpc_eth_types::GasPriceOracle,
+    reth_rpc_eth_types::fee_history::fee_history_cache_new_blocks_task,
 };
 
 use crate::{BaseEthApi, BaseRpcContext, BaseRpcConverter, eth_backend::core::BaseEthApiInner};

@@ -6,19 +6,12 @@ use std::fmt::{self, Debug, Formatter};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U256};
 use base_common_types_chain::{BlockHeader, Transaction, TxReceipt, constants::GWEI_TO_WEI};
-use base_common_types_rpc::BlockId;
+use base_common_types_rpc::{BlockId, GasPriceOracleConfig};
 use base_execution_state_api::BlockReaderIdExt;
 use derive_more::{Deref, DerefMut, From, Into};
 use itertools::Itertools;
-use reth_rpc_server_types::{
-    constants,
-    constants::gas_oracle::{
-        DEFAULT_GAS_PRICE_BLOCKS, DEFAULT_GAS_PRICE_PERCENTILE, DEFAULT_IGNORE_GAS_PRICE,
-        DEFAULT_MAX_GAS_PRICE, MAX_HEADER_HISTORY, MAX_REWARD_PERCENTILE_COUNT, SAMPLE_NUMBER,
-    },
-};
+use reth_rpc_server_types::{constants, constants::gas_oracle::SAMPLE_NUMBER};
 use schnellru::{ByLength, LruMap};
-use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::warn;
 
@@ -27,53 +20,6 @@ use super::{EthApiError, EthResult, EthStateCache, RpcInvalidTransactionError};
 /// The default gas limit for `eth_call` and adjacent calls. See
 /// [`RPC_DEFAULT_GAS_CAP`](constants::gas_oracle::RPC_DEFAULT_GAS_CAP).
 pub const RPC_DEFAULT_GAS_CAP: GasCap = GasCap(constants::gas_oracle::RPC_DEFAULT_GAS_CAP);
-
-/// Settings for the [`GasPriceOracle`]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GasPriceOracleConfig {
-    /// The number of populated blocks to produce the gas price estimate
-    pub blocks: u32,
-
-    /// The percentile of gas prices to use for the estimate
-    pub percentile: u32,
-
-    /// The maximum number of headers to keep in the cache
-    pub max_header_history: u64,
-
-    /// The maximum number of blocks for estimating gas price
-    pub max_block_history: u64,
-
-    /// The maximum number for reward percentiles.
-    ///
-    /// This effectively limits how many transactions and receipts are fetched to compute the
-    /// reward percentile.
-    pub max_reward_percentile_count: u64,
-
-    /// The default gas price to use if there are no blocks to use
-    pub default_suggested_fee: Option<U256>,
-
-    /// The maximum gas price to use for the estimate
-    pub max_price: Option<U256>,
-
-    /// The minimum gas price, under which the sample will be ignored
-    pub ignore_price: Option<U256>,
-}
-
-impl Default for GasPriceOracleConfig {
-    fn default() -> Self {
-        Self {
-            blocks: DEFAULT_GAS_PRICE_BLOCKS,
-            percentile: DEFAULT_GAS_PRICE_PERCENTILE,
-            max_header_history: MAX_HEADER_HISTORY,
-            max_block_history: MAX_HEADER_HISTORY,
-            max_reward_percentile_count: MAX_REWARD_PERCENTILE_COUNT,
-            default_suggested_fee: None,
-            max_price: Some(DEFAULT_MAX_GAS_PRICE),
-            ignore_price: Some(DEFAULT_IGNORE_GAS_PRICE),
-        }
-    }
-}
 
 /// Calculates a gas price depending on recent blocks.
 #[derive(Debug)]
