@@ -46,14 +46,14 @@ use crate::{
 };
 
 /// A test network consisting of multiple peers.
-pub struct Testnet<C, Pool> {
+pub struct Testnet<C> {
     /// All running peers in the network.
-    peers: Vec<Peer<C, Pool>>,
+    peers: Vec<Peer<C>>,
 }
 
 // === impl Testnet ===
 
-impl<C> Testnet<C, TestPool>
+impl<C> Testnet<C>
 where
     C: BlockReader + HeaderProvider + Clone + 'static + ChainSpecProvider,
 {
@@ -87,18 +87,17 @@ where
     }
 }
 
-impl<C, Pool> Testnet<C, Pool>
+impl<C> Testnet<C>
 where
     C: BlockReader + HeaderProvider + Clone + 'static,
-    Pool: TransactionPool,
 {
     /// Return a mutable slice of all peers.
-    pub fn peers_mut(&mut self) -> &mut [Peer<C, Pool>] {
+    pub fn peers_mut(&mut self) -> &mut [Peer<C>] {
         &mut self.peers
     }
 
     /// Return a slice of all peers.
-    pub fn peers(&self) -> &[Peer<C, Pool>] {
+    pub fn peers(&self) -> &[Peer<C>] {
         &self.peers
     }
 
@@ -106,17 +105,17 @@ where
     ///
     /// # Panics
     /// If the index is out of bounds.
-    pub fn remove_peer(&mut self, index: usize) -> Peer<C, Pool> {
+    pub fn remove_peer(&mut self, index: usize) -> Peer<C> {
         self.peers.remove(index)
     }
 
     /// Return a mutable iterator over all peers.
-    pub fn peers_iter_mut(&mut self) -> impl Iterator<Item = &mut Peer<C, Pool>> + '_ {
+    pub fn peers_iter_mut(&mut self) -> impl Iterator<Item = &mut Peer<C>> + '_ {
         self.peers.iter_mut()
     }
 
     /// Return an iterator over all peers.
-    pub fn peers_iter(&self) -> impl Iterator<Item = &Peer<C, Pool>> + '_ {
+    pub fn peers_iter(&self) -> impl Iterator<Item = &Peer<C>> + '_ {
         self.peers.iter()
     }
 
@@ -146,10 +145,9 @@ where
     }
 
     /// Maps the pool of each peer with the given closure
-    pub fn map_pool<F, P>(self, f: F) -> Testnet<C, P>
+    pub fn map_pool<F>(self, f: F) -> Testnet<C>
     where
-        F: Fn(Peer<C, Pool>) -> Peer<C, P>,
-        P: TransactionPool,
+        F: Fn(Peer<C>) -> Peer<C>,
     {
         Testnet { peers: self.peers.into_iter().map(f).collect() }
     }
@@ -157,7 +155,7 @@ where
     /// Apply a closure on each peer
     pub fn for_each<F>(&self, f: F)
     where
-        F: Fn(&Peer<C, Pool>),
+        F: Fn(&Peer<C>),
     {
         self.peers.iter().for_each(f)
     }
@@ -165,23 +163,15 @@ where
     /// Apply a closure on each peer
     pub fn for_each_mut<F>(&mut self, f: F)
     where
-        F: FnMut(&mut Peer<C, Pool>),
+        F: FnMut(&mut Peer<C>),
     {
         self.peers.iter_mut().for_each(f)
     }
 }
 
-impl<Pool> Testnet<base_execution_state_provider::BlockchainProvider, Pool>
-where
-    Pool: TransactionPool,
-{
+impl Testnet<base_execution_state_provider::BlockchainProvider> {
     /// Installs an eth pool on each peer
-    pub fn with_eth_pool(
-        self,
-    ) -> Testnet<
-        base_execution_state_provider::BlockchainProvider,
-        EthTransactionPool<InMemoryBlobStore>,
-    > {
+    pub fn with_eth_pool(self) -> Testnet<base_execution_state_provider::BlockchainProvider> {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
@@ -189,11 +179,14 @@ where
                 BaseEvmConfig::default(),
                 Runtime::test(),
             );
-            peer.map_transactions_manager(base_execution_txpool::Pool::new(
-                pool,
+            peer.map_transactions_manager(base_execution_txpool::BaseTransactionPool::new(
+                base_execution_txpool::Pool::new(
+                    pool,
+                    base_execution_txpool::BaseOrdering::default(),
+                    blob_store,
+                    Default::default(),
+                ),
                 base_execution_txpool::BaseOrdering::default(),
-                blob_store,
-                Default::default(),
             ))
         })
     }
@@ -202,10 +195,7 @@ where
     pub fn with_eth_pool_config(
         self,
         tx_manager_config: TransactionsManagerConfig,
-    ) -> Testnet<
-        base_execution_state_provider::BlockchainProvider,
-        EthTransactionPool<InMemoryBlobStore>,
-    > {
+    ) -> Testnet<base_execution_state_provider::BlockchainProvider> {
         self.with_eth_pool_config_and_policy(tx_manager_config, Default::default())
     }
 
@@ -214,10 +204,7 @@ where
         self,
         tx_manager_config: TransactionsManagerConfig,
         policy: TransactionPropagationKind,
-    ) -> Testnet<
-        base_execution_state_provider::BlockchainProvider,
-        EthTransactionPool<InMemoryBlobStore>,
-    > {
+    ) -> Testnet<base_execution_state_provider::BlockchainProvider> {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
@@ -227,11 +214,14 @@ where
             );
 
             peer.map_transactions_manager_with(
-                base_execution_txpool::Pool::new(
-                    pool,
+                base_execution_txpool::BaseTransactionPool::new(
+                    base_execution_txpool::Pool::new(
+                        pool,
+                        base_execution_txpool::BaseOrdering::default(),
+                        blob_store,
+                        Default::default(),
+                    ),
                     base_execution_txpool::BaseOrdering::default(),
-                    blob_store,
-                    Default::default(),
                 ),
                 tx_manager_config.clone(),
                 policy,
@@ -240,7 +230,7 @@ where
     }
 }
 
-impl<C, Pool> Testnet<C, Pool>
+impl<C> Testnet<C>
 where
     C: BlockReader
         + HeaderProvider
@@ -250,10 +240,9 @@ where
         + Clone
         + Unpin
         + 'static,
-    Pool: TransactionPool + Unpin + 'static,
 {
     /// Spawns the testnet to a separate task
-    pub fn spawn(self) -> TestnetHandle<C, Pool> {
+    pub fn spawn(self) -> TestnetHandle<C> {
         let (tx, rx) = oneshot::channel::<oneshot::Sender<Self>>();
         let peers = self.peers.iter().map(|peer| peer.peer_handle()).collect::<Vec<_>>();
         let mut net = self;
@@ -274,7 +263,7 @@ where
     }
 }
 
-impl Testnet<NoopProvider, TestPool> {
+impl Testnet<NoopProvider> {
     /// Same as [`Self::try_create`] but panics on error
     pub async fn create(num_peers: usize) -> Self {
         Self::try_create(num_peers).await.unwrap()
@@ -294,19 +283,19 @@ impl Testnet<NoopProvider, TestPool> {
     }
 }
 
-impl<C, Pool> Default for Testnet<C, Pool> {
+impl<C> Default for Testnet<C> {
     fn default() -> Self {
         Self { peers: Vec::new() }
     }
 }
 
-impl<C, Pool> fmt::Debug for Testnet<C, Pool> {
+impl<C> fmt::Debug for Testnet<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Testnet {{}}").finish_non_exhaustive()
     }
 }
 
-impl<C, Pool> Future for Testnet<C, Pool>
+impl<C> Future for Testnet<C>
 where
     C: BlockReader
         + HeaderProvider
@@ -315,7 +304,6 @@ where
         + StateRangeProviderFactory
         + Unpin
         + 'static,
-    Pool: TransactionPool + Unpin + 'static,
 {
     type Output = ();
 
@@ -330,24 +318,24 @@ where
 
 /// A handle to a [`Testnet`] that can be shared.
 #[derive(Debug)]
-pub struct TestnetHandle<C, Pool> {
+pub struct TestnetHandle<C> {
     _handle: JoinHandle<()>,
-    peers: Vec<PeerHandle<Pool>>,
-    terminate: oneshot::Sender<oneshot::Sender<Testnet<C, Pool>>>,
+    peers: Vec<PeerHandle>,
+    terminate: oneshot::Sender<oneshot::Sender<Testnet<C>>>,
 }
 
 // === impl TestnetHandle ===
 
-impl<C, Pool> TestnetHandle<C, Pool> {
+impl<C> TestnetHandle<C> {
     /// Terminates the task and returns the [`Testnet`] back.
-    pub async fn terminate(self) -> Testnet<C, Pool> {
+    pub async fn terminate(self) -> Testnet<C> {
         let (tx, rx) = oneshot::channel();
         self.terminate.send(tx).unwrap();
         rx.await.unwrap()
     }
 
     /// Returns the [`PeerHandle`]s of this [`Testnet`].
-    pub fn peers(&self) -> &[PeerHandle<Pool>] {
+    pub fn peers(&self) -> &[PeerHandle] {
         &self.peers
     }
 
@@ -386,24 +374,23 @@ impl<C, Pool> TestnetHandle<C, Pool> {
 /// A peer in the [`Testnet`].
 #[pin_project]
 #[derive(Debug)]
-pub struct Peer<C, Pool = TestPool> {
+pub struct Peer<C> {
     #[pin]
     network: NetworkManager,
     #[pin]
     request_handler: Option<EthRequestHandler>,
     #[pin]
-    transactions_manager: Option<TransactionsManager<Pool>>,
-    pool: Option<Pool>,
+    transactions_manager: Option<TransactionsManager<InMemoryBlobStore>>,
+    pool: Option<TestPool>,
     client: C,
     secret_key: SecretKey,
 }
 
 // === impl Peer ===
 
-impl<C, Pool> Peer<C, Pool>
+impl<C> Peer<C>
 where
     C: BlockReader + HeaderProvider + Clone + 'static,
-    Pool: TransactionPool,
 {
     /// Returns the number of connected peers.
     pub fn num_peers(&self) -> usize {
@@ -411,7 +398,7 @@ where
     }
 
     /// Returns a handle to the peer's network.
-    pub fn peer_handle(&self) -> PeerHandle<Pool> {
+    pub fn peer_handle(&self) -> PeerHandle {
         PeerHandle {
             network: self.network.handle().clone(),
             pool: self.pool.clone(),
@@ -440,7 +427,7 @@ where
     }
 
     /// Returns the [`TestPool`] of this peer.
-    pub const fn pool(&self) -> Option<&Pool> {
+    pub const fn pool(&self) -> Option<&TestPool> {
         self.pool.as_ref()
     }
 
@@ -457,7 +444,7 @@ where
     }
 
     /// Set a new transactions manager that's connected to the peer's network
-    pub fn install_transactions_manager(&mut self, pool: Pool) {
+    pub fn install_transactions_manager(&mut self, pool: TestPool) {
         let (tx, rx) = memory_bounded_channel(
             DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
             "test_tx_channel",
@@ -475,10 +462,8 @@ where
     }
 
     /// Set a new transactions manager that's connected to the peer's network
-    pub fn map_transactions_manager<P>(self, pool: P) -> Peer<C, P>
-    where
-        P: TransactionPool,
-    {
+    pub fn map_transactions_manager(self, pool: TestPool) -> Peer<C>
+where {
         let Self { mut network, request_handler, client, secret_key, .. } = self;
         let (tx, rx) = memory_bounded_channel(
             DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
@@ -503,27 +488,23 @@ where
     }
 
     /// Map transactions manager with custom config
-    pub fn map_transactions_manager_with_config<P>(
+    pub fn map_transactions_manager_with_config(
         self,
-        pool: P,
+        pool: TestPool,
         config: TransactionsManagerConfig,
-    ) -> Peer<C, P>
-    where
-        P: TransactionPool,
-    {
+    ) -> Peer<C>
+where {
         self.map_transactions_manager_with(pool, config, Default::default())
     }
 
     /// Map transactions manager with custom config and the given policy.
-    pub fn map_transactions_manager_with<P>(
+    pub fn map_transactions_manager_with(
         self,
-        pool: P,
+        pool: TestPool,
         config: TransactionsManagerConfig,
         policy: TransactionPropagationKind,
-    ) -> Peer<C, P>
-    where
-        P: TransactionPool,
-    {
+    ) -> Peer<C>
+where {
         let Self { mut network, request_handler, client, secret_key, .. } = self;
         let (tx, rx) = memory_bounded_channel(
             DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
@@ -564,7 +545,7 @@ where
     }
 }
 
-impl<C, Pool> Future for Peer<C, Pool>
+impl<C> Future for Peer<C>
 where
     C: BlockReader
         + HeaderProvider
@@ -573,7 +554,6 @@ where
         + StateRangeProviderFactory
         + Unpin
         + 'static,
-    Pool: TransactionPool + Unpin + 'static,
 {
     type Output = ();
 
@@ -602,15 +582,15 @@ pub struct PeerConfig<C = NoopProvider> {
 
 /// A handle to a peer in the [`Testnet`].
 #[derive(Debug)]
-pub struct PeerHandle<Pool> {
+pub struct PeerHandle {
     network: NetworkHandle,
     transactions: Option<TransactionsHandle>,
-    pool: Option<Pool>,
+    pool: Option<TestPool>,
 }
 
 // === impl PeerHandle ===
 
-impl<Pool> PeerHandle<Pool> {
+impl PeerHandle {
     /// Returns the [`PeerId`] used in the network.
     pub fn peer_id(&self) -> &PeerId {
         self.network.peer_id()
@@ -637,7 +617,7 @@ impl<Pool> PeerHandle<Pool> {
     }
 
     /// Returns the [`TestPool`] of this peer.
-    pub const fn pool(&self) -> Option<&Pool> {
+    pub const fn pool(&self) -> Option<&TestPool> {
         self.pool.as_ref()
     }
 

@@ -21,7 +21,7 @@ async fn unsupported_satellite_does_not_disable_native_snap_requests() {
     let protocols = vec![EthVersion::Eth71.into(), Protocol::snap_2(), les_protocol.clone()];
 
     let provider = Arc::new(MockEthProvider::default());
-    let mut net: Testnet<_, TestPool> = Testnet::default();
+    let mut net: Testnet<_> = Testnet::default();
     for _ in 0..2 {
         let peer = PeerConfig::with_protocols(provider.clone(), protocols.clone());
         net.add_peer_with_config(peer).await.unwrap();

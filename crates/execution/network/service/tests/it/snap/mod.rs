@@ -40,7 +40,7 @@ use base_testing_support::{generators, generators::BlockParams};
 
 mod protocol;
 
-type SnapTestnetHandle<C> = TestnetHandle<C, TestPool>;
+type SnapTestnetHandle<C> = TestnetHandle<C>;
 
 /// Protocols a snap/2-capable peer advertises: `eth/71` plus `snap/2`.
 ///
@@ -89,7 +89,7 @@ async fn spawn_snap_testnet_with_protocols<C: SnapTestProvider>(
     provider: C,
     protocols: Vec<Protocol>,
 ) -> SnapTestnetHandle<C> {
-    let mut net: Testnet<C, TestPool> = Testnet::default();
+    let mut net: Testnet<C> = Testnet::default();
     for _ in 0..2 {
         let peer = PeerConfig::with_protocols(provider.clone(), protocols.clone());
         net.add_peer_with_config(peer).await.unwrap();

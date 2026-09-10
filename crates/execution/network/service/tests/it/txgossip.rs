@@ -256,7 +256,7 @@ async fn rejects_blob_transaction_gossip() {
         while let Some(event) = events.next().await {
             if let NetworkEvent::Peer(PeerEvent::SessionClosed { peer_id, .. }) = event {
                 assert_eq!(peer_id, *peer0.peer_id());
-                assert!(peer1.pool().unwrap().is_empty());
+                assert_eq!(peer1.pool().unwrap().pool_size().total, 0);
                 return;
             }
         }

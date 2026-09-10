@@ -96,11 +96,11 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
     }
 
     /// Creates a new [`TransactionsManager`] and wires it to the network.
-    pub fn transactions<Pool: TransactionPool>(
+    pub fn transactions<S: base_execution_txpool::BlobStore + Clone>(
         self,
-        pool: Pool,
+        pool: base_execution_txpool::BaseTransactionPool<S>,
         transactions_manager_config: TransactionsManagerConfig,
-    ) -> NetworkBuilder<TransactionsManager<Pool>, Eth> {
+    ) -> NetworkBuilder<TransactionsManager<S>, Eth> {
         self.transactions_with_policy(
             pool,
             transactions_manager_config,
@@ -111,12 +111,15 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
     /// Creates a new [`TransactionsManager`] and wires it to the network.
     ///
     /// Uses the default [`StrictEthAnnouncementFilter`] for announcement filtering.
-    pub fn transactions_with_policy<Pool: TransactionPool, P: TransactionPropagationPolicy>(
+    pub fn transactions_with_policy<
+        S: base_execution_txpool::BlobStore + Clone,
+        P: TransactionPropagationPolicy,
+    >(
         self,
-        pool: Pool,
+        pool: base_execution_txpool::BaseTransactionPool<S>,
         transactions_manager_config: TransactionsManagerConfig,
         propagation_policy: P,
-    ) -> NetworkBuilder<TransactionsManager<Pool>, Eth> {
+    ) -> NetworkBuilder<TransactionsManager<S>, Eth> {
         self.transactions_with_policies(
             pool,
             transactions_manager_config,
@@ -130,16 +133,16 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
     /// This allows chains with custom transaction types (like CATX) to configure
     /// the announcement filter to accept their transaction types.
     pub fn transactions_with_policies<
-        Pool: TransactionPool,
+        S: base_execution_txpool::BlobStore + Clone,
         P: TransactionPropagationPolicy,
         A: AnnouncementFilteringPolicy,
     >(
         self,
-        pool: Pool,
+        pool: base_execution_txpool::BaseTransactionPool<S>,
         transactions_manager_config: TransactionsManagerConfig,
         propagation_policy: P,
         announcement_policy: A,
-    ) -> NetworkBuilder<TransactionsManager<Pool>, Eth> {
+    ) -> NetworkBuilder<TransactionsManager<S>, Eth> {
         let Self { mut network, request_handler, .. } = self;
         let (tx, rx) = memory_bounded_channel(
             transactions_manager_config.tx_channel_memory_limit_bytes,

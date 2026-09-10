@@ -27,7 +27,8 @@ use crate::{
 };
 
 /// A new tx manager for testing.
-pub async fn new_tx_manager() -> (TransactionsManager<TestPool>, NetworkManager) {
+pub async fn new_tx_manager()
+-> (TransactionsManager<base_execution_txpool::InMemoryBlobStore>, NetworkManager) {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let client = NoopProvider::default();
 

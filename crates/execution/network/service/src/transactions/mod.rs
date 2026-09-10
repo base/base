@@ -269,9 +269,11 @@ impl TransactionsHandle {
 /// Rate limiting via reputation, bad transaction isolation, peer scoring.
 #[derive(Debug)]
 #[must_use = "Manager does nothing unless polled."]
-pub struct TransactionsManager<Pool> {
+pub struct TransactionsManager<
+    S: base_execution_txpool::BlobStore + Clone = base_execution_txpool::DiskFileBlobStore,
+> {
     /// Access to the transaction pool.
-    pool: Pool,
+    pool: base_execution_txpool::BaseTransactionPool<S>,
     /// Cache of recovered transaction senders shared with payload execution, if enabled.
     sender_recovery_cache: Option<SenderRecoveryCache>,
     /// Network access.
@@ -335,13 +337,13 @@ pub struct TransactionsManager<Pool> {
     announced_tx_types_metrics: AnnouncedTxTypesMetrics,
 }
 
-impl<Pool: TransactionPool> TransactionsManager<Pool> {
+impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
     /// Sets up a new instance.
     ///
     /// Note: This expects an existing [`NetworkManager`](crate::NetworkManager) instance.
     pub fn new(
         network: NetworkHandle,
-        pool: Pool,
+        pool: base_execution_txpool::BaseTransactionPool<S>,
         from_network: MemoryBoundedReceiver<NetworkTransactionEvent>,
         transactions_manager_config: TransactionsManagerConfig,
     ) -> Self {
@@ -358,13 +360,13 @@ impl<Pool: TransactionPool> TransactionsManager<Pool> {
     }
 }
 
-impl<Pool: TransactionPool> TransactionsManager<Pool> {
+impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
     /// Sets up a new instance with given the settings.
     ///
     /// Note: This expects an existing [`NetworkManager`](crate::NetworkManager) instance.
     pub fn with_policy(
         network: NetworkHandle,
-        pool: Pool,
+        pool: base_execution_txpool::BaseTransactionPool<S>,
         from_network: MemoryBoundedReceiver<NetworkTransactionEvent>,
         transactions_manager_config: TransactionsManagerConfig,
         policies: NetworkPolicies,
@@ -580,7 +582,7 @@ impl<Pool: TransactionPool> TransactionsManager<Pool> {
     }
 }
 
-impl<Pool: TransactionPool> TransactionsManager<Pool> {
+impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
     /// Processes a batch import results.
     fn on_batch_import_result(&mut self, batch_results: Vec<PoolResult<AddedTransactionOutcome>>) {
         for res in batch_results {
@@ -849,9 +851,9 @@ impl<Pool: TransactionPool> TransactionsManager<Pool> {
     }
 }
 
-impl<Pool> TransactionsManager<Pool>
+impl<S> TransactionsManager<S>
 where
-    Pool: TransactionPool + Unpin + 'static,
+    S: base_execution_txpool::BlobStore + Clone + Unpin + 'static,
 {
     /// Invoked when transactions in the local mempool are considered __pending__.
     ///
@@ -1552,7 +1554,9 @@ where
 //
 // spawned in `NodeConfig::start_network`(base_node_config::NodeConfig) and
 // `NetworkConfig::start_network`(base_execution_network_service::NetworkConfig)
-impl<Pool: TransactionPool + Unpin + 'static> Future for TransactionsManager<Pool> {
+impl<S: base_execution_txpool::BlobStore + Clone + Unpin + 'static> Future
+    for TransactionsManager<S>
+{
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -2358,9 +2362,9 @@ mod tests {
         transactions::config::RelaxedEthAnnouncementFilter,
     };
 
-    type BaseTestPool = Pool<InMemoryBlobStore>;
+    type BaseTestPool = base_execution_txpool::BaseTransactionPool<InMemoryBlobStore>;
 
-    async fn new_base_tx_manager() -> (TransactionsManager<BaseTestPool>, NetworkManager) {
+    async fn new_base_tx_manager() -> (TransactionsManager<InMemoryBlobStore>, NetworkManager) {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
         let client = NoopProvider::default();
 
@@ -2369,11 +2373,14 @@ mod tests {
             .disable_discovery()
             .build(client);
 
-        let pool = Pool::new_test(
-            OkValidator::default(),
-            BaseOrdering::default(),
-            InMemoryBlobStore::default(),
-            Default::default(),
+        let pool = base_execution_txpool::BaseTransactionPool::new(
+            Pool::new_test(
+                OkValidator::default(),
+                BaseOrdering::default(),
+                InMemoryBlobStore::default(),
+                Default::default(),
+            ),
+            base_execution_txpool::BaseOrdering::default(),
         );
 
         let transactions_manager_config = config.transactions_manager_config.clone();
@@ -2483,7 +2490,7 @@ mod tests {
             Poll::Ready(())
         })
         .await;
-        assert!(pool.is_empty());
+        assert_eq!(pool.pool_size().total, 0);
         handle.terminate().await;
     }
 
@@ -2559,7 +2566,7 @@ mod tests {
         .await;
         assert!(!NetworkInfo::is_initially_syncing(&network_handle));
         assert!(NetworkInfo::is_syncing(&network_handle));
-        assert!(!pool.is_empty());
+        assert_ne!(pool.pool_size().total, 0);
         handle.terminate().await;
     }
 
@@ -2620,7 +2627,7 @@ mod tests {
         let (peer_1, mut to_mock_session_rx) = new_mock_session(peer_id_1, eth_version);
         tx_manager.peers.insert(peer_id_1, peer_1);
 
-        assert!(pool.is_empty());
+        assert_eq!(pool.pool_size().total, 0);
 
         tx_manager.on_network_tx_event(NetworkTransactionEvent::IncomingPooledTransactionHashes {
             peer_id: peer_id_1,
@@ -2738,7 +2745,7 @@ mod tests {
         })
         .await;
 
-        assert!(!pool.is_empty());
+        assert_ne!(pool.pool_size().total, 0);
         assert!(pool.get(&signed_tx.tx_hash()).is_some());
         handle.terminate().await;
     }
@@ -3389,7 +3396,7 @@ mod tests {
         let network_handle = network_manager.handle().clone();
         let network_service_handle = tokio::spawn(network_manager);
 
-        let mut tx_manager = TransactionsManager::<TestPool>::with_policy(
+        let mut tx_manager = TransactionsManager::<InMemoryBlobStore>::with_policy(
             network_handle.clone(),
             pool.clone(),
             from_network_rx,

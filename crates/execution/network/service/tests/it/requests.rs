@@ -23,7 +23,7 @@ use base_execution_txpool::test_utils::TransactionGenerator;
 use rand::Rng;
 use tokio::sync::oneshot;
 
-type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>, TestPool>;
+type BalTestnetHandle = TestnetHandle<Arc<MockEthProvider>>;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_body() {
@@ -330,7 +330,7 @@ async fn test_eth68_get_receipts() {
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
-    let mut net: Testnet<Arc<MockEthProvider>, TestPool> = Testnet::default();
+    let mut net: Testnet<Arc<MockEthProvider>> = Testnet::default();
 
     // Create peers with ETH68 protocol explicitly
     let p0 = PeerConfig::with_protocols(mock_provider.clone(), Some(EthVersion::Eth68.into()));
@@ -411,7 +411,7 @@ async fn test_eth69_get_headers() {
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
-    let mut net: Testnet<Arc<MockEthProvider>, TestPool> = Testnet::default();
+    let mut net: Testnet<Arc<MockEthProvider>> = Testnet::default();
 
     // Create peers with ETH69 protocol
     let p0 = PeerConfig::with_protocols(mock_provider.clone(), Some(EthVersion::Eth69.into()));
@@ -470,7 +470,7 @@ async fn test_eth69_get_bodies() {
     let mock_provider = Arc::new(MockEthProvider::default());
     let mut tx_gen = TransactionGenerator::new(rand::rng());
 
-    let mut net: Testnet<Arc<MockEthProvider>, TestPool> = Testnet::default();
+    let mut net: Testnet<Arc<MockEthProvider>> = Testnet::default();
 
     // Create peers with ETH69 protocol
     let p0 = PeerConfig::with_protocols(mock_provider.clone(), Some(EthVersion::Eth69.into()));
@@ -528,7 +528,7 @@ async fn test_eth69_get_receipts() {
     let mut rng = rand::rng();
     let mock_provider = Arc::new(MockEthProvider::default());
 
-    let mut net: Testnet<Arc<MockEthProvider>, TestPool> = Testnet::default();
+    let mut net: Testnet<Arc<MockEthProvider>> = Testnet::default();
 
     // Create peers with ETH69 protocol
     let p0 = PeerConfig::with_protocols(mock_provider.clone(), Some(EthVersion::Eth69.into()));
@@ -764,7 +764,7 @@ async fn spawn_bal_testnet_with_store(
     mock_provider.bal_store = bal_store.clone();
     let mock_provider = Arc::new(mock_provider);
 
-    let mut net: Testnet<Arc<MockEthProvider>, TestPool> = Testnet::default();
+    let mut net: Testnet<Arc<MockEthProvider>> = Testnet::default();
 
     for version in versions {
         let peer = PeerConfig::with_protocols(mock_provider.clone(), Some(version.into()));

@@ -13,7 +13,7 @@ use base_execution_state_provider::test_utils::MockEthProvider;
 #[tokio::test(flavor = "multi_thread")]
 async fn unsupported_protocols_are_not_announced_and_eth_requests_work_both_directions() {
     let provider = Arc::new(MockEthProvider::default());
-    let mut net: Testnet<_, TestPool> = Testnet::default();
+    let mut net: Testnet<_> = Testnet::default();
     let extra = Capability::new_static("extra", 1);
     for _ in 0..2 {
         net.add_peer_with_config(PeerConfig::with_protocols(
