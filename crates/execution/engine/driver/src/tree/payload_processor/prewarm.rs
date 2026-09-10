@@ -536,7 +536,7 @@ pub struct PrewarmContext {
     /// Whether the precompile cache is disabled.
     pub precompile_cache_disabled: bool,
     /// The precompile cache map.
-    pub precompile_cache_map: PrecompileCacheMap<base_execution_evm_runtime::BaseSpecId>,
+    pub precompile_cache_map: PrecompileCacheMap,
     /// Whether to disable BAL-driven parallel state root computation.
     /// Only valid when BAL parallel execution is also disabled.
     pub disable_bal_parallel_state_root: bool,

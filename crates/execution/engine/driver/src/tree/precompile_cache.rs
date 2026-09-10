@@ -1,6 +1,6 @@
 //! Contains a precompile cache backed by `schnellru::LruMap` (LRU by length).
 
-use std::{hash::Hash, sync::Arc};
+use std::sync::Arc;
 
 use alloy_primitives::{
     Address, Bytes,
@@ -9,8 +9,8 @@ use alloy_primitives::{
 use base_common_types_chain::DashMap;
 use base_execution_evm_blocks::{DynPrecompile, Precompile, PrecompileInput};
 use base_execution_evm_runtime::{
-    CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileResult as PrecompileResult,
-    PrecompileId,
+    BaseSpecId, CryptoPrecompileOutput as PrecompileOutput,
+    CryptoPrecompileResult as PrecompileResult, PrecompileId,
 };
 use moka::policy::EvictionPolicy;
 use tracing::error;
@@ -23,16 +23,11 @@ const MAX_PRECOMPILE_CACHE_INPUT_SIZE: usize = 2 * 1024;
 
 /// Stores caches for each precompile.
 #[derive(Debug, Clone, Default)]
-pub struct PrecompileCacheMap<S>(Arc<DashMap<Address, PrecompileCache<S>, FbBuildHasher<20>>>)
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static;
+pub struct PrecompileCacheMap(Arc<DashMap<Address, PrecompileCache, FbBuildHasher<20>>>);
 
-impl<S> PrecompileCacheMap<S>
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static,
-{
+impl PrecompileCacheMap {
     /// Get the precompile cache for the given address.
-    pub fn cache_for_address(&self, address: Address) -> PrecompileCache<S> {
+    pub fn cache_for_address(&self, address: Address) -> PrecompileCache {
         // Try just using `.get` first to avoid acquiring a write lock.
         if let Some(cache) = self.0.get(&address) {
             return cache.clone();
@@ -47,19 +42,14 @@ where
 
 /// Cache for precompiles, for each input stores the result.
 #[derive(Debug, Clone)]
-pub struct PrecompileCache<S>(moka::sync::Cache<Bytes, CacheEntry<S>, DefaultHashBuilder>)
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static;
+pub struct PrecompileCache(moka::sync::Cache<Bytes, CacheEntry, DefaultHashBuilder>);
 
-impl<S> Default for PrecompileCache<S>
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static,
-{
+impl Default for PrecompileCache {
     fn default() -> Self {
         Self(
             moka::sync::CacheBuilder::new(MAX_CACHE_SIZE as u64)
                 .eviction_policy(EvictionPolicy::lru())
-                .weigher(|key: &Bytes, value: &CacheEntry<S>| {
+                .weigher(|key: &Bytes, value: &CacheEntry| {
                     (key.len() + value.output.bytes.len()) as u32
                 })
                 .build_with_hasher(Default::default()),
@@ -67,16 +57,13 @@ where
     }
 }
 
-impl<S> PrecompileCache<S>
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static,
-{
-    fn get(&self, input: &[u8], spec: S) -> Option<CacheEntry<S>> {
+impl PrecompileCache {
+    fn get(&self, input: &[u8], spec: BaseSpecId) -> Option<CacheEntry> {
         self.0.get(input).filter(|e| e.spec == spec)
     }
 
     /// Inserts the given key and value into the cache, returning the new cache size.
-    fn insert(&self, input: Bytes, value: CacheEntry<S>) -> usize {
+    fn insert(&self, input: Bytes, value: CacheEntry) -> usize {
         self.0.insert(input, value);
         self.0.entry_count() as usize
     }
@@ -86,12 +73,12 @@ where
 ///
 /// We intentionally do not cache non-successful statuses or errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CacheEntry<S> {
+pub struct CacheEntry {
     output: PrecompileOutput,
-    spec: S,
+    spec: BaseSpecId,
 }
 
-impl<S> CacheEntry<S> {
+impl CacheEntry {
     const fn gas_used(&self) -> u64 {
         self.output.gas_used
     }
@@ -109,29 +96,23 @@ impl<S> CacheEntry<S> {
 
 /// A cache for precompile inputs / outputs.
 #[derive(Debug)]
-pub struct CachedPrecompile<S>
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static,
-{
+pub struct CachedPrecompile {
     /// Cache for precompile results and gas bounds.
-    cache: PrecompileCache<S>,
+    cache: PrecompileCache,
     /// The precompile.
     precompile: DynPrecompile,
     /// Cache metrics.
     metrics: Option<CachedPrecompileMetrics>,
     /// Spec id associated to the EVM from which this cached precompile was created.
-    spec_id: S,
+    spec_id: BaseSpecId,
 }
 
-impl<S> CachedPrecompile<S>
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static,
-{
+impl CachedPrecompile {
     /// `CachedPrecompile` constructor.
     pub const fn new(
         precompile: DynPrecompile,
-        cache: PrecompileCache<S>,
-        spec_id: S,
+        cache: PrecompileCache,
+        spec_id: BaseSpecId,
         metrics: Option<CachedPrecompileMetrics>,
     ) -> Self {
         Self { precompile, cache, spec_id, metrics }
@@ -140,8 +121,8 @@ where
     /// Wrap the given precompile in a cached precompile.
     pub fn wrap(
         precompile: DynPrecompile,
-        cache: PrecompileCache<S>,
-        spec_id: S,
+        cache: PrecompileCache,
+        spec_id: BaseSpecId,
         metrics: Option<CachedPrecompileMetrics>,
     ) -> DynPrecompile {
         let precompile_id = precompile.precompile_id().clone();
@@ -177,10 +158,7 @@ where
     }
 }
 
-impl<S> Precompile for CachedPrecompile<S>
-where
-    S: Eq + Hash + std::fmt::Debug + Send + Sync + Clone + 'static,
-{
+impl Precompile for CachedPrecompile {
     fn precompile_id(&self) -> &PrecompileId {
         self.precompile.precompile_id()
     }
@@ -261,7 +239,7 @@ mod tests {
     use base_execution_evm_blocks::{EthEvmFactory, Evm, ReferenceEvmEnv, ReferenceEvmFactory};
     use base_execution_evm_runtime::{
         CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileStatus as PrecompileStatus,
-        EmptyDB, TxEnv, hardfork::SpecId,
+        EmptyDB, TxEnv,
     };
 
     use super::*;
@@ -281,8 +259,12 @@ mod tests {
         })
         .into();
 
-        let cache =
-            CachedPrecompile::new(dyn_precompile, PrecompileCache::default(), SpecId::PRAGUE, None);
+        let cache = CachedPrecompile::new(
+            dyn_precompile,
+            PrecompileCache::default(),
+            BaseSpecId::new(base_execution_evm_runtime::BaseUpgrade::Isthmus),
+            None,
+        );
 
         let output = PrecompileOutput {
             status: PrecompileStatus::Success,
@@ -295,10 +277,16 @@ mod tests {
         };
 
         let input = b"test_input";
-        let expected = CacheEntry { output, spec: SpecId::PRAGUE };
+        let expected = CacheEntry {
+            output,
+            spec: BaseSpecId::new(base_execution_evm_runtime::BaseUpgrade::Isthmus),
+        };
         cache.cache.insert(input.into(), expected.clone());
 
-        let actual = cache.cache.get(input, SpecId::PRAGUE).unwrap();
+        let actual = cache
+            .cache
+            .get(input, BaseSpecId::new(base_execution_evm_runtime::BaseUpgrade::Isthmus))
+            .unwrap();
 
         assert_eq!(actual, expected);
     }
@@ -354,13 +342,13 @@ mod tests {
         let wrapped_precompile1 = CachedPrecompile::wrap(
             precompile1,
             cache_map.cache_for_address(address1),
-            SpecId::PRAGUE,
+            BaseSpecId::new(base_execution_evm_runtime::BaseUpgrade::Isthmus),
             None,
         );
         let wrapped_precompile2 = CachedPrecompile::wrap(
             precompile2,
             cache_map.cache_for_address(address2),
-            SpecId::PRAGUE,
+            BaseSpecId::new(base_execution_evm_runtime::BaseUpgrade::Isthmus),
             None,
         );
 

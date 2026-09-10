@@ -88,7 +88,7 @@ pub struct PayloadProcessor {
     /// Whether precompile cache should be disabled.
     precompile_cache_disabled: bool,
     /// Precompile cache map.
-    precompile_cache_map: PrecompileCacheMap<base_execution_evm_runtime::BaseSpecId>,
+    precompile_cache_map: PrecompileCacheMap,
     /// Whether to disable BAL-driven parallel state root computation.
     /// Only valid when BAL parallel execution is also disabled.
     disable_bal_parallel_state_root: bool,
@@ -105,7 +105,7 @@ impl PayloadProcessor {
         executor: Runtime,
         evm_config: BaseEvmConfig,
         config: &TreeConfig,
-        precompile_cache_map: PrecompileCacheMap<base_execution_evm_runtime::BaseSpecId>,
+        precompile_cache_map: PrecompileCacheMap,
     ) -> Self {
         Self {
             executor,

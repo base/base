@@ -233,7 +233,7 @@ pub struct BasicEngineValidator {
     /// Payload processor for transaction conversion, prewarming, and execution caching.
     payload_processor: PayloadProcessor,
     /// Precompile cache map.
-    precompile_cache_map: PrecompileCacheMap<base_execution_evm_runtime::BaseSpecId>,
+    precompile_cache_map: PrecompileCacheMap,
     /// Precompile cache metrics.
     precompile_cache_metrics: AddressMap<CachedPrecompileMetrics>,
     /// Hook to call when invalid blocks are encountered.
