@@ -1,4 +1,4 @@
-# `base-shadow-metrics`
+# `base-infra-shadow-metrics-service`
 
 Read-only HTTP JSON API over persisted shadow blocks.
 
@@ -21,11 +21,11 @@ from a stored row for the summary endpoints.
 
 ```toml
 [dependencies]
-base-shadow-metrics.workspace = true
+base-infra-shadow-metrics-service.workspace = true
 ```
 
 ```rust,ignore
-use base_shadow_metrics::{ShadowMetricsStore, api_router};
+use base_infra_shadow_metrics_service::{ShadowMetricsStore, api_router};
 
 let store = ShadowMetricsStore::connect(&connection, 10).await?;
 store.check_schema_ready().await?;

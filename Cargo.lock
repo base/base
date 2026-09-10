@@ -4470,6 +4470,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-infra-shadow-metrics-service"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "anyhow",
+ "axum",
+ "base-common-types-chain",
+ "base-execution-state-indexer",
+ "chrono",
+ "reth-primitives-traits",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-infra-telemetry-service"
 version = "0.0.0"
 dependencies = [
@@ -5254,31 +5272,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-shadow-metrics"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "anyhow",
- "axum",
- "base-common-types-chain",
- "base-execution-state-indexer",
- "chrono",
- "reth-primitives-traits",
- "serde",
- "sqlx",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-shadow-metrics-bin"
 version = "0.0.0"
 dependencies = [
  "anyhow",
  "axum",
  "base-common-cli-support",
- "base-shadow-metrics",
+ "base-infra-shadow-metrics-service",
  "clap",
  "dotenvy",
  "serde",

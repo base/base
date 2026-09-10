@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 dotenvy = { workspace = true }
-base-shadow-metrics = { workspace = true }
+base-infra-shadow-metrics-service = { workspace = true }
 base-common-cli-support = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, features = ["default"] }

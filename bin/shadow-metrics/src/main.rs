@@ -11,7 +11,7 @@ use axum::{
     routing::get,
 };
 use base_common_cli_support::LogConfig;
-use base_shadow_metrics::{
+use base_infra_shadow_metrics_service::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowMetricsStore,
     api_router,
 };

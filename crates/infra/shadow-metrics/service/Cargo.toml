@@ -1,5 +1,5 @@
 [package]
-name = "base-shadow-metrics"
+name = "base-infra-shadow-metrics-service"
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
