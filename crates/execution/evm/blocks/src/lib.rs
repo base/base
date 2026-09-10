@@ -99,3 +99,8 @@ pub use ethereum_test_consensus::EthereumTestConsensus;
 
 mod gas_limits;
 pub use gas_limits::{MAXIMUM_GAS_LIMIT_BLOCK, MINIMUM_GAS_LIMIT};
+
+mod block_import_error;
+pub use block_import_error::{
+    InsertBlockErrorKind, InsertBlockFatalError, InsertBlockValidationError,
+};

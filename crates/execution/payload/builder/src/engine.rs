@@ -5,6 +5,8 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::{BlockHeader, Predeploys};
 use base_common_types_payload::ExecutionData;
+use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use base_execution_evm_blocks::InsertBlockErrorKind;
 use base_execution_evm_blocks::{
     BaseConsensusError, ConsensusError, verify_withdrawals_root_prehashed,
 };
@@ -14,8 +16,6 @@ use base_execution_payload_types::{
 };
 use base_execution_state_api::{ProviderResult, StateProvider, StateProviderBox};
 use base_execution_state_types::HashedPostState;
-use base_consensus_batch_types::{BaseTimeMetadataError, BaseTimeUpdateTx};
-use reth_engine_primitives::InsertBlockErrorKind;
 use reth_primitives_traits::{RecoveredBlock, SealedBlock, SealedHeader};
 
 use crate::BaseExecutionPayloadValidator;
@@ -274,8 +274,10 @@ mod tests {
     use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
     use base_execution_evm_blocks::BaseConsensusError;
     use base_execution_payload_types::BasePayloadBuilderAttributes;
+    use base_execution_state_provider::{
+        NoopProvider, test_utils::ExtendedAccount, test_utils::MockEthProvider,
+    };
     use reth_primitives_traits::WithEncoded;
-    use base_execution_state_provider::{NoopProvider, test_utils::ExtendedAccount, test_utils::MockEthProvider};
 
     use super::*;
 

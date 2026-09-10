@@ -12,9 +12,6 @@
 extern crate alloc;
 
 // Re-export [`ExecutionPayload`] moved to `base_execution_payload_types`
-#[cfg(feature = "std")]
-pub use base_execution_evm_blocks::ConvertTx;
-pub use base_execution_evm_blocks::{ExecutableTxIterator, ExecutableTxTuple};
 pub use base_execution_payload_types::ExecutionPayload;
 
 mod error;

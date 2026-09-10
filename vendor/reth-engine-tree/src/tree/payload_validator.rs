@@ -115,6 +115,7 @@ use base_common_types_chain::{
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
 };
+use base_execution_evm_blocks::ExecutableTxIterator;
 use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm_blocks::{
     BaseEvmConfig, BlockExecutor, EvmEnvFor, ExecutableTxFor, ExecutionCtxFor, OnStateHook, SpecFor,
@@ -141,7 +142,7 @@ use base_execution_state_trie::{
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
 use base_execution_state_types::ProviderResult;
-use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
+use reth_engine_primitives::{ExecutionPayload, InvalidBlockHook};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 use {
     base_execution_state_provider::CanonicalInMemoryState,

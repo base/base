@@ -18,8 +18,6 @@ workspace = true
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 reth-primitives-traits = { workspace = true }
-base-execution-evm-blocks = { workspace = true}
-base-execution-evm-runtime = {workspace = true}
 base-execution-state-types = {workspace = true}
 tokio = { workspace = true, features = ["sync"], optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
@@ -35,7 +33,6 @@ test-utils = ["std"]
 default = ["std"]
 trie-debug = []
 std = [
-    "base-execution-evm-runtime/std",
     "base-execution-state-types/std",
     "reth-primitives-traits/std",
     "alloy-primitives/std",
@@ -44,5 +41,4 @@ std = [
     "futures/std",
     "tokio",
     "thiserror/std",
-    "base-execution-evm-blocks/std",
 ]

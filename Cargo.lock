@@ -13996,8 +13996,6 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "base-common-types-payload",
- "base-execution-evm-blocks",
- "base-execution-evm-runtime",
  "base-execution-payload-types",
  "base-execution-state-types",
  "futures",
