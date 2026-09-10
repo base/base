@@ -15,6 +15,7 @@ use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
+use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
 use base_upgrade_signal::UpgradeSignalStartupMode;
 use clap::Args;
@@ -70,6 +71,10 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config()?;
+        // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
+        // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
+        // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
+        let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
         let payload_builder_cutover = builder.payload_builder_cutover;
         let basic_payload_builder = builder.basic_payload_builder;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
@@ -120,6 +125,7 @@ impl SequencerCommand {
                     builder_api_config.max_validity_predicates,
                 );
             }
+            runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
                 &rollup_args,
@@ -233,6 +239,48 @@ mod tests {
             Some("http://localhost:9090/")
         );
         assert!(sequencer.consensus.p2p_flags.signer.sequencer_key.is_some());
+    }
+
+    #[test]
+    fn parses_shadow_indexer_args_and_builds_config() {
+        use base_shadow_indexer::ShadowIndexerConfig;
+
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--enable-shadow-indexer",
+            "--shadow-indexer.db-host",
+            "shadow-db.internal",
+            "--shadow-indexer.db-password",
+            "hunter2",
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(sequencer.builder.shadow_indexer.enable_shadow_indexer);
+        let config = ShadowIndexerConfig::try_from(&sequencer.builder.shadow_indexer)
+            .expect("shadow indexer config should build from valid args");
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn shadow_indexer_defaults_to_disabled() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(!sequencer.builder.shadow_indexer.enable_shadow_indexer);
     }
 
     #[test]
