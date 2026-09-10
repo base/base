@@ -7,4 +7,4 @@ pub use static_file_producer::{
     StaticFileProducerWithResult,
 };
 
-pub use base_execution_state_types::*;
+use base_execution_state_types::StaticFileProducerEvent;

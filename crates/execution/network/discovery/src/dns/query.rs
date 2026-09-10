@@ -2,6 +2,7 @@
 
 use std::{
     collections::VecDeque,
+    fmt,
     future::Future,
     num::NonZeroUsize,
     pin::Pin,
@@ -41,6 +42,17 @@ pub struct DnsQueryPool<R: DnsLookup, K: EnrKeyUnambiguous> {
     rate_limit: RateLimit,
     /// Timeout for DNS lookups.
     lookup_timeout: Duration,
+}
+
+impl<R: DnsLookup, K: EnrKeyUnambiguous> fmt::Debug for DnsQueryPool<R, K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DnsQueryPool")
+            .field("queued_queries", &self.queued_queries.len())
+            .field("active_queries", &self.active_queries.len())
+            .field("queued_outcomes", &self.queued_outcomes.len())
+            .field("lookup_timeout", &self.lookup_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 // === impl DnsQueryPool ===
@@ -119,6 +131,7 @@ impl<R: DnsLookup, K: EnrKeyUnambiguous> DnsQueryPool<R, K> {
 
 // === Various future/type alias ===
 
+#[derive(Debug)]
 pub struct DnsResolveEntryResult<K: EnrKeyUnambiguous> {
     pub entry: Option<DnsLookupResult<DnsEntry<K>>>,
     pub link: DnsLinkEntry<K>,
@@ -157,6 +170,7 @@ impl<K: EnrKeyUnambiguous> Query<K> {
 }
 
 /// The output the queries return
+#[derive(Debug)]
 pub enum DnsQueryOutcome<K: EnrKeyUnambiguous> {
     Root(DnsResolveRootResult<K>),
     Entry(DnsResolveEntryResult<K>),

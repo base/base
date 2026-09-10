@@ -87,7 +87,7 @@ pub use bucket::{
 pub use entry::*;
 pub use filter::{Filter, IpBucketFilter, IpTableFilter};
 
-pub use crate::handler::ConnectionDirection;
+use crate::handler::ConnectionDirection;
 
 /// Maximum number of k-buckets.
 const NUM_BUCKETS: usize = 256;

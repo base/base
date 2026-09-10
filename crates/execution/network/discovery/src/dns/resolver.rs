@@ -126,6 +126,7 @@ impl DnsLookup for DnsMapResolver {
 
 /// A DnsLookup that always times out.
 #[cfg(test)]
+#[derive(Debug)]
 pub struct DnsTimeoutResolver(pub std::time::Duration);
 
 #[cfg(test)]

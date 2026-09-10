@@ -63,3 +63,9 @@ pub use gossip::{
     P2pRpcRequest, PEER_SCORE_INSPECT_FREQUENCY, PENDING_DIAL_PRUNE_INTERVAL, PublishError,
     SEEN_MESSAGES_TTL, default_config, default_config_builder,
 };
+
+#[cfg(test)]
+pub mod test_utils {
+    //! Shared valid gossip block fixtures.
+    pub use crate::gossip::{v2_valid_block, v3_valid_block, v4_valid_block};
+}

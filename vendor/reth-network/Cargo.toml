@@ -36,8 +36,6 @@ base-common-runtime-tasks = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
-base-execution-state-types = {workspace = true}
-base-execution-state-memory = {workspace = true}
 socket2 = { workspace = true, features = ["all"] }
 rand = { workspace = true, features = ["default"] }
 base-execution-network-discv5 = { workspace = true }
@@ -70,6 +68,7 @@ alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
+base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
 base-execution-state-types = { workspace = true }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }

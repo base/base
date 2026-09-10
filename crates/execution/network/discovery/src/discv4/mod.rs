@@ -2233,7 +2233,7 @@ impl LookupTargetRotator {
 /// If this type is dropped by all Clones, it will send all the discovered nodes to the listener, if
 /// one is present.
 #[derive(Clone, Debug)]
-struct LookupContext {
+pub struct LookupContext {
     inner: Rc<LookupContextInner>,
 }
 
@@ -2522,7 +2522,7 @@ impl NodeEntry {
 
 /// Represents why a ping is issued
 #[derive(Debug)]
-enum PingReason {
+pub enum PingReason {
     /// Initial ping to a previously unknown peer that was inserted into the table.
     InitialInsert,
     /// A ping to a peer to establish a bond (endpoint proof).

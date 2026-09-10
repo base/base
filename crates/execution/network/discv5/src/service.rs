@@ -33,12 +33,12 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    Config, Enr, Event, IpMode,
+    Config, ConnectionDirection, Enr, Event, IpMode,
     error::{RequestError, ResponseError},
     handler::{Handler, HandlerIn, HandlerOut},
     kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        MAX_NODES_PER_BUCKET, NodeStatus, UpdateResult,
+        self, ConnectionState, FailureReason, InsertResult, KBucketsTable, MAX_NODES_PER_BUCKET,
+        NodeStatus, UpdateResult,
     },
     node_info::{NodeAddress, NodeContact, NonContactable},
     packet::MAX_PACKET_SIZE,

@@ -29,10 +29,10 @@ pub use discv4::{
     EnrRequest as Discv4EnrRequest, EnrResponse as Discv4EnrResponse, FindNode as Discv4FindNode,
     IngressEvent as Discv4IngressEvent, IngressHandler as Discv4IngressHandler,
     IngressReceiver as Discv4IngressReceiver, IngressSender as Discv4IngressSender,
-    Message as Discv4Message, MessageId as Discv4MessageId, Neighbours as Discv4Neighbours,
-    NodeEndpoint as Discv4NodeEndpoint, NodeKey as Discv4NodeKey, Packet as Discv4Packet,
-    Ping as Discv4Ping, Pong as Discv4Pong, PongNodeKey as Discv4PongNodeKey,
-    PongTable as Discv4PongTable,
+    LookupContext as Discv4LookupContext, Message as Discv4Message, MessageId as Discv4MessageId,
+    Neighbours as Discv4Neighbours, NodeEndpoint as Discv4NodeEndpoint, NodeKey as Discv4NodeKey,
+    Packet as Discv4Packet, Ping as Discv4Ping, PingReason as Discv4PingReason, Pong as Discv4Pong,
+    PongNodeKey as Discv4PongNodeKey, PongTable as Discv4PongTable,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

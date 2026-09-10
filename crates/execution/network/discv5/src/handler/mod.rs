@@ -67,7 +67,7 @@ mod session;
 pub use session::{Keys, Session};
 mod tests;
 
-pub use crate::node_info::{NodeAddress, NodeContact};
+use crate::node_info::{NodeAddress, NodeContact};
 use crate::{lru_time_cache::LruTimeCache, metrics::METRICS, socket::ListenConfig};
 
 // The time interval to check banned peer timeouts and unban peers when the timeout has elapsed (in

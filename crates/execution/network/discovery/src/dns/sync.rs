@@ -7,6 +7,7 @@ use secp256k1::SecretKey;
 use crate::dns::tree::{DnsLinkEntry, DnsTreeRootEntry};
 
 /// A sync-able tree
+#[derive(Debug)]
 pub struct DnsSyncTree<K: EnrKeyUnambiguous = SecretKey> {
     /// Root of the tree
     root: DnsTreeRootEntry,
@@ -133,6 +134,7 @@ pub enum DnsSyncAction {
 }
 
 /// How the [`DnsSyncTree::update_root`] changed the root
+#[derive(Debug)]
 enum SyncState {
     RootUpdate,
     Pending,
@@ -142,6 +144,7 @@ enum SyncState {
 }
 
 /// What kind of hash to resolve
+#[derive(Debug)]
 pub enum DnsResolveKind {
     Enr,
     Link,

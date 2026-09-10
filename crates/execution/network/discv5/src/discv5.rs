@@ -27,11 +27,10 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, warn};
 
 use crate::{
-    Config, Enr, IpMode,
+    Config, ConnectionDirection, Enr, IpMode,
     error::{Error, QueryError, RequestError},
     kbucket::{
-        self, ConnectionDirection, ConnectionState, FailureReason, InsertResult, KBucketsTable,
-        NodeStatus, UpdateResult,
+        self, ConnectionState, FailureReason, InsertResult, KBucketsTable, NodeStatus, UpdateResult,
     },
     node_info::{NodeAddress, NodeContact},
     service::{QueryKind, Service, ServiceRequest, TalkRequest},

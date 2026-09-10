@@ -52,8 +52,8 @@ pub use base_execution_state_types as static_file;
 pub use base_execution_state_types::{ProviderError, ProviderResult};
 pub use static_file::StaticFileSegment;
 
-mod range;
-pub use range::ProviderRange;
+mod provider_range;
+pub use provider_range::ProviderRange;
 
 #[cfg(unix)]
 mod changeset_offsets;
