@@ -18,14 +18,14 @@ use base_execution_evm_blocks::{
     ExecutableTxTuple, WithTxEnv,
 };
 use base_execution_evm_runtime::BundleState;
-use base_execution_state_provider::{
-    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
-    StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
-};
-pub use base_execution_state_tasks::{
+pub use base_execution_state_operations::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
+};
+use base_execution_state_provider::{
+    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
+    StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;
@@ -601,7 +601,7 @@ mod tests {
     use base_common_types_chain::constants::KECCAK_EMPTY;
     use base_execution_evm_blocks::BaseEvmConfig;
     use base_execution_evm_runtime::{AccountInfo, BundleState};
-    use base_execution_state_tasks::CachedStatus;
+    use base_execution_state_operations::CachedStatus;
 
     use crate::tree::{
         ExecutionCache, PayloadExecutionCache, SavedCache, TreeConfig,

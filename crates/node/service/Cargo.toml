@@ -42,7 +42,6 @@ thiserror = { workspace = true, features = ["std"] }
 alloy-eips = { workspace = true, features = ["kzg"] }
 chrono = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 base-execution-network-discovery = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
@@ -59,13 +58,13 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 base-execution-state-types = { workspace = true, features = ["std"] }
 base-execution-payload = { features = ["default"], workspace = true }
 reqwest = { workspace = true, features = ["rustls", "stream", "query"] }
-base-execution-state-tasks = { workspace = true, features = ["metrics"] }
 base-execution-state-provider = { workspace = true, features = ["rayon"] }
 base-execution-state-indexer = { features = ["service"], workspace = true }
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-execution-rpc = { workspace = true, features = ["client", "default"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 base-execution-network-service = { workspace = true, features = ["default"] }
+base-execution-state-operations = { workspace = true, features = ["metrics"] }
 base-common-chain-config = { features = ["default", "std"], workspace = true }
 base-execution-evm-blocks = { features = ["default", "std"], workspace = true }
 base-common-observability-metrics = { features = ["metrics"], workspace = true }
@@ -92,7 +91,7 @@ base-execution-state-types = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-common-client-ethereum = { workspace = true }
 rstest = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 jsonrpsee = { workspace = true, features = ["client"] }
 tempfile = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, features = [] }

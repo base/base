@@ -1,0 +1,119 @@
+[package]
+name = "base-execution-state-operations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Trie node storage for serving proofs in FP window fast"
+
+[lints]
+workspace = true
+
+[dependencies]
+url = { workspace = true }
+serde = { workspace = true }
+rayon = { workspace = true }
+metrics = { workspace = true }
+auto_impl = { workspace = true }
+thiserror = { workspace = true }
+humantime = { workspace = true }
+alloy-eips = { workspace = true }
+rustc-hash = { workspace = true }
+derive_more = { workspace = true }
+alloy-genesis = { workspace = true }
+base-common-io = { workspace = true }
+static_assertions = { workspace = true }
+boyer-moore-magiclen = { workspace = true }
+base-common-chain-config = { workspace = true }
+tar = { workspace = true, features = ["default"] }
+strum = { workspace = true, features = ["derive"] }
+eyre = { workspace = true, features = ["default"] }
+zstd = { workspace = true, features = ["default"] }
+base-execution-state-provider = { workspace = true }
+bytes = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+blake3 = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["alloc"] }
+tempfile = { workspace = true, features = ["default"] }
+tracing = { features = ["attributes"], workspace = true }
+alloy-rlp = { workspace = true, features = ["core-net"] }
+rocksdb = { workspace = true, features = ["lz4", "zstd"] }
+tokio = { workspace = true, features = ["default", "sync"] }
+crossbeam-utils = { workspace = true, features = ["default"] }
+bincode = { workspace = true, features = ["default", "serde"] }
+crossbeam-channel = { workspace = true, features = ["default"] }
+base-common-runtime = { workspace = true, features = ["rayon"] }
+fixed-cache = { workspace = true, features = ["alloc", "stats"] }
+alloy-primitives = { features = ["map-foldhash"], workspace = true }
+rand = { workspace = true, optional = true, features = ["default"] }
+base-execution-evm-runtime = { workspace = true, features = ["std"] }
+base-execution-state-trie = { features = ["serde"], workspace = true }
+base-execution-evm-blocks = { workspace = true, features = ["default", "witness"] }
+parking_lot = { features = ["default", "send_guard", "arc_lock"], workspace = true }
+base-execution-state-database = { workspace = true, features = ["default", "mdbx"] }
+base-execution-state-types = { features = ["default", "serde", "std"], workspace = true }
+base-common-observability-metrics = { features = ["common", "metrics"], workspace = true }
+base-common-types-chain = { features = ["alloy", "dashmap", "k256", "std", "reth"], workspace = true }
+
+[dev-dependencies]
+mockall = { workspace = true }
+test-case = { workspace = true }
+alloy-genesis = { workspace = true }
+assert_matches = { workspace = true }
+alloy-hardforks = { workspace = true }
+base-common-runtime = { workspace = true }
+base-testing-support = { workspace = true }
+alloy-rpc-types-debug = { workspace = true }
+base-common-chain-config = { workspace = true }
+base-execution-evm-runtime = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+rand_08 = { workspace = true, features = ["default"] }
+base-execution-state-operations = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+serial_test = { workspace = true, features = ["default"] }
+base-execution-sync = { workspace = true, features = ["test-utils"] }
+secp256k1 = { workspace = true, features = ["default", "rand", "std"] }
+criterion = { workspace = true, features = ["default", "html_reports"] }
+base-execution-state-types = { workspace = true, features = ["arbitrary"]}
+base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
+base-execution-state-trie = { workspace = true, features = ["test-utils"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
+base-common-observability-tracing = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true, features = ["map-foldhash", "rand", "getrandom"] }
+base-execution-state-database = { workspace = true, features = ["default", "test-utils", "mdbx"] }
+tokio = { workspace = true, features = ["default", "test-util", "rt-multi-thread", "macros", "rt"] }
+base-common-types-chain = { features = ["alloy", "k256", "reth", "serde", "std", "test-utils", "arbitrary"], workspace = true }
+
+[[bench]]
+name = "witness_reads"
+harness = false
+
+[[bench]]
+name = "deep_history_reads"
+harness = false
+
+[features]
+serde-bincode-compat = [
+    "base-common-types-chain/serde-bincode-compat",
+    "alloy-eips/serde-bincode-compat",
+    "base-execution-state-types/serde-bincode-compat",
+    "base-execution-state-trie/serde-bincode-compat",
+]
+metrics = [
+    "base-common-observability-metrics/metrics",
+    "base-execution-evm-blocks/metrics",
+    "base-execution-state-trie/metrics",
+]
+default = ["metrics"]
+trie-debug = ["dep:rand", "base-execution-state-trie/trie-debug"]
+test-utils = [
+    "base-common-types-chain/test-utils",
+    "base-execution-state-provider/test-utils",
+    "base-execution-state-trie/test-utils",
+    "base-common-runtime/test-utils",
+    "base-execution-state-types/test-utils",
+    "base-execution-evm-runtime/test-utils",
+]

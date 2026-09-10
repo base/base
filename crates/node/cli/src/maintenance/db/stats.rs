@@ -4,7 +4,7 @@ use base_common_io as fs;
 use base_execution_state_database::{
     Database, TableViewer, Tables, mdbx, static_file::iter_static_files,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{RocksDBProviderFactory, providers::StaticFileProvider};
 use base_execution_state_types::SegmentRangeInclusive;
 use base_node_config::{ChainPath, DataDirPath};

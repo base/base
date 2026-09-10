@@ -10,7 +10,7 @@ use std::{
 use base_execution_state_database::{
     Database, DbCursorRO, DbTx, Table, Tables, open_db_read_only, tables_to_generic,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_node_config::{DataDirPath, DatabaseArgs, PlatformPath};
 use clap::Parser;
 use tracing::{info, warn};

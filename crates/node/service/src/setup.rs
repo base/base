@@ -9,7 +9,7 @@ use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_service::{BodyDownloader, HeaderDownloader};
 use base_execution_network_wire::BlockClient;
-use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_operations::StaticFileProducer;
 use base_execution_state_provider::ProviderFactory;
 use base_execution_state_types::PruneConfig;
 use base_execution_sync::{

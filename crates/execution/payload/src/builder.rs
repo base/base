@@ -27,7 +27,7 @@ use base_execution_evm_blocks::{
 use base_execution_evm_runtime::{
     Block, BlockEnv, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State, TxResult,
 };
-use base_execution_state_tasks::{
+use base_execution_state_operations::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, PayloadStateRootHandle,
 };
 use base_execution_state_types::{
@@ -1375,11 +1375,11 @@ mod tests {
         BaseEvmConfig, BlockBuilder, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
     };
     use base_execution_evm_runtime::{BaseTime, EvmState, State, StoredAccount as Account};
-    use base_execution_state_provider::NoopProvider;
-    use base_execution_state_tasks::{
+    use base_execution_state_operations::{
         PayloadStateRootHandle, StateRootComputeOutcome, StateRootSink, StateRootTaskError,
         StateRootUpdateStream,
     };
+    use base_execution_state_provider::NoopProvider;
     use base_execution_state_types::{HashedPostState, updates::TrieUpdates};
     use base_execution_txpool::{
         BasePooledTransaction, NoopPayloadTransactions, PayloadTransactions, ValidityOperator,

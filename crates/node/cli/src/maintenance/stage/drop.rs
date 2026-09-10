@@ -4,7 +4,7 @@ use std::sync::Arc;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BaseReceipt, BaseTxEnvelope};
 use base_execution_state_database::{DatabaseError, DbTx, DbTxMut, mdbx::tx::Tx, tables};
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     DbTool, PruneSegment,
     init::{
         insert_genesis_account_history, insert_genesis_header, insert_genesis_state,

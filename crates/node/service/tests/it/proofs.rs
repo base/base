@@ -4,8 +4,8 @@ use std::{sync::Arc, time::Duration};
 
 use base_common_chain_config::BaseChainSpecBuilder;
 use base_common_runtime::Runtime;
+use base_execution_state_operations::InitializationJob;
 use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
-use base_execution_state_tasks::InitializationJob;
 use base_node_service::{
     BaseNode, NodeConfig, ProofHistory, ProofHistoryBackend, ProofsHistoryDbBackend, RollupArgs,
 };
@@ -25,7 +25,7 @@ async fn proof_history_tracks_canonical_blocks_in_both_backends() -> eyre::Resul
         );
         let wallet = Wallet::default().with_chain_id(chain.chain().into());
         let factory = create_test_provider_factory_with_chain_spec(chain.clone());
-        base_execution_state_maintenance::init::init_genesis(&factory)?;
+        base_execution_state_operations::init::init_genesis(&factory)?;
         let genesis_hash = chain.genesis_hash();
         let mut config = NodeConfig::new(chain).with_unused_ports();
         config.network.discovery.disable_discovery = true;

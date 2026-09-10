@@ -3,13 +3,13 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::eip1898::BlockWithParent;
 use base_common_types_chain::BlockHeader;
-use base_execution_state_provider::{
-    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
-};
-use base_execution_state_tasks::{
+use base_execution_state_operations::{
     BaseProofStoragePrunerTask, BaseProofsBatchStore, BaseProofsStorage, BaseProofsStore,
     live::{BatchBlock, LiveTrieCollector},
     metrics::BlockMetrics,
+};
+use base_execution_state_provider::{
+    BlockNumReader, BlockReader, TransactionVariant, providers::BlockchainProvider,
 };
 use base_execution_state_types::Chain;
 use futures::TryStreamExt;
@@ -627,7 +627,7 @@ mod tests {
     use alloy_eips::{BlockNumHash, NumHash, eip1898::BlockWithParent};
     use base_common_types_chain::{RecoveredBlock, private::alloy_primitives::B256};
     use base_execution_state_database::test_utils::tempdir_path;
-    use base_execution_state_tasks::{
+    use base_execution_state_operations::{
         BaseProofsStorage, BaseProofsStore, BlockStateDiff, RocksdbProofsStorage,
     };
     use base_execution_state_trie::{

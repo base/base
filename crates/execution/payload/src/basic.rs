@@ -17,7 +17,7 @@ use base_common_types_payload::{
 };
 use base_execution_evm_blocks::CancelOnDrop;
 use base_execution_evm_runtime::CachedReads;
-use base_execution_state_tasks::{PayloadStateRootHandle, SavedCache};
+use base_execution_state_operations::{PayloadStateRootHandle, SavedCache};
 use base_execution_state_types::{
     BlockReaderIdExt, CanonStateNotification, HeaderProvider, StateProviderFactory,
 };

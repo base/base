@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use base_execution_engine_observers::{BaseProofsExEx, ExExContext};
 use base_execution_rpc::{DebugApiExt, DebugApiOverrideServer, EthApiExt, EthApiOverrideServer};
 use base_execution_state_database::DatabaseMetrics;
-use base_execution_state_tasks::{
+use base_execution_state_operations::{
     BaseProofsBatchStore, BaseProofsStorage, MdbxProofsStorage, ProofsProgress,
     RocksdbProofsStorage,
 };

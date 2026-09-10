@@ -537,7 +537,7 @@ mod tests {
 
     use alloy_eips::BlockNumHash;
     use base_common_types_chain::{BaseBlock, Header};
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_operations::init::init_genesis;
     use base_execution_state_provider::{
         BlockWriter, Chain, DBProvider, DatabaseProviderFactory, providers::BlockchainProvider,
         test_utils::create_test_provider_factory,

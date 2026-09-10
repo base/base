@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_service::{BodyDownloader, HeaderDownloader, SyncTarget};
 use base_execution_state_database::{DbTx, tables};
-use base_execution_state_maintenance::{PruneModes, StaticFileProducer};
+use base_execution_state_operations::{PruneModes, StaticFileProducer};
 use base_execution_state_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
     StageCheckpointReader,

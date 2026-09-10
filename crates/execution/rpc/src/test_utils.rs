@@ -29,7 +29,7 @@ impl RpcTestUtils {
     /// Materializes fixture accounts and blocks in a real Base provider.
     pub fn provider(mock: MockEthProvider) -> BlockchainProvider {
         let factory = create_test_provider_factory_with_chain_spec(mock.chain_spec());
-        base_execution_state_maintenance::init::init_genesis(&factory)
+        base_execution_state_operations::init::init_genesis(&factory)
             .expect("initialize RPC fixture genesis");
         let writer = factory.provider_rw().expect("fixture writer");
         mock.write_accounts_to(&writer).expect("fixture accounts");

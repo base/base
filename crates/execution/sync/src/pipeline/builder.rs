@@ -1,5 +1,5 @@
 use alloy_primitives::{B256, BlockNumber};
-use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_operations::StaticFileProducer;
 use base_execution_state_provider::{DatabaseProviderFactory, ProviderFactory};
 use tokio::sync::watch;
 

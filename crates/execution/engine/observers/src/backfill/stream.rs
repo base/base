@@ -235,7 +235,7 @@ mod tests {
         BaseBlock, BaseBlockBody, BaseTypedTransaction, Header, TxEip2930, constants::ETH_TO_WEI,
         crypto::secp256k1::public_key_to_address,
     };
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_operations::init::init_genesis;
     use base_execution_state_provider::{
         ProviderFactory, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,

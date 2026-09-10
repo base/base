@@ -101,7 +101,7 @@ class ArchitectureTests(unittest.TestCase):
         for source, target, kind in [
             ("state/indexer", "engine/observers", None),
             ("state/indexer", "network/service", None),
-            ("state/maintenance", "sync", "dev"),
+            ("state/operations", "sync", "dev"),
         ]:
             with self.subTest(source=source, target=target):
                 self.assertEqual([], check(

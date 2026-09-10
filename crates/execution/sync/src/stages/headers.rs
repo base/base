@@ -9,7 +9,7 @@ use base_execution_network_service::{
 use base_execution_state_database::{
     DbCursorRO, DbCursorRW, DbTx, DbTxMut, DbTxUnwindExt, RawKey, RawTable, RawValue, tables,
 };
-use base_execution_state_maintenance::Collector;
+use base_execution_state_operations::Collector;
 use base_execution_state_provider::{
     BlockHashReader, DBProvider, HeaderSyncGapProvider, StaticFileProviderFactory,
     providers::StaticFileWriter,

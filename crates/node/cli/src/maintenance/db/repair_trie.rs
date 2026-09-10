@@ -9,7 +9,7 @@ use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_execution_state_database::{
     Database, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
 use base_execution_state_trie::{
     DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,

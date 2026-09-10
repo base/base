@@ -32,7 +32,6 @@ base-execution-evm-runtime = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
 serde_json = { features = ["alloc"], workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 indexmap = { workspace = true, features = ["default"] }
@@ -48,10 +47,10 @@ base-common-runtime = { workspace = true, features = ["rayon"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-execution-state-types = { features = ["rayon"], workspace = true }
 base-execution-state-trie = { features = ["metrics"], workspace = true }
-base-execution-state-tasks = { features = ["default"], workspace = true }
 base-execution-state-provider = { workspace = true, features = ["rayon"] }
 base-execution-network-wire = { workspace = true, features = ["requests"] }
 base-execution-network-service = { workspace = true, features = ["default"] }
+base-execution-state-operations = { features = ["default"], workspace = true }
 base-execution-engine-observers = { workspace = true, features = ["witness"] }
 alloy-primitives = { workspace = true, features = ["getrandom", "map-foldhash"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
@@ -69,7 +68,7 @@ base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 proptest = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 metrics-util = { workspace = true, features = ["debugging"] }
@@ -94,12 +93,12 @@ test-utils = [
     "base-execution-sync/test-utils",
     "base-common-observability-tracing",
     "base-execution-state-trie/test-utils",
-    "base-execution-state-tasks/test-utils",
+    "base-execution-state-operations/test-utils",
     "base-common-runtime/test-utils",
     "base-execution-evm-runtime/test-utils",
 ]
 trie-debug = [
     "base-execution-state-trie/trie-debug",
-    "base-execution-state-tasks/trie-debug",
+    "base-execution-state-operations/trie-debug",
     "base-common-types-payload/trie-debug",
 ]

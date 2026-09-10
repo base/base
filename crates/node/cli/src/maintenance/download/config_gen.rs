@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::Path};
 
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use base_execution_state_database::{DbTx, DbTxMut, tables};
-use base_execution_state_maintenance::{BlocksPerFileConfig, StaticFilesConfig};
+use base_execution_state_operations::{BlocksPerFileConfig, StaticFilesConfig};
 use base_execution_state_types::{
     PruneCheckpoint, PruneConfig, PruneMode, PruneSegment, StageCheckpoint,
 };

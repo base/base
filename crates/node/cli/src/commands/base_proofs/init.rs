@@ -4,11 +4,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::ChainInfo;
-use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
-use base_execution_state_tasks::{
+use base_execution_state_operations::{
     BaseProofsInitialStateStore, BaseProofsStorage, BaseProofsStore, InitializationJob,
     MdbxProofsStorage, RocksdbProofsStorage,
 };
+use base_execution_state_provider::{BlockNumReader, DBProvider, DatabaseProviderFactory};
 use base_node_config::version_metadata;
 use base_node_service::{ProofsHistoryDbBackend, ProofsHistoryRocksdbArgs};
 use clap::Parser;

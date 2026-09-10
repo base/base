@@ -36,7 +36,6 @@ alloy-rpc-types-debug = { workspace = true }
 boa_gc = { workspace = true, optional = true }
 url = { workspace = true, features = ["serde"] }
 tower = { workspace = true, features = ["full"] }
-base-execution-state-tasks = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 http = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
@@ -56,8 +55,8 @@ parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { features = ["default"], workspace = true }
 opentelemetry = { workspace = true, features = ["default"] }
 jsonrpsee-core = { features = ["default"], workspace = true }
-serde_json = { workspace = true, features = ["alloc", "std"] }
 anstyle = { workspace = true, features = ["default", "std"] }
+serde_json = { workspace = true, features = ["alloc", "std"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
 tracing = { workspace = true, features = ["attributes", "std"] }
 base-common-runtime = { features = ["rayon"], workspace = true }
@@ -68,10 +67,10 @@ alloy-transport-http = { workspace = true, features = ["default"] }
 jsonrpsee-http-client = { workspace = true, features = ["default"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-execution-payload = { workspace = true, features = ["default"] }
-alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 serde = { workspace = true, features = ["derive", "default", "std"] }
+base-execution-state-operations = { workspace = true, optional = true}
+alloy-dyn-abi = { workspace = true, features = ["default", "eip712"] }
 base-common-chain-config = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true, optional = true }
 alloy-rpc-client = { features = ["default", "reqwest"], workspace = true }
 boa_engine = { workspace = true, optional = true, features = ["default"] }
 base-common-types-rpc = { features = ["default", "serde"], workspace = true }
@@ -97,8 +96,8 @@ base-execution-network-wire = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 base-execution-state-database = { workspace = true }
+base-execution-state-operations = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
-base-execution-state-maintenance = { workspace = true }
 httpmock = { workspace = true, features = ["default"] }
 criterion = { workspace = true, features = ["default"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -143,7 +142,7 @@ default = ["metrics"]
 client = ["base-execution-state-provider/serde", "jsonrpsee/async-client", "jsonrpsee/client"]
 metrics = [
     "base-execution-payload/metrics",
-    "base-execution-state-tasks/metrics",
+    "base-execution-state-operations/metrics",
     "base-common-observability-metrics/metrics",
     "base-common-observability-events/metrics",
     "base-execution-evm-blocks/metrics",
@@ -152,6 +151,6 @@ test-utils = [
     "base-execution-evm-blocks/test-utils",
     "base-execution-state-provider/test-utils",
     "base-execution-network-service/test-utils",
-    "dep:base-execution-state-maintenance",
+    "dep:base-execution-state-operations",
 ]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]

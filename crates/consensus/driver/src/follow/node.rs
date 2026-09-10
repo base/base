@@ -4,7 +4,7 @@ use alloy_eips::BlockNumberOrTag;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::RootProvider;
 use base_consensus_source::LocalL2Provider;
-use base_execution_state_tasks::ProofsProgress;
+use base_execution_state_operations::ProofsProgress;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 

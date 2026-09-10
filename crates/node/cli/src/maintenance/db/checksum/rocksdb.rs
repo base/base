@@ -3,7 +3,7 @@
 use std::{hash::Hasher, time::Instant};
 
 use base_execution_state_database::{Table, tables};
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::RocksDBProviderFactory;
 use clap::ValueEnum;
 use tracing::info;

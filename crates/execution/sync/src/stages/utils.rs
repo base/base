@@ -10,7 +10,7 @@ use base_execution_state_database::{
     },
     tables,
 };
-use base_execution_state_maintenance::Collector;
+use base_execution_state_operations::Collector;
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PreparedHistoryShardWrites, ProviderError,
     ProviderRange, ProviderResult, RocksDBProviderFactory, ShardedHistoryTable,

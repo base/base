@@ -11,7 +11,7 @@ use base_common_types_payload::BeaconEngineMessage;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_wire::BlockClient;
 use base_execution_payload::PayloadBuilderHandle;
-use base_execution_state_maintenance::PrunerWithFactory;
+use base_execution_state_operations::PrunerWithFactory;
 use base_execution_state_provider::{
     OverlayManager, ProviderFactory, providers::BlockchainProvider,
 };

@@ -34,7 +34,7 @@ eyre = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }
 base-execution-engine-observers = { workspace = true }
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 humantime-serde = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
@@ -68,7 +68,7 @@ base-common-chain-config = { workspace = true }
 base-execution-state-types = { workspace = true }
 base-execution-network-wire = { workspace = true }
 rand = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tokio-stream = { workspace = true, features = ["default"] }

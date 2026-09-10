@@ -52,7 +52,7 @@ alloy-transport-http = { workspace = true, features = ["default", "hyper", "hype
 [dev-dependencies]
 base-common-types-rpc = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 httpmock = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "test-util"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }

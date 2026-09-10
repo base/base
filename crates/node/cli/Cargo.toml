@@ -30,7 +30,6 @@ base-consensus-batch = { workspace = true }
 base-consensus-derive = { workspace = true }
 arbitrary = { workspace = true, optional = true }
 base-execution-evm-runtime = { workspace = true }
-base-execution-state-tasks = { workspace = true }
 tar = { features = ["default"], workspace = true }
 url = { features = ["default"], workspace = true }
 socket2 = { workspace = true, features = ["all"] }
@@ -40,11 +39,11 @@ base-execution-state-provider = { workspace = true }
 discv5 = { workspace = true, features = ["libp2p"] }
 thiserror = { workspace = true, features = ["std"] }
 blake3 = { workspace = true, features = ["default"] }
+base-execution-state-operations = { workspace = true }
 futures = { features = ["default"], workspace = true }
 base-execution-engine-observers = { workspace = true }
 alloy-chains = { features = ["std"], workspace = true }
 base-common-observability-events = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 crossterm = { workspace = true, features = ["default"] }
 ratatui = { workspace = true, features = ["crossterm"] }

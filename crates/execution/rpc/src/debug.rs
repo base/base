@@ -15,11 +15,11 @@ use base_execution_payload::{
     BasePayloadBuilderAttributes, PayloadConfig,
     builder::{BasePayloadBuilderCtx, Builder},
 };
+use base_execution_state_operations::{BaseProofsStorage, BaseProofsStore};
 use base_execution_state_provider::{
     BlockReaderIdExt, ChainSpecProvider, HeaderProvider, ProviderError, ProviderResult,
     StateProviderFactory,
 };
-use base_execution_state_tasks::{BaseProofsStorage, BaseProofsStore};
 use base_execution_state_types::ExecutionWitnessMode;
 use base_execution_txpool::{BasePooledTransaction, NoopPayloadTransactions};
 use jsonrpsee::proc_macros::rpc;

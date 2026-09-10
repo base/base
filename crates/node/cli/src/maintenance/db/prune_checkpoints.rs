@@ -1,6 +1,6 @@
 //! `reth db prune-checkpoints` command for viewing and setting prune checkpoint values.
 
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
 use base_execution_state_types::{
     PruneCheckpoint, PruneCheckpointReader, PruneCheckpointWriter, PruneMode, PruneSegment,

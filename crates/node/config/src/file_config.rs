@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use base_execution_network_wire::{PeersConfig, SessionsConfig, TrustedPeer};
-use base_execution_state_maintenance::StaticFilesConfig;
+use base_execution_state_operations::StaticFilesConfig;
 use base_execution_state_types::PruneConfig;
 use base_execution_sync::StageConfig;
 

@@ -11,7 +11,7 @@ use base_execution_network_service::{
 use base_execution_state_database::test_utils::{
     create_test_rocksdb_dir, create_test_rw_db, create_test_static_files_dir,
 };
-use base_execution_state_maintenance::init::init_genesis;
+use base_execution_state_operations::init::init_genesis;
 use base_execution_state_provider::{
     BlockReader, ProviderFactory,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},

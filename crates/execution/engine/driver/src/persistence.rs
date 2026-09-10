@@ -9,7 +9,7 @@ use std::{
 
 use alloy_eips::BlockNumHash;
 use base_common_runtime::spawn_os_thread;
-use base_execution_state_maintenance::{PrunerError, PrunerWithFactory};
+use base_execution_state_operations::{PrunerError, PrunerWithFactory};
 use base_execution_state_provider::{
     BalProvider, BlockExecutionWriter, BlockHashReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, SaveBlocksInput,
@@ -402,7 +402,7 @@ mod tests {
     use alloy_eips::NumHash;
     use alloy_primitives::{B256, BlockHash, BlockNumber, Bytes, U256};
     use base_execution_state_database::Database;
-    use base_execution_state_maintenance::{Pruner, init::init_genesis};
+    use base_execution_state_operations::{Pruner, init::init_genesis};
     use base_execution_state_provider::{
         AccountReader, BalConfig, BalNotificationStream, BalStore, BalStoreHandle,
         ChainSpecProvider, HeaderProvider, InMemoryBalStore, ProviderError, ProviderResult, RawBal,

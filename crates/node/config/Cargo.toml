@@ -34,7 +34,7 @@ eyre = { workspace = true, features = ["default"] }
 strum = { workspace = true, features = ["derive"] }
 ipnet = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["attributes"] }
 base-execution-sync = { workspace = true, features = ["serde"] }

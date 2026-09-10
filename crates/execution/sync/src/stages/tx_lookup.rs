@@ -1,6 +1,6 @@
 use alloy_primitives::{TxHash, TxNumber};
 use base_execution_state_database::{DbTxMut, Decode, Decompress, Tables, tables};
-use base_execution_state_maintenance::Collector;
+use base_execution_state_operations::Collector;
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, PruneCheckpointReader, PruneCheckpointWriter,
     RocksDBProviderFactory, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
@@ -23,11 +23,11 @@ use crate::{
 /// [`tables::TransactionHashNumbers`] This is used for looking up changesets via the transaction
 /// hash.
 ///
-/// It uses [`base_execution_state_maintenance::Collector`] to collect all entries before finally writing them to disk.
+/// It uses [`base_execution_state_operations::Collector`] to collect all entries before finally writing them to disk.
 #[derive(Debug, Clone)]
 pub struct TransactionLookupStage {
     /// The maximum number of lookup entries to hold in memory before pushing them to
-    /// [`base_execution_state_maintenance::Collector`].
+    /// [`base_execution_state_operations::Collector`].
     chunk_size: u64,
     etl_config: EtlConfig,
     prune_mode: Option<PruneMode>,

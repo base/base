@@ -132,7 +132,7 @@ mod tests {
     use base_common_chain_config::BaseChainSpecBuilder;
     use base_common_types_chain::Header;
     use base_execution_evm_runtime::BundleState;
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_operations::init::init_genesis;
     use base_execution_state_provider::{
         StateWriter, providers::BlockchainProvider,
         test_utils::create_test_provider_factory_with_chain_spec,

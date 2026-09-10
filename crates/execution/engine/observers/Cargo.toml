@@ -47,7 +47,7 @@ base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 pretty_assertions = { workspace = true, features = ["default"], optional = true }
 base-execution-rpc = { workspace = true, features = ["client"], optional = true }
-base-execution-state-tasks = { workspace = true, features = ["serde-bincode-compat"] }
+base-execution-state-operations = { workspace = true, features = ["serde-bincode-compat"] }
 base-common-types-payload = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
 
 [dev-dependencies]
@@ -62,7 +62,7 @@ base-testing-support = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
 base-execution-network-service = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 base-common-chain-config = { features = ["std"], workspace = true }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
@@ -93,7 +93,7 @@ test-utils = [
     "base-execution-state-provider/test-utils",
     "base-execution-state-trie/test-utils",
 ]
-metrics = ["base-execution-state-tasks/metrics", "base-execution-state-trie/metrics"]
+metrics = ["base-execution-state-operations/metrics", "base-execution-state-trie/metrics"]
 witness = [
     "dep:serde",
     "dep:jsonrpsee",

@@ -672,7 +672,7 @@ impl Clone for ExExManagerHandle {
 mod tests {
     use alloy_primitives::B256;
     use base_common_types_chain::RecoveredBlock;
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_operations::init::init_genesis;
     use base_execution_state_provider::{
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
         providers::BlockchainProvider, test_utils::create_test_provider_factory,

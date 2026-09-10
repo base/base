@@ -5,7 +5,7 @@ use std::{collections::HashMap, path::PathBuf};
 use base_execution_state_database::{
     Database, DbTx, mdbx::DatabaseArguments, open_db_read_only, tables,
 };
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     ManifestGenerationParams, SnapshotGenerator, SnapshotManifest,
 };
 use base_execution_state_types::StageId;

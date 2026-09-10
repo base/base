@@ -7,7 +7,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub use base_execution_state_maintenance::{
+pub use base_execution_state_operations::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
     ProgressDisplay, SingleArchive, SnapshotGenerator, SnapshotManifest,
 };

@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_runtime::{EventSender, EventStream};
-use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_operations::StaticFileProducer;
 use base_execution_state_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
@@ -628,7 +628,7 @@ mod tests {
 
     use assert_matches::assert_matches;
     use base_execution_evm_blocks::ConsensusError;
-    use base_execution_state_maintenance::PruneModes;
+    use base_execution_state_operations::PruneModes;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
     use base_execution_state_types::ProviderError;
     use base_testing_support::{generators, generators::random_block_with_parent};

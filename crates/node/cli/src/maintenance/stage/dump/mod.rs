@@ -6,7 +6,7 @@ use base_execution_state_database::{
     Database, DatabaseEnv, DbCursorRO, DbTx, TableImporter, init_db, mdbx::DatabaseArguments,
     models::ClientVersion, tables,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_node_config::{DataDirPath, DatadirArgs, PlatformPath};
 use clap::Parser;
 use tracing::info;

@@ -15,7 +15,7 @@ use base_common_types_chain::{
 };
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig, Executor};
 use base_execution_network_service::{BodyDownloader, HeaderDownloader, SyncTarget};
-use base_execution_state_maintenance::{StaticFileProducer, init::init_genesis};
+use base_execution_state_operations::{StaticFileProducer, init::init_genesis};
 use base_execution_state_provider::{
     BlockNumReader, DBProvider, DatabaseProviderFactory, HeaderProvider, OriginalValuesKnown,
     StageCheckpointReader, StateWriter, StaticFileProviderFactory,

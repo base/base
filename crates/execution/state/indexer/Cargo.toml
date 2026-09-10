@@ -34,7 +34,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 mockall = { workspace = true }
 serde_json = { workspace = true }
 alloy-primitives = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }

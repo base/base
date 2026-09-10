@@ -68,18 +68,18 @@ use alloy_primitives::B256;
 use base_common_runtime::utils::increase_thread_priority;
 use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedHeader};
 use base_execution_evm_blocks::OnStateHook;
+pub use base_execution_state_operations::{
+    PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
+    StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
+    StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
+};
+use base_execution_state_operations::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
 use base_execution_state_provider::{
     BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
     HashedPostStateProvider, OverlayManager, OverlayStateProviderFactory, PreservedSparseTrie,
     ProviderError, PruneCheckpointReader, StageCheckpointReader, StateRootProvider,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-pub use base_execution_state_tasks::{
-    PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
-    StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
-    StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
-};
-use base_execution_state_tasks::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
 #[cfg(feature = "trie-debug")]
 use base_execution_state_trie::TrieDebugRecorder;
 use base_execution_state_trie::{
@@ -1241,7 +1241,7 @@ mod tests {
         AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, StoredAccount as Account,
         TransactionId,
     };
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_operations::init::init_genesis;
     use base_execution_state_provider::{
         HashingWriter, OverlayManager, OverlayStateProviderFactory,
         providers::BlockchainProvider,

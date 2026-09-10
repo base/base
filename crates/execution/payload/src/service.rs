@@ -17,7 +17,7 @@ use base_common_types_payload::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, Events, PayloadBuilderError, PayloadEvents,
     PayloadId, PayloadKind,
 };
-use base_execution_state_tasks::{PayloadStateRootHandle, SavedCache};
+use base_execution_state_operations::{PayloadStateRootHandle, SavedCache};
 use base_execution_state_types::CanonStateNotification;
 use futures_util::{Stream, StreamExt, future::FutureExt};
 use tokio::sync::{

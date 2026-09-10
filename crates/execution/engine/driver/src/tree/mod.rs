@@ -67,7 +67,7 @@ mod txpool_prewarm;
 pub mod types;
 
 pub use base_common_types_payload::TreeConfig;
-pub use base_execution_state_tasks::{
+pub use base_execution_state_operations::{
     CachedStateCacheMetrics, CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider,
     ExecutionCache, PayloadExecutionCache, SavedCache, TxPoolPrewarmCacheSnapshot,
 };

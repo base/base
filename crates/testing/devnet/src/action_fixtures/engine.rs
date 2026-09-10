@@ -32,7 +32,7 @@ use base_execution_payload::{
     PayloadConfig,
 };
 use base_execution_state_database::{DatabaseEnv, test_utils::TempDatabase};
-use base_execution_state_maintenance::init::init_genesis;
+use base_execution_state_operations::init::init_genesis;
 use base_execution_state_provider::{
     BlockWriter, HashedPostStateProvider, LatestStateProviderRef, ProviderFactory,
     StateProviderFactory, StorageRootProvider, providers::BlockchainProvider,

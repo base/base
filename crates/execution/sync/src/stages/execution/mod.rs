@@ -744,7 +744,7 @@ mod tests {
         AccountStatus, BundleAccount, StoredAccount as Account, StoredBytecode as Bytecode,
     };
     use base_execution_state_database::{DbTx, DbTxMut, models::metadata::StorageSettings};
-    use base_execution_state_maintenance::PruneModes;
+    use base_execution_state_operations::PruneModes;
     use base_execution_state_provider::{
         AccountReader, BlockWriter, DatabaseProviderFactory, HashingWriter, ReceiptProvider,
         StaticFileProviderFactory,

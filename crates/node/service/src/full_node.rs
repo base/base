@@ -13,8 +13,8 @@ use base_execution_engine_driver::BaseExecutionHandle;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload::PayloadBuilderHandle;
 use base_execution_rpc::RpcServerHandle;
+use base_execution_state_operations::ProofsProgress;
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
-use base_execution_state_tasks::ProofsProgress;
 use base_node_config::{ChainPath, DataDirPath, NodeConfig};
 
 use crate::EngineShutdown;

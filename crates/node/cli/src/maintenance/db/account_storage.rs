@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{Address, keccak256};
 use base_common_types_chain::Compact;
 use base_execution_state_database::{Database, DbDupCursorRO, DbTx, tables};
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use clap::Parser;
 use human_bytes::human_bytes;
 use tracing::info;

@@ -8,7 +8,7 @@ use base_execution_state_database::{
     DbCursorRO, DbTx, RawKey, RawTable, RawValue, Table, TableViewer, Tables,
     static_file::iter_static_files,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{DBProvider, StaticFileProviderFactory};
 use base_execution_state_types::{ChangesetOffset, StaticFileSegment};
 use clap::Parser;

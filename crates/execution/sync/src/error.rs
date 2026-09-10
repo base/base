@@ -3,7 +3,7 @@ use base_common_types_chain::DecompressError;
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_evm_runtime::BlockExecutionError;
 use base_execution_network_service::DownloadError;
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     PruneSegment, PruneSegmentError, PrunerError, UnwindTargetPrunedError,
 };
 use base_execution_state_provider::ProviderError;

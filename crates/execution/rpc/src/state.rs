@@ -1,10 +1,10 @@
 //! State provider factory for Base Proofs `ExEx`.
 
 use alloy_eips::BlockId;
-use base_execution_state_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
-use base_execution_state_tasks::{
+use base_execution_state_operations::{
     BaseProofsStorage, BaseProofsStore, provider::BaseProofsStateProviderRef,
 };
+use base_execution_state_provider::{BlockIdReader, ProviderError, ProviderResult, StateProvider};
 
 use crate::{BaseEthApi, EthApiError};
 

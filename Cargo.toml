@@ -53,7 +53,7 @@ members = [
   "crates/execution/rpc",
   "crates/testing/devnet",
   "crates/execution/state/indexer",
-  "crates/execution/state/tasks",
+  "crates/execution/state/operations",
   "crates/execution/txpool",
   "crates/infra/audit",
   "crates/infra/basectl",
@@ -91,7 +91,6 @@ members = [
   "crates/common/cli",
   "crates/common/codec",
   "crates/execution/state/database",
-  "crates/execution/state/maintenance",
   "crates/execution/engine/driver",
   "crates/execution/network/wire",
   "crates/execution/engine/observers",
@@ -260,8 +259,8 @@ base-testing-devnet = { path = "crates/testing/devnet", default-features = false
 base-execution-txpool = { path = "crates/execution/txpool", default-features = false }
 base-execution-payload = { path = "crates/execution/payload", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
-base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-state-indexer = { path = "crates/execution/state/indexer", default-features = false }
+base-execution-state-operations = { path = "crates/execution/state/operations", default-features = false }
 
 # Infra
 base-infra-audit = { path = "crates/infra/audit", default-features = false }
@@ -355,7 +354,6 @@ base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", defa
 base-execution-network-service = { path = "crates/execution/network/service", default-features = false }
 base-execution-engine-observers = { path = "crates/execution/engine/observers", default-features = false }
 base-execution-network-discovery = { path = "crates/execution/network/discovery", default-features = false }
-base-execution-state-maintenance = { path = "crates/execution/state/maintenance", default-features = false }
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 
 # tokio

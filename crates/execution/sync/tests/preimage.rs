@@ -21,7 +21,7 @@ use base_execution_state_database::{
     mdbx::{Environment, EnvironmentFlags, Mode},
     tables,
 };
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     StaticFileProducer,
     init::{init_genesis, init_genesis_with_settings},
 };

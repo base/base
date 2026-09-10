@@ -43,8 +43,8 @@ alloy-eips = { workspace = true, features = ["std"] }
 base-execution-network-service = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
+base-execution-state-operations = { workspace = true }
 tempfile = { features = ["default"], workspace = true }
-base-execution-state-maintenance = { workspace = true }
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rlp = { features = ["core-net"], workspace = true }
 tokio-util = { features = ["default"], workspace = true }
@@ -109,7 +109,6 @@ base-consensus-derive = { workspace = true }
 base-common-client-rollup = { workspace = true }
 base-common-types-payload = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
-base-execution-state-tasks = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 base-execution-engine-driver = { workspace = true }
 base-execution-state-indexer = { workspace = true }
@@ -118,6 +117,7 @@ time = { workspace = true, features = ["default"] }
 hyper = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
+base-execution-state-operations = { workspace = true }
 futures = { features = ["default"], workspace = true }
 base-common-observability-events = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }

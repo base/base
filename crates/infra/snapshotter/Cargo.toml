@@ -19,7 +19,7 @@ url = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 bollard = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 tokio = { workspace = true, features = ["default", "rt", "fs", "time"] }
 base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }

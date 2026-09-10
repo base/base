@@ -5,7 +5,7 @@ use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_state_database::{
     Database, DatabaseEnv, DbCursorRO, DbTx, TableImporter, tables,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},

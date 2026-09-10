@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     ManifestGenerationParams, SnapshotGenerator, SnapshotManifest,
 };
 use tracing::{error, info, warn};

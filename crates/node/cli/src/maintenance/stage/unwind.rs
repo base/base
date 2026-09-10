@@ -7,7 +7,7 @@ use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
-use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_operations::StaticFileProducer;
 use base_execution_state_provider::{BlockNumReader, ProviderFactory};
 use base_execution_sync::{
     DefaultStages, ExecutionStage, ExecutionStageThresholds, NoopBodiesDownloader,

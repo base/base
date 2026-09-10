@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_cli::{CancellationToken, CliContext};
-use base_execution_state_maintenance::{PrunerBuilder, StaticFileProducer};
+use base_execution_state_operations::{PrunerBuilder, StaticFileProducer};
 use base_execution_state_provider::RocksDBProviderFactory;
 use base_node_config::{MetricArgs, version_metadata};
 use base_node_service::{

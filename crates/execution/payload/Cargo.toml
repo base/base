@@ -35,8 +35,8 @@ tracing = { workspace = true, features = ["attributes", "std"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-execution-evm-runtime = { workspace = true, features = ["std"] }
-base-execution-state-tasks = { features = ["default"], workspace = true }
 base-execution-state-types = { features = ["default"], workspace = true }
+base-execution-state-operations = { features = ["default"], workspace = true }
 base-common-chain-config = { workspace = true, features = ["default", "std"] }
 base-common-observability-metrics = { features = ["metrics"], workspace = true }
 base-common-types-chain = { features = ["k256", "reth", "std"], workspace = true }
@@ -52,7 +52,7 @@ base-common-client-ethereum = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 url = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-operations = { workspace = true }
 alloy-genesis = { workspace = true, features = ["std"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-node-service = { workspace = true, features = ["default"] }
@@ -80,6 +80,6 @@ test-utils = [
     "base-execution-state-types/test-utils",
     "base-common-types-chain/test-utils",
     "tokio/rt",
-    "base-execution-state-tasks/test-utils",
+    "base-execution-state-operations/test-utils",
     "base-execution-evm-runtime/test-utils",
 ]

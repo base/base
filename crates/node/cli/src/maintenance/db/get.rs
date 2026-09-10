@@ -10,7 +10,7 @@ use base_execution_state_database::{
     },
     tables,
 };
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{
     ChangeSetReader, RocksDBProviderFactory, StaticFileProviderFactory,
 };

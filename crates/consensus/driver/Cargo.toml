@@ -29,7 +29,6 @@ base-consensus-network = { workspace = true }
 base-execution-payload = { workspace = true }
 metrics = { optional = true, workspace = true }
 serde = { features = ["std"], workspace = true }
-base-execution-state-tasks = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 url = { workspace = true, features = ["default"] }
 base-execution-engine-driver = { workspace = true }
@@ -42,6 +41,7 @@ ipnet = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 base-execution-network-service = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+base-execution-state-operations = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
@@ -65,9 +65,9 @@ base-common-types-payload = { features = ["jwt", "serde", "std"], workspace = tr
 base-common-types-rpc = { workspace = true, features = ["default", "serde", "std"] }
 base-common-chain-config = { features = ["default", "serde", "std"], workspace = true }
 tokio = { workspace = true, features = ["default", "macros", "rt", "rt-multi-thread", "time"] }
-derive_more = { features = ["constructor", "debug", "deref", "display", "eq", "from_str"], workspace = true }
 alloy-transport-http = { workspace = true, features = ["default", "reqwest", "reqwest-rustls-tls"] }
 base-common-client-ethereum = { features = ["default", "reqwest", "reqwest-rustls-tls"], workspace = true }
+derive_more = { features = ["constructor", "debug", "deref", "display", "eq", "from_str"], workspace = true }
 
 [dev-dependencies]
 mockall = { workspace = true }

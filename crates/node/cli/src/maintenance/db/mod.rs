@@ -6,7 +6,7 @@ use std::{
 use base_common_chain_config::BaseChainSpec;
 use base_common_cli::CliContext;
 use base_execution_state_database::version::{DB_VERSION, DatabaseVersionError, get_db_version};
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use clap::{Parser, Subcommand};
 
 use crate::{AccessRights, Environment, EnvironmentArgs};

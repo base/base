@@ -1,5 +1,5 @@
 use base_execution_state_database::DbTxMut;
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     PruneMode, PruneModes, PruneSegment, PrunerBuilder, SegmentOutput, SegmentOutputCheckpoint,
 };
 use base_execution_state_provider::{
@@ -192,7 +192,7 @@ where
 mod tests {
     use alloy_primitives::B256;
     use base_common_types_chain::{SealedBlock, SignerRecoverable};
-    use base_execution_state_maintenance::PruneMode;
+    use base_execution_state_operations::PruneMode;
     use base_execution_state_provider::{
         TransactionsProvider, TransactionsProviderExt, providers::StaticFileWriter,
     };

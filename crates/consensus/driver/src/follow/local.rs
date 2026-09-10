@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_consensus_batch::L2BlockInfo;
 use base_consensus_source::LocalL2Provider;
-use base_execution_state_tasks::ProofsProgress;
+use base_execution_state_operations::ProofsProgress;
 
 use crate::follow::error::FollowError;
 

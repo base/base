@@ -1,6 +1,6 @@
 use alloy_primitives::BlockNumber;
 use base_execution_state_database::{Database, DatabaseEnv, TableImporter, tables};
-use base_execution_state_maintenance::DbTool;
+use base_execution_state_operations::DbTool;
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},

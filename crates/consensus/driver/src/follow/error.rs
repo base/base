@@ -55,7 +55,7 @@ pub enum FollowError {
 
     /// Fetching the local proofs sync status failed.
     #[error("failed to fetch proofs sync status: {0}")]
-    ProofsStatus(base_execution_state_tasks::ProofsProgressError),
+    ProofsStatus(base_execution_state_operations::ProofsProgressError),
 
     /// Proof gating was requested without the proofs-history extension.
     #[error("proof gating requires the proofs-history extension")]

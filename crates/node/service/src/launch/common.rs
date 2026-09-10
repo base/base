@@ -45,7 +45,7 @@ use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_wire::HeadersClient;
 use base_execution_state_database::{DatabaseMetrics, models::PartialStateTrieUnwindMarker};
-use base_execution_state_maintenance::{
+use base_execution_state_operations::{
     PruneMode, PruneModes, PrunerBuilder, StaticFileProducer, StaticFileSegment,
     blocks_per_file_for_prune_distance,
     init::{InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate},

@@ -10,7 +10,7 @@ use alloy_rlp::{Decodable, Encodable};
 use base_common_observability_metrics::Metrics;
 use base_common_runtime::Runtime;
 use base_execution_evm_runtime::StoredAccount as Account;
-use base_execution_state_tasks::{
+use base_execution_state_operations::{
     AccountMultiproofInput, ProofResultContext, ProofResultMessage, ProofResultSender,
     ProofWorkerHandle, StateRootTaskError,
 };
@@ -1111,11 +1111,10 @@ enum SparseTrieTaskMessage {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
-    use base_execution_state_maintenance::init::init_genesis;
+    use base_execution_state_operations::{ProofTaskCtx, init::init_genesis};
     use base_execution_state_provider::{
         OverlayManager, OverlayStateProviderFactory, test_utils::create_test_provider_factory,
     };
-    use base_execution_state_tasks::ProofTaskCtx;
     use base_execution_state_trie::ArenaParallelSparseTrie;
 
     use super::*;

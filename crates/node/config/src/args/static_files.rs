@@ -1,6 +1,6 @@
 //! clap [Args](clap::Args) for static files configuration
 
-use base_execution_state_maintenance::{BlocksPerFileConfig, StaticFilesConfig};
+use base_execution_state_operations::{BlocksPerFileConfig, StaticFilesConfig};
 use clap::Args;
 
 /// Blocks per static file when running in `--minimal` node.

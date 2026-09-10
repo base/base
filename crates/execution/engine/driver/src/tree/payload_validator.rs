@@ -127,6 +127,7 @@ use base_execution_evm_blocks::{
 };
 use base_execution_evm_runtime::{BlockExecutionError, BundleAccount, BundleRetention, Evm, State};
 use base_execution_payload::{BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources};
+use base_execution_state_operations::{CacheFillMode, CacheStats};
 use base_execution_state_provider::{
     BlockExecutionOutput, BlockReader, CanonicalInMemoryState, ChangeSetReader,
     DatabaseProviderFactory, DatabaseProviderROFactory, HeaderProvider, OverlayManager,
@@ -134,7 +135,6 @@ use base_execution_state_provider::{
     StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,
     StorageSettingsCache, TryIntoHistoricalStateProvider,
 };
-use base_execution_state_tasks::{CacheFillMode, CacheStats};
 use base_execution_state_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
