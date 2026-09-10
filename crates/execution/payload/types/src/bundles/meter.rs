@@ -1,5 +1,7 @@
 //! Metering response types for bundle simulation.
 
+use alloc::{string::String, vec::Vec};
+
 use alloy_primitives::{Address, B256, TxHash, U256};
 use serde::{Deserialize, Serialize};
 

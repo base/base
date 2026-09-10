@@ -1,5 +1,7 @@
 //! Accepted bundle type that has been validated and metered.
 
+use alloc::vec::Vec;
+
 use base_common_types_chain::{BaseTxEnvelope, transaction::Recovered};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

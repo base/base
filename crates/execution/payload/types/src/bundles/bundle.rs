@@ -1,5 +1,7 @@
 //! Raw bundle type for API requests.
 
+use alloc::vec::Vec;
+
 use alloy_primitives::Bytes;
 use serde::{Deserialize, Serialize};
 

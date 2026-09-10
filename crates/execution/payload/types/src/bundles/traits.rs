@@ -1,5 +1,7 @@
 //! Traits for bundle operations.
 
+use alloc::vec::Vec;
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, TxHash, keccak256};
 use base_common_types_chain::{BaseTxEnvelope, Transaction, transaction::Recovered};

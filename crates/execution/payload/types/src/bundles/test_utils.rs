@@ -1,5 +1,7 @@
 //! Test utilities for bundle types.
 
+use alloc::{vec, vec::Vec};
+
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, B256, Bytes, TxHash, U256, b256, bytes};
 use base_common_client_ethereum::PrivateKeySigner;
