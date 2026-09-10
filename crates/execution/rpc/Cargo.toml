@@ -29,7 +29,6 @@ alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
 reth-network-api = { workspace = true }
-base-node-context = { workspace = true }
 reth-payload-util = { workspace = true }
 opentelemetry-http = { workspace = true }
 reth-rpc-eth-types = { workspace = true }

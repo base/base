@@ -3765,7 +3765,6 @@ dependencies = [
  "base-execution-state-tasks",
  "base-execution-state-types",
  "base-execution-txpool",
- "base-node-context",
  "dyn-clone",
  "eyre",
  "futures",

@@ -229,7 +229,7 @@ impl BaseEthApiBuilder {
 
 impl BaseEthApiBuilder {
     /// Constructs the Base eth API from the node components and RPC settings.
-    pub async fn build_eth_api(self, ctx: EthApiCtx<'_>) -> eyre::Result<BaseEthApi> {
+    pub async fn build_eth_api(self, ctx: EthApiCtx) -> eyre::Result<BaseEthApi> {
         let Self { sequencer_url, sequencer_headers, min_suggested_priority_fee, .. } = self;
         let base_time = BaseTimeCache::default();
 

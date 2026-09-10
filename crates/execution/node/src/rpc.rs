@@ -216,10 +216,15 @@ impl BaseRpcServer {
 
         let eth_config = rpc_config.eth.max_batch_size(config.txpool.max_batch_size);
         let ctx = EthApiCtx {
-            components: &node,
+            components: base_execution_rpc::BaseRpcContext {
+                provider: node.provider.clone(),
+                pool: node.transaction_pool.clone(),
+                network: node.network.clone(),
+                evm_config: node.evm_config.clone(),
+            },
+            task_executor: node.task_executor().clone(),
             config: eth_config,
             cache,
-            engine_handle: beacon_engine_handle.clone(),
         };
         let eth_api = eth_api_builder.build_eth_api(ctx).await?;
 
