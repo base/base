@@ -193,7 +193,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let sink = StreamingS3ArchiveSink::new(
             self.uploader.clone(),
             tokio::runtime::Handle::current(),
-            1,
+            self.config.max_streaming_archives.get(),
             move |archive_name| {
                 let key = match ChunkFilename::parse(archive_name) {
                     Some((_component, start, _end)) if start != latest_chunk_start => {

@@ -1745,6 +1745,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn streaming_upload_limiter_allows_configured_parallelism() {
+        use std::{
+            sync::{Arc, mpsc as std_mpsc},
+            time::Duration,
+        };
+
+        let limiter = Arc::new(StreamingUploadLimiter::new(3));
+        let permits: Vec<_> = (0..3).map(|_| limiter.acquire()).collect();
+        let (started_tx, started_rx) = std_mpsc::channel();
+        let blocked_limiter = Arc::clone(&limiter);
+        let blocked = std::thread::spawn(move || {
+            let permit = blocked_limiter.acquire();
+            started_tx.send(()).expect("receiver should remain available");
+            drop(permit);
+        });
+
+        assert!(
+            started_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "a fourth archive must wait while all three streaming slots are occupied"
+        );
+
+        drop(permits);
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("releasing a slot should unblock another archive");
+        blocked.join().expect("blocking archive thread should finish");
+    }
+
+    #[test]
     fn static_file_chunks_are_diff_eligible() {
         assert_eq!(
             UploadStrategy::classify("headers-0-499999.tar.zst"),
