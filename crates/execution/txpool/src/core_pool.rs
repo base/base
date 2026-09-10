@@ -31,25 +31,24 @@ use crate::{
     },
 };
 
-pub type EthTransactionPool<S> = Pool<TransactionValidationTaskExecutor, S>;
+pub type EthTransactionPool<S> = Pool<S>;
 
 /// A shareable, generic, customizable `TransactionPool` implementation.
 #[derive(Debug)]
-pub struct Pool<V, S> {
+pub struct Pool<S> {
     /// Arc'ed instance of the pool internals
-    pub pool: Arc<PoolInner<V, S>>,
+    pub pool: Arc<PoolInner<S>>,
 }
 
 // === impl Pool ===
 
-impl<V, S> Pool<V, S>
+impl<S> Pool<S>
 where
-    V: TransactionValidator,
     S: BlobStore,
 {
     /// Create a new transaction pool instance.
     pub fn new(
-        validator: V,
+        validator: TransactionValidationTaskExecutor,
         ordering: crate::BaseOrdering,
         blob_store: S,
         config: PoolConfig,
@@ -57,8 +56,19 @@ where
         Self { pool: Arc::new(PoolInner::new(validator, ordering, blob_store, config)) }
     }
 
+    /// Constructs a pool with a validator reserved for test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_test(
+        validator: impl Into<crate::PoolValidator>,
+        ordering: crate::BaseOrdering,
+        blob_store: S,
+        config: PoolConfig,
+    ) -> Self {
+        Self { pool: Arc::new(PoolInner::new_test(validator, ordering, blob_store, config)) }
+    }
+
     /// Returns the wrapped pool internals.
-    pub fn inner(&self) -> &PoolInner<V, S> {
+    pub fn inner(&self) -> &PoolInner<S> {
         &self.pool
     }
 
@@ -68,7 +78,7 @@ where
     }
 
     /// Get the validator reference.
-    pub fn validator(&self) -> &V {
+    pub fn validator(&self) -> &crate::PoolValidator {
         self.inner().validator()
     }
 
@@ -146,9 +156,8 @@ where
 }
 
 /// implements the `TransactionPool` interface for various transaction pool API consumers.
-impl<V, S> TransactionPool for Pool<V, S>
+impl<S> TransactionPool for Pool<S>
 where
-    V: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn pool_size(&self) -> PoolSize {
@@ -486,9 +495,8 @@ where
     }
 }
 
-impl<V, S> TransactionPoolExt for Pool<V, S>
+impl<S> TransactionPoolExt for Pool<S>
 where
-    V: TransactionValidator,
     S: BlobStore + Clone,
 {
     #[instrument(skip(self), target = "txpool")]
@@ -518,19 +526,18 @@ where
     }
 }
 
-impl<V, S> ValidatingPool for Pool<V, S>
+impl<S> ValidatingPool for Pool<S>
 where
-    V: TransactionValidator,
     S: BlobStore + Clone,
 {
-    type Validator = V;
+    type Validator = crate::PoolValidator;
 
     fn validator(&self) -> &Self::Validator {
         self.inner().validator()
     }
 }
 
-impl<V, S> Clone for Pool<V, S> {
+impl<S> Clone for Pool<S> {
     fn clone(&self) -> Self {
         Self { pool: Arc::clone(&self.pool) }
     }

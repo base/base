@@ -787,8 +787,12 @@ mod tests {
         )
         .build();
 
-        let txpool =
-            Pool::new(validator, BaseOrdering::default(), blob_store.clone(), Default::default());
+        let txpool = Pool::new_test(
+            validator,
+            BaseOrdering::default(),
+            blob_store.clone(),
+            Default::default(),
+        );
 
         txpool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
 

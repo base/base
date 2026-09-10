@@ -140,3 +140,9 @@ pub use transaction_tracing::{
     Tracker as TransactionTracker, TxEvent, TxpoolConfig as TransactionTracingConfig,
     tracex_subscription,
 };
+
+/// The production pool validates through the Base task executor.
+#[cfg(not(any(test, feature = "test-utils")))]
+pub type PoolValidator = TransactionValidationTaskExecutor;
+#[cfg(any(test, feature = "test-utils"))]
+pub use test_utils::PoolValidator;

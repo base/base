@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// A transaction validator that determines all transactions to be valid.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct OkValidator {
     /// Whether to mark transactions as propagatable.

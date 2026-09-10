@@ -16,7 +16,7 @@ mod okvalidator;
 pub use okvalidator::*;
 
 /// A [Pool] used for testing
-pub type TestPool = Pool<MockTransactionValidator, InMemoryBlobStore>;
+pub type TestPool = Pool<InMemoryBlobStore>;
 
 /// Structure encapsulating a [`TestPool`] used for testing
 #[derive(Debug, Clone)]
@@ -24,7 +24,7 @@ pub struct TestPoolBuilder(TestPool);
 
 impl Default for TestPoolBuilder {
     fn default() -> Self {
-        Self(Pool::new(
+        Self(Pool::new_test(
             MockTransactionValidator::default(),
             MockOrdering::default(),
             InMemoryBlobStore::default(),
@@ -36,7 +36,7 @@ impl Default for TestPoolBuilder {
 impl TestPoolBuilder {
     /// Returns a new [`TestPoolBuilder`] with a custom validator used for testing purposes
     pub fn with_validator(self, validator: MockTransactionValidator) -> Self {
-        Self(Pool::new(
+        Self(Pool::new_test(
             validator,
             MockOrdering::default(),
             self.pool.blob_store().clone(),
@@ -46,7 +46,7 @@ impl TestPoolBuilder {
 
     /// Returns a new [`TestPoolBuilder`] with a custom ordering used for testing purposes
     pub fn with_ordering(self, ordering: MockOrdering) -> Self {
-        Self(Pool::new(
+        Self(Pool::new_test(
             self.pool.validator().clone(),
             ordering,
             self.pool.blob_store().clone(),
@@ -56,7 +56,7 @@ impl TestPoolBuilder {
 
     /// Returns a new [`TestPoolBuilder`] with a custom blob store used for testing purposes
     pub fn with_blob_store(self, blob_store: InMemoryBlobStore) -> Self {
-        Self(Pool::new(
+        Self(Pool::new_test(
             self.pool.validator().clone(),
             MockOrdering::default(),
             blob_store,
@@ -66,7 +66,7 @@ impl TestPoolBuilder {
 
     /// Returns a new [`TestPoolBuilder`] with a custom configuration used for testing purposes
     pub fn with_config(self, config: PoolConfig) -> Self {
-        Self(Pool::new(
+        Self(Pool::new_test(
             self.pool.validator().clone(),
             MockOrdering::default(),
             self.pool.blob_store().clone(),
@@ -93,3 +93,6 @@ impl Deref for TestPoolBuilder {
 pub fn testing_pool() -> TestPool {
     TestPoolBuilder::default().into()
 }
+
+mod pool_validator;
+pub use pool_validator::PoolValidator;

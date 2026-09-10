@@ -2358,7 +2358,7 @@ mod tests {
         transactions::config::RelaxedEthAnnouncementFilter,
     };
 
-    type BaseTestPool = Pool<OkValidator, InMemoryBlobStore>;
+    type BaseTestPool = Pool<InMemoryBlobStore>;
 
     async fn new_base_tx_manager() -> (TransactionsManager<BaseTestPool>, NetworkManager) {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -2369,7 +2369,7 @@ mod tests {
             .disable_discovery()
             .build(client);
 
-        let pool = Pool::new(
+        let pool = Pool::new_test(
             OkValidator::default(),
             BaseOrdering::default(),
             InMemoryBlobStore::default(),

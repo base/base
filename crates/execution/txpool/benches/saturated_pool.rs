@@ -13,7 +13,7 @@ use base_execution_txpool::{
 };
 use codspeed_criterion_compat::{BatchSize, Criterion, criterion_group, criterion_main};
 
-type BenchPool = PoolInner<MockTransactionValidator, InMemoryBlobStore>;
+type BenchPool = PoolInner<InMemoryBlobStore>;
 
 /// Base fee the pool is initialized with.
 const BASE_FEE: u64 = 100;
@@ -86,7 +86,7 @@ fn tip_block() -> SealedBlock {
 
 /// Builds a saturated pool: pending pool at its limit, basefee and queued pools populated.
 fn build_saturated_pool() -> (BenchPool, u64) {
-    let pool = PoolInner::new(
+    let pool = PoolInner::new_test(
         MockTransactionValidator::default(),
         MockOrdering::default(),
         InMemoryBlobStore::default(),

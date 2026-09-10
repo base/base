@@ -134,11 +134,11 @@ pub const NEW_TX_LISTENER_BUFFER_SIZE: usize = 1024;
 const BLOB_SIDECAR_LISTENER_BUFFER_SIZE: usize = 512;
 
 /// Transaction pool internals.
-pub struct PoolInner<V, S> {
+pub struct PoolInner<S> {
     /// Internal mapping of addresses to plain ints.
     identifiers: RwLock<SenderIdentifiers>,
     /// Transaction validator.
-    validator: V,
+    validator: crate::PoolValidator,
     /// Storage for blob transactions
     blob_store: S,
     /// The internal pool that manages all transactions.
@@ -161,21 +161,45 @@ pub struct PoolInner<V, S> {
 
 // === impl PoolInner ===
 
-impl<V, S> PoolInner<V, S>
+impl<S> PoolInner<S>
 where
-    V: TransactionValidator,
     S: BlobStore,
 {
     /// Create a new transaction pool instance.
     pub fn new(
-        validator: V,
+        validator: crate::TransactionValidationTaskExecutor,
+        ordering: crate::BaseOrdering,
+        blob_store: S,
+        config: PoolConfig,
+    ) -> Self {
+        #[cfg(any(test, feature = "test-utils"))]
+        let validator = crate::PoolValidator::Task(validator);
+        Self {
+            identifiers: Default::default(),
+            validator,
+            event_listener: Default::default(),
+            has_event_listeners: AtomicBool::new(false),
+            pool: RwLock::new(TxPool::new(ordering, config.clone())),
+            pending_transaction_listener: Default::default(),
+            transaction_listener: Default::default(),
+            blob_transaction_sidecar_listener: Default::default(),
+            config,
+            blob_store,
+            blob_store_metrics: Default::default(),
+        }
+    }
+
+    /// Constructs a pool with a validator reserved for test fixtures.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn new_test(
+        validator: impl Into<crate::PoolValidator>,
         ordering: crate::BaseOrdering,
         blob_store: S,
         config: PoolConfig,
     ) -> Self {
         Self {
             identifiers: Default::default(),
-            validator,
+            validator: validator.into(),
             event_listener: Default::default(),
             has_event_listeners: AtomicBool::new(false),
             pool: RwLock::new(TxPool::new(ordering, config.clone())),
@@ -263,7 +287,7 @@ where
     }
 
     /// Get the validator reference.
-    pub const fn validator(&self) -> &V {
+    pub const fn validator(&self) -> &crate::PoolValidator {
         &self.validator
     }
 
@@ -1293,7 +1317,7 @@ where
     }
 }
 
-impl<V, S> fmt::Debug for PoolInner<V, S> {
+impl<S> fmt::Debug for PoolInner<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PoolInner").field("config", &self.config).finish_non_exhaustive()
     }

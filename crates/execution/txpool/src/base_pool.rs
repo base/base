@@ -76,7 +76,7 @@ pub struct BaseTransactionPool<S = crate::DiskFileBlobStore>
 where
     S: BlobStore + Clone,
 {
-    protocol_pool: Pool<TransactionValidationTaskExecutor, S>,
+    protocol_pool: Pool<S>,
     ordering: crate::BaseOrdering,
     nonce_pool: Arc<RwLock<TwoDNoncePool>>,
     listeners: Arc<RwLock<SidecarListeners>>,
@@ -125,10 +125,7 @@ where
     S: BlobStore + Clone,
 {
     /// Creates a new wrapper around the reth protocol pool.
-    pub fn new(
-        protocol_pool: Pool<TransactionValidationTaskExecutor, S>,
-        ordering: crate::BaseOrdering,
-    ) -> Self {
+    pub fn new(protocol_pool: Pool<S>, ordering: crate::BaseOrdering) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
         Self {
             protocol_pool,
@@ -168,12 +165,12 @@ where
     }
 
     /// Returns the wrapped reth pool.
-    pub const fn protocol_pool(&self) -> &Pool<TransactionValidationTaskExecutor, S> {
+    pub const fn protocol_pool(&self) -> &Pool<S> {
         &self.protocol_pool
     }
 
     /// Returns the validator backing the wrapped reth pool.
-    pub fn validator(&self) -> &TransactionValidationTaskExecutor {
+    pub fn validator(&self) -> &crate::PoolValidator {
         self.protocol_pool.validator()
     }
 

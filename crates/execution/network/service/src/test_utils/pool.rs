@@ -11,7 +11,7 @@ use base_execution_txpool::{
 use crate::NetworkConfigBuilder;
 
 /// Pool accepting Base transactions for network tests.
-pub type TestPool = Pool<MockTransactionValidator, InMemoryBlobStore>;
+pub type TestPool = Pool<InMemoryBlobStore>;
 
 /// Constructs Base fixtures for networking tests.
 #[derive(Debug)]
@@ -33,7 +33,7 @@ impl NetworkTestData {
 
     /// Creates a pool using the shared mock validator.
     pub fn pool() -> TestPool {
-        Pool::new(
+        Pool::new_test(
             MockTransactionValidator::default(),
             BaseOrdering::default(),
             InMemoryBlobStore::default(),
