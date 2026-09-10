@@ -39,9 +39,6 @@ mod namespace;
 pub use namespace::RpcNamespace;
 pub use tower::layer::util::{Identity, Stack};
 
-mod auth_validator;
-pub use auth_validator::AuthValidator;
-
 mod auth_layer;
 pub use auth_layer::{AuthLayer, AuthService, ResponseFuture};
 

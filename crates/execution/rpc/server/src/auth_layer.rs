@@ -8,11 +8,11 @@ use jsonrpsee_http_client::{HttpRequest, HttpResponse};
 use pin_project::pin_project;
 use tower::{Layer, Service};
 
-use super::AuthValidator;
+use crate::JwtAuthValidator;
 
 /// This is an Http middleware layer that acts as an
 /// interceptor for `Authorization` headers. Incoming requests are dispatched to
-/// an inner [`AuthValidator`]. Invalid requests are blocked and the validator's error response is
+/// an inner [`JwtAuthValidator`]. Invalid requests are blocked and the validator's error response is
 /// returned. Valid requests are instead dispatched to the next layer along the chain.
 ///
 /// # How to integrate
@@ -40,24 +40,21 @@ use super::AuthValidator;
 ///         .unwrap();
 /// }
 /// ```
-#[expect(missing_debug_implementations)]
-pub struct AuthLayer<V> {
-    validator: V,
+#[derive(Debug)]
+pub struct AuthLayer {
+    validator: JwtAuthValidator,
 }
 
-impl<V> AuthLayer<V> {
+impl AuthLayer {
     /// Creates an instance of [`AuthLayer`].
-    /// `validator` is a generic trait able to validate requests (see [`AuthValidator`]).
-    pub const fn new(validator: V) -> Self {
+    /// The validator checks JWT signatures and issuance timestamps.
+    pub const fn new(validator: JwtAuthValidator) -> Self {
         Self { validator }
     }
 }
 
-impl<S, V> Layer<S> for AuthLayer<V>
-where
-    V: Clone,
-{
-    type Service = AuthService<S, V>;
+impl<S> Layer<S> for AuthLayer {
+    type Service = AuthService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
         AuthService { validator: self.validator.clone(), inner }
@@ -67,17 +64,16 @@ where
 /// This type is the actual implementation of the middleware. It follows the [`Service`]
 /// specification to correctly proxy Http requests to its inner service after headers validation.
 #[derive(Clone, Debug)]
-pub struct AuthService<S, V> {
+pub struct AuthService<S> {
     /// Performs auth validation logics
-    validator: V,
+    validator: JwtAuthValidator,
     /// Recipient of authorized Http requests
     inner: S,
 }
 
-impl<S, V> Service<HttpRequest> for AuthService<S, V>
+impl<S> Service<HttpRequest> for AuthService<S>
 where
     S: Service<HttpRequest, Response = HttpResponse>,
-    V: AuthValidator,
     Self: Clone,
 {
     type Response = HttpResponse;
@@ -166,7 +162,6 @@ mod tests {
     use reqwest::{StatusCode, header};
 
     use super::*;
-    use crate::JwtAuthValidator;
 
     const AUTH_PORT: u32 = 8551;
     const AUTH_ADDR: &str = "0.0.0.0";

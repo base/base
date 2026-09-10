@@ -598,7 +598,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
     }
 
     /// Creates the [`AuthLayer`] if any
-    fn maybe_jwt_layer(jwt_secret: Option<JwtSecret>) -> Option<AuthLayer<JwtAuthValidator>> {
+    fn maybe_jwt_layer(jwt_secret: Option<JwtSecret>) -> Option<AuthLayer> {
         jwt_secret.map(|secret| AuthLayer::new(JwtAuthValidator::new(secret)))
     }
 

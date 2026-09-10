@@ -2,11 +2,11 @@ use http::{HeaderMap, Response, StatusCode, header};
 use jsonrpsee_http_client::{HttpBody, HttpResponse};
 use tracing::error;
 
-use crate::{AuthValidator, JwtError, JwtSecret};
+use crate::{JwtError, JwtSecret};
 
 /// Implements JWT validation logics and integrates
 /// to an Http [`AuthLayer`][crate::AuthLayer]
-/// by implementing the [`AuthValidator`] trait.
+/// by validating JWT signatures and issuance timestamps.
 #[derive(Debug, Clone)]
 pub struct JwtAuthValidator {
     secret: JwtSecret,
@@ -21,20 +21,22 @@ impl JwtAuthValidator {
     }
 }
 
-impl AuthValidator for JwtAuthValidator {
-    fn validate(&self, headers: &HeaderMap) -> Result<(), HttpResponse> {
+impl JwtAuthValidator {
+    /// Validates the authorization header before a request reaches RPC handlers.
+    #[expect(clippy::result_large_err)]
+    pub fn validate(&self, headers: &HeaderMap) -> Result<(), HttpResponse> {
         match get_bearer(headers) {
             Some(jwt) => match self.secret.validate(&jwt) {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    error!(target: "engine::jwt-validator", "Invalid JWT: {e}");
+                    error!(target: "engine::jwt-validator", error = %e, "Invalid JWT");
                     let response = err_response(e);
                     Err(response)
                 }
             },
             None => {
                 let e = JwtError::MissingOrInvalidAuthorizationHeader;
-                error!(target: "engine::jwt-validator", "Invalid JWT: {e}");
+                error!(target: "engine::jwt-validator", error = %e, "Invalid JWT");
                 let response = err_response(e);
                 Err(response)
             }
