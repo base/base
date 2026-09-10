@@ -137,11 +137,11 @@ mod tests {
         DBProvider, DatabaseProviderFactory, ProviderFactory, PruneCheckpointWriter,
         StaticFileWriter, test_utils::create_test_provider_factory,
     };
+    use base_execution_state_types::FinishedExExHeight;
     use base_execution_state_types::{
         DEFAULT_BLOCKS_PER_STATIC_FILE, SegmentHeader, SegmentRangeInclusive, StaticFileSegment,
     };
     use base_execution_state_types::{PruneMode, PruneProgress, PruneSegment};
-    use reth_exex_types::FinishedExExHeight;
 
     use super::*;
     use crate::pruning::Pruner;

@@ -70,7 +70,6 @@ rand_08 = { workspace = true, features = ["default"] }
 proptest = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-reth-exex-types = { workspace = true, features = ["default"] }
 reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 base-execution-state-database = {workspace = true, features = ["test-utils"]}

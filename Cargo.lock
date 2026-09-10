@@ -4002,7 +4002,6 @@ dependencies = [
  "metrics",
  "parking_lot",
  "rayon",
- "reth-exex-types",
  "reth-primitives-traits",
  "reth-testing-utils",
  "rustc-hash",
@@ -14049,7 +14048,6 @@ dependencies = [
  "rand 0.9.5",
  "rayon",
  "reth-engine-primitives",
- "reth-exex-types",
  "reth-primitives-traits",
  "reth-testing-utils",
  "schnellru",
@@ -14162,7 +14160,6 @@ name = "reth-exex-types"
 version = "0.0.0"
 dependencies = [
  "alloy-eips",
- "alloy-primitives",
  "arbitrary",
  "base-execution-state-types",
  "bincode 1.3.3",

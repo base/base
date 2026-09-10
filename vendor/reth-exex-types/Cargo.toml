@@ -19,7 +19,6 @@ workspace = true
 alloy-eips = { workspace = true }
 serde = { workspace = true, optional = true }
 base-execution-state-types = { workspace = true }
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 serde_with = { workspace = true, features = ["macros"], optional = true }
 
 [dev-dependencies]
@@ -34,7 +33,6 @@ serde = [
     "dep:serde",
     "base-execution-state-types/serde",
     "alloy-eips/serde",
-    "alloy-primitives/serde",
     "rand/serde",
     "reth-primitives-traits/serde",
 ]

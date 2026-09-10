@@ -412,8 +412,8 @@ mod tests {
         providers::{ReadOnlyConfig, RocksDBProvider, StaticFileProvider},
         test_utils::create_test_provider_factory,
     };
+    use base_execution_state_types::FinishedExExHeight;
     use base_execution_state_types::PruneMode;
-    use reth_exex_types::FinishedExExHeight;
     use tokio::sync::mpsc::unbounded_channel;
     use {
         base_execution_state_provider::test_utils::TestBlockBuilder,

@@ -7,9 +7,9 @@ use base_execution_state_provider::{
     PruneCheckpointWriter, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderFactory, providers::StaticFileProvider,
 };
+use base_execution_state_types::FinishedExExHeight;
 use base_execution_state_types::PruneConfig;
 use base_execution_state_types::PruneModes;
-use reth_exex_types::FinishedExExHeight;
 use tokio::sync::watch;
 
 use crate::pruning::{Pruner, segments::SegmentSet};

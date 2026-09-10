@@ -8,11 +8,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-mod finished_height;
 mod head;
 mod notification;
 
-pub use finished_height::FinishedExExHeight;
 pub use head::ExExHead;
 pub use notification::ExExNotification;
 

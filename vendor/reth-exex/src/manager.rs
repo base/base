@@ -1,3 +1,4 @@
+use base_execution_state_types::FinishedExExHeight;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -28,9 +29,7 @@ use tokio::sync::{
 };
 use tokio_util::sync::{PollSendError, PollSender, ReusableBoxFuture};
 
-use crate::{
-    ExExEvent, ExExNotification, ExExNotifications, FinishedExExHeight, WalHandle, wal::Wal,
-};
+use crate::{ExExEvent, ExExNotification, ExExNotifications, WalHandle, wal::Wal};
 
 /// Default max size of the internal state notifications buffer.
 ///
@@ -674,13 +673,13 @@ impl Clone for ExExManagerHandle {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::B256;
+    use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::{
         BlockReader, BlockWriter, Chain, DBProvider, DatabaseProviderFactory, TransactionVariant,
         providers::BlockchainProvider, test_utils::create_test_provider_factory,
     };
     use futures::{StreamExt, TryStreamExt};
     use rand::Rng;
-    use base_execution_state_maintenance::init::init_genesis;
     use reth_primitives_traits::RecoveredBlock;
     use reth_testing_utils::generators::{self, BlockParams};
 

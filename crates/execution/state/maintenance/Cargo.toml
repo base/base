@@ -33,7 +33,6 @@ eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
 tracing = {workspace = true, features = ["attributes"]}
-reth-exex-types = { workspace = true, features = ["default"] }
 base-common-types-chain = {workspace = true, features = ["reth"]}
 alloy-primitives = {workspace = true, features = ["map-foldhash"]}
 base-execution-state-types = {workspace = true, features = ["std"]}

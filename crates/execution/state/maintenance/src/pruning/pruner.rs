@@ -8,9 +8,9 @@ use base_execution_state_provider::{
     DBProvider, DatabaseProviderFactory, PruneCheckpointReader, PruneCheckpointWriter,
     StageCheckpointReader,
 };
+use base_execution_state_types::FinishedExExHeight;
 use base_execution_state_types::StageId;
 use base_execution_state_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
-use reth_exex_types::FinishedExExHeight;
 use std::time::Instant;
 use tokio::sync::watch;
 use tracing::{debug, instrument};
@@ -383,7 +383,7 @@ fn is_stage_finished<Provider: StageCheckpointReader>(
 #[cfg(test)]
 mod tests {
     use base_execution_state_provider::test_utils::create_test_provider_factory;
-    use reth_exex_types::FinishedExExHeight;
+    use base_execution_state_types::FinishedExExHeight;
 
     use crate::pruning::Pruner;
 
