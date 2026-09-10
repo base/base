@@ -7,8 +7,7 @@ use base_execution_state_types::{
     updates::{StorageTrieUpdates, TrieUpdates},
 };
 use either::Either;
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-use reth_primitives_traits::ParallelBridgeBuffered;
+use rayon::iter::{IntoParallelIterator, IntoParallelRefMutIterator, ParallelIterator};
 
 use tracing::debug;
 use tracing::instrument;
@@ -279,8 +278,7 @@ impl SparseStateTrie {
         let results: Vec<_> = {
             let parent_span = tracing::Span::current();
             targets
-                .into_iter()
-                .par_bridge_buffered()
+                .into_par_iter()
                 .map(|(hashed_address, target, mut nodes)| {
                     let _span = tracing::trace_span!(
                         target: "trie::sparse",

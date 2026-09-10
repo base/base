@@ -164,12 +164,6 @@ pub mod header;
 pub use base_common_types_chain::InMemorySize;
 pub use header::{Header, SealedHeader};
 
-/// Rayon utilities
-#[cfg(feature = "rayon")]
-pub mod rayon;
-#[cfg(feature = "rayon")]
-pub use rayon::ParallelBridgeBuffered;
-
 /// Helper trait that requires de-/serialize implementation since `serde` feature is enabled.
 #[cfg(feature = "serde")]
 pub trait MaybeSerde: serde::Serialize + for<'de> serde::Deserialize<'de> {}
