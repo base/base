@@ -2,7 +2,7 @@
 
 ## Crate Architecture and Public API
 
-- All crate names must use the `base-` prefix, for example `base-enclave` or `base-builder-core`.
+- All crate names must use the `base-` prefix, for example `base-enclave` or `base-testing-devnet`.
 - Keep `lib.rs` files minimal and free of logic.
 - Group each module declaration with its re-export (`mod foo; pub use foo::Bar;`) instead of listing all modules and then all re-exports.
 - Do not declare modules `pub` or `pub(crate)` unless they are test utilities, such as `pub mod test_utils`.

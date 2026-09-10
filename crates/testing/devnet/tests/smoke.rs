@@ -7,13 +7,12 @@ use core::{
 use std::collections::HashSet;
 
 use alloy_primitives::TxHash;
+use base_node_service::BuilderConfig;
 #[cfg(target_os = "linux")]
-use base_builder_core::test_utils::ExternalNode;
-use base_builder_core::{
-    BuilderConfig,
-    test_utils::{
-        TransactionBuilderExt, setup_test_instance, setup_test_instance_with_builder_config,
-    },
+use base_testing_devnet::builder_test_utils::ExternalNode;
+use base_testing_devnet::{
+    builder_test_utils::TransactionBuilderExt, builder_test_utils::setup_test_instance,
+    builder_test_utils::setup_test_instance_with_builder_config,
 };
 use tokio::{join, task::yield_now};
 use tracing::info;
@@ -172,15 +171,16 @@ async fn chain_produces_big_tx_with_gas_limit() -> eyre::Result<()> {
     #[cfg(target_os = "linux")]
     let driver = driver.with_validation_node(ExternalNode::reth().await?).await?;
 
-    // insert valid txn under limit
+    // Advertise a gas limit below the configured cap.
     let tx = driver
         .create_transaction()
         .random_valid_transfer()
+        .with_gas_limit(21_000)
         .send()
         .await
         .expect("Failed to send transaction");
 
-    // insert txn with gas usage above limit
+    // The contract deployment advertises a gas limit above the cap.
     let tx_high_gas = driver
         .create_transaction()
         .random_big_transaction()

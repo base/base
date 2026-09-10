@@ -36,22 +36,23 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-genesis = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
 miniz_oxide = { workspace = true, features = ["default"] }
+base-node-service = {workspace = true, features = ["default"]}
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
-base-execution-txpool-pool = { workspace = true, features = ["default"] }
 base-consensus-batch-types = { workspace = true, features = ["std"] }
 base-execution-state-types = {features = ["default"], workspace = true}
 base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = { workspace = true, features = ["default"] }
 base-consensus-driver-service = {workspace = true, features = ["default"]}
 tokio = { workspace = true, features = ["default", "rt", "time", "sync"] }
 base-batcher-service-driver = {workspace = true, features = ["test-utils"]}
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-payload-builder = { workspace = true, features = ["default"] }
-base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-consensus-derive-pipeline = { workspace = true, features = ["test-utils"] }
 base-execution-state-database = { workspace = true, features = ["default", "test-utils"] }
+base-testing-devnet = { workspace = true, features = ["default", "test-utils"] }
 
 [dev-dependencies]
 base-execution-evm-precompiles = {workspace = true}

@@ -1,8 +1,9 @@
 #![allow(missing_docs)]
 
 use base_common_client_ethereum::Provider;
-use base_builder_core::test_utils::{
-    BlockTransactionsExt, ChainDriverExt, TransactionBuilderExt, setup_test_instance,
+use base_testing_devnet::{
+    builder_test_utils::BlockTransactionsExt, builder_test_utils::ChainDriverExt,
+    builder_test_utils::TransactionBuilderExt, builder_test_utils::setup_test_instance,
 };
 
 /// This test ensures that the transaction size limit is respected.

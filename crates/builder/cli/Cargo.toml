@@ -13,12 +13,13 @@ workspace = true
 
 [dependencies]
 tracing = { workspace = true }
-base-common-observability-events = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
-base-node-service = { workspace = true, features = ["default"] }
-base-builder-core = { workspace = true, features = ["default"] }
+base-common-observability-events = { workspace = true }
+base-node-service = {features = ["default"], workspace = true}
 base-execution-cli = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
+base-execution-rpc-handlers = {workspace = true, features = ["default"]}
+base-execution-payload-builder = {workspace = true, features = ["default"]}
 
 [dev-dependencies]
 alloy-primitives = { workspace = true }

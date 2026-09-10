@@ -111,7 +111,7 @@ loop {
 
 ## PR 3: Builder RPC Endpoint
 
-**Crate:** `crates/builder/core/` or new `crates/builder/rpc/`
+**Crate:** `crates/testing/devnet/` or new `crates/builder/rpc/`
 
 RPC endpoint on builder nodes to receive forwarded transactions.
 

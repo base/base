@@ -7,7 +7,6 @@ use std::{
     time::Duration,
 };
 
-use base_builder_core::test_utils::get_available_port;
 use base_common_chain_activation::{
     UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer, UpgradeSignalMonitor,
     UpgradeSignalPollOutcome, UpgradeSignalRefresher, UpgradeSignalRuntimeApplier,
@@ -16,6 +15,7 @@ use base_common_chain_config::RollupConfig;
 use base_consensus_driver_service::RpcBuilder;
 use base_consensus_driver_service::{FollowNode, FollowNodeConfig, RemoteL2Client};
 use base_consensus_source_providers::L1RpcProvider;
+use base_testing_devnet::builder_test_utils::get_available_port;
 use eyre::{Result, WrapErr};
 use tokio::{
     task::{AbortHandle, JoinHandle},

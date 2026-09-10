@@ -3,17 +3,18 @@
 use core::time::Duration;
 use std::path::PathBuf;
 
-use base_builder_core::MeteringStore;
-use base_builder_core::{
-    BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig,
-    SharedMeteringStore,
-};
-use base_execution_cli::ShadowIndexerArgs;
-use base_node_service::RollupArgs;
 use base_common_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
     TransactionEventWriterConfig,
 };
+use base_execution_cli::ShadowIndexerArgs;
+use base_execution_payload_builder::MeteringStore;
+use base_execution_payload_builder::SharedMeteringStore;
+use base_execution_rpc_handlers::{
+    BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig,
+};
+use base_node_service::BuilderConfig;
+use base_node_service::RollupArgs;
 use tracing::warn;
 
 /// Dedicated transaction event journal configuration.

@@ -4,7 +4,7 @@ mod apis;
 mod driver;
 mod external;
 mod external_engine;
-pub use base_testing_devnet::test_utils::EngineApi;
+pub use crate::test_utils::EngineApi;
 pub use external_engine::ExternalEngineApi;
 mod instance;
 mod txs;
@@ -23,7 +23,7 @@ use reth_primitives_traits::Recovered;
 pub use txs::*;
 pub use utils::*;
 
-use crate::BuilderConfig;
+use base_node_service::BuilderConfig;
 
 /// Signs a Base transaction and returns the recovered signed transaction.
 pub fn sign_base_tx(

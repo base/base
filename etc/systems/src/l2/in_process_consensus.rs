@@ -13,7 +13,6 @@ use std::{
 
 use alloy_genesis::ChainConfig;
 use alloy_primitives::B256;
-use base_builder_core::test_utils::get_available_port;
 use base_common_chain_activation::{
     UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
     UpgradeSignalRuntimeApplier,
@@ -32,6 +31,7 @@ use base_consensus_network_service::LocalNode;
 use base_consensus_network_service::PeerScoreLevel;
 use base_consensus_network_service::SecretKeyLoader;
 use base_consensus_source_providers::BlockSigner;
+use base_testing_devnet::builder_test_utils::get_available_port;
 use eyre::{Result, WrapErr};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use tempfile::TempDir;

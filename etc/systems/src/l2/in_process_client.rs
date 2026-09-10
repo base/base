@@ -4,7 +4,6 @@
 
 use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use base_builder_core::test_utils::get_available_port;
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use base_execution_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
@@ -15,6 +14,7 @@ use base_node_config::{
     NodeExitFuture, RpcServerArgs,
 };
 use base_node_service::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
+use base_testing_devnet::builder_test_utils::get_available_port;
 use eyre::{Context, Result, eyre};
 use tempfile::TempDir;
 use tracing::warn;
@@ -211,7 +211,8 @@ impl InProcessClient {
         rpc.validity = config
             .enable_experimental_validity_transactions
             .then_some(base_execution_txpool_pool::DEFAULT_MAX_VALIDITY_PREDICATES);
-        let mut builder = base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        let mut builder =
+            base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         builder.base = base_node;
         builder.rpc = rpc;
 

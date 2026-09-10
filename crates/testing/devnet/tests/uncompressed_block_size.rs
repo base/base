@@ -1,9 +1,10 @@
 //! Tests for `max_uncompressed_block_size` limit enforcement and transaction spillover.
 
 use alloy_primitives::{Address, Bytes};
-use base_builder_core::{
-    BuilderConfig,
-    test_utils::{BlockTransactionsExt, setup_test_instance_with_builder_config},
+use base_node_service::BuilderConfig;
+use base_testing_devnet::{
+    builder_test_utils::BlockTransactionsExt,
+    builder_test_utils::setup_test_instance_with_builder_config,
 };
 
 /// Test that the uncompressed block size limit is enforced: only the highest priority fee

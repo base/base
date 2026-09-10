@@ -1,4 +1,9 @@
-# `base-testing-devnet`
+# Base devnet test support
 
-Integration harness for launching local Base nodes and exercising the execution driver.
-The `test-utils` feature exposes the harness; production startup lives in `base-node-service`.
+`base-testing-devnet` provides in-process Base node and builder fixtures for
+integration tests. `test_utils` contains the execution harness and direct engine
+client; `builder_test_utils` provides block drivers, transaction builders, pool
+observers, and optional external reference-node validation.
+
+Production node assembly and builder configuration live in `base-node-service`.
+RPC and payload definitions remain in their execution crates.

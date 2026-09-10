@@ -7,7 +7,6 @@
 use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
-use base_builder_core::{BuilderConfig, test_utils::get_available_port};
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
 use base_execution_state_database::{
@@ -19,7 +18,9 @@ use base_node_config::{
     DataDirPath, DatadirArgs, MaybePlatformPath, MetricArgs, NetworkArgs, NodeExitFuture,
     RpcServerArgs,
 };
+use base_node_service::BuilderConfig;
 use base_node_service::{BaseNode, NodeConfig, NodeHandle, RollupArgs};
+use base_testing_devnet::builder_test_utils::get_available_port;
 use eyre::{Result, WrapErr, eyre};
 use tempfile::TempDir;
 use tracing::warn;
@@ -159,12 +160,13 @@ impl InProcessBuilder {
             shadow_indexer: config.shadow_indexer,
             ..Default::default()
         };
-        rpc.builder = Some(base_builder_core::BuilderApiConfig::new(
+        rpc.builder = Some(base_execution_rpc_handlers::BuilderApiConfig::new(
             accept_validity_transactions,
             DEFAULT_MAX_VALIDITY_PREDICATES,
         ));
         rpc.validity = accept_validity_transactions.then_some(DEFAULT_MAX_VALIDITY_PREDICATES);
-        let mut launch = base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        let mut launch =
+            base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         launch.base = base_node;
         launch.payload = Some(builder_config.into_payload_service_config());
         launch.rpc = rpc;

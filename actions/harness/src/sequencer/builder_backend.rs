@@ -6,8 +6,8 @@
 //! DA/gas limits, metering, revert/rejection semantics).
 //!
 //! [`BuilderBackedEngineClient`] instead launches an in-process
-//! [`LocalInstance`](base_builder_core::test_utils::LocalInstance) running the production
-//! [`BlockServiceBuilder`](base_builder_core::BlockServiceBuilder) with a real
+//! [`LocalInstance`](base_testing_devnet::builder_test_utils::LocalInstance) running the production
+//! [`BlockServiceBuilder`](base_testing_devnet::BlockServiceBuilder) with a real
 //! transaction pool, against the harness's rollup-config-derived genesis. It implements the
 //! production [`SequencerEngineClient`] seam, so the harness's real `SequencerActor` drives the real
 //! builder over the Engine API — while the verifier still re-executes the derived blocks, keeping
@@ -20,12 +20,6 @@ use std::{
 
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests};
 use async_trait::async_trait;
-use base_builder_core::{
-    BuilderConfig,
-    test_utils::{
-        ChainDriver, EngineApi, LocalInstance, LocalInstanceBuilder, node_config_with_chain_spec,
-    },
-};
 use base_common_chain_config::BaseChainSpec;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::Base;
@@ -38,6 +32,12 @@ use base_consensus_driver_service::{
 };
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_txpool_pool::BasePooledTransaction;
+use base_node_service::BuilderConfig;
+use base_testing_devnet::{
+    builder_test_utils::ChainDriver, builder_test_utils::EngineApi,
+    builder_test_utils::LocalInstance, builder_test_utils::LocalInstanceBuilder,
+    builder_test_utils::node_config_with_chain_spec,
+};
 
 use super::ExecutionPayloadConverter;
 use crate::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry};

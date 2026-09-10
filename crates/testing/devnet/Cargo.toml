@@ -12,46 +12,87 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-eyre = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true }
-base-node-config = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, optional = true }
+tower = { workspace = true }
+dashmap = { workspace = true }
+jsonrpsee = { workspace = true }
+async-trait = { workspace = true }
+alloy-hardforks = { workspace = true }
+nanoid = { workspace = true, optional = true }
+rlimit = { workspace = true, optional = true }
+eyre = {features = ["default"], workspace = true}
+base-execution-state-provider = {workspace = true}
+tracing = { workspace = true, features = ["std"] }
+k256 = { workspace = true, features = ["default"] }
+rand = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default"] }
+serde_json = { workspace = true, features = ["std"] }
+futures = { workspace = true, features = ["default"] }
+testcontainers = { workspace = true, optional = true }
+alloy-primitives = {workspace = true, optional = false}
+derive_more = { workspace = true, features = ["debug"] }
 base-testing-support = { workspace = true, optional = true }
-base-node-service = { workspace = true, features = ["default"] }
-reth-primitives-traits = { workspace = true, optional = true}
-base-common-types-chain = { workspace = true, optional = true }
-base-common-runtime-tasks = { workspace = true, optional = true }
+reth-primitives-traits = {workspace = true, optional = false}
+base-node-service = {features = ["default"], workspace = true}
+base-common-runtime-tasks = {workspace = true, optional = false}
 base-consensus-batch-types = { workspace = true, optional = true }
 base-execution-engine-driver = {workspace = true, optional = true}
-base-execution-evm-runtime = { workspace = true, optional = true }
-base-execution-payload-types = { workspace = true, optional = true}
-base-execution-rpc-handlers = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["default"], optional = true }
-alloy-eips = { workspace = true, features = ["std"], optional = true }
+tar = { workspace = true, optional = true, features = ["default"] }
+ctor = { workspace = true, optional = true, features = ["default"] }
+tokio = {features = ["default"], optional = false, workspace = true}
+alloy-eips = {features = ["std"], optional = false, workspace = true}
 base-execution-network-service = { workspace = true, optional = true }
 alloy-genesis = { workspace = true, features = ["std"], optional = true }
-base-common-client-ethereum = {workspace = true,  features = ["default"]}
-base-execution-state-database = { workspace = true, features = ["default"] }
-base-execution-payload-builder = {workspace = true, features = ["default"], optional = false}
-alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
-base-common-chain-config = {optional = true, features = ["std"], workspace = true}
-tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
-base-common-types-payload = {workspace = true, optional = true, features = ["std"]}
-base-common-types-rpc = { workspace = true, optional = true, features = ["serde", "std"] }
-base-execution-txpool-pool = { workspace = true, optional = true }
+base-execution-state-database = {features = ["default"], workspace = true}
+base-node-config = {features = ["otlp"], workspace = true, optional = false}
+opentelemetry = { workspace = true, optional = true, features = ["default"] }
+alloy-rpc-client = {features = ["default"], optional = false, workspace = true}
+base-common-types-payload = {features = ["std"], optional = false, workspace = true}
+base-execution-evm-runtime = {features = ["std"], workspace = true, optional = false}
+base-common-client-ethereum = {features = ["default", "jwt-client"], workspace = true}
+base-execution-txpool-pool = {features = ["default"], workspace = true, optional = false}
+base-common-types-chain = {features = ["reth", "std"], workspace = true, optional = false}
+base-execution-payload-types = {features = ["default"], workspace = true, optional = false}
+base-execution-payload-builder = {features = ["default"], optional = false, workspace = true}
+base-common-chain-config = {features = ["default", "std"], optional = false, workspace = true}
+base-common-types-rpc = {features = ["default", "serde", "std"], optional = false, workspace = true}
+base-execution-rpc-handlers = {features = ["client", "default"], workspace = true, optional = false}
+tracing-subscriber = {features = ["default", "env-filter", "json"], optional = false, workspace = true}
 
 [dev-dependencies]
+nanoid = { workspace = true }
+rlimit = { workspace = true }
 serde_json = { workspace = true }
+alloy-signer = { workspace = true }
+reth-testing-utils = { workspace = true }
+base-testing-support = { workspace = true }
 base-consensus-batch-types = { workspace = true }
 base-execution-engine-driver = {workspace = true}
+base-execution-state-tasks = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+ctor = { workspace = true, features = ["default"] }
+time = { workspace = true, features = ["default"] }
+hyper = { workspace = true, features = ["default"] }
+rstest = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
-tokio-tungstenite = { workspace = true, features = ["default"] }
+base-common-observability-events = { workspace = true }
+tempfile = { workspace = true, features = ["default"] }
+hyper-util = { workspace = true, features = ["default"] }
+http-body-util = { workspace = true, features = ["default"] }
+tokio-tungstenite = {workspace = true, features = ["default"]}
 base-testing-devnet = { workspace = true, features = ["test-utils"] }
-criterion = { workspace = true, features = ["default", "async_tokio", "html_reports"] }
+base-execution-state-types = { workspace = true, features = ["default"] }
+base-node-service = { workspace = true, features = ["default", "test-utils"] }
+criterion = {features = ["async_tokio", "default", "html_reports"], workspace = true}
+base-common-client-ethereum = { workspace = true, features = ["default", "txpool-api"] }
 
 [[bench]]
 name = "fcu_unsafe"
 harness = false
 
 [features]
-test-utils = ["dep:base-execution-txpool-pool", "dep:base-execution-rpc-handlers", "dep:base-common-chain-config", "dep:base-common-types-chain", "dep:base-execution-evm-runtime", "dep:base-consensus-batch-types", "dep:base-execution-network-service", "dep:tokio", "base-node-service/test-utils", "dep:alloy-eips", "dep:alloy-genesis", "dep:alloy-primitives", "dep:alloy-rpc-client", "dep:base-common-types-rpc", "dep:base-common-types-payload", "dep:base-testing-support", "dep:base-node-config", "dep:base-common-runtime-tasks", "dep:tracing-subscriber", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks?/test-utils", "dep:reth-primitives-traits", "dep:base-execution-payload-types", "dep:base-execution-engine-driver"]
+test-utils = ["dep:base-consensus-batch-types", "dep:base-execution-network-service", "base-node-service/test-utils", "dep:alloy-genesis", "dep:base-testing-support", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks/test-utils", "dep:base-execution-engine-driver", "base-execution-payload-types/test-utils", "base-common-chain-config/test-utils", "base-execution-rpc-handlers/client", "base-common-observability-events/test-utils", "ctor", "nanoid", "base-execution-payload-builder/test-utils", "base-common-runtime-tasks/test-utils", "base-execution-txpool-pool/test-utils", "rlimit", "testcontainers"]
+default = ["test-utils"]
+
+[target."cfg(unix)".dependencies]
+tikv-jemallocator = { workspace = true, optional = true, features = ["default"] }

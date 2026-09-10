@@ -4,15 +4,17 @@
 
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, U256};
-use base_builder_core::{
-    BuilderApiConfig, BuilderConfig, DEFAULT_MAX_VALIDITY_PREDICATES,
-    test_utils::{ChainDriverExt, LocalInstanceBuilder, ONE_ETH},
-};
 use base_common_client_ethereum::Provider;
 use base_common_client_ethereum::TransactionResponse;
 use base_common_observability_events::{TransactionEventCapture, TransactionEventType};
+use base_execution_rpc_handlers::{BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES};
 use base_execution_txpool_pool::{
     TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
+};
+use base_node_service::BuilderConfig;
+use base_testing_devnet::{
+    builder_test_utils::ChainDriverExt, builder_test_utils::LocalInstanceBuilder,
+    builder_test_utils::ONE_ETH,
 };
 
 fn validity_instance() -> LocalInstanceBuilder {

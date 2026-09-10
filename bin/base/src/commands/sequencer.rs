@@ -63,7 +63,7 @@ impl SequencerCommand {
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         let rollup_args = builder.rollup_args.clone();
-        let metering_provider: base_builder_core::SharedMeteringStore =
+        let metering_provider: base_execution_payload_builder::SharedMeteringStore =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config()?;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;

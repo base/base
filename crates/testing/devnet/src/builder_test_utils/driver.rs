@@ -16,7 +16,7 @@ use super::{
     DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, DEFAULT_GAS_LIMIT, EngineApi, ExternalNode,
     LocalInstance, PrivateKeySigner, TransactionBuilder, sign_base_tx,
 };
-use crate::BuilderConfig;
+use base_node_service::BuilderConfig;
 
 /// The `ChainDriver` is a type that allows driving the Base builder node to build new blocks manually.
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node

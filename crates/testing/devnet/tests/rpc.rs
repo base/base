@@ -4,12 +4,12 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
 use alloy_rpc_client::RpcClient;
 use alloy_signer::SignerSync;
-use base_builder_core::BuilderApiConfig;
 use base_common_client_ethereum::TransactionBuilder;
 use base_common_types_chain::{
     BaseTransactionSigned, BaseTypedTransaction, SignableTransaction, TxDeposit, TxEip1559,
 };
 use base_common_types_rpc::BaseTransactionRequest;
+use base_execution_rpc_handlers::BuilderApiConfig;
 use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, TransactionValidity, ValidatedTransaction,

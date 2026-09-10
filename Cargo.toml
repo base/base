@@ -34,7 +34,6 @@ members = [
   "crates/batcher/encoding/channel",
   "crates/batcher/service/driver",
   "crates/builder/cli",
-  "crates/builder/core",
   "crates/common/chain/config",
   "crates/common/types/chain",
   "crates/execution/evm/runtime",
@@ -271,7 +270,6 @@ base-common-observability-events = { path = "crates/common/observability/events"
 
 # Builder
 base-builder-cli = { path = "crates/builder/cli", default-features = false }
-base-builder-core = { path = "crates/builder/core", default-features = false }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli", default-features = false }
