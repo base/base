@@ -48,6 +48,19 @@ impl ProviderTestUtils {
         provider
     }
 
+    /// Writes an account fixture to an existing production provider.
+    pub fn set_account(
+        provider: &BlockchainProvider,
+        address: alloy_primitives::Address,
+        account: super::ExtendedAccount,
+    ) {
+        let mock = MockEthProvider::default();
+        mock.add_account(address, account);
+        let writer = provider.database_provider_rw().expect("account fixture writer");
+        mock.write_accounts_to(&writer).expect("persist account fixture");
+        writer.commit().expect("commit account fixture");
+    }
+
     /// Persists blocks and advances the fixture's committed head.
     pub fn insert_blocks(provider: &BlockchainProvider, blocks: &[RecoveredBlock]) {
         let writer = provider.database_provider_rw().expect("fixture write transaction");

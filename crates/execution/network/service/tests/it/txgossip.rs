@@ -21,7 +21,9 @@ use tokio::join;
 async fn test_tx_gossip() {
     base_common_observability_tracing::init_test_tracing();
 
-    let provider = MockEthProvider::default().with_genesis_block();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
     let net = Testnet::create_with(2, provider.clone()).await;
 
     // install request handlers
@@ -44,7 +46,11 @@ async fn test_tx_gossip() {
 
     // ensure the sender has balance
     let sender = tx.sender();
-    provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
+    base_execution_state_provider::test_utils::ProviderTestUtils::set_account(
+        &provider,
+        sender,
+        ExtendedAccount::new(0, U256::from(100_000_000)),
+    );
 
     // insert pending tx in peer0's pool
     let AddedTransactionOutcome { hash, .. } =
@@ -62,7 +68,9 @@ async fn test_tx_gossip() {
 async fn test_tx_propagation_policy_trusted_only() {
     base_common_observability_tracing::init_test_tracing();
 
-    let provider = MockEthProvider::default().with_genesis_block();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
 
     let policy = TransactionPropagationKind::Trusted;
     let net = Testnet::create_with(2, provider.clone()).await;
@@ -86,7 +94,11 @@ async fn test_tx_propagation_policy_trusted_only() {
 
     // ensure the sender has balance
     let sender = tx.sender();
-    provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
+    base_execution_state_provider::test_utils::ProviderTestUtils::set_account(
+        &provider,
+        sender,
+        ExtendedAccount::new(0, U256::from(100_000_000)),
+    );
 
     // insert the tx in peer0's pool
     let outcome_0 = peer_0_handle.pool().unwrap().add_external_transaction(tx).await.unwrap();
@@ -115,7 +127,11 @@ async fn test_tx_propagation_policy_trusted_only() {
 
     // ensure the sender has balance
     let sender = tx.sender();
-    provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
+    base_execution_state_provider::test_utils::ProviderTestUtils::set_account(
+        &provider,
+        sender,
+        ExtendedAccount::new(0, U256::from(100_000_000)),
+    );
 
     // insert pending tx in peer0's pool
     let outcome_1 = peer_0_handle.pool().unwrap().add_external_transaction(tx).await.unwrap();
@@ -134,7 +150,9 @@ async fn test_tx_propagation_policy_trusted_only() {
 async fn test_tx_ingress_policy_trusted_only() {
     base_common_observability_tracing::init_test_tracing();
 
-    let provider = MockEthProvider::default().with_genesis_block();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
 
     let tx_manager_config = TransactionsManagerConfig {
         ingress_policy: TransactionIngressPolicy::Trusted,
@@ -161,7 +179,11 @@ async fn test_tx_ingress_policy_trusted_only() {
 
     // ensure the sender has balance
     let sender = tx.sender();
-    provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
+    base_execution_state_provider::test_utils::ProviderTestUtils::set_account(
+        &provider,
+        sender,
+        ExtendedAccount::new(0, U256::from(100_000_000)),
+    );
 
     // insert the tx in peer1's pool
     let outcome_0 = peer_1_handle.pool().unwrap().add_external_transaction(tx).await.unwrap();
@@ -187,7 +209,11 @@ async fn test_tx_ingress_policy_trusted_only() {
 
     // ensure the sender has balance
     let sender = tx.sender();
-    provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
+    base_execution_state_provider::test_utils::ProviderTestUtils::set_account(
+        &provider,
+        sender,
+        ExtendedAccount::new(0, U256::from(100_000_000)),
+    );
 
     // insert pending tx in peer1's pool
     let outcome_1 = peer_1_handle.pool().unwrap().add_external_transaction(tx).await.unwrap();
@@ -203,7 +229,9 @@ async fn test_tx_ingress_policy_trusted_only() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_blob_transaction_gossip() {
-    let provider = MockEthProvider::default().with_genesis_block();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
     let net = Testnet::create_with(2, provider).await.with_eth_pool();
     let handle = net.spawn();
     handle.connect_peers().await;
@@ -241,7 +269,9 @@ async fn rejects_blob_transaction_gossip() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_sending_invalid_transactions() {
     base_common_observability_tracing::init_test_tracing();
-    let provider = MockEthProvider::default().with_genesis_block();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
     let net = Testnet::create_with(2, provider.clone()).await;
     // install request handlers
     let net = net.with_eth_pool();

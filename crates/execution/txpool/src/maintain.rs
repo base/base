@@ -780,7 +780,9 @@ mod tests {
         let mut chain_spec = (**BaseEvmConfig::default().chain_spec()).clone();
         chain_spec.config.chain_id = 1;
         let validator = BaseTransactionValidatorBuilder::new(
-            provider.with_chain_spec(chain_spec.clone()),
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+                &provider.with_chain_spec(chain_spec.clone()),
+            ),
             BaseEvmConfig::new(Arc::new(chain_spec)),
         )
         .build();

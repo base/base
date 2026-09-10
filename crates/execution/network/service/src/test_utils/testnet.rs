@@ -171,18 +171,17 @@ where
     }
 }
 
-impl<C, Pool> Testnet<C, Pool>
+impl<Pool> Testnet<base_execution_state_provider::BlockchainProvider, Pool>
 where
-    C: ChainSpecProvider
-        + StateProviderFactory
-        + BlockReaderIdExt
-        + HeaderProvider
-        + Clone
-        + 'static,
     Pool: TransactionPool,
 {
     /// Installs an eth pool on each peer
-    pub fn with_eth_pool(self) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore>> {
+    pub fn with_eth_pool(
+        self,
+    ) -> Testnet<
+        base_execution_state_provider::BlockchainProvider,
+        EthTransactionPool<InMemoryBlobStore>,
+    > {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
@@ -203,7 +202,10 @@ where
     pub fn with_eth_pool_config(
         self,
         tx_manager_config: TransactionsManagerConfig,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore>> {
+    ) -> Testnet<
+        base_execution_state_provider::BlockchainProvider,
+        EthTransactionPool<InMemoryBlobStore>,
+    > {
         self.with_eth_pool_config_and_policy(tx_manager_config, Default::default())
     }
 
@@ -212,7 +214,10 @@ where
         self,
         tx_manager_config: TransactionsManagerConfig,
         policy: TransactionPropagationKind,
-    ) -> Testnet<C, EthTransactionPool<C, InMemoryBlobStore>> {
+    ) -> Testnet<
+        base_execution_state_provider::BlockchainProvider,
+        EthTransactionPool<InMemoryBlobStore>,
+    > {
         self.map_pool(|peer| {
             let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(

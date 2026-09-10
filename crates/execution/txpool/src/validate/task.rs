@@ -120,13 +120,10 @@ impl<V> Clone for TransactionValidationTaskExecutor<V> {
 
 impl TransactionValidationTaskExecutor<()> {
     /// Convenience method to create a [`BaseTransactionValidatorBuilder`]
-    pub fn eth_builder<Client>(
-        client: Client,
+    pub fn eth_builder(
+        client: base_execution_state_provider::BlockchainProvider,
         evm_config: BaseEvmConfig,
-    ) -> BaseTransactionValidatorBuilder<Client>
-    where
-        Client: ChainSpecProvider + BlockReaderIdExt,
-    {
+    ) -> BaseTransactionValidatorBuilder {
         BaseTransactionValidatorBuilder::new(client, evm_config)
     }
 }
@@ -149,17 +146,16 @@ impl<V> TransactionValidationTaskExecutor<V> {
     }
 }
 
-impl<Client: base_execution_state_types::StateProviderFactory>
-    TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>
-{
+impl TransactionValidationTaskExecutor<BaseTransactionValidator> {
     /// Creates a new instance for the given client
     ///
     /// This will spawn a single validation tasks that performs the actual validation.
     /// See [`TransactionValidationTaskExecutor::eth_with_additional_tasks`]
-    pub fn eth(client: Client, evm_config: BaseEvmConfig, tasks: Runtime) -> Self
-    where
-        Client: ChainSpecProvider + BlockReaderIdExt,
-    {
+    pub fn eth(
+        client: base_execution_state_provider::BlockchainProvider,
+        evm_config: BaseEvmConfig,
+        tasks: Runtime,
+    ) -> Self {
         Self::eth_with_additional_tasks(client, evm_config, tasks, 0)
     }
 
@@ -173,14 +169,11 @@ impl<Client: base_execution_state_types::StateProviderFactory>
     /// This will always spawn a validation task that performs the actual validation. It will spawn
     /// `num_additional_tasks` additional tasks.
     pub fn eth_with_additional_tasks(
-        client: Client,
+        client: base_execution_state_provider::BlockchainProvider,
         evm_config: BaseEvmConfig,
         tasks: Runtime,
         num_additional_tasks: usize,
-    ) -> Self
-    where
-        Client: ChainSpecProvider + BlockReaderIdExt,
-    {
+    ) -> Self {
         BaseTransactionValidatorBuilder::new(client, evm_config)
             .with_additional_tasks(num_additional_tasks)
             .build_with_tasks(tasks)

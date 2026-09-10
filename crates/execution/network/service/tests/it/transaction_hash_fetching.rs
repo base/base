@@ -16,7 +16,9 @@ async fn transaction_hash_fetching() {
     let mut config = TransactionsManagerConfig { propagation_mode: Max(0), ..Default::default() };
     config.transaction_fetcher_config.max_inflight_requests = 1;
 
-    let provider = MockEthProvider::default();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
     let num_peers = 10;
     let net = Testnet::create_with(num_peers, provider.clone()).await;
 
@@ -44,7 +46,11 @@ async fn transaction_hash_fetching() {
                 tx_gen.gen_eip1559_pooled(),
             );
             let sender = tx.sender();
-            provider.add_account(sender, ExtendedAccount::new(0, U256::from(100_000_000)));
+            base_execution_state_provider::test_utils::ProviderTestUtils::set_account(
+                &provider,
+                sender,
+                ExtendedAccount::new(0, U256::from(100_000_000)),
+            );
             peer_pool.add_external_transaction(tx).await.unwrap();
         }
     }

@@ -523,10 +523,13 @@ mod tests {
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
         let evm_config = BaseEvmConfig::new(chain_spec);
-        let validator = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build();
         let validator = validator;
 
         let origin = TransactionOrigin::External;

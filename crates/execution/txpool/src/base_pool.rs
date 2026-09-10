@@ -76,12 +76,7 @@ pub struct BaseTransactionPool<S = crate::DiskFileBlobStore>
 where
     S: BlobStore + Clone,
 {
-    protocol_pool: Pool<
-        TransactionValidationTaskExecutor<
-            BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
-        >,
-        S,
-    >,
+    protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S>,
     ordering: crate::BaseOrdering,
     nonce_pool: Arc<RwLock<TwoDNoncePool>>,
     listeners: Arc<RwLock<SidecarListeners>>,
@@ -131,12 +126,7 @@ where
 {
     /// Creates a new wrapper around the reth protocol pool.
     pub fn new(
-        protocol_pool: Pool<
-            TransactionValidationTaskExecutor<
-                BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
-            >,
-            S,
-        >,
+        protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S>,
         ordering: crate::BaseOrdering,
     ) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
@@ -180,21 +170,12 @@ where
     /// Returns the wrapped reth pool.
     pub const fn protocol_pool(
         &self,
-    ) -> &Pool<
-        TransactionValidationTaskExecutor<
-            BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
-        >,
-        S,
-    > {
+    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S> {
         &self.protocol_pool
     }
 
     /// Returns the validator backing the wrapped reth pool.
-    pub fn validator(
-        &self,
-    ) -> &TransactionValidationTaskExecutor<
-        BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
-    > {
+    pub fn validator(&self) -> &TransactionValidationTaskExecutor<BaseTransactionValidator> {
         self.protocol_pool.validator()
     }
 

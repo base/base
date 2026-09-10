@@ -654,7 +654,9 @@ async fn new_random_peer(max_in_bound: usize, trusted_nodes: Vec<TrustedPeer>) -
 async fn test_connect_many() {
     base_common_observability_tracing::init_test_tracing();
 
-    let provider = MockEthProvider::default().with_genesis_block();
+    let provider = base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(
+        &MockEthProvider::default().with_genesis_block(),
+    );
     let net = Testnet::create_with(5, provider).await;
 
     // install request handlers

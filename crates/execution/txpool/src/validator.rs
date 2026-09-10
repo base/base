@@ -651,9 +651,9 @@ impl BaseL1BlockInfo {
 
 /// Validator for Base transactions.
 #[derive(Clone)]
-pub struct BaseTransactionValidator<Client> {
+pub struct BaseTransactionValidator {
     /// This type fetches account info from the db
-    pub client: Client,
+    pub client: base_execution_state_provider::BlockchainProvider,
     /// The chain ID transactions must use.
     pub chain_id: u64,
     /// tracks activated forks relevant for transaction validation
@@ -711,7 +711,7 @@ pub struct BaseTransactionValidator<Client> {
     pub limit_class_cache_generation: Arc<AtomicU64>,
 }
 
-impl<Client> BaseTransactionValidator<Client> {
+impl BaseTransactionValidator {
     /// Returns the configured chain spec
 
     /// Returns the configured client
@@ -819,10 +819,7 @@ impl<Client> BaseTransactionValidator<Client> {
     }
 }
 
-impl<Client> BaseTransactionValidator<Client>
-where
-    Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
-{
+impl BaseTransactionValidator {
     /// Create a new [`BaseTransactionValidator`].
     pub fn initialize_block_info(self) -> Self {
         let this = self;
@@ -2143,10 +2140,7 @@ where
     }
 }
 
-impl<Client> TransactionValidator for BaseTransactionValidator<Client>
-where
-    Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
-{
+impl TransactionValidator for BaseTransactionValidator {
     async fn validate_transaction(
         &self,
         origin: TransactionOrigin,
@@ -2188,7 +2182,7 @@ mod tests {
 
     use super::*;
 
-    type TestValidator = BaseTransactionValidator<MockEthProvider>;
+    type TestValidator = BaseTransactionValidator;
 
     fn zenith_chain_spec() -> Arc<BaseChainSpec> {
         let mut genesis = build_test_genesis_zenith();
@@ -2203,10 +2197,13 @@ mod tests {
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let inner = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build();
+        let inner = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build();
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
@@ -2224,11 +2221,14 @@ mod tests {
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let inner = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .with_max_tx_input_bytes(max_tx_input_bytes)
-            .build();
+        let inner = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .with_max_tx_input_bytes(max_tx_input_bytes)
+        .build();
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
@@ -2243,10 +2243,13 @@ mod tests {
             .with_genesis_block();
         client.add_account(address, account);
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let inner = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build();
+        let inner = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build();
         BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
     }
 
@@ -3483,10 +3486,13 @@ mod tests {
             .with_genesis_block();
         client.add_account(sender, ExtendedAccount::new(0, balance));
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let inner = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build();
+        let inner = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build();
         let validator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
@@ -3550,10 +3556,13 @@ mod tests {
         client
             .add_account(sender, ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)));
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let inner = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build();
+        let inner = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build();
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
 
@@ -3627,10 +3636,13 @@ mod tests {
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
         );
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let inner = BaseTransactionValidatorBuilder::new(client, evm_config)
-            .no_shanghai()
-            .no_cancun()
-            .build();
+        let inner = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&client),
+            evm_config,
+        )
+        .no_shanghai()
+        .no_cancun()
+        .build();
         let validator: TestValidator =
             BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default());
         let header = base_common_types_chain::Header { timestamp: now, ..Default::default() };

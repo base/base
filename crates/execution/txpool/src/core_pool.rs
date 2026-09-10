@@ -31,8 +31,8 @@ use crate::{
     },
 };
 
-pub type EthTransactionPool<Client, S> =
-    Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S>;
+pub type EthTransactionPool<S> =
+    Pool<TransactionValidationTaskExecutor<BaseTransactionValidator>, S>;
 
 /// A shareable, generic, customizable `TransactionPool` implementation.
 #[derive(Debug)]
@@ -103,9 +103,8 @@ where
     }
 }
 
-impl<Client, S> EthTransactionPool<Client, S>
+impl<S> EthTransactionPool<S>
 where
-    Client: ChainSpecProvider + StateProviderFactory + Clone + BlockReaderIdExt + 'static,
     S: BlobStore,
 {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when
@@ -139,7 +138,7 @@ where
     /// # }
     /// ```
     pub fn eth_pool(
-        validator: TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>,
+        validator: TransactionValidationTaskExecutor<BaseTransactionValidator>,
         blob_store: S,
         config: PoolConfig,
     ) -> Self {

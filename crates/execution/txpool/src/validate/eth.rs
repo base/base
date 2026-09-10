@@ -71,7 +71,7 @@ pub type StatefulValidationFn<T> = Arc<
 ///
 /// And adheres to the configured [`LocalTransactionConfig`].
 
-impl<Client> fmt::Debug for BaseTransactionValidator<Client> {
+impl fmt::Debug for BaseTransactionValidator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseTransactionValidator")
             .field("fork_tracker", &self.fork_tracker)
@@ -97,12 +97,9 @@ impl<Client> fmt::Debug for BaseTransactionValidator<Client> {
     }
 }
 
-impl<Client> BaseTransactionValidator<Client> {
+impl BaseTransactionValidator {
     /// Returns the configured chain spec
-    pub fn chain_spec(&self) -> Arc<BaseChainSpec>
-    where
-        Client: ChainSpecProvider,
-    {
+    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
         self.client().chain_spec()
     }
 
@@ -112,7 +109,7 @@ impl<Client> BaseTransactionValidator<Client> {
     }
 
     /// Returns the configured client
-    pub const fn client(&self) -> &Client {
+    pub const fn client(&self) -> &base_execution_state_provider::BlockchainProvider {
         &self.client
     }
 
@@ -296,10 +293,7 @@ impl<Client> BaseTransactionValidator<Client> {
     }
 }
 
-impl<Client> BaseTransactionValidator<Client>
-where
-    Client: ChainSpecProvider + StateProviderFactory,
-{
+impl BaseTransactionValidator {
     /// Returns the current max gas limit
     pub fn block_gas_limit(&self) -> u64 {
         self.max_gas_limit()
@@ -836,8 +830,8 @@ where
 
 /// A builder for [`BaseTransactionValidator`] and [`TransactionValidationTaskExecutor`]
 #[derive(Debug)]
-pub struct BaseTransactionValidatorBuilder<Client> {
-    client: Client,
+pub struct BaseTransactionValidatorBuilder {
+    client: base_execution_state_provider::BlockchainProvider,
     /// The chain ID transactions must use.
     chain_id: u64,
     /// The EVM configuration to use for validation.
@@ -891,7 +885,7 @@ pub struct BaseTransactionValidatorBuilder<Client> {
     tx_gas_limit_cap: u64,
 }
 
-impl<Client> BaseTransactionValidatorBuilder<Client> {
+impl BaseTransactionValidatorBuilder {
     /// Creates a new builder for the given client and EVM config
     ///
     /// By default this assumes the network is on the `Prague` hardfork and the following
@@ -901,10 +895,10 @@ impl<Client> BaseTransactionValidatorBuilder<Client> {
     ///  - EIP-1559
     ///  - EIP-4844
     ///  - EIP-7702
-    pub fn new(client: Client, evm_config: BaseEvmConfig) -> Self
-    where
-        Client: ChainSpecProvider + BlockReaderIdExt,
-    {
+    pub fn new(
+        client: base_execution_state_provider::BlockchainProvider,
+        evm_config: BaseEvmConfig,
+    ) -> Self {
         let chain_spec = client.chain_spec();
         let tip = client
             .header_by_id(BlockId::latest())
@@ -1122,10 +1116,7 @@ impl<Client> BaseTransactionValidatorBuilder<Client> {
     }
 
     /// Builds a the [`BaseTransactionValidator`] without spawning validator tasks.
-    pub fn build(self) -> BaseTransactionValidator<Client>
-    where
-        Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
-    {
+    pub fn build(self) -> BaseTransactionValidator {
         let Self {
             client,
             chain_id,
@@ -1192,12 +1183,12 @@ impl<Client> BaseTransactionValidatorBuilder<Client> {
             block_info: Arc::default(),
             require_l1_data_gas_fee: true,
             trusted_proxy_code_hashes: Arc::new(
-                BaseTransactionValidator::<Client>::trusted_proxy_code_hashes(
-                    &BaseTransactionValidator::<Client>::default_trusted_delegation_targets(),
+                BaseTransactionValidator::trusted_proxy_code_hashes(
+                    &BaseTransactionValidator::default_trusted_delegation_targets(),
                 ),
             ),
             trusted_delegation_targets: Arc::new(
-                BaseTransactionValidator::<Client>::default_trusted_delegation_targets(),
+                BaseTransactionValidator::default_trusted_delegation_targets(),
             ),
             limit_class_cache: Arc::default(),
             limit_class_cache_generation: Arc::default(),
@@ -1214,10 +1205,7 @@ impl<Client> BaseTransactionValidatorBuilder<Client> {
     pub fn build_with_tasks(
         self,
         tasks: Runtime,
-    ) -> TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>
-    where
-        Client: ChainSpecProvider + StateProviderFactory + BlockReaderIdExt + Sync,
-    {
+    ) -> TransactionValidationTaskExecutor<BaseTransactionValidator> {
         let additional_tasks = self.additional_tasks;
         let validator = self.build();
         TransactionValidationTaskExecutor::spawn(validator, &tasks, additional_tasks)
@@ -1465,7 +1453,11 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
         let blob_store = InMemoryBlobStore::default();
-        let validator = BaseTransactionValidatorBuilder::new(provider, test_evm_config()).build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .build();
 
         let outcome =
             validator.validate_protocol_one(TransactionOrigin::External, transaction.clone());
@@ -1490,7 +1482,11 @@ mod tests {
             transaction.sender(),
             ExtendedAccount::new(transaction.nonce(), U256::MAX).with_bytecode(Bytes::new()),
         );
-        let validator = BaseTransactionValidatorBuilder::new(provider, test_evm_config()).build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .build();
 
         let outcome = validator.validate_protocol_one(TransactionOrigin::External, transaction);
 
@@ -1502,7 +1498,11 @@ mod tests {
         let provider = MockEthProvider::default()
             .with_chain_spec((**test_evm_config().chain_spec()).clone())
             .with_genesis_block();
-        let validator = BaseTransactionValidatorBuilder::new(provider, test_evm_config()).build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .build();
         let transaction = |chain_id| -> BasePooledTransaction {
             BasePooledTransaction::try_from_consensus(
                 TransactionBuilder::default()
@@ -1544,9 +1544,12 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = BaseTransactionValidatorBuilder::new(provider, test_evm_config())
-            .set_block_gas_limit(1_000_000) // tx gas limit is 1_015_288
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .set_block_gas_limit(1_000_000) // tx gas limit is 1_015_288
+        .build();
 
         let outcome =
             validator.validate_protocol_one(TransactionOrigin::External, transaction.clone());
@@ -1579,9 +1582,12 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = BaseTransactionValidatorBuilder::new(provider, test_evm_config())
-            .set_tx_fee_cap(100) // 100 wei cap
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .set_tx_fee_cap(100) // 100 wei cap
+        .build();
 
         let outcome =
             validator.validate_protocol_one(TransactionOrigin::Local, transaction.clone());
@@ -1617,9 +1623,12 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let validator = BaseTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .set_tx_fee_cap(0) // no cap
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .set_tx_fee_cap(0) // no cap
+        .build();
 
         let outcome = validator.validate_protocol_one(TransactionOrigin::Local, transaction);
         assert!(outcome.is_valid());
@@ -1636,9 +1645,12 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let validator = BaseTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .set_tx_fee_cap(2e18 as u128) // 2 ETH cap
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .set_tx_fee_cap(2e18 as u128) // 2 ETH cap
+        .build();
 
         let outcome = validator.validate_protocol_one(TransactionOrigin::Local, transaction);
         assert!(outcome.is_valid());
@@ -1656,9 +1668,12 @@ mod tests {
         );
 
         let blob_store = InMemoryBlobStore::default();
-        let validator = BaseTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .with_max_tx_gas_limit(Some(500_000)) // Set limit lower than transaction gas limit (1_015_288)
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .with_max_tx_gas_limit(Some(500_000)) // Set limit lower than transaction gas limit (1_015_288)
+        .build();
 
         let outcome =
             validator.validate_protocol_one(TransactionOrigin::External, transaction.clone());
@@ -1689,9 +1704,12 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let validator = BaseTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .with_max_tx_gas_limit(None) // disabled
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .with_max_tx_gas_limit(None) // disabled
+        .build();
 
         let outcome = validator.validate_protocol_one(TransactionOrigin::External, transaction);
         assert!(outcome.is_valid());
@@ -1708,9 +1726,12 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let validator = BaseTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .with_max_tx_gas_limit(Some(2_000_000)) // Set limit higher than transaction gas limit (1_015_288)
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .with_max_tx_gas_limit(Some(2_000_000)) // Set limit higher than transaction gas limit (1_015_288)
+        .build();
 
         let outcome = validator.validate_protocol_one(TransactionOrigin::External, transaction);
         assert!(outcome.is_valid());
@@ -1734,9 +1755,12 @@ mod tests {
         provider: MockEthProvider,
         minimum_priority_fee: Option<u128>,
         local_config: Option<LocalTransactionConfig>,
-    ) -> BaseTransactionValidator<MockEthProvider> {
-        let mut builder = BaseTransactionValidatorBuilder::new(provider, test_evm_config())
-            .with_minimum_priority_fee(minimum_priority_fee);
+    ) -> BaseTransactionValidator {
+        let mut builder = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .with_minimum_priority_fee(minimum_priority_fee);
 
         if let Some(config) = local_config {
             builder = builder.with_local_transactions_config(config);
@@ -1909,9 +1933,12 @@ mod tests {
         let provider = MockEthProvider::default()
             .with_chain_spec((**test_evm_config().chain_spec()).clone())
             .with_genesis_block();
-        let validator = BaseTransactionValidatorBuilder::new(provider, test_evm_config())
-            .with_max_tx_input_bytes(max_tx_input_bytes)
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            test_evm_config(),
+        )
+        .with_max_tx_input_bytes(max_tx_input_bytes)
+        .build();
 
         let tx_with_access_list = |storage_keys: usize| {
             let access_list = AccessList(vec![AccessListItem {
@@ -1956,9 +1983,11 @@ mod tests {
         );
 
         // Validate with balance check enabled
-        let validator =
-            BaseTransactionValidatorBuilder::new(provider.clone(), BaseEvmConfig::default())
-                .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .build();
 
         let outcome =
             validator.validate_protocol_one(TransactionOrigin::External, transaction.clone());
@@ -1974,9 +2003,12 @@ mod tests {
         }
 
         // Validate with balance check disabled
-        let validator = BaseTransactionValidatorBuilder::new(provider, BaseEvmConfig::default())
-            .disable_balance_check()
-            .build();
+        let validator = BaseTransactionValidatorBuilder::new(
+            base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
+            BaseEvmConfig::default(),
+        )
+        .disable_balance_check()
+        .build();
 
         let outcome = validator.validate_protocol_one(TransactionOrigin::External, transaction);
         assert!(outcome.is_valid()); // Should be valid because balance check is disabled
