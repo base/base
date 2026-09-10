@@ -1,5 +1,5 @@
 [package]
-name = "base-sidecrush"
+name = "base-infra-sidecrush-service"
 description = "Block-production health-check sidecar library"
 version.workspace = true
 edition.workspace = true

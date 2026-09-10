@@ -4488,6 +4488,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-infra-sidecrush-service"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base-common-client-ethereum",
+ "base-common-types-rpc",
+ "cadence",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-infra-telemetry-service"
 version = "0.0.0"
 dependencies = [
@@ -5287,23 +5300,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-sidecrush"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base-common-client-ethereum",
- "base-common-types-rpc",
- "cadence",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-sidecrush-bin"
 version = "0.0.0"
 dependencies = [
- "base-sidecrush",
+ "base-infra-sidecrush-service",
  "cadence",
  "clap",
  "tokio",

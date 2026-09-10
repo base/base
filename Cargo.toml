@@ -67,7 +67,7 @@ members = [
   "crates/infra/basectl/service",
   "crates/infra/load-tests",
   "crates/infra/shadow-metrics/service",
-  "crates/infra/sidecrush",
+  "crates/infra/sidecrush/service",
   "crates/infra/snapshotter",
   "crates/infra/telemetry/service",
   "crates/infra/websocket-proxy",
@@ -298,7 +298,7 @@ base-execution-payload-builder = { path = "crates/execution/payload/builder", de
 
 # Infra
 base-infra-basectl-service = { path = "crates/infra/basectl/service", default-features = false }
-base-sidecrush = { path = "crates/infra/sidecrush", default-features = false }
+base-infra-sidecrush-service = { path = "crates/infra/sidecrush/service", default-features = false }
 base-infra-audit-service = { path = "crates/infra/audit/service", default-features = false }
 base-load-tests = { path = "crates/infra/load-tests", default-features = false }
 base-snapshotter = { path = "crates/infra/snapshotter", default-features = false }

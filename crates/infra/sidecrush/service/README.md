@@ -1,8 +1,8 @@
-# base-sidecrush
+# base-infra-sidecrush-service
 
 Block-production health-check sidecar library.
 
-`base-sidecrush` polls an execution-layer node's HTTP RPC endpoint on a fixed
+`base-infra-sidecrush-service` polls an execution-layer node's HTTP RPC endpoint on a fixed
 interval, computes the age of the latest block relative to wall-clock time, and
 classifies the node into one of four health states:
 
