@@ -46,8 +46,8 @@ base-common-types-chain = { workspace = true, features = ["k256", "reth"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 pretty_assertions = { workspace = true, features = ["default"], optional = true }
-base-execution-rpc = { workspace = true, features = ["client"], optional = true }
 base-execution-state-operations = { workspace = true, features = ["serde-bincode-compat"] }
+base-common-client-ethereum = { workspace = true, features = ["debug-api"], optional = true }
 base-common-types-payload = { workspace = true, features = ["default", "serde", "serde-bincode-compat"] }
 
 [dev-dependencies]
@@ -103,5 +103,5 @@ witness = [
     "dep:alloy-rlp",
     "dep:pretty_assertions",
     "base-execution-evm-blocks/serde",
-    "dep:base-execution-rpc",
+    "dep:base-common-client-ethereum",
 ]

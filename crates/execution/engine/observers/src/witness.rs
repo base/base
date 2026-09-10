@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, fmt::Debug, fs::File, io::Write, path::PathBuf}
 
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
+use base_common_client_ethereum::ExecutionWitnessClient;
 use base_common_observability_tracing::tracing::warn;
 use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedHeader};
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
@@ -9,7 +10,6 @@ use base_execution_evm_runtime::{
     AccountInfo, AccountInfoRevert, AccountStatus, BundleState, Bytecode, RevertToSlot, State,
     StorageSlot,
 };
-use base_execution_rpc::DebugApiClient;
 use base_execution_state_provider::{
     BlockExecutionOutput, StateProvider, StateProviderBox, StateProviderFactory,
 };
@@ -235,12 +235,7 @@ where
 
         if let Some(healthy_node_client) = &self.healthy_node_client {
             let healthy_node_witness = futures::executor::block_on(async move {
-                DebugApiClient::debug_execution_witness(
-                    healthy_node_client,
-                    block_number.into(),
-                    None,
-                )
-                .await
+                ExecutionWitnessClient::fetch(healthy_node_client, block_number.into()).await
             })?;
 
             let filename = format!("{}.witness.healthy.json", block_prefix);

@@ -22,6 +22,7 @@ DISALLOWED = {
 # a top-level domain. Shared RPC/payload schemas under common are not servers.
 # Like the domain rules, these restrictions include dev, optional and cfg edges.
 EXECUTION_DISALLOWED = {
+    "engine": {"rpc"},
     "state": {"payload", "rpc", "txpool"},
     "evm": {"engine", "network", "payload", "rpc", "sync", "txpool"},
     "network": {"engine", "payload", "rpc", "sync"},

@@ -44,6 +44,7 @@ class ArchitectureTests(unittest.TestCase):
         # Representative architectural inversions, rather than a copy of the rule table.
         for source, target in [
             ("state/types", "txpool"),
+            ("engine/observers", "rpc"),
             ("state/indexer", "payload"),
             ("evm/runtime", "rpc"),
             ("evm/blocks", "engine/driver"),
