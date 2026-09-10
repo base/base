@@ -54,7 +54,6 @@ members = [
   "crates/consensus/source/providers",
   "crates/consensus/driver/service",
   "crates/execution/cli",
-  "crates/execution/eip8130-rpc",
   "crates/execution/evm/blocks",
   "crates/execution/exex",
   "crates/execution/metering",
@@ -328,7 +327,6 @@ base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features
 base-execution-state-indexer = { path = "crates/execution/state/indexer", default-features = false }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
 base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }
-base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc", default-features = false }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl", default-features = false }

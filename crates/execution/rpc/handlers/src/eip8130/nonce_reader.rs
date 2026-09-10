@@ -1,13 +1,13 @@
 //! 2D channel-nonce reader used by `eth_getTransactionCount` extensions.
 
+use crate::BaseEthApi;
+use crate::EthApiError;
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::Eip8130Constants;
 use base_common_types_rpc::Eip8130Nonce;
 use base_common_types_rpc::state::StateOverride;
 use base_execution_evm_precompiles::NonceManagerStorage;
-use base_execution_rpc_handlers::BaseEthApi;
-use base_execution_rpc_handlers::EthApiError;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 
 /// Reads 2D channel nonces (`nonces[account][nonce_key]`) from the Nonce Manager
@@ -18,7 +18,7 @@ use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 ///
 /// **Fork-agnostic on purpose.** This helper does not check that the
 /// Zenith fork has activated. Callers must enforce that themselves
-/// (typically via [`crate::Eip8130ZenithGate`]) before invoking
+/// (typically via [`crate::eip8130::Eip8130ZenithGate`]) before invoking
 /// [`Self::read`].
 #[derive(Debug)]
 pub struct ChannelNonceReader;

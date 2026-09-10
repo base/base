@@ -3242,37 +3242,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-eip8130-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-genesis",
- "alloy-primitives",
- "alloy-rpc-client",
- "alloy-signer",
- "base-common-chain-config",
- "base-common-client-ethereum",
- "base-common-types-chain",
- "base-common-types-rpc",
- "base-consensus-batch-types",
- "base-execution-evm-blocks",
- "base-execution-evm-machine",
- "base-execution-evm-precompiles",
- "base-execution-evm-runtime",
- "base-execution-rpc-handlers",
- "base-execution-state-api",
- "base-execution-state-provider",
- "base-node-runner",
- "base-testing-support",
- "eyre",
- "jsonrpsee",
- "jsonrpsee-types",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "base-execution-evm-blocks"
 version = "0.0.0"
 dependencies = [
@@ -3755,6 +3724,7 @@ dependencies = [
  "base-execution-evm-fees",
  "base-execution-evm-inspectors",
  "base-execution-evm-machine",
+ "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-execution-network-types",
  "base-execution-payload-builder",
@@ -3766,6 +3736,8 @@ dependencies = [
  "base-execution-state-tasks",
  "base-execution-state-types",
  "base-execution-txpool",
+ "base-node-runner",
+ "base-testing-support",
  "derive_more",
  "dyn-clone",
  "eyre",
@@ -4351,7 +4323,6 @@ dependencies = [
  "base-common-types-payload",
  "base-common-types-rpc",
  "base-consensus-batch-types",
- "base-execution-eip8130-rpc",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
  "base-execution-exex",

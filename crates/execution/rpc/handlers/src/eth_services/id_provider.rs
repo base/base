@@ -1,4 +1,4 @@
-//! Helper type for `base_execution_rpc_handlers::EthPubSubApiServer` implementation.
+//! Helper type for `crate::EthPubSubApiServer` implementation.
 //!
 //! Generates IDs for tracking subscriptions.
 

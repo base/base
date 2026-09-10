@@ -1,6 +1,7 @@
 //! Standalone `eth_getTransactionCount` override that adds EIP-8130
 //! `nonce_key` support on execution nodes.
 
+use crate::BaseEthApi;
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, U256};
 use base_common_types_rpc::BaseTransactionRequest;
@@ -9,14 +10,13 @@ use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
 use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::BaseTransaction as BaseRevm;
 use base_execution_evm_runtime::EvmFactory;
-use base_execution_rpc_handlers::BaseEthApi;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use tracing::debug;
 
-use crate::{ChannelNonceReader, Eip8130GasEstimator, Eip8130ZenithGate};
+use crate::eip8130::{ChannelNonceReader, Eip8130GasEstimator, Eip8130ZenithGate};
 
 /// Eth API override trait that adds EIP-8130 `nonce_key` support to
 /// `eth_getTransactionCount`.

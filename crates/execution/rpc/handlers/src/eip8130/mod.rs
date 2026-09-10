@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+//! EIP-8130 nonce and gas-estimation endpoints.
 
 mod nonce_reader;
 pub use nonce_reader::ChannelNonceReader;

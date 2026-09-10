@@ -4,12 +4,12 @@ use std::{fmt, fmt::Debug, ops::Deref, sync::Arc};
 
 use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_tracing::tracing::{debug, info};
-use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
 use base_execution_rpc_handlers::{
     AdminApi, BaseEthApi, BaseEthApiBuilder, BaseEthConfigApiServer,
     DebugExecutionWitnessApiServer, DevSigner, EthApiCtx, MinerApiExtServer,
 };
+use base_execution_rpc_handlers::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_rpc_handlers::{EthStateCache, cache::cache_new_blocks_task};
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
@@ -199,7 +199,9 @@ impl BaseRpcServer {
             .with_sequencer_headers(base.args.sequencer_headers.clone())
             .with_min_suggested_priority_fee(base.args.min_suggested_priority_fee);
 
-        let AddOnsContext { node, config, beacon_engine_handle, engine_events } = ctx;
+        let node = ctx.node;
+        let config = ctx.config;
+        let engine_events = ctx.engine_events;
 
         let rpc_config = RpcConfig::new(&config.rpc);
         let cache = EthStateCache::spawn_with(

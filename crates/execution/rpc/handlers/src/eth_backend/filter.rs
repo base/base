@@ -93,7 +93,7 @@ impl EthFilter {
     /// # Create a filter service for an existing API
     ///
     /// ```no_run
-    /// use crate::EthFilter;
+    /// use base_execution_rpc_handlers::{BaseEthApi, EthFilter};
     /// use base_common_runtime_tasks::Runtime;
     ///
     /// fn filters(eth_api: BaseEthApi, runtime: Runtime) -> EthFilter {

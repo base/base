@@ -1,5 +1,7 @@
 //! `eth_estimateGas` gas estimation for EIP-8130 simulation requests.
 
+use crate::BaseEthApi;
+use crate::BaseEthApiError;
 use alloy_eips::BlockId;
 use alloy_primitives::U256;
 use base_common_types_rpc::BaseTransactionRequest;
@@ -7,12 +9,10 @@ use base_common_types_rpc::state::EvmOverrides;
 use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
 use base_execution_evm_machine::{Block, BlockEnv, ExecutionResult};
 use base_execution_evm_runtime::BaseTransaction as BaseRevm;
-use base_execution_rpc_handlers::BaseEthApi;
-use base_execution_rpc_handlers::BaseEthApiError;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use {
-    base_execution_evm_runtime::EvmFactory, base_execution_rpc_handlers::apply_block_overrides,
-    base_execution_rpc_handlers::apply_state_overrides,
+    crate::apply_block_overrides, crate::apply_state_overrides,
+    base_execution_evm_runtime::EvmFactory,
 };
 
 /// Estimates gas for an EIP-8130 `eth_estimateGas` request by running a single
@@ -31,7 +31,7 @@ use {
 /// request with a stub authentication blob and never commits state.
 ///
 /// **Fork-agnostic on purpose.** This does not check Zenith activation; callers
-/// must gate via [`crate::Eip8130ZenithGate`] before invoking it.
+/// must gate via [`crate::eip8130::Eip8130ZenithGate`] before invoking it.
 ///
 /// **Revert semantics match standard `eth_estimateGas`.** If a phased call
 /// reverts (or the simulation halts), this returns an execution error carrying
@@ -75,19 +75,17 @@ impl Eip8130GasEstimator {
         // Bound execution by the block gas limit when the request omits `gas`.
         let gas_cap = Block::gas_limit(&evm_env.block_env);
 
-        let sim_tx = base_execution_rpc_handlers::Eip8130TransactionConverter::convert(
-            &request, chain_id, gas_cap,
-        )
-        .ok_or_else(|| {
-            ErrorObjectOwned::owned(
-                INVALID_PARAMS_CODE,
-                "invalid EIP-8130 estimate request: missing EIP-8130 fields, no sender account \
+        let sim_tx = crate::Eip8130TransactionConverter::convert(&request, chain_id, gas_cap)
+            .ok_or_else(|| {
+                ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    "invalid EIP-8130 estimate request: missing EIP-8130 fields, no sender account \
                  (neither `sender` nor `from`), a `sender`/`from` mismatch, a \
                  `sender_auth`/`payer_auth` blob whose data exceeds the maximum size, or a \
                  `payer_auth` with an unrecognized authenticator selector",
-                None::<()>,
-            )
-        })?;
+                    None::<()>,
+                )
+            })?;
 
         let EvmOverrides { state, block } = overrides;
 
