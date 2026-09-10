@@ -151,8 +151,6 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
         tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
         source_datadir: tmp.join("nonexistent-datadir"),
-        output_dir: tmp.join("output"),
-        upload_existing_run_timestamp: None,
         bucket: bucket.to_string(),
         prefix: "test".to_string(),
         chain_id: 8453,
@@ -717,15 +715,13 @@ async fn snapshot_generator_streams_archives_to_minio() -> Result<()> {
     let source = tempfile::tempdir()?;
     std::fs::create_dir_all(source.path().join("db"))?;
     std::fs::write(source.path().join("db/mdbx.dat"), b"generated-state")?;
-    let output_dir = source.path().join("not-created");
-    let output_dir_for_generation = output_dir.clone();
     let source_path = source.path().to_owned();
     let remote_static_files = HashMap::new();
     let manifest = tokio::task::spawn_blocking(move || {
         SnapshotGenerator::generate_manifest_with_sink(
             &ManifestGenerationParams {
                 source_datadir: &source_path,
-                output_dir: &output_dir_for_generation,
+                output_dir: None,
                 chain_id: 8453,
                 base_url: None,
                 block: Some(0),
@@ -739,7 +735,6 @@ async fn snapshot_generator_streams_archives_to_minio() -> Result<()> {
     })
     .await??;
     assert!(manifest.components.contains_key("state"));
-    assert!(!output_dir.exists(), "streaming generation must not create the output directory");
 
     let bytes = get_object_bytes(
         &harness.storage_client,
@@ -1121,7 +1116,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     let baseline = tempfile::tempdir()?;
     SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
         source_datadir: source.path(),
-        output_dir: baseline.path(),
+        output_dir: Some(baseline.path()),
         chain_id: 8453,
         base_url: None,
         block: Some(1_999_999),
@@ -1149,7 +1144,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     let output = tempfile::tempdir()?;
     let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
         source_datadir: source.path(),
-        output_dir: output.path(),
+        output_dir: Some(output.path()),
         chain_id: 8453,
         base_url: None,
         block: Some(1_999_999),
@@ -1225,7 +1220,7 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     let empty_remote = HashMap::new();
     let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
         source_datadir: source.path(),
-        output_dir: output.path(),
+        output_dir: Some(output.path()),
         chain_id: 8453,
         base_url: None,
         block: Some(0),
@@ -1459,42 +1454,6 @@ async fn orchestrator_skips_when_not_at_tip() -> Result<()> {
     assert!(result.is_ok(), "run should return Ok when skipping a not-at-tip node");
     assert!(!manager.was_stopped(), "container must not be stopped when EL is not at tip");
     assert!(!manager.was_started(), "container must not be started when EL is not at tip");
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
-async fn upload_existing_run_skips_container_lifecycle() -> Result<()> {
-    let harness = TestHarness::new().await?;
-    let manager = std::sync::Arc::new(MockContainerManager::new());
-    let uploader = SnapshotUploader::new(
-        harness.storage_client.clone(),
-        harness.bucket_name.clone(),
-        "test".to_string(),
-        None,
-    );
-
-    let tmp = tempfile::tempdir()?;
-    let output_dir = tmp.path().join("output");
-    let run_timestamp = 1_700_000_123u64;
-    let run_dir = output_dir.join(format!("run-{run_timestamp}"));
-    create_fake_snapshot(&run_dir, 1_000_000)?;
-
-    let mut config = test_config(&harness.bucket_name, tmp.path());
-    config.output_dir = output_dir;
-    config.upload_existing_run_timestamp = Some(run_timestamp);
-
-    let snapshotter = base_snapshotter::Snapshotter::new(
-        std::sync::Arc::clone(&manager),
-        MockTipChecker::new(true),
-        uploader,
-        config,
-    );
-
-    snapshotter.run().await?;
-    assert!(!manager.was_stopped(), "upload-only mode should not stop the container");
-    assert!(!manager.was_started(), "upload-only mode should not restart the container");
 
     Ok(())
 }

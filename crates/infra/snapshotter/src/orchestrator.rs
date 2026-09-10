@@ -1,20 +1,16 @@
 //! Orchestrates the full snapshot lifecycle with a restart safety guard.
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{ChunkFilename, ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
+use base_reth_cli::{ChunkFilename, ManifestGenerationParams, SnapshotGenerator};
 use tracing::{error, info, warn};
 
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     tip::TipChecker,
-    upload::{SnapshotUploadParams, SnapshotUploader, StreamingS3ArchiveSink},
+    upload::{SnapshotUploader, StreamingS3ArchiveSink},
 };
 
 /// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
@@ -56,15 +52,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     /// 4. Uploads to S3/R2
     /// 5. Clears reth's persisted peer list (best effort)
     /// 6. Restarts the EL and then the CL (always, even on failure)
-    ///
-    /// When `upload_existing_run_timestamp` is set, the snapshotter skips the
-    /// container lifecycle entirely and uploads the existing `run-<timestamp>`
-    /// directory from `output_dir`.
     pub async fn run(&self) -> Result<()> {
-        if let Some(run_timestamp) = self.config.upload_existing_run_timestamp {
-            return self.upload_existing_run(run_timestamp).await;
-        }
-
         // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
         // node would publish stale data and pause a node that is still syncing.
         //
@@ -173,9 +161,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         );
 
         let source_datadir = self.config.source_datadir.clone();
-        // `output_dir` remains part of the generator parameters for directory-backed callers and
-        // upload-existing recovery, but the streaming sink never materializes this run directory.
-        let output_dir_for_gen = self.config.output_dir.join(format!("run-{run_timestamp}"));
         let chain_id = self.config.chain_id;
         let block = self.config.block.unwrap_or(latest_block);
         let blocks_per_file = self.config.blocks_per_file;
@@ -208,7 +193,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let manifest = tokio::task::spawn_blocking(move || {
             let params = ManifestGenerationParams {
                 source_datadir: &source_datadir,
-                output_dir: &output_dir_for_gen,
+                output_dir: None,
                 chain_id,
                 base_url: None,
                 block: Some(block),
@@ -233,73 +218,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         Ok(())
     }
 
-    /// Uploads an existing `run-<timestamp>` directory without regenerating artifacts
-    /// or touching the EL container lifecycle.
-    async fn upload_existing_run(&self, run_timestamp: u64) -> Result<()> {
-        let run_output_dir = existing_run_output_dir(&self.config.output_dir, run_timestamp)?;
-        info!(
-            run_timestamp,
-            output_dir = %run_output_dir.display(),
-            "uploading existing snapshot run"
-        );
-
-        let files = SnapshotGenerator::collect_output_files(&run_output_dir)?;
-        let remote_static_files = self.uploader.list_remote_static_files().await?;
-        let remote_manifest = self.uploader.fetch_previous_manifest().await?;
-        info!(
-            has_remote_manifest = remote_manifest.is_some(),
-            "fetched previous manifest for blake3 diff"
-        );
-        self.upload_run_directory(
-            &run_output_dir,
-            run_timestamp,
-            files,
-            remote_manifest.as_ref(),
-            &remote_static_files,
-        )
-        .await
-    }
-
-    /// Uploads one prepared run directory after generation or from upload-only mode.
-    async fn upload_run_directory(
-        &self,
-        run_output_dir: &Path,
-        run_timestamp: u64,
-        files: Vec<PathBuf>,
-        remote_manifest: Option<&SnapshotManifest>,
-        remote_static_files: &HashMap<String, u64>,
-    ) -> Result<()> {
-        if files.is_empty() {
-            bail!("snapshot run directory produced no files")
-        }
-
-        let manifest_bytes = tokio::fs::read(run_output_dir.join("manifest.json"))
-            .await
-            .context("failed to read run manifest.json")?;
-        let local_manifest: SnapshotManifest =
-            serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
-
-        self.uploader
-            .upload(SnapshotUploadParams {
-                output_dir: run_output_dir,
-                files: &files,
-                timestamp: run_timestamp,
-                retain_runs: self.config.retain_runs.get(),
-                local_manifest: &local_manifest,
-                remote_manifest,
-                remote_static_files,
-            })
-            .await
-            .with_context(|| {
-                format!(
-                    "snapshot upload failed for run_timestamp={} output_dir={}",
-                    run_timestamp,
-                    run_output_dir.display()
-                )
-            })?;
-        Ok(())
-    }
-
     /// Removes reth's persisted peer list (`known-peers.json`) from the datadir.
     ///
     /// Best effort: a missing file or removal error is logged and swallowed so
@@ -316,15 +234,4 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             }
         }
     }
-}
-
-/// Resolves an existing `run-<timestamp>` directory for upload-only mode.
-fn existing_run_output_dir(base: &Path, timestamp: u64) -> Result<PathBuf> {
-    let run_dir = base.join(format!("run-{timestamp}"));
-    let metadata = std::fs::metadata(&run_dir)
-        .with_context(|| format!("failed to stat existing run dir {}", run_dir.display()))?;
-    if !metadata.is_dir() {
-        bail!("existing run path is not a directory: {}", run_dir.display());
-    }
-    Ok(run_dir)
 }
