@@ -1,6 +1,8 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
-pub use base_execution_txpool::DEFAULT_MAX_VALIDITY_PREDICATES;
+pub use base_execution_txpool::{
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+};
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use reth_rpc_server_types::RethRpcModule;
 
@@ -43,26 +45,39 @@ impl BaseNodeExtension for TxPoolRpcExtension {
     }
 }
 
-/// Extension registering local validity-bearing transaction ingress.
-#[derive(Debug)]
-pub struct SendRawTransactionValidityExtension {
-    max_validity_predicates: usize,
+/// Configuration for local validity-bearing transaction ingress.
+#[derive(Debug, Clone, Copy)]
+pub struct SendRawTransactionValidityConfig {
+    /// Maximum number of validity predicates accepted per transaction.
+    pub max_validity_predicates: usize,
+    /// Maximum validity-transaction lifetime, in seconds.
+    pub max_validity_expiry_secs: u64,
 }
 
-impl Default for SendRawTransactionValidityExtension {
+impl Default for SendRawTransactionValidityConfig {
     fn default() -> Self {
-        Self { max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
+        Self {
+            max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+        }
     }
+}
+
+/// Extension registering local validity-bearing transaction ingress.
+#[derive(Debug, Default)]
+pub struct SendRawTransactionValidityExtension {
+    config: SendRawTransactionValidityConfig,
 }
 
 impl BaseNodeExtension for SendRawTransactionValidityExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
-        let max_validity_predicates = self.max_validity_predicates;
+        let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
+            let api = SendRawTransactionValidityApiImpl::with_validity_limits(
                 ctx.pool().clone(),
                 ctx.provider().clone(),
-                max_validity_predicates,
+                config.max_validity_predicates,
+                config.max_validity_expiry_secs,
             );
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
@@ -71,10 +86,10 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
 }
 
 impl FromExtensionConfig for SendRawTransactionValidityExtension {
-    type Config = usize;
+    type Config = SendRawTransactionValidityConfig;
 
-    fn from_config(max_validity_predicates: Self::Config) -> Self {
-        Self { max_validity_predicates }
+    fn from_config(config: Self::Config) -> Self {
+        Self { config }
     }
 }
 

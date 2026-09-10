@@ -5,18 +5,21 @@ use std::{sync::Arc, time::Duration};
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::TransactionBuilder;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, U256};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_chainspec::BaseChainSpec;
 use base_execution_txpool::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
+    TransactionValidity, ValidatedTransaction, ValidityOperator, ValidityPredicate,
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityOptions};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendRawTransactionValidityOptions,
+};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,
@@ -156,12 +159,15 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     // EIP-1559 validity transactions are gated by the experimental flag alone (not Cobalt), so this
     // exercises the flow against a pre-Cobalt genesis.
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness = TestHarness::builder()
-        .with_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES)
-        .with_ext::<TxForwardingExtension>(config)
-        .with_chain_spec(chain_spec)
-        .build()
-        .await?;
+    let harness =
+        TestHarness::builder()
+            .with_ext::<SendRawTransactionValidityExtension>(
+                SendRawTransactionValidityConfig::default(),
+            )
+            .with_ext::<TxForwardingExtension>(config)
+            .with_chain_spec(chain_spec)
+            .build()
+            .await?;
     let raw = signed_eip1559_transaction();
     let validity = serde_json::from_value(serde_json::json!({
         "type": "storage",
@@ -172,7 +178,13 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
             "value": "0x2"
         }
     }))?;
-    let expected = vec![validity];
+    let expected = vec![
+        ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThanOrEqual,
+            value: U256::from(31),
+        },
+        validity,
+    ];
     let client = harness.rpc_client()?;
     let _: alloy_primitives::TxHash = client
         .request(

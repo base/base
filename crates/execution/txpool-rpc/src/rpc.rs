@@ -4,9 +4,10 @@ use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
+use base_common_genesis::RollupConfig;
 use base_execution_txpool::{
-    BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
-    deserialize_bounded_predicates,
+    BasePooledTransaction, DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    ValidityPredicate, deserialize_bounded_predicates,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -32,6 +33,9 @@ use tracing::{debug, info, warn};
 /// carry validity predicates under the experimental flag alone.
 pub const VALIDITY_TX_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 validity transactions are gated behind \
      the Zenith hard fork; they are not accepted before Zenith is active";
+
+/// Legacy full-block cadence used before Denim activates.
+const LEGACY_BLOCK_INTERVAL_MILLIS: u64 = 2_000;
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -112,17 +116,23 @@ pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
     pool: Pool,
     provider: Provider,
     max_validity_predicates: usize,
+    max_validity_expiry_secs: u64,
 }
 
 impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
-    /// Creates a validity transaction ingress backed by the given pool and default predicate limit.
+    /// Creates a validity transaction ingress backed by the given pool and default limits.
     ///
     /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn new(pool: Pool, provider: Provider) -> Self {
-        Self { pool, provider, max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
+        Self::with_validity_limits(
+            pool,
+            provider,
+            DEFAULT_MAX_VALIDITY_PREDICATES,
+            DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+        )
     }
 
-    /// Creates a validity transaction ingress with a predicate limit.
+    /// Creates a validity transaction ingress with a predicate limit and default expiry window.
     ///
     /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn with_max_validity_predicates(
@@ -130,7 +140,25 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
         provider: Provider,
         max_validity_predicates: usize,
     ) -> Self {
-        Self { pool, provider, max_validity_predicates }
+        Self::with_validity_limits(
+            pool,
+            provider,
+            max_validity_predicates,
+            DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+        )
+    }
+
+    /// Creates a validity transaction ingress with explicit predicate and expiry limits.
+    ///
+    /// The expiry limit is expressed in seconds and converted to blocks using the active full-
+    /// block cadence at submission time.
+    pub const fn with_validity_limits(
+        pool: Pool,
+        provider: Provider,
+        max_validity_predicates: usize,
+        max_validity_expiry_secs: u64,
+    ) -> Self {
+        Self { pool, provider, max_validity_predicates, max_validity_expiry_secs }
     }
 }
 
@@ -138,11 +166,9 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
 {
-    /// Returns whether the Zenith hard fork is active at the latest block's timestamp.
-    ///
-    /// Returns `false` when no latest header is available (e.g. before genesis is committed), which
-    /// keeps the fork-gated RPC method closed until a canonical head exists.
-    fn is_zenith_active_at_latest(&self) -> RpcResult<bool> {
+    /// Returns the latest committed header's `(number, timestamp)`, or `None` when no canonical
+    /// head exists (e.g. before genesis is committed).
+    fn latest_block_number_and_timestamp(&self) -> RpcResult<Option<(u64, u64)>> {
         let Some(header) = self.provider.latest_header().map_err(|error| {
             ErrorObjectOwned::owned(
                 ErrorCode::InternalError.code(),
@@ -151,9 +177,27 @@ where
             )
         })?
         else {
-            return Ok(false);
+            return Ok(None);
         };
-        Ok(self.provider.chain_spec().is_zenith_active_at_timestamp(header.timestamp()))
+        Ok(Some((header.number(), header.timestamp())))
+    }
+
+    /// Returns the maximum permitted expiry distance in full blocks for the block being built.
+    fn max_validity_expiry_blocks(&self, latest_timestamp: u64) -> u64 {
+        // The target build can be the first Denim block even though the latest committed header
+        // is pre-Denim. Check both its parent timestamp and the next legacy block timestamp so
+        // the window uses Denim's 200ms full-block cadence at that transition.
+        let next_legacy_timestamp =
+            latest_timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS.saturating_div(1_000));
+        let block_interval_millis =
+            if self.provider.chain_spec().is_denim_active_at_timestamp(latest_timestamp)
+                || self.provider.chain_spec().is_denim_active_at_timestamp(next_legacy_timestamp)
+            {
+                RollupConfig::NATIVE_SUBSECOND_BLOCK_INTERVAL_MILLIS
+            } else {
+                LEGACY_BLOCK_INTERVAL_MILLIS
+            };
+        self.max_validity_expiry_secs.saturating_mul(1_000).div_ceil(block_interval_millis)
     }
 }
 
@@ -228,6 +272,27 @@ where
                 )
             })?;
 
+        // Every validity transaction must carry a finite `block_number` expiry. When a canonical
+        // head exists, also reject bounds already in the past and bounds outside the configured
+        // wall-clock window. This validates the submission without injecting or rewriting a
+        // predicate.
+        let latest = self.latest_block_number_and_timestamp()?;
+        let expiry_validation = match latest {
+            Some((latest_block, latest_timestamp)) => {
+                ValidityPredicate::validate_block_expiry_bounds(
+                    &options.validity,
+                    latest_block.saturating_add(1),
+                    self.max_validity_expiry_blocks(latest_timestamp),
+                )
+            }
+            // Before genesis is committed there is no build target from which to measure the
+            // window, but a finite expiry is still mandatory.
+            None => ValidityPredicate::validate_has_block_expiry(&options.validity),
+        };
+        expiry_validation.map_err(|error| {
+            ErrorObjectOwned::owned(ErrorCode::InvalidParams.code(), error.to_string(), None::<()>)
+        })?;
+
         let transaction =
             BasePooledTransaction::recover_raw_transaction(tx.as_ref()).map_err(|error| {
                 ErrorObjectOwned::owned(
@@ -240,7 +305,10 @@ where
         // EIP-8130 (account abstraction) validity transactions are fork-gated on Zenith. Other
         // transaction types (e.g. EIP-1559) carry validity predicates under the experimental flag
         // alone and are accepted before Zenith activates.
-        if transaction.ty() == EIP8130_TX_TYPE_ID && !self.is_zenith_active_at_latest()? {
+        let zenith_active = latest.is_some_and(|(_, timestamp)| {
+            self.provider.chain_spec().is_zenith_active_at_timestamp(timestamp)
+        });
+        if transaction.ty() == EIP8130_TX_TYPE_ID && !zenith_active {
             return Err(ErrorObjectOwned::owned(
                 ErrorCode::InvalidParams.code(),
                 VALIDITY_TX_PRE_ZENITH_RPC_ERROR,
@@ -306,16 +374,17 @@ impl<Pool: TransactionPool + 'static> AdminTxPoolApiServer for AdminTxPoolApiImp
 mod tests {
     use std::sync::Arc;
 
-    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_consensus::{BlockBody, Header, SignableTransaction, TxEip1559};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
-        BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, Eip8130Signed,
-        TxEip8130,
+        BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
+        Eip8130Signed, TxEip8130,
     };
+    use base_common_genesis::BaseUpgrade;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
@@ -323,6 +392,7 @@ mod tests {
     };
     use base_test_utils::build_test_genesis_zenith;
     use httpmock::prelude::*;
+    use reth_chainspec::ForkCondition;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
         PoolTransaction, TransactionOrigin,
@@ -359,13 +429,19 @@ mod tests {
         (
             tx,
             SendRawTransactionValidityOptions {
-                validity: vec![ValidityPredicate::Storage {
-                    address: Address::repeat_byte(0xab),
-                    slot: U256::from(1),
-                    mask: U256::MAX,
-                    op: base_execution_txpool::ValidityOperator::Equal,
-                    value: U256::from(0x789),
-                }],
+                validity: vec![
+                    ValidityPredicate::Storage {
+                        address: Address::repeat_byte(0xab),
+                        slot: U256::from(1),
+                        mask: U256::MAX,
+                        op: base_execution_txpool::ValidityOperator::Equal,
+                        value: U256::from(0x789),
+                    },
+                    ValidityPredicate::BlockNumber {
+                        op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
+                        value: U256::from(31),
+                    },
+                ],
             },
         )
     }
@@ -385,14 +461,41 @@ mod tests {
                 value: U256::from(0x789),
             },
             ValidityPredicate::BlockNumber {
-                op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
-                value: U256::from(100),
+                op: base_execution_txpool::ValidityOperator::LessThan,
+                value: U256::from(32),
             },
             ValidityPredicate::FlashblockIndex {
                 op: base_execution_txpool::ValidityOperator::LessThan,
                 value: U256::from(5),
             },
         ]
+    }
+
+    #[test]
+    fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
+        let legacy = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider());
+        assert_eq!(legacy.max_validity_expiry_blocks(0), 30);
+
+        let denim_provider = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(
+                BaseChainSpecBuilder::base_mainnet()
+                    .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(0))
+                    .build(),
+            ))
+            .with_genesis_block();
+        let denim = SendRawTransactionValidityApiImpl::new(validity_pool(), denim_provider);
+        assert_eq!(denim.max_validity_expiry_blocks(0), 300);
+
+        let transition_provider = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(
+                BaseChainSpecBuilder::base_mainnet()
+                    .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(2))
+                    .build(),
+            ))
+            .with_genesis_block();
+        let transition =
+            SendRawTransactionValidityApiImpl::new(validity_pool(), transition_provider);
+        assert_eq!(transition.max_validity_expiry_blocks(0), 300);
     }
 
     fn signed_eip1559(signer: &PrivateKeySigner, nonce: u64, priority_fee: u128) -> Bytes {
@@ -511,8 +614,8 @@ mod tests {
                 {
                     "type": "block_number",
                     "params": {
-                        "op": ">=",
-                        "value": "0x64",
+                        "op": "<",
+                        "value": "0x20",
                     },
                 },
                 {
@@ -675,6 +778,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn send_raw_transaction_validity_requires_block_number_expiry() {
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity = vec![ValidityPredicate::BlockNumber {
+            op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
+            value: U256::ZERO,
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("a validity transaction without an upper block bound should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("require a block-number predicate"));
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_block_number_bound_outside_window() {
+        // Legacy blocks are 2 seconds, so the default 60-second window permits 30 blocks.
+        // With the head at 100, the build target is 101 and the maximum bound is 131.
+        let provider = pre_zenith_provider();
+        provider.add_block(
+            B256::repeat_byte(8),
+            BaseBlock {
+                header: Header { number: 100, ..Default::default() },
+                body: BlockBody::default(),
+            },
+        );
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity = vec![ValidityPredicate::BlockNumber {
+            op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
+            value: U256::from(132),
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("a block bound beyond the configured window should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("expires too far in the future"));
+    }
+
+    #[tokio::test]
     async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
         let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
@@ -772,6 +921,96 @@ mod tests {
         let error = serde_json::from_str::<SendRawTransactionValidityOptions>(&json)
             .expect_err("unknown fields must be rejected");
         assert!(error.to_string().contains("unknown field"), "unexpected error: {error}");
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_expired_block_number_bound() {
+        // The genesis block is the latest committed block, so the block being built is 1.
+        // A predicate capping inclusion at block 0 can never be satisfied.
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity = vec![ValidityPredicate::BlockNumber {
+            op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
+            value: U256::ZERO,
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("a block bound below the block being built should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("already expired"), "unexpected message: {error}");
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_rejects_bound_behind_a_later_head() {
+        // With the head at block 100, the block being built is 101; `block_number < 101`
+        // caps inclusion at block 100, which has already been sealed.
+        let provider = zenith_provider();
+        provider.add_block(
+            B256::repeat_byte(7),
+            BaseBlock {
+                header: Header { number: 100, ..Default::default() },
+                body: BlockBody::default(),
+            },
+        );
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
+        let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
+        options.validity = vec![ValidityPredicate::BlockNumber {
+            op: base_execution_txpool::ValidityOperator::LessThan,
+            value: U256::from(101),
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("a block bound at the sealed head should be rejected");
+
+        assert_eq!(error.code(), ErrorCode::InvalidParams.code());
+        assert!(error.message().contains("already expired"), "unexpected message: {error}");
+    }
+
+    #[tokio::test]
+    async fn send_raw_transaction_validity_accepts_bound_on_the_block_being_built() {
+        // With the head at block 100, `block_number = 101` targets the block currently
+        // being built and may still land in one of its flashblocks, so validation passes
+        // and submission proceeds to the pool (which the noop pool then rejects).
+        let capture = TransactionEventCapture::install();
+        let signer = PrivateKeySigner::random();
+        let raw = signed_eip1559(&signer, 0, 1);
+        let provider = zenith_provider();
+        provider.add_block(
+            B256::repeat_byte(7),
+            BaseBlock {
+                header: Header { number: 100, ..Default::default() },
+                body: BlockBody::default(),
+            },
+        );
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
+        let mut options = SendRawTransactionValidityOptions { validity: vec![] };
+        options.validity = vec![ValidityPredicate::BlockNumber {
+            op: base_execution_txpool::ValidityOperator::Equal,
+            value: U256::from(101),
+        }];
+
+        let error = rpc
+            .send_raw_transaction_validity(raw, options)
+            .await
+            .expect_err("the noop pool rejects insertion after expiry validation passes");
+
+        assert!(
+            !error.message().contains("already expired"),
+            "bound on the block being built should pass expiry validation: {error}"
+        );
+        assert!(
+            capture
+                .events()
+                .iter()
+                .any(|event| event.event_type
+                    == TransactionEventType::TxpoolSendRawTransactionValidity),
+            "the admission event should fire once expiry validation passes"
+        );
     }
 
     #[tokio::test]

@@ -6521,6 +6521,7 @@ dependencies = [
  "alloy-signer-local 2.4.1",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-execution-chainspec",
  "base-execution-txpool",
  "base-node-runner",
