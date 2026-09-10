@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use base_shadow_indexer_db::{
+use base_execution_state_indexer::{
     PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockPayload, ShadowBlockRepo,
     ShadowBlockRow, ShadowDbConfig, ShadowRetentionRepo, ShadowWrite,
 };

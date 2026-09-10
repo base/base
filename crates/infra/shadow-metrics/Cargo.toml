@@ -13,13 +13,14 @@ workspace = true
 [dependencies]
 tracing = { workspace = true }
 alloy-primitives = { workspace = true }
-base-shadow-indexer-db = { workspace = true }
+base-execution-state-indexer = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true, features = ["std"] }
 axum = { workspace = true, features = ["json", "query"] }
 anyhow = { workspace = true, features = ["default", "std"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "tls-native-tls"] }
+
 [dev-dependencies]
 reth-primitives-traits = { workspace = true }
 chrono = { workspace = true, features = ["default"] }

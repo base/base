@@ -11,7 +11,7 @@ use axum::{
     routing::get,
 };
 use base_common_types_chain::{BaseTxEnvelope, Transaction, TxReceipt, Typed2718};
-use base_shadow_indexer_db::{ShadowBlockRepo, ShadowBlockRow, ShadowSummaryRow};
+use base_execution_state_indexer::{ShadowBlockRepo, ShadowBlockRow, ShadowSummaryRow};
 use serde::{Deserialize, Serialize};
 
 use crate::{ShadowBlockStats, ShadowMetricsStore};
@@ -406,7 +406,7 @@ mod tests {
     use base_common_types_chain::{
         BaseReceipt, Block, BlockBody, Header, Receipt, Sealable, TxDeposit,
     };
-    use base_shadow_indexer_db::ShadowBlockPayload;
+    use base_execution_state_indexer::ShadowBlockPayload;
     use chrono::Utc;
     use reth_primitives_traits::RecoveredBlock;
     use sqlx::types::Json;

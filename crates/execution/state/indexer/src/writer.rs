@@ -1,10 +1,8 @@
 use std::{collections::HashSet, time::Duration};
 
+use crate::{ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite};
 use async_trait::async_trait;
 use base_common_runtime_tasks::TaskExecutor;
-use base_shadow_indexer_db::{
-    ShadowBlockRepo, ShadowBlockRow, ShadowDbConfig, ShadowFlushOutcome, ShadowWrite,
-};
 use tokio::{
     sync::mpsc,
     time::{MissedTickBehavior, interval, sleep},
@@ -195,11 +193,11 @@ impl ShadowWriter {
 mod tests {
     use std::time::Duration;
 
-    use anyhow::anyhow;
-    use base_shadow_indexer_db::{
+    use crate::{
         PgConnectionParams, ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowDbConfig,
         ShadowFlushOutcome,
     };
+    use anyhow::anyhow;
     use chrono::{DateTime, Utc};
     use reth_primitives_traits::RecoveredBlock;
     use tokio::sync::mpsc;

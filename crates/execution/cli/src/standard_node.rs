@@ -2,6 +2,11 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
+use base_common_chain_activation::UpgradeSignalStartupMode;
+use base_common_observability_events::{
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
+    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
+};
 use base_execution_payload_builder::{
     DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
 };
@@ -9,22 +14,17 @@ use base_execution_payload_builder::{
     REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache, ResourceMeteringConfig,
     SharedMeteringStore,
 };
-use base_metering::{MeteredOpcodes, MeteringConfig};
-use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
-use base_common_observability_events::{
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
-    GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
-};
-use base_execution_state_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
-use base_shadow_indexer_db::{
+use base_execution_state_indexer::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
+use base_execution_state_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
+use base_metering::{MeteredOpcodes, MeteringConfig};
+use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
 use base_tx_forwarding::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
 };
 use base_txpool_rpc::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_txpool_tracing::TxpoolConfig;
-use base_common_chain_activation::UpgradeSignalStartupMode;
 use tracing::warn;
 use url::Url;
 

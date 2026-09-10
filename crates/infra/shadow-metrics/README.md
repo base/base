@@ -8,7 +8,7 @@ Read-only HTTP JSON API over persisted shadow blocks.
 UI: block detail by hash, and the shadow candidates a canonical block replaced.
 `ShadowMetricsStore` is the thin Postgres handle underneath it: it establishes
 an eager `PgPool` from connection parameters and exposes a schema-readiness check
-for Kubernetes-style `/readyz` probes. `base-shadow-indexer-db` owns and applies
+for Kubernetes-style `/readyz` probes. `base-execution-state-indexer` owns and applies
 the shared schema and the queries the API runs.
 
 A shadow block gains a `canonical_hash` once the block that replaced it at its

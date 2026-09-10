@@ -62,7 +62,6 @@ base-execution-cli = { workspace = true, features = ["default"] }
 base-tx-forwarding = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
 base-prover-service = { workspace = true, features = ["default"] }
-base-execution-state-indexer = { workspace = true, features = ["default"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
@@ -78,6 +77,7 @@ base-execution-state-database = { workspace = true, features = ["default"] }
 base-builder-core = { workspace = true, features = ["default", "test-utils"] }
 base-consensus-batch-types = { workspace = true, features = ["serde", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
+base-execution-state-indexer = { workspace = true, features = ["default", "service"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
 base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 tokio = { workspace = true, features = ["default", "full", "rt-multi-thread", "macros"] }
@@ -87,11 +87,11 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "
 [dev-dependencies]
 alloy-json-rpc = { workspace = true }
 base-txpool-rpc = { workspace = true }
-base-shadow-indexer-db = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-client-rollup = { workspace = true }
 base-common-types-payload = { workspace = true }
+base-execution-state-indexer = { workspace = true }
 anyhow = { workspace = true, features = ["default"] }
 base-consensus-derive-pipeline = { workspace = true }
 futures = { workspace = true, features = ["default"] }

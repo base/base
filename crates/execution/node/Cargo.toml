@@ -36,12 +36,10 @@ reth-node-metrics = { workspace = true }
 base-tx-forwarding = { workspace = true }
 reth-node-ethstats = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
-base-execution-state-indexer = { workspace = true }
 base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
 reth-rpc-server-types = { workspace = true }
-base-shadow-indexer-db = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 base-common-client-ethereum = {workspace = true}
@@ -69,6 +67,7 @@ base-execution-state-types = {workspace = true, features = ["std"]}
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-execution-state-provider = {workspace = true, features = ["rayon"]}
+base-execution-state-indexer = {features = ["service"], workspace = true}
 base-execution-state-tasks = { workspace = true, features = ["metrics"] }
 base-common-chain-activation = { workspace = true, features = ["default"] }
 base-common-types-payload = {workspace = true, features = ["serde", "std"]}

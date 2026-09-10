@@ -65,7 +65,6 @@ members = [
   "crates/execution/rpc",
   "crates/execution/runner",
   "crates/execution/state/indexer",
-  "crates/execution/shadow-indexer-db",
   "crates/execution/state/tasks",
   "crates/execution/tx-forwarding",
   "crates/execution/txpool",
@@ -332,7 +331,6 @@ base-execution-state-indexer = { path = "crates/execution/state/indexer", defaul
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
 base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }
 base-execution-eip8130-rpc = { path = "crates/execution/eip8130-rpc", default-features = false }
-base-shadow-indexer-db = { path = "crates/execution/shadow-indexer-db", default-features = false }
 
 # Infra
 basectl-cli = { path = "crates/infra/basectl", default-features = false }

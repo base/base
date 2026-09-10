@@ -7,7 +7,7 @@ use anyhow::Result;
 use base_common_types_chain::{
     BaseTxEnvelope, Block, BlockBody, Header, SignableTransaction, TxDeposit, TxEip1559,
 };
-use base_shadow_indexer_db::{
+use base_execution_state_indexer::{
     PgConnectionParams, ShadowBlockPayload, ShadowBlockRepo, ShadowBlockRow, ShadowCanonicalRef,
     ShadowDbConfig, ShadowWrite,
 };

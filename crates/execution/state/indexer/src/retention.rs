@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
+use crate::{ShadowDbConfig, ShadowRetentionRepo};
 use base_common_runtime_tasks::TaskExecutor;
-use base_shadow_indexer_db::{ShadowDbConfig, ShadowRetentionRepo};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
 

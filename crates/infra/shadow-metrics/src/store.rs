@@ -1,7 +1,7 @@
 //! Postgres access for shadow metrics.
 
 use anyhow::Result;
-use base_shadow_indexer_db::PgConnectionParams;
+use base_execution_state_indexer::PgConnectionParams;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 /// Schema readiness failure.

@@ -14,7 +14,7 @@ mod stats;
 pub use stats::ShadowBlockStats;
 
 mod store;
-pub use base_shadow_indexer_db::{
+pub use base_execution_state_indexer::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams,
 };
 pub use store::{ShadowMetricsSchemaReadinessError, ShadowMetricsStore};

@@ -1,7 +1,7 @@
+use crate::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use alloy_eips::BlockNumHash;
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_types::Chain;
-use base_shadow_indexer_db::{ShadowBlockPayload, ShadowBlockRow, ShadowCanonicalRef, ShadowWrite};
 use chrono::Utc;
 use eyre::Result;
 use futures::TryStreamExt;
@@ -258,13 +258,13 @@ mod tests {
     use alloy_primitives::B256;
     use base_common_types_chain::Receipt;
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::ForkChoiceStream;
     use base_execution_state_provider::{
         providers::BlockchainProvider, test_utils::create_test_provider_factory,
     };
     use base_execution_state_types::{Chain, ExecutionOutcome};
     use futures::TryStreamExt;
-    use base_execution_state_maintenance::init::init_genesis;
     use reth_exex::{ExExHandle, ExExManager, ExExNotificationSource, Wal};
     use tokio::{
         sync::{mpsc, watch},

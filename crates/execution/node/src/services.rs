@@ -1,12 +1,14 @@
 //! Fixed background services for Base execution nodes.
 
+use base_execution_state_indexer::ShadowWrite;
+use base_execution_state_indexer::{
+    ShadowIndexerConfig, ShadowIndexerExEx, ShadowRetention, ShadowWriter,
+};
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_txpool::TransactionValidity;
 use base_node_context::BaseNodeContext;
-use base_execution_state_indexer::{ShadowIndexerConfig, ShadowIndexerExEx, ShadowRetention, ShadowWriter};
-use base_shadow_indexer_db::ShadowWrite;
 use base_tx_forwarding::{TxForwardingConfig, TxForwardingService};
 use base_txpool_tracing::{TxpoolConfig, tracex_subscription};
-use base_execution_state_provider::CanonStateSubscriptions;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;

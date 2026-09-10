@@ -1,6 +1,6 @@
 //! Node service runtime settings.
 
-use base_shadow_indexer_db::ShadowDbConfig;
+use crate::ShadowDbConfig;
 
 use crate::ShadowRetentionConfig;
 /// Configuration for the shadow indexer extension.

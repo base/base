@@ -14,3 +14,6 @@ fill in `canonical_hash` on the rows already stored at those heights.
 height holds at most one discarded candidate, and a second reorg at that height replaces the
 row outright rather than accumulating a sibling. The replacement clears `canonical_hash`: the
 hash belonged to the block that was displaced, not to the one now stored.
+
+The database schema, PostgreSQL repositories, and migrations are available without the `service`
+feature. Node callers enable `service` for the execution extension, writer, and retention worker.
