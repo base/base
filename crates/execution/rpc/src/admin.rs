@@ -9,7 +9,7 @@ use alloy_rpc_types_admin::{
 };
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
-use base_execution_network_service::{NetworkInfo, Peers};
+use base_execution_network_service::{NetworkInfo, Peers, PeersInfo};
 use base_execution_network_wire::{AnyNode, NodeRecord, PeerKind};
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::core::RpcResult;
@@ -19,28 +19,28 @@ use crate::AdminApiServer;
 /// `admin` API implementation.
 ///
 /// This type provides the functionality for handling `admin` related requests.
-pub struct AdminApi<N, Pool> {
+pub struct AdminApi {
     /// An interface to interact with the network
-    network: N,
+    network: base_execution_network_service::NetworkHandle,
     /// The specification of the blockchain's configuration.
     chain_spec: Arc<BaseChainSpec>,
     /// The transaction pool
-    pool: Pool,
+    pool: base_execution_txpool::BaseTransactionPool,
 }
 
-impl<N, Pool> AdminApi<N, Pool> {
+impl AdminApi {
     /// Creates a new instance of `AdminApi`.
-    pub const fn new(network: N, chain_spec: Arc<BaseChainSpec>, pool: Pool) -> Self {
+    pub const fn new(
+        network: base_execution_network_service::NetworkHandle,
+        chain_spec: Arc<BaseChainSpec>,
+        pool: base_execution_txpool::BaseTransactionPool,
+    ) -> Self {
         Self { network, chain_spec, pool }
     }
 }
 
 #[async_trait]
-impl<N, Pool> AdminApiServer for AdminApi<N, Pool>
-where
-    N: NetworkInfo + Peers + 'static,
-    Pool: TransactionPool + 'static,
-{
+impl AdminApiServer for AdminApi {
     /// Handler for `admin_addPeer`
     fn add_peer(&self, record: NodeRecord) -> RpcResult<bool> {
         self.network.add_peer_with_udp(record.id, record.tcp_addr(), record.udp_addr());
@@ -214,7 +214,7 @@ where
     }
 }
 
-impl<N, Pool> std::fmt::Debug for AdminApi<N, Pool> {
+impl std::fmt::Debug for AdminApi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AdminApi").finish_non_exhaustive()
     }

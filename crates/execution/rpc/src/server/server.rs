@@ -175,9 +175,7 @@ impl RpcRegistryInner {
 
 impl RpcRegistryInner {
     /// Instantiates `AdminApi`
-    pub fn admin_api(
-        &self,
-    ) -> AdminApi<base_execution_network_service::NetworkHandle, BaseTransactionPool> {
+    pub fn admin_api(&self) -> AdminApi {
         AdminApi::new(self.network.clone(), self.provider.chain_spec(), self.pool.clone())
     }
 

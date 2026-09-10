@@ -141,9 +141,7 @@ impl RpcHandle {
     }
 
     /// Returns an instance of the [`AdminApi`] for the rpc server.
-    pub fn admin_api(
-        &self,
-    ) -> AdminApi<base_execution_network_service::NetworkHandle, BaseTransactionPool> {
+    pub fn admin_api(&self) -> AdminApi {
         self.rpc_registry.admin_api()
     }
 }

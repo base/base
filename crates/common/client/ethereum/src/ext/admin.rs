@@ -43,7 +43,7 @@ pub trait AdminApi<N>: Send + Sync {
 
 #[cfg_attr(target_family = "wasm", async_trait::async_trait(?Send))]
 #[cfg_attr(not(target_family = "wasm"), async_trait::async_trait)]
-impl<N, P> AdminApi<N> for P
+impl<N, P> AdminApi for P
 where
     N: Network,
     P: Provider<N>,
