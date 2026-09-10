@@ -7,6 +7,7 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::{DbTx, tables};
 use base_execution_state_maintenance::PruneModes;
+use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
     StageCheckpointReader,
@@ -24,7 +25,6 @@ use reth_network_p2p::{
 };
 use reth_node_events::node::NodeEvent;
 use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
-use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 

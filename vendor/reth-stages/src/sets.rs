@@ -17,7 +17,7 @@
 //! # use base_execution_evm_blocks::BaseEvmConfig;
 //! # use base_execution_state_provider::StaticFileProviderFactory;
 //! # use base_execution_state_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
-//! # use reth_static_file::StaticFileProducer;
+//! # use base_execution_state_maintenance::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use std::sync::Arc;
 //! # use base_execution_evm_blocks::BaseBeaconConsensus;
@@ -39,10 +39,10 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_provider::HeaderSyncGapProvider;
 use base_execution_state_types::{PruneMode, PruneModes};
 use reth_config::config::StageConfig;
 use reth_network_p2p::{bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader};
-use base_execution_state_provider::HeaderSyncGapProvider;
 use reth_stages_api::Stage;
 use tokio::sync::watch;
 

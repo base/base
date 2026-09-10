@@ -4,10 +4,10 @@ mod receipts;
 use std::ops::RangeInclusive;
 
 use alloy_primitives::BlockNumber;
+use base_execution_state_provider::StaticFileProviderFactory;
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::StaticFileSegment;
 pub use receipts::Receipts;
-use base_execution_state_provider::StaticFileProviderFactory;
 
 /// A segment represents moving some portion of the data to static files.
 pub trait Segment<Provider: StaticFileProviderFactory>: Send + Sync {

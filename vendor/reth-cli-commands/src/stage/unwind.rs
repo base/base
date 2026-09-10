@@ -8,17 +8,17 @@ use alloy_primitives::B256;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_provider::{BlockNumReader, ProviderFactory};
 use clap::{Parser, Subcommand};
 use reth_config::Config;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_exex::ExExManagerHandle;
-use base_execution_state_provider::{BlockNumReader, ProviderFactory};
 use reth_stages::{
     ExecutionStageThresholds, Pipeline, StageSet,
     sets::{DefaultStages, OfflineStages},
     stages::ExecutionStage,
 };
-use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 use tracing::info;
 

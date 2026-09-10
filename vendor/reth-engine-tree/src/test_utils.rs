@@ -3,13 +3,13 @@ use std::{collections::VecDeque, ops::Range, sync::Arc};
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::BaseBlockBody as BlockBody;
+use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use base_execution_state_types::PruneModes;
 use reth_network_p2p::test_utils::TestFullBlockClient;
 use reth_primitives_traits::SealedHeader;
-use base_execution_state_provider::test_utils::create_test_provider_factory_with_chain_spec;
 use reth_stages::{ExecOutput, StageError, test_utils::TestStages};
 use reth_stages_api::Pipeline;
-use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 
 /// Test pipeline builder.

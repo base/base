@@ -8,6 +8,7 @@ use base_common_runtime_tasks::TaskExecutor;
 use base_common_types_chain::BaseBlock;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
+use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::ProviderFactory;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
@@ -18,7 +19,6 @@ use reth_network_p2p::{
     BlockClient, bodies::downloader::BodyDownloader, headers::downloader::HeaderDownloader,
 };
 use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
-use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 use {base_execution_state_types::PruneConfig, reth_config::config::StageConfig};
 

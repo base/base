@@ -5,6 +5,7 @@ use crate::ChainSpecParser;
 use base_cli_utils::CliContext;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_execution_state_maintenance::PrunerBuilder;
+use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::RocksDBProviderFactory;
 use base_node_core::metrics_hooks;
 use clap::Parser;
@@ -15,7 +16,6 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
-use reth_static_file::StaticFileProducer;
 use tracing::info;
 
 use crate::common::{AccessRights, EnvironmentArgs};

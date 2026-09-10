@@ -13,9 +13,16 @@ use base_common_types_chain::{
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_state_api::{ChangeSetReader, StorageChangeSetReader};
+use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_maintenance::init::init_genesis;
+use base_execution_state_provider::{
+    BlockNumReader, DBProvider, DatabaseProviderFactory, HeaderProvider, OriginalValuesKnown,
+    StageCheckpointReader, StateWriter, StaticFileProviderFactory,
+    test_utils::create_test_provider_factory_with_chain_spec,
+};
+use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
-use base_execution_state_maintenance::init::init_genesis;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
@@ -29,16 +36,9 @@ use reth_primitives_traits::{
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use base_execution_state_provider::{
-    BlockNumReader, DBProvider, DatabaseProviderFactory, HeaderProvider, OriginalValuesKnown,
-    StageCheckpointReader, StateWriter, StaticFileProviderFactory,
-    test_utils::create_test_provider_factory_with_chain_spec,
-};
 use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
-use reth_static_file::StaticFileProducer;
 use reth_testing_utils::generators::{self, generate_key};
-use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
 /// Counter contract deployed bytecode compiled with Solidity 0.8.31.

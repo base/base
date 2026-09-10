@@ -9,6 +9,7 @@ use std::{
 
 use alloy_primitives::{B256, BlockNumber};
 use base_common_runtime_tasks::{EventSender, EventStream};
+use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::{
     BlockHashReader, BlockNumReader, ChainStateBlockReader, ChainStateBlockWriter, DBProvider,
     DatabaseProviderFactory, ProviderFactory, PruneCheckpointReader, StageCheckpointReader,
@@ -16,7 +17,6 @@ use base_execution_state_provider::{
 pub use event::*;
 use futures_util::Future;
 use reth_primitives_traits::constants::BEACON_CONSENSUS_REORG_UNWIND_DEPTH;
-use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 use tracing::*;
 

@@ -7,6 +7,10 @@ use std::{
 
 use alloy_primitives::BlockNumber;
 use base_common_runtime_tasks::{EventSender, EventStream};
+use base_execution_state_provider::{
+    BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
+    StaticFileProviderFactory, providers::StaticFileWriter,
+};
 use base_execution_state_types::ProviderResult;
 use base_execution_state_types::PruneModes;
 use base_execution_state_types::StageId;
@@ -14,13 +18,9 @@ use base_execution_state_types::{HighestStaticFiles, StaticFileTargets};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use reth_primitives_traits::FastInstant as Instant;
-use base_execution_state_provider::{
-    BlockReader, ChainStateBlockReader, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
-    StaticFileProviderFactory, providers::StaticFileWriter,
-};
 use tracing::{debug, trace};
 
-use crate::{StaticFileProducerEvent, segments, segments::Segment};
+use crate::static_files::{StaticFileProducerEvent, segments, segments::Segment};
 
 /// Result of [`StaticFileProducerInner::run`] execution.
 pub type StaticFileProducerResult = ProviderResult<StaticFileTargets>;
@@ -230,16 +230,16 @@ mod tests {
 
     use alloy_primitives::B256;
     use assert_matches::assert_matches;
-    use base_execution_state_types::PruneModes;
-    use base_execution_state_types::{HighestStaticFiles, StaticFileSegment};
     use base_execution_state_provider::{
         ProviderError, ProviderFactory, StaticFileProviderFactory, providers::StaticFileWriter,
     };
+    use base_execution_state_types::PruneModes;
+    use base_execution_state_types::{HighestStaticFiles, StaticFileSegment};
     use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams};
     use tempfile::TempDir;
 
-    use crate::static_file_producer::{
+    use crate::static_files::static_file_producer::{
         StaticFileProducer, StaticFileProducerInner, StaticFileTargets,
     };
 

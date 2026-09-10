@@ -27,12 +27,11 @@ base-execution-evm-runtime = { workspace = true }
 reth-stages = { workspace = true, optional = true }
 base-execution-state-database = { workspace = true }
 base-execution-payload-builder = { workspace = true }
+base-execution-state-maintenance = { workspace = true}
 futures = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
 derive_more = { workspace = true, features = ["full"] }
 indexmap = { workspace = true, features = ["default"] }
 alloy-eip7928 = { workspace = true, features = ["rlp"] }
-reth-static-file = { workspace = true, optional = true }
 schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
@@ -60,15 +59,14 @@ base-execution-evm-blocks = {features = ["metrics", "optional-balance-check", "o
 
 [dev-dependencies]
 assert_matches = { workspace = true }
-reth-static-file = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = {workspace = true}
 rand_08 = { workspace = true, features = ["default"] }
-base-execution-state-maintenance = { workspace = true }
 proptest = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 metrics-util = { workspace = true, features = ["debugging"] }
@@ -93,7 +91,6 @@ test-utils = [
     "base-execution-state-types/test-utils",
     "reth-stages-api/test-utils",
     "reth-stages/test-utils",
-    "reth-static-file",
     "base-common-observability-tracing",
     "base-execution-state-trie/test-utils",
     "base-execution-state-tasks/test-utils",

@@ -12,7 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-rayon = { workspace = true }
+rayon = {workspace = true}
 serde = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
@@ -22,9 +22,9 @@ alloy-genesis = { workspace = true }
 base-common-io-files = { workspace = true }
 boyer-moore-magiclen = { workspace = true }
 reth-primitives-traits = {workspace = true}
+base-common-runtime-tasks = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
-base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
 base-execution-state-database = {workspace = true}
@@ -32,19 +32,21 @@ base-execution-state-provider = {workspace = true}
 eyre = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 tempfile = { workspace = true, features = ["default"] }
-tracing = {features = ["attributes"], workspace = true}
+tracing = {workspace = true, features = ["attributes"]}
 reth-exex-types = { workspace = true, features = ["default"] }
-base-common-types-chain = {features = ["reth"], workspace = true}
-alloy-primitives = {features = ["map-foldhash"], workspace = true}
-base-execution-state-types = {features = ["std"], workspace = true}
+base-common-types-chain = {workspace = true, features = ["reth"]}
+alloy-primitives = {workspace = true, features = ["map-foldhash"]}
+base-execution-state-types = {workspace = true, features = ["std"]}
 base-common-observability-metrics = { workspace = true, features = ["metrics"]}
+parking_lot = { workspace = true, features = ["default", "send_guard", "arc_lock"] }
 
 [dev-dependencies]
-assert_matches = { workspace = true }
-reth-testing-utils = { workspace = true }
+assert_matches = {workspace = true}
+reth-testing-utils = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-reth-stages = { workspace = true, features = ["test-utils"] }
+tempfile = { workspace = true, features = ["default"] }
+reth-stages = {workspace = true, features = ["test-utils"]}
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-state-types = {workspace = true, features = ["arbitrary"]}

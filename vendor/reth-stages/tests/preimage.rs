@@ -18,9 +18,16 @@ use base_execution_state_api::{StorageChangeSetReader, StorageSettings, StorageS
 use base_execution_state_database::mdbx::{Environment, EnvironmentFlags, Mode};
 use base_execution_state_database::tables;
 use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
+use base_execution_state_maintenance::StaticFileProducer;
+use base_execution_state_maintenance::init::{init_genesis, init_genesis_with_settings};
+use base_execution_state_provider::{
+    BlockNumReader, DBProvider, DatabaseProviderFactory, HashedPostStateProvider, HeaderProvider,
+    OriginalValuesKnown, StateWriter, StoragePath,
+    test_utils::create_test_provider_factory_with_chain_spec,
+};
+use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use base_execution_state_types::PruneModes;
 use reth_config::config::StageConfig;
-use base_execution_state_maintenance::init::{init_genesis, init_genesis_with_settings};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
@@ -34,19 +41,12 @@ use reth_primitives_traits::{
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use base_execution_state_provider::{
-    BlockNumReader, DBProvider, DatabaseProviderFactory, HashedPostStateProvider, HeaderProvider,
-    OriginalValuesKnown, StateWriter, StoragePath,
-    test_utils::create_test_provider_factory_with_chain_spec,
-};
 use reth_stages::{
     sets::{ExecutionStages, HashingStages, OnlineStages},
     stages::FinishStage,
 };
 use reth_stages_api::{Pipeline, StageSet};
-use reth_static_file::StaticFileProducer;
 use reth_testing_utils::generators::{self, generate_key};
-use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use tokio::sync::watch;
 
 type TestProviderFactory = base_execution_state_provider::ProviderFactory;

@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, BlockNumber};
+use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::{DatabaseProviderFactory, ProviderFactory};
-use reth_static_file::StaticFileProducer;
 use tokio::sync::watch;
 
 use crate::{MetricEventsSender, Pipeline, Stage, StageId, StageSet, pipeline::BoxedStage};

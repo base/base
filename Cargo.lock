@@ -3894,6 +3894,7 @@ dependencies = [
  "boyer-moore-magiclen",
  "eyre",
  "metrics",
+ "parking_lot",
  "rayon",
  "reth-exex-types",
  "reth-primitives-traits",
@@ -4374,7 +4375,6 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-rpc-server-types",
  "reth-stages",
- "reth-static-file",
  "rstest",
  "secp256k1 0.30.0",
  "serde_json",
@@ -13777,7 +13777,6 @@ dependencies = [
  "reth-node-metrics",
  "reth-primitives-traits",
  "reth-stages",
- "reth-static-file",
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
@@ -14020,7 +14019,6 @@ dependencies = [
  "reth-primitives-traits",
  "reth-stages",
  "reth-stages-api",
- "reth-static-file",
  "reth-testing-utils",
  "schnellru",
  "serde_json",
@@ -14617,7 +14615,6 @@ dependencies = [
  "reth-network-p2p",
  "reth-primitives-traits",
  "reth-stages-api",
- "reth-static-file",
  "reth-testing-utils",
  "tempfile",
  "thiserror 2.0.19",
@@ -14648,31 +14645,10 @@ dependencies = [
  "metrics",
  "reth-network-p2p",
  "reth-primitives-traits",
- "reth-static-file",
  "reth-testing-utils",
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
- "tracing",
-]
-
-[[package]]
-name = "reth-static-file"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "assert_matches",
- "base-common-runtime-tasks",
- "base-common-types-chain",
- "base-execution-state-database",
- "base-execution-state-provider",
- "base-execution-state-types",
- "parking_lot",
- "rayon",
- "reth-primitives-traits",
- "reth-stages",
- "reth-testing-utils",
- "tempfile",
  "tracing",
 ]
 

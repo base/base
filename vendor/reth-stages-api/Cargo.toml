@@ -21,7 +21,6 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 aquamarine = { workspace = true }
 futures-util = { workspace = true }
-reth-static-file = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}
@@ -30,7 +29,7 @@ base-common-runtime-tasks = { workspace = true }
 base-execution-evm-blocks = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 base-execution-state-provider = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
+base-execution-state-maintenance = {workspace = true}
 tracing = { workspace = true, features = ["attributes"] }
 reth-network-p2p = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }

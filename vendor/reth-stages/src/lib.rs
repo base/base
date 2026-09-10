@@ -27,7 +27,7 @@
 //! # use base_execution_state_provider::ProviderFactory;
 //! # use base_execution_state_provider::StaticFileProviderFactory;
 //! # use base_execution_state_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
-//! # use reth_static_file::StaticFileProducer;
+//! # use base_execution_state_maintenance::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use base_execution_evm_blocks::Consensus;
 //! # use base_execution_evm_blocks::BaseBeaconConsensus;

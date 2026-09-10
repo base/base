@@ -32,7 +32,6 @@ base-cli-utils = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-node-events = { workspace = true }
-reth-static-file = { workspace = true }
 reth-node-metrics = { workspace = true }
 base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }

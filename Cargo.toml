@@ -156,7 +156,6 @@ members = [
   "vendor/reth-rpc-server-types",
   "vendor/reth-stages",
   "vendor/reth-stages-api",
-  "vendor/reth-static-file",
   "crates/execution/state/api",
   "vendor/reth-testing-utils",
   "crates/common/observability/tracing",
@@ -451,7 +450,6 @@ base-execution-state-types = { path = "crates/execution/state/types", default-fe
 reth-rpc-convert = { path = "vendor/reth-rpc-convert", default-features = false }
 reth-network-api = { path = "vendor/reth-network-api", default-features = false }
 base-execution-state-api = { path = "crates/execution/state/api", default-features = false }
-reth-static-file = { path = "vendor/reth-static-file", default-features = false }
 reth-rpc-builder = { path = "vendor/reth-rpc-builder", default-features = false }
 reth-downloaders = { path = "vendor/reth-downloaders", default-features = false }
 reth-engine-util = { path = "vendor/reth-engine-util", default-features = false }

@@ -49,6 +49,9 @@ use base_execution_state_maintenance::init::{
     InitStorageError, init_genesis_with_settings, init_genesis_with_settings_and_validate,
 };
 use base_execution_state_maintenance::{PruneMode, PruneModes, PrunerBuilder};
+use base_execution_state_maintenance::{
+    StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance,
+};
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{
     BalConfig, BalStoreHandle, BlockHashReader, DBProvider, DatabaseProviderFactory,
@@ -86,7 +89,6 @@ use reth_stages::{
     MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet, sets::DefaultStages,
     stages::MerkleStage,
 };
-use reth_static_file::{StaticFileProducer, StaticFileSegment, blocks_per_file_for_prune_distance};
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot, watch,

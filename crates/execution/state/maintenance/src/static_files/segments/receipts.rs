@@ -3,11 +3,11 @@ use std::ops::RangeInclusive;
 use alloy_primitives::BlockNumber;
 use base_common_types_chain::BaseReceipt;
 use base_execution_state_database::{DbCursorRO, DbTx, tables};
+use base_execution_state_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::{ProviderError, ProviderResult};
-use base_execution_state_provider::{BlockReader, DBProvider, StaticFileProviderFactory};
 
-use crate::segments::Segment;
+use crate::static_files::segments::Segment;
 
 /// Static File segment responsible for [`StaticFileSegment::Receipts`] part of data.
 #[derive(Debug, Default)]

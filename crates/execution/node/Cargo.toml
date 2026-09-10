@@ -30,7 +30,6 @@ reth-engine-util = { workspace = true }
 reth-network-api = { workspace = true }
 reth-node-events = { workspace = true }
 reth-rpc-builder = { workspace = true }
-reth-static-file = { workspace = true }
 base-node-context = { workspace = true }
 reth-engine-local = { workspace = true }
 reth-node-metrics = { workspace = true }

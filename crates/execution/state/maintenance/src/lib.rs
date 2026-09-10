@@ -17,3 +17,6 @@ pub use etl::{Collector, EtlFile, EtlIter};
 
 mod pruning;
 pub use pruning::*;
+
+mod static_files;
+pub use static_files::*;
