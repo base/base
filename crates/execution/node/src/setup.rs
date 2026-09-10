@@ -9,12 +9,12 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::ProviderFactory;
+use base_execution_sync_pipeline::{DefaultStages, ExecutionStage, Pipeline, StageId, StageSet};
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder,
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
 use reth_exex::ExExManagerHandle;
-use reth_stages::{Pipeline, StageId, StageSet, prelude::DefaultStages, stages::ExecutionStage};
 use tokio::sync::watch;
 use {
     base_execution_network_service::BodyDownloader,
@@ -30,7 +30,7 @@ pub fn build_networked_pipeline<Client>(
     consensus: Arc<BaseBeaconConsensus>,
     provider_factory: ProviderFactory,
     task_executor: &TaskExecutor,
-    metrics_tx: reth_stages::MetricEventsSender,
+    metrics_tx: base_execution_sync_pipeline::MetricEventsSender,
     prune_config: PruneConfig,
     max_block: Option<BlockNumber>,
     static_file_producer: StaticFileProducer<ProviderFactory>,
@@ -77,7 +77,7 @@ pub fn build_pipeline<H, B>(
     body_downloader: B,
     consensus: Arc<BaseBeaconConsensus>,
     max_block: Option<u64>,
-    metrics_tx: reth_stages::MetricEventsSender,
+    metrics_tx: base_execution_sync_pipeline::MetricEventsSender,
     prune_config: PruneConfig,
     static_file_producer: StaticFileProducer<ProviderFactory>,
     evm_config: BaseEvmConfig,

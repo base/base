@@ -4,16 +4,16 @@ use alloy_primitives::{B256, BlockNumber};
 use base_common_types_chain::{BlockHeader, Compact, constants::KECCAK_EMPTY};
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_database::{DbTx, DbTxMut, tables};
-use reth_primitives_traits::{GotExpected, SealedHeader};
 use base_execution_state_provider::{
     HeaderProvider, ProviderError, StageCheckpointReader, StatsReader, TrieWriter,
 };
+use base_execution_state_trie::{
+    DatabaseStateRoot, IntermediateStateRootState, StateRoot, StateRootProgress, StoredSubNode,
+};
+use reth_primitives_traits::{GotExpected, SealedHeader};
 use reth_stages_api::{
     BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, MerkleCheckpoint, Stage,
     StageCheckpoint, StageError, StageId, StorageRootMerkleCheckpoint, UnwindInput, UnwindOutput,
-};
-use base_execution_state_trie::{
-    DatabaseStateRoot, IntermediateStateRootState, StateRoot, StateRootProgress, StoredSubNode,
 };
 
 type DbStateRoot<'a, TX, A> = StateRoot<
@@ -162,7 +162,9 @@ impl MerkleStage {
     }
 }
 
-impl<TX: DbTx + DbTxMut + 'static> Stage<base_execution_state_provider::DatabaseProvider<TX>> for MerkleStage {
+impl<TX: DbTx + DbTxMut + 'static> Stage<base_execution_state_provider::DatabaseProvider<TX>>
+    for MerkleStage
+{
     /// Return the id of the stage
     fn id(&self) -> StageId {
         match self {
@@ -472,17 +474,17 @@ mod tests {
 
     use assert_matches::assert_matches;
     use base_execution_state_database::{DbCursorRO, DbDupCursorRO};
-    use base_execution_state_types::StaticFileSegment;
-    use reth_primitives_traits::SealedBlock;
     use base_execution_state_provider::{
         DatabaseProviderFactory, HashingWriter, StaticFileProviderFactory,
         providers::StaticFileWriter,
     };
+    use base_execution_state_trie::test_utils::{state_root, state_root_prehashed};
+    use base_execution_state_types::StaticFileSegment;
+    use reth_primitives_traits::SealedBlock;
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{
         self, BlockParams, BlockRangeParams, random_changeset_range, random_contract_account_range,
     };
-    use base_execution_state_trie::test_utils::{state_root, state_root_prehashed};
 
     use super::*;
     use crate::test_utils::{

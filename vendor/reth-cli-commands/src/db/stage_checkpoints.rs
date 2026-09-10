@@ -1,9 +1,9 @@
 //! `reth db stage-checkpoints` command for viewing and setting stage checkpoint values.
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
 use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{DBProvider, DatabaseProviderFactory, StageCheckpointReader};
-use reth_stages::StageId;
+use base_execution_sync_pipeline::StageId;
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::common::AccessRights;
 
@@ -145,12 +145,12 @@ impl From<StageArg> for StageId {
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
     use base_execution_state_provider::{
         DBProvider, DatabaseProviderFactory, StageCheckpointReader,
         test_utils::create_test_provider_factory,
     };
-    use reth_stages::StageCheckpoint;
+    use base_execution_sync_pipeline::StageCheckpoint;
+    use clap::Parser;
 
     use super::*;
 

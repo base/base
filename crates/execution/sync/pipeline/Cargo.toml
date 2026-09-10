@@ -1,5 +1,5 @@
 [package]
-name = "reth-stages"
+name = "base-execution-sync-pipeline"
 description = "Staged syncing primitives used in reth."
 version.workspace = true
 edition.workspace = true
@@ -28,7 +28,6 @@ reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-base-execution-state-memory = {workspace = true}
 base-execution-evm-runtime = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 eyre = { workspace = true, features = ["default"] }
@@ -41,6 +40,7 @@ tracing = { workspace = true, features = ["attributes"] }
 reth-testing-utils = { workspace = true, optional = true }
 base-execution-state-types = {workspace = true,features = ["std"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
+base-execution-state-memory = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm-blocks = {features = ["metrics"], workspace = true}
 base-execution-state-trie = { workspace = true, features = ["metrics"] }
@@ -64,6 +64,7 @@ reth-stages-api = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 base-execution-evm-blocks = {features = ["test-utils"], workspace = true}
 base-execution-state-trie = { workspace = true, features = ["test-utils"] }
+base-execution-state-memory = { workspace = true, features = ["test-utils"] }
 reth-downloaders = { workspace = true, features = ["default", "file-client"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
@@ -73,6 +74,8 @@ base-execution-network-service = { workspace = true, features = ["default", "tes
 
 [features]
 test-utils = [
+    "dep:base-execution-state-memory",
+    "base-execution-state-memory/test-utils",
     "base-execution-network-service/test-utils",
     "base-execution-state-database/test-utils",
     "base-execution-state-provider/test-utils",
@@ -86,5 +89,4 @@ test-utils = [
     "base-execution-state-trie/test-utils",
     "base-execution-state-types/test-utils",
     "base-common-runtime-tasks/test-utils",
-    "base-execution-state-memory/test-utils",
 ]

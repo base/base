@@ -208,7 +208,7 @@ mod tests {
     use base_execution_state_database::tables;
     use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress};
-    use reth_stages::test_utils::{StorageKind, TestStageDB};
+    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams};
 
     use crate::pruning::segments::{

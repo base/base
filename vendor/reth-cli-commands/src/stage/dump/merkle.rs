@@ -5,22 +5,20 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::DatabaseEnv;
 use base_execution_state_database::{Database, TableImporter, models::BlockNumberAddress, tables};
+use base_execution_state_maintenance::DbTool;
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},
 };
 use base_execution_state_types::EtlConfig;
+use base_execution_sync_pipeline::{
+    AccountHashingStage, ExecutionStage, ExecutionStageThresholds,
+    MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD, MerkleStage, Stage, StageCheckpoint,
+    StorageHashingStage, UnwindInput,
+};
 use eyre::Result;
-use base_execution_state_maintenance::DbTool;
 use reth_exex::ExExManagerHandle;
 use reth_node_core::dirs::{ChainPath, DataDirPath};
-use reth_stages::{
-    ExecutionStageThresholds, Stage, StageCheckpoint, UnwindInput,
-    stages::{
-        AccountHashingStage, ExecutionStage, MERKLE_STAGE_DEFAULT_REBUILD_THRESHOLD, MerkleStage,
-        StorageHashingStage,
-    },
-};
 use tracing::info;
 
 use super::setup;
@@ -90,8 +88,10 @@ fn unwind_and_copy(
         checkpoint: StageCheckpoint::new(tip_block_number),
         bad_block: None,
     };
-    let execute_input =
-        reth_stages::ExecInput { target: Some(to), checkpoint: Some(StageCheckpoint::new(from)) };
+    let execute_input = base_execution_sync_pipeline::ExecInput {
+        target: Some(to),
+        checkpoint: Some(StageCheckpoint::new(from)),
+    };
 
     // Unwind hashes all the way to FROM
     StorageHashingStage::default().unwind(&provider, unwind)?;
@@ -167,7 +167,7 @@ fn dry_run(output_provider_factory: ProviderFactory, to: u64, from: u64) -> eyre
     };
 
     loop {
-        let input = reth_stages::ExecInput {
+        let input = base_execution_sync_pipeline::ExecInput {
             target: Some(to),
             checkpoint: Some(StageCheckpoint::new(from)),
         };

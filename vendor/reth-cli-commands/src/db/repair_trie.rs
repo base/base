@@ -8,10 +8,17 @@ use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_execution_state_database::{
     Database, DbCursorRO, DbCursorRW, DbDupCursorRO, DbTx, DbTxMut,
 };
+use base_execution_state_maintenance::DbTool;
+use base_execution_state_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
+use base_execution_state_trie::{
+    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,
+    StorageTrieEntryLike, TrieTableAdapter,
+    verify::{Output, Verifier},
+};
+use base_execution_sync_pipeline::StageId;
 use clap::Parser;
 use metrics::{self, Counter};
 use reth_cli_util::parse_socket_address;
-use base_execution_state_maintenance::DbTool;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     version::version_metadata,
@@ -21,13 +28,6 @@ use reth_node_metrics::{
     hooks::Hooks,
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
-};
-use base_execution_state_provider::{ChainSpecProvider, HeaderProvider, StageCheckpointReader};
-use reth_stages::StageId;
-use base_execution_state_trie::{
-    DatabaseHashedCursorFactory, DatabaseStateRoot, DatabaseTrieCursorFactory, Nibbles,
-    StorageTrieEntryLike, TrieTableAdapter,
-    verify::{Output, Verifier},
 };
 use tracing::{info, warn};
 

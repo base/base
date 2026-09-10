@@ -191,7 +191,7 @@ mod tests {
     use base_execution_state_database::{DbTxMut, tables};
     use base_execution_state_provider::{DBProvider, DatabaseProviderFactory};
     use base_execution_state_types::StorageEntry;
-    use reth_stages::test_utils::TestStageDB;
+    use base_execution_sync_pipeline::test_utils::TestStageDB;
 
     use super::DbTxPruneExt;
     use crate::pruning::PruneLimiter;

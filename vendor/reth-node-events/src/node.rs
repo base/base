@@ -18,9 +18,11 @@ use base_common_types_payload::ForkchoiceState;
 use base_execution_network_service::PeersInfo;
 use base_execution_state_types::PrunerEvent;
 use base_execution_state_types::StaticFileProducerEvent;
+use base_execution_sync_pipeline::{
+    EntitiesCheckpoint, ExecOutput, PipelineEvent, StageCheckpoint, StageId,
+};
 use futures::Stream;
 use reth_engine_primitives::{ConsensusEngineEvent, ForkchoiceStatus, SlowBlockInfo};
-use reth_stages::{EntitiesCheckpoint, ExecOutput, PipelineEvent, StageCheckpoint, StageId};
 use tokio::time::Interval;
 use tracing::{debug, info, warn};
 

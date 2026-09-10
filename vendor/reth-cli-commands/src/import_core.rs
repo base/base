@@ -12,6 +12,7 @@ use base_execution_state_provider::{
     BlockNumReader, HeaderProvider, ProviderError, ProviderFactory, RocksDBProviderFactory,
     StageCheckpointReader,
 };
+use base_execution_sync_pipeline::{ControlFlow, Pipeline, StageId, StageSet, *};
 use futures::StreamExt;
 use reth_config::Config;
 use reth_downloaders::{
@@ -20,7 +21,6 @@ use reth_downloaders::{
     headers::reverse_headers::ReverseHeadersDownloaderBuilder,
 };
 use reth_node_events::node::NodeEvent;
-use reth_stages::{ControlFlow, Pipeline, StageId, StageSet, prelude::*};
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 use {

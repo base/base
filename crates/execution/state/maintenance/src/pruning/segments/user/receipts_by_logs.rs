@@ -237,8 +237,8 @@ mod tests {
         BlockReader, DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
     };
     use base_execution_state_types::{PruneMode, PruneSegment, ReceiptsLogPruneConfig};
+    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
     use reth_primitives_traits::InMemorySize;
-    use reth_stages::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams, random_eoa_account, random_log};
 
     use crate::pruning::segments::{PruneInput, PruneLimiter, Segment, user::ReceiptsByLogs};

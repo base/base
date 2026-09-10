@@ -18,9 +18,9 @@ use base_execution_state_provider::{
     DBProvider, RocksDBProviderFactory, StaticFileProviderFactory, StaticFileWriter,
 };
 use base_execution_state_types::StaticFileSegment;
+use base_execution_sync_pipeline::StageId;
 use clap::Parser;
 use reth_node_core::args::StageEnum;
-use reth_stages::StageId;
 
 use crate::common::{AccessRights, Environment, EnvironmentArgs};
 

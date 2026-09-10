@@ -169,7 +169,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [base-execution-rpc-server](../../crates/execution/rpc/server/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-rpc-server](../../crates/execution/rpc/server/Cargo.toml) | Retain shared infrastructure |
 | [reth-rpc-traits](../../vendor/reth-rpc-traits/Cargo.toml) | Consolidate; retain required code |
-| [reth-stages](../../vendor/reth-stages/Cargo.toml) | Retain shared infrastructure |
+| [base-execution-sync-pipeline](../../crates/execution/sync/pipeline/Cargo.toml) | Retain shared infrastructure |
 | [reth-stages-api](../../vendor/reth-stages-api/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-types](../../crates/execution/state/types/Cargo.toml) | Retain shared infrastructure |
 | [base-execution-state-maintenance](../../crates/execution/state/maintenance/Cargo.toml) | Retain shared infrastructure |
@@ -199,8 +199,8 @@ Initial ERA cleanup passed:
 - `cargo check --offline --locked -p base --all-targets`
 - `cargo test --offline -p reth-config --features serde --lib` — 16 tests, including loading and saving old ERA configuration.
 - `cargo test --offline -p base-execution-state-types --features reth-codecs/alloy --lib` — 17 tests. The explicit codec feature supplies the Alloy codec implementations needed by this isolated test build.
-- `cargo test --offline -p reth-stages --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
-- `cargo test --offline --locked -p reth-stages --features test-utils --test preimage` — 7 storage/preimage pipeline tests.
+- `cargo test --offline -p base-execution-sync-pipeline --features test-utils --test pipeline` — full forward sync, unwind, and re-sync test.
+- `cargo test --offline --locked -p base-execution-sync-pipeline --features test-utils --test preimage` — 7 storage/preimage pipeline tests.
 - `cargo test --offline -p base-execution-cli --lib node::tests` — 37 matching tests, including rejection of ERA CLI flags.
 - Formatting of affected packages and `git diff --check`.
 - Dependency-tree comparison confirms all six named crates are absent from Base's normal/build graph. Searches found no remaining ERA production references.

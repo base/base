@@ -22,6 +22,7 @@ use base_execution_state_provider::{
 };
 use base_execution_state_trie::{DatabaseStateRoot, HashedPostState, StateRoot};
 use base_execution_state_types::PruneModes;
+use base_execution_sync_pipeline::DefaultStages;
 use reth_config::config::StageConfig;
 use reth_downloaders::{
     bodies::bodies::BodiesDownloaderBuilder, file_client::FileClient,
@@ -32,7 +33,6 @@ use reth_primitives_traits::{
     crypto::secp256k1::public_key_to_address,
     proofs::{calculate_receipt_root, calculate_transaction_root},
 };
-use reth_stages::sets::DefaultStages;
 use reth_stages_api::{Pipeline, StageId};
 use reth_testing_utils::generators::{self, generate_key};
 use tokio::sync::watch;

@@ -12,10 +12,6 @@ use base_execution_state_database::{
     test_utils::create_test_rw_db_with_path, test_utils::create_test_static_files_dir,
 };
 use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::ProviderResult;
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::StorageEntry;
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     DatabaseProviderFactory, EitherWriter, HistoryWriter, ProviderError, ProviderFactory,
     RocksBatchArg, StaticFileProviderFactory, StatsReader,
@@ -23,6 +19,10 @@ use base_execution_state_provider::{
         RocksDBProvider, StaticFileProvider, StaticFileProviderRWRefMut, StaticFileWriter,
     },
 };
+use base_execution_state_types::ProviderResult;
+use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::StorageEntry;
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use reth_testing_utils::generators::ChangeSet;
 use tempfile::TempDir;
 

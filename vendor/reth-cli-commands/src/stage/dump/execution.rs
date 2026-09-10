@@ -6,12 +6,12 @@ use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_database::DatabaseEnv;
 use base_execution_state_database::{Database, DbCursorRO, DbTx, TableImporter, tables};
 use base_execution_state_maintenance::DbTool;
-use reth_node_core::dirs::{ChainPath, DataDirPath};
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},
 };
-use reth_stages::{Stage, StageCheckpoint, UnwindInput, stages::ExecutionStage};
+use base_execution_sync_pipeline::{ExecutionStage, Stage, StageCheckpoint, UnwindInput};
+use reth_node_core::dirs::{ChainPath, DataDirPath};
 use tracing::info;
 
 use super::setup;
@@ -169,8 +169,10 @@ fn dry_run(
 
     let mut exec_stage = ExecutionStage::new_with_executor(evm_config, consensus);
 
-    let input =
-        reth_stages::ExecInput { target: Some(to), checkpoint: Some(StageCheckpoint::new(from)) };
+    let input = base_execution_sync_pipeline::ExecInput {
+        target: Some(to),
+        checkpoint: Some(StageCheckpoint::new(from)),
+    };
     exec_stage.execute(&output_provider_factory.database_provider_rw()?, input)?;
 
     info!(target: "reth::cli", "Success");

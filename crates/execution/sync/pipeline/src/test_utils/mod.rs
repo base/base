@@ -1,3 +1,5 @@
+//! Fixtures and runners for synchronization stage tests.
+
 use reth_stages_api::StageId;
 
 #[cfg(test)]

@@ -3,13 +3,13 @@ use std::path::Path;
 use alloy_primitives::{B256, BlockNumber};
 use alloy_rlp::Decodable;
 use base_common_types_chain::{BaseBlock, BlockHeader};
-use base_execution_state_types::StaticFileSegment;
-use reth_primitives_traits::{SealedBlock, SealedHeader};
 use base_execution_state_provider::{
     BlockWriter, ProviderResult, StaticFileProviderFactory, StaticFileWriter,
     providers::StaticFileProvider,
 };
-use reth_stages::{StageCheckpoint, StageId};
+use base_execution_state_types::StaticFileSegment;
+use base_execution_sync_pipeline::{StageCheckpoint, StageId};
+use reth_primitives_traits::{SealedBlock, SealedHeader};
 use tracing::info;
 
 /// Reads the header RLP from a file and returns the Header.
@@ -193,7 +193,9 @@ mod tests {
     use alloy_primitives::{address, b256};
     use base_common_types_chain::Header;
     use base_execution_state_maintenance::init::init_genesis;
-    use base_execution_state_provider::{DatabaseProviderFactory, test_utils::create_test_provider_factory};
+    use base_execution_state_provider::{
+        DatabaseProviderFactory, test_utils::create_test_provider_factory,
+    };
     use tempfile::NamedTempFile;
 
     use super::*;

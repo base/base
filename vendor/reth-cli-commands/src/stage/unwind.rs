@@ -10,15 +10,13 @@ use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_maintenance::StaticFileProducer;
 use base_execution_state_provider::{BlockNumReader, ProviderFactory};
+use base_execution_sync_pipeline::{
+    DefaultStages, ExecutionStage, ExecutionStageThresholds, OfflineStages, Pipeline, StageSet,
+};
 use clap::{Parser, Subcommand};
 use reth_config::Config;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_exex::ExExManagerHandle;
-use reth_stages::{
-    ExecutionStageThresholds, Pipeline, StageSet,
-    sets::{DefaultStages, OfflineStages},
-    stages::ExecutionStage,
-};
 use tokio::sync::watch;
 use tracing::info;
 
@@ -97,7 +95,7 @@ impl<C: ChainSpecParser> Command<C> {
                     prune_modes.clone(),
                 )
                 .builder()
-                .disable(reth_stages::StageId::SenderRecovery),
+                .disable(base_execution_sync_pipeline::StageId::SenderRecovery),
             )
         } else {
             Pipeline::builder().with_tip_sender(tip_tx).add_stages(

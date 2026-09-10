@@ -15,13 +15,13 @@ use base_execution_state_provider::{
     StorageSettings,
     providers::{RocksDBProvider, StaticFileProvider, StaticFileProviderBuilder},
 };
+use base_execution_sync_pipeline::{DefaultStages, Pipeline, PipelineTarget};
 use clap::Parser;
 use reth_downloaders::{bodies::noop::NoopBodiesDownloader, headers::noop::NoopHeaderDownloader};
 use reth_node_core::{
     args::{DatabaseArgs, DatadirArgs, StaticFilesArgs, StorageArgs},
     dirs::{ChainPath, DataDirPath},
 };
-use reth_stages::{Pipeline, PipelineTarget, sets::DefaultStages};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 use {base_execution_state_types::EtlConfig, reth_config::Config};

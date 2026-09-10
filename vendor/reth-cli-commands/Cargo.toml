@@ -25,7 +25,6 @@ humantime = { workspace = true }
 itertools = { workspace = true }
 reth-exex = { workspace = true }
 alloy-eips = { workspace = true }
-reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 reth-cli-util = { workspace = true }
 base-cli-utils = { workspace = true }
@@ -45,6 +44,7 @@ base-execution-evm-runtime = { workspace = true }
 base-execution-network-discv5 = {workspace = true}
 socket2 = { workspace = true, features = ["all"] }
 tar = { workspace = true, features = ["default"] }
+base-execution-sync-pipeline = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
 zstd = { workspace = true, features = ["default"] }
 base-execution-state-provider = { workspace = true }

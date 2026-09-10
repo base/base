@@ -217,7 +217,7 @@ mod tests {
     };
     use base_execution_state_types::PruneModes;
     use base_execution_state_types::{HighestStaticFiles, StaticFileSegment};
-    use reth_stages::test_utils::{StorageKind, TestStageDB};
+    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{self, BlockRangeParams};
     use tempfile::TempDir;
 

@@ -10,13 +10,13 @@
 //! # Examples
 //!
 //! ```no_run
-//! # use reth_stages::Pipeline;
-//! # use reth_stages::sets::{OfflineStages};
+//! # use base_execution_sync_pipeline::Pipeline;
+//! # use base_execution_sync_pipeline::{OfflineStages};
 //! #
 //! # use base_execution_state_types::PruneModes;
 //! # use base_execution_evm_blocks::BaseEvmConfig;
 //! # use base_execution_state_provider::StaticFileProviderFactory;
-//! # use base_execution_state_provider::test_utils::{create_test_provider_factory, MockNodeDatabase};
+//! # use base_execution_state_provider::test_utils::create_test_provider_factory;
 //! # use base_execution_state_maintenance::StaticFileProducer;
 //! # use reth_config::config::StageConfig;
 //! # use std::sync::Arc;
@@ -28,7 +28,7 @@
 //! let static_file_producer =
 //!     StaticFileProducer::new(provider_factory.clone(), PruneModes::default());
 //! // Build a pipeline with all offline stages.
-//! let pipeline = Pipeline::<MockNodeDatabase>::builder()
+//! let pipeline = Pipeline::builder()
 //!     .add_stages(OfflineStages::new(exec, Arc::new(consensus), StageConfig::default(), PruneModes::default()))
 //!     .build(provider_factory, static_file_producer);
 //!

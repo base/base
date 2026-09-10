@@ -21,10 +21,10 @@ use base_execution_state_provider::{
     BlockNumReader, BlockReader, ChainSpecProvider, DatabaseProviderROFactory, ReceiptProvider,
     StaticFileProviderFactory, TransactionVariant,
 };
+use base_execution_sync_pipeline::calculate_gas_used_from_headers;
 use clap::Parser;
 use eyre::WrapErr;
 use reth_cli_util::cancellation::CancellationToken;
-use reth_stages::stages::calculate_gas_used_from_headers;
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::*;
 use {base_common_observability_metrics::GasDisplay, reth_primitives_traits::GotExpected};

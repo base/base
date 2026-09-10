@@ -188,7 +188,7 @@ mod tests {
         DBProvider, DatabaseProviderFactory, PruneCheckpointReader,
     };
     use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneProgress, PruneSegment};
-    use reth_stages::test_utils::{StorageKind, TestStageDB};
+    use base_execution_sync_pipeline::test_utils::{StorageKind, TestStageDB};
     use reth_testing_utils::generators::{
         self, BlockRangeParams, random_changeset_range, random_eoa_accounts,
     };

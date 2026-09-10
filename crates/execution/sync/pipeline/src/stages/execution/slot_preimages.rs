@@ -7,9 +7,9 @@ use base_execution_state_database::mdbx::{
 };
 use base_execution_state_database::tables;
 use base_execution_state_database::{DbCursorRO, DbDupCursorRO, DbTx};
+use base_execution_state_provider::{DBProvider, ExecutionOutcome};
 use eyre::Context;
 use rayon::slice::ParallelSliceMut;
-use base_execution_state_provider::{DBProvider, ExecutionOutcome};
 use reth_stages_api::StageError;
 use tracing::trace;
 

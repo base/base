@@ -61,6 +61,9 @@ use base_execution_state_provider::{
     StaticFileProviderFactory, StorageSettingsCache,
     providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
 };
+use base_execution_sync_pipeline::{
+    DefaultStages, MerkleStage, MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet,
+};
 use base_execution_txpool::TransactionPool;
 use base_node_context::BaseNodeContext;
 use eyre::Context;
@@ -84,10 +87,6 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     storage::StorageSettingsInfo,
     version::VersionInfo,
-};
-use reth_stages::{
-    MetricEvent, PipelineBuilder, PipelineTarget, StageId, StageSet, sets::DefaultStages,
-    stages::MerkleStage,
 };
 use tokio::sync::{
     mpsc::{UnboundedSender, unbounded_channel},
@@ -584,7 +583,7 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
 
             // Pipeline should be run as blocking and panic if it fails.
             self.task_executor().spawn_critical_blocking_task("pipeline task", async move {
-                let result: Result<(), reth_stages::PipelineError> = async {
+                let result: Result<(), base_execution_sync_pipeline::PipelineError> = async {
                     for (unwind_target, inconsistency_source, pipeline, clear_partial_trie_unwind) in
                         unwinds
                     {
@@ -724,7 +723,8 @@ impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
             WithMeteredProvider { provider_factory: self.right().clone(), metrics_sender };
 
         debug!(target: "reth::cli", "Spawning stages metrics listener task");
-        let sync_metrics_listener = reth_stages::MetricsListener::new(metrics_receiver);
+        let sync_metrics_listener =
+            base_execution_sync_pipeline::MetricsListener::new(metrics_receiver);
         self.task_executor()
             .spawn_critical_task("stages metrics listener task", sync_metrics_listener);
 
@@ -1263,9 +1263,9 @@ fn delete_partial_trie_unwind_marker(
 mod tests {
     use base_execution_state_database::models::PartialStateTrieUnwindMarker;
     use base_execution_state_provider::{MetadataProvider, ProviderResult, StageCheckpointReader};
+    use base_execution_sync_pipeline::{FinishCheckpoint, StageCheckpoint, StageId};
     use reth_config::Config;
     use reth_node_core::args::PruningArgs;
-    use reth_stages::{FinishCheckpoint, StageCheckpoint, StageId};
 
     use super::{LaunchContext, NodeConfig, get_partial_trie_unwind_marker};
 

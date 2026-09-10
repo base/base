@@ -230,9 +230,9 @@ mod tests {
     use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::Header;
     use base_execution_network_service::test_utils::TestFullBlockClient;
+    use base_execution_sync_pipeline::ExecOutput;
     use futures::poll;
     use reth_primitives_traits::SealedHeader;
-    use reth_stages::ExecOutput;
     use reth_stages_api::StageCheckpoint;
 
     use super::*;

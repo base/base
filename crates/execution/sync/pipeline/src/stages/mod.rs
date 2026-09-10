@@ -1,38 +1,39 @@
+//! Synchronization stages for headers, execution, indexes, and pruning.
+
 /// The bodies stage.
 mod bodies;
+pub use bodies::*;
 /// The execution stage that generates state diff.
 mod execution;
+pub use execution::*;
 /// The finish stage
 mod finish;
+pub use finish::*;
 /// Account hashing stage.
 mod hashing_account;
+pub use hashing_account::*;
 /// Storage hashing stage.
 mod hashing_storage;
+pub use hashing_storage::*;
 /// The headers stage.
 mod headers;
+pub use headers::*;
 /// Index history of account changes
 mod index_account_history;
+pub use index_account_history::*;
 /// Index history of storage changes
 mod index_storage_history;
+pub use index_storage_history::*;
 /// Stage for computing state root.
 mod merkle;
+pub use merkle::*;
 mod prune;
+pub use prune::*;
 /// The sender recovery stage.
 mod sender_recovery;
+pub use sender_recovery::*;
 /// The transaction lookup stage
 mod tx_lookup;
-
-pub use bodies::*;
-pub use execution::*;
-pub use finish::*;
-pub use hashing_account::*;
-pub use hashing_storage::*;
-pub use headers::*;
-pub use index_account_history::*;
-pub use index_storage_history::*;
-pub use merkle::*;
-pub use prune::*;
-pub use sender_recovery::*;
 pub use tx_lookup::*;
 
 mod utils;
@@ -58,16 +59,16 @@ mod tests {
     };
     use base_execution_state_database::{mdbx::RW, mdbx::cursor::Cursor};
     use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-    use base_execution_state_types::StaticFileSegment;
-    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
-    use reth_exex::ExExManagerHandle;
-    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use base_execution_state_provider::{
         AccountExtReader, BlockBodyIndicesProvider, BlockWriter, DatabaseProviderFactory,
         ProviderFactory, ProviderResult, PruneCheckpointWriter, ReceiptProvider,
         StaticFileProviderFactory, StorageReader,
         providers::{StaticFileProvider, StaticFileWriter},
     };
+    use base_execution_state_types::StaticFileSegment;
+    use base_execution_state_types::{PruneCheckpoint, PruneMode, PruneModes, PruneSegment};
+    use reth_exex::ExExManagerHandle;
+    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use reth_stages_api::{
         ExecInput, ExecutionStageThresholds, PipelineTarget, Stage, StageCheckpoint, StageId,
     };
@@ -298,7 +299,8 @@ mod tests {
                     .enumerate()
                     .map(|(number, tx)| (number as u64, tx.recover_signer().unwrap())),
             )?;
-            let mut changesets = base_execution_state_provider::test_utils::TestChangesets::default();
+            let mut changesets =
+                base_execution_state_provider::test_utils::TestChangesets::default();
             changesets.accounts.insert(tip, Vec::new());
             changesets.write_to(&db.factory.static_file_provider())?;
         }

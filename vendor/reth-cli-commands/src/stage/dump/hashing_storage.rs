@@ -1,13 +1,13 @@
 use base_execution_state_database::DatabaseEnv;
 use base_execution_state_database::{Database, TableImporter, tables};
-use eyre::Result;
 use base_execution_state_maintenance::DbTool;
-use reth_node_core::dirs::{ChainPath, DataDirPath};
 use base_execution_state_provider::{
     DatabaseProviderFactory, ProviderFactory,
     providers::{RocksDBProvider, StaticFileProvider},
 };
-use reth_stages::{Stage, StageCheckpoint, UnwindInput, stages::StorageHashingStage};
+use base_execution_sync_pipeline::{Stage, StageCheckpoint, StorageHashingStage, UnwindInput};
+use eyre::Result;
+use reth_node_core::dirs::{ChainPath, DataDirPath};
 use tracing::info;
 
 use super::setup;
@@ -82,7 +82,7 @@ fn dry_run(output_provider_factory: ProviderFactory, to: u64, from: u64) -> eyre
     };
 
     loop {
-        let input = reth_stages::ExecInput {
+        let input = base_execution_sync_pipeline::ExecInput {
             target: Some(to),
             checkpoint: Some(StageCheckpoint::new(from)),
         };

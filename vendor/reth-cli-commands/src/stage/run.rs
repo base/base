@@ -14,6 +14,12 @@ use base_execution_state_provider::{
     ChainSpecProvider, DBProvider, DatabaseProviderFactory, StageCheckpointReader,
     providers::BlockchainProvider,
 };
+use base_execution_sync_pipeline::{
+    AccountHashingStage, BodyStage, ExecInput, ExecOutput, ExecutionStage,
+    ExecutionStageThresholds, HeaderStage, IndexAccountHistoryStage, IndexStorageHistoryStage,
+    MerkleStage, SenderRecoveryStage, Stage, StageExt, StorageHashingStage, TransactionLookupStage,
+    UnwindInput, UnwindOutput,
+};
 use base_node_core::metrics_hooks;
 use clap::Parser;
 use reth_cli_util::get_secret_key;
@@ -31,14 +37,6 @@ use reth_node_metrics::{
     chain::ChainSpecInfo,
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
-};
-use reth_stages::{
-    ExecInput, ExecOutput, ExecutionStageThresholds, Stage, StageExt, UnwindInput, UnwindOutput,
-    stages::{
-        AccountHashingStage, BodyStage, ExecutionStage, HeaderStage, IndexAccountHistoryStage,
-        IndexStorageHistoryStage, MerkleStage, SenderRecoveryStage, StorageHashingStage,
-        TransactionLookupStage,
-    },
 };
 use std::time::Instant;
 use tokio::sync::watch;

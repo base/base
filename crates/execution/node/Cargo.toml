@@ -18,7 +18,6 @@ humantime = { workspace = true }
 jsonrpsee = { workspace = true }
 reth-exex = { workspace = true }
 reth-config = { workspace = true }
-reth-stages = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
 base-metering = { workspace = true }
@@ -42,6 +41,7 @@ base-execution-payload-types = {workspace = true}
 base-execution-network-discv5 = {workspace = true}
 reth-consensus-debug-client = { workspace = true }
 url = { workspace = true, features = ["default"] }
+base-execution-sync-pipeline = { workspace = true }
 clap = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
 alloy-eips = { workspace = true, features = ["kzg"]}
@@ -149,7 +149,7 @@ test-utils = [
     "base-execution-state-trie/test-utils",
     "reth-engine-tree/test-utils",
     "reth-downloaders/test-utils",
-    "reth-stages/test-utils",
+    "base-execution-sync-pipeline/test-utils",
 ]
 reth-codec = []
 trie-debug = ["reth-engine-tree/trie-debug", "reth-engine-primitives/trie-debug", "reth-node-core/trie-debug"]
