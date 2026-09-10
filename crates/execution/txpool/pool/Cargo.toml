@@ -13,12 +13,11 @@ workspace = true
 
 [dependencies]
 imbl = { workspace = true }
+thiserror = {workspace = true}
 aquamarine = {workspace = true}
 bitflags = { workspace = true }
-metrics = { workspace = true  }
 smallvec = { workspace = true }
 auto_impl = { workspace = true }
-thiserror = { workspace = true }
 rustc-hash = { workspace = true }
 async-trait = { workspace = true }
 pin-project = { workspace = true }
@@ -27,24 +26,27 @@ alloy-hardforks = { workspace = true }
 base-common-io-files = { workspace = true }
 paste = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true }
+base-common-runtime-tasks = {workspace = true}
 base-execution-evm-fees = { workspace = true }
+metrics = {optional = false, workspace = true}
 base-execution-evm-runtime = {workspace = true}
-base-common-runtime-tasks = { workspace = true }
 base-execution-state-memory = {workspace = true}
 base-execution-evm-machine = { workspace = true }
 lru = { workspace = true, features = ["default"] }
-alloy-eips = { workspace = true, features = ["kzg"]}
+url = { workspace = true, features = ["default"] }
+alloy-eips = {features = ["kzg"], workspace = true}
 base-execution-state-provider = { workspace = true }
-futures = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"]}
-base-common-observability-events = { workspace = true }
+futures = {features = ["default"], workspace = true}
+base-common-observability-events = {workspace = true}
+serde_json = {features = ["alloc"], workspace = true}
+serde = {features = ["derive", "rc"], workspace = true}
+tracing = {features = ["attributes"], workspace = true}
 schnellru = { workspace = true, features = ["default"] }
-serde = { workspace = true, features = ["derive", "rc"]}
-tracing = { workspace = true, features = ["attributes"]}
 alloy-rlp = { workspace = true, features = ["core-net"] }
+tokio-util = { workspace = true, features = ["default"] }
 parking_lot = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
-alloy-primitives = {workspace = true, features = ["map-foldhash"]}
+alloy-primitives = {features = ["map-foldhash"], workspace = true}
 proptest-arbitrary-interop = { workspace = true, optional = true }
 rand = { workspace = true, optional = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
@@ -52,35 +54,42 @@ base-execution-evm-precompiles = {workspace = true, features = ["std"]}
 base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-evm-blocks = { workspace = true, features = ["default"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
+tokio = {features = ["default", "rt", "sync", "time"], workspace = true}
 base-execution-state-types = { workspace = true, features = ["default"] }
 base-execution-network-wire = { workspace = true, features = ["default"] }
-tokio = { workspace = true, features = ["default", "sync", "rt", "time"] }
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
-jsonrpsee = { workspace = true, features = ["http-client", "server", "macros"] }
+jsonrpsee = {features = ["http-client", "macros", "server"], workspace = true}
 base-common-types-chain = {workspace = true, features = ["kzg", "reth", "serde"]}
 
 [dev-dependencies]
 paste = { workspace = true }
-alloy-signer = { workspace = true }
+alloy-signer = {workspace = true}
 assert_matches = { workspace = true }
 alloy-sol-types = { workspace = true }
-base-testing-support = { workspace = true }
+base-testing-support = {workspace = true}
+base-common-types-chain = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
 proptest-arbitrary-interop = { workspace = true }
-base-common-client-ethereum = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
+eyre = { workspace = true, features = ["default"] }
 rand = { workspace = true, features = ["default"] }
+serde = { workspace = true, features = ["derive"] }
 futures = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["server"] }
 proptest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
-base-common-chain-config = { workspace = true, features = ["std"] }
+base-common-chain-config = {features = ["std"], workspace = true}
+base-node-runner = { workspace = true, features = ["test-utils"] }
+base-common-types-rpc = { workspace = true, features = ["default"] }
+base-common-client-ethereum = {features = ["default"], workspace = true}
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 base-execution-txpool-pool = {workspace = true, features = ["test-utils"]}
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = {workspace = true, features = ["getrandom", "map-foldhash", "rand"]}
-tokio = { workspace = true, features = ["default", "time", "rt-multi-thread", "macros"] }
+tokio = {features = ["default", "macros", "rt-multi-thread", "time"], workspace = true}
 
 [[bench]]
 name = "saturated_pool"

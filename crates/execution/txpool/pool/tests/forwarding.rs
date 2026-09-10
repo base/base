@@ -11,12 +11,12 @@ use base_common_client_ethereum::TransactionBuilder;
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
 use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
+use base_execution_txpool_pool::TxForwardingConfig;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
 };
 use base_node_runner::test_utils::TestHarness;
 use base_testing_support::{Account, DEVNET_CHAIN_ID, build_test_genesis};
-use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use jsonrpsee::{
     RpcModule,

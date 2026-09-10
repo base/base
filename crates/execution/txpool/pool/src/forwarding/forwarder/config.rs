@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
+use crate::forwarding::config::{DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS};
 
 /// Configuration for transaction forwarders.
 ///

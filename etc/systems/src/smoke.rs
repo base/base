@@ -16,7 +16,7 @@ use base_common_chain_config::{
 };
 use base_common_client_ethereum::RootProvider;
 use base_common_client_ethereum::{Base, Ethereum, PrivateKeySigner};
-use base_tx_forwarding::TxForwardingConfig;
+use base_execution_txpool_pool::TxForwardingConfig;
 #[cfg(feature = "upgrade-signal")]
 use eyre::ensure;
 use eyre::{OptionExt, Result, WrapErr};

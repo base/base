@@ -1,11 +1,11 @@
 use std::{fmt, sync::Arc};
 
-use alloy_eips::Encodable2718;
-use alloy_primitives::{Bytes, TxHash};
-use base_execution_txpool_pool::{
+use crate::{
     NoExtensions, TransactionPool, ValidPoolTransaction, ValidatedTransaction,
     ValidatedTransactionExtensions,
 };
+use alloy_eips::Encodable2718;
+use alloy_primitives::{Bytes, TxHash};
 use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -15,7 +15,7 @@ use tracing::{info, trace};
 use url::Url;
 
 use super::{config::ReaderConfig, metrics::Metrics, validator::RecentlySent};
-use crate::forwarder::InsertValidatedTransaction;
+use crate::forwarding::forwarder::InsertValidatedTransaction;
 
 /// Background reader that drains the pool for one destination.
 ///
@@ -188,11 +188,9 @@ impl<P: TransactionPool, E> fmt::Debug for DestinationReader<P, E> {
 mod tests {
     use std::time::{Duration, Instant};
 
+    use crate::{BasePooledTransaction, NoopTransactionPool, TransactionId, TransactionOrigin};
     use alloy_primitives::{Address, B256, TxKind, U256};
     use base_common_types_chain::{BaseTransactionSigned, TxDeposit, transaction::Recovered};
-    use base_execution_txpool_pool::{
-        BasePooledTransaction, NoopTransactionPool, TransactionId, TransactionOrigin,
-    };
 
     use super::*;
 

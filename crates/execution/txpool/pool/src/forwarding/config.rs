@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use url::Url;
 
-use crate::{forwarder::ForwarderConfig, reader::ReaderConfig};
+use crate::forwarding::{forwarder::ForwarderConfig, reader::ReaderConfig};
 
 /// Default resend-after window in milliseconds (~2 blocks on Base).
 pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;

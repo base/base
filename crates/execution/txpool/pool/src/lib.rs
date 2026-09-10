@@ -132,3 +132,10 @@ pub use payload_transactions::{
     BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions,
     PayloadTransactionsChain, PayloadTransactionsFixed,
 };
+
+mod forwarding;
+pub use forwarding::{
+    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, ForwardRequest,
+    ForwardingSetupError, InsertValidatedTransaction, ShutdownReport, TxForwardingConfig,
+    TxForwardingHandle, TxForwardingService,
+};

@@ -2,8 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use crate::{NoExtensions, TransactionPool, ValidatedTransactionExtensions};
 use base_common_runtime_tasks::TaskExecutor;
-use base_execution_txpool_pool::{NoExtensions, TransactionPool, ValidatedTransactionExtensions};
 use futures::{StreamExt, future::join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::HttpClientBuilder;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::{
+use crate::forwarding::{
     TxForwardingConfig,
     forwarder::{DestinationForwarder, ForwardRequest},
     reader::DestinationReader,
@@ -260,15 +260,15 @@ pub struct ShutdownReport {
 mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
+    use crate::ValidatedTransaction;
     use alloy_primitives::{Address, B256, Bytes};
     use base_common_runtime_tasks::{RuntimeBuilder, RuntimeConfig, TokioConfig};
-    use base_execution_txpool_pool::ValidatedTransaction;
     use jsonrpsee::{RpcModule, server::Server};
     use serde_json::Value;
     use tokio::sync::oneshot;
 
     use super::*;
-    use crate::InsertValidatedTransaction;
+    use crate::forwarding::InsertValidatedTransaction;
 
     /// A [`TaskExecutor`] attached to the test's own tokio runtime, so spawned forwarders share it
     /// rather than standing up a second one per test.

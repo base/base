@@ -17,7 +17,6 @@ base-execution-state-provider = { workspace = true }
 base-metering = { workspace = true, optional = true }
 base-node-config = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
-base-tx-forwarding = { workspace = true, optional = true }
 base-testing-support = { workspace = true, optional = true }
 base-node-core = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, optional = true}
@@ -40,6 +39,7 @@ base-common-chain-config = {optional = true, features = ["std"], workspace = tru
 tracing-subscriber = { workspace = true, optional = true, features = ["default"] }
 base-common-types-payload = {workspace = true, optional = true, features = ["std"]}
 base-common-types-rpc = { workspace = true, optional = true, features = ["serde", "std"] }
+base-execution-txpool-pool = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -55,32 +55,4 @@ name = "fcu_unsafe"
 harness = false
 
 [features]
-test-utils = [
-    "dep:base-tx-forwarding",
-    "dep:base-execution-rpc-handlers",
-    "dep:base-metering",
-    "dep:base-common-chain-config",
-    "dep:base-common-types-chain",
-    "dep:base-execution-evm-runtime",
-    "dep:base-consensus-batch-types",
-    "dep:base-execution-network-service",
-    "dep:tokio",
-    "base-node-core/test-utils",
-    "dep:alloy-eips",
-    "dep:alloy-genesis",
-    "dep:alloy-primitives",
-    "dep:alloy-rpc-client",
-    "dep:base-common-types-rpc",
-    "dep:base-common-types-payload",
-    "dep:base-testing-support",
-    "dep:base-node-config",
-    "dep:base-common-runtime-tasks",
-    "dep:tracing-subscriber",
-    "base-execution-state-database/test-utils",
-    "reth-primitives-traits/test-utils",
-    "base-execution-state-provider/test-utils",
-    "base-common-runtime-tasks?/test-utils",
-    "dep:reth-primitives-traits",
-    "dep:base-execution-payload-types",
-    "dep:base-execution-engine-driver",
-]
+test-utils = ["dep:base-execution-txpool-pool", "dep:base-execution-rpc-handlers", "dep:base-metering", "dep:base-common-chain-config", "dep:base-common-types-chain", "dep:base-execution-evm-runtime", "dep:base-consensus-batch-types", "dep:base-execution-network-service", "dep:tokio", "base-node-core/test-utils", "dep:alloy-eips", "dep:alloy-genesis", "dep:alloy-primitives", "dep:alloy-rpc-client", "dep:base-common-types-rpc", "dep:base-common-types-payload", "dep:base-testing-support", "dep:base-node-config", "dep:base-common-runtime-tasks", "dep:tracing-subscriber", "base-execution-state-database/test-utils", "reth-primitives-traits/test-utils", "base-execution-state-provider/test-utils", "base-common-runtime-tasks?/test-utils", "dep:reth-primitives-traits", "dep:base-execution-payload-types", "dep:base-execution-engine-driver"]

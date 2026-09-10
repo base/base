@@ -84,7 +84,10 @@ impl TestHarnessBuilder {
     }
 
     /// Configures the built-in transaction forwarder.
-    pub fn with_forwarding(mut self, config: base_tx_forwarding::TxForwardingConfig) -> Self {
+    pub fn with_forwarding(
+        mut self,
+        config: base_execution_txpool_pool::TxForwardingConfig,
+    ) -> Self {
         self.services.forwarding = Some(config);
         self
     }

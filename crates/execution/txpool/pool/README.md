@@ -39,7 +39,7 @@ impl ValidatedTransactionExtensions<MyPooledTx> for MyExtensions {
 let api = BuilderApiImpl::<_, MyExtensions>::with_extensions(pool);
 modules.merge_configured(api.into_rpc())?;
 
-// Mempool (egress) forwarding is provided by `base-tx-forwarding`.
+// Mempool (egress) forwarding is provided by `base-execution-txpool-pool`.
 ```
 
 Extension payloads must serialize as a JSON map (a braced struct, not a unit struct) and must avoid

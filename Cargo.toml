@@ -63,7 +63,6 @@ members = [
   "crates/execution/runner",
   "crates/execution/state/indexer",
   "crates/execution/state/tasks",
-  "crates/execution/tx-forwarding",
   "crates/execution/txpool/pool",
   "crates/execution/txpool-tracing",
   "crates/infra/audit",
@@ -303,7 +302,6 @@ base-metering = { path = "crates/execution/metering", default-features = false }
 base-node-runner = { path = "crates/execution/runner", default-features = false }
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-txpool-pool = { path = "crates/execution/txpool/pool", default-features = false }
-base-tx-forwarding = { path = "crates/execution/tx-forwarding", default-features = false }
 base-execution-state-indexer = { path = "crates/execution/state/indexer", default-features = false }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
 base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }

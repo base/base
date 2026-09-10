@@ -1,4 +1,4 @@
-# base-tx-forwarding
+# base-execution-txpool-pool
 
 Built-in transaction forwarding service for Base. Forwards transactions from the mempool to builder RPC endpoints.
 

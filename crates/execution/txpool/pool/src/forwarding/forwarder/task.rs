@@ -423,8 +423,8 @@ impl<R> std::fmt::Debug for DestinationForwarder<R> {
 mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
+    use crate::{NoExtensions, ValidatedTransaction};
     use alloy_primitives::{Address, B256, Bytes};
-    use base_execution_txpool_pool::{NoExtensions, ValidatedTransaction};
     use jsonrpsee::{
         RpcModule, core::params::ArrayParams, http_client::HttpClientBuilder, server::Server,
     };

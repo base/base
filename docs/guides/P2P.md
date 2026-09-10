@@ -694,10 +694,10 @@ For non-sequencer nodes, transactions received in the mempool need to be forward
 for inclusion. This is handled by the reader/forwarder pipeline in the tx-forwarding crate.
 
 The
-[`DestinationReader`](https://github.com/base/base/blob/main/crates/execution/tx-forwarding/src/reader/task.rs)
+[`DestinationReader`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/reader/task.rs)
 polls the transaction pool for new pending transactions and queues them through a bounded
 `tokio::mpsc` channel. The
-[`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/tx-forwarding/src/forwarder/task.rs)
+[`DestinationForwarder`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/forwarder/task.rs)
 receives queued transactions and forwards them via a custom JSON-RPC method
 (`base_insertValidatedTransactions`) to configured builder endpoints. One forwarder task is spawned
 per builder URL, so multiple downstream builders can receive transactions simultaneously. This
@@ -817,10 +817,10 @@ networks are completely separate and serve different purposes.
   [`crates/execution/txpool/pool/src/ordering.rs`](https://github.com/base/base/blob/main/crates/execution/txpool/pool/src/ordering.rs)
   — BaseOrdering (fee-based vs FIFO)
 -
-  [`crates/execution/tx-forwarding/src/reader/`](https://github.com/base/base/tree/main/crates/execution/tx-forwarding/src/reader)
+  [`crates/execution/txpool/pool/src/reader/`](https://github.com/base/base/tree/main/crates/execution/txpool/pool/src/reader)
   — Transaction pool reader
 -
-  [`crates/execution/tx-forwarding/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/tx-forwarding/src/forwarder)
+  [`crates/execution/txpool/pool/src/forwarder/`](https://github.com/base/base/tree/main/crates/execution/txpool/pool/src/forwarder)
   — Transaction forwarder to sequencer
 
 

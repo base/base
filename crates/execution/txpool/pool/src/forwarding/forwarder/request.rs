@@ -1,7 +1,7 @@
 //! What a forwarder sends: one JSON-RPC call to one destination.
 
+use crate::{NoExtensions, ValidatedTransaction};
 use alloy_primitives::TxHash;
-use base_execution_txpool_pool::{NoExtensions, ValidatedTransaction};
 use jsonrpsee::core::params::ArrayParams;
 use serde::Serialize;
 

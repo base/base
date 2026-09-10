@@ -141,7 +141,7 @@ pub trait BaseTxApi {
 
 ## PR 4: Node Integration
 
-**Crate:** `crates/execution/tx-forwarding/`
+**Crate:** `crates/execution/txpool/pool/`
 
 Core `NodeServices` starts the consumer and forwarder directly from `TxForwardingConfig`.
 

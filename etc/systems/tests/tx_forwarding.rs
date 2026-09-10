@@ -15,6 +15,7 @@ use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::{Call, Eip8130Signed, SignableTransaction, TxEip8130, TxReceipt};
 use base_common_types_rpc::BaseTransactionRequest;
 use base_execution_rpc_handlers::SendRawTransactionValidityOptions;
+use base_execution_txpool_pool::TxForwardingConfig;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, NoExtensions, ValidatedTransaction, ValidityOperator,
     ValidityPredicate,
@@ -23,7 +24,6 @@ use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
     SystemTestStack, SystemTestStackBuilder,
 };
-use base_tx_forwarding::TxForwardingConfig;
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
