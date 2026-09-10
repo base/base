@@ -1,9 +1,8 @@
+use crate::Web3ApiServer;
 use alloy_primitives::{B256, Bytes, keccak256};
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
 use reth_network_api::NetworkInfo;
-use crate::Web3ApiServer;
-use reth_rpc_server_types::ToRpcResult;
 
 /// `web3` API implementation.
 ///
@@ -27,7 +26,11 @@ where
 {
     /// Handler for `web3_clientVersion`
     async fn client_version(&self) -> RpcResult<String> {
-        let status = self.network.network_status().await.to_rpc_result()?;
+        let status = self
+            .network
+            .network_status()
+            .await
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
         Ok(status.client_version)
     }
 

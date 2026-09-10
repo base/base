@@ -42,7 +42,7 @@ use jsonrpsee::core::RpcResult;
 use parking_lot::RwLock;
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_primitives_traits::{Block as BlockTrait, BlockBody, ReceiptWithBloom, RecoveredBlock};
-use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
+use reth_rpc_server_types::result::internal_rpc_err;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 use tokio_stream::StreamExt;
@@ -745,14 +745,21 @@ impl DebugApiServer for DebugApi {
     /// Handler for `debug_getRawHeader`
     async fn raw_header(&self, block_id: BlockId) -> RpcResult<Bytes> {
         let header = match block_id {
-            BlockId::Hash(hash) => self.provider().header(hash.into()).to_rpc_result()?,
+            BlockId::Hash(hash) => self
+                .provider()
+                .header(hash.into())
+                .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?,
             BlockId::Number(number_or_tag) => {
                 let number = self
                     .provider()
                     .convert_block_number(number_or_tag)
-                    .to_rpc_result()?
+                    .map_err(|err| {
+                        reth_rpc_server_types::result::internal_rpc_err(err.to_string())
+                    })?
                     .ok_or(EthApiError::HeaderNotFound(block_id))?;
-                self.provider().header_by_number(number).to_rpc_result()?
+                self.provider().header_by_number(number).map_err(|err| {
+                    reth_rpc_server_types::result::internal_rpc_err(err.to_string())
+                })?
             }
         }
         .ok_or(EthApiError::HeaderNotFound(block_id))?;
@@ -767,7 +774,7 @@ impl DebugApiServer for DebugApi {
         let block = self
             .provider()
             .block_by_id(block_id)
-            .to_rpc_result()?
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?
             .ok_or(EthApiError::HeaderNotFound(block_id))?;
         let mut res = Vec::new();
         block.encode(&mut res);
@@ -797,7 +804,7 @@ impl DebugApiServer for DebugApi {
         let block: RecoveredBlock = self
             .provider()
             .block_with_senders_by_id(block_id, TransactionVariant::NoHash)
-            .to_rpc_result()?
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?
             .unwrap_or_default();
         Ok(block.into_transactions_recovered().map(|tx| tx.encoded_2718().into()).collect())
     }
@@ -807,7 +814,7 @@ impl DebugApiServer for DebugApi {
         Ok(self
             .provider()
             .receipts_by_block_id(block_id)
-            .to_rpc_result()?
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?
             .ok_or(EthApiError::HeaderNotFound(block_id))?
             .into_iter()
             .map(|receipt| ReceiptWithBloom::from(receipt).encoded_2718().into())

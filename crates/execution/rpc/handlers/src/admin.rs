@@ -10,12 +10,11 @@ use alloy_rpc_types_admin::{
 };
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
+use base_execution_network_types::PeerKind;
+use base_execution_network_types::{AnyNode, NodeRecord};
 use base_execution_txpool::TransactionPool;
 use jsonrpsee::core::RpcResult;
 use reth_network_api::{NetworkInfo, Peers};
-use base_execution_network_types::{AnyNode, NodeRecord};
-use base_execution_network_types::PeerKind;
-use reth_rpc_server_types::ToRpcResult;
 
 /// `admin` API implementation.
 ///
@@ -91,7 +90,11 @@ where
 
     /// Handler for `admin_peers`
     async fn peers(&self) -> RpcResult<Vec<PeerInfo>> {
-        let peers = self.network.get_all_peers().await.to_rpc_result()?;
+        let peers = self
+            .network
+            .get_all_peers()
+            .await
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
         let mut infos = Vec::with_capacity(peers.len());
 
         for peer in peers {
@@ -122,7 +125,11 @@ where
     /// Handler for `admin_nodeInfo`
     async fn node_info(&self) -> RpcResult<NodeInfo> {
         let enode = self.network.local_node_record();
-        let status = self.network.network_status().await.to_rpc_result()?;
+        let status = self
+            .network
+            .network_status()
+            .await
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
         let mut config = ChainConfig {
             chain_id: self.chain_spec.chain().id(),
             terminal_total_difficulty_passed: true,

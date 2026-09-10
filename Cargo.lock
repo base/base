@@ -14427,13 +14427,9 @@ version = "0.0.0"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
- "base-common-types-payload",
  "base-common-types-rpc",
- "base-execution-evm-blocks",
- "base-execution-state-types",
  "jsonrpsee-core",
  "jsonrpsee-types",
- "reth-network-api",
  "serde",
  "strum 0.27.2",
 ]

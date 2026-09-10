@@ -28,7 +28,7 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::RpcResult;
 use reth_payload_util::NoopPayloadTransactions;
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
+use reth_rpc_server_types::result::internal_rpc_err;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Semaphore, oneshot};
 
@@ -165,7 +165,9 @@ where
         DebugApiExtMetrics::record_operation_async(DebugApis::DebugExecutePayload, async {
             let _permit = self.inner.semaphore.acquire().await;
 
-            let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
+            let parent_header = self
+                .parent_header(parent_block_hash)
+                .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
 
             let (tx, rx) = oneshot::channel();
             let this = Arc::clone(&self.inner);

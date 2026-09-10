@@ -16,7 +16,7 @@ use base_common_types_rpc::{
     state::{EvmOverrides, StateOverride},
 };
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
+use reth_rpc_server_types::result::internal_rpc_err;
 use serde_json::Value;
 use tracing::trace;
 
@@ -436,13 +436,16 @@ impl EthApiServer for BaseEthApi {
     /// Handler for: `eth_protocolVersion`
     async fn protocol_version(&self) -> RpcResult<U64> {
         trace!(target: "rpc::eth", "Serving eth_protocolVersion");
-        BaseEthApi::protocol_version(self).await.to_rpc_result()
+        BaseEthApi::protocol_version(self)
+            .await
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))
     }
 
     /// Handler for: `eth_syncing`
     fn syncing(&self) -> RpcResult<SyncStatus> {
         trace!(target: "rpc::eth", "Serving eth_syncing");
-        BaseEthApi::sync_status(self).to_rpc_result()
+        BaseEthApi::sync_status(self)
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))
     }
 
     /// Handler for: `eth_coinbase`
@@ -460,7 +463,13 @@ impl EthApiServer for BaseEthApi {
     fn block_number(&self) -> RpcResult<U256> {
         trace!(target: "rpc::eth", "Serving eth_blockNumber");
         Ok(U256::from(
-            BaseEthApi::chain_info(self).with_message("failed to read chain info")?.best_number,
+            BaseEthApi::chain_info(self)
+                .map_err(|err| {
+                    reth_rpc_server_types::result::internal_rpc_err(format!(
+                        "failed to read chain info: {err}"
+                    ))
+                })?
+                .best_number,
         ))
     }
 
@@ -473,7 +482,8 @@ impl EthApiServer for BaseEthApi {
     /// Handler for: `eth_capabilities`
     fn capabilities(&self) -> RpcResult<EthCapabilities> {
         trace!(target: "rpc::eth", "Serving eth_capabilities");
-        BaseEthApi::capabilities(self).to_rpc_result()
+        BaseEthApi::capabilities(self)
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))
     }
 
     /// Handler for: `eth_getBlockByHash`

@@ -36,7 +36,7 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_server_types::{ToRpcResult, result::rpc_error_with_code};
+use reth_rpc_server_types::result::rpc_error_with_code;
 use tokio::{
     sync::{Mutex, mpsc::Receiver, oneshot},
     time::MissedTickBehavior,
@@ -553,7 +553,10 @@ impl EthFilterInner {
         &self,
         kind: FilterKind<base_common_types_rpc::BaseTransaction>,
     ) -> RpcResult<FilterId> {
-        let last_poll_block_number = self.provider().best_block_number().to_rpc_result()?;
+        let last_poll_block_number = self
+            .provider()
+            .best_block_number()
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
         let subscription_id = self.id_provider.next_id();
 
         let id = match subscription_id {

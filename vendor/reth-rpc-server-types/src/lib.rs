@@ -14,4 +14,3 @@ pub mod result;
 
 mod module;
 pub use module::RethRpcModule;
-pub use result::ToRpcResult;

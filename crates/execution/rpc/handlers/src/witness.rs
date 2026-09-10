@@ -15,7 +15,7 @@ use base_execution_txpool::TransactionPool;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee_core::{RpcResult, async_trait};
 use reth_primitives_traits::SealedHeader;
-use reth_rpc_server_types::{ToRpcResult, result::internal_rpc_err};
+use reth_rpc_server_types::result::internal_rpc_err;
 use tokio::sync::{Semaphore, oneshot};
 
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
@@ -76,7 +76,9 @@ where
     ) -> RpcResult<ExecutionWitness> {
         let _permit = self.inner.semaphore.acquire().await;
 
-        let parent_header = self.parent_header(parent_block_hash).to_rpc_result()?;
+        let parent_header = self
+            .parent_header(parent_block_hash)
+            .map_err(|err| reth_rpc_server_types::result::internal_rpc_err(err.to_string()))?;
 
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
