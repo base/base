@@ -119,7 +119,11 @@ impl L1Stack {
     }
 
     /// Maximum time to wait for the L1 validator to propose its first block.
-    pub const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(240);
+    ///
+    /// Sized to cover the remaining beacon genesis lead once the containers are up. Every test
+    /// pays this on a stalled L1, so it stays tight enough that a suite-wide L1 failure still
+    /// reports per-test results inside the CI budget instead of timing the whole job out.
+    pub const BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(90);
 
     /// Poll interval while waiting for the first L1 block.
     const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);

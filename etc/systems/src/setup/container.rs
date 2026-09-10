@@ -35,8 +35,10 @@ const SETUP_TIMEOUT_SECS: u64 = 300;
 /// missed slot, and the beacon node never reports itself synced, so it never proposes and L1
 /// stalls at block 0 forever. Anchoring genesis ahead of generation keeps the validator's first
 /// slot in the future. Lighthouse simply waits for a future genesis, so overshooting only costs
-/// startup latency while undershooting deadlocks the chain.
-const GENESIS_LEAD_SECS: u64 = 150;
+/// startup latency while undershooting deadlocks the chain. Every second of overshoot is paid by
+/// each test, so this stays only slightly above the observed generation and boot cost; the whole
+/// suite shares a one hour CI budget.
+const GENESIS_LEAD_SECS: u64 = 120;
 
 /// Builder enode ID
 pub const BUILDER_ENODE_ID: &str = "3255458e24278e31d5940f304b16300fdff3f6efd3e2a030b5818310ac67af45e28d057e6a332d07e0c5ab09d6947fd4eed1a646edbf224e2d2fec6f49f90abc";
