@@ -3,18 +3,6 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use audit_archiver_lib::{
-    AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
-    DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
-    DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
-    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
-    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
-    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
-    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
-};
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
@@ -27,6 +15,18 @@ use axum::{
     routing::get,
 };
 use base_common_cli_support::LogConfig;
+use base_infra_audit_service::{
+    AuditArchiver, AuditArchiverApiServer, AuditArchiverRpc, DEFAULT_TRANSACTION_EVENT_BATCH_PATH,
+    DEFAULT_TRANSACTION_EVENT_COLD_RETENTION_DAYS, DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS,
+    DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_INTERVAL_SECS,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_MAX_BATCHES,
+    DEFAULT_TRANSACTION_EVENT_RETENTION_STATEMENT_TIMEOUT_MS,
+    DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS, Metrics, PgTransactionEventSink, RpcEventReader,
+    S3EventReaderWriter, TransactionEventIngestConfig, TransactionEventRetentionConfig,
+};
 use clap::{Parser, ValueEnum};
 use jsonrpsee::server::{ServerBuilder, stop_channel};
 use moka::{policy::EvictionPolicy, sync::Cache};

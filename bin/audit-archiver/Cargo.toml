@@ -28,5 +28,5 @@ tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 moka = { workspace = true, features = ["default", "sync"] }
-audit-archiver-lib = { workspace = true, features = ["default"] }
+base-infra-audit-service = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }

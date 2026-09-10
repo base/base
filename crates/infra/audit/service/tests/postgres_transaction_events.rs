@@ -4,16 +4,16 @@
 //!
 //! ```bash
 //! DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres \
-//!   cargo test -p audit-archiver-lib --test postgres_transaction_events -- --ignored
+//!   cargo test -p base-infra-audit-service --test postgres_transaction_events -- --ignored
 //! ```
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use audit_archiver_lib::{
+use base_common_observability_events::TransactionEvent;
+use base_infra_audit_service::{
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
     TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
 };
-use base_common_observability_events::TransactionEvent;
 use chrono::Utc;
 use serde_json::json;
 use sqlx::{Executor, PgPool, postgres::PgPoolOptions};

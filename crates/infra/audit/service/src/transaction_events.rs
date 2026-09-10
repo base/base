@@ -16,7 +16,9 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use base_common_observability_events::{TransactionEvent, TransactionEventProducer, TransactionEventType};
+use base_common_observability_events::{
+    TransactionEvent, TransactionEventProducer, TransactionEventType,
+};
 use chrono::{DateTime, Duration, Utc};
 use serde::{
     Deserialize, Serialize,

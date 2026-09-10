@@ -1,7 +1,7 @@
 //! S3 event storage tests.
 
 use alloy_primitives::TxHash;
-use audit_archiver_lib::{
+use base_infra_audit_service::{
     BundleEvent, BundleEventS3Reader, Event, EventWriter, S3EventReaderWriter,
 };
 use uuid::Uuid;

@@ -63,7 +63,7 @@ members = [
   "crates/execution/state/indexer",
   "crates/execution/state/tasks",
   "crates/execution/txpool/pool",
-  "crates/infra/audit",
+  "crates/infra/audit/service",
   "crates/infra/basectl",
   "crates/infra/load-tests",
   "crates/infra/shadow-metrics",
@@ -299,7 +299,7 @@ base-execution-payload-builder = { path = "crates/execution/payload/builder", de
 # Infra
 basectl-cli = { path = "crates/infra/basectl", default-features = false }
 base-sidecrush = { path = "crates/infra/sidecrush", default-features = false }
-audit-archiver-lib = { path = "crates/infra/audit", default-features = false }
+base-infra-audit-service = { path = "crates/infra/audit/service", default-features = false }
 base-load-tests = { path = "crates/infra/load-tests", default-features = false }
 base-snapshotter = { path = "crates/infra/snapshotter", default-features = false }
 websocket-proxy = { path = "crates/infra/websocket-proxy", default-features = false }

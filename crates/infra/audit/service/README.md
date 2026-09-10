@@ -1,4 +1,4 @@
-# `audit-archiver-lib`
+# `base-infra-audit-service`
 
 Audit library for tracking and archiving bundle events.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-audit-archiver-lib = { workspace = true }
+base-infra-audit-service = { workspace = true }
 ```
 
 ```rust,ignore
-use audit_archiver_lib::{AuditConnector, RpcBundleEventPublisher};
+use base_infra_audit_service::{AuditConnector, RpcBundleEventPublisher};
 
 let publisher = RpcBundleEventPublisher::new(rpc_url, timeout)?;
 AuditConnector::connect_batched(event_rx, publisher, batch_size, batch_wait);
