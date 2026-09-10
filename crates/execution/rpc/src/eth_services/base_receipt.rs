@@ -18,33 +18,10 @@ use base_execution_state_types::BlockReader;
 
 use crate::{
     ConvertReceiptInput,
-    eth_services::{BaseEthApiError, BaseTimeCache, EthApiError, receipt::build_receipt},
+    eth_services::{BaseEthApiError, EthApiError, receipt::build_receipt},
 };
 
-/// Converter for Base receipts.
-#[derive(Clone)]
-pub struct BaseReceiptConverter {
-    provider: base_execution_state_provider::BlockchainProvider,
-    base_time: BaseTimeCache,
-}
-
-impl std::fmt::Debug for BaseReceiptConverter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BaseReceiptConverter").finish_non_exhaustive()
-    }
-}
-
-impl BaseReceiptConverter {
-    /// Creates a new [`BaseReceiptConverter`].
-    pub const fn new(
-        provider: base_execution_state_provider::BlockchainProvider,
-        base_time: BaseTimeCache,
-    ) -> Self {
-        Self { provider, base_time }
-    }
-}
-
-impl BaseReceiptConverter {
+impl crate::BaseRpcConverter {
     /// Adds the validated BaseTime timestamp to a receipt log.
     pub fn convert_log(
         &self,

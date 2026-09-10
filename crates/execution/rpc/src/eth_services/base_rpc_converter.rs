@@ -2,25 +2,22 @@
 
 use alloy_primitives::{Signature, U256};
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, SealedBlock, SignableTransaction, error::ValueError,
-    transaction::Recovered,
+    BaseTxEnvelope, SignableTransaction, error::ValueError, transaction::Recovered,
 };
-use base_common_types_rpc::{
-    BaseTransactionReceipt, BaseTransactionRequest, Header, Log, TransactionInfo,
-};
+use base_common_types_rpc::{BaseTransactionRequest, Header, TransactionInfo};
 
 use crate::{
-    ConvertReceiptInput, TransactionConversionError, TryIntoTxEnv,
-    eth_services::{BaseEthApiError, BaseReceiptConverter, BaseTimeCache, BaseTxInfoMapper},
+    TransactionConversionError, TryIntoTxEnv,
+    eth_services::{BaseEthApiError, BaseTimeCache},
 };
 
 /// Converts Base RPC data using the provider and shared BaseTime cache.
 #[derive(Clone)]
 pub struct BaseRpcConverter {
-    /// Receipt and L1 fee conversion.
-    pub receipt_converter: BaseReceiptConverter,
-    /// Deposit and block timestamp metadata.
-    pub mapper: BaseTxInfoMapper,
+    /// Provider used to load receipts and block metadata.
+    pub provider: base_execution_state_provider::BlockchainProvider,
+    /// Shared block timestamp cache.
+    pub base_time: BaseTimeCache,
 }
 
 impl std::fmt::Debug for BaseRpcConverter {
@@ -35,10 +32,7 @@ impl BaseRpcConverter {
         provider: base_execution_state_provider::BlockchainProvider,
         base_time: BaseTimeCache,
     ) -> Self {
-        Self {
-            receipt_converter: BaseReceiptConverter::new(provider.clone(), base_time.clone()),
-            mapper: BaseTxInfoMapper::new(provider, base_time),
-        }
+        Self { provider, base_time }
     }
 }
 
@@ -58,7 +52,7 @@ impl BaseRpcConverter {
         tx_info: TransactionInfo,
     ) -> Result<base_common_types_rpc::BaseTransaction, BaseEthApiError> {
         let (tx, signer) = tx.into_parts();
-        let tx_info = self.mapper.try_map(&tx, tx_info)?;
+        let tx_info = self.try_map(&tx, tx_info)?;
 
         Ok(base_common_types_rpc::BaseTransaction::from_transaction(
             Recovered::new_unchecked(tx, signer),
@@ -86,33 +80,6 @@ impl BaseRpcConverter {
         evm_env: &base_execution_evm_runtime::EvmEnv,
     ) -> Result<base_execution_evm_runtime::BaseTransaction, BaseEthApiError> {
         request.try_into_tx_env(evm_env).map_err(Into::into)
-    }
-
-    /// Adds Base block timestamp metadata to a log.
-    pub fn convert_log(
-        &self,
-        log: Log,
-        receipt: &BaseReceipt,
-        header: &base_common_types_chain::SealedHeader,
-    ) -> Result<Log, BaseEthApiError> {
-        self.receipt_converter.convert_log(log, receipt, header)
-    }
-
-    /// Converts receipts and calculates Base L1 fees.
-    pub fn convert_receipts(
-        &self,
-        receipts: Vec<ConvertReceiptInput<'_>>,
-    ) -> Result<Vec<BaseTransactionReceipt>, BaseEthApiError> {
-        self.receipt_converter.convert_receipts(receipts)
-    }
-
-    /// Converts receipts using their loaded block.
-    pub fn convert_receipts_with_block(
-        &self,
-        receipts: Vec<ConvertReceiptInput<'_>>,
-        block: &SealedBlock,
-    ) -> Result<Vec<BaseTransactionReceipt>, BaseEthApiError> {
-        self.receipt_converter.convert_receipts_with_block(receipts, block)
     }
 
     /// Converts a Base consensus header to its RPC representation.

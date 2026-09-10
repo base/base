@@ -147,7 +147,7 @@ impl BaseEthApiInner {
         Self {
             sequencer_client: None,
             min_suggested_priority_fee: U256::from(1_000_000),
-            base_time: converter.mapper.base_time.clone(),
+            base_time: converter.base_time.clone(),
             components,
             signers,
             eth_cache,
