@@ -3,6 +3,8 @@
 //! Deploys the mock `ProtocolVersions` schedule contract to the L1 stack and builds the
 //! [`UpgradeSignalConfig`] consumed by the in-process consensus nodes.
 
+use std::time::Duration;
+
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -13,7 +15,7 @@ use base_test_utils::MockProtocolVersions;
 use base_upgrade_signal::{
     UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMode,
 };
-use eyre::{Result, WrapErr};
+use eyre::{Result, WrapErr, ensure};
 use url::Url;
 
 use crate::config::ANVIL_ACCOUNT_4;
@@ -143,6 +145,35 @@ pub struct MockProtocolVersionsClient {
 }
 
 impl MockProtocolVersionsClient {
+    /// Maximum time to wait for the devnet L1 to start producing blocks.
+    pub const L1_BLOCK_PRODUCTION_TIMEOUT: Duration = Duration::from_secs(90);
+
+    /// Maximum time to wait for one upgrade signal L1 transaction to be mined.
+    pub const L1_TRANSACTION_TIMEOUT: Duration = Duration::from_secs(90);
+
+    /// Poll interval while waiting for the devnet L1 to start producing blocks.
+    const L1_BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+    /// Waits until the devnet L1 has produced at least one block after genesis.
+    ///
+    /// Lighthouse reports its HTTP API as ready well before the validator proposes its first
+    /// slot, and Reth accepts transactions into its pool the whole time. A transaction sent in
+    /// that window never gets a receipt, so every upgrade signal write waits for block
+    /// production first rather than blocking forever on an unmined transaction.
+    pub async fn wait_for_l1_block_production(l1_rpc_url: &Url) -> Result<()> {
+        let provider = Self::wallet_provider(l1_rpc_url)?;
+        tokio::time::timeout(Self::L1_BLOCK_PRODUCTION_TIMEOUT, async {
+            loop {
+                if provider.get_block_number().await.is_ok_and(|number| number > 0) {
+                    return;
+                }
+                tokio::time::sleep(Self::L1_BLOCK_POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .wrap_err("L1 did not produce a block before the upgrade signal deadline")
+    }
+
     /// Deploys the mock contract to L1 and seeds it with the rollup config baseline overlaid
     /// with the options' explicit schedule entries.
     pub async fn deploy(
@@ -150,10 +181,16 @@ impl MockProtocolVersionsClient {
         options: &UpgradeSignalStackOptions,
         rollup_config: &RollupConfig,
     ) -> Result<Self> {
+        Self::wait_for_l1_block_production(&l1_rpc_url).await?;
+
         let provider = Self::wallet_provider(&l1_rpc_url)?;
-        let contract = MockProtocolVersions::deploy(provider)
-            .await
-            .wrap_err("Failed to deploy MockProtocolVersions to L1")?;
+        let contract = tokio::time::timeout(
+            Self::L1_TRANSACTION_TIMEOUT,
+            MockProtocolVersions::deploy(provider),
+        )
+        .await
+        .wrap_err("MockProtocolVersions deploy was not mined before the L1 deadline")?
+        .wrap_err("Failed to deploy MockProtocolVersions to L1")?;
 
         let client = Self {
             l1_rpc_url,
@@ -176,14 +213,16 @@ impl MockProtocolVersionsClient {
         let merged: Vec<_> = self.baseline.iter().chain(entries).copied().collect();
         let provider = Self::wallet_provider(&self.l1_rpc_url)?;
         let contract = MockProtocolVersions::new(self.address, provider);
-        contract
+        let pending = contract
             .setSchedule(Self::id_ordered_schedule(&merged)?)
             .send()
             .await
-            .wrap_err("Failed to send setSchedule")?
-            .get_receipt()
+            .wrap_err("Failed to send setSchedule")?;
+        let receipt = tokio::time::timeout(Self::L1_TRANSACTION_TIMEOUT, pending.get_receipt())
             .await
+            .wrap_err("setSchedule was not mined before the L1 deadline")?
             .wrap_err("setSchedule was not mined")?;
+        ensure!(receipt.status(), "setSchedule reverted on L1");
         Ok(())
     }
 
@@ -191,14 +230,16 @@ impl MockProtocolVersionsClient {
     pub async fn set_minimum_protocol_version(&self, version: U256) -> Result<()> {
         let provider = Self::wallet_provider(&self.l1_rpc_url)?;
         let contract = MockProtocolVersions::new(self.address, provider);
-        contract
+        let pending = contract
             .setMinimumProtocolVersion(version)
             .send()
             .await
-            .wrap_err("Failed to send setMinimumProtocolVersion")?
-            .get_receipt()
+            .wrap_err("Failed to send setMinimumProtocolVersion")?;
+        let receipt = tokio::time::timeout(Self::L1_TRANSACTION_TIMEOUT, pending.get_receipt())
             .await
+            .wrap_err("setMinimumProtocolVersion was not mined before the L1 deadline")?
             .wrap_err("setMinimumProtocolVersion was not mined")?;
+        ensure!(receipt.status(), "setMinimumProtocolVersion reverted on L1");
         Ok(())
     }
 
