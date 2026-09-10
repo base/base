@@ -113,7 +113,7 @@ members = [
   "crates/common/client/ethereum",
   "crates/execution/network/discv5",
   "vendor/reth-cli-commands",
-  "vendor/reth-cli-util",
+  "crates/common/cli/support",
   "crates/common/codec/macros",
   "vendor/reth-config",
   "vendor/reth-consensus-debug-client",
@@ -414,7 +414,7 @@ base-execution-network-discovery = { path = "crates/execution/network/discovery"
 base-common-observability-tracing = { path = "crates/common/observability/tracing", default-features = false }
 base-execution-network-service = { path = "crates/execution/network/service", default-features = false }
 base-common-io-files = { path = "crates/common/io/files", default-features = false }
-reth-cli-util = { path = "vendor/reth-cli-util", default-features = false }
+base-common-cli-support = { path = "crates/common/cli/support", default-features = false }
 base-execution-state-provider = { path = "crates/execution/state/provider", default-features = false }
 base-execution-state-mdbx-sys = { path = "crates/execution/state/mdbx-sys", default-features = false }
 reth-node-core = { path = "vendor/reth-node-core", default-features = false }

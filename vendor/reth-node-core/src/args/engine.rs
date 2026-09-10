@@ -2,6 +2,7 @@
 
 use std::{sync::OnceLock, time::Duration};
 
+use base_common_cli_support::{format_duration_as_secs_or_ms, parse_duration_from_secs_or_ms};
 use base_execution_engine_types::{
     DEFAULT_INVALID_HEADER_HIT_EVICTION_THRESHOLD, DEFAULT_MULTIPROOF_TASK_CHUNK_SIZE,
     DEFAULT_NUM_STATE_MASKING_BLOCKS, DEFAULT_PERSISTENCE_BACKPRESSURE_THRESHOLD, TreeConfig,
@@ -11,7 +12,6 @@ use clap::{
     builder::{RangedU64ValueParser, Resettable},
 };
 use eyre::ensure;
-use reth_cli_util::{parse_duration_from_secs_or_ms, parsers::format_duration_as_secs_or_ms};
 
 use crate::node_config::{
     DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB, DEFAULT_MEMORY_BLOCK_BUFFER_TARGET,

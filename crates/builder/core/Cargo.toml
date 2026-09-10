@@ -19,7 +19,7 @@ dirs-next = { workspace = true }
 jsonrpsee = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
-reth-cli-util = { workspace = true }
+base-common-cli-support = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
 alloy-hardforks = { workspace = true }
@@ -137,8 +137,8 @@ metrics = [
     "base-execution-evm-blocks/metrics",
     "base-execution-state-trie/metrics",
 ]
-jemalloc = ["dep:tikv-jemallocator", "reth-cli-util/jemalloc"]
-jemalloc-prof = ["jemalloc", "reth-cli-util/jemalloc-prof", "tikv-jemallocator?/profiling"]
+jemalloc = ["dep:tikv-jemallocator", "base-common-cli-support/jemalloc"]
+jemalloc-prof = ["jemalloc", "base-common-cli-support/jemalloc-prof", "tikv-jemallocator?/profiling"]
 min-error-logs = ["tracing/release_max_level_error"]
 min-warn-logs = ["tracing/release_max_level_warn"]
 min-info-logs = ["tracing/release_max_level_info"]

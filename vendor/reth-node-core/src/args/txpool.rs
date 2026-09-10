@@ -4,6 +4,7 @@ use std::{path::PathBuf, sync::OnceLock, time::Duration};
 
 use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::Address;
+use base_common_cli_support::{format_duration_as_secs_or_ms, parse_duration_from_secs_or_ms};
 use base_execution_txpool::{
     DEFAULT_MAX_CACHED_BLOBS, DEFAULT_MAX_TX_INPUT_BYTES, DEFAULT_PRICE_BUMP,
     DEFAULT_TXPOOL_ADDITIONAL_VALIDATION_TASKS, LocalTransactionConfig,
@@ -13,8 +14,6 @@ use base_execution_txpool::{
     TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT, TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
 };
 use clap::{Args, builder::Resettable};
-use reth_cli_util::{parse_duration_from_secs_or_ms, parsers::format_duration_as_secs_or_ms};
-
 
 /// Global static transaction pool defaults
 static TXPOOL_DEFAULTS: OnceLock<DefaultTxPoolValues> = OnceLock::new();
@@ -541,7 +540,6 @@ impl TxPoolArgs {
             max_inflight_delegated_slot_limit: default_config.max_inflight_delegated_slot_limit,
         }
     }
-
 }
 
 #[cfg(test)]

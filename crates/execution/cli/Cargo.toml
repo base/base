@@ -17,7 +17,7 @@ alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 base-metering = { workspace = true }
 base-reth-cli = { workspace = true }
-reth-cli-util = { workspace = true }
+base-common-cli-support = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-node-core = { workspace = true }
 reth-cli-commands = { workspace = true }

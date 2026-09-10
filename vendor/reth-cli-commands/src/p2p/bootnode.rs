@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use base_common_cli_support::{get_secret_key, rng_secret_key};
 use base_execution_network_discovery::Discv4;
 use base_execution_network_discovery::Discv4Config;
 use base_execution_network_discovery::Discv4DiscoveryUpdate as DiscoveryUpdate;
@@ -16,7 +17,6 @@ use base_execution_network_discv5::Event;
 use base_execution_network_discv5::ListenConfig;
 use base_execution_network_types::NodeRecord;
 use clap::Parser;
-use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use secp256k1::SecretKey;
 use tokio::{net::UdpSocket, select};
 use tokio_stream::StreamExt;

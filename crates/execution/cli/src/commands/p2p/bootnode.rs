@@ -2,6 +2,7 @@
 
 use std::{net::SocketAddr, path::PathBuf};
 
+use base_common_cli_support::{get_secret_key, rng_secret_key};
 use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_LISTEN_CONFIG;
 use base_execution_network_discovery::Discv4;
 use base_execution_network_discovery::Discv4Config;
@@ -15,7 +16,6 @@ use base_execution_network_discv5::ProtocolIdentity;
 use base_execution_network_types::NodeRecord;
 use base_node_core::BASE_V0_PROTOCOL_VERSION;
 use clap::Parser;
-use reth_cli_util::{get_secret_key, load_secret_key::rng_secret_key};
 use secp256k1::SecretKey;
 use tokio::select;
 use tokio_stream::StreamExt;

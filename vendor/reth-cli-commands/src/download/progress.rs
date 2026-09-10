@@ -7,8 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_cli_support::CancellationToken;
 use eyre::Result;
-use reth_cli_util::cancellation::CancellationToken;
 use tracing::info;
 
 const BYTE_UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];

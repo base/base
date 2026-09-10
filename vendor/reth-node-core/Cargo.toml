@@ -23,7 +23,7 @@ thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
 alloy-eip2124 = { workspace = true }
-reth-cli-util = { workspace = true }
+base-common-cli-support = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-common-types-rpc = {workspace = true}
 base-execution-txpool = { workspace = true }
@@ -61,7 +61,7 @@ tokio = { workspace = true }
 proptest = { workspace = true, features = ["default"] }
 
 [features]
-jemalloc = ["reth-cli-util/jemalloc"]
+jemalloc = ["base-common-cli-support/jemalloc"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 keccak-cache-global = ["alloy-primitives/keccak-cache-global"]
 otlp = ["base-common-observability-tracing/otlp"]

@@ -14,7 +14,7 @@ use std::sync::{
 /// # Example
 ///
 /// ```
-/// use reth_cli_util::cancellation::CancellationToken;
+/// use base_common_cli_support::CancellationToken;
 /// use std::{thread, time::Duration};
 ///
 /// let token = CancellationToken::new();
@@ -66,7 +66,7 @@ impl CancellationToken {
     /// # Example
     ///
     /// ```
-    /// use reth_cli_util::cancellation::CancellationToken;
+    /// use base_common_cli_support::CancellationToken;
     ///
     /// let token = CancellationToken::new();
     /// {

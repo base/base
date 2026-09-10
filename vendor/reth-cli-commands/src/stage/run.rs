@@ -8,6 +8,7 @@ use crate::ChainSpecParser;
 use alloy_eips::BlockHashOrNumber;
 use base_cli_utils::CliContext;
 use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::get_secret_key;
 use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_network_service::BlockDownloaderProvider;
 use base_execution_network_wire::HeadersClient;
@@ -25,7 +26,6 @@ use base_execution_sync_pipeline::{BodiesDownloaderBuilder, ReverseHeadersDownlo
 use base_execution_sync_pipeline::{HashingConfig, SenderRecoveryConfig, TransactionLookupConfig};
 use base_node_core::metrics_hooks;
 use clap::Parser;
-use reth_cli_util::get_secret_key;
 use reth_node_core::{
     args::{NetworkArgs, StageEnum},
     version::version_metadata,

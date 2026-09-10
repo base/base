@@ -12,6 +12,7 @@ use std::{
 use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
 use base_common_chain_config::BaseChainSpec;
+use base_common_cli_support::{SecretKeyError, get_secret_key};
 use base_common_runtime_tasks::Runtime;
 use base_execution_network_discovery::DEFAULT_COUNT_BOOTSTRAP_LOOKUPS;
 use base_execution_network_discovery::DEFAULT_DISCOVERY_V5_PORT;
@@ -42,7 +43,6 @@ use clap::{
     Args,
     builder::{OsStr, Resettable},
 };
-use reth_cli_util::{get_secret_key, load_secret_key::SecretKeyError};
 use reth_config::Config;
 use secp256k1::SecretKey;
 use tracing::error;

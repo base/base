@@ -5,9 +5,9 @@ use std::{
     path::PathBuf,
 };
 
-use clap::Parser;
-use reth_cli_util::get_secret_key;
+use base_common_cli_support::get_secret_key;
 use base_execution_network_types::NodeRecord;
+use clap::Parser;
 
 /// Print the enode identifier for a given secret key.
 #[derive(Parser, Debug)]

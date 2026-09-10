@@ -26,7 +26,7 @@ eyre = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 base-consensus-driver-service = { workspace = true }
 tokio = { workspace = true, features = ["default"] }
-reth-cli-util = { workspace = true, optional = true }
+base-common-cli-support = { workspace = true, optional = true }
 base-consensus-source-providers = { workspace = true }
 alloy-chains = { workspace = true, features = ["std"] }
 tokio-util = { workspace = true, features = ["default"] }
@@ -48,6 +48,6 @@ figment = { workspace = true, features = ["test"] }
 jemalloc-prof = [
     "base-builder-core/jemalloc-prof",
     "base-execution-cli/jemalloc-symbols",
-    "dep:reth-cli-util",
-    "reth-cli-util/jemalloc-prof",
+    "dep:base-common-cli-support",
+    "base-common-cli-support/jemalloc-prof",
 ]

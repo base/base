@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use base_common_cli_support::{parse_duration_from_secs_or_ms, parse_ether_value};
 use base_common_types_payload::JwtSecret;
 use base_common_types_rpc as constants;
 use base_common_types_rpc::PendingBlockKind;
@@ -13,7 +14,6 @@ use clap::{
     Args,
     builder::{RangedU64ValueParser, Resettable},
 };
-use reth_cli_util::{parse_duration_from_secs_or_ms, parse_ether_value};
 use url::Url;
 
 use super::types::MaxOr;

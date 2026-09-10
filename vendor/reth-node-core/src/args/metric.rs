@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
+use base_common_cli_support::{parse_duration_from_secs, parse_socket_address};
 use clap::Parser;
-use reth_cli_util::{parse_duration_from_secs, parse_socket_address};
 
 /// Default push gateway interval in seconds.
 const DEFAULT_PUSH_GATEWAY_INTERVAL_SECS: u64 = 5;

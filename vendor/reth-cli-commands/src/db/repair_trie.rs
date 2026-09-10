@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base_common_cli_support::parse_socket_address;
 use base_common_runtime_tasks::TaskExecutor;
 use base_common_types_chain::BlockHeader as AlloyBlockHeader;
 use base_execution_state_database::{
@@ -18,7 +19,6 @@ use base_execution_state_trie::{
 use base_execution_sync_pipeline::StageId;
 use clap::Parser;
 use metrics::{self, Counter};
-use reth_cli_util::parse_socket_address;
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     version::version_metadata,

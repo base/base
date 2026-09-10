@@ -54,7 +54,7 @@ These are opportunities to eliminate standalone packages, **not to delete their 
 
 | Current crates | Proposed direction |
 | --- | --- |
-| `reth-cli`, `reth-cli-commands`, `reth-cli-runner`, `reth-cli-util` | Move the Base parser, selected maintenance commands, runtime setup, and CLI utilities into Base CLI libraries. Specialize `ChainSpecParser` and generic command parameters. Keep database init, stage maintenance, prune, and re-execute: `bin/base/src/commands/reth.rs` dispatches them today. |
+| `reth-cli`, `reth-cli-commands`, `reth-cli-runner`, `base-common-cli-support` | Move the Base parser, selected maintenance commands, runtime setup, and CLI utilities into Base CLI libraries. Specialize `ChainSpecParser` and generic command parameters. Keep database init, stage maintenance, prune, and re-execute: `bin/base/src/commands/reth.rs` dispatches them today. |
 | `reth-node-api`, `reth-node-types` | Consolidate node type bundles and adapters in a lower-level Base execution API crate; remove arbitrary-network type builders after concrete Base types are wired through. Do not move them into an upper-level node crate that already consumes provider/engine crates. |
 | `reth-chainspec`, `reth-ethereum-forks` | Deleted after consolidating configuration in `ChainConfig` and execution metadata in `BaseChainSpec`. Base upgrades use a typed schedule; fork IDs, Ethereum rule traits, and fee parameters come directly from Alloy. |
 | `reth-ethereum-primitives` | Replace wrapper aliases with direct Alloy types where appropriate and replace `EthPrimitives` defaults with Base primitives in execution code. Preserve ordinary Ethereum transaction compatibility and L1 use. This small crate is largely aliases, but many storage/network/default/test types still reference it. |
@@ -86,7 +86,7 @@ The following table accounts for all 109 original Reth crates. “Retain shared 
 | [reth-cli](../../vendor/reth-cli/Cargo.toml) | Consolidate; retain required code |
 | [reth-cli-commands](../../vendor/reth-cli-commands/Cargo.toml) | Consolidate; retain required code |
 | [reth-cli-runner](../../vendor/reth-cli-runner/Cargo.toml) | Consolidate; retain required code |
-| [reth-cli-util](../../vendor/reth-cli-util/Cargo.toml) | Consolidate; retain required code |
+| [base-common-cli-support](../../crates/common/cli/support/Cargo.toml) | Consolidate; retain required code |
 | `reth-codecs` | Merged into [base-common-types-chain](../../crates/common/types/chain/Cargo.toml) with the consensus types it encodes |
 | [base-common-codec-macros](../../crates/common/codec/macros/Cargo.toml) | Retain shared infrastructure |
 | [reth-config](../../vendor/reth-config/Cargo.toml) | Retain shared infrastructure |

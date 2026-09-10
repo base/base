@@ -25,7 +25,7 @@ humantime = { workspace = true }
 itertools = { workspace = true }
 alloy-eips = { workspace = true }
 alloy-chains = { workspace = true }
-reth-cli-util = { workspace = true }
+base-common-cli-support = { workspace = true }
 base-cli-utils = { workspace = true }
 reth-node-core = { workspace = true }
 alloy-hardforks = { workspace = true }

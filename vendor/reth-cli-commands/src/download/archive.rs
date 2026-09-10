@@ -4,10 +4,10 @@ use std::{
     time::Duration,
 };
 
+use base_common_cli_support::CancellationToken;
 use base_common_io_files as fs;
 use eyre::Result;
 use futures::stream::{self, StreamExt};
-use reth_cli_util::cancellation::CancellationToken;
 use tokio::task;
 use tracing::{debug, info, warn};
 
