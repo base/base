@@ -3,9 +3,7 @@
 use alloy_eips::BlockId;
 use alloy_primitives::U256;
 use base_common_types_rpc::{BaseTransactionRequest, state::EvmOverrides};
-use base_execution_evm_runtime::{
-    BaseTransaction as BaseRevm, Block, BlockEnv, EvmFactory, ExecutionResult,
-};
+use base_execution_evm_runtime::{BaseTransaction as BaseRevm, Block, ExecutionResult};
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 
 use crate::{BaseEthApi, BaseEthApiError, apply_block_overrides, apply_state_overrides};
@@ -63,7 +61,6 @@ impl Eip8130GasEstimator {
     ) -> Result<U256, ErrorObjectOwned>
     where
         base_execution_evm_runtime::BaseTransaction: From<BaseRevm>,
-        base_execution_evm_runtime::BaseEvmFactory: EvmFactory<BlockEnv = BlockEnv>,
     {
         let (evm_env, at) = eth_api.evm_env_at(block_id).await?;
         let chain_id = evm_env.cfg_env.chain_id;

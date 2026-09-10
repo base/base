@@ -1,13 +1,12 @@
 use alloy_primitives::Address;
 use base_execution_evm_runtime::{
-    BaseContext, BaseEvm, BaseHaltReason, BaseSpecId, BaseTransaction, BaseTransactionError,
-    BlockEnv, Builder, Context, DBErrorMarker, Database, DefaultBase, EVMError, EvmEnv, EvmFactory,
-    Inspector, NoOpInspector, PrecompilesMap,
+    BaseContext, BaseEvm, BaseSpecId, Builder, Context, Database, DatabaseCommit, DefaultBase,
+    EvmEnv, Inspector, NoOpInspector, TxTracer,
 };
 
-/// Factory that produces [`BaseEvm`] instances backed by a [`PrecompilesMap`].
+/// Factory that produces [`BaseEvm`] instances backed by a [`crate::PrecompilesMap`].
 ///
-/// Base precompiles are eagerly flattened into a [`PrecompilesMap`] on construction so that
+/// Base precompiles are eagerly flattened into a [`crate::PrecompilesMap`] on construction so that
 /// precompile dispatch is a single hash-map lookup rather than a spec-aware branch on every call.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
@@ -52,21 +51,13 @@ impl Default for BaseEvmFactory {
     }
 }
 
-impl EvmFactory for BaseEvmFactory {
-    type Evm<DB: Database, I: Inspector<BaseContext<DB>>> = BaseEvm<DB, I>;
-    type Context<DB: Database> = BaseContext<DB>;
-    type Tx = BaseTransaction;
-    type Error<DBError: DBErrorMarker> = EVMError<DBError, BaseTransactionError>;
-    type HaltReason = BaseHaltReason;
-    type Spec = BaseSpecId;
-    type BlockEnv = BlockEnv;
-    type Precompiles = PrecompilesMap;
-
-    fn create_evm<DB: Database>(
+impl BaseEvmFactory {
+    /// Creates a Base EVM with the supplied database and environment.
+    pub fn create_evm<DB: Database>(
         &self,
         db: DB,
         input: EvmEnv<BaseSpecId>,
-    ) -> Self::Evm<DB, NoOpInspector> {
+    ) -> BaseEvm<DB, NoOpInspector> {
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
@@ -75,12 +66,13 @@ impl EvmFactory for BaseEvmFactory {
             .with_inspector(NoOpInspector {})
     }
 
-    fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>>>(
+    /// Creates a Base EVM using the supplied inspector.
+    pub fn create_evm_with_inspector<DB: Database, I: Inspector<BaseContext<DB>>>(
         &self,
         db: DB,
         input: EvmEnv<BaseSpecId>,
         inspector: I,
-    ) -> Self::Evm<DB, I> {
+    ) -> BaseEvm<DB, I> {
         Context::base()
             .with_db(db)
             .with_block(input.block_env)
@@ -105,17 +97,33 @@ mod tests {
     }
 
     #[test]
-    fn create_evm_has_inspect_false() {
+    pub fn create_evm_has_inspect_false() {
         let factory = BaseEvmFactory::default();
         let evm = factory.create_evm(EmptyDB::default(), default_env());
         assert!(!evm.inspect);
     }
 
     #[test]
-    fn create_evm_with_inspector_has_inspect_true() {
+    pub fn create_evm_with_inspector_has_inspect_true() {
         let factory = BaseEvmFactory::default();
         let evm =
             factory.create_evm_with_inspector(EmptyDB::default(), default_env(), NoOpInspector {});
         assert!(evm.inspect);
+    }
+}
+
+impl BaseEvmFactory {
+    /// Creates a transaction tracer with the supplied database and inspector.
+    pub fn create_tracer<DB, I>(
+        &self,
+        db: DB,
+        input: EvmEnv<BaseSpecId>,
+        inspector: I,
+    ) -> TxTracer<BaseEvm<DB, I>>
+    where
+        DB: Database + DatabaseCommit,
+        I: Inspector<BaseContext<DB>> + Clone,
+    {
+        TxTracer::new(self.create_evm_with_inspector(db, input, inspector))
     }
 }

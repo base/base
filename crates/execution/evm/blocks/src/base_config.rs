@@ -17,7 +17,7 @@ use base_common_types_payload as _;
 use base_common_types_payload::ExecutionData;
 use base_execution_evm_runtime::{
     Address, B256, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
-    BlockExecutionError, Bytes as RevmBytes, Database, EvmFactory, IntoTxEnv, State,
+    BlockExecutionError, Bytes as RevmBytes, Database, IntoTxEnv, State,
 };
 #[cfg(not(feature = "std"))]
 use base_execution_state_types as _;
@@ -185,7 +185,7 @@ impl BaseEvmConfig {
         Ok((transactions, convert))
     }
 
-    /// Returns a [`EvmFactory::Tx`] from a transaction.
+    /// Returns a [`BaseTransaction`] from a transaction.
     pub fn tx_env(
         &self,
         transaction: impl IntoTxEnv<base_execution_evm_runtime::BaseTransaction>,
@@ -193,7 +193,7 @@ impl BaseEvmConfig {
         transaction.into_tx_env()
     }
 
-    /// Provides a reference to [`EvmFactory`] implementation.
+    /// Provides a reference to [`crate::BaseEvmFactory`] implementation.
     pub fn evm_factory(&self) -> &base_execution_evm_runtime::BaseEvmFactory {
         &self.executor_factory.evm_factory
     }

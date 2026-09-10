@@ -3,7 +3,6 @@ use core::fmt::Debug;
 
 use alloy_primitives::B256;
 use base_consensus_derive::EthereumDataSource;
-use base_execution_evm_runtime::EvmFactory;
 use base_proof_witness_preimage::{HintWriterClient, PreimageOracleClient};
 use spin::RwLock;
 

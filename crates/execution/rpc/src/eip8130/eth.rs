@@ -7,7 +7,7 @@ use base_common_types_rpc::{
     BaseTransactionRequest,
     state::{EvmOverrides, StateOverride},
 };
-use base_execution_evm_runtime::{BaseTransaction as BaseRevm, BlockEnv, EvmFactory};
+use base_execution_evm_runtime::BaseTransaction as BaseRevm;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -78,7 +78,6 @@ impl Eip8130EthApiExt {
 impl Eip8130EthApiOverrideServer for Eip8130EthApiExt
 where
     base_execution_evm_runtime::BaseTransaction: From<BaseRevm>,
-    base_execution_evm_runtime::BaseEvmFactory: EvmFactory<BlockEnv = BlockEnv>,
 {
     async fn get_transaction_count(
         &self,

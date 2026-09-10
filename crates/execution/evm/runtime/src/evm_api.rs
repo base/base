@@ -6,10 +6,12 @@ use alloy_primitives::{Address, B256, Bytes};
 use base_common_types_chain::transaction::TxHashRef;
 pub(crate) use base_execution_evm_runtime::Database;
 use base_execution_evm_runtime::{
-    BlockEnvironment, CfgEnv, ContextTr, DBErrorMarker, DatabaseCommit, EvmEnv, EvmError,
-    ExecutionResult, HaltReasonTr, Inspector, IntoTxEnv, NoOpInspector, ResultAndState,
-    tracing::TxTracer,
+    BlockEnvironment, CfgEnv, ContextTr, DatabaseCommit, EvmEnv, EvmError, ExecutionResult,
+    HaltReasonTr, Inspector, IntoTxEnv, ResultAndState,
 };
+
+#[cfg(any(test, feature = "test-utils"))]
+use crate::{DBErrorMarker, NoOpInspector};
 
 /// An instance of an ethereum virtual machine.
 ///
@@ -146,7 +148,7 @@ pub trait Evm {
 
     /// Determines whether additional transactions should be inspected or not.
     ///
-    /// See also [`EvmFactory::create_evm_with_inspector`].
+    /// See also [`crate::BaseEvmFactory::create_evm_with_inspector`].
     fn set_inspector_enabled(&mut self, enabled: bool);
 
     /// Enables the configured inspector.
@@ -249,7 +251,8 @@ pub trait EvmExt: Evm {
 impl<T: Evm> EvmExt for T {}
 
 /// A type responsible for creating instances of an ethereum virtual machine given a certain input.
-pub trait EvmFactory {
+#[cfg(any(test, feature = "test-utils"))]
+pub trait ReferenceEvmFactory {
     /// The EVM type that this factory creates.
     type Evm<DB: Database, I: Inspector<Self::Context<DB>>>: Evm<
             DB = DB,
@@ -298,22 +301,3 @@ pub trait EvmFactory {
         inspector: I,
     ) -> Self::Evm<DB, I>;
 }
-
-/// An extension trait for [`EvmFactory`] providing useful non-overridable methods.
-pub trait EvmFactoryExt: EvmFactory {
-    /// Creates a new [`TxTracer`] instance with the given database, input and fused inspector.
-    fn create_tracer<DB, I>(
-        &self,
-        db: DB,
-        input: EvmEnv<Self::Spec, Self::BlockEnv>,
-        fused_inspector: I,
-    ) -> TxTracer<Self::Evm<DB, I>>
-    where
-        DB: Database + DatabaseCommit,
-        I: Inspector<Self::Context<DB>> + Clone,
-    {
-        TxTracer::new(self.create_evm_with_inspector(db, input, fused_inspector))
-    }
-}
-
-impl<T: EvmFactory> EvmFactoryExt for T {}

@@ -632,7 +632,7 @@ mod tests {
         use alloy_primitives::{Bytes, TxKind};
         use base_execution_evm_runtime::{
             AccountInfo, CfgEnv, ContextTr, CreateInputs, CreateOutcome, EmptyDB, EthEvmFactory,
-            Evm, EvmEnv, EvmFactory, Inspector, JournalTr, TxEnv, hardfork::SpecId,
+            Evm, EvmEnv, Inspector, JournalTr, ReferenceEvmFactory, TxEnv, hardfork::SpecId,
         };
 
         type TestDb = State<CacheDB<EmptyDB>>;

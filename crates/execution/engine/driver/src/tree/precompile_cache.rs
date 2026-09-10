@@ -258,7 +258,7 @@ impl CachedPrecompileMetrics {
 
 #[cfg(test)]
 mod tests {
-    use base_execution_evm_blocks::{EthEvmFactory, Evm, EvmEnv, EvmFactory};
+    use base_execution_evm_blocks::{EthEvmFactory, Evm, EvmEnv, ReferenceEvmFactory};
     use base_execution_evm_runtime::{
         CryptoPrecompileOutput as PrecompileOutput, CryptoPrecompileStatus as PrecompileStatus,
         EmptyDB, TxEnv, hardfork::SpecId,

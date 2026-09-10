@@ -12,7 +12,7 @@ use base_common_types_chain::{BaseReceipt, Header, Sealed, crypto::RecoveryError
 use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_runtime::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseSpecId, BlockExecutionResult,
-    BlockExecutor, BundleRetention, EvmFactory, State,
+    BlockExecutor, BundleRetention, State,
 };
 use base_proof_witness_mpt::TrieHinter;
 
@@ -28,7 +28,7 @@ use crate::{ExecutorError, ExecutorResult, TrieDB, TrieDBError, TrieDBProvider};
 ///
 /// * `P` - Trie database provider implementing [`TrieDBProvider`]
 /// * `H` - Trie hinter implementing [`TrieHinter`] for state access optimization
-/// * `Evm` - EVM factory implementing [`EvmFactory`] for execution environment creation
+/// * `Evm` - EVM factory implementing [`crate::BaseEvmFactory`] for execution environment creation
 #[derive(Debug)]
 pub struct StatelessL2Builder<'a, P, H>
 where

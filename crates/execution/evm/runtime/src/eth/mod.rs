@@ -11,7 +11,8 @@ use base_execution_evm_runtime::{
     BlockEnv, CfgEnv, DBErrorMarker, Database, EVMError, EthPrecompiles, Evm, EvmEnv,
     EvmMachine as RevmEvm, ExecuteEvm, HaltReason, InspectEvm, Inspector, InterpreterResult,
     MainBuilder, MainContext, NoOpInspector, PrecompileProvider, PrecompileSpecId, Precompiles,
-    PrecompilesMap, ResultAndState, SystemCallEvm, TxEnv, evm_api::EvmFactory, hardfork::SpecId,
+    PrecompilesMap, ResultAndState, SystemCallEvm, TxEnv, evm_api::ReferenceEvmFactory,
+    hardfork::SpecId,
 };
 
 /// Helper builder to construct `EthEvm` instances in a unified way.
@@ -226,7 +227,7 @@ where
 #[non_exhaustive]
 pub struct EthEvmFactory;
 
-impl EvmFactory for EthEvmFactory {
+impl ReferenceEvmFactory for EthEvmFactory {
     type Evm<DB: Database, I: Inspector<EthEvmContext<DB>>> = EthEvm<DB, I, Self::Precompiles>;
     type Context<DB: Database> = base_execution_evm_runtime::ReferenceContext<TxEnv, CfgEnv, DB>;
     type Tx = TxEnv;
@@ -330,7 +331,7 @@ mod tests {
     #[derive(Debug, Clone, Copy)]
     struct TestFactory;
 
-    impl EvmFactory for TestFactory {
+    impl ReferenceEvmFactory for TestFactory {
         type Evm<DB: Database, I: Inspector<Self::Context<DB>>> = TestEvm<DB, I>;
         type Context<DB: Database> = EthEvmContext<Box<DB>>;
         type Tx = TxEnv;

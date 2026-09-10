@@ -431,7 +431,7 @@ mod tests {
 
     use alloy_primitives::{Address, U256};
     use base_execution_evm_runtime::{
-        BaseEvmFactory, BaseSpecId, BaseUpgrade, CfgEnv, EmptyDB, EvmFactory, EvmInternals, JOVIAN,
+        BaseEvmFactory, BaseSpecId, BaseUpgrade, CfgEnv, EmptyDB, EvmInternals, JOVIAN,
         JOVIAN_G1_MSM, JOVIAN_G1_MSM_MAX_INPUT_SIZE, JOVIAN_G2_MSM, JOVIAN_G2_MSM_MAX_INPUT_SIZE,
         JOVIAN_MAX_INPUT_SIZE, JOVIAN_PAIRING, JOVIAN_PAIRING_MAX_INPUT_SIZE, Precompile,
         PrecompileInput,
