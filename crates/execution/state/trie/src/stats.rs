@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 
 /// Trie stats.
 #[derive(Clone, Copy, Debug)]

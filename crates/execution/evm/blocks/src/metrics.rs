@@ -2,7 +2,7 @@
 use base_common_observability_metrics::Metrics;
 use base_common_types_chain::BlockHeader;
 use metrics::{Counter, Gauge, Histogram};
-use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock};
+use {reth_primitives_traits::RecoveredBlock, std::time::Instant};
 
 /// Executor metrics.
 #[derive(Metrics, Clone)]

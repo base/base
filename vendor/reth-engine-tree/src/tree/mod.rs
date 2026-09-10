@@ -28,6 +28,7 @@ use base_execution_state_provider::{
     StateProviderFactory, StateReader, StorageChangeSetReader, StorageSettingsCache,
     TransactionVariant, TryIntoHistoricalStateProvider,
 };
+use base_execution_state_trie::ComputedTrieData;
 use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver, Sender};
 use error::{InsertBlockError, InsertBlockFatalError};
@@ -35,9 +36,7 @@ use reth_engine_primitives::{
     BeaconEngineMessage, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionPayload,
     ForkchoiceStateTracker, OnForkChoiceUpdated, SlowBlockInfo,
 };
-use reth_primitives_traits::{FastInstant as Instant, RecoveredBlock, SealedBlock, SealedHeader};
 use reth_stages_api::ControlFlow;
-use base_execution_state_trie::ComputedTrieData;
 use state::TreeState;
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -49,6 +48,10 @@ use {
     base_execution_state_provider::MemoryOverlayStateProvider,
     base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock,
     base_execution_state_types::ExecutionTimingStats,
+};
+use {
+    reth_primitives_traits::RecoveredBlock, reth_primitives_traits::SealedBlock,
+    reth_primitives_traits::SealedHeader, std::time::Instant,
 };
 
 use crate::{

@@ -30,6 +30,10 @@ use base_execution_state_database::{
     models::StorageSettings, models::StoredBlockBodyIndices, tables,
 };
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
+use base_execution_state_trie::{
+    ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
+    updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
+};
 use base_execution_state_types::ExecutedBlock;
 use base_execution_state_types::StaticFileSegment;
 use base_execution_state_types::StorageEntry;
@@ -44,15 +48,13 @@ use base_execution_state_types::{ProviderResult, StaticFileWriterError};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use rayon::slice::ParallelSliceMut;
-use reth_primitives_traits::{
-    Block as _, BlockBody as _, FastInstant as Instant, RecoveredBlock, SealedHeader,
-};
-use base_execution_state_trie::{
-    ComputedTrieData, DatabaseStorageTrieCursor, HashedPostStateSorted, TrieTableAdapter,
-    updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted},
-};
 use smallvec::SmallVec;
 use tracing::{debug, instrument, trace};
+use {
+    reth_primitives_traits::Block as _, reth_primitives_traits::BlockBody as _,
+    reth_primitives_traits::RecoveredBlock, reth_primitives_traits::SealedHeader,
+    std::time::Instant,
+};
 
 use super::SaveBlocksInput;
 use crate::{
@@ -3545,13 +3547,13 @@ mod tests {
     use base_execution_evm_runtime::{database::BundleState, state::AccountInfo};
     use base_execution_state_api::{MetadataProvider, StateReadProvider};
     use base_execution_state_database::models::StorageSettings;
+    use base_execution_state_trie::{
+        HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
+    };
     use base_execution_state_types::ExecutedBlock;
     use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult};
     use reth_primitives_traits::SealedBlock;
     use reth_testing_utils::generators::{self, BlockParams};
-    use base_execution_state_trie::{
-        HashedPostState, Nibbles, PackedStoredNibbles, PackedStoredNibblesSubKey, SortedTrieData,
-    };
 
     use super::*;
     use crate::{

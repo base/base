@@ -26,15 +26,15 @@ use base_execution_evm_blocks::{
     BaseEvmConfig, Evm, EvmFor, ExecutableTxFor, RecoveredTx, SpecFor,
 };
 use base_execution_state_memory::StoredAccount as Account;
-use base_execution_state_types::MultiProofTargetsV2;
-use metrics::{Counter, Gauge, Histogram};
-use rayon::prelude::*;
-use reth_primitives_traits::FastInstant as Instant;
 use base_execution_state_provider::{
     AccountReader, BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory,
     PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
     TryIntoHistoricalStateProvider,
 };
+use base_execution_state_types::MultiProofTargetsV2;
+use metrics::{Counter, Gauge, Histogram};
+use rayon::prelude::*;
+use std::time::Instant;
 use tokio::sync::oneshot;
 use tracing::{Span, debug, debug_span, instrument, trace, trace_span, warn};
 

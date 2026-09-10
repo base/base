@@ -23,18 +23,22 @@ use base_execution_state_api::{
     BlockNumReader, ChangeSetReader, DBProvider, PruneCheckpointReader, StageCheckpointReader,
     StorageChangeSetReader, StorageSettingsCache,
 };
-use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
-use base_execution_state_types::{ProviderError, ProviderResult};
-use parking_lot::RwLock;
-use reth_primitives_traits::FastInstant as Instant;
 #[cfg(test)]
-use base_execution_state_trie::{DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot};
+use base_execution_state_trie::{
+    DatabaseHashedCursorFactory, DatabaseHashedPostState, DatabaseStateRoot,
+};
 use base_execution_state_trie::{
     DatabaseTrieCursorFactory, TrieTableAdapter,
     trie_cursor::{InMemoryTrieCursorFactory, TrieCursor, TrieCursorFactory},
 };
 #[cfg(test)]
-use base_execution_state_trie::{HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets};
+use base_execution_state_trie::{
+    HashedPostStateSorted, TrieInputSorted, changesets::compute_trie_changesets,
+};
+use base_execution_state_types::updates::{StorageTrieUpdatesSorted, TrieUpdatesSorted};
+use base_execution_state_types::{ProviderError, ProviderResult};
+use parking_lot::RwLock;
+use std::time::Instant;
 use tracing::{debug, warn};
 
 use crate::overlay::{OverlayManager, OverlayStateProvider, database_state_frontiers};
@@ -407,12 +411,13 @@ impl ChangesetCache {
             .build_overlay_at_frontiers(provider, partial_state_trie, finish)?;
         let state_trie_provider = OverlayStateProvider::new(provider, overlay);
 
-        let accumulated_reverts = Arc::new(base_execution_state_trie::compute_range_trie_changesets(
-            provider,
-            &state_trie_provider,
-            start_block..=end_block,
-            finish.number,
-        )?);
+        let accumulated_reverts =
+            Arc::new(base_execution_state_trie::compute_range_trie_changesets(
+                provider,
+                &state_trie_provider,
+                start_block..=end_block,
+                finish.number,
+            )?);
 
         let elapsed = timer.elapsed();
 
@@ -627,9 +632,9 @@ mod tests {
         DbTxMut, models::AccountBeforeTx, models::BlockNumberAddress, tables,
     };
     use base_execution_state_memory::StoredAccount as Account;
+    use base_execution_state_trie::{BranchNodeCompact, Nibbles, StateRoot};
     use base_execution_state_types::StorageEntry;
     use base_execution_state_types::{StageCheckpoint, StageId};
-    use base_execution_state_trie::{BranchNodeCompact, Nibbles, StateRoot};
 
     use super::*;
     use crate::overlay::Overlay;
@@ -925,9 +930,13 @@ mod tests {
 
         let overlay = empty_overlay();
         let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
-        let actual =
-            base_execution_state_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 1..=3, 3)
-                .unwrap();
+        let actual = base_execution_state_trie::compute_range_trie_changesets(
+            &*provider,
+            &state_trie_provider,
+            1..=3,
+            3,
+        )
+        .unwrap();
         let storage_revert = actual
             .storage_tries_ref()
             .get(&hashed_address)
@@ -1015,9 +1024,13 @@ mod tests {
         let expected = legacy_compute_range_trie_changesets(&*provider, 2..=3);
         let overlay = empty_overlay();
         let state_trie_provider = OverlayStateProvider::new(&*provider, overlay);
-        let actual =
-            base_execution_state_trie::compute_range_trie_changesets(&*provider, &state_trie_provider, 2..=3, 3)
-                .unwrap();
+        let actual = base_execution_state_trie::compute_range_trie_changesets(
+            &*provider,
+            &state_trie_provider,
+            2..=3,
+            3,
+        )
+        .unwrap();
         assert_eq!(actual, expected);
     }
 

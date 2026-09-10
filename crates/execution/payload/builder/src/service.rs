@@ -21,7 +21,7 @@ use base_execution_state_tasks::PayloadStateRootHandle;
 use base_execution_state_tasks::SavedCache;
 use base_execution_state_types::CanonStateNotification;
 use futures_util::{Stream, StreamExt, future::FutureExt};
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tokio::sync::{
     broadcast, mpsc,
     oneshot::{self, Receiver},

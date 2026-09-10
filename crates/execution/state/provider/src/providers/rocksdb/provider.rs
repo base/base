@@ -22,7 +22,6 @@ use base_execution_state_types::{
 };
 use metrics::Label;
 use parking_lot::Mutex;
-use reth_primitives_traits::{BlockBody as _, FastInstant as Instant};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, CompactionPri, DB, DBCompressionType,
     DBRawIteratorWithThreadMode, DEFAULT_COLUMN_FAMILY_NAME, IteratorMode, OptimisticTransactionDB,
@@ -30,6 +29,7 @@ use rocksdb::{
     WriteBatchWithTransaction, WriteBufferManager, WriteOptions,
 };
 use tracing::instrument;
+use {reth_primitives_traits::BlockBody as _, std::time::Instant};
 
 use super::metrics::{ROCKSDB_TABLES, RocksDBMetrics, RocksDBOperation};
 use crate::{

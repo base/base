@@ -17,6 +17,10 @@ use base_execution_evm_blocks::{
     ExecutableTxTuple, SpecFor, TxEnvFor, WithTxEnv,
 };
 use base_execution_evm_runtime::database::BundleState;
+use base_execution_state_provider::{
+    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
+    StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
+};
 pub use base_execution_state_tasks::{
     PayloadStateRootHandle, StateAccessHint, StateRootComputeOutcome, StateRootHandle,
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
@@ -25,11 +29,7 @@ pub use base_execution_state_tasks::{
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;
-use reth_primitives_traits::FastInstant as Instant;
-use base_execution_state_provider::{
-    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
-    StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
-};
+use std::time::Instant;
 use tracing::{Span, debug, instrument, trace, warn};
 
 use super::precompile_cache::PrecompileCacheMap;

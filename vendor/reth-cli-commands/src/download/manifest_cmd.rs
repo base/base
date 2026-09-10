@@ -6,7 +6,7 @@ use base_execution_state_types::DEFAULT_BLOCKS_PER_STATIC_FILE;
 use base_execution_state_types::StageId;
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::download::manifest::generate_manifest;

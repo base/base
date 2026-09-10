@@ -32,7 +32,6 @@ use reth_node_metrics::{
     server::{MetricServer, MetricServerConfig},
     version::VersionInfo,
 };
-use reth_primitives_traits::FastInstant as Instant;
 use reth_stages::{
     ExecInput, ExecOutput, ExecutionStageThresholds, Stage, StageExt, UnwindInput, UnwindOutput,
     stages::{
@@ -41,6 +40,7 @@ use reth_stages::{
         TransactionLookupStage,
     },
 };
+use std::time::Instant;
 use tokio::sync::watch;
 use tracing::*;
 

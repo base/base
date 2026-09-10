@@ -87,9 +87,6 @@ use base_execution_state_trie::{
 };
 use base_execution_state_types::ProviderResult;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
-use reth_primitives_traits::{
-    AlloyBlockHeader, FastInstant as Instant, RecoveredBlock, SealedHeader,
-};
 use tracing::{Span, debug, debug_span, instrument, warn};
 use {
     base_execution_state_provider::PreservedSparseTrie, base_execution_state_types::ExecutedBlock,
@@ -98,6 +95,10 @@ use {
     base_execution_state_trie::ArenaParallelSparseTrie,
     base_execution_state_trie::RevealableSparseTrie, base_execution_state_trie::SparseStateTrie,
     base_execution_state_types::TrieNodeEpoch,
+};
+use {
+    reth_primitives_traits::AlloyBlockHeader, reth_primitives_traits::RecoveredBlock,
+    reth_primitives_traits::SealedHeader, std::time::Instant,
 };
 
 use self::sparse_trie::{SparseTrieCacheTask, SparseTrieTaskMetrics};
@@ -1308,6 +1309,7 @@ mod tests {
     use base_execution_evm_runtime::state::{
         AccountInfo, EvmState, EvmStorageSlot, JournalAccountStatus, TransactionId,
     };
+    use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_memory::StoredAccount as Account;
     use base_execution_state_provider::test_utils::TestBlockBuilder;
     use base_execution_state_provider::{
@@ -1318,7 +1320,6 @@ mod tests {
     use base_execution_state_trie::test_utils::state_root;
     use base_execution_state_types::StorageEntry;
     use rand::Rng;
-    use base_execution_state_maintenance::init::init_genesis;
     use reth_testing_utils::generators;
 
     use super::*;

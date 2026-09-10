@@ -45,9 +45,6 @@ use alloy_primitives::{
 };
 use base_common_runtime_tasks::Runtime;
 use base_execution_state_provider::{DatabaseProviderROFactory, ProviderError, ProviderResult};
-use base_execution_state_types::{DatabaseError, StateProofError};
-use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
-use reth_primitives_traits::{FastInstant as Instant, dashmap::DashMap};
 use base_execution_state_trie::{
     DecodedMultiProofV2, HashedPostState, MultiProofTargetsV2, ProofTrieNodeV2, ProofV2Target,
     hashed_cursor::{
@@ -59,7 +56,10 @@ use base_execution_state_trie::{
         InstrumentedTrieCursor, TrieCursorFactory, TrieCursorMetricsCache, TrieStorageCursor,
     },
 };
+use base_execution_state_types::{DatabaseError, StateProofError};
+use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender, unbounded};
 use tracing::{debug, debug_span, error, instrument, trace};
+use {reth_primitives_traits::dashmap::DashMap, std::time::Instant};
 
 #[cfg(feature = "metrics")]
 use crate::proof_task_metrics::{ProofTaskCursorMetrics, ProofTaskTrieMetrics};

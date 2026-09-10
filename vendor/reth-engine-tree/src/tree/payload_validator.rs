@@ -136,20 +136,22 @@ use base_execution_state_provider::{
 };
 use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
 use base_execution_state_tasks::{CacheFillMode, CacheStats};
-use base_execution_state_types::ProviderResult;
-use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
-use reth_primitives_traits::{
-    AlloyBlockHeader, BlockBody, FastInstant as Instant, GotExpected, RecoveredBlock, SealedBlock,
-    SealedHeader, SignerRecoverable,
-};
 use base_execution_state_trie::{
     HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
     trie_cursor::TrieCursorFactory, updates::TrieUpdates,
 };
+use base_execution_state_types::ProviderResult;
+use reth_engine_primitives::{ExecutableTxIterator, ExecutionPayload, InvalidBlockHook};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 use {
     base_execution_state_provider::CanonicalInMemoryState,
     base_execution_state_types::ExecutedBlock, base_execution_state_types::ExecutionTimingStats,
+};
+use {
+    reth_primitives_traits::AlloyBlockHeader, reth_primitives_traits::BlockBody,
+    reth_primitives_traits::GotExpected, reth_primitives_traits::RecoveredBlock,
+    reth_primitives_traits::SealedBlock, reth_primitives_traits::SealedHeader,
+    reth_primitives_traits::SignerRecoverable, std::time::Instant,
 };
 
 pub use crate::tree::types::ValidationOutcome;

@@ -4,10 +4,10 @@ use std::hash::Hasher;
 
 use base_execution_state_database::Table;
 use base_execution_state_database::tables;
-use clap::ValueEnum;
 use base_execution_state_maintenance::DbTool;
-use reth_primitives_traits::FastInstant as Instant;
 use base_execution_state_provider::RocksDBProviderFactory;
+use clap::ValueEnum;
+use std::time::Instant;
 use tracing::info;
 
 use super::{PROGRESS_LOG_INTERVAL, checksum_hasher};

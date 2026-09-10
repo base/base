@@ -10,9 +10,6 @@ use std::{
 use alloy_primitives::{Address, B256, StorageKey, StorageValue};
 use base_common_observability_metrics::Metrics;
 use base_execution_state_memory::{StoredAccount as Account, StoredBytecode as Bytecode};
-use base_execution_state_types::ProviderResult;
-use metrics::{Gauge, Histogram};
-use reth_primitives_traits::FastInstant as Instant;
 use base_execution_state_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, StateProofProvider,
     StateProvider, StateRootProvider, StorageRootProvider,
@@ -21,6 +18,9 @@ use base_execution_state_trie::{
     AccountProof, HashedPostState, HashedStorage, MultiProof, MultiProofTargets, StorageMultiProof,
     StorageProof, TrieInput, updates::TrieUpdates,
 };
+use base_execution_state_types::ProviderResult;
+use metrics::{Gauge, Histogram};
+use std::time::Instant;
 
 /// Nanoseconds per second
 const NANOS_PER_SEC: u32 = 1_000_000_000;

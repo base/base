@@ -22,7 +22,7 @@
 
 use alloy_eips::BlockNumHash;
 use crossbeam_channel::Receiver as CrossbeamReceiver;
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tracing::trace;
 
 use crate::persistence::PersistenceResult;

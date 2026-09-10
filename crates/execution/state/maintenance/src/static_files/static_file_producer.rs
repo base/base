@@ -16,7 +16,7 @@ use base_execution_state_types::PruneModes;
 use base_execution_state_types::{HighestStaticFiles, StaticFileTargets};
 use base_execution_state_types::{StageId, StaticFileSegment};
 use parking_lot::Mutex;
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tracing::{debug, trace};
 
 use crate::static_files::{StaticFileProducerEvent, segments::Receipts};

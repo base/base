@@ -11,7 +11,7 @@ use base_execution_state_provider::{
 use base_execution_state_types::StageId;
 use base_execution_state_types::{PruneProgress, PrunedSegmentInfo, PrunerOutput};
 use reth_exex_types::FinishedExExHeight;
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tokio::sync::watch;
 use tracing::{debug, instrument};
 

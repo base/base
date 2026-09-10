@@ -16,7 +16,7 @@ use jsonrpsee::{
     server::middleware::rpc::RpcServiceT,
     types::Request,
 };
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tower::Layer;
 
 /// Metrics for the RPC server.

@@ -16,8 +16,8 @@ use base_execution_state_provider::{
 };
 use base_execution_state_types::ProviderError;
 use crossbeam_channel::Sender as CrossbeamSender;
-use reth_primitives_traits::FastInstant as Instant;
 use reth_stages_api::{MetricEvent, MetricEventsSender};
+use std::time::Instant;
 use thiserror::Error;
 use tracing::{debug, error, instrument, warn};
 

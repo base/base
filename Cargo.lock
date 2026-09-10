@@ -14339,7 +14339,6 @@ dependencies = [
  "once_cell",
  "proptest",
  "proptest-arbitrary-interop",
- "quanta",
  "rand 0.8.7",
  "rand 0.9.5",
  "rayon",

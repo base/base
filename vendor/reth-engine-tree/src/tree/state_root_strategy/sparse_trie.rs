@@ -22,7 +22,7 @@ use base_execution_state_types::{MultiProofTargetsV2, ProofV2Target, ProofV2Targ
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use metrics::{Gauge, Histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tracing::{debug, debug_span, error, instrument, trace_span};
 use {
     base_execution_state_trie::DeferredDrops, base_execution_state_trie::RevealableSparseTrie,
@@ -1116,11 +1116,11 @@ enum SparseTrieTaskMessage {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, U256, keccak256};
+    use base_execution_state_maintenance::init::init_genesis;
     use base_execution_state_provider::test_utils::create_test_provider_factory;
     use base_execution_state_provider::{OverlayManager, OverlayStateProviderFactory};
     use base_execution_state_tasks::ProofTaskCtx;
     use base_execution_state_trie::ArenaParallelSparseTrie;
-    use base_execution_state_maintenance::init::init_genesis;
 
     use super::*;
 

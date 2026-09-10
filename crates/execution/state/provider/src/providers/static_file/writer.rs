@@ -17,7 +17,7 @@ use base_execution_state_types::{
 };
 use base_execution_state_types::{ProviderError, ProviderResult, StaticFileWriterError};
 use parking_lot::{RawRwLock, RwLock, lock_api::RwLockWriteGuard};
-use reth_primitives_traits::FastInstant as Instant;
+use std::time::Instant;
 use tracing::{debug, instrument};
 
 use super::{

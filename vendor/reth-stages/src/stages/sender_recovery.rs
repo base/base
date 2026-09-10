@@ -5,21 +5,24 @@ use base_common_types_chain::BaseTxEnvelope;
 use base_execution_evm_blocks::ConsensusError;
 use base_execution_state_database::static_file::TransactionMask;
 use base_execution_state_database::{DbCursorRW, DbTx, DbTxMut, RawValue, tables};
-use base_execution_state_types::StaticFileSegment;
-use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
-use reth_config::config::SenderRecoveryConfig;
-use reth_primitives_traits::{FastInstant as Instant, GotExpected, SignedTransaction};
 use base_execution_state_provider::{
     BlockReader, DBProvider, EitherWriter, HeaderProvider, ProviderError, PruneCheckpointReader,
     PruneCheckpointWriter, StaticFileProviderFactory, StatsReader, StorageSettingsCache,
     TransactionsProvider,
 };
+use base_execution_state_types::StaticFileSegment;
+use base_execution_state_types::{PruneCheckpoint, PruneMode, PrunePurpose, PruneSegment};
+use reth_config::config::SenderRecoveryConfig;
 use reth_stages_api::{
     BlockErrorKind, EntitiesCheckpoint, ExecInput, ExecOutput, Stage, StageCheckpoint, StageError,
     StageId, UnwindInput, UnwindOutput,
 };
 use thiserror::Error;
 use tracing::*;
+use {
+    reth_primitives_traits::GotExpected, reth_primitives_traits::SignedTransaction,
+    std::time::Instant,
+};
 
 /// Maximum amount of transactions to read from disk at one time before we flush their senders to
 /// disk. Since each rayon worker will hold at most 100 transactions (`WORKER_CHUNK_SIZE`), we
@@ -457,15 +460,15 @@ mod tests {
     use assert_matches::assert_matches;
     use base_common_types_chain::BaseTxEnvelope as TransactionSigned;
     use base_execution_state_database::{DbCursorRO, models::StorageSettings};
-    use base_execution_state_types::StaticFileSegment;
-    use base_execution_state_types::{PruneCheckpoint, PruneMode};
-    use reth_primitives_traits::{SealedBlock, SignerRecoverable};
     use base_execution_state_provider::{
         BlockBodyIndicesProvider, DatabaseProviderFactory, PruneCheckpointWriter,
         StaticFileProviderFactory, TransactionsProvider, providers::StaticFileWriter,
     };
+    use base_execution_state_types::StaticFileSegment;
+    use base_execution_state_types::{PruneCheckpoint, PruneMode};
     use reth_stages_api::StageUnitCheckpoint;
     use reth_testing_utils::generators::{self, BlockParams, BlockRangeParams};
+    use {reth_primitives_traits::SealedBlock, reth_primitives_traits::SignerRecoverable};
 
     use super::*;
     use crate::test_utils::{

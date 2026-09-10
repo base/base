@@ -36,7 +36,6 @@ once_cell = { workspace = true, features = ["critical-section"] }
 proptest-arbitrary-interop = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true, features = ["k256"] }
 dashmap = { workspace = true, features = ["inline"], optional = true }
-quanta = { workspace = true, optional = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 proptest = { workspace = true, optional = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = [
@@ -92,8 +91,7 @@ arbitrary = [
     "dashmap?/arbitrary",
 ]
 dashmap = ["dep:dashmap"]
-default = ["std", "quanta"]
-quanta = ["std", "dep:quanta"]
+default = ["std"]
 rayon = ["dep:rayon"]
 reth-codec = ["base-common-types-chain/reth"]
 secp256k1 = ["base-common-types-chain/secp256k1"]
