@@ -185,6 +185,11 @@ impl SnapshotManifestExt for SnapshotManifest {
 pub struct ManifestGenerationParams<'a> {
     /// Reth node datadir containing static files, state DB, and optional proofs DB.
     pub source_datadir: &'a Path,
+    /// Optional directory where the directory-backed generator writes archives and `manifest.json`.
+    ///
+    /// This is required by [`SnapshotGenerator::generate_manifest`] and unused by
+    /// [`SnapshotGenerator::generate_manifest_with_sink`].
+    pub output_dir: Option<&'a Path>,
     /// Chain ID recorded in the manifest.
     pub chain_id: u64,
     /// Optional base URL recorded in the manifest.
@@ -269,10 +274,10 @@ impl SnapshotGenerator {
     /// Returns the list of files created in the output directory.
     ///
     /// From <https://github.com/paradigmxyz/reth/blob/420693521fccd1437071a15a4a54a3a98b5492cf/crates/cli/commands/src/download/manifest.rs>
-    pub fn generate_manifest(
-        params: &ManifestGenerationParams<'_>,
-        output_dir: &Path,
-    ) -> Result<Vec<PathBuf>> {
+    pub fn generate_manifest(params: &ManifestGenerationParams<'_>) -> Result<Vec<PathBuf>> {
+        let output_dir = params
+            .output_dir
+            .context("output_dir is required for directory-backed snapshot generation")?;
         std::fs::create_dir_all(output_dir)
             .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
 
@@ -1009,6 +1014,7 @@ mod tests {
 
     fn test_manifest_params<'a>(
         source_datadir: &'a Path,
+        output_dir: &'a Path,
         remote_static_files: &'a HashMap<String, u64>,
         previous_manifest: Option<&'a SnapshotManifest>,
         block: Option<u64>,
@@ -1016,6 +1022,7 @@ mod tests {
     ) -> ManifestGenerationParams<'a> {
         ManifestGenerationParams {
             source_datadir,
+            output_dir: Some(output_dir),
             chain_id: 8453,
             base_url: None,
             block,
@@ -1145,10 +1152,14 @@ mod tests {
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
         let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(
-            &test_manifest_params(source.path(), &remote, None, Some(0), false),
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
             output.path(),
-        )
+            &remote,
+            None,
+            Some(0),
+            false,
+        ))
         .unwrap();
 
         assert!(
@@ -1180,10 +1191,14 @@ mod tests {
         std::fs::write(proofs_dir.join("000801.log"), b"wal-data").unwrap();
 
         let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(
-            &test_manifest_params(source.path(), &remote, None, Some(0), true),
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
             output.path(),
-        )
+            &remote,
+            None,
+            Some(0),
+            true,
+        ))
         .unwrap();
 
         assert!(
@@ -1225,10 +1240,14 @@ mod tests {
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
         let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(
-            &test_manifest_params(source.path(), &remote, None, Some(0), true),
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
             output.path(),
-        )
+            &remote,
+            None,
+            Some(0),
+            true,
+        ))
         .unwrap();
 
         assert!(
@@ -1258,10 +1277,14 @@ mod tests {
         std::fs::write(proofs_dir.join("CURRENT"), b"MANIFEST-000014\n").unwrap();
 
         let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(
-            &test_manifest_params(source.path(), &remote, None, Some(0), false),
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
             output.path(),
-        )
+            &remote,
+            None,
+            Some(0),
+            false,
+        ))
         .unwrap();
 
         assert!(
@@ -1305,16 +1328,14 @@ mod tests {
             }],
             123,
         );
-        let files = SnapshotGenerator::generate_manifest(
-            &test_manifest_params(
-                source.path(),
-                &remote,
-                Some(&previous_manifest),
-                Some(2_000_000),
-                false,
-            ),
+        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+            source.path(),
             output.path(),
-        )
+            &remote,
+            Some(&previous_manifest),
+            Some(2_000_000),
+            false,
+        ))
         .unwrap();
 
         let filenames: Vec<String> = files
@@ -1369,19 +1390,17 @@ mod tests {
             123,
         );
 
-        let files = SnapshotGenerator::generate_manifest(
-            &ManifestGenerationParams {
-                source_datadir: source.path(),
-                chain_id: 8453,
-                base_url: None,
-                block: Some(2_000_000),
-                blocks_per_file: Some(500_000),
-                remote_static_files: &remote,
-                previous_manifest: Some(&previous_manifest),
-                upload_proofs: false,
-            },
-            output.path(),
-        )
+        let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            source_datadir: source.path(),
+            output_dir: Some(output.path()),
+            chain_id: 8453,
+            base_url: None,
+            block: Some(2_000_000),
+            blocks_per_file: Some(500_000),
+            remote_static_files: &remote,
+            previous_manifest: Some(&previous_manifest),
+            upload_proofs: false,
+        })
         .unwrap();
 
         assert!(

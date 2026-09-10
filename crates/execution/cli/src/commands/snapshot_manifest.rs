@@ -73,19 +73,17 @@ impl SnapshotManifestCommand {
             block,
             "packaging modular snapshot archives"
         );
-        SnapshotGenerator::generate_manifest(
-            &ManifestGenerationParams {
-                source_datadir: &self.source_datadir,
-                chain_id: self.chain_id,
-                base_url: self.base_url.as_deref(),
-                block: Some(block),
-                blocks_per_file: Some(blocks_per_file),
-                remote_static_files: &remote_static_files,
-                previous_manifest: previous_manifest.as_ref(),
-                upload_proofs: self.proofs,
-            },
-            &self.output_dir,
-        )
+        SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            source_datadir: &self.source_datadir,
+            output_dir: Some(&self.output_dir),
+            chain_id: self.chain_id,
+            base_url: self.base_url.as_deref(),
+            block: Some(block),
+            blocks_per_file: Some(blocks_per_file),
+            remote_static_files: &remote_static_files,
+            previous_manifest: previous_manifest.as_ref(),
+            upload_proofs: self.proofs,
+        })
         .map_err(|error| eyre::eyre!("snapshot generation failed: {error:#}"))?;
         Ok(())
     }
