@@ -123,7 +123,6 @@ reqwest = ["dep:reqwest", "dep:alloy-transport-http", "alloy-rpc-client/reqwest"
 reqwest-default-tls = ["alloy-transport-http?/reqwest-default-tls"]
 reqwest-native-tls = ["alloy-transport-http?/reqwest-native-tls"]
 reqwest-rustls-tls = ["alloy-transport-http?/reqwest-rustls-tls"]
-rpc-api = []
 throttle = ["alloy-transport/throttle"]
 trace-api = []
 txpool-api = []
