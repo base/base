@@ -13,7 +13,6 @@ use base_execution_rpc::{
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::providers::BlockchainProvider;
-use base_node_context::{AddOnsContext, BaseNodePool};
 pub use jsonrpsee::{
     core::middleware::layer::Either,
     server::middleware::rpc::{RpcService, RpcServiceBuilder},
@@ -25,6 +24,7 @@ use reth_rpc_builder::{
     RpcConfig, RpcRegistryInner, RpcServerConfig, RpcServerHandle, TransportRpcModules,
 };
 use reth_rpc_eth_types::{EthStateCache, cache::cache_new_blocks_task};
+use {base_execution_txpool::BaseTransactionPool, base_node_context::AddOnsContext};
 
 use crate::{InvalidBlockHookBuilder, TxpoolPrewarmSource};
 
@@ -78,7 +78,7 @@ impl RpcContext<'_> {
     }
 
     /// Returns the transaction pool instance.
-    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
         self.node.pool()
     }
 
@@ -146,7 +146,7 @@ impl RpcHandle {
     /// Returns an instance of the [`AdminApi`] for the rpc server.
     pub fn admin_api(
         &self,
-    ) -> AdminApi<reth_network::NetworkHandle, BaseNodePool<BlockchainProvider>> {
+    ) -> AdminApi<reth_network::NetworkHandle, BaseTransactionPool<BlockchainProvider>> {
         self.rpc_registry.admin_api()
     }
 }

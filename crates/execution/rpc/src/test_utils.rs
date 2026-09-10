@@ -15,7 +15,6 @@ use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore,
     EthTransactionValidatorBuilder, Pool,
 };
-use base_node_context::BaseNodePool;
 use reth_network::NetworkHandle;
 use reth_primitives_traits::RecoveredBlock;
 use {base_execution_state_provider::NewCanonicalChain, base_execution_state_types::ExecutedBlock};
@@ -23,7 +22,7 @@ use {base_execution_state_provider::NewCanonicalChain, base_execution_state_type
 use crate::{BaseRpcContext, EthApiBuilder};
 
 /// Production Base pool used by RPC tests.
-pub type TestPool = BaseNodePool<BlockchainProvider>;
+pub type TestPool = BaseTransactionPool<BlockchainProvider>;
 
 /// Constructs concrete Base fixtures for RPC tests.
 #[derive(Debug)]
@@ -33,7 +32,8 @@ impl RpcTestUtils {
     /// Materializes fixture accounts and blocks in a real Base provider.
     pub fn provider(mock: MockEthProvider) -> BlockchainProvider {
         let factory = create_test_provider_factory_with_chain_spec(mock.chain_spec());
-        base_execution_state_maintenance::init::init_genesis(&factory).expect("initialize RPC fixture genesis");
+        base_execution_state_maintenance::init::init_genesis(&factory)
+            .expect("initialize RPC fixture genesis");
         let writer = factory.provider_rw().expect("fixture writer");
         mock.write_accounts_to(&writer).expect("fixture accounts");
         writer.commit().expect("commit fixture accounts");

@@ -21,9 +21,10 @@ use base_common_types_rpc::{
 use base_execution_state_api::{
     BlockHashReader, BlockIdReader, BlockNumReader, HeaderProvider, ReceiptProvider,
 };
+use base_execution_state_provider::providers::BlockchainProvider;
 use base_execution_state_types::ProviderError;
+use base_execution_txpool::BaseTransactionPool;
 use base_execution_txpool::{NewSubpoolTransactionStream, TransactionPool};
-use base_node_context::BaseNodePool;
 use futures::{
     Future,
     stream::{FuturesOrdered, StreamExt},
@@ -31,7 +32,6 @@ use futures::{
 use itertools::Itertools;
 use jsonrpsee::{core::RpcResult, server::IdProvider};
 use reth_primitives_traits::SealedHeader;
-use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{
     EthApiError, EthFilterConfig, EthStateCache, EthSubscriptionIdProvider,
     logs_utils::{self, ProviderOrBlock, append_matching_block_logs},
@@ -170,7 +170,7 @@ impl EthFilter {
     }
 
     /// Access the underlying pool.
-    fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+    fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
         self.inner.eth_api.pool()
     }
 
@@ -1279,8 +1279,8 @@ mod tests {
     use alloy_primitives::FixedBytes;
     use base_common_runtime_tasks::Runtime;
     use base_common_types_chain::{BaseBlock, BaseReceipt};
-    use rand::Rng;
     use base_execution_state_provider::test_utils::MockEthProvider;
+    use rand::Rng;
     use reth_testing_utils::generators;
 
     use super::*;

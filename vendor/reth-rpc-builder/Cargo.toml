@@ -21,12 +21,12 @@ dyn-clone = { workspace = true }
 thiserror = { workspace = true }
 pin-project = { workspace = true }
 reth-network = { workspace = true }
-base-execution-state-provider = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
 base-node-context = { workspace = true }
 base-execution-rpc = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
+base-execution-txpool = {workspace = true}
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-primitives-traits = { workspace = true }
@@ -35,6 +35,7 @@ base-common-chain-config = { workspace = true }
 tower = { workspace = true, features = ["full"] }
 http = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
+base-execution-state-provider = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
 tracing = { workspace = true, features = ["attributes"] }
 tower-http = { workspace = true, features = ["default", "full"] }
@@ -52,7 +53,6 @@ base-execution-network-types = { workspace = true }
 serde_json = { workspace = true, features = ["alloc"] }
 clap = { workspace = true, features = ["default", "derive"] }
 reqwest = { workspace = true, features = ["rustls", "stream"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-types-chain = { workspace = true, features = ["serde"]}
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-txpool = { workspace = true, features = ["test-utils"] }
@@ -60,5 +60,6 @@ reth-engine-primitives = { workspace = true, features = ["test-utils"] }
 base-common-runtime-tasks = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }
 base-execution-rpc = { workspace = true, features = ["test-utils", "client"] }
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }

@@ -1,7 +1,7 @@
 //! Base `eth_` endpoint implementation.
 
-use base_node_context::BaseNodePool;
 use base_execution_state_provider::providers::BlockchainProvider;
+use base_execution_txpool::BaseTransactionPool;
 mod proofs;
 
 pub use proofs::*;
@@ -87,7 +87,7 @@ impl BaseEthApi {
 
 impl BaseEthApi {
     #[inline]
-    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
         self.inner.pool()
     }
 

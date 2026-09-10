@@ -1,9 +1,9 @@
 //! Concrete components used by Base RPC handlers.
 
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_node_context::{BaseNodeContext, BaseNodePool};
-use reth_network::NetworkHandle;
 use base_execution_state_provider::providers::BlockchainProvider;
+use reth_network::NetworkHandle;
+use {base_execution_txpool::BaseTransactionPool, base_node_context::BaseNodeContext};
 
 /// The provider, pool, network, and execution rules shared by Base RPC handlers.
 #[derive(Debug, Clone)]
@@ -11,7 +11,7 @@ pub struct BaseRpcContext {
     /// Canonical Base blockchain and state provider.
     pub provider: BlockchainProvider,
     /// Base transaction pool.
-    pub pool: BaseNodePool<BlockchainProvider>,
+    pub pool: BaseTransactionPool<BlockchainProvider>,
     /// Handle to the peer network.
     pub network: NetworkHandle,
     /// Base execution rules.

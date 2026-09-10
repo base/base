@@ -4,9 +4,9 @@ use alloy_eips::BlockNumHash;
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadBuilderHandle;
+use base_execution_state_provider::providers::BlockchainProvider;
 use reth_exex_types::ExExHead;
 use reth_node_core::node_config::NodeConfig;
-use base_execution_state_provider::providers::BlockchainProvider;
 use tokio::sync::mpsc::{UnboundedSender, error::SendError};
 
 use crate::{ExExContextDyn, ExExEvent, ExExNotifications, ExExNotificationsStream};
@@ -63,7 +63,7 @@ impl ExExContext {
 
 impl ExExContext {
     /// Returns the transaction pool of the node.
-    pub fn pool(&self) -> &base_node_context::BaseNodePool<BlockchainProvider> {
+    pub fn pool(&self) -> &base_execution_txpool::BaseTransactionPool<BlockchainProvider> {
         self.components.pool()
     }
 

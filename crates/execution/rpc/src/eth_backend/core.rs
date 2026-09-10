@@ -14,10 +14,10 @@ use base_common_types_chain::BlockHeader;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_api::BlockReaderIdExt;
 use base_execution_state_provider::providers::BlockchainProvider;
+use base_execution_txpool::BaseTransactionPool;
 use base_execution_txpool::{
     AddedTransactionOutcome, BatchTxProcessor, BatchTxRequest, BlobSidecarConverter,
 };
-use base_node_context::BaseNodePool;
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 use {
     base_common_types_rpc::PendingBlockKind, reth_rpc_eth_types::EthApiError,
@@ -226,7 +226,7 @@ impl BaseEthApiInner {
 
     /// Returns a handle to the transaction pool.
     #[inline]
-    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
         &self.components.pool
     }
 

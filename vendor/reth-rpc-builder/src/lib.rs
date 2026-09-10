@@ -25,7 +25,7 @@ use base_execution_rpc::{
     EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi, RPCApi, RethApi,
     TraceApi, TxPoolApi, Web3Api,
 };
-use base_node_context::BaseNodePool;
+use base_execution_txpool::BaseTransactionPool;
 pub use cors::CorsDomainError;
 use error::{RpcError, ServerKind};
 use http::{HeaderMap, header::AUTHORIZATION};
@@ -36,6 +36,7 @@ use base_execution_rpc::{
     AdminApiServer, DebugApiServer, MevSimApiServer, MinerApiServer, NetApiServer, OtterscanServer,
     RethApiServer, RpcApiServer, TraceApiServer, TxPoolApiServer, Web3ApiServer,
 };
+use base_execution_state_provider::providers::BlockchainProvider;
 pub use jsonrpsee::server::ServerBuilder;
 use jsonrpsee::{
     Methods, RpcModule,
@@ -45,7 +46,6 @@ use jsonrpsee::{
     },
 };
 use reth_engine_primitives::ConsensusEngineEvent;
-use base_execution_state_provider::providers::BlockchainProvider;
 use reth_rpc_eth_types::{EthConfig, EthSubscriptionIdProvider};
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
 pub use reth_rpc_server_types::{RethRpcModule, constants};
@@ -114,7 +114,7 @@ impl RpcModuleConfig {
 #[derive(Debug)]
 pub struct RpcRegistryInner {
     provider: BlockchainProvider,
-    pool: BaseNodePool<BlockchainProvider>,
+    pool: BaseTransactionPool<BlockchainProvider>,
     network: reth_network::NetworkHandle,
     executor: Runtime,
     evm_config: BaseEvmConfig,
@@ -138,7 +138,7 @@ impl RpcRegistryInner {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: BlockchainProvider,
-        pool: BaseNodePool<BlockchainProvider>,
+        pool: BaseTransactionPool<BlockchainProvider>,
         network: reth_network::NetworkHandle,
         executor: Runtime,
         consensus: Arc<BaseBeaconConsensus>,
@@ -179,7 +179,7 @@ impl RpcRegistryInner {
     }
 
     /// Returns a reference to the pool
-    pub const fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+    pub const fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
         &self.pool
     }
 
@@ -217,7 +217,7 @@ impl RpcRegistryInner {
     /// Instantiates `AdminApi`
     pub fn admin_api(
         &self,
-    ) -> AdminApi<reth_network::NetworkHandle, BaseNodePool<BlockchainProvider>> {
+    ) -> AdminApi<reth_network::NetworkHandle, BaseTransactionPool<BlockchainProvider>> {
         AdminApi::new(self.network.clone(), self.provider.chain_spec(), self.pool.clone())
     }
 

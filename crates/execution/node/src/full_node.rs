@@ -12,11 +12,11 @@ use reth_engine_primitives::ConsensusEngineEvent;
 // re-export the node api types
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::TaskExecutor;
+use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use reth_node_core::{
     dirs::{ChainPath, DataDirPath},
     node_config::NodeConfig,
 };
-use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use reth_rpc_builder::RpcServerHandle;
 
 use crate::EngineShutdown;
@@ -29,7 +29,7 @@ pub struct FullNode {
     /// The evm configuration.
     pub evm_config: BaseEvmConfig,
     /// The node's transaction pool.
-    pub pool: base_node_context::BaseNodePool<BlockchainProvider>,
+    pub pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     /// Handle to the node's network.
     pub network: reth_network::NetworkHandle,
     /// Provider to interact with the node's database

@@ -73,7 +73,7 @@ impl AccountStateDiff {
 }
 
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
-pub struct BaseTransactionPool<Client, S>
+pub struct BaseTransactionPool<Client, S = crate::DiskFileBlobStore>
 where
     BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
@@ -1736,6 +1736,7 @@ mod tests {
         transaction::{Recovered, SignerRecoverable},
     };
     use base_execution_evm_blocks::BaseEvmConfig;
+    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
     use base_execution_txpool::{
         CanonicalStateUpdate, EthTransactionValidatorBuilder, InMemoryBlobStore, PoolConfig,
         PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,
@@ -1743,7 +1744,6 @@ mod tests {
     use base_testing_support::build_test_genesis_zenith;
     use futures::{StreamExt, future::join_all};
     use reth_primitives_traits::SealedBlock;
-    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     use super::*;
     use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};

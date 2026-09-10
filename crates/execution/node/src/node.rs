@@ -523,7 +523,7 @@ impl BaseNode {
     pub async fn build_network(
         &self,
         ctx: &BuilderContext,
-        pool: base_node_context::BaseNodePool<BlockchainProvider>,
+        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     ) -> eyre::Result<NetworkHandle> {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;

@@ -26,6 +26,7 @@ reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 reth-stages-api = { workspace = true }
 base-node-context = { workspace = true }
+base-execution-txpool = {workspace = true}
 base-common-io-files = { workspace = true }
 reth-primitives-traits = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
@@ -48,11 +49,11 @@ reth-exex-types = { workspace = true, features = ["default", "serde", "serde-bin
 
 [dev-dependencies]
 alloy-genesis = { workspace = true }
-base-execution-state-maintenance = { workspace = true }
 alloy-hardforks = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-common-chain-config = { workspace = true }
 rand = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 tempfile = { workspace = true, features = ["default"] }
 reth-primitives-traits = { workspace = true, features = ["test-utils"] }
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }

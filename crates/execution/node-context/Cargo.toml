@@ -17,10 +17,10 @@ workspace = true
 
 [dependencies]
 reth-network = { workspace = true }
-base-execution-state-provider = { workspace = true }
 reth-node-core = { workspace = true }
 base-execution-txpool = { workspace = true }
 reth-engine-primitives = { workspace = true }
 base-common-runtime-tasks = {workspace = true}
 base-execution-evm-blocks = {workspace = true}
+base-execution-state-provider = { workspace = true }
 base-execution-payload-builder = { workspace = true }

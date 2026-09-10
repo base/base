@@ -3,17 +3,14 @@
 use base_common_runtime_tasks::TaskExecutor;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::providers::BlockchainProvider;
-
-/// Base's transaction pool with its production disk blob store.
-pub type BaseNodePool<Provider> =
-    base_execution_txpool::BaseTransactionPool<Provider, base_execution_txpool::DiskFileBlobStore>;
+use base_execution_txpool::BaseTransactionPool;
 
 /// Container for the node's types and the components and other internals that can be used by
 /// addons of the node.
 #[derive(Debug, Clone)]
 pub struct BaseNodeContext {
     /// The node transaction pool.
-    pub transaction_pool: BaseNodePool<BlockchainProvider>,
+    pub transaction_pool: BaseTransactionPool<BlockchainProvider>,
     /// The Base EVM configuration.
     pub evm_config: BaseEvmConfig,
     /// The Base consensus validator.
@@ -30,7 +27,7 @@ pub struct BaseNodeContext {
 
 impl BaseNodeContext {
     /// Returns the Base transaction pool.
-    pub fn pool(&self) -> &BaseNodePool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
         &self.transaction_pool
     }
 

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use alloy_eips::eip4844::env_settings::EnvKzgSettings;
 use base_common_chain_config::BaseChainSpec;
 use base_common_runtime_tasks::TaskExecutor;
+use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use base_execution_txpool::{PoolConfig, TransactionPool};
 use reth_network::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
@@ -15,7 +16,6 @@ use reth_node_core::{
     node_config::NodeConfig,
     primitives::Head,
 };
-use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use secp256k1::SecretKey;
 use tracing::{info, trace, warn};
 
@@ -114,7 +114,7 @@ impl BuilderContext {
     pub fn start_network(
         &self,
         builder: NetworkBuilder<(), ()>,
-        pool: base_node_context::BaseNodePool<BlockchainProvider>,
+        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
     ) -> NetworkHandle {
         let (handle, network, txpool, eth) = builder
             .transactions_with_policies(
