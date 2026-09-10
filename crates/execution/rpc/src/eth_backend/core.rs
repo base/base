@@ -224,7 +224,7 @@ impl BaseEthApiInner {
 
     /// Returns a handle to the transaction pool.
     #[inline]
-    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool {
         &self.components.pool
     }
 

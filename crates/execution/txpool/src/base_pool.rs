@@ -72,12 +72,16 @@ impl AccountStateDiff {
 }
 
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
-pub struct BaseTransactionPool<Client, S = crate::DiskFileBlobStore>
+pub struct BaseTransactionPool<S = crate::DiskFileBlobStore>
 where
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
-    protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S>,
+    protocol_pool: Pool<
+        TransactionValidationTaskExecutor<
+            BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
+        >,
+        S,
+    >,
     ordering: crate::BaseOrdering,
     nonce_pool: Arc<RwLock<TwoDNoncePool>>,
     listeners: Arc<RwLock<SidecarListeners>>,
@@ -93,10 +97,8 @@ where
     protocol_admission_lock: Arc<Mutex<()>>,
 }
 
-impl<Client, S> fmt::Debug for BaseTransactionPool<Client, S>
+impl<S> fmt::Debug for BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -104,10 +106,8 @@ where
     }
 }
 
-impl<Client, S> Clone for BaseTransactionPool<Client, S>
+impl<S> Clone for BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn clone(&self) -> Self {
@@ -123,23 +123,20 @@ where
     }
 }
 
-impl<Client, S> Unpin for BaseTransactionPool<Client, S>
-where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
-    S: BlobStore + Clone,
-{
-}
+impl<S> Unpin for BaseTransactionPool<S> where S: BlobStore + Clone {}
 
-impl<Client, S> BaseTransactionPool<Client, S>
+impl<S> BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     /// Creates a new wrapper around the reth protocol pool.
     pub fn new(
-        protocol_pool: Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S>,
+        protocol_pool: Pool<
+            TransactionValidationTaskExecutor<
+                BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
+            >,
+            S,
+        >,
         ordering: crate::BaseOrdering,
     ) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
@@ -183,14 +180,21 @@ where
     /// Returns the wrapped reth pool.
     pub const fn protocol_pool(
         &self,
-    ) -> &Pool<TransactionValidationTaskExecutor<BaseTransactionValidator<Client>>, S> {
+    ) -> &Pool<
+        TransactionValidationTaskExecutor<
+            BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
+        >,
+        S,
+    > {
         &self.protocol_pool
     }
 
     /// Returns the validator backing the wrapped reth pool.
     pub fn validator(
         &self,
-    ) -> &TransactionValidationTaskExecutor<BaseTransactionValidator<Client>> {
+    ) -> &TransactionValidationTaskExecutor<
+        BaseTransactionValidator<base_execution_state_provider::BlockchainProvider>,
+    > {
         self.protocol_pool.validator()
     }
 
@@ -783,10 +787,8 @@ where
     }
 }
 
-impl<Client, S> StateDiffInvalidation for BaseTransactionPool<Client, S>
+impl<S> StateDiffInvalidation for BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
@@ -798,10 +800,8 @@ where
     }
 }
 
-impl<Client, S> TransactionPool for BaseTransactionPool<Client, S>
+impl<S> TransactionPool for BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn pool_size(&self) -> PoolSize {
@@ -1383,10 +1383,8 @@ where
     }
 }
 
-impl<Client, S> ParkableTransactionPool for BaseTransactionPool<Client, S>
+impl<S> ParkableTransactionPool for BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn best_transactions_with_attributes_and_parking(
@@ -1404,10 +1402,8 @@ where
     }
 }
 
-impl<Client, S> TransactionPoolExt for BaseTransactionPool<Client, S>
+impl<S> TransactionPoolExt for BaseTransactionPool<S>
 where
-    Client: 'static,
-    BaseTransactionValidator<Client>: TransactionValidator,
     S: BlobStore + Clone,
 {
     fn set_block_info(&self, info: BlockInfo) {
@@ -1733,7 +1729,10 @@ mod tests {
         transaction::{Recovered, SignerRecoverable},
     };
     use base_execution_evm_blocks::BaseEvmConfig;
-    use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use base_execution_state_provider::{
+        BlockchainProvider, DBProvider, DatabaseProviderFactory,
+        test_utils::{ExtendedAccount, MockEthProvider, ProviderTestUtils},
+    };
     use base_execution_txpool::{
         BaseTransactionValidatorBuilder, CanonicalStateUpdate, InMemoryBlobStore, PoolConfig,
         PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,
@@ -1944,15 +1943,16 @@ mod tests {
         assert!(nonce_pool.get(&replacement_hash).is_some());
     }
 
-    type IntegrationPool = BaseTransactionPool<MockEthProvider, InMemoryBlobStore>;
+    type IntegrationPool = BaseTransactionPool<InMemoryBlobStore>;
 
-    fn build_integration_pool() -> (IntegrationPool, MockEthProvider) {
+    fn build_integration_pool() -> (IntegrationPool, BlockchainProvider) {
         let mut genesis = build_test_genesis_zenith();
         genesis.config.chain_id = test_chain_id();
         let chain_spec = Arc::new(BaseChainSpec::from_genesis(genesis));
         let client = MockEthProvider::new()
             .with_chain_spec(chain_spec.as_ref().clone())
             .with_genesis_block();
+        let client = ProviderTestUtils::from_mock(&client);
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
         let blob_store = InMemoryBlobStore::default();
         let validator = BaseTransactionValidatorBuilder::new(client.clone(), evm_config)
@@ -1968,11 +1968,15 @@ mod tests {
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 
-    fn fund(client: &MockEthProvider, account: Address) {
-        client.add_account(
+    fn fund(client: &BlockchainProvider, account: Address) {
+        let mock = MockEthProvider::new();
+        mock.add_account(
             account,
             ExtendedAccount::new(0, U256::from(1_000_000_000_000_000_000u64)),
         );
+        let writer = client.database_provider_rw().expect("funding writer");
+        mock.write_accounts_to(&writer).expect("fund fixture account");
+        writer.commit().expect("commit fixture funding");
     }
 
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {

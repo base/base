@@ -19,7 +19,7 @@ use base_execution_txpool::{
 use crate::{BaseRpcContext, EthApiBuilder};
 
 /// Production Base pool used by RPC tests.
-pub type TestPool = BaseTransactionPool<BlockchainProvider>;
+pub type TestPool = BaseTransactionPool;
 
 /// Constructs concrete Base fixtures for RPC tests.
 #[derive(Debug)]

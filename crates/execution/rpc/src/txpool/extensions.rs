@@ -93,17 +93,13 @@ pub trait AdminTxPoolApi {
 #[derive(Debug, Clone)]
 pub struct TransactionStatusApiImpl {
     sequencer_client: Option<HttpClient>,
-    pool: base_execution_txpool::BaseTransactionPool<
-        base_execution_state_provider::BlockchainProvider,
-    >,
+    pool: base_execution_txpool::BaseTransactionPool,
 }
 
 /// Local mempool-ingress implementation for validity-bearing transactions.
 #[derive(Debug, Clone)]
 pub struct SendRawTransactionValidityApiImpl {
-    pool: base_execution_txpool::BaseTransactionPool<
-        base_execution_state_provider::BlockchainProvider,
-    >,
+    pool: base_execution_txpool::BaseTransactionPool,
     provider: base_execution_state_provider::BlockchainProvider,
     max_validity_predicates: usize,
 }
@@ -113,9 +109,7 @@ impl SendRawTransactionValidityApiImpl {
     ///
     /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn new(
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
+        pool: base_execution_txpool::BaseTransactionPool,
         provider: base_execution_state_provider::BlockchainProvider,
     ) -> Self {
         Self { pool, provider, max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES }
@@ -125,9 +119,7 @@ impl SendRawTransactionValidityApiImpl {
     ///
     /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn with_max_validity_predicates(
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
+        pool: base_execution_txpool::BaseTransactionPool,
         provider: base_execution_state_provider::BlockchainProvider,
         max_validity_predicates: usize,
     ) -> Self {
@@ -162,9 +154,7 @@ impl TransactionStatusApiImpl {
     /// sequencer. Otherwise, the local transaction pool is used.
     pub fn new(
         sequencer_url: Option<String>,
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
+        pool: base_execution_txpool::BaseTransactionPool,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let sequencer_client = if let Some(ref url) = sequencer_url {
             debug!("fetching transaction status from sequencer");
@@ -268,18 +258,12 @@ impl SendRawTransactionValidityApiServer for SendRawTransactionValidityApiImpl {
 /// Implementation of the admin transaction pool management RPC API.
 #[derive(Debug)]
 pub struct AdminTxPoolApiImpl {
-    pool: base_execution_txpool::BaseTransactionPool<
-        base_execution_state_provider::BlockchainProvider,
-    >,
+    pool: base_execution_txpool::BaseTransactionPool,
 }
 
 impl AdminTxPoolApiImpl {
     /// Creates a new admin transaction pool management API instance.
-    pub const fn new(
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
-    ) -> Self {
+    pub const fn new(pool: base_execution_txpool::BaseTransactionPool) -> Self {
         Self { pool }
     }
 }

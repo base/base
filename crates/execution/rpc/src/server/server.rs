@@ -74,7 +74,7 @@ impl RpcModuleConfig {
 #[derive(Debug)]
 pub struct RpcRegistryInner {
     provider: BlockchainProvider,
-    pool: BaseTransactionPool<BlockchainProvider>,
+    pool: BaseTransactionPool,
     network: base_execution_network_service::NetworkHandle,
     executor: Runtime,
     evm_config: BaseEvmConfig,
@@ -98,7 +98,7 @@ impl RpcRegistryInner {
     #[expect(clippy::too_many_arguments)]
     pub fn new(
         provider: BlockchainProvider,
-        pool: BaseTransactionPool<BlockchainProvider>,
+        pool: BaseTransactionPool,
         network: base_execution_network_service::NetworkHandle,
         executor: Runtime,
         consensus: Arc<BaseBeaconConsensus>,
@@ -139,7 +139,7 @@ impl RpcRegistryInner {
     }
 
     /// Returns a reference to the pool
-    pub const fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
+    pub const fn pool(&self) -> &BaseTransactionPool {
         &self.pool
     }
 
@@ -177,10 +177,7 @@ impl RpcRegistryInner {
     /// Instantiates `AdminApi`
     pub fn admin_api(
         &self,
-    ) -> AdminApi<
-        base_execution_network_service::NetworkHandle,
-        BaseTransactionPool<BlockchainProvider>,
-    > {
+    ) -> AdminApi<base_execution_network_service::NetworkHandle, BaseTransactionPool> {
         AdminApi::new(self.network.clone(), self.provider.chain_spec(), self.pool.clone())
     }
 

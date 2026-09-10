@@ -10,7 +10,7 @@ use base_execution_txpool::BaseTransactionPool;
 #[derive(Debug, Clone)]
 pub struct BaseNodeContext {
     /// The node transaction pool.
-    pub transaction_pool: BaseTransactionPool<BlockchainProvider>,
+    pub transaction_pool: BaseTransactionPool,
     /// The Base EVM configuration.
     pub evm_config: BaseEvmConfig,
     /// The Base consensus validator.
@@ -27,7 +27,7 @@ pub struct BaseNodeContext {
 
 impl BaseNodeContext {
     /// Returns the Base transaction pool.
-    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool {
         &self.transaction_pool
     }
 

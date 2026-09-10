@@ -166,7 +166,7 @@ impl EthFilter {
     }
 
     /// Access the underlying pool.
-    fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
+    fn pool(&self) -> &BaseTransactionPool {
         self.inner.eth_api.pool()
     }
 

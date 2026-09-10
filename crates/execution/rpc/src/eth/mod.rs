@@ -89,7 +89,7 @@ impl BaseEthApi {
 
 impl BaseEthApi {
     #[inline]
-    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool {
         self.inner.pool()
     }
 

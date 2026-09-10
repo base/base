@@ -88,9 +88,7 @@ pub struct BasePayloadBuilder {
     /// The type responsible for creating the evm.
     pub evm_config: BaseEvmConfig,
     /// Transaction pool.
-    pub pool: base_execution_txpool::BaseTransactionPool<
-        base_execution_state_provider::BlockchainProvider,
-    >,
+    pub pool: base_execution_txpool::BaseTransactionPool,
     /// Node client.
     pub client: base_execution_state_provider::BlockchainProvider,
     /// Settings for the builder, e.g. DA settings.
@@ -113,9 +111,7 @@ impl BasePayloadBuilder {
     ///
     /// Configures the builder with the default settings.
     pub fn new(
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
+        pool: base_execution_txpool::BaseTransactionPool,
         client: base_execution_state_provider::BlockchainProvider,
         evm_config: BaseEvmConfig,
     ) -> Self {
@@ -124,9 +120,7 @@ impl BasePayloadBuilder {
 
     /// Configures the builder with the given [`BaseBuilderConfig`].
     pub const fn with_builder_config(
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
+        pool: base_execution_txpool::BaseTransactionPool,
         client: base_execution_state_provider::BlockchainProvider,
         evm_config: BaseEvmConfig,
         config: BaseBuilderConfig,

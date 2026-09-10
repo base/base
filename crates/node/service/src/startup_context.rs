@@ -111,7 +111,7 @@ impl BuilderContext {
     pub fn start_network(
         &self,
         builder: NetworkBuilder<(), ()>,
-        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
+        pool: base_execution_txpool::BaseTransactionPool,
     ) -> NetworkHandle {
         let (handle, network, txpool, eth) = builder
             .transactions_with_policies(

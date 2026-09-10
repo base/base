@@ -243,7 +243,12 @@ impl MockEthProvider {
     }
 
     /// Writes account fixtures into a real provider for tests of concrete RPC handlers.
-    pub fn write_accounts_to(&self, provider: &crate::DatabaseProviderRW) -> ProviderResult<()> {
+    pub fn write_accounts_to(
+        &self,
+        provider: &crate::DatabaseProvider<
+            base_execution_state_database::mdbx::tx::Tx<base_execution_state_database::mdbx::RW>,
+        >,
+    ) -> ProviderResult<()> {
         for (address, account) in self.accounts.lock().iter() {
             provider.insert_account_for_hashing([(*address, Some(account.account))])?;
             provider.insert_storage_for_hashing([(

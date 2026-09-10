@@ -268,7 +268,7 @@ impl BaseNode {
         &self,
         ctx: &BuilderContext,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<BaseTransactionPool<BlockchainProvider, DiskFileBlobStore>> {
+    ) -> eyre::Result<BaseTransactionPool<DiskFileBlobStore>> {
         let ordering = match self.args.txpool_ordering {
             TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
             TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
@@ -526,7 +526,7 @@ impl BaseNode {
     pub async fn build_network(
         &self,
         ctx: &BuilderContext,
-        pool: base_execution_txpool::BaseTransactionPool<BlockchainProvider>,
+        pool: base_execution_txpool::BaseTransactionPool,
     ) -> eyre::Result<NetworkHandle> {
         let network_config = self.network_config(ctx)?;
         let network = NetworkManager::builder(network_config).await?;

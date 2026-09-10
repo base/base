@@ -11,7 +11,7 @@ pub struct BaseRpcContext {
     /// Canonical Base blockchain and state provider.
     pub provider: BlockchainProvider,
     /// Base transaction pool.
-    pub pool: BaseTransactionPool<BlockchainProvider>,
+    pub pool: BaseTransactionPool,
     /// Handle to the peer network.
     pub network: NetworkHandle,
     /// Base execution rules.

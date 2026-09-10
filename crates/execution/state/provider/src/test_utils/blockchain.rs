@@ -8,7 +8,7 @@ use base_execution_state_types::{
     BalStoreHandle, BlockWriter, StageCheckpoint, StageId, StaticFileSegment,
 };
 
-use super::create_test_provider_factory_with_chain_spec;
+use super::{MockEthProvider, create_test_provider_factory_with_chain_spec};
 use crate::{
     BlockchainProvider, DBProvider, DatabaseProviderFactory, InMemoryBalStore,
     StaticFileProviderFactory,
@@ -26,6 +26,26 @@ impl ProviderTestUtils {
         let factory = create_test_provider_factory_with_chain_spec(chain_spec)
             .with_bal_store(BalStoreHandle::new(InMemoryBalStore::default()));
         BlockchainProvider::with_latest(factory, header).expect("temporary blockchain provider")
+    }
+
+    /// Materializes mock account and canonical block fixtures in a production provider.
+    pub fn from_mock(mock: &MockEthProvider) -> BlockchainProvider {
+        let provider = Self::empty(mock.chain_spec());
+        let mut blocks: Vec<_> = mock
+            .blocks
+            .lock()
+            .iter()
+            .map(|(hash, block)| {
+                let senders = vec![Default::default(); block.body.transactions.len()];
+                RecoveredBlock::new(block.clone(), senders, *hash)
+            })
+            .collect();
+        blocks.sort_by_key(|block| block.header().number);
+        Self::insert_blocks(&provider, &blocks);
+        let writer = provider.database_provider_rw().expect("fixture account writer");
+        mock.write_accounts_to(&writer).expect("persist fixture accounts");
+        writer.commit().expect("commit fixture accounts");
+        provider
     }
 
     /// Persists blocks and advances the fixture's committed head.

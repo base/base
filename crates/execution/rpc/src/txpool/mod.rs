@@ -19,18 +19,14 @@ use crate::TxPoolApiServer;
 #[derive(Clone)]
 pub struct TxPoolApi {
     /// An interface to interact with the pool
-    pool: base_execution_txpool::BaseTransactionPool<
-        base_execution_state_provider::BlockchainProvider,
-    >,
+    pool: base_execution_txpool::BaseTransactionPool,
     converter: crate::BaseRpcConverter,
 }
 
 impl TxPoolApi {
     /// Creates a new instance of `TxpoolApi`.
     pub const fn new(
-        pool: base_execution_txpool::BaseTransactionPool<
-            base_execution_state_provider::BlockchainProvider,
-        >,
+        pool: base_execution_txpool::BaseTransactionPool,
         converter: crate::BaseRpcConverter,
     ) -> Self {
         Self { pool, converter }

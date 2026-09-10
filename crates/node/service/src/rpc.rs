@@ -75,7 +75,7 @@ impl RpcContext<'_> {
     }
 
     /// Returns the transaction pool instance.
-    pub fn pool(&self) -> &BaseTransactionPool<BlockchainProvider> {
+    pub fn pool(&self) -> &BaseTransactionPool {
         self.node.pool()
     }
 
@@ -143,10 +143,7 @@ impl RpcHandle {
     /// Returns an instance of the [`AdminApi`] for the rpc server.
     pub fn admin_api(
         &self,
-    ) -> AdminApi<
-        base_execution_network_service::NetworkHandle,
-        BaseTransactionPool<BlockchainProvider>,
-    > {
+    ) -> AdminApi<base_execution_network_service::NetworkHandle, BaseTransactionPool> {
         self.rpc_registry.admin_api()
     }
 }

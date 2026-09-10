@@ -57,7 +57,7 @@ pub type TestProviderFactory = ProviderFactory;
 pub type TestBlockchainProvider = BlockchainProvider;
 
 /// Base transaction pool used by the engine client.
-pub type TestPool = BaseTransactionPool<BlockchainProvider>;
+pub type TestPool = BaseTransactionPool;
 
 /// Minimal `L2ToL1MessagePasser` stand-in for Isthmus withdrawals-root tests.
 ///
