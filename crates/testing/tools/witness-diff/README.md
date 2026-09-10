@@ -14,7 +14,7 @@ To additionally record witnesses automatically when a bad block is encountered a
 
 The local witness is fetched from your node using the same `debug_executionWitness` RPC method and saved to a JSON file before running the diff. For example:
 
-```
+```sh
 curl -s -X POST http://localhost:8545 \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","method":"debug_executionWitness","params":["0x292FA96"],"id":1}' \
@@ -25,8 +25,8 @@ The block number in the `params` array must be hex. The `.result` field of the r
 
 ## Running the tool
 
-```
-cargo run -p base-witness-diff -- \
+```sh
+cargo run -p base-testing-tools-witness-diff -- \
   --local <PATH>    path to the local witness JSON file
   --rpc-url <URL>   HTTP(S) URL of the reference L2 node to compare against
   --block <NUMBER>  decimal block number to fetch from the reference node
@@ -36,8 +36,8 @@ cargo run -p base-witness-diff -- \
 
 Example:
 
-```
-cargo run -p base-witness-diff -- \
+```sh
+cargo run -p base-testing-tools-witness-diff -- \
   --local ~/witnesses/43127830_witness.json \
   --rpc-url https://reference-node:8545 \
   --block 43127830

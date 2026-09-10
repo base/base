@@ -97,7 +97,7 @@ members = [
   "crates/common/l1/transactions",
   "crates/common/chain/activation",
   "etc/systems",
-  "etc/tools/witness-diff",
+  "crates/testing/tools/witness-diff",
   "crates/common/client/contracts",
   "vendor/alloy-node-bindings",
   "crates/common/client/ethereum",

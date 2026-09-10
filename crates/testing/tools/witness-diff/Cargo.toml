@@ -1,5 +1,5 @@
 [package]
-name = "base-witness-diff"
+name = "base-testing-tools-witness-diff"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -25,3 +25,8 @@ clap = { workspace = true, features = ["default", "derive"] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-common-client-ethereum = {workspace = true, features = ["default"]}
+
+[[bin]]
+name = "base-witness-diff"
+path = "src/main.rs"
+

@@ -5480,7 +5480,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-witness-diff"
+name = "base-testing-tools-witness-diff"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",

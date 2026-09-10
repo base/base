@@ -29,5 +29,5 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    base_witness_diff::run(args.local, args.rpc_url, args.block).await
+    base_testing_tools_witness_diff::run(args.local, args.rpc_url, args.block).await
 }
