@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+//! Prover job persistence and database models.
 
 mod config;
 pub use config::DatabaseConfig;

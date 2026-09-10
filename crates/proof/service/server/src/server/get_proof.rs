@@ -1,4 +1,4 @@
-use base_prover_service_db::{
+use crate::{
     ProofRequest, ProofStatus as DbProofStatus, SessionStatus as DbSessionStatus,
     canonical_session_id,
 };
@@ -108,7 +108,7 @@ impl ProverServiceServer {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_db::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
+    use crate::{ApiProofType, ProofRequest, ProofType, ZkVmKind};
     use chrono::Utc;
     use uuid::Uuid;
 

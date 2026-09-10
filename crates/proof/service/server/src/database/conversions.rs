@@ -12,7 +12,7 @@ use base_proof_service_protocol::{
     ZkProofResult, ZkVm as ProtocolZkVm,
 };
 
-use crate::{
+use crate::database::{
     ApiProofType, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofSession,
     ProofStatus, ProofType, SessionStatus, SessionType, TeeKind, ZkVmKind,
 };

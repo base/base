@@ -1,4 +1,4 @@
-# `base-proof-service-server`
+# `base-prover-service`
 
 Standalone JSON-RPC binary for the Base prover service.
 

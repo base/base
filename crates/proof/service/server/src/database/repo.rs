@@ -5,7 +5,7 @@ use chrono::Utc;
 use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
-use crate::{
+use crate::database::{
     ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
     CreateProofSession, DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome,

@@ -1,4 +1,4 @@
-# `base-prover-service-db`
+# `base-proof-service-server`
 
 `PostgreSQL` persistence layer for prover-service proof requests and sessions.
 

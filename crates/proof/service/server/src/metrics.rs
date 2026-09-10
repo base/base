@@ -3,7 +3,7 @@
 //! Uses the `metrics` crate facade (`counter!`, `histogram!`) so the exporter
 //! backend is determined by the binary (e.g. Prometheus, `DogStatsD`).
 
-use base_prover_service_db::{ApiProofType, ProofJob, ProofType};
+use crate::{ApiProofType, ProofJob, ProofType};
 use metrics::{counter, describe_counter, describe_histogram, histogram};
 
 // ---------------------------------------------------------------------------
@@ -172,7 +172,7 @@ pub const fn api_proof_type_label(proof_type: ApiProofType) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_db::{ApiProofType, ProofJobStatus};
+    use crate::{ApiProofType, ProofJobStatus};
     use chrono::{Duration, Utc};
     use metrics_util::{
         MetricKind,

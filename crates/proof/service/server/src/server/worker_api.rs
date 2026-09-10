@@ -1,6 +1,6 @@
 //! Implementation of the prover worker JSON-RPC endpoints.
 
-use base_prover_service_db::{
+use crate::{
     ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome, HeartbeatProofJob,
     RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert, canonical_session_id,
 };
@@ -433,7 +433,7 @@ fn parse_lock_id(lock_id: &str) -> RpcResult<Uuid> {
     })
 }
 
-fn into_protocol_job(job: base_prover_service_db::ProofJob) -> RpcResult<ProtocolProofJob> {
+fn into_protocol_job(job: crate::ProofJob) -> RpcResult<ProtocolProofJob> {
     ProtocolProofJob::try_from(job).map_err(|e| internal(e.to_string()))
 }
 

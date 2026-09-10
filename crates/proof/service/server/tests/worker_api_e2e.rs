@@ -13,16 +13,18 @@
 
 use std::{net::SocketAddr, time::Duration};
 
-use base_proof_service_server::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
-use base_prover_service_db::{
-    ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
-    ProofStatus as DbProofStatus, ZkVmKind,
-};
 use base_proof_service_protocol::{
     GetNextProofRequest, HeartbeatRequest, ProofJobStatus, ProofRequest as ProtocolProofRequest,
     ProofRequestKind, ProofResult, ProofType, ProverRequesterApiServer, ProverWorkerApiClient,
     ProverWorkerApiServer, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest, ZkProofResult,
     ZkVm,
+};
+use base_proof_service_server::{
+    ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
+    ProofStatus as DbProofStatus, ZkVmKind,
+};
+use base_proof_service_server::{
+    ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig,
 };
 use jsonrpsee::{
     core::client::Error as ClientError,

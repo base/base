@@ -1,4 +1,4 @@
-use base_prover_service_db::{
+use crate::{
     ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
     canonical_session_id,
 };
@@ -167,7 +167,7 @@ fn validate_intermediate_root_interval(
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_db::{ApiProofType, ProofRequestRepo, ProofType};
+    use crate::{ApiProofType, ProofRequestRepo, ProofType};
     use base_proof_service_protocol::{
         ProofRequest, ProofRequestKind, ProveBlockRangeRequest, SnarkPlonkProofRequest, ZkBackend,
         ZkProofRequest, ZkVm,

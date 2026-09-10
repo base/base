@@ -144,7 +144,7 @@ target "prover-service" {
     CARGO_CHEF_ARGS = "--package base-prover-service-bin"
     SCCACHE_CACHE_ID = "rust-services-prover-service-sccache"
   }
-  tags = ["base-proof-service-server:local"]
+  tags = ["base-prover-service:local"]
 }
 
 target "nitro-host-local" {

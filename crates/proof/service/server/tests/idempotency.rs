@@ -6,25 +6,23 @@
 mod common;
 
 use base_proof_service_protocol::{
-    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, ZkBackend,
-    ZkProofRequest, ZkVm,
+    ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, TeeKind,
+    TeeProofRequest,
 };
+use base_proof_types_protocol::ProofRequest as PrimitiveProofRequest;
 use common::connect;
 use uuid::Uuid;
 
-fn compressed_request(session_id: &str, start_block_number: u64) -> ProveBlockRangeRequest {
+fn tee_request(session_id: &str, start_block_number: u64) -> ProveBlockRangeRequest {
     ProveBlockRangeRequest {
         proof: ProofRequest {
             session_id: session_id.to_string(),
-            request: ProofRequestKind::Compressed(ZkProofRequest {
-                start_block_number,
-                number_of_blocks_to_prove: 1,
-                sequence_window: None,
-                l1_head: None,
-                intermediate_root_interval: None,
-                schedule_l2_block_number: None,
-                zk_vm: ZkVm::Sp1,
-                zk_backend: ZkBackend::Cluster,
+            request: ProofRequestKind::Tee(TeeProofRequest {
+                proof: PrimitiveProofRequest {
+                    claimed_l2_block_number: start_block_number,
+                    ..Default::default()
+                },
+                tee_kind: TeeKind::AwsNitro,
             }),
         },
         retry_failed: true,
@@ -38,7 +36,7 @@ async fn prove_block_range_with_session_id_returns_uuid() {
     let session_id = Uuid::new_v4().to_string();
 
     let resp = client
-        .prove_block_range(compressed_request(&session_id, 100))
+        .prove_block_range(tee_request(&session_id, 100))
         .await
         .expect("ProveBlockRange should succeed with session_id");
 
@@ -52,7 +50,7 @@ async fn prove_block_range_with_session_id_uses_provided_id() {
     let session_id = "550e8400-e29b-41d4-a716-446655440000".to_string();
 
     let resp = client
-        .prove_block_range(compressed_request(&session_id, 200))
+        .prove_block_range(tee_request(&session_id, 200))
         .await
         .expect("ProveBlockRange should succeed with session_id");
 
@@ -66,12 +64,12 @@ async fn prove_block_range_duplicate_session_id_is_idempotent() {
     let session_id = "661f9a00-bbbb-4444-cccc-000000000001".to_string();
 
     let resp1 = client
-        .prove_block_range(compressed_request(&session_id, 300))
+        .prove_block_range(tee_request(&session_id, 300))
         .await
         .expect("first call should succeed");
 
     let resp2 = client
-        .prove_block_range(compressed_request(&session_id, 300))
+        .prove_block_range(tee_request(&session_id, 300))
         .await
         .expect("duplicate call should succeed (idempotent)");
 
@@ -87,7 +85,7 @@ async fn prove_block_range_empty_session_id_returns_error() {
     let client = connect();
 
     let err = client
-        .prove_block_range(compressed_request("", 400))
+        .prove_block_range(tee_request("", 400))
         .await
         .expect_err("should fail with empty session_id");
 

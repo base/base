@@ -5,7 +5,7 @@
 //! Run with:
 //!   ```sh
 //!   DATABASE_URL=postgres://prover:prover@localhost:5433/prover \
-//!     cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1
+//!     cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1
 //!   ```
 //!
 //! Tests are marked `#[ignore]` so they're skipped by default (no Postgres in CI)
@@ -16,8 +16,13 @@
 use std::time::Duration;
 
 use alloy_primitives::Address;
-use base_proof_types_protocol::Proposal;
-use base_prover_service_db::{
+use base_proof_service_protocol::{
+    ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
+    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
+    TeeKind as ProtocolTeeKind, TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest,
+    ZkProofResult, ZkVm,
+};
+use base_proof_service_server::{
     ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
     CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
     DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
@@ -25,12 +30,7 @@ use base_prover_service_db::{
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
     UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
 };
-use base_proof_service_protocol::{
-    ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
-    ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
-    TeeKind as ProtocolTeeKind, TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest,
-    ZkProofResult, ZkVm,
-};
+use base_proof_types_protocol::Proposal;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
@@ -165,7 +165,7 @@ async fn setup_running_request(repo: &ProofRequestRepo) -> (Uuid, String) {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_and_get_compressed() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -195,7 +195,7 @@ async fn test_create_and_get_compressed() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_and_get_snark() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -214,7 +214,7 @@ async fn test_create_and_get_snark() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_with_session_id() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -232,7 +232,7 @@ async fn test_create_with_session_id() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_with_uppercase_session_id_is_canonicalized() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -254,7 +254,7 @@ async fn test_create_with_uppercase_session_id_is_canonicalized() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_replayable() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -307,7 +307,7 @@ async fn test_legacy_rollout_request_without_protocol_storage_is_readable_and_re
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_get_nonexistent_returns_none() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -321,7 +321,7 @@ async fn test_get_nonexistent_returns_none() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_transition_pending_to_running() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -350,7 +350,7 @@ async fn test_transition_pending_to_running() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_transition_pending_to_running_race() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -382,7 +382,7 @@ async fn test_transition_pending_to_running_race() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_transition_pending_to_failed() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -400,7 +400,7 @@ async fn test_transition_pending_to_failed() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_transition_pending_to_failed_wrong_state() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -415,7 +415,7 @@ async fn test_transition_pending_to_failed_wrong_state() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_transition_running_to_failed() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -433,7 +433,7 @@ async fn test_transition_running_to_failed() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_transition_running_to_failed_wrong_state() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -454,7 +454,7 @@ async fn test_transition_running_to_failed_wrong_state() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_update_receipt_if_running() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -512,7 +512,7 @@ async fn test_update_receipt_if_running() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_atomic_claim_task() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -532,7 +532,7 @@ async fn test_atomic_claim_task() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_atomic_claim_nonexistent() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -546,7 +546,7 @@ async fn test_atomic_claim_nonexistent() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_proof_session() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -566,7 +566,7 @@ async fn test_create_proof_session() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_get_session_by_backend_id() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -592,7 +592,7 @@ async fn test_get_session_by_backend_id() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_get_sessions_for_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -626,7 +626,7 @@ async fn test_get_sessions_for_request() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_update_proof_session() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -659,7 +659,7 @@ async fn test_update_proof_session() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_update_proof_session_if_non_terminal() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -709,7 +709,7 @@ async fn test_update_proof_session_if_non_terminal() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_fail_session_and_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -733,7 +733,7 @@ async fn test_fail_session_and_request() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_fail_session_and_request_skips_terminal() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -768,7 +768,7 @@ async fn test_fail_session_and_request_skips_terminal() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_complete_session_and_update_receipt() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -802,7 +802,7 @@ async fn test_complete_session_and_update_receipt() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_complete_session_and_update_receipt_skips_non_running() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -844,7 +844,7 @@ async fn test_complete_session_and_update_receipt_skips_non_running() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_retries() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -889,7 +889,7 @@ async fn test_retry_or_fail_stuck_request_retries() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_retries_tee_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -913,7 +913,7 @@ async fn test_retry_or_fail_stuck_request_retries_tee_request() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_exhausted() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -946,7 +946,7 @@ async fn test_retry_or_fail_stuck_request_exhausted() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_wrong_state() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -962,7 +962,7 @@ async fn test_retry_or_fail_stuck_request_wrong_state() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_get_stuck_requests_includes_migration_parked_running_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -985,7 +985,7 @@ async fn test_get_stuck_requests_includes_migration_parked_running_request() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_retry_or_fail_stuck_request_requeues_migration_parked_running_request() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1050,7 +1050,7 @@ async fn drive_to_failed(repo: &ProofRequestRepo, id: Uuid, error_message: &str)
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_creates_claimable_job() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1073,7 +1073,7 @@ async fn test_create_for_worker_queue_creates_claimable_job() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_accepts_tee_requests() {
     let repo = test_repo(test_pool().await);
 
@@ -1100,10 +1100,11 @@ async fn test_create_for_worker_queue_accepts_tee_requests() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
+    drain_claimable_compressed_jobs(&repo).await;
 
     let explicit_id = Uuid::new_v4();
     let mut req = compressed_request();
@@ -1129,7 +1130,7 @@ async fn test_create_for_worker_queue_idempotent_for_legacy_null_backend() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_rejects_backend_collision() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1148,7 +1149,7 @@ async fn test_create_for_worker_queue_rejects_backend_collision() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_requeues_failed_row() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1164,10 +1165,11 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
 
     sqlx::query(
         "UPDATE proof_requests SET job_status = 'FAILED', worker_id = 'stale-worker', \
-         lock_id = gen_random_uuid(), lock_expires_at = NOW(), claimed_at = NOW(), \
+         lock_id = $2, lock_expires_at = NOW(), claimed_at = NOW(), \
          last_heartbeat_at = NOW(), attempt = 4 WHERE id = $1",
     )
     .bind(explicit_id)
+    .bind(Uuid::new_v4())
     .execute(&pool)
     .await
     .unwrap();
@@ -1193,7 +1195,7 @@ async fn test_create_for_worker_queue_requeues_failed_row() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_does_not_requeue_failed_row_without_approval() {
     let repo = test_repo(test_pool().await);
 
@@ -1220,7 +1222,7 @@ async fn test_create_for_worker_queue_does_not_requeue_failed_row_without_approv
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_replays_succeeded_row() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1253,7 +1255,7 @@ async fn test_create_for_worker_queue_replays_succeeded_row() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1289,7 +1291,7 @@ async fn test_create_for_worker_queue_rejects_succeeded_row_with_new_l1_head() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1338,7 +1340,7 @@ async fn test_delete_proof_request_by_session_id_deletes_terminal_rows() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_delete_proof_request_by_session_id_rejects_non_terminal_row() {
     let repo = test_repo(test_pool().await);
 
@@ -1359,7 +1361,7 @@ async fn test_delete_proof_request_by_session_id_rejects_non_terminal_row() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_get_running_sessions() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1404,7 +1406,7 @@ async fn test_get_running_sessions() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_get_running_proof_requests() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1417,7 +1419,7 @@ async fn test_get_running_proof_requests() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_list_with_filter() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1443,7 +1445,7 @@ async fn test_list_with_filter() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_full_snark_pipeline() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1630,7 +1632,7 @@ fn uppercase_uuid_session_id() -> (Uuid, String) {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_claim_next_proof_job_claim_and_capabilities() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1677,7 +1679,7 @@ async fn test_claim_next_proof_job_claim_and_capabilities() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_claim_next_proof_job_concurrent_workers_never_double_claim() {
     let pool = test_pool().await;
     let repo_a = test_repo(pool.clone());
@@ -1700,7 +1702,7 @@ async fn test_claim_next_proof_job_concurrent_workers_never_double_claim() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_claim_next_proof_job_orders_by_start_block_number() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1721,7 +1723,7 @@ async fn test_claim_next_proof_job_orders_by_start_block_number() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_claim_next_proof_job_expired_lock_lifecycle() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1758,7 +1760,7 @@ async fn test_claim_next_proof_job_expired_lock_lifecycle() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -1838,7 +1840,7 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_complete_claimed_proof_job_guards_and_stores_result() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -1949,7 +1951,7 @@ async fn test_complete_claimed_proof_job_guards_and_stores_result() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_delete_proof_requests_by_tee_signer() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -2006,7 +2008,7 @@ async fn test_delete_proof_requests_by_tee_signer() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -2068,7 +2070,7 @@ async fn test_complete_claimed_proof_job_rejects_mismatched_result() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -2133,7 +2135,7 @@ async fn test_fail_expired_proof_jobs_enforces_retry_exhaustion() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_fail_expired_proof_jobs_honors_batch_size() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -2193,7 +2195,7 @@ async fn test_fail_expired_proof_jobs_honors_batch_size() {
 // ============================================================
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_record_worker_proof_session_records_resumes_and_updates() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -2287,7 +2289,7 @@ async fn test_record_worker_proof_session_records_resumes_and_updates() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() {
     let pool = test_pool().await;
     let repo = test_repo(pool);
@@ -2391,7 +2393,7 @@ async fn test_record_worker_proof_session_preserves_terminal_backend_sessions() 
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_record_worker_proof_session_guards_ownership() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());
@@ -2451,7 +2453,7 @@ async fn test_record_worker_proof_session_guards_ownership() {
 }
 
 #[tokio::test]
-#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-proof-service-server --test postgres_integration --test-threads=1`"]
 async fn test_record_worker_proof_session_rejects_not_claimed_and_terminal() {
     let pool = test_pool().await;
     let repo = test_repo(pool.clone());

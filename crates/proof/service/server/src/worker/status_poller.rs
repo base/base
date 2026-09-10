@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use base_prover_service_db::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
+use crate::{FailExpiredProofJobs, ProofJob, ProofRequestRepo, RetryOutcome};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 

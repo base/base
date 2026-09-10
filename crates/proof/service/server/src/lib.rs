@@ -20,3 +20,6 @@ pub use server::{ProverServiceServer, ServerConfig, WorkerApiConfig};
 
 mod worker;
 pub use worker::{StatusPoller, WorkerQueueConfig};
+
+mod database;
+pub use database::*;

@@ -4847,16 +4847,20 @@ dependencies = [
 name = "base-proof-service-server"
 version = "0.0.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "base-proof-service-protocol",
- "base-prover-service-db",
+ "base-proof-types-protocol",
  "chrono",
+ "futures",
  "jsonrpsee",
  "metrics",
  "metrics-util",
  "rstest",
+ "serde",
  "serde_json",
  "sqlx",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "uuid",
@@ -5138,32 +5142,12 @@ dependencies = [
  "base-common-cli-support",
  "base-proof-service-protocol",
  "base-proof-service-server",
- "base-prover-service-db",
  "clap",
  "eyre",
  "jsonrpsee",
  "serde",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-prover-service-db"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "anyhow",
- "base-proof-service-protocol",
- "base-proof-types-protocol",
- "chrono",
- "futures",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -5325,7 +5309,6 @@ dependencies = [
  "base-node-runner",
  "base-proof-service-protocol",
  "base-proof-service-server",
- "base-prover-service-db",
  "base-testing-support",
  "chrono",
  "clap",

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use base_prover_service_db::ProofRequestRepo;
+use crate::ProofRequestRepo;
 use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,

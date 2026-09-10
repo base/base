@@ -3,11 +3,11 @@
 use std::net::SocketAddr;
 
 use base_common_cli_support::{LogConfig, RuntimeManager};
+use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
+use base_proof_service_server::{DatabaseConfig, ProofRequestRepo};
 use base_proof_service_server::{
     ProverServiceServer, ServerConfig, StatusPoller, WorkerApiConfig, WorkerQueueConfig,
 };
-use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
-use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
 use clap::Parser;
 use eyre::eyre;
 use jsonrpsee::server::{Server, ServerConfig as JsonRpcServerConfig};

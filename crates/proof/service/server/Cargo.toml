@@ -9,29 +9,34 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+tracing = {workspace = true}
 metrics = { workspace = true }
-tracing = { workspace = true }
-serde_json = { workspace = true }
-base-prover-service-db = { workspace = true }
+serde_json = {workspace = true}
+thiserror = { workspace = true }
 jsonrpsee = { workspace = true, optional = true }
-anyhow = { workspace = true, features = ["default"] }
-uuid = { workspace = true, features = ["default", "v4"] }
-base-proof-service-protocol = { workspace = true, features = ["default"] }
+anyhow = {workspace = true, features = ["default"]}
+serde = { workspace = true, features = ["derive"] }
+futures = { workspace = true, features = ["default"] }
+chrono = { workspace = true, features = ["default", "serde"] }
+uuid = {workspace = true, features = ["default", "serde", "v4"]}
+base-proof-service-protocol = {workspace = true, features = ["default"]}
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread", "sync", "time"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "uuid", "chrono", "derive", "tls-native-tls"] }
+
 [dev-dependencies]
-rstest = { workspace = true, features = ["default"] }
+alloy-primitives = { workspace = true }
+base-proof-types-protocol = { workspace = true }
 chrono = { workspace = true, features = ["default"] }
+rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
+tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
 base-proof-service-protocol = { workspace = true, features = ["default", "rpc-client"] }
+
 [lints]
 workspace = true
 
 [features]
-default = [ "rpc-server" ]
-rpc-server = [
-	"base-proof-service-protocol/rpc-server",
-	"dep:jsonrpsee",
-	"jsonrpsee/server",
-]
+default = ["rpc-server"]
+rpc-server = ["base-proof-service-protocol/rpc-server", "dep:jsonrpsee", "jsonrpsee/server"]

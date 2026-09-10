@@ -29,7 +29,6 @@ base-node-config = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }
-base-prover-service-db = { workspace = true }
 base-common-client-rollup = {workspace = true}
 base-common-runtime-tasks = {workspace = true}
 base-batcher-service-driver = { workspace = true }
@@ -58,7 +57,7 @@ base-testing-support = { workspace = true, optional = true }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-execution-cli = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"] }
-base-proof-service-server = { workspace = true, features = ["default"] }
+base-proof-service-server = {workspace = true, features = ["default"]}
 base-common-types-payload = { workspace = true, features = ["std"] }
 base-execution-txpool-pool = {features = ["default"], workspace = true}
 clap = { workspace = true, features = ["default", "derive", "env"] }

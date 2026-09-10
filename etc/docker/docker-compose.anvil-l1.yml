@@ -117,15 +117,15 @@ services:
       - POSTGRES_PASSWORD=devnet
     volumes:
       - ../../.devnet/anvil-no-nitro/postgres:/var/lib/postgresql/data
-      - ../../crates/proof/service/server/db/migrations:/docker-entrypoint-initdb.d:ro
+      - ../../crates/proof/service/server/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
       <<: *healthcheck-defaults
     restart: unless-stopped
 
-  base-proof-service-server:
-    image: base-proof-service-server:local
-    container_name: base-proof-service-server
+  base-prover-service:
+    image: base-prover-service:local
+    container_name: base-prover-service
     profiles: ["nitro-local"]
     depends_on:
       prover-service-postgres:
@@ -141,7 +141,7 @@ services:
       - POSTGRES_USER=prover
       - POSTGRES_PASSWORD=devnet
       - POSTGRES_SSLMODE=disable
-      - OTEL_SERVICE_NAME=base-proof-service-server
+      - OTEL_SERVICE_NAME=base-prover-service
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
       <<: *healthcheck-defaults
@@ -154,7 +154,7 @@ services:
     depends_on:
       base-proofs:
         condition: service_healthy
-      base-proof-service-server:
+      base-prover-service:
         condition: service_healthy
     env_file:
       - path: ../../.devnet/anvil-no-nitro/runtime.env
@@ -166,7 +166,7 @@ services:
       - L1_BEACON_URL=http://l1-el:${L1_HTTP_PORT}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
       - ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT=true
-      - PROVER_SERVICE_ENDPOINT=http://base-proof-service-server:9001
+      - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
       - BASE_ENCLAVE_SIGNER_KEY=0x0000000000000000000000000000000000000000000000000000000000000001
       - OTEL_SERVICE_NAME=nitro-prover-1
     entrypoint: ["/app/base-prover-nitro-host", "local"]
@@ -179,7 +179,7 @@ services:
     depends_on:
       base-proofs:
         condition: service_healthy
-      base-proof-service-server:
+      base-prover-service:
         condition: service_healthy
     env_file:
       - path: ../../.devnet/anvil-no-nitro/runtime.env
@@ -191,7 +191,7 @@ services:
       - L1_BEACON_URL=http://l1-el:${L1_HTTP_PORT}
       - L2_CHAIN_ID=${L2_CHAIN_ID}
       - ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT=true
-      - PROVER_SERVICE_ENDPOINT=http://base-proof-service-server:9001
+      - PROVER_SERVICE_ENDPOINT=http://base-prover-service:9001
       - BASE_ENCLAVE_SIGNER_KEY=0x0000000000000000000000000000000000000000000000000000000000000002
       - OTEL_SERVICE_NAME=nitro-prover-2
     entrypoint: ["/app/base-prover-nitro-host", "local"]
@@ -202,7 +202,7 @@ services:
     container_name: base-proposer
     profiles: ["nitro-local"]
     depends_on:
-      base-proof-service-server:
+      base-prover-service:
         condition: service_healthy
       base-rpc:
         condition: service_healthy
@@ -212,7 +212,7 @@ services:
     ports:
       - "${PROPOSER_HEALTH_PORT}:8080"
     environment:
-      - BASE_PROPOSER_PROVER_RPC=http://base-proof-service-server:9000
+      - BASE_PROPOSER_PROVER_RPC=http://base-prover-service:9000
       - BASE_PROPOSER_L1_ETH_RPC=http://l1-el:${L1_HTTP_PORT}
       - BASE_PROPOSER_L2_ETH_RPC=http://base-rpc:${L2_BASE_RPC_HTTP_PORT}
       - BASE_PROPOSER_ROLLUP_RPC=http://base-rpc:${L2_BASE_RPC_CL_RPC_PORT}
