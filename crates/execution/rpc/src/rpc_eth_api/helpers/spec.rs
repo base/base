@@ -170,11 +170,9 @@ fn effective_resource(
     })
 }
 
-/// Signers for Base requests and the provider's transactions.
-pub type SignersForRpc<Provider> = parking_lot::RwLock<
-    Vec<
-        Box<dyn EthSigner<<Provider as TransactionsProvider>::Transaction, BaseTransactionRequest>>,
-    >,
+/// Signers for Base transaction envelopes and RPC requests.
+pub type SignersForRpc = parking_lot::RwLock<
+    Vec<Box<dyn EthSigner<base_common_types_chain::BaseTxEnvelope, BaseTransactionRequest>>>,
 >;
 
 #[cfg(test)]

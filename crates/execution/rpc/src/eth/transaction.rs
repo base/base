@@ -23,7 +23,7 @@ use crate::{
 };
 
 impl BaseEthApi {
-    pub fn signers(&self) -> &SignersForRpc<BlockchainProvider> {
+    pub fn signers(&self) -> &SignersForRpc {
         self.inner.signers()
     }
 

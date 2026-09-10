@@ -40,7 +40,7 @@ pub struct BaseEthApiInner {
     /// The components of the node.
     components: BaseRpcContext,
     /// All configured Signers
-    signers: SignersForRpc<BlockchainProvider>,
+    signers: SignersForRpc,
     /// The async cache frontend for eth related data
     eth_cache: EthStateCache,
     /// The async gas oracle frontend for gas price suggestions
@@ -260,7 +260,7 @@ impl BaseEthApiInner {
 
     /// Returns a handle to the signers.
     #[inline]
-    pub const fn signers(&self) -> &SignersForRpc<BlockchainProvider> {
+    pub const fn signers(&self) -> &SignersForRpc {
         &self.signers
     }
 
