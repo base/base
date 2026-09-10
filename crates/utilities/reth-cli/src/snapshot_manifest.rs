@@ -1344,7 +1344,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_manifest_creates_proofs_archive() {
+    fn generate_manifest_creates_incremental_rocksdb_proofs_archives() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
         let db_dir = source.path().join("db");
@@ -1373,8 +1373,8 @@ mod tests {
         .unwrap();
 
         assert!(
-            files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
-            "should produce proofs.tar.zst when proofs/ exists"
+            files.iter().any(|f| f.file_name().unwrap() == PROOFS_METADATA_ARCHIVE),
+            "should produce proofs metadata when proofs/ exists"
         );
 
         let manifest_content =
@@ -1386,24 +1386,25 @@ mod tests {
             panic!("proofs component should be a Single archive");
         };
 
-        assert_eq!(proofs.file, "proofs.tar.zst", "proofs archive filename");
-        assert_eq!(proofs.output_files.len(), 7, "exactly 7 proofs DB files should be packaged");
+        assert_eq!(proofs.file, PROOFS_METADATA_ARCHIVE, "proofs metadata archive filename");
+        assert_eq!(proofs.output_files.len(), 6, "SST files belong in static archives");
         assert!(
             proofs.output_files.iter().all(|f| f.path.starts_with("proofs/")),
             "all proofs output paths should be under proofs/"
         );
         assert!(
-            proofs.output_files.iter().any(|f| f.path == "proofs/000060.sst"),
-            "should include SST file under proofs/"
-        );
-        assert!(
             proofs.output_files.iter().any(|f| f.path == "proofs/CURRENT"),
             "should include CURRENT under proofs/"
         );
+        let proofs_static = ProofsStaticManifest::from_manifest_bytes(manifest_content.as_bytes())
+            .unwrap()
+            .expect("manifest should include proofs_static extension");
+        assert_eq!(proofs_static.tables.len(), 1);
+        assert_eq!(proofs_static.tables[0].output_files[0].path, "proofs/000060.sst");
     }
 
     #[test]
-    fn generate_manifest_skips_proofs_when_missing() {
+    fn generate_manifest_fails_when_enabled_proofs_database_is_missing() {
         let source = tempfile::tempdir().unwrap();
         let output = tempfile::tempdir().unwrap();
         let db_dir = source.path().join("db");
@@ -1411,7 +1412,7 @@ mod tests {
         std::fs::write(db_dir.join("mdbx.dat"), b"state-data").unwrap();
 
         let remote = HashMap::new();
-        let files = SnapshotGenerator::generate_manifest(&test_manifest_params(
+        let error = SnapshotGenerator::generate_manifest(&test_manifest_params(
             source.path(),
             output.path(),
             &remote,
@@ -1419,20 +1420,8 @@ mod tests {
             Some(0),
             true,
         ))
-        .unwrap();
-
-        assert!(
-            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
-            "should not produce proofs.tar.zst when proofs/ is missing"
-        );
-
-        let manifest_content =
-            std::fs::read_to_string(output.path().join("manifest.json")).unwrap();
-        let manifest: SnapshotManifest = serde_json::from_str(&manifest_content).unwrap();
-        assert!(
-            !manifest.components.contains_key("proofs"),
-            "manifest should omit proofs component when proofs/ is missing"
-        );
+        .unwrap_err();
+        assert!(error.to_string().contains("could not find RocksDB proofs database"));
     }
 
     #[test]
@@ -1459,8 +1448,8 @@ mod tests {
         .unwrap();
 
         assert!(
-            !files.iter().any(|f| f.file_name().unwrap() == "proofs.tar.zst"),
-            "should not produce proofs.tar.zst when upload_proofs is disabled"
+            !files.iter().any(|f| f.file_name().unwrap() == PROOFS_METADATA_ARCHIVE),
+            "should not produce proofs metadata when upload_proofs is disabled"
         );
 
         let manifest_content =
