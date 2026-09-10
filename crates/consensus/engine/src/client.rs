@@ -23,7 +23,7 @@ pub enum EngineClientError {
 
     /// A local execution command failed.
     #[error(transparent)]
-    Execution(#[from] base_execution_payload_builder::ExecutionCommandError),
+    Execution(#[from] base_execution_engine_driver::ExecutionCommandError),
     /// Submitting a block to the execution driver failed.
     #[error(transparent)]
     Submit(#[from] base_execution_engine_types::BeaconOnNewPayloadError),
@@ -42,7 +42,7 @@ impl EngineClientError {
     /// Whether the execution driver rejected the requested forkchoice state.
     pub fn is_invalid_forkchoice(&self) -> bool {
         match self {
-            Self::Execution(base_execution_payload_builder::ExecutionCommandError::Forkchoice(
+            Self::Execution(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
                 base_execution_engine_types::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
                     base_common_types_payload::ForkchoiceUpdateError::InvalidState,
                 ),
@@ -57,7 +57,7 @@ impl EngineClientError {
             self,
             Self::InvalidAttributes(_)
                 | Self::Execution(
-                    base_execution_payload_builder::ExecutionCommandError::InvalidAttributes(_)
+                    base_execution_engine_driver::ExecutionCommandError::InvalidAttributes(_)
                 )
         )
     }

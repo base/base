@@ -74,6 +74,7 @@ alloy-rpc-client = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 alloy-sol-types = { workspace = true, features = ["json", "std"] }
 base-common-types-payload = {workspace = true, features = ["std"]}
+base-execution-engine-driver = {workspace = true, optional = true}
 alloy-transport-http = { workspace = true, features = ["default"] }
 base-execution-evm-runtime = {features = ["std"], workspace = true}
 tar = { workspace = true, optional = true, features = ["default"] }
@@ -108,6 +109,7 @@ nanoid = { workspace = true }
 rlimit = { workspace = true }
 reth-testing-utils = { workspace = true }
 base-testing-support = { workspace = true }
+base-execution-engine-driver = {workspace = true}
 base-execution-state-tasks = { workspace = true }
 base-execution-rpc-handlers = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
@@ -166,4 +168,5 @@ test-utils = [
     "base-execution-state-trie/test-utils",
     "rlimit",
     "testcontainers",
+    "dep:base-execution-engine-driver",
 ]

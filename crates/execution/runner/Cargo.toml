@@ -24,6 +24,7 @@ reth-primitives-traits = { workspace = true, optional = true}
 base-common-types-chain = { workspace = true, optional = true }
 base-common-runtime-tasks = { workspace = true, optional = true }
 base-consensus-batch-types = { workspace = true, optional = true }
+base-execution-engine-driver = {workspace = true, optional = true}
 base-execution-evm-runtime = { workspace = true, optional = true }
 base-execution-payload-types = { workspace = true, optional = true}
 base-execution-rpc-handlers = { workspace = true, optional = true }
@@ -43,6 +44,7 @@ base-common-types-rpc = { workspace = true, optional = true, features = ["serde"
 [dev-dependencies]
 serde_json = { workspace = true }
 base-consensus-batch-types = { workspace = true }
+base-execution-engine-driver = {workspace = true}
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
 base-node-runner = { workspace = true, features = ["test-utils"] }
@@ -80,4 +82,5 @@ test-utils = [
     "base-common-runtime-tasks?/test-utils",
     "dep:reth-primitives-traits",
     "dep:base-execution-payload-types",
+    "dep:base-execution-engine-driver",
 ]

@@ -19,6 +19,7 @@ reth-primitives-traits = { workspace = true }
 base-common-chain-config = { workspace = true }
 metrics = { workspace = true, optional = true }
 serde = { workspace = true, features = ["std"] }
+base-execution-engine-driver = {workspace = true}
 base-execution-state-tasks = { workspace = true }
 base-execution-engine-types = { workspace = true }
 tracing = { workspace = true, features = ["std"] }

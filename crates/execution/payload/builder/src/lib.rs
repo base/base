@@ -58,9 +58,6 @@ pub use validity::{
 pub mod validator;
 pub use validator::BaseExecutionPayloadValidator;
 
-mod execution_handle;
-pub use execution_handle::{BaseExecutionHandle, ExecutionCommandError};
-
 mod engine;
 pub use engine::BaseEngineValidator;
 

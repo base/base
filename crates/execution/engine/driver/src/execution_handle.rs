@@ -4,7 +4,7 @@ use base_execution_payload_types::{
     InvalidPayloadAttributesError, PayloadBuilderError, PayloadKind,
 };
 
-use crate::{
+use base_execution_payload_builder::{
     BaseBuiltPayload, BaseEngineValidator, BasePayloadBuilderAttributes, PayloadBuilderHandle,
 };
 

@@ -39,7 +39,6 @@ alloy-primitives = { workspace = true, features = ["map-foldhash"]}
 base-common-types-chain = { workspace = true, features = ["reth"] }
 base-execution-txpool = { workspace = true, features = ["default"] }
 base-common-chain-config = {features = ["default"], workspace = true}
-base-execution-engine-types = { workspace = true, features = ["std"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
 base-execution-state-tasks = {features = ["default"], workspace = true}
 base-execution-state-types = {features = ["default"], workspace = true}

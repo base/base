@@ -3,6 +3,7 @@
 use base_common_observability_tracing::tracing::{debug, error, info};
 use base_common_runtime_tasks::EventSender;
 use base_common_types_chain::BlockHeader;
+use base_execution_engine_driver::BaseExecutionHandle;
 use base_execution_engine_driver::EngineMessageStream;
 use base_execution_engine_driver::{
     chain::{ChainEvent, FromOrchestrator},
@@ -13,7 +14,7 @@ use base_execution_engine_observers::ExExManagerHandle;
 use base_execution_engine_types::ConsensusEngineHandle;
 use base_execution_network_service::BlockDownloaderProvider;
 use base_execution_network_service::{NetworkSyncUpdater, SyncState, types::BlockRangeUpdate};
-use base_execution_payload_builder::{BaseEngineValidator, BaseExecutionHandle};
+use base_execution_payload_builder::BaseEngineValidator;
 use base_execution_state_provider::OverlayManager;
 use base_execution_state_provider::{BlockNumReader, StorageSettingsCache};
 use base_node_context::AddOnsContext;

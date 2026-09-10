@@ -49,3 +49,6 @@ pub use skip_fcu::EngineSkipFcu;
 
 mod message_stream;
 pub use message_stream::EngineMessageStream;
+
+mod execution_handle;
+pub use execution_handle::{BaseExecutionHandle, ExecutionCommandError};

@@ -26,7 +26,7 @@ pub type LocalNodeProvider = base_execution_state_provider::providers::Blockchai
 /// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
     /// In-process execution services.
-    pub execution: base_execution_payload_builder::BaseExecutionHandle,
+    pub execution: base_execution_engine_driver::BaseExecutionHandle,
     /// Execution network and synchronization status.
     pub network: base_execution_network_service::NetworkHandle,
     /// HTTP API address of the local node.

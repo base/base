@@ -5,9 +5,10 @@ use std::{
 };
 
 use base_common_chain_config::BaseChainSpec;
+use base_execution_engine_driver::BaseExecutionHandle;
 use base_execution_engine_types::ConsensusEngineEvent;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_payload_builder::{BaseExecutionHandle, PayloadBuilderHandle};
+use base_execution_payload_builder::PayloadBuilderHandle;
 use base_execution_state_tasks::ProofsProgress;
 // re-export the node api types
 use base_common_runtime_tasks::EventSender;

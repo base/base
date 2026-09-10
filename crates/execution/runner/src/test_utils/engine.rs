@@ -6,7 +6,7 @@ use base_common_types_payload::{
     BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadV4, ExecutionData, ForkchoiceState,
     ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
-use base_execution_payload_builder::BaseExecutionHandle;
+use base_execution_engine_driver::BaseExecutionHandle;
 use base_execution_payload_types::BasePayloadBuilderAttributes;
 
 /// Integration access to the local execution driver and payload builder.

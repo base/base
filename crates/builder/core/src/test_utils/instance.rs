@@ -54,7 +54,7 @@ pub fn clear_otel_env_vars() {
 #[derive(Debug)]
 pub struct LocalInstance {
     /// In-process execution services.
-    pub execution: base_execution_payload_builder::BaseExecutionHandle,
+    pub execution: base_execution_engine_driver::BaseExecutionHandle,
     /// Public HTTP endpoint used by transaction-query tests.
     pub http_url: String,
     node_config: NodeConfig,

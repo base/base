@@ -32,12 +32,12 @@ use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Identity, ProviderBuilder};
 use base_common_types_chain::{BaseTxEnvelope, transaction::SignerRecoverable};
 use base_common_types_payload::{BaseExecutionPayload, BaseExecutionPayloadEnvelope, PayloadId};
+use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 use base_consensus_driver_service::{
     EngineClientError, EngineClientResult, ResetReason, SequencerEngineClient,
 };
 use base_execution_payload_builder::BasePayloadBuilderAttributes;
 use base_execution_txpool::BasePooledTransaction;
-use base_consensus_batch_types::{AttributesWithParent, L2BlockInfo};
 
 use super::ExecutionPayloadConverter;
 use crate::{ActionEngineClient, SequencerEngineBackend, SharedBlockHashRegistry};
@@ -52,7 +52,7 @@ pub struct BuilderBackedEngineClient {
     /// `Sync` (`LocalInstance` is `Send` but not `Sync`).
     instance: Mutex<LocalInstance>,
     /// The authenticated Engine API IPC socket path, used to build engine clients on demand.
-    execution: base_execution_payload_builder::BaseExecutionHandle,
+    execution: base_execution_engine_driver::BaseExecutionHandle,
     /// How long to let the payload build loop run before sealing a block.
     block_time: Duration,
     rollup_config: Arc<RollupConfig>,

@@ -33,6 +33,7 @@ base-common-chain-config = { workspace = true }
 base-execution-evm-runtime = { workspace = true }
 base-execution-state-types = { workspace = true }
 base-execution-engine-types = { workspace = true }
+base-execution-engine-driver = { workspace = true }
 base-execution-network-service = {workspace = true}
 base-execution-network-types = { workspace = true }
 eyre = { workspace = true, features = ["default"] }
