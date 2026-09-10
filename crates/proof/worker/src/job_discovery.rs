@@ -11,7 +11,7 @@ use std::{
 };
 
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     GetNextProofRequest, ProofJob, ProofType, TeeKind, ZkBackend, ZkVm,
 };
 use tokio::{
@@ -487,7 +487,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest,
         HeartbeatResponse, ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind,
         RecordProofSessionRequest, RecordProofSessionResponse, SnarkPlonkProofRequest,

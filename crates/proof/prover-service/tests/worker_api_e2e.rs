@@ -18,7 +18,7 @@ use base_prover_service_db::{
     ApiProofType, ClaimProofJob, CreateProofRequest, DatabaseConfig, ProofRequestRepo,
     ProofStatus as DbProofStatus, ZkVmKind,
 };
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     GetNextProofRequest, HeartbeatRequest, ProofJobStatus, ProofRequest as ProtocolProofRequest,
     ProofRequestKind, ProofResult, ProofType, ProverRequesterApiServer, ProverWorkerApiClient,
     ProverWorkerApiServer, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest, ZkProofResult,

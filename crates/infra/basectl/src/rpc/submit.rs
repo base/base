@@ -9,7 +9,7 @@ use base_common_l1_transactions::{
     NoopTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig, TxManagerError,
 };
 use base_proof_submission::{AggregateProofSubmitter, ProofSubmissionError};
-use base_prover_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
+use base_proof_service_protocol::{GetProofResponse, ProofResult, ProofStatus};
 use tokio::time::timeout;
 use url::Url;
 
@@ -231,7 +231,7 @@ impl ProposalProofSubmitter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, address};
-    use base_prover_service_protocol::{SnarkPlonkProofResult, ZkProofResult, ZkVm};
+    use base_proof_service_protocol::{SnarkPlonkProofResult, ZkProofResult, ZkVm};
 
     use super::*;
 

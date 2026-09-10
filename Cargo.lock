@@ -2403,10 +2403,10 @@ dependencies = [
  "base-consensus-batch-types",
  "base-proof-client-providers",
  "base-proof-contracts",
+ "base-proof-service-protocol",
  "base-proof-submission",
  "base-proof-types-protocol",
  "base-prover-service-client",
- "base-prover-service-protocol",
  "clap",
  "eyre",
  "futures",
@@ -4805,6 +4805,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-proof-service-protocol"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "base-proof-types-protocol",
+ "chrono",
+ "jsonrpsee",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "base-proof-submission"
 version = "0.0.0"
 dependencies = [
@@ -4860,12 +4873,12 @@ dependencies = [
  "base-common-observability-health",
  "base-proof-contracts",
  "base-proof-host",
+ "base-proof-service-protocol",
  "base-proof-tee-nitro-enclave",
  "base-proof-types-protocol",
  "base-proof-witness-preimage",
  "base-proof-worker",
  "base-prover-service-client",
- "base-prover-service-protocol",
  "chrono",
  "eyre",
  "jsonrpsee",
@@ -5015,8 +5028,8 @@ dependencies = [
  "async-trait",
  "backon",
  "base-common-runtime-tasks",
+ "base-proof-service-protocol",
  "base-prover-service-client",
- "base-prover-service-protocol",
  "chrono",
  "thiserror 2.0.19",
  "tokio",
@@ -5043,10 +5056,10 @@ dependencies = [
  "base-common-types-rpc",
  "base-proof-client-providers",
  "base-proof-contracts",
+ "base-proof-service-protocol",
  "base-proof-submission",
  "base-proof-types-protocol",
  "base-prover-service-client",
- "base-prover-service-protocol",
  "clap",
  "eyre",
  "futures",
@@ -5110,8 +5123,8 @@ name = "base-prover-service"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-proof-service-protocol",
  "base-prover-service-db",
- "base-prover-service-protocol",
  "chrono",
  "jsonrpsee",
  "metrics",
@@ -5129,9 +5142,9 @@ name = "base-prover-service-bin"
 version = "0.0.0"
 dependencies = [
  "base-common-cli-support",
+ "base-proof-service-protocol",
  "base-prover-service",
  "base-prover-service-db",
- "base-prover-service-protocol",
  "clap",
  "eyre",
  "jsonrpsee",
@@ -5147,7 +5160,7 @@ dependencies = [
  "async-trait",
  "backon",
  "base-common-runtime-tasks",
- "base-prover-service-protocol",
+ "base-proof-service-protocol",
  "chrono",
  "jsonrpsee",
  "rstest",
@@ -5163,8 +5176,8 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "anyhow",
+ "base-proof-service-protocol",
  "base-proof-types-protocol",
- "base-prover-service-protocol",
  "chrono",
  "futures",
  "serde",
@@ -5173,19 +5186,6 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
- "uuid",
-]
-
-[[package]]
-name = "base-prover-service-protocol"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "base-proof-types-protocol",
- "chrono",
- "jsonrpsee",
- "serde",
- "serde_json",
  "uuid",
 ]
 
@@ -5346,9 +5346,9 @@ dependencies = [
  "base-node-config",
  "base-node-core",
  "base-node-runner",
+ "base-proof-service-protocol",
  "base-prover-service",
  "base-prover-service-db",
- "base-prover-service-protocol",
  "base-testing-support",
  "chrono",
  "clap",
@@ -5564,9 +5564,9 @@ dependencies = [
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
  "base-proof-contracts",
+ "base-proof-service-protocol",
  "base-proof-submission",
  "base-prover-service-client",
- "base-prover-service-protocol",
  "chrono",
  "clap",
  "crossterm",

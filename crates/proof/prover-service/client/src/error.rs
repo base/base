@@ -1,6 +1,6 @@
 //! Shared prover-service client error types.
 
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     PROOF_REQUEST_NOT_FOUND_MESSAGE, ProofRequestIdCollisionMessage,
 };
 use jsonrpsee::{core::client::Error as JsonRpcClientError, types::ErrorCode};

@@ -11,7 +11,7 @@ use std::{
 
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ExecutionStats, GetProofResponse, ListProofsRequest, ProofResult, ProofStatus, ProofSummary,
     ProofType, TeeKind, ZkBackend, ZkVm,
 };
@@ -1752,7 +1752,7 @@ mod tests {
     use std::collections::HashMap;
 
     use alloy_primitives::{Address, B256};
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         ExecutionStats, GetProofResponse, ProofResult, ProofStatus, ProofSummary, ProofType,
         SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
     };

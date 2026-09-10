@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use backon::Retryable;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, ProveBlockRangeRequest, ProveBlockRangeResponse,
     ProverRequesterApiClient,
@@ -276,7 +276,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
         ListProofsRequest, ListProofsResponse, ProofRequest, ProofRequestKind, ProofResult,
         ProofStatus, ProofSummary, ProofType, ProveBlockRangeRequest, ProveBlockRangeResponse,

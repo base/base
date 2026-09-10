@@ -24,7 +24,7 @@ use base_proof_contracts::{
 };
 use base_proof_client_providers::{BaseHeader, L1Provider, L2Provider, RpcError, RpcResult};
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     DeleteProofRequest, GetProofRequest, GetProofResponse, ProofResult as ApiProofResult,
     ProofStatus, ProveBlockRangeRequest, ProveBlockRangeResponse, SnarkPlonkProofResult,
     ZkProofResult, ZkVm,
@@ -674,15 +674,15 @@ impl ProofRequesterProvider for MockZkProofProvider {
 
     async fn delete_proofs_by_tee_signer(
         &self,
-        _request: base_prover_service_protocol::DeleteProofsByTeeSignerRequest,
+        _request: base_proof_service_protocol::DeleteProofsByTeeSignerRequest,
     ) -> Result<u64, ProverServiceClientError> {
         unimplemented!("tests do not delete proofs by tee signer")
     }
 
     async fn list_proofs(
         &self,
-        _request: base_prover_service_protocol::ListProofsRequest,
-    ) -> Result<base_prover_service_protocol::ListProofsResponse, ProverServiceClientError> {
+        _request: base_proof_service_protocol::ListProofsRequest,
+    ) -> Result<base_proof_service_protocol::ListProofsResponse, ProverServiceClientError> {
         unimplemented!("tests do not list proofs")
     }
 }

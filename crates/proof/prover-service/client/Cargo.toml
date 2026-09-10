@@ -16,14 +16,14 @@ base-common-runtime-tasks = { workspace = true }
 url = { workspace = true, features = ["default"] }
 backon = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["http-client"] }
-base-prover-service-protocol = { workspace = true, features = ["default", "rpc-client"] }
+base-proof-service-protocol = { workspace = true, features = ["default", "rpc-client"] }
 
 [dev-dependencies]
 chrono = { workspace = true, features = ["default"] }
 rstest = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 tokio = { workspace = true, features = ["default", "macros", "rt-multi-thread"] }
-base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
+base-proof-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 
 [lints]
 workspace = true

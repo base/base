@@ -7,7 +7,7 @@ use base_prover_service::{
     ProverServiceServer, ServerConfig, StatusPoller, WorkerApiConfig, WorkerQueueConfig,
 };
 use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
-use base_prover_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
+use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
 use clap::Parser;
 use eyre::eyre;
 use jsonrpsee::server::{Server, ServerConfig as JsonRpcServerConfig};

@@ -11,7 +11,7 @@ use std::sync::{
 
 use backon::Retryable;
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     HeartbeatRequest, HeartbeatResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 use base_common_runtime_tasks::{DEFAULT_UNBOUNDED_INITIAL_DELAY, DEFAULT_UNBOUNDED_MAX_DELAY, RetryConfig};
@@ -319,7 +319,7 @@ mod tests {
     };
 
     use async_trait::async_trait;
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult,
         RecordProofSessionRequest, RecordProofSessionResponse, ZkBackend, ZkProofRequest,

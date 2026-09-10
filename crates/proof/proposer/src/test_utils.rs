@@ -21,7 +21,7 @@ use base_proof_client_providers::{
     BaseBlock, BaseHeader, L1Provider, L2Provider, RollupProvider, RpcError, RpcResult,
 };
 use base_prover_service_client::{ProofRequesterProvider, ProverServiceClientError};
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
     ListProofsRequest, ListProofsResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
     ProofRequestIdCollisionMessage, ProofRequestKind as ApiProofRequestKind,

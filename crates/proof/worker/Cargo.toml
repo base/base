@@ -20,7 +20,7 @@ base-prover-service-client = { workspace = true }
 backon = { workspace = true, features = ["default"] }
 chrono = { workspace = true, features = ["default"] }
 tokio-util = { workspace = true, features = ["default"] }
-base-prover-service-protocol = { workspace = true, features = ["default"] }
+base-proof-service-protocol = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "macros", "rt", "sync", "time"] }
 
 [dev-dependencies]

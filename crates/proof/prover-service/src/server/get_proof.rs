@@ -2,7 +2,7 @@ use base_prover_service_db::{
     ProofRequest, ProofStatus as DbProofStatus, SessionStatus as DbSessionStatus,
     canonical_session_id,
 };
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ExecutionStats, GetProofRequest, GetProofResponse, PROOF_REQUEST_NOT_FOUND_MESSAGE,
     ProofResult, ProofStatus, ZkProofResult, ZkVm,
 };

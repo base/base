@@ -22,7 +22,7 @@ use base_proof_contracts::{AggregateVerifierClient, DisputeGameFactoryClient, Ga
 use base_proof_types_protocol::Proposal;
 use base_proof_client_providers::L1Provider;
 use base_consensus_batch_types::OutputRoot;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofRequestKind, ProofResult as ApiProofResult, ProofStatus, SnarkPlonkProofRequest, TeeKind,
     TeeProofResult, ZkBackend, ZkProofRequest, ZkVm,
 };

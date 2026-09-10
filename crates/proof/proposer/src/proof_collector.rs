@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use base_proof_client_providers::RollupProvider;
 use base_proof_submission::ProofSubmissionError;
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, ProofStatus,
     TeeProofResult,
 };
@@ -436,7 +436,7 @@ mod tests {
     };
     use base_proof_types_protocol::ProofRequest;
     use base_proof_submission::ProofSubmissionError;
-    use base_prover_service_protocol::TeeKind;
+    use base_proof_service_protocol::TeeKind;
     use tokio_util::sync::CancellationToken;
 
     use super::*;

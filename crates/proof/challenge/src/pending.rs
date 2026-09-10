@@ -14,7 +14,7 @@ use std::{
 
 use alloy_primitives::{Address, B256, Bytes};
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{GetProofRequest, ProofStatus, SnarkPlonkProofRequest};
+use base_proof_service_protocol::{GetProofRequest, ProofStatus, SnarkPlonkProofRequest};
 use tracing::warn;
 
 use crate::{ChallengerMetrics, ChallengerProofAdapter};
@@ -356,7 +356,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256};
-    use base_prover_service_protocol::{ZkBackend, ZkProofRequest, ZkVm};
+    use base_proof_service_protocol::{ZkBackend, ZkProofRequest, ZkVm};
 
     use super::*;
     use crate::test_utils::{MockZkProofProvider, MockZkProofState, addr};
@@ -440,7 +440,7 @@ mod tests {
     mod metrics_emission {
         use alloy_primitives::Bytes;
         use base_proof_types_protocol::Proposal;
-        use base_prover_service_protocol::{
+        use base_proof_service_protocol::{
             ProofResult as ApiProofResult, TeeKind, TeeProofResult,
         };
         use metrics_util::{

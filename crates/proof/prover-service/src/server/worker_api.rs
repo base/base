@@ -4,7 +4,7 @@ use base_prover_service_db::{
     ClaimProofJob, CompleteClaimedProofJob, HeartbeatOutcome, HeartbeatProofJob,
     RecordSessionOutcome, SubmitProofOutcome, WorkerSessionUpsert, canonical_session_id,
 };
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
     HeartbeatRequest, HeartbeatResponse, ProofJob as ProtocolProofJob, ProverWorkerApiServer,
     RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,

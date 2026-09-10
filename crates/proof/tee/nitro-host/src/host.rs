@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use base_proof_worker::{JobDiscovery, JobDiscoveryConfig, ProofSubmitter};
 use base_prover_service_client::ProverWorkerProvider;
-use base_prover_service_protocol::TeeKind;
+use base_proof_service_protocol::TeeKind;
 use tokio_util::sync::CancellationToken;
 
 use crate::{NitroEnclavePool, ProofGenerator, ProofGeneratorHeartbeatConfig};

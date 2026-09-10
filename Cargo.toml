@@ -82,7 +82,7 @@ members = [
   "crates/proof/prover-service",
   "crates/proof/prover-service/client",
   "crates/proof/prover-service/db",
-  "crates/proof/prover-service/protocol",
+  "crates/proof/service/protocol",
   "crates/proof/client/providers",
   "crates/proof/submission",
   "crates/proof/tee/nitro-enclave",
@@ -328,7 +328,7 @@ base-proof-tee-nitro-host = { path = "crates/proof/tee/nitro-host", default-feat
 base-proof-tee-nitro-enclave = { path = "crates/proof/tee/nitro-enclave", default-features = false }
 base-prover-service-client = { path = "crates/proof/prover-service/client", default-features = false }
 base-proof-tee-nitro-verifier = { path = "crates/proof/tee/nitro-verifier", default-features = false }
-base-prover-service-protocol = { path = "crates/proof/prover-service/protocol", default-features = false }
+base-proof-service-protocol = { path = "crates/proof/service/protocol", default-features = false }
 
 # Batcher
 base-batcher-cli = { path = "crates/batcher/cli", default-features = false }

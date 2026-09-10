@@ -7,7 +7,7 @@ use base_prover_service_client::{
     ProofRequesterClient, ProverServiceClientBuildError, ProverServiceClientConfig,
     ProverServiceClientError,
 };
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     GetProofRequest, GetProofResponse, ListProofsRequest, ListProofsResponse, ProofRequest,
     ProofRequestKind, ProofSessionId, ProofStatus, ProveBlockRangeRequest, SnarkPlonkProofRequest,
     ZkBackend, ZkProofRequest, ZkVm,
@@ -439,7 +439,7 @@ mod tests {
     };
 
     use alloy_primitives::{Address, B256};
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         DeleteProofRequest, DeleteProofsByTeeSignerRequest, GetProofRequest, GetProofResponse,
         ListProofsRequest, ListProofsResponse, ProofRequestKind, ProofStatus,
         ProveBlockRangeRequest, ProveBlockRangeResponse, ProverRequesterApiServer, ZkBackend, ZkVm,

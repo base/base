@@ -76,7 +76,7 @@ base-consensus-batch-types = { workspace = true, features = ["serde", "std"] }
 testcontainers = { workspace = true, features = ["blocking", "host-port-exposure"] }
 base-execution-state-indexer = { workspace = true, features = ["default", "service"] }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
-base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
+base-proof-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 tokio = { workspace = true, features = ["default", "full", "rt-multi-thread", "macros"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
 base-common-client-ethereum = {workspace = true, features = ["default", "mnemonic", "reqwest", "jwt-client"]}

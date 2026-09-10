@@ -5,7 +5,7 @@
 
 mod common;
 
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofRequest, ProofRequestKind, ProveBlockRangeRequest, ProverRequesterApiClient, ZkBackend,
     ZkProofRequest, ZkVm,
 };

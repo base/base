@@ -2,7 +2,7 @@ use base_prover_service_db::{
     ApiProofType, CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome,
     canonical_session_id,
 };
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofRequestIdCollisionMessage, ProofRequestKind, ProveBlockRangeRequest,
     ProveBlockRangeResponse,
 };
@@ -168,7 +168,7 @@ fn validate_intermediate_root_interval(
 #[cfg(test)]
 mod tests {
     use base_prover_service_db::{ApiProofType, ProofRequestRepo, ProofType};
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         ProofRequest, ProofRequestKind, ProveBlockRangeRequest, SnarkPlonkProofRequest, ZkBackend,
         ZkProofRequest, ZkVm,
     };

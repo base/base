@@ -2,7 +2,7 @@
 
 use alloy_primitives::B256;
 use base_proof_types_protocol::ProofRequest as PrimitiveProofRequest;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofRequest, ProofRequestKind, ProofResult, ProofSessionId, ProveBlockRangeRequest, TeeKind,
     TeeProofRequest, TeeProofResult,
 };
@@ -75,7 +75,7 @@ impl ProposerProofAdapter {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         ProofRequestKind, ProofResult, SnarkPlonkProofResult, TeeKind, TeeProofResult,
         ZkProofResult, ZkVm,
     };

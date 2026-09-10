@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use backon::Retryable;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
     HeartbeatRequest, HeartbeatResponse, ProverWorkerApiClient, RecordProofSessionRequest,
     RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
@@ -276,7 +276,7 @@ mod tests {
         time::Duration,
     };
 
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         BackendSession, BackendSessionState, GetProofSessionRequest, GetProofSessionResponse,
         ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
         ProverWorkerApiServer, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,

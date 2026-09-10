@@ -1,4 +1,4 @@
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofResult as ProtocolProofResult, SnarkPlonkProofResult, ZkBackend, ZkProofResult, ZkVm,
 };
 use chrono::Utc;
@@ -2328,7 +2328,7 @@ fn remove_l1_head_fields(value: &mut serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         ProofRequest as ProtocolProofRequest, ProofRequestKind, TeeKind as ProtocolTeeKind,
         TeeProofRequest, ZkBackend, ZkProofRequest, ZkVm,
     };

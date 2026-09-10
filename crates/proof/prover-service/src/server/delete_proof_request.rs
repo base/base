@@ -1,5 +1,5 @@
 use base_prover_service_db::{DeleteProofRequestOutcome, canonical_session_id};
-use base_prover_service_protocol::{DeleteProofRequest, DeleteProofsByTeeSignerRequest};
+use base_proof_service_protocol::{DeleteProofRequest, DeleteProofsByTeeSignerRequest};
 use jsonrpsee::core::RpcResult;
 use tracing::info;
 

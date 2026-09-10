@@ -1,7 +1,7 @@
 //! TEE-specific worker submission request builder.
 
 use base_proof_types_protocol::ProofResult as NitroProofResult;
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofResult as ServiceProofResult, TeeKind, TeeProofResult, WorkerSubmitProofRequest,
 };
 use thiserror::Error;
@@ -48,7 +48,7 @@ impl ProofSubmitterRequest {
 mod tests {
     use alloy_primitives::{Address, B256, Bytes};
     use base_proof_types_protocol::{ProofResult as NitroProofResult, Proposal};
-    use base_prover_service_protocol::{ProofResult as ServiceProofResult, TeeKind};
+    use base_proof_service_protocol::{ProofResult as ServiceProofResult, TeeKind};
 
     use super::*;
 

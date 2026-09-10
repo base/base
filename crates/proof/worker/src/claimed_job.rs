@@ -1,7 +1,7 @@
 //! Claimed proof job handling contract.
 
 use async_trait::async_trait;
-use base_prover_service_protocol::ProofJob;
+use base_proof_service_protocol::ProofJob;
 use thiserror::Error;
 
 /// Stable claim identifiers attached to a worker-owned proof job.

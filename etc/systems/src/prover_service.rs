@@ -4,7 +4,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use base_prover_service::{ProverServiceServer, ServerConfig, WorkerApiConfig, WorkerQueueConfig};
 use base_prover_service_db::{DatabaseConfig, ProofRequestRepo};
-use base_prover_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
+use base_proof_service_protocol::{ProverRequesterApiServer, ProverWorkerApiServer};
 use eyre::{Result, WrapErr};
 use jsonrpsee::server::{Server, ServerHandle};
 use testcontainers::{ContainerAsync, runners::AsyncRunner};

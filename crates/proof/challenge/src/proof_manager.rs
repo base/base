@@ -18,7 +18,7 @@ use base_proof_types_protocol::ProofRequest as TeeProofRequest;
 use base_proof_client_providers::{L1Provider, L2Provider};
 use base_proof_submission::KnownRevert;
 use base_prover_service_client::ProofRequesterProvider;
-use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
+use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkBackend, ZkProofRequest, ZkVm};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -627,7 +627,7 @@ mod tests {
     use base_common_l1_transactions::TxManagerError;
     use base_proof_contracts::{AggregateVerifierClient, GameStatus, l1_origin_too_old_selector};
     use base_proof_client_providers::L1Provider;
-    use base_prover_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
+    use base_proof_service_protocol::{SnarkPlonkProofRequest, ZkProofRequest, ZkVm};
 
     use super::*;
     use crate::test_utils::{

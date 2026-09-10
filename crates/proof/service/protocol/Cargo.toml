@@ -1,5 +1,5 @@
 [package]
-name = "base-prover-service-protocol"
+name = "base-proof-service-protocol"
 description = "Protocol types and JSON-RPC traits for the Base prover service"
 version.workspace = true
 edition.workspace = true

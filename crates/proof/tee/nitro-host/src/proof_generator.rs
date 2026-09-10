@@ -16,7 +16,7 @@ pub use base_proof_worker::{
     WorkerHeartbeatConfig as ProofGeneratorHeartbeatConfig,
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
+use base_proof_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::task::JoinHandle;
@@ -359,7 +359,7 @@ mod tests {
     use base_proof_tee_nitro_enclave::Server as EnclaveServer;
     use base_proof_worker::ProofSubmitter;
     use base_prover_service_client::ProverServiceClientError;
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
         HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
         RecordProofSessionRequest, RecordProofSessionResponse, TeeKind, TeeProofRequest,
@@ -547,15 +547,15 @@ mod tests {
                 tee_kind: TeeKind::AwsNitro,
             }),
             PrimitiveRequestKind::Compressed => {
-                ProofRequestKind::Compressed(base_prover_service_protocol::ZkProofRequest {
+                ProofRequestKind::Compressed(base_proof_service_protocol::ZkProofRequest {
                     start_block_number: 1,
                     number_of_blocks_to_prove: 1,
                     sequence_window: None,
                     l1_head: None,
                     intermediate_root_interval: None,
                     schedule_l2_block_number: None,
-                    zk_vm: base_prover_service_protocol::ZkVm::Sp1,
-                    zk_backend: base_prover_service_protocol::ZkBackend::Cluster,
+                    zk_vm: base_proof_service_protocol::ZkVm::Sp1,
+                    zk_backend: base_proof_service_protocol::ZkBackend::Cluster,
                 })
             }
         };

@@ -25,7 +25,7 @@ use base_prover_service_db::{
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
     UpdateProofSession, UpdateReceipt, WorkerSessionUpsert, ZkVmKind,
 };
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
     ProofResult as ProtocolProofResult, SnarkPlonkProofRequest, SnarkPlonkProofResult,
     TeeKind as ProtocolTeeKind, TeeProofRequest, TeeProofResult, ZkBackend, ZkProofRequest,

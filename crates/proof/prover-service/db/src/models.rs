@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     ProofRequest as ProtocolProofRequest, ProofRequestKind as ProtocolProofRequestKind,
     ProofResult as ProtocolProofResult, TeeKind as ProtocolTeeKind, ZkBackend,
     ZkVm as ProtocolZkVm,
@@ -1214,7 +1214,7 @@ pub struct FailExpiredProofJobs<'a> {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         SnarkPlonkProofResult, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
 

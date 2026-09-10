@@ -3,7 +3,7 @@
 //! Centralizing translation here keeps endpoints from rebuilding protocol
 //! responses through ad hoc field access.
 
-use base_prover_service_protocol::{
+use base_proof_service_protocol::{
     BackendSession as ProtocolBackendSession, BackendSessionState as ProtocolBackendSessionState,
     ProofJob as ProtocolProofJob, ProofJobStatus as ProtocolProofJobStatus,
     ProofResult as ProtocolProofResult, ProofStatus as ProtocolProofStatus,
@@ -260,7 +260,7 @@ impl ProofRequest {
 
 #[cfg(test)]
 mod tests {
-    use base_prover_service_protocol::{
+    use base_proof_service_protocol::{
         ProofRequest as ProtocolProofRequest, ProofRequestKind, ZkBackend as ProtocolZkBackend,
     };
     use chrono::Utc;
@@ -271,7 +271,7 @@ mod tests {
     fn compressed_payload(session_id: &str) -> serde_json::Value {
         serde_json::to_value(ProtocolProofRequest {
             session_id: session_id.to_owned(),
-            request: ProofRequestKind::Compressed(base_prover_service_protocol::ZkProofRequest {
+            request: ProofRequestKind::Compressed(base_proof_service_protocol::ZkProofRequest {
                 start_block_number: 10,
                 number_of_blocks_to_prove: 2,
                 sequence_window: None,
