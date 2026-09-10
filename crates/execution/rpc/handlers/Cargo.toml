@@ -106,7 +106,7 @@ alloy-rlp = { workspace = true, features = ["core-net"] }
 base-common-types-rpc = { workspace = true, features = [] }
 alloy-rpc-client = { workspace = true, features = ["default"] }
 base-common-chain-config = {workspace = true, features = ["std"]}
-base-node-runner = { workspace = true, features = ["test-utils"] }
+base-testing-devnet = { workspace = true, features = ["test-utils"] }
 base-execution-state-api = { workspace = true, features = ["std"] }
 base-execution-txpool-pool = {workspace = true, features = ["test-utils"]}
 base-execution-evm-runtime = {workspace = true, features = ["default"]}

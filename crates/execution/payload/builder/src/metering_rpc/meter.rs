@@ -879,7 +879,7 @@ mod tests {
     use base_execution_payload_types::{Bundle, ParsedBundle};
     use base_execution_state_provider::StateProviderFactory;
     use base_execution_txpool_pool::test_utils::TransactionBuilder;
-    use base_node_runner::test_utils::TestHarness;
+    use base_testing_devnet::test_utils::TestHarness;
     use base_testing_support::{
         Account, ContractFactory, DEVNET_CHAIN_ID, SimpleStorage, build_test_genesis,
     };

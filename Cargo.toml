@@ -58,7 +58,7 @@ members = [
   "crates/execution/payload/builder",
   "crates/execution/payload/types",
   "crates/execution/rpc/handlers",
-  "crates/execution/runner",
+  "crates/testing/devnet",
   "crates/execution/state/indexer",
   "crates/execution/state/tasks",
   "crates/execution/txpool/pool",
@@ -286,7 +286,7 @@ base-node-service = { path = "crates/node/service", default-features = false }
 base-execution-cli = { path = "crates/execution/cli", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
 base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
-base-node-runner = { path = "crates/execution/runner", default-features = false }
+base-testing-devnet = { path = "crates/testing/devnet", default-features = false }
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-txpool-pool = { path = "crates/execution/txpool/pool", default-features = false }
 base-execution-state-indexer = { path = "crates/execution/state/indexer", default-features = false }

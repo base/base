@@ -15,7 +15,7 @@ use base_execution_txpool_pool::TxForwardingConfig;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_VALIDITY_PREDICATES, TransactionValidity, ValidatedTransaction,
 };
-use base_node_runner::test_utils::TestHarness;
+use base_testing_devnet::test_utils::TestHarness;
 use base_testing_support::{Account, DEVNET_CHAIN_ID, build_test_genesis};
 use eyre::{Result, WrapErr};
 use jsonrpsee::{

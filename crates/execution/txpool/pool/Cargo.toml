@@ -84,7 +84,7 @@ proptest = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-chain-config = {features = ["std"], workspace = true}
-base-node-runner = { workspace = true, features = ["test-utils"] }
+base-testing-devnet = { workspace = true, features = ["test-utils"] }
 base-common-types-payload = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-client-ethereum = {features = ["default"], workspace = true}

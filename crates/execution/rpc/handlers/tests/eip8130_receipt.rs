@@ -13,7 +13,7 @@ use base_common_client_ethereum::Provider;
 use base_common_client_ethereum::ReceiptResponse;
 use base_common_types_chain::{Call, Eip8130Constants, Eip8130Signed, TxEip8130};
 use base_consensus_batch_types::BaseTimeUpdateTx;
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_testing_support::{Account, DEVNET_CHAIN_ID, build_test_genesis_zenith};
 
 /// EIP-8130 transaction type byte.

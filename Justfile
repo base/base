@@ -204,7 +204,7 @@ bench-precompiles:
 
 # Runs node runner forkchoice update benchmarks
 bench-node-runner:
-    cargo bench -p base-node-runner --bench fcu_unsafe
+    cargo bench -p base-testing-devnet --bench fcu_unsafe
 
 # Runs execution trie witness read benchmarks
 bench-execution-trie-witness-reads:

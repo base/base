@@ -29,10 +29,12 @@ use base_common_client_ethereum::{Base, PrivateKeySigner, TransactionBuilder};
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::SignableTransaction;
 use base_common_types_rpc::BaseTransactionRequest;
-use base_testing_load_service::{CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, Account,
     SystemTestStackBuilder,
+};
+use base_testing_load_service::{
+    CalldataPayload, TransferPayload, WorkloadConfig, WorkloadGenerator,
 };
 use eyre::{Result, WrapErr, eyre};
 use tokio::time::{sleep, timeout};
@@ -66,7 +68,7 @@ const BALANCE_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[tokio::test]
 async fn fuzz_sync_parity() -> Result<()> {
-    base_node_runner::test_utils::init_silenced_tracing();
+    base_testing_devnet::test_utils::init_silenced_tracing();
     let seed = seed_from_env();
 
     // 1. Boot the devnet: sequencer (builder) + gossip-following validator (client).

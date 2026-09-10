@@ -18,7 +18,7 @@ use base_common_runtime_tasks::{Runtime, RuntimeBuilder, RuntimeConfig};
 use base_execution_txpool_pool::{BasePooledTransaction, TransactionPool};
 use base_node_config::{DatadirArgs, NetworkArgs, NodeExitFuture, RpcServerArgs};
 use base_node_service::{BaseNode, NodeConfig, RollupArgs};
-use base_node_runner::test_utils::init_silenced_tracing;
+use base_testing_devnet::test_utils::init_silenced_tracing;
 use futures::FutureExt;
 use nanoid::nanoid;
 
@@ -196,7 +196,8 @@ impl LocalInstance {
 
         let (db, db_dir) = create_test_db_env(node_config.clone())?;
 
-        let mut builder = base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
+        let mut builder =
+            base_node_service::NodeLaunch::new(node_config.clone(), db, runtime.clone());
         builder.base = base_node;
         builder.payload = Some(service_builder);
         builder.rpc = rpc;

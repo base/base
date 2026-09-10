@@ -11,11 +11,11 @@ use base_execution_state_database::{
     test_utils::create_test_rocksdb_dir, test_utils::create_test_static_files_dir,
     test_utils::tempdir_path,
 };
-use base_testing_support::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
 use base_execution_state_provider::{
     ProviderFactory,
     providers::{RocksDBBuilder, StaticFileProvider},
 };
+use base_testing_support::{Account, GENESIS_GAS_LIMIT, build_test_genesis};
 
 use crate::test_utils::TEST_ACCOUNT_BALANCE_ETH;
 

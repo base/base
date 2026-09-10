@@ -14,7 +14,7 @@
 //! Run with:
 //!
 //! ```bash
-//! cargo bench -p base-node-runner --bench fcu_unsafe
+//! cargo bench -p base-testing-devnet --bench fcu_unsafe
 //! ```
 //!
 //! Set `FCU_BENCH_VERBOSE=1` for tracing output during the run.
@@ -26,7 +26,7 @@ use std::{
 
 use base_common_client_ethereum::Provider;
 use base_common_types_rpc::BlockNumberOrTag;
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, PreparedBlock, TestHarness};
+use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, PreparedBlock, TestHarness};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
@@ -101,7 +101,8 @@ fn init_bench_tracing() {
         let mut filter =
             EnvFilter::builder().with_default_directive(default_level.into()).from_env_lossy();
 
-        for directive in ["base_common_runtime_tasks=off", "base_node_service::launch::common=off"] {
+        for directive in ["base_common_runtime_tasks=off", "base_node_service::launch::common=off"]
+        {
             if let Ok(directive) = directive.parse() {
                 filter = filter.add_directive(directive);
             }

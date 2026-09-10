@@ -282,7 +282,7 @@ mod tests {
     use base_common_types_payload::{BasePayloadAttributes, ForkchoiceState, PayloadAttributes};
     use base_consensus_network_service::LocalNode as DiscoveryNode;
     use base_consensus_source_providers::LocalL2Provider;
-    use base_node_runner::test_utils::LocalNode;
+    use base_testing_devnet::test_utils::LocalNode;
     use discv5::enr::k256::ecdsa::SigningKey;
     use libp2p::Multiaddr;
 

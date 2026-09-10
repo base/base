@@ -6,16 +6,17 @@ use alloy_eips::Encodable2718;
 use alloy_primitives::Bytes;
 use alloy_rpc_client::RpcClient;
 use base_common_chain_config::BaseChainSpec;
-use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use base_consensus_batch_types::BaseTimeUpdateTx;
-use base_testing_support::{Account, build_test_genesis};
+use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+use base_testing_support::{Account, build_test_genesis_cobalt};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const BLOCK_NUMBER: u64 = 1;
 const TIMESTAMP_MILLIS_PART: u16 = 200;
-const TIMESTAMP_MS_QUANTITY: &str = "0xc80";
+// The Cobalt fixture builds its first block at 1 second plus the BaseTime fraction.
+const TIMESTAMP_MS_QUANTITY: &str = "0x4b0";
 
 async fn request(client: &RpcClient, method: &'static str, params: Value) -> eyre::Result<Value> {
     Ok(client.request(method, params).await?)
@@ -44,8 +45,7 @@ fn receipt_logs(receipts: &Value, transaction_hash: &str) -> Value {
 
 #[tokio::test]
 async fn canonical_cobalt_rpc_responses_include_millisecond_timestamps() -> eyre::Result<()> {
-    let mut genesis = build_test_genesis();
-    genesis.config.extra_fields.insert("base".into(), json!({ "cobalt": 3 }));
+    let genesis = build_test_genesis_cobalt();
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(BaseChainSpec::from_genesis(genesis)))
         .build()

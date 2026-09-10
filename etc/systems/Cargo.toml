@@ -92,7 +92,7 @@ anyhow = { workspace = true, features = ["default"] }
 base-consensus-derive-pipeline = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 tokio-tungstenite = { workspace = true, features = ["default"] }
-base-node-runner = { workspace = true, features = ["test-utils"] }
+base-testing-devnet = { workspace = true, features = ["test-utils"] }
 base-consensus-driver-service = { workspace = true, features = ["test-utils"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "json", "migrate", "macros", "tls-native-tls"] }
 

@@ -22,7 +22,7 @@ const TX_TIMEOUT: Duration = Duration::from_secs(30);
 #[tokio::test]
 #[ignore = "requires two writable Base execution snapshot datadirs"]
 async fn snapshot_devnet_mines_follows_and_includes_rpc_transaction() -> Result<()> {
-    base_node_runner::test_utils::init_silenced_tracing();
+    base_testing_devnet::test_utils::init_silenced_tracing();
     let builder_datadir = std::env::var_os("BASE_SNAPSHOT_BUILDER_DATADIR")
         .expect("BASE_SNAPSHOT_BUILDER_DATADIR must be set");
     let client_datadir = std::env::var_os("BASE_SNAPSHOT_CLIENT_DATADIR")

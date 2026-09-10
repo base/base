@@ -319,7 +319,7 @@ mod tests {
     use base_common_types_chain::{BaseTransactionSigned, BaseTxEnvelope};
     use base_execution_payload_types::{Bundle, MeterBundleResponse};
     use base_execution_txpool_pool::test_utils::TransactionBuilder;
-    use base_node_runner::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+    use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
     use base_testing_support::Account;
 
     use super::*;

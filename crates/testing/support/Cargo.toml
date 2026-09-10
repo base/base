@@ -31,6 +31,6 @@ alloy-sol-macro = { workspace = true, features = ["json"], optional = true }
 # `sol!(..., concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/<Name>.json"))`, embedding Foundry
 # `out/` artifacts at compile time. Those artifacts are gitignored, so the module cannot compile
 # when this crate is pulled over a git dependency. It is therefore off by default: consumers that
-# only need the accounts/genesis helpers (e.g. base-node-runner's `test-utils`) build artifact-free,
+# only need the accounts/genesis helpers (e.g. base-testing-devnet's `test-utils`) build artifact-free,
 # and consumers that use the contract bindings enable this feature (where the artifacts are built).
 contracts = ["dep:base-common-client-contracts", "dep:alloy-sol-macro", "dep:alloy-sol-types"]

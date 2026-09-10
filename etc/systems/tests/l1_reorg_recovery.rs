@@ -26,7 +26,7 @@ const RECOVERY_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[tokio::test]
 async fn sequencer_recovers_from_l1_outage_and_deep_reorg() -> Result<()> {
-    base_node_runner::test_utils::init_silenced_tracing();
+    base_testing_devnet::test_utils::init_silenced_tracing();
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
@@ -249,8 +249,11 @@ async fn l2_block_info(
         .ok_or_eyre("L2 block is missing at the requested height")?
         .into_consensus()
         .map_transactions(|transaction| transaction.inner.inner);
-    base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(&block, &rollup_config.genesis)
-        .wrap_err("Failed to decode L1 origin from L2 block")
+    base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
+        &block,
+        &rollup_config.genesis,
+    )
+    .wrap_err("Failed to decode L1 origin from L2 block")
 }
 
 async fn l1_block_hash(provider: &RootProvider<Ethereum>, number: u64) -> Result<B256> {

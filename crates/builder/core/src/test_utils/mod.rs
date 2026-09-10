@@ -4,7 +4,7 @@ mod apis;
 mod driver;
 mod external;
 mod external_engine;
-pub use base_node_runner::test_utils::EngineApi;
+pub use base_testing_devnet::test_utils::EngineApi;
 pub use external_engine::ExternalEngineApi;
 mod instance;
 mod txs;
