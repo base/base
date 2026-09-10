@@ -7,11 +7,11 @@
 use alloc::boxed::Box;
 use core::error::Error;
 
+use crate::BlockBuildingOutcome;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_types_chain::{Header, Sealed};
 use base_common_types_payload::BasePayloadAttributes;
-use base_proof_execution_client::BlockBuildingOutcome;
 
 /// Executor trait for block execution in the driver pipeline.
 ///

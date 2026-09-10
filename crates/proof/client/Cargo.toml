@@ -15,8 +15,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 base-proof = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-driver = { workspace = true }
-base-proof-execution-client = { workspace = true }
+base-proof-execution-client = {workspace = true}
 base-proof-witness-preimage = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
@@ -31,17 +30,4 @@ rstest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 
 [features]
-std = [
-    "base-common-types-chain/std",
-    "base-execution-evm-runtime/std",
-    "alloy-primitives/std",
-    "base-common-chain-config/std",
-    "base-proof-driver/std",
-    "base-proof-execution-client/std",
-    "base-proof-witness-preimage/std",
-    "base-proof/std",
-    "base-consensus-batch-types/std",
-    "spin/std",
-    "thiserror/std",
-    "tracing/std",
-]
+std = ["base-common-types-chain/std", "base-execution-evm-runtime/std", "alloy-primitives/std", "base-common-chain-config/std", "base-proof-execution-client/std", "base-proof-witness-preimage/std", "base-proof/std", "base-consensus-batch-types/std", "spin/std", "thiserror/std", "tracing/std"]

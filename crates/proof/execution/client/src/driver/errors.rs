@@ -2,8 +2,8 @@
 
 use alloc::boxed::Box;
 
-use base_consensus_derive_pipeline::PipelineErrorKind;
 use base_consensus_batch_types::FromBlockError;
+use base_consensus_derive_pipeline::PipelineErrorKind;
 use thiserror::Error;
 
 /// A [`Result`] type for the [`DriverError`].

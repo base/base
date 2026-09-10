@@ -1,4 +1,4 @@
-# `base-proof-driver`
+# `base-proof-execution-client`
 
 A `no_std` derivation pipeline driver.
 
@@ -16,7 +16,7 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-proof-driver = { workspace = true }
+base-proof-execution-client = { workspace = true }
 ```
 
 ```rust,ignore

@@ -9,7 +9,7 @@ use alloy_primitives::{B256, map::HashMap};
 use base_common_types_chain::{Header, Sealed};
 use base_consensus_batch_types::{BlockInfo, L2BlockInfo};
 
-use crate::TipCursor;
+use crate::driver::TipCursor;
 
 /// A cursor that tracks the derivation pipeline state and progress.
 ///

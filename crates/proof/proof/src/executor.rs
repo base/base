@@ -11,7 +11,7 @@ use base_common_types_payload::BasePayloadAttributes;
 use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::EvmFactory;
 use base_execution_evm_runtime::{BaseSpecId, BaseTransaction};
-use base_proof_driver::Executor;
+use base_proof_execution_client::Executor;
 use base_proof_execution_client::{BlockBuildingOutcome, StatelessL2Builder, TrieDBProvider};
 use base_proof_witness_mpt::TrieHinter;
 

@@ -7,16 +7,18 @@ use alloy_genesis::ChainConfig;
 use alloy_primitives::Sealable;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
+use base_consensus_batch_types::{
+    AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo,
+};
 use base_consensus_derive_pipeline::{
     ChainProvider, DataAvailabilityProvider, DerivationPipeline, EthereumDataSource,
     L2ChainProvider, OriginProvider, Pipeline, PipelineBuilder, PipelineErrorKind, PipelineResult,
     PolledAttributesQueueStage, ResetSignal, Signal, SignalReceiver, StatefulAttributesBuilder,
     StepResult,
 };
-use base_proof_driver::{DriverPipeline, PipelineCursor};
 use base_proof_execution_client::TrieDBProvider;
+use base_proof_execution_client::{DriverPipeline, PipelineCursor};
 use base_proof_witness_preimage::{CommsClient, FlushableCache};
-use base_consensus_batch_types::{AttributesWithParent, BatchValidationProvider, BlockInfo, L2BlockInfo};
 use spin::RwLock;
 
 use crate::{

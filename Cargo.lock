@@ -4701,7 +4701,6 @@ dependencies = [
  "base-consensus-derive-pipeline",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
- "base-proof-driver",
  "base-proof-execution-client",
  "base-proof-witness-mpt",
  "base-proof-witness-preimage",
@@ -4730,7 +4729,6 @@ dependencies = [
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof",
- "base-proof-driver",
  "base-proof-execution-client",
  "base-proof-witness-preimage",
  "rstest",
@@ -4759,25 +4757,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-proof-driver"
-version = "0.0.0"
-dependencies = [
- "alloy-primitives",
- "alloy-rlp",
- "async-trait",
- "base-common-chain-config",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-consensus-batch-types",
- "base-consensus-derive-pipeline",
- "base-execution-evm-runtime",
- "base-proof-execution-client",
- "spin 0.10.1",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
 name = "base-proof-execution-client"
 version = "0.0.0"
 dependencies = [
@@ -4788,11 +4767,13 @@ dependencies = [
  "alloy-transport",
  "alloy-transport-http",
  "alloy-trie",
+ "async-trait",
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-types-chain",
  "base-common-types-payload",
  "base-consensus-batch-types",
+ "base-consensus-derive-pipeline",
  "base-execution-evm-machine",
  "base-execution-evm-runtime",
  "base-proof-witness-mpt",
@@ -4801,6 +4782,7 @@ dependencies = [
  "rocksdb",
  "serde",
  "serde_json",
+ "spin 0.10.1",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",

@@ -1,11 +1,4 @@
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(not(test), no_std)]
-
-extern crate alloc;
-
-#[macro_use]
-extern crate tracing;
+//! Proof execution driver.
 
 mod errors;
 pub use errors::{DriverError, DriverResult};

@@ -3,16 +3,20 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
+use crate::BlockBuildingOutcome;
 use alloy_primitives::{B256, Bytes};
 use alloy_rlp::Decodable;
 use base_common_chain_config::RollupConfig;
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, BlockBody, OpTxType};
-use base_consensus_derive_pipeline::{Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver};
-use base_proof_execution_client::BlockBuildingOutcome;
 use base_consensus_batch_types::L2BlockInfo;
+use base_consensus_derive_pipeline::{
+    Pipeline, PipelineError, PipelineErrorKind, Signal, SignalReceiver,
+};
 use spin::RwLock;
 
-use crate::{DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor};
+use crate::driver::{
+    DriverError, DriverPipeline, DriverResult, Executor, PipelineCursor, TipCursor,
+};
 
 /// The Rollup Driver entrypoint.
 #[derive(Debug)]

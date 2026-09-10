@@ -22,7 +22,6 @@ export RUSTFLAGS
 proof_packages=(
   base-proof
   base-proof-client
-  base-proof-driver
   base-proof-execution-client
   base-proof-witness-mpt
   base-proof-witness-preimage

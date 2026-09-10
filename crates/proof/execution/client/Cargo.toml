@@ -14,62 +14,34 @@ workspace = true
 normal = ["getrandom"]
 
 [dependencies]
-tracing = { workspace = true }
-alloy-rlp = { workspace = true }
-thiserror = { workspace = true }
+tracing = {workspace = true}
+alloy-rlp = {workspace = true}
+thiserror = {workspace = true}
 alloy-eips = { workspace = true }
 alloy-trie = { workspace = true }
+async-trait = { workspace = true }
 base-proof-witness-mpt = { workspace = true }
+base-consensus-batch-types = {workspace = true}
 base-execution-evm-runtime = {workspace = true}
-base-consensus-batch-types = { workspace = true }
 base-execution-evm-machine = { workspace = true }
 serde_json = { workspace = true, optional = true }
+spin = { workspace = true, features = ["default"] }
+base-consensus-derive-pipeline = { workspace = true }
 alloy-transport = { workspace = true, optional = true }
-alloy-primitives = { workspace = true, features = ["rlp"] }
+alloy-primitives = {workspace = true, features = ["rlp"]}
 getrandom_0_2_17 = { workspace = true, features = ["custom"] }
-base-common-types-chain = { workspace = true, features = ["k256"]}
+base-common-types-chain = {workspace = true, features = ["k256"]}
 rand = { workspace = true, optional = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"], optional = true }
-base-common-chain-config = {workspace = true,  features = ["default"]}
+base-common-chain-config = {workspace = true, features = ["default"]}
 rocksdb = { workspace = true, features = ["snappy"], optional = true }
 tempfile = { workspace = true, optional = true, features = ["default"] }
-base-common-types-payload = {workspace = true, features = ["serde", "k256"]}
+base-common-types-payload = {workspace = true, features = ["k256", "serde"]}
 tokio = { workspace = true, features = ["default", "full"], optional = true }
 alloy-rpc-client = { workspace = true, optional = true, features = ["default"] }
 alloy-transport-http = { workspace = true, optional = true, features = ["default"] }
 base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"], optional = true }
 
 [features]
-std = [
-    "base-common-types-chain/std",
-    "alloy-eips/std",
-    "base-execution-evm-runtime/std",
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "base-common-types-payload/std",
-    "alloy-trie/std",
-    "base-common-chain-config/std",
-    "base-proof-witness-mpt/std",
-    "base-consensus-batch-types/std",
-    "getrandom_0_2_17/std",
-    "serde?/std",
-    "serde_json?/std",
-    "thiserror/std",
-    "tracing/std",
-]
-test-utils = [
-    "base-common-chain-config/test-utils",
-    "base-consensus-batch-types/test-utils",
-    "dep:base-common-client-ethereum",
-    "dep:alloy-rpc-client",
-    "dep:alloy-transport",
-    "dep:alloy-transport-http",
-    "dep:rand",
-    "dep:rocksdb",
-    "dep:serde",
-    "dep:serde_json",
-    "dep:tempfile",
-    "dep:tokio",
-    "std",
-    "base-common-chain-config/serde",
-]
+std = ["base-common-types-chain/std", "alloy-eips/std", "base-execution-evm-runtime/std", "alloy-primitives/std", "alloy-rlp/std", "base-common-types-payload/std", "alloy-trie/std", "base-common-chain-config/std", "base-proof-witness-mpt/std", "base-consensus-batch-types/std", "getrandom_0_2_17/std", "serde?/std", "serde_json?/std", "thiserror/std", "tracing/std", "spin/std"]
+test-utils = ["base-common-chain-config/test-utils", "base-consensus-batch-types/test-utils", "dep:base-common-client-ethereum", "dep:alloy-rpc-client", "dep:alloy-transport", "dep:alloy-transport-http", "dep:rand", "dep:rocksdb", "dep:serde", "dep:serde_json", "dep:tempfile", "dep:tokio", "std", "base-common-chain-config/serde"]

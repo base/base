@@ -23,8 +23,7 @@ async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
 base-proof-witness-mpt = { workspace = true }
 alloy-primitives = { workspace = true }
-base-proof-driver = { workspace = true }
-base-proof-execution-client = { workspace = true }
+base-proof-execution-client = {workspace = true}
 base-proof-witness-preimage = { workspace = true }
 c-kzg = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
@@ -48,33 +47,7 @@ rstest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }
 
 [features]
-std = [
-    "base-common-types-chain/std",
-    "alloy-eips/kzg",
-    "alloy-eips/std",
-    "base-execution-evm-runtime/std",
-    "alloy-genesis/std",
-    "alloy-primitives/std",
-    "alloy-rlp/std",
-    "alloy-trie/std",
-    "ark-bls12-381/std",
-    "ark-ff/std",
-    "base-common-chain-config/std",
-    "base-common-types-payload/std",
-    "base-proof-driver/std",
-    "base-proof-execution-client/std",
-    "base-proof-witness-mpt/std",
-    "base-proof-witness-preimage/std",
-    "base-consensus-batch-types/std",
-    "c-kzg?/std",
-    "dep:c-kzg",
-    "dep:tokio",
-    "serde/std",
-    "serde_json/std",
-    "spin/std",
-    "thiserror/std",
-    "tracing/std",
-]
+std = ["base-common-types-chain/std", "alloy-eips/kzg", "alloy-eips/std", "base-execution-evm-runtime/std", "alloy-genesis/std", "alloy-primitives/std", "alloy-rlp/std", "alloy-trie/std", "ark-bls12-381/std", "ark-ff/std", "base-common-chain-config/std", "base-common-types-payload/std", "base-proof-execution-client/std", "base-proof-witness-mpt/std", "base-proof-witness-preimage/std", "base-consensus-batch-types/std", "c-kzg?/std", "dep:c-kzg", "dep:tokio", "serde/std", "serde_json/std", "spin/std", "thiserror/std", "tracing/std"]
 # EIP-8130 execution in the EVM without Tokio (`std` pulls Tokio).
 # Bare-metal FPVM builds (`check-no-std-proof`) leave this off.
 evm-std = ["base-execution-evm-runtime/std"]

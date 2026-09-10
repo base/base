@@ -10,7 +10,7 @@ use base_proof::{
     BaseExecutor, CachingOracle, OracleBlobProvider, OracleL1ChainProvider, OracleL2ChainProvider,
     OraclePipeline,
 };
-use base_proof_driver::Driver;
+use base_proof_execution_client::Driver;
 use base_proof_witness_preimage::{HintWriterClient, PreimageOracleClient};
 use spin::RwLock;
 
@@ -42,7 +42,7 @@ where
     rollup_config: Arc<base_common_chain_config::RollupConfig>,
     claimed_l2_block_number: u64,
     claimed_l2_output_root: B256,
-    cursor: Arc<RwLock<base_proof_driver::PipelineCursor>>,
+    cursor: Arc<RwLock<base_proof_execution_client::PipelineCursor>>,
     pipeline: ConcreteOraclePipeline<P, H>,
     l2_provider: OracleL2Provider<P, H>,
     evm_factory: F,
@@ -64,7 +64,7 @@ where
         rollup_config: Arc<base_common_chain_config::RollupConfig>,
         claimed_l2_block_number: u64,
         claimed_l2_output_root: B256,
-        cursor: Arc<RwLock<base_proof_driver::PipelineCursor>>,
+        cursor: Arc<RwLock<base_proof_execution_client::PipelineCursor>>,
         pipeline: ConcreteOraclePipeline<P, H>,
         l2_provider: OracleL2Provider<P, H>,
         evm_factory: F,
@@ -93,7 +93,10 @@ where
     /// pairs for all intermediate blocks.
     pub async fn execute_with_intermediates(
         self,
-    ) -> Result<(Epilogue, Vec<(base_consensus_batch_types::L2BlockInfo, B256)>), FaultProofProgramError> {
+    ) -> Result<
+        (Epilogue, Vec<(base_consensus_batch_types::L2BlockInfo, B256)>),
+        FaultProofProgramError,
+    > {
         let mut intermediates = Vec::new();
         let epilogue = self
             .run_pipeline(|l2_info, output_root| intermediates.push((l2_info, output_root)))

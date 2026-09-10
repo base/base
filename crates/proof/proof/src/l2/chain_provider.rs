@@ -8,12 +8,12 @@ use alloy_rlp::Decodable;
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
 use base_common_types_chain::{BaseBlock, BaseTxEnvelope, BlockBody, Header};
+use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use base_consensus_derive_pipeline::L2ChainProvider;
-use base_proof_driver::PipelineCursor;
+use base_proof_execution_client::PipelineCursor;
 use base_proof_execution_client::TrieDBProvider;
 use base_proof_witness_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use base_proof_witness_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
 use spin::RwLock;
 
 use crate::{HintType, eip2935::eip_2935_history_lookup, errors::OracleProviderError};
