@@ -73,6 +73,7 @@ impl SnapshotManifestCommand {
             block,
             self.chain_id,
             blocks_per_file,
+            Some(base_node_config::version_metadata().short_version.as_ref()),
         )?;
 
         let num_components = manifest.components.len();

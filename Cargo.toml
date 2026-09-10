@@ -86,7 +86,6 @@ members = [
   "crates/common/observability/health",
   "crates/common/observability/metrics",
   "crates/common/client/rollup",
-  "crates/utilities/reth-cli",
   "crates/common/runtime/tasks",
   "crates/testing/support",
   "crates/common/http/proxy",
@@ -319,7 +318,6 @@ base-batcher-service-driver = { path = "crates/batcher/service/driver", default-
 base-common-observability-health = { path = "crates/common/observability/health", default-features = false }
 base-common-observability-metrics = { path = "crates/common/observability/metrics", default-features = false }
 base-common-runtime-tasks = { path = "crates/common/runtime/tasks", default-features = false }
-base-reth-cli = { path = "crates/utilities/reth-cli", default-features = false }
 base-testing-support = { path = "crates/testing/support", default-features = false }
 base-common-l1-transactions = { path = "crates/common/l1/transactions", default-features = false }
 base-common-client-rollup = { path = "crates/common/client/rollup", default-features = false }

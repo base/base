@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 lz4 = { workspace = true }
 url = { workspace = true }
-rayon = { workspace = true }
 serde = { workspace = true }
 fdlimit = { workspace = true }
 metrics = { workspace = true }

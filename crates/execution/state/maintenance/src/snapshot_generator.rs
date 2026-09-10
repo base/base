@@ -13,12 +13,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::{
+    ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
+};
 use anyhow::{Context, Result, bail};
 use humantime::{FormattedDuration, format_duration};
 use rayon::prelude::*;
-pub use reth_cli_commands::download::manifest::{
-    ChunkedArchive, ComponentManifest, OutputFileChecksum, SingleArchive, SnapshotManifest,
-};
 use tracing::info;
 
 /// Default blocks per static file segment.
@@ -97,8 +97,7 @@ impl ProgressDisplay {
     }
 }
 
-/// Convenience helpers for snapshotter-specific manifest lookups.
-pub trait SnapshotManifestExt {
+impl SnapshotManifest {
     /// Returns the per-file BLAKE3 hashes for a static-file chunk archive,
     /// sorted by file path, or `None` if the chunk has no recorded hashes.
     ///
@@ -111,20 +110,7 @@ pub trait SnapshotManifestExt {
     ///
     /// Callers should treat `None` as "no comparable hash available" and fall
     /// through to re-upload.
-    fn chunk_hashes_for_file(&self, filename: &str) -> Option<Vec<String>>;
-
-    /// Returns the full per-file metadata for a static-file chunk archive.
-    fn chunk_output_files_for_file(&self, filename: &str) -> Option<Vec<OutputFileChecksum>>;
-
-    /// Returns the compressed size recorded for a static-file chunk archive.
-    fn chunk_size_for_file(&self, filename: &str) -> Option<u64>;
-
-    /// Returns whether `filename` is the latest chunk for its component.
-    fn is_latest_chunk_file(&self, filename: &str) -> bool;
-}
-
-impl SnapshotManifestExt for SnapshotManifest {
-    fn chunk_hashes_for_file(&self, filename: &str) -> Option<Vec<String>> {
+    pub fn chunk_hashes_for_file(&self, filename: &str) -> Option<Vec<String>> {
         let (component, start, _end) = ChunkFilename::parse(filename)?;
         let ComponentManifest::Chunked(meta) = self.components.get(&component)? else {
             return None;
@@ -139,7 +125,8 @@ impl SnapshotManifestExt for SnapshotManifest {
         Some(sorted.into_iter().map(|e| e.blake3).collect())
     }
 
-    fn chunk_output_files_for_file(&self, filename: &str) -> Option<Vec<OutputFileChecksum>> {
+    /// Returns the full per-file metadata for a static-file chunk archive.
+    pub fn chunk_output_files_for_file(&self, filename: &str) -> Option<Vec<OutputFileChecksum>> {
         let (component, start, _end) = ChunkFilename::parse(filename)?;
         let ComponentManifest::Chunked(meta) = self.components.get(&component)? else {
             return None;
@@ -152,7 +139,8 @@ impl SnapshotManifestExt for SnapshotManifest {
         Some(entries.clone())
     }
 
-    fn chunk_size_for_file(&self, filename: &str) -> Option<u64> {
+    /// Returns the compressed size recorded for a static-file chunk archive.
+    pub fn chunk_size_for_file(&self, filename: &str) -> Option<u64> {
         let (component, start, _end) = ChunkFilename::parse(filename)?;
         let ComponentManifest::Chunked(meta) = self.components.get(&component)? else {
             return None;
@@ -161,7 +149,8 @@ impl SnapshotManifestExt for SnapshotManifest {
         meta.chunk_sizes.get(chunk_index).copied()
     }
 
-    fn is_latest_chunk_file(&self, filename: &str) -> bool {
+    /// Returns whether `filename` is the latest chunk for its component.
+    pub fn is_latest_chunk_file(&self, filename: &str) -> bool {
         let Some((component, start, end)) = ChunkFilename::parse(filename) else {
             return false;
         };
@@ -179,6 +168,8 @@ impl SnapshotManifestExt for SnapshotManifest {
 /// Inputs for [`SnapshotGenerator::generate_manifest`].
 #[derive(Debug, Clone, Copy)]
 pub struct ManifestGenerationParams<'a> {
+    /// Producer version recorded in snapshot metadata.
+    pub producer_version: Option<&'a str>,
     /// Reth node datadir containing static files, state DB, and optional proofs DB.
     pub source_datadir: &'a Path,
     /// Directory where snapshot archives and `manifest.json` are written.
@@ -427,7 +418,7 @@ impl SnapshotGenerator {
             storage_version: 2,
             timestamp,
             base_url: params.base_url.map(str::to_owned),
-            reth_version: Some(base_node_config::version_metadata().short_version.to_string()),
+            reth_version: params.producer_version.map(str::to_owned),
             components,
         };
 
@@ -884,6 +875,7 @@ mod tests {
         upload_proofs: bool,
     ) -> ManifestGenerationParams<'a> {
         ManifestGenerationParams {
+            producer_version: None,
             source_datadir,
             output_dir,
             chain_id: 8453,
@@ -1296,6 +1288,7 @@ mod tests {
         );
 
         let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            producer_version: None,
             source_datadir: source.path(),
             output_dir: output.path(),
             chain_id: 8453,

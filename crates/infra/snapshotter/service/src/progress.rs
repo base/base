@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use base_reth_cli::ProgressDisplay;
+use base_execution_state_maintenance::ProgressDisplay;
 use tracing::{info, warn};
 
 /// Interval between periodic progress logs during snapshot artifact uploads.

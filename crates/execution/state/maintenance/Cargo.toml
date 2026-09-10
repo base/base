@@ -13,10 +13,12 @@ categories.workspace = true
 
 [dependencies]
 rayon = {workspace = true}
+url = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
 thiserror = {workspace = true}
+humantime = { workspace = true }
 rustc-hash = { workspace = true }
 alloy-genesis = { workspace = true }
 base-common-io-files = { workspace = true }
@@ -29,8 +31,12 @@ base-execution-state-memory = {workspace = true}
 base-execution-state-trie = { workspace = true }
 base-execution-state-database = {workspace = true}
 base-execution-state-provider = {workspace = true}
+tar = { workspace = true, features = ["default"] }
 eyre = { workspace = true, features = ["default"] }
-serde_json = { workspace = true, features = ["alloc"] }
+zstd = { workspace = true, features = ["default"] }
+anyhow = { workspace = true, features = ["default"] }
+blake3 = { workspace = true, features = ["default"] }
+serde_json = {workspace = true, features = ["alloc"]}
 tempfile = { workspace = true, features = ["default"] }
 tracing = {workspace = true, features = ["attributes"]}
 base-common-types-chain = {workspace = true, features = ["reth"]}
@@ -41,9 +47,10 @@ parking_lot = { workspace = true, features = ["default", "send_guard", "arc_lock
 
 [dev-dependencies]
 assert_matches = {workspace = true}
+base-testing-support = {workspace = true}
 base-common-chain-config = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
-tempfile = { workspace = true, features = ["default"] }
+tempfile = {workspace = true, features = ["default"]}
 reth-primitives-traits = { workspace = true, features = ["arbitrary"] }
 base-execution-state-database = { workspace = true, features = ["mdbx"] }
 base-execution-state-types = {workspace = true, features = ["arbitrary"]}
@@ -51,7 +58,6 @@ base-execution-sync-pipeline = {workspace = true, features = ["test-utils"]}
 base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "getrandom"] }
-base-testing-support = {workspace = true}
 
 [lints]
 workspace = true

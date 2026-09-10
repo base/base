@@ -15,19 +15,20 @@ tracing = { workspace = true }
 alloy-eips = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }
-base-reth-cli = { workspace = true }
 url = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
 bollard = { workspace = true, features = ["default"] }
 futures = { workspace = true, features = ["default"] }
+base-execution-state-maintenance = { workspace = true }
 clap = { workspace = true, features = ["default", "derive", "env"] }
-base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }
 tokio = { workspace = true, features = ["default", "rt", "fs", "time"] }
+base-common-client-ethereum = { workspace = true, features = ["default", "reqwest"] }
 aws-sdk-s3 = { workspace = true, features = ["rustls", "default-https-client", "rt-tokio"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
-futures = { workspace = true, features = ["default"] }
 bollard = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
 tempfile = { workspace = true, features = ["default"] }
 serial_test = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "full"] }

@@ -936,6 +936,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     ];
     let baseline = tempfile::tempdir()?;
     SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        producer_version: None,
         source_datadir: source.path(),
         output_dir: baseline.path(),
         chain_id: 8453,
@@ -964,6 +965,7 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
 
     let output = tempfile::tempdir()?;
     let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        producer_version: None,
         source_datadir: source.path(),
         output_dir: output.path(),
         chain_id: 8453,
@@ -1040,6 +1042,7 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     let output = tempfile::tempdir()?;
     let empty_remote = HashMap::new();
     let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        producer_version: None,
         source_datadir: source.path(),
         output_dir: output.path(),
         chain_id: 8453,

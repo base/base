@@ -23,7 +23,7 @@ use aws_sdk_s3::{
     primitives::ByteStream,
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
-use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
+use base_execution_state_maintenance::{ChunkFilename, ComponentManifest, SnapshotManifest};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::{sync::Semaphore, time::sleep};
 use tracing::{debug, error, info, warn};
@@ -1153,7 +1153,7 @@ mod tests {
     fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
         use std::collections::BTreeMap;
 
-        use base_reth_cli::{ChunkedArchive, SingleArchive};
+        use base_execution_state_maintenance::{ChunkedArchive, SingleArchive};
 
         let mut components = BTreeMap::new();
         components.insert(

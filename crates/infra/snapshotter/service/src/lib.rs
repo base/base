@@ -7,9 +7,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub use base_reth_cli::{
+pub use base_execution_state_maintenance::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    ProgressDisplay, SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ProgressDisplay, SingleArchive, SnapshotGenerator, SnapshotManifest,
 };
 
 mod config;

@@ -4,8 +4,10 @@ use std::{collections::HashMap, path::PathBuf};
 
 use base_execution_state_database::DbTx;
 use base_execution_state_database::{Database, mdbx::DatabaseArguments, open_db_read_only, tables};
+use base_execution_state_maintenance::{
+    ManifestGenerationParams, SnapshotGenerator, SnapshotManifest,
+};
 use base_execution_state_types::StageId;
-use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
 use clap::Parser;
 use eyre::{ContextCompat, Result, WrapErr};
 use tracing::{info, warn};
@@ -74,6 +76,7 @@ impl SnapshotManifestCommand {
             "packaging modular snapshot archives"
         );
         SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+            producer_version: Some(base_node_config::version_metadata().short_version.as_ref()),
             source_datadir: &self.source_datadir,
             output_dir: &self.output_dir,
             chain_id: self.chain_id,

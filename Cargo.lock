@@ -3626,7 +3626,6 @@ dependencies = [
  "base-execution-rpc-handlers",
  "base-execution-state-provider",
  "base-execution-txpool-pool",
- "clap",
  "dyn-clone",
  "http 1.4.2",
  "http-body-util",
@@ -3757,6 +3756,7 @@ version = "0.0.0"
 dependencies = [
  "alloy-genesis",
  "alloy-primitives",
+ "anyhow",
  "assert_matches",
  "base-common-chain-config",
  "base-common-io-files",
@@ -3772,8 +3772,10 @@ dependencies = [
  "base-execution-state-types",
  "base-execution-sync-pipeline",
  "base-testing-support",
+ "blake3",
  "boyer-moore-magiclen",
  "eyre",
+ "humantime",
  "metrics",
  "parking_lot",
  "rayon",
@@ -3781,10 +3783,13 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "url",
+ "zstd",
 ]
 
 [[package]]
@@ -4250,7 +4255,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "base-common-client-ethereum",
- "base-reth-cli",
+ "base-execution-state-maintenance",
  "bollard",
  "clap",
  "futures",
@@ -4371,13 +4376,13 @@ dependencies = [
  "base-execution-rpc-handlers",
  "base-execution-state-database",
  "base-execution-state-indexer",
+ "base-execution-state-maintenance",
  "base-execution-state-provider",
  "base-execution-state-tasks",
  "base-execution-state-types",
  "base-execution-txpool-pool",
  "base-node-config",
  "base-node-service",
- "base-reth-cli",
  "clap",
  "dirs",
  "discv5",
@@ -5056,23 +5061,6 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "base-reth-cli"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base-node-config",
- "blake3",
- "humantime",
- "rayon",
- "reth-cli-commands",
- "serde_json",
- "tar",
- "tempfile",
- "tracing",
- "zstd",
 ]
 
 [[package]]
@@ -13650,7 +13638,6 @@ dependencies = [
  "proptest",
  "proptest-arbitrary-interop",
  "ratatui",
- "rayon",
  "reqwest",
  "reth-primitives-traits",
  "secp256k1 0.30.0",

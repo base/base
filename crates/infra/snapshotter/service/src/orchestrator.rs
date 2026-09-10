@@ -7,7 +7,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
+use base_execution_state_maintenance::{
+    ManifestGenerationParams, SnapshotGenerator, SnapshotManifest,
+};
 use tracing::{error, info, warn};
 
 use crate::{
@@ -185,6 +187,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
 
         let files = tokio::task::spawn_blocking(move || {
             let params = ManifestGenerationParams {
+                producer_version: Some(env!("CARGO_PKG_VERSION")),
                 source_datadir: &source_datadir,
                 output_dir: &output_dir_for_gen,
                 chain_id,
