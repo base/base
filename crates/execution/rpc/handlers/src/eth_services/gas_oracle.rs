@@ -10,16 +10,16 @@ use base_common_types_rpc::{BlockId, GasPriceOracleConfig};
 use base_execution_state_api::BlockReaderIdExt;
 use derive_more::{Deref, DerefMut, From, Into};
 use itertools::Itertools;
-use reth_rpc_server_types::{constants, constants::gas_oracle::SAMPLE_NUMBER};
 use schnellru::{ByLength, LruMap};
 use tokio::sync::Mutex;
 use tracing::warn;
+use {base_common_types_rpc as constants, base_common_types_rpc::SAMPLE_NUMBER};
 
 use super::{EthApiError, EthResult, EthStateCache, RpcInvalidTransactionError};
 
 /// The default gas limit for `eth_call` and adjacent calls. See
-/// [`RPC_DEFAULT_GAS_CAP`](constants::gas_oracle::RPC_DEFAULT_GAS_CAP).
-pub const RPC_DEFAULT_GAS_CAP: GasCap = GasCap(constants::gas_oracle::RPC_DEFAULT_GAS_CAP);
+/// [`RPC_DEFAULT_GAS_CAP`](constants::RPC_DEFAULT_GAS_CAP).
+pub const RPC_DEFAULT_GAS_CAP: GasCap = GasCap(constants::RPC_DEFAULT_GAS_CAP);
 
 /// Calculates a gas price depending on recent blocks.
 #[derive(Debug)]

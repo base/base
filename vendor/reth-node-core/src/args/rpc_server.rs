@@ -7,13 +7,13 @@ use std::{
 };
 
 use base_common_types_payload::JwtSecret;
+use base_common_types_rpc as constants;
 use base_common_types_rpc::PendingBlockKind;
 use clap::{
     Args,
     builder::{RangedU64ValueParser, Resettable},
 };
 use reth_cli_util::{parse_duration_from_secs_or_ms, parse_ether_value};
-use reth_rpc_server_types::constants;
 use url::Url;
 
 use super::types::MaxOr;
@@ -305,12 +305,12 @@ impl Default for DefaultRpcServerArgs {
             rpc_max_response_size: RPC_DEFAULT_MAX_RESPONSE_SIZE_MB.into(),
             rpc_max_subscriptions_per_connection: RPC_DEFAULT_MAX_SUBS_PER_CONN.into(),
             rpc_max_connections: RPC_DEFAULT_MAX_CONNECTIONS.into(),
-            rpc_max_tracing_requests: constants::default_max_tracing_requests(),
+            rpc_max_tracing_requests: constants::RpcServerDefaults::max_tracing_requests(),
             rpc_max_blocking_io_requests: constants::DEFAULT_MAX_BLOCKING_IO_REQUEST,
             rpc_max_trace_filter_blocks: constants::DEFAULT_MAX_TRACE_FILTER_BLOCKS,
             rpc_max_blocks_per_filter: constants::DEFAULT_MAX_BLOCKS_PER_FILTER.into(),
             rpc_max_logs_per_response: (constants::DEFAULT_MAX_LOGS_PER_RESPONSE as u64).into(),
-            rpc_gas_cap: constants::gas_oracle::RPC_DEFAULT_GAS_CAP,
+            rpc_gas_cap: constants::RPC_DEFAULT_GAS_CAP,
             rpc_evm_memory_limit: (1 << 32) - 1,
             rpc_tx_fee_cap: constants::DEFAULT_TX_FEE_CAP_WEI,
             rpc_max_simulate_blocks: constants::DEFAULT_MAX_SIMULATE_BLOCKS,

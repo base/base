@@ -2,12 +2,12 @@
 
 use std::time::Duration;
 
-use reqwest::Url;
-use reth_rpc_server_types::constants::{
+use base_common_types_rpc::{
     DEFAULT_ETH_PROOF_WINDOW, DEFAULT_MAX_BLOCKING_IO_REQUEST, DEFAULT_MAX_BLOCKS_PER_FILTER,
     DEFAULT_MAX_LOGS_PER_RESPONSE, DEFAULT_MAX_SIMULATE_BLOCKS, DEFAULT_MAX_TRACE_FILTER_BLOCKS,
-    DEFAULT_PROOF_PERMITS, RPC_DEFAULT_SEND_RAW_TX_SYNC_TIMEOUT_SECS, default_max_tracing_requests,
+    DEFAULT_PROOF_PERMITS, RPC_DEFAULT_SEND_RAW_TX_SYNC_TIMEOUT_SECS, RpcServerDefaults,
 };
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 use crate::eth_services::{
@@ -94,7 +94,7 @@ impl Default for EthConfig {
             cache: EthStateCacheConfig::default(),
             gas_oracle: GasPriceOracleConfig::default(),
             eth_proof_window: DEFAULT_ETH_PROOF_WINDOW,
-            max_tracing_requests: default_max_tracing_requests(),
+            max_tracing_requests: RpcServerDefaults::max_tracing_requests(),
             max_blocking_io_requests: DEFAULT_MAX_BLOCKING_IO_REQUEST,
             max_trace_filter_blocks: DEFAULT_MAX_TRACE_FILTER_BLOCKS,
             max_blocks_per_filter: DEFAULT_MAX_BLOCKS_PER_FILTER,

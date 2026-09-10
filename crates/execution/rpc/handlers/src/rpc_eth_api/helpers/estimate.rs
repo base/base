@@ -4,6 +4,7 @@ use crate::{BaseEthApiError, EthApiError, RpcInvalidTransactionError};
 use alloy_primitives::{TxKind, U256};
 use base_common_client_ethereum::TransactionBuilder;
 use base_common_types_rpc::{BaseTransactionRequest, BlockId, state::EvmOverrides};
+use base_common_types_rpc::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use base_execution_evm_blocks::{
     BlockEnvironment, Database, Evm, EvmEnvFor, EvmFor, TransactionEnvMut, TxEnvFor,
 };
@@ -15,7 +16,6 @@ use base_execution_evm_runtime::{
 use base_execution_state_api::StateProvider;
 use base_execution_state_types::ProviderError;
 use futures::Future;
-use reth_rpc_server_types::constants::gas_oracle::{CALL_STIPEND_GAS, ESTIMATE_GAS_ERROR_RATIO};
 use tracing::trace;
 use {crate::apply_block_overrides, crate::apply_state_overrides};
 

@@ -1,10 +1,10 @@
 use alloy_primitives::U256;
 use base_common_types_rpc::GasPriceOracleConfig;
-use clap::Args;
-use reth_rpc_server_types::constants::gas_oracle::{
+use base_common_types_rpc::{
     DEFAULT_GAS_PRICE_BLOCKS, DEFAULT_GAS_PRICE_PERCENTILE, DEFAULT_IGNORE_GAS_PRICE,
     DEFAULT_MAX_GAS_PRICE,
 };
+use clap::Args;
 
 /// Parameters to configure Gas Price Oracle
 #[derive(Debug, Clone, Copy, Args, PartialEq, Eq)]

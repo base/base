@@ -1,6 +1,6 @@
 //! Configuration for RPC cache.
 
-use reth_rpc_server_types::constants::cache::{
+use base_common_types_rpc::{
     DEFAULT_BAL_CACHE_MAX_LEN, DEFAULT_BLOCK_CACHE_MAX_LEN, DEFAULT_CONCURRENT_DB_REQUESTS,
     DEFAULT_HEADER_CACHE_MAX_LEN, DEFAULT_MAX_CACHED_TX_HASHES, DEFAULT_RECEIPT_CACHE_MAX_LEN,
 };

@@ -8,8 +8,5 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-/// Common RPC constants.
-pub mod constants;
-
 mod module;
 pub use module::RethRpcModule;

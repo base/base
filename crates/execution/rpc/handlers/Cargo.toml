@@ -33,7 +33,6 @@ alloy-sol-types = { workspace = true }
 reth-network-api = { workspace = true }
 reth-payload-util = { workspace = true }
 opentelemetry-http = { workspace = true }
-reth-rpc-server-types = {workspace = true}
 alloy-rpc-types-admin = { workspace = true }
 alloy-rpc-types-debug = { workspace = true }
 reth-engine-primitives = { workspace = true }

@@ -32,6 +32,7 @@ use http::{HeaderMap, header::AUTHORIZATION};
 // re-export for convenience
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
+use base_common_types_rpc as constants;
 use base_execution_rpc_handlers::{
     AdminApiServer, DebugApiServer, MevSimApiServer, MinerApiServer, NetApiServer, OtterscanServer,
     RethApiServer, RpcApiServer, TraceApiServer, TxPoolApiServer, Web3ApiServer,
@@ -48,7 +49,7 @@ use jsonrpsee::{
 };
 use reth_engine_primitives::ConsensusEngineEvent;
 use reth_rpc_layer::{AuthLayer, Claims, CompressionLayer, JwtAuthValidator, JwtSecret};
-pub use reth_rpc_server_types::{RethRpcModule, constants};
+pub use reth_rpc_server_types::RethRpcModule;
 use serde::{Deserialize, Serialize};
 pub use tower::layer::util::{Identity, Stack};
 use tower_http::cors::CorsLayer;
@@ -581,7 +582,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
     /// Configures the [`SocketAddr`] of the http server
     ///
     /// Default is [`Ipv4Addr::LOCALHOST`] and
-    /// [`reth_rpc_server_types::constants::DEFAULT_HTTP_RPC_PORT`]
+    /// [`base_common_types_rpc::DEFAULT_HTTP_RPC_PORT`]
     pub const fn with_http_address(mut self, addr: SocketAddr) -> Self {
         self.http_addr = Some(addr);
         self
@@ -590,7 +591,7 @@ impl<RpcMiddleware> RpcServerConfig<RpcMiddleware> {
     /// Configures the [`SocketAddr`] of the ws server
     ///
     /// Default is [`Ipv4Addr::LOCALHOST`] and
-    /// [`reth_rpc_server_types::constants::DEFAULT_WS_RPC_PORT`]
+    /// [`base_common_types_rpc::DEFAULT_WS_RPC_PORT`]
     pub const fn with_ws_address(mut self, addr: SocketAddr) -> Self {
         self.ws_addr = Some(addr);
         self

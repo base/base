@@ -94,10 +94,10 @@ impl RpcConfig {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+    use base_common_types_rpc as constants;
     use base_execution_rpc_handlers::RPC_DEFAULT_GAS_CAP;
     use clap::{Args, Parser};
     use reth_node_core::args::RpcServerArgs;
-    use reth_rpc_server_types::constants;
 
     use crate::RpcConfig;
 

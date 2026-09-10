@@ -23,7 +23,6 @@ pin-project = { workspace = true }
 reth-network = { workspace = true }
 reth-node-core = { workspace = true }
 reth-rpc-layer = { workspace = true }
-base-node-context = { workspace = true }
 base-execution-txpool = {workspace = true}
 reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
@@ -36,13 +35,15 @@ http = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
 base-execution-state-provider = { workspace = true }
 jsonrpsee = { workspace = true, features = ["server"] }
-tracing = { workspace = true, features = ["attributes"] }
 tower-http = { workspace = true, features = ["default", "full"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 tokio-util = { workspace = true, features = ["default", "codec"] }
 base-common-runtime-tasks = {workspace = true, features = ["rayon"]}
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
 base-common-client-ethereum = {workspace = true, features = ["debug-api", "reqwest", "ws"]}
+
+[dependencies.base-common-types-rpc]
+workspace = true
 
 [dev-dependencies]
 alloy-eips = { workspace = true }
@@ -62,3 +63,7 @@ base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-execution-payload-builder = { workspace = true, features = ["test-utils"] }
 base-execution-rpc-handlers = { workspace = true, features = ["test-utils", "client"] }
+
+[dev-dependencies.tracing]
+workspace = true
+features = ["attributes"]

@@ -8,6 +8,7 @@ use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_serde::JsonStorageKey;
 use base_common_types_chain::constants::KECCAK_EMPTY;
+use base_common_types_rpc::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 use base_common_types_rpc::{
     Account, AccountInfo, BaseTransactionRequest, EIP1186AccountProofResponse,
 };
@@ -19,7 +20,6 @@ use base_execution_state_types::MultiProofTargets;
 use base_execution_txpool::TransactionPool;
 use futures::Future;
 use reth_primitives_traits::RecoveredBlock;
-use reth_rpc_server_types::constants::DEFAULT_MAX_STORAGE_VALUES_SLOTS;
 
 use crate::BaseEthApi;
 

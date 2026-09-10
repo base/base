@@ -3,12 +3,12 @@
 use std::{sync::Arc, time::Duration};
 
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskPool};
-use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_state_provider::providers::BlockchainProvider;
-use reth_rpc_server_types::constants::{
+use base_common_types_rpc::{
     DEFAULT_ETH_PROOF_WINDOW, DEFAULT_MAX_BLOCKING_IO_REQUEST, DEFAULT_MAX_SIMULATE_BLOCKS,
     DEFAULT_PROOF_PERMITS,
 };
+use base_execution_state_provider::CanonStateSubscriptions;
+use base_execution_state_provider::providers::BlockchainProvider;
 use {
     crate::EthStateCache, crate::EthStateCacheConfig, crate::FeeHistoryCache,
     crate::FeeHistoryCacheConfig, crate::ForwardConfig, crate::GasCap, crate::GasPriceOracle,

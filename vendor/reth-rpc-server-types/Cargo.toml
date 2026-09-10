@@ -16,7 +16,5 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-base-common-types-rpc = {workspace = true}
 serde = { workspace = true, features = ["derive"] }
 strum = { workspace = true, features = ["derive"] }
-alloy-primitives = { workspace = true, features = ["map-foldhash"] }

@@ -37,7 +37,6 @@ reth-node-ethstats = { workspace = true }
 base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
-reth-rpc-server-types = { workspace = true }
 reth-engine-primitives = { workspace = true }
 reth-invalid-block-hooks = { workspace = true }
 base-common-client-ethereum = {workspace = true}

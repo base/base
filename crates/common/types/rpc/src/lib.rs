@@ -164,3 +164,6 @@ pub use gas_price_config::{
 
 mod pending_block_kind;
 pub use pending_block_kind::PendingBlockKind;
+
+mod rpc_defaults;
+pub use rpc_defaults::*;
