@@ -119,7 +119,11 @@ impl L1Stack {
     }
 
     /// How long the chain may stay at block zero before its client logs are captured.
-    pub const STALL_DIAGNOSTIC_DELAY: Duration = Duration::from_secs(60);
+    ///
+    /// A healthy devnet L1 leaves block zero within a couple of slots, so this only needs to be
+    /// long enough to tell "stalled" from "starting". Every second here is charged to tests that
+    /// are already failing, and overshooting pushes them past their own nextest timeouts.
+    pub const STALL_DIAGNOSTIC_DELAY: Duration = Duration::from_secs(20);
 
     /// Poll interval while watching for the first L1 block.
     const BLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
