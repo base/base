@@ -18,13 +18,13 @@ use crate::RpcErrorFactory;
 #[cfg_attr(not(test), rpc(server, namespace = "debug"))]
 #[cfg_attr(test, rpc(server, client, namespace = "debug"))]
 /// RPC trait for the `debug_executePayload` endpoint.
-pub trait DebugExecutionWitnessApi<Attributes> {
+pub trait DebugExecutionWitnessApi {
     /// Executes a payload and returns the execution witness.
     #[method(name = "executePayload")]
     async fn execute_payload(
         &self,
         parent_block_hash: B256,
-        attributes: Attributes,
+        attributes: BasePayloadAttributes,
     ) -> RpcResult<ExecutionWitness>;
 }
 
@@ -57,7 +57,7 @@ impl BaseDebugWitnessApi {
 }
 
 #[async_trait]
-impl DebugExecutionWitnessApiServer<BasePayloadAttributes> for BaseDebugWitnessApi {
+impl DebugExecutionWitnessApiServer for BaseDebugWitnessApi {
     async fn execute_payload(
         &self,
         parent_block_hash: B256,
