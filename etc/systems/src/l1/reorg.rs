@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use alloy_eips::eip1898::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, keccak256};
+use base_common_client_ethereum::AuthClientLayer;
 use base_common_client_ethereum::Ethereum;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_payload::{
@@ -12,7 +13,6 @@ use base_common_types_payload::{
 };
 use eyre::{OptionExt, Result, WrapErr, ensure};
 use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
-use reth_rpc_layer::AuthClientLayer;
 use tower::ServiceBuilder;
 use url::Url;
 

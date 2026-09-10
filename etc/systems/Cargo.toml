@@ -26,7 +26,6 @@ nanoid = { workspace = true }
 async-trait = { workspace = true }
 alloy-signer = { workspace = true }
 reth-node-core = { workspace = true }
-reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-load-tests = { workspace = true }
 alloy-primitives = { workspace = true }
@@ -81,8 +80,8 @@ base-execution-state-indexer = { workspace = true, features = ["default", "servi
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "fmt"] }
 base-prover-service-protocol = { workspace = true, features = ["default", "rpc-server"] }
 tokio = { workspace = true, features = ["default", "full", "rt-multi-thread", "macros"] }
-base-common-client-ethereum = {workspace = true, features = ["default", "mnemonic", "reqwest"]}
 sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "migrate", "macros", "tls-native-tls"] }
+base-common-client-ethereum = {workspace = true, features = ["default", "mnemonic", "reqwest", "jwt-client"]}
 
 [dev-dependencies]
 alloy-json-rpc = { workspace = true }

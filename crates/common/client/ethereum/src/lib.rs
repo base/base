@@ -42,3 +42,8 @@ pub use alloy_transport as transport;
 pub use alloy_transport::mock;
 mod networks;
 pub use networks::*;
+
+#[cfg(feature = "jwt-client")]
+mod auth_client;
+#[cfg(feature = "jwt-client")]
+pub use auth_client::{AuthClientLayer, AuthClientService};

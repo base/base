@@ -11,14 +11,12 @@
 use http::HeaderMap;
 use jsonrpsee_http_client::HttpResponse;
 
-mod auth_client_layer;
 mod auth_layer;
 mod compression_layer;
 pub use compression_layer::CompressionService;
 mod jwt_validator;
 
 // Export alloy JWT types
-pub use auth_client_layer::{AuthClientLayer, AuthClientService, secret_to_bearer_header};
 pub use auth_layer::{AuthLayer, AuthService, ResponseFuture};
 pub use base_common_types_payload::{Claims, JwtError, JwtSecret};
 pub use compression_layer::CompressionLayer;

@@ -77,6 +77,20 @@ zeroize = { workspace = true, features = [
     "alloc",
 ], optional = true }
 
+[dependencies.tower]
+workspace = true
+optional = true
+
+[dependencies.http]
+workspace = true
+optional = true
+features = ["default"]
+
+[dependencies.base-common-types-payload]
+workspace = true
+optional = true
+features = ["jwt-aws-lc-rs", "serde"]
+
 [dev-dependencies]
 ci_info = { workspace = true }
 reqwest = { workspace = true }
@@ -146,3 +160,4 @@ k256 = [
     "alloy-eips/k256",
     "base-common-types-rpc/k256",
 ]
+jwt-client = ["dep:tower", "dep:http", "dep:base-common-types-payload"]

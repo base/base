@@ -20,8 +20,6 @@ derive_more = { workspace = true }
 alloy-signer = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-transport = {workspace = true}
-base-execution-state-provider = { workspace = true }
-reth-rpc-layer = { workspace = true }
 serde = {workspace = true, features = ["std"]}
 base-common-chain-config = { workspace = true }
 base-execution-state-api = { workspace = true }
@@ -33,6 +31,7 @@ base-execution-state-types = { workspace = true }
 lru = { workspace = true, features = ["default"] }
 thiserror = {workspace = true, features = ["std"]}
 base-execution-state-database = { workspace = true }
+base-execution-state-provider = { workspace = true }
 base-consensus-derive-pipeline = { workspace = true }
 notify = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default"] }
@@ -48,16 +47,16 @@ http-body-util = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["std"]}
 tokio = {workspace = true, features = ["default", "full", "time"]}
 base-common-types-payload = { workspace = true, features = ["std", "serde"] }
-base-common-client-ethereum = {workspace = true, features = ["default", "reqwest", "ws"]}
+base-common-client-ethereum = {workspace = true, features = ["default", "reqwest", "ws", "jwt-client"]}
 alloy-transport-http = {workspace = true, features = ["default", "hyper", "hyper-tls", "reqwest", "reqwest-rustls-tls"]}
 
 [dev-dependencies]
-base-execution-state-maintenance = { workspace = true }
 base-common-types-rpc = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+base-execution-state-maintenance = { workspace = true }
 httpmock = { workspace = true, features = ["default"] }
-base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 tokio = {workspace = true, features = ["default", "macros", "test-util"]}
+base-execution-state-provider = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = []

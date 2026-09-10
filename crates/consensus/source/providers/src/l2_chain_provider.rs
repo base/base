@@ -12,14 +12,17 @@ use alloy_transport_http::{
 };
 use async_trait::async_trait;
 use base_common_chain_config::{RollupConfig, SystemConfig};
+use base_common_client_ethereum::AuthClientLayer;
 use base_common_client_ethereum::Base;
 use base_common_client_ethereum::{Provider, RootProvider};
 use base_common_types_chain::BaseBlock;
-use base_consensus_derive_pipeline::{L2ChainProvider, PipelineError, PipelineErrorKind, ResetError};
+use base_common_types_payload::JwtSecret;
 use base_consensus_batch_types::{BatchValidationProvider, L2BlockInfo, to_system_config};
+use base_consensus_derive_pipeline::{
+    L2ChainProvider, PipelineError, PipelineErrorKind, ResetError,
+};
 use http_body_util::Full;
 use lru::LruCache;
-use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use tower::ServiceBuilder;
 
 use crate::Metrics;
@@ -146,15 +149,16 @@ impl AlloyL2ChainProvider {
                     let consensus_block =
                         block.into_consensus().map_transactions(|t| t.inner.inner);
 
-                    let l2_block = base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
-                        &consensus_block,
-                        &self.rollup_config.genesis,
-                    )
-                    .map_err(|_| {
-                        RpcError::local_usage_str(
-                            "failed to construct L2BlockInfo from block and genesis",
+                    let l2_block =
+                        base_consensus_batch_types::L2BlockInfoDecoder::from_block_and_genesis(
+                            &consensus_block,
+                            &self.rollup_config.genesis,
                         )
-                    })?;
+                        .map_err(|_| {
+                            RpcError::local_usage_str(
+                                "failed to construct L2BlockInfo from block and genesis",
+                            )
+                        })?;
                     Ok(Some(l2_block))
                 }
                 None => Ok(None),

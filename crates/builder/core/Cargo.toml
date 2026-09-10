@@ -22,7 +22,6 @@ alloy-signer = { workspace = true }
 reth-cli-util = { workspace = true }
 alloy-json-rpc = { workspace = true }
 base-cli-utils = { workspace = true }
-reth-rpc-layer = { workspace = true }
 alloy-hardforks = { workspace = true }
 alloy-transport = { workspace = true }
 jsonrpsee-types = { workspace = true }
@@ -82,7 +81,6 @@ base-execution-txpool = { workspace = true, features = ["default"] }
 ctor = { workspace = true, optional = true, features = ["default"] }
 hyper = { workspace = true, optional = true, features = ["default"] }
 base-execution-state-api = { workspace = true, features = ["default"] }
-base-common-client-ethereum = {workspace = true, features = ["default"]}
 base-execution-evm-precompiles = { workspace = true, features = ["std"]}
 uuid = { workspace = true, features = ["default", "serde", "v5", "v4"] }
 base-common-types-rpc = {workspace = true, features = ["default", "std"]}
@@ -99,6 +97,7 @@ base-execution-payload-builder = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, optional = true, features = ["default"] }
 http-body-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-rpc-handlers = {workspace = true, features = ["client", "default"]}
+base-common-client-ethereum = {workspace = true, features = ["default", "jwt-client"]}
 tracing-subscriber = { workspace = true, features = ["default", "env-filter", "json"] }
 
 [target.'cfg(unix)'.dependencies]
