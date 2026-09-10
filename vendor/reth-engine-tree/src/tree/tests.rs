@@ -23,7 +23,7 @@ use base_common_types_payload::{
     ExecutionPayloadV1, ForkchoiceState, ForkchoiceUpdateError,
     PayloadAttributes as EthPayloadAttributes,
 };
-use base_execution_engine_types::{ForkchoiceStatus, NoopInvalidBlockHook};
+use base_execution_engine_types::ForkchoiceStatus;
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload_builder::PayloadServiceCommand;
@@ -183,7 +183,7 @@ impl TestHarness {
             evm_config.clone(),
             payload_validator,
             tree_config.clone(),
-            Box::new(NoopInvalidBlockHook::default()),
+            Vec::new(),
             overlay_manager,
             runtime.clone(),
         );
@@ -394,7 +394,7 @@ impl ValidatorTestHarness {
             evm_config,
             payload_validator,
             TreeConfig::default(),
-            Box::new(NoopInvalidBlockHook::default()),
+            Vec::new(),
             overlay_manager,
             base_common_runtime_tasks::Runtime::test(),
         );

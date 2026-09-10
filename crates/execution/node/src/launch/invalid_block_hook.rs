@@ -1,7 +1,6 @@
 //! Invalid block hook helpers for the node builder.
 
 use base_execution_engine_observers::InvalidBlockWitnessHook;
-use base_execution_engine_types::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_rpc_handlers::EthApiClient;
 use eyre::OptionExt;
@@ -18,7 +17,7 @@ pub struct InvalidBlockHookBuilder;
 impl InvalidBlockHookBuilder {
     /// Creates an invalid block hook based on the node configuration.
     ///
-    /// This function constructs the appropriate [`InvalidBlockHook`] based on the debug
+    /// This function constructs the appropriate [`InvalidBlockWitnessHook`] based on the debug
     /// configuration in the node config. It supports:
     /// - Witness hooks for capturing block witness data
     /// - Healthy node verification via RPC
@@ -35,7 +34,7 @@ impl InvalidBlockHookBuilder {
         provider: P,
         evm_config: BaseEvmConfig,
         chain_id: u64,
-    ) -> eyre::Result<Box<dyn InvalidBlockHook>>
+    ) -> eyre::Result<Vec<InvalidBlockWitnessHook<P>>>
     where
         P: base_execution_state_provider::StateProviderFactory
             + base_execution_state_provider::ChainSpecProvider
@@ -45,7 +44,7 @@ impl InvalidBlockHookBuilder {
             + 'static,
     {
         let Some(ref hook) = config.debug.invalid_block_hook else {
-            return Ok(Box::new(NoopInvalidBlockHook::default()));
+            return Ok(Vec::new());
         };
 
         let healthy_node_rpc_client = Self::healthy_node_client(config, chain_id).await?;
@@ -59,20 +58,20 @@ impl InvalidBlockHookBuilder {
                 std::fs::create_dir_all(&output_directory)?;
 
                 Ok(match hook {
-                    InvalidBlockHookType::Witness => Box::new(InvalidBlockWitnessHook::new(
+                    InvalidBlockHookType::Witness => InvalidBlockWitnessHook::new(
                         provider.clone(),
                         evm_config.clone(),
                         output_directory,
                         healthy_node_rpc_client.clone(),
-                    )),
+                    ),
                     InvalidBlockHookType::PreState | InvalidBlockHookType::Opcode => {
                         eyre::bail!("invalid block hook {hook:?} is not implemented yet");
                     }
-                } as Box<dyn InvalidBlockHook>)
+                })
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(Box::new(InvalidBlockHooks(hooks)))
+        Ok(hooks)
     }
 
     /// Returns an RPC client for the healthy node, if configured in the node config.

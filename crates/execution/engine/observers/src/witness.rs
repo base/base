@@ -4,7 +4,6 @@ use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_observability_tracing::tracing::warn;
 use base_common_types_chain::BlockHeader;
-use base_execution_engine_types::InvalidBlockHook;
 use base_execution_evm_blocks::{BaseEvmConfig, Executor};
 use base_execution_evm_runtime::{
     bytecode::Bytecode,
@@ -341,7 +340,7 @@ where
         Ok(())
     }
 
-    fn on_invalid_block(
+    pub fn on_invalid_block(
         &self,
         parent_header: &SealedHeader,
         block: &RecoveredBlock,
@@ -387,23 +386,6 @@ where
         File::create(&path)?.write_all(diff.to_string().as_bytes())?;
 
         Ok(path)
-    }
-}
-
-impl<P> InvalidBlockHook for InvalidBlockWitnessHook<P>
-where
-    P: StateProviderFactory + Send + Sync + 'static,
-{
-    fn on_invalid_block(
-        &self,
-        parent_header: &SealedHeader,
-        block: &RecoveredBlock,
-        output: &BlockExecutionOutput,
-        trie_updates: Option<(&TrieUpdates, B256)>,
-    ) {
-        if let Err(err) = self.on_invalid_block(parent_header, block, output, trie_updates) {
-            warn!(target: "engine::invalid_block_hooks::witness", %err, "Failed to invoke hook");
-        }
     }
 }
 

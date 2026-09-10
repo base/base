@@ -14047,6 +14047,7 @@ dependencies = [
  "base-common-runtime-tasks",
  "base-common-types-chain",
  "base-common-types-payload",
+ "base-execution-engine-observers",
  "base-execution-engine-types",
  "base-execution-evm-blocks",
  "base-execution-evm-machine",

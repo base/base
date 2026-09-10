@@ -115,7 +115,8 @@ use base_common_types_chain::{
     constants::KECCAK_EMPTY,
     transaction::{Either, TxHashRef},
 };
-use base_execution_engine_types::{ExecutionPayload, InvalidBlockHook};
+use base_execution_engine_observers::InvalidBlockWitnessHook;
+use base_execution_engine_types::ExecutionPayload;
 use base_execution_evm_blocks::ExecutableTxIterator;
 use base_execution_evm_blocks::{BaseBeaconConsensus, ConsensusError, ReceiptRootBloom};
 use base_execution_evm_blocks::{
@@ -251,7 +252,7 @@ pub struct BasicEngineValidator<P> {
     precompile_cache_metrics: AddressMap<CachedPrecompileMetrics>,
     /// Hook to call when invalid blocks are encountered.
     #[debug(skip)]
-    invalid_block_hook: Box<dyn InvalidBlockHook>,
+    invalid_block_hook: Vec<InvalidBlockWitnessHook<P>>,
     /// Metrics for the engine api.
     metrics: EngineApiMetrics,
     /// Validator for the payload.
@@ -299,7 +300,7 @@ where
         evm_config: BaseEvmConfig,
         validator: BaseEngineValidator,
         config: TreeConfig,
-        invalid_block_hook: Box<dyn InvalidBlockHook>,
+        invalid_block_hook: Vec<InvalidBlockWitnessHook<P>>,
         overlay_manager: OverlayManager,
         runtime: base_common_runtime_tasks::Runtime,
     ) -> Self {
@@ -1347,7 +1348,11 @@ where
             // we already marked this block as invalid
             return;
         }
-        self.invalid_block_hook.on_invalid_block(parent_header, block, output, trie_updates);
+        for hook in &self.invalid_block_hook {
+            if let Err(err) = hook.on_invalid_block(parent_header, block, output, trie_updates) {
+                tracing::warn!(target: "engine::invalid_block_hooks::witness", %err, "Failed to invoke hook");
+            }
+        }
     }
 
     /// Prepares the optional payload-builder state-root handle through the installed

@@ -51,6 +51,7 @@ serde_json = { workspace = true, features = ["alloc"], optional = true }
 base-execution-network-wire = {workspace = true, features = ["requests"]}
 base-execution-payload-types = { workspace = true, features = ["default"] }
 base-execution-network-service = { workspace = true, features = ["default"] }
+base-execution-engine-observers = { workspace = true, features = ["witness"] }
 reth-primitives-traits = { workspace = true, features = ["rayon", "dashmap"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "macros"] }
 base-common-observability-metrics = { workspace = true, features = ["common", "metrics"] }
