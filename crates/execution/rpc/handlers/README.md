@@ -1,4 +1,4 @@
-# `base-execution-rpc`
+# `base-execution-rpc-handlers`
 
 RPC extensions for the Base execution node.
 
@@ -15,11 +15,11 @@ Add the dependency to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-base-execution-rpc = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
 ```
 
 ```rust,ignore
-use base_execution_rpc::{BaseEthApiBuilder, SequencerClient};
+use base_execution_rpc_handlers::{BaseEthApiBuilder, SequencerClient};
 
 let eth_api = BaseEthApiBuilder::new()
     .with_sequencer(SequencerClient::new(sequencer_url))

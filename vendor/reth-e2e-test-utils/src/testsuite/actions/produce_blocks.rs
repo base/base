@@ -7,7 +7,7 @@ use base_common_types_payload::{
     ExecutionPayloadEnvelopeV3, ForkchoiceState, PayloadAttributes, PayloadStatusEnum,
 };
 use base_execution_payload_types::BasePayloadBuilderAttributes;
-use base_execution_rpc::EthApiClient;
+use base_execution_rpc_handlers::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tokio::time::sleep;

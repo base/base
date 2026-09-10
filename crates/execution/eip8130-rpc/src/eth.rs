@@ -9,7 +9,7 @@ use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
 use base_execution_evm_machine::BlockEnv;
 use base_execution_evm_runtime::BaseTransaction as BaseRevm;
 use base_execution_evm_runtime::EvmFactory;
-use base_execution_rpc::BaseEthApi;
+use base_execution_rpc_handlers::BaseEthApi;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,

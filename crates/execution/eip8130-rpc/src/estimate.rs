@@ -7,7 +7,7 @@ use base_common_types_rpc::state::EvmOverrides;
 use base_execution_evm_blocks::{EvmFactoryFor, TxEnvFor};
 use base_execution_evm_machine::{Block, BlockEnv, ExecutionResult};
 use base_execution_evm_runtime::BaseTransaction as BaseRevm;
-use base_execution_rpc::BaseEthApi;
+use base_execution_rpc_handlers::BaseEthApi;
 use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use reth_rpc_eth_types::BaseEthApiError;
 use {

@@ -169,9 +169,9 @@ async fn test_eth_subscribe_pending_transactions_receives_tx() {
         base_execution_state_provider::test_utils::ExtendedAccount::new(0, alloy_primitives::U256::MAX),
     );
     let tx = base_execution_txpool::BasePooledTransaction::try_from_consensus(recovered).unwrap();
-    let context = base_execution_rpc::test_utils::RpcTestUtils::context(mock);
+    let context = base_execution_rpc_handlers::test_utils::RpcTestUtils::context(mock);
     let pool_clone = context.pool.clone();
-    let eth_api = base_execution_rpc::EthApiBuilder::new_with_components(context.clone()).build();
+    let eth_api = base_execution_rpc_handlers::EthApiBuilder::new_with_components(context.clone()).build();
     let mut registry = RpcRegistryInner::new(
         context.provider,
         context.pool,

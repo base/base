@@ -20,7 +20,7 @@ use base_common_client_ethereum::IntoWallet;
 use base_common_client_ethereum::{Provider, ProviderBuilder, fillers::RecommendedFillers};
 use base_execution_evm_blocks::BaseBeaconConsensus;
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_rpc::{
+use base_execution_rpc_handlers::{
     AdminApi, BaseEthApi, DebugApi, EthApiServer, EthBundle, EthCallBundleApiServer,
     EthFilterApiServer, EthPubSubApiServer, MinerApi, NetApi, OtterscanApi, RPCApi, RethApi,
     TraceApi, TxPoolApi, Web3Api,
@@ -32,7 +32,7 @@ use http::{HeaderMap, header::AUTHORIZATION};
 // re-export for convenience
 use base_common_runtime_tasks::EventSender;
 use base_common_runtime_tasks::{Runtime, pool::BlockingTaskGuard};
-use base_execution_rpc::{
+use base_execution_rpc_handlers::{
     AdminApiServer, DebugApiServer, MevSimApiServer, MinerApiServer, NetApiServer, OtterscanServer,
     RethApiServer, RpcApiServer, TraceApiServer, TxPoolApiServer, Web3ApiServer,
 };
@@ -76,7 +76,7 @@ pub use eth::EthHandlers;
 
 // Rpc server metrics
 mod metrics;
-use base_execution_rpc::EthSimBundle;
+use base_execution_rpc_handlers::EthSimBundle;
 pub use metrics::{MeteredBatchRequestsFuture, MeteredRequestFuture, RpcRequestMetricsService};
 
 use crate::middleware::RethRpcMiddleware;

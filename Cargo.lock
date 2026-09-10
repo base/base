@@ -2317,7 +2317,7 @@ dependencies = [
  "base-execution-network-types",
  "base-execution-payload-builder",
  "base-execution-payload-types",
- "base-execution-rpc",
+ "base-execution-rpc-handlers",
  "base-execution-state-api",
  "base-execution-state-database",
  "base-execution-state-provider",
@@ -3260,7 +3260,7 @@ dependencies = [
  "base-execution-evm-machine",
  "base-execution-evm-precompiles",
  "base-execution-evm-runtime",
- "base-execution-rpc",
+ "base-execution-rpc-handlers",
  "base-execution-state-api",
  "base-execution-state-provider",
  "base-node-runner",
@@ -3722,7 +3722,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-execution-rpc"
+name = "base-execution-rpc-handlers"
 version = "0.0.0"
 dependencies = [
  "alloy-dyn-abi",
@@ -4356,7 +4356,7 @@ dependencies = [
  "base-execution-network-types",
  "base-execution-payload-builder",
  "base-execution-payload-types",
- "base-execution-rpc",
+ "base-execution-rpc-handlers",
  "base-execution-state-database",
  "base-execution-state-indexer",
  "base-execution-state-maintenance",
@@ -13890,7 +13890,7 @@ dependencies = [
  "base-execution-network-types",
  "base-execution-payload-builder",
  "base-execution-payload-types",
- "base-execution-rpc",
+ "base-execution-rpc-handlers",
  "base-execution-state-database",
  "base-execution-state-provider",
  "base-execution-state-types",
@@ -14133,7 +14133,7 @@ dependencies = [
  "base-common-types-chain",
  "base-execution-evm-blocks",
  "base-execution-evm-runtime",
- "base-execution-rpc",
+ "base-execution-rpc-handlers",
  "base-execution-state-provider",
  "base-execution-state-trie",
  "eyre",
@@ -14433,7 +14433,7 @@ dependencies = [
  "base-execution-evm-blocks",
  "base-execution-network-types",
  "base-execution-payload-builder",
- "base-execution-rpc",
+ "base-execution-rpc-handlers",
  "base-execution-state-provider",
  "base-execution-txpool",
  "base-node-context",

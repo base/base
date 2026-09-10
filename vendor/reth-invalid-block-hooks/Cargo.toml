@@ -28,7 +28,7 @@ base-execution-state-provider = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
-base-execution-rpc = { workspace = true, features = ["client"] }
+base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 pretty_assertions = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-execution-evm-blocks = { workspace = true, features = ["serde"]}

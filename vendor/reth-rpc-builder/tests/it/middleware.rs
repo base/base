@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use base_execution_rpc::EthApiClient;
+use base_execution_rpc_handlers::EthApiClient;
 use jsonrpsee::{
     core::middleware::{Batch, Notification},
     server::middleware::rpc::RpcServiceT,

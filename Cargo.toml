@@ -62,7 +62,7 @@ members = [
   "crates/execution/node-context",
   "crates/execution/payload/builder",
   "crates/execution/payload/types",
-  "crates/execution/rpc",
+  "crates/execution/rpc/handlers",
   "crates/execution/runner",
   "crates/execution/state/indexer",
   "crates/execution/state/tasks",
@@ -319,7 +319,7 @@ base-consensus-source-providers = { path = "crates/consensus/source/providers", 
 base-node-core = { path = "crates/execution/node", default-features = false }
 base-execution-cli = { path = "crates/execution/cli", default-features = false }
 base-execution-evm-blocks = { path = "crates/execution/evm/blocks", default-features = false }
-base-execution-rpc = { path = "crates/execution/rpc", default-features = false }
+base-execution-rpc-handlers = { path = "crates/execution/rpc/handlers", default-features = false }
 base-metering = { path = "crates/execution/metering", default-features = false }
 base-node-runner = { path = "crates/execution/runner", default-features = false }
 base-execution-exex = { path = "crates/execution/exex", default-features = false }

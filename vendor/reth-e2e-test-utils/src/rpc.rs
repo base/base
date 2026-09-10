@@ -2,8 +2,8 @@ use alloy_eips::eip7594::BlobTransactionSidecarVariant;
 use alloy_primitives::{B256, Bytes};
 use base_common_client_ethereum::eip2718::Decodable2718;
 use base_common_types_chain::{EthereumTxEnvelope, TxEip4844Variant};
-use base_execution_rpc::BaseEthApiError;
-use base_execution_rpc::DebugApiServer;
+use base_execution_rpc_handlers::BaseEthApiError;
+use base_execution_rpc_handlers::DebugApiServer;
 use reth_rpc_builder::RpcRegistryInner;
 
 #[expect(missing_debug_implementations)]

@@ -9,7 +9,7 @@ use base_execution_evm_runtime::{
     database::{AccountInfoRevert, AccountStatus, BundleState, RevertToSlot, State, StorageSlot},
     state::AccountInfo,
 };
-use base_execution_rpc::DebugApiClient;
+use base_execution_rpc_handlers::DebugApiClient;
 use pretty_assertions::Comparison;
 use reth_engine_primitives::InvalidBlockHook;
 use reth_primitives_traits::{RecoveredBlock, SealedHeader};

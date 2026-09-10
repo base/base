@@ -93,7 +93,7 @@ base-execution-state-types = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth", "std"] }
 hyper-util = { workspace = true, optional = true, features = ["default"] }
 base-execution-network-types = { workspace = true, features = ["default"] }
-base-execution-rpc = { workspace = true, features = ["default", "client"] }
+base-execution-rpc-handlers = { workspace = true, features = ["default", "client"] }
 base-common-chain-config = {features = ["default", "std"], workspace = true}
 base-execution-state-database = { workspace = true, features = ["default"] }
 base-common-observability-tracing = { workspace = true, features = ["otlp"] }
@@ -149,7 +149,7 @@ test-utils = [
     "base-execution-payload-types/test-utils",
     "base-common-chain-config/test-utils",
     "base-execution-evm-precompiles/test-utils",
-    "base-execution-rpc/client",
+    "base-execution-rpc-handlers/client",
     "base-node-core/test-utils",
     "base-node-runner/test-utils",
     "base-common-observability-events/test-utils",

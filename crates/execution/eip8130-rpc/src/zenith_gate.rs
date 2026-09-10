@@ -5,7 +5,7 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_chain_config::Upgrades;
 use base_common_types_chain::BlockHeader;
 use base_common_types_rpc::EIP8130_PRE_ZENITH_RPC_ERROR;
-use base_execution_rpc::BaseEthApi;
+use base_execution_rpc_handlers::BaseEthApi;
 use base_execution_state_api::BlockReaderIdExt;
 use jsonrpsee_types::{
     ErrorObjectOwned,

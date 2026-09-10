@@ -1,7 +1,7 @@
 //! Fork creation actions for the e2e testing framework.
 
 use base_common_types_payload::ForkchoiceState;
-use base_execution_rpc::EthApiClient;
+use base_execution_rpc_handlers::EthApiClient;
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;

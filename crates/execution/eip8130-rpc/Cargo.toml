@@ -19,7 +19,7 @@ alloy-eips = { workspace = true }
 reth-rpc-convert = {workspace = true}
 jsonrpsee-types = { workspace = true }
 alloy-primitives = { workspace = true }
-base-execution-rpc = { workspace = true }
+base-execution-rpc-handlers = { workspace = true }
 reth-rpc-eth-types = { workspace = true }
 base-common-types-chain = { workspace = true }
 base-execution-evm-runtime = {workspace = true}

@@ -45,7 +45,7 @@ tempfile = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
 tracing = { workspace = true, features = ["attributes"] }
 tokio-stream = { workspace = true, features = ["default"] }
-base-execution-rpc = { workspace = true, features = ["client"] }
+base-execution-rpc-handlers = { workspace = true, features = ["client"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash"] }
 base-common-types-payload = {workspace = true, features = ["serde"]}
 base-execution-payload-types = { workspace = true, features = ["default"] }

@@ -16,7 +16,7 @@ pub const EIP8130_TX_TYPE_ID: u8 = 121; // 0x79
 
 /// Canonical user-facing rejection message for EIP-8130 transactions submitted before Zenith.
 ///
-/// Used by `base-execution-rpc` when an EIP-8130 transaction is submitted before
+/// Used by `base-execution-rpc-handlers` when an EIP-8130 transaction is submitted before
 /// the Zenith fork is active at the latest block timestamp.
 pub const EIP8130_REJECTION_MSG: &str = "EIP-8130 (account abstraction) transactions are gated behind Zenith; \
      eth_sendRawTransaction does not accept transaction type 0x79 before Zenith";

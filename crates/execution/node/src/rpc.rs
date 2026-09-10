@@ -6,7 +6,7 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_observability_tracing::tracing::{debug, info};
 use base_execution_eip8130_rpc::{Eip8130EthApiExt, Eip8130EthApiOverrideServer};
 use base_execution_payload_builder::{BaseEngineValidator, PayloadBuilderHandle};
-use base_execution_rpc::{
+use base_execution_rpc_handlers::{
     AdminApi, BaseEthApi, BaseEthApiBuilder, BaseEthConfigApiServer,
     DebugExecutionWitnessApiServer, DevSigner, EthApiCtx, MinerApiExtServer,
 };
@@ -44,7 +44,7 @@ pub struct RethRpcServerHandles {
 /// their runtime configuration.
 ///
 /// This can be used to access installed modules, or create commonly used handlers like
-/// [`base_execution_rpc::EthApi`], and ultimately merge additional rpc handler into the configured
+/// [`base_execution_rpc_handlers::EthApi`], and ultimately merge additional rpc handler into the configured
 /// transport modules [`TransportRpcModules`].
 #[expect(missing_debug_implementations)]
 pub struct RpcContext<'a> {
@@ -216,7 +216,7 @@ impl BaseRpcServer {
 
         let eth_config = rpc_config.eth.max_batch_size(config.txpool.max_batch_size);
         let ctx = EthApiCtx {
-            components: base_execution_rpc::BaseRpcContext {
+            components: base_execution_rpc_handlers::BaseRpcContext {
                 provider: node.provider.clone(),
                 pool: node.transaction_pool.clone(),
                 network: node.network.clone(),
@@ -260,7 +260,7 @@ impl BaseRpcServer {
 
         services.register(&mut ctx)?;
 
-        let eth_config = base_execution_rpc::BaseEthConfigHandler::new(
+        let eth_config = base_execution_rpc_handlers::BaseEthConfigHandler::new(
             node.provider().clone(),
             node.evm_config().clone(),
         );
@@ -270,13 +270,13 @@ impl BaseRpcServer {
             node.provider().clone(),
             node.evm_config().clone(),
         );
-        let witness = base_execution_rpc::BaseDebugWitnessApi::new(
+        let witness = base_execution_rpc_handlers::BaseDebugWitnessApi::new(
             node.provider().clone(),
             node.task_executor().clone(),
             payload,
         );
         ctx.modules.merge_configured(witness.into_rpc())?;
-        let miner = base_execution_rpc::BaseMinerExtApi::new(
+        let miner = base_execution_rpc_handlers::BaseMinerExtApi::new(
             base.da_config.clone(),
             base.gas_limit_config.clone(),
         );

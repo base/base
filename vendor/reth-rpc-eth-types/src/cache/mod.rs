@@ -318,7 +318,7 @@ impl From<CacheServiceUnavailable> for ProviderError {
 /// handles messages and does LRU lookups and never blocking IO.
 ///
 /// Caution: The channel for the data is _unbounded_ it is assumed that this is mainly used by the
-/// `base_execution_rpc::EthApi` which is typically invoked by the RPC server, which already uses
+/// `base_execution_rpc_handlers::EthApi` which is typically invoked by the RPC server, which already uses
 /// permits to limit concurrent requests.
 #[must_use = "Type does nothing unless spawned"]
 pub(crate) struct EthStateCacheService<

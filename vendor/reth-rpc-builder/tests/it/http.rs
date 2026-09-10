@@ -9,10 +9,10 @@ use base_common_types_rpc::{
     BaseTransactionRequest, Block, FeeHistory, Filter, Index, Log, PendingTransactionFilterKind,
     SyncStatus, TraceFilter, Transaction, TransactionReceipt,
 };
-use base_execution_rpc::{
+use base_execution_rpc_handlers::{
     AdminApiClient, DebugApiClient, NetApiClient, OtterscanClient, TraceApiClient, Web3ApiClient,
 };
-use base_execution_rpc::{EthApiClient, EthCallBundleApiClient, EthFilterApiClient};
+use base_execution_rpc_handlers::{EthApiClient, EthCallBundleApiClient, EthFilterApiClient};
 use jsonrpsee::{
     core::{
         client::{ClientT, SubscriptionClientT},

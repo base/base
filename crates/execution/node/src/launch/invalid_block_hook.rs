@@ -1,7 +1,7 @@
 //! Invalid block hook helpers for the node builder.
 
 use base_execution_evm_blocks::BaseEvmConfig;
-use base_execution_rpc::EthApiClient;
+use base_execution_rpc_handlers::EthApiClient;
 use eyre::OptionExt;
 use reth_engine_primitives::{InvalidBlockHook, InvalidBlockHooks, NoopInvalidBlockHook};
 use reth_invalid_block_hooks::InvalidBlockWitnessHook;

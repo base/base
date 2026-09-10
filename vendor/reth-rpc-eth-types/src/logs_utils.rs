@@ -1,4 +1,4 @@
-//! Helper functions for `base_execution_rpc::EthFilterApiServer` implementation.
+//! Helper functions for `base_execution_rpc_handlers::EthFilterApiServer` implementation.
 //!
 //! Log parsing for building filter.
 
