@@ -19,12 +19,12 @@ use base_execution_state_indexer::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
 use base_execution_state_indexer::{ShadowIndexerConfig, ShadowRetentionConfig};
+use base_execution_txpool_pool::TransactionTracingConfig as TxpoolConfig;
 use base_execution_txpool_pool::{
     DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
 };
 use base_metering::{MeteredOpcodes, MeteringConfig};
 use base_node_core::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
-use base_txpool_tracing::TxpoolConfig;
 use tracing::warn;
 use url::Url;
 

@@ -139,3 +139,10 @@ pub use forwarding::{
     ForwardingSetupError, InsertValidatedTransaction, ShutdownReport, TxForwardingConfig,
     TxForwardingHandle, TxForwardingService,
 };
+
+mod transaction_tracing;
+pub use transaction_tracing::{
+    EventLog, Metrics as TxpoolTracingMetrics, NonceSlot, NonceSummary, Pool as TracedPool,
+    Tracker as TransactionTracker, TxEvent, TxpoolConfig as TransactionTracingConfig,
+    tracex_subscription,
+};

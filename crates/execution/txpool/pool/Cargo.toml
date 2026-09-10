@@ -31,21 +31,23 @@ base-execution-evm-fees = { workspace = true }
 metrics = {optional = false, workspace = true}
 base-execution-evm-runtime = {workspace = true}
 base-execution-state-memory = {workspace = true}
+lru = {features = ["default"], workspace = true}
 base-execution-evm-machine = { workspace = true }
-lru = { workspace = true, features = ["default"] }
+base-execution-state-provider = {workspace = true}
 url = { workspace = true, features = ["default"] }
 alloy-eips = {features = ["kzg"], workspace = true}
-base-execution-state-provider = { workspace = true }
 futures = {features = ["default"], workspace = true}
 base-common-observability-events = {workspace = true}
+chrono = { workspace = true, features = ["default"] }
 serde_json = {features = ["alloc"], workspace = true}
 serde = {features = ["derive", "rc"], workspace = true}
 tracing = {features = ["attributes"], workspace = true}
 schnellru = { workspace = true, features = ["default"] }
 alloy-rlp = { workspace = true, features = ["core-net"] }
+tokio-stream = {features = ["default"], workspace = true}
 tokio-util = { workspace = true, features = ["default"] }
+derive_more = { workspace = true, features = ["display"] }
 parking_lot = { workspace = true, features = ["default"] }
-tokio-stream = { workspace = true, features = ["default"] }
 alloy-primitives = {features = ["map-foldhash"], workspace = true}
 proptest-arbitrary-interop = { workspace = true, optional = true }
 rand = { workspace = true, optional = true, features = ["default"] }
@@ -59,6 +61,7 @@ base-execution-state-types = { workspace = true, features = ["default"] }
 base-execution-network-wire = { workspace = true, features = ["default"] }
 base-common-observability-metrics = {features = ["metrics"], workspace = true}
 jsonrpsee = {features = ["http-client", "macros", "server"], workspace = true}
+base-common-observability-tracing = { workspace = true, features = ["default"] }
 base-common-types-chain = {workspace = true, features = ["kzg", "reth", "serde"]}
 
 [dev-dependencies]
@@ -67,13 +70,14 @@ alloy-signer = {workspace = true}
 assert_matches = { workspace = true }
 alloy-sol-types = { workspace = true }
 base-testing-support = {workspace = true}
-base-common-types-chain = { workspace = true }
 base-common-runtime-tasks = { workspace = true }
+eyre = {features = ["default"], workspace = true}
 proptest-arbitrary-interop = { workspace = true }
 base-execution-rpc-handlers = { workspace = true }
-eyre = { workspace = true, features = ["default"] }
+base-execution-state-memory = { workspace = true }
 rand = { workspace = true, features = ["default"] }
 serde = { workspace = true, features = ["derive"] }
+alloy-eips = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 jsonrpsee = { workspace = true, features = ["server"] }
 proptest = { workspace = true, features = ["default"] }
@@ -81,8 +85,10 @@ tempfile = { workspace = true, features = ["default"] }
 metrics-util = { workspace = true, features = ["debugging"] }
 base-common-chain-config = {features = ["std"], workspace = true}
 base-node-runner = { workspace = true, features = ["test-utils"] }
+base-common-types-payload = { workspace = true, features = ["std"] }
 base-common-types-rpc = { workspace = true, features = ["default"] }
 base-common-client-ethereum = {features = ["default"], workspace = true}
+base-common-types-chain = {features = ["reth", "std"], workspace = true}
 codspeed-criterion-compat = { workspace = true, features = ["default"] }
 base-execution-txpool-pool = {workspace = true, features = ["test-utils"]}
 base-execution-evm-blocks = { workspace = true, features = ["test-utils"] }

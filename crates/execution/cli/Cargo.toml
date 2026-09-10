@@ -39,7 +39,6 @@ base-common-observability-events = { workspace = true }
 secp256k1 = { workspace = true, features = ["default"] }
 tokio-stream = { workspace = true, features = ["default"] }
 base-node-core = { workspace = true, features = ["default"] }
-base-txpool-tracing = { workspace = true, features = ["default"] }
 base-common-types-chain = { workspace = true, features = ["reth"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 proptest = { workspace = true, optional = true, features = ["default"] }
@@ -52,7 +51,7 @@ tokio = { workspace = true, features = ["default", "macros", "time", "sync"] }
 base-execution-state-database = {workspace = true, features = ["default", "mdbx"]}
 base-execution-state-indexer = {features = ["default", "service"], workspace = true}
 base-common-chain-activation = { workspace = true, features = ["default", "metrics"] }
-base-execution-txpool-pool = { workspace = true, features = ["default"] }
+base-execution-txpool-pool = {features = ["default"], workspace = true}
 
 [dev-dependencies]
 alloy-chains = { workspace = true }

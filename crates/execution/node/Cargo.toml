@@ -24,7 +24,6 @@ reth-node-events = { workspace = true }
 base-node-context = { workspace = true }
 reth-node-metrics = { workspace = true }
 reth-node-ethstats = { workspace = true }
-base-txpool-tracing = { workspace = true }
 base-common-io-files = { workspace = true }
 base-common-types-rpc = { workspace = true }
 base-common-client-ethereum = {workspace = true}

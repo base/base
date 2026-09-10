@@ -5,18 +5,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::FullTransactionEvent;
 use alloy_primitives::TxHash;
-use base_execution_txpool_pool::FullTransactionEvent;
 use base_common_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
+use base_common_observability_tracing::tracing::{debug, info};
+use base_execution_state_provider::{CanonStateNotification, Chain};
 use chrono::Local;
 use lru::LruCache;
-use base_execution_state_provider::{CanonStateNotification, Chain};
-use base_common_observability_tracing::tracing::{debug, info};
 use serde_json::{Map, Value, json};
 
-use crate::{EventLog, NonceSlot, NonceSummary, Pool, TxEvent, metrics::Metrics};
+use crate::transaction_tracing::{
+    EventLog, NonceSlot, NonceSummary, Pool, TxEvent, metrics::Metrics,
+};
 
 /// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug, Clone)]

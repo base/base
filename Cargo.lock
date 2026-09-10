@@ -3195,7 +3195,6 @@ dependencies = [
  "base-node-config",
  "base-node-core",
  "base-reth-cli",
- "base-txpool-tracing",
  "clap",
  "eyre",
  "futures",
@@ -4392,6 +4391,7 @@ dependencies = [
  "base-common-observability-tracing",
  "base-common-runtime-tasks",
  "base-common-types-chain",
+ "base-common-types-payload",
  "base-common-types-rpc",
  "base-execution-evm-blocks",
  "base-execution-evm-fees",
@@ -4408,7 +4408,9 @@ dependencies = [
  "base-node-runner",
  "base-testing-support",
  "bitflags 2.13.1",
+ "chrono",
  "codspeed-criterion-compat 4.7.0",
+ "derive_more",
  "eyre",
  "futures",
  "futures-util",
@@ -4645,7 +4647,6 @@ dependencies = [
  "base-node-config",
  "base-node-context",
  "base-node-core",
- "base-txpool-tracing",
  "clap",
  "criterion",
  "eyre",
@@ -5544,33 +5545,6 @@ dependencies = [
  "ipnet",
  "thiserror 2.0.19",
  "tracing",
-]
-
-[[package]]
-name = "base-txpool-tracing"
-version = "0.0.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "base-common-observability-events",
- "base-common-observability-metrics",
- "base-common-observability-tracing",
- "base-common-types-chain",
- "base-common-types-payload",
- "base-execution-state-memory",
- "base-execution-state-provider",
- "base-execution-txpool-pool",
- "base-node-runner",
- "base-testing-support",
- "chrono",
- "derive_more",
- "eyre",
- "futures",
- "lru 0.16.4",
- "metrics",
- "serde_json",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

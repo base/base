@@ -64,7 +64,6 @@ members = [
   "crates/execution/state/indexer",
   "crates/execution/state/tasks",
   "crates/execution/txpool/pool",
-  "crates/execution/txpool-tracing",
   "crates/infra/audit",
   "crates/infra/basectl",
   "crates/infra/load-tests",
@@ -303,7 +302,6 @@ base-node-runner = { path = "crates/execution/runner", default-features = false 
 base-execution-state-tasks = { path = "crates/execution/state/tasks", default-features = false }
 base-execution-txpool-pool = { path = "crates/execution/txpool/pool", default-features = false }
 base-execution-state-indexer = { path = "crates/execution/state/indexer", default-features = false }
-base-txpool-tracing = { path = "crates/execution/txpool-tracing", default-features = false }
 base-execution-payload-builder = { path = "crates/execution/payload/builder", default-features = false }
 
 # Infra
