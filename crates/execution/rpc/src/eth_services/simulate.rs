@@ -13,7 +13,7 @@ use base_common_types_rpc::{
 };
 use base_execution_evm_blocks::{BlockBuilderOutcome, Evm};
 use base_execution_evm_runtime::{
-    Address, Block, Bytes, Database, ExecutionResult, PrecompilesMap, TxKind, TxResult, U256,
+    Address, Block, Bytes, Database, ExecutionResult, PrecompilesMap, TxKind, U256,
 };
 use base_execution_state_database::NoopProvider;
 use base_execution_state_types::StateProvider;
@@ -369,8 +369,8 @@ where
 
         let mut tx_regular_gas_used = 0;
         let gas_output = builder.execute_transaction_with_result_closure(tx, |result| {
-            tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
-            results.push(result.result().result.clone())
+            tx_regular_gas_used = result.result.result.gas().block_regular_gas_used();
+            results.push(result.result.result.clone())
         })?;
 
         let gas_used = gas_output.tx_gas_used();

@@ -15,7 +15,7 @@ use base_execution_evm_blocks::{BaseEvmConfig, BaseNextBlockEnvAttributes, Evm a
 use base_execution_evm_runtime::{
     ActivationRegistryStorage, B20FactoryStorage, B20Variant, BaseSpecId, BaseUpgrade, EvmState,
     GasParams, KECCAK_EMPTY, L1BlockInfo, PolicyRegistryStorage, State, StoredAccount as Account,
-    TxResult as _, hardfork::SpecId, opcode::OpCode,
+    hardfork::SpecId, opcode::OpCode,
 };
 use eyre::{Result as EyreResult, eyre};
 
@@ -776,7 +776,7 @@ where
             let mut state_effects = Vec::new();
             let gas_used = builder
                 .execute_transaction_with_result_closure(tx.clone(), |result| {
-                    let result_and_state = result.result();
+                    let result_and_state = &result.result;
                     tx_succeeded = result_and_state.result.is_success();
                     // Count net post-state even when the call reverts. Revm still
                     // commits gas payment, nonce, and coinbase balance; rolled-back

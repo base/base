@@ -13,7 +13,7 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{BlockHeader, InvalidTransactionError, SealedHeader, Transaction};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_execution_evm_blocks::{
-    BaseNextBlockEnvAttributes, BlockBuilderOutcome, BlockExecutionOutput, Evm, TxResult,
+    BaseNextBlockEnvAttributes, BlockBuilderOutcome, BlockExecutionOutput, Evm,
 };
 use base_execution_evm_runtime::{
     Block, BlockExecutionError, BlockValidationError, Cfg as _, State,
@@ -276,7 +276,7 @@ impl BaseEthApi {
                 let mut tx_regular_gas_used = 0;
                 let gas_output =
                     match builder.execute_transaction_with_result_closure(tx, |result| {
-                        tx_regular_gas_used = result.result().result.gas().block_regular_gas_used();
+                        tx_regular_gas_used = result.result.result.gas().block_regular_gas_used();
                     }) {
                         Ok(gas_output) => gas_output,
                         Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {

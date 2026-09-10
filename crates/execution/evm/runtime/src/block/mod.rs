@@ -3,7 +3,7 @@
 use alloy_eips::eip2718::WithEncoded;
 use base_common_types_chain::transaction::Recovered;
 use base_execution_evm_runtime::{
-    FromRecoveredTx, FromTxWithEncoded, RecoveredTx, ResultAndState, ToTxEnv, either::Either,
+    FromRecoveredTx, FromTxWithEncoded, RecoveredTx, ToTxEnv, either::Either,
 };
 
 mod error;
@@ -156,16 +156,4 @@ impl CommitChanges {
     pub const fn should_commit(self) -> bool {
         matches!(self, Self::Yes)
     }
-}
-
-/// Result of transaction execution.
-pub trait TxResult: Send + 'static {
-    /// Halt reason.
-    type HaltReason: Send + 'static;
-
-    /// Returns the inner EVM result.
-    fn result(&self) -> &ResultAndState<Self::HaltReason>;
-
-    /// Consumes self and returns the inner EVM result.
-    fn into_result(self) -> ResultAndState<Self::HaltReason>;
 }

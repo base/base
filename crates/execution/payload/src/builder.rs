@@ -24,7 +24,7 @@ use base_execution_evm_blocks::{
     BlockValidationError, CancelOnDrop, Database, ExecutionWitnessRecord,
 };
 use base_execution_evm_runtime::{
-    Block, BlockEnv, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State, TxResult,
+    Block, BlockEnv, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State,
 };
 use base_execution_state_operations::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, PayloadStateRootHandle,
@@ -710,7 +710,7 @@ impl BasePayloadBuilderCtx {
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 sequencer_tx.clone(),
                 |result| {
-                    let result_and_state = result.result();
+                    let result_and_state = &result.result;
                     pending_resource_usage = resource_metering.unthrottled_usage(
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),
@@ -1158,7 +1158,7 @@ impl BasePayloadBuilderCtx {
             let gas_output = match builder.execute_transaction_with_commit_condition(
                 tx.clone(),
                 |result| {
-                    let result_and_state = result.result();
+                    let result_and_state = &result.result;
                     let decision = resource_metering.check_executed_usage(
                         &tx_hash,
                         result_and_state.result.tx_gas_used(),

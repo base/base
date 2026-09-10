@@ -13,9 +13,9 @@ use base_execution_evm_runtime::IntrinsicGas;
 use base_execution_evm_runtime::{
     BalIndexedDatabase, BaseBlockExecutionCtx, BaseBlockExecutionError, BaseTime, BaseTransaction,
     BaseTxResult, Block, BlockExecutionError, BlockExecutionResult, BlockValidationError,
-    CommitChanges, DEPOSIT_TRANSACTION_TYPE, Database, DatabaseCommit, DatabaseCommitExt,
-    EthTxResult, Evm, ExecutableTx, GasOutput, L1BlockInfo, RecoveredTx, ResultAndState, StateDB,
-    SystemCaller, canyon, post_block_balance_increments,
+    CommitChanges, DEPOSIT_TRANSACTION_TYPE, Database, DatabaseCommit, DatabaseCommitExt, Evm,
+    ExecutableTx, GasOutput, L1BlockInfo, RecoveredTx, ResultAndState, StateDB, SystemCaller,
+    canyon, post_block_balance_increments,
 };
 
 /// Block executor for Base.
@@ -267,11 +267,9 @@ where
             .map_err(BlockExecutionError::other)?;
 
         Ok(BaseTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: da_footprint_used,
-                tx_type: tx.tx().tx_type(),
-            },
+            result,
+            blob_gas_used: da_footprint_used,
+            tx_type: tx.tx().tx_type(),
             is_deposit,
             sender: *tx.signer(),
             depositor,
@@ -290,7 +288,9 @@ where
     /// - `output`: The transaction output containing execution result and state changes
     pub fn commit_transaction(&mut self, output: BaseTxResult) -> GasOutput {
         let BaseTxResult {
-            inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
+            result: ResultAndState { result, state },
+            blob_gas_used,
+            tx_type,
             is_deposit,
             sender: _,
             depositor,
@@ -938,21 +938,19 @@ mod tests {
         crate::Eip8130PhaseStatuses::set(vec![1, 0]);
         for tx_type in [OpTxType::Eip8130, OpTxType::Deposit] {
             executor.commit_transaction(BaseTxResult {
-                inner: EthTxResult {
-                    result: ResultAndState {
-                        result: base_execution_evm_runtime::ExecutionResult::Success {
-                            reason: base_execution_evm_runtime::SuccessReason::Return,
-                            gas: base_execution_evm_runtime::ResultGas::new_with_state_gas(
-                                21_000, 0, 0, 0,
-                            ),
-                            logs: vec![alloy_primitives::Log::default()],
-                            output: base_execution_evm_runtime::Output::Call(Bytes::new()),
-                        },
-                        state: Default::default(),
+                result: ResultAndState {
+                    result: base_execution_evm_runtime::ExecutionResult::Success {
+                        reason: base_execution_evm_runtime::SuccessReason::Return,
+                        gas: base_execution_evm_runtime::ResultGas::new_with_state_gas(
+                            21_000, 0, 0, 0,
+                        ),
+                        logs: vec![alloy_primitives::Log::default()],
+                        output: base_execution_evm_runtime::Output::Call(Bytes::new()),
                     },
-                    blob_gas_used: 0,
-                    tx_type,
+                    state: Default::default(),
                 },
+                blob_gas_used: 0,
+                tx_type,
                 is_deposit: tx_type == OpTxType::Deposit,
                 sender: Address::ZERO,
                 depositor: Some(AccountInfo { nonce: 42, ..Default::default() }),

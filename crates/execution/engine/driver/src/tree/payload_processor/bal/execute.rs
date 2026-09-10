@@ -27,7 +27,7 @@ use base_common_types_chain::BaseReceipt;
 use base_execution_evm_blocks::{BaseEvmConfig, Database, ExecutableTxFor};
 use base_execution_evm_runtime::{
     Block, BlockExecutionError, BlockValidationError, BundleRetention, Evm, ResultAndState, State,
-    TxResult, bal::Bal as RevmBal,
+    bal::Bal as RevmBal,
 };
 use base_execution_state_provider::BlockExecutionOutput;
 use crossbeam_channel::{Receiver, Sender};
@@ -137,7 +137,7 @@ where
             let output = output?;
 
             gas_tracker.validate_tx_limit(output.tx_gas_limit)?;
-            gas_tracker.record_result(output.result.result());
+            gas_tracker.record_result(&output.result.result);
             canonical_executor.evm_mut().db_mut().bump_bal_index();
 
             let _ = canonical_executor.commit_transaction(output.result);

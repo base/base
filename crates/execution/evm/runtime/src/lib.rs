@@ -170,9 +170,6 @@ pub use tracing::*;
 
 mod base_transactions;
 
-mod eth_tx_result;
-pub use eth_tx_result::*;
-
 mod core_primitives;
 pub use core_primitives::*;
 
