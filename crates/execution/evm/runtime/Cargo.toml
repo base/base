@@ -35,7 +35,6 @@ alloy-sol-types = { workspace = true }
 alloy-hardforks = { workspace = true }
 aurora-engine-modexp = { workspace = true }
 sha2 = { workspace = true, optional = true }
-paste = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 metrics = { workspace = true, optional = true }
 base-execution-evm-macros = { workspace = true }
@@ -48,7 +47,6 @@ alloy-eip7702 = { workspace = true, features = ["k256"] }
 ark-bls12-381 = { workspace = true, features = ["curve"] }
 ark-bn254_0_6_0 = { workspace = true, features = ["curve"] }
 once_cell = { workspace = true, features = ["alloc", "race"] }
-phf = { workspace = true, features = ["macros"], optional = true }
 base-common-types-chain = { features = ["k256"], workspace = true }
 blst = { workspace = true, optional = true, features = ["default"] }
 base64 = { workspace = true, features = ["default"], optional = true }
@@ -153,7 +151,6 @@ std = [
     "tracing/std",
     "once_cell/std",
     "bitvec/std",
-    "phf?/std",
     "alloy-genesis/std",
     "alloy-trie/std",
     "bitflags/std",
@@ -187,7 +184,6 @@ serde = [
     "dep:serde",
     "either/serde",
     "bitvec/serde",
-    "phf?/serde",
     "bitflags/serde",
     "alloy-eip7928/serde",
     "nonmax/serde",
@@ -232,7 +228,6 @@ map-foldhash = ["alloy-primitives/map-foldhash"]
 optional_eip7623 = []
 optional_priority_fee_check = []
 p256-aws-lc-rs = ["dep:aws-lc-rs"]
-parse = ["phf", "paste"]
 sha3-keccak = ["alloy-primitives/sha3-keccak"]
 test-utils = ["arbitrary", "base-common-types-chain/test-utils", "base-common-chain-config/test-utils", "std"]
 rand = ["alloy-primitives/rand"]

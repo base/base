@@ -1,8 +1,5 @@
 //! EVM opcode definitions and utilities. It contains opcode information and utilities to work with opcodes.
 
-#[cfg(feature = "parse")]
-pub mod parse;
-
 use core::{fmt, ptr::NonNull};
 
 /// An EVM opcode
@@ -322,9 +319,7 @@ pub const fn stack_io(mut op: OpCodeInfo, inputs: u8, outputs: u8) -> OpCodeInfo
 /// Alias for the [`JUMPDEST`] opcode
 pub const NOP: u8 = JUMPDEST;
 
-/// Created all opcodes constants and two maps:
-///  * `OPCODE_INFO` maps opcode number to the opcode info
-///  * `NAME_TO_OPCODE` that maps opcode name to the opcode number.
+/// Creates opcode constants and the `OPCODE_INFO` lookup table.
 macro_rules! opcodes {
     ($($val:literal => $name:ident => $($modifier:ident $(( $($modifier_arg:expr),* ))?),*);* $(;)?) => {
         // Constants for each opcode. This also takes care of duplicate names.
@@ -354,32 +349,7 @@ macro_rules! opcodes {
             let _ = prev;
             map
         };
-
-
-        /// Maps each name to its opcode.
-        #[cfg(feature = "parse")]
-        pub(crate) static NAME_TO_OPCODE: phf::Map<&'static str, OpCode> = stringify_with_cb! { phf_map_cb; $($name)* };
     };
-}
-
-/// Callback for creating a [`phf`] map with `stringify_with_cb`.
-#[cfg(feature = "parse")]
-macro_rules! phf_map_cb {
-    ($(#[doc = $s:literal] $id:ident)*) => {
-        phf::phf_map! {
-            $($s => OpCode::$id),*
-        }
-    };
-}
-
-/// Stringifies identifiers with `paste` so that they are available as literals.
-///
-/// This doesn't work with [`stringify!`] because it cannot be expanded inside of another macro.
-#[cfg(feature = "parse")]
-macro_rules! stringify_with_cb {
-    ($callback:ident; $($id:ident)*) => { paste::paste! {
-        $callback! { $(#[doc = "" $id ""] $id)* }
-    }};
 }
 
 // When adding new opcodes:
@@ -738,16 +708,6 @@ mod tests {
                 opcodes[i],
                 "Opcode {opcode:?} terminating check failed."
             );
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "parse")]
-    fn test_parsing() {
-        for i in 0..=u8::MAX {
-            if let Some(op) = OpCode::new(i) {
-                assert_eq!(OpCode::parse(op.as_str()), Some(op));
-            }
         }
     }
 
