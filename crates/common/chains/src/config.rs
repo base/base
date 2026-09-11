@@ -251,6 +251,25 @@ impl ChainConfig {
         }
     }
 
+    /// Returns the Base-centric operator selector (`mainnet`, `sepolia`,
+    /// `zeronet`, `dev`) for this chain — the inverse of
+    /// [`from_base_chain`](Self::from_base_chain).
+    ///
+    /// Use this to normalize any recognized chain input back to the canonical
+    /// selector understood by the `base` binary's `--chain` surface, for example
+    /// `from_base_chain(x).or_else(|| by_name(x)).and_then(Self::base_chain_selector)`.
+    ///
+    /// Returns `None` for chains that have no built-in selector.
+    pub fn base_chain_selector(&self) -> Option<&'static str> {
+        match self.chain_id {
+            8453 => Some("mainnet"),
+            84532 => Some("sepolia"),
+            763360 => Some("zeronet"),
+            84538453 => Some("dev"),
+            _ => None,
+        }
+    }
+
     /// Looks up a chain config by L2 chain ID.
     pub const fn by_chain_id(id: u64) -> Option<&'static Self> {
         match id {
@@ -761,6 +780,27 @@ mod tests {
         // namespaced names matched by `by_name`.
         assert_eq!(ChainConfig::by_name("mainnet"), None);
         assert_eq!(ChainConfig::from_base_chain(ChainConfig::MAINNET_NAME), None);
+    }
+
+    #[test]
+    fn base_chain_selector_is_inverse_of_from_base_chain() {
+        // Every selector round-trips through `from_base_chain`.
+        for selector in ["mainnet", "sepolia", "zeronet", "dev"] {
+            let config = ChainConfig::from_base_chain(selector).unwrap();
+            assert_eq!(config.base_chain_selector(), Some(selector));
+        }
+
+        // Legacy namespaced names normalize to the canonical selector, letting
+        // callers accept both surfaces: `by_name(x).and_then(base_chain_selector)`.
+        assert_eq!(ChainConfig::mainnet().base_chain_selector(), Some("mainnet"));
+        assert_eq!(
+            ChainConfig::by_name("base").and_then(ChainConfig::base_chain_selector),
+            Some("mainnet")
+        );
+        assert_eq!(
+            ChainConfig::by_name("base-sepolia").and_then(ChainConfig::base_chain_selector),
+            Some("sepolia")
+        );
     }
 
     #[test]

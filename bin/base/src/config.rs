@@ -22,7 +22,9 @@ pub(crate) const BASE_CHAIN_ENV_PREFIX: &str = "BASE_CHAIN_";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ChainArg {
     /// Use one of the built-in static chains, identified by its Base network
-    /// selector (`mainnet`, `sepolia`, `zeronet`, `dev`).
+    /// selector (`mainnet`, `sepolia`, `zeronet`, `dev`). Legacy namespaced
+    /// names (`base`, `base-sepolia`, `base-zeronet`) are accepted for backwards
+    /// compatibility and normalized to the selector.
     BuiltIn(String),
     /// Load chain settings from a TOML file.
     File(PathBuf),
@@ -39,11 +41,21 @@ impl FromStr for ChainArg {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let selector = value.to_ascii_lowercase();
-        Ok(if ChainConfig::from_base_chain(&selector).is_some() {
-            Self::BuiltIn(selector)
-        } else {
-            Self::File(PathBuf::from(value))
-        })
+        // Accept both the Base-centric selectors (`mainnet`/`sepolia`/`zeronet`/
+        // `dev`) and the legacy namespaced names (`base`/`base-sepolia`/
+        // `base-zeronet`/`dev`) used by the former split `base-reth-node`,
+        // normalizing either to the canonical selector so the rest of the
+        // pipeline only ever sees a selector. Anything unrecognized is treated as
+        // a path to a TOML chain config file.
+        Ok(
+            match ChainConfig::from_base_chain(&selector)
+                .or_else(|| ChainConfig::by_name(&selector))
+                .and_then(ChainConfig::base_chain_selector)
+            {
+                Some(selector) => Self::BuiltIn(selector.to_owned()),
+                None => Self::File(PathBuf::from(value)),
+            },
+        )
     }
 }
 
@@ -260,6 +272,49 @@ mod tests {
             assert_eq!(resolved.l2_chain_id, 84538453);
             assert_eq!(resolved.l1_chain_id, 1337);
             assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("dev".to_owned()));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn from_str_normalizes_legacy_names_to_selectors() {
+        // Legacy namespaced names (the former `base-reth-node` `--chain` surface)
+        // normalize to the Base-centric selectors.
+        assert_eq!("base".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
+        assert_eq!(
+            "base-sepolia".parse::<ChainArg>().unwrap(),
+            ChainArg::BuiltIn("sepolia".to_owned())
+        );
+        assert_eq!(
+            "base-zeronet".parse::<ChainArg>().unwrap(),
+            ChainArg::BuiltIn("zeronet".to_owned())
+        );
+
+        // Base-centric selectors keep resolving as before.
+        assert_eq!("mainnet".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
+
+        // Matching is case-insensitive.
+        assert_eq!("BASE".parse::<ChainArg>().unwrap(), ChainArg::BuiltIn("mainnet".to_owned()));
+
+        // Unrecognized values are still treated as TOML file paths.
+        assert_eq!(
+            "./chain.toml".parse::<ChainArg>().unwrap(),
+            ChainArg::File(PathBuf::from("./chain.toml"))
+        );
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)]
+    fn resolves_legacy_base_name_to_mainnet() {
+        with_cleared_env(|_| {
+            let chain: ChainArg = "base".parse().unwrap();
+            let resolved = ChainResolver::new(Some(chain)).resolve().unwrap();
+
+            assert_eq!(resolved.name, "mainnet");
+            assert_eq!(resolved.l2_chain_id, 8453);
+            assert_eq!(resolved.l1_chain_id, 1);
+            assert_eq!(resolved.source, ResolvedChainSource::BuiltIn("mainnet".to_owned()));
 
             Ok(())
         });
