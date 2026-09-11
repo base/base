@@ -113,7 +113,6 @@ mod tests {
             "--consensus-container-name=consensus",
             "--el-rpc-url=http://execution:8545",
             "--source-datadir=/data",
-            "--output-dir=/snapshots",
             "--bucket=snapshots",
         ])
         .unwrap();
