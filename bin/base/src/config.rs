@@ -47,15 +47,13 @@ impl FromStr for ChainArg {
         // normalizing either to the canonical selector so the rest of the
         // pipeline only ever sees a selector. Anything unrecognized is treated as
         // a path to a TOML chain config file.
-        Ok(
-            match ChainConfig::from_base_chain(&selector)
-                .or_else(|| ChainConfig::by_name(&selector))
-                .and_then(ChainConfig::base_chain_selector)
-            {
-                Some(selector) => Self::BuiltIn(selector.to_owned()),
-                None => Self::File(PathBuf::from(value)),
-            },
-        )
+        Ok(ChainConfig::from_base_chain(&selector)
+            .or_else(|| ChainConfig::by_name(&selector))
+            .and_then(ChainConfig::base_chain_selector)
+            .map_or_else(
+                || Self::File(PathBuf::from(value)),
+                |selector| Self::BuiltIn(selector.to_owned()),
+            ))
     }
 }
 

@@ -260,7 +260,7 @@ impl ChainConfig {
     /// `from_base_chain(x).or_else(|| by_name(x)).and_then(Self::base_chain_selector)`.
     ///
     /// Returns `None` for chains that have no built-in selector.
-    pub fn base_chain_selector(&self) -> Option<&'static str> {
+    pub const fn base_chain_selector(&self) -> Option<&'static str> {
         match self.chain_id {
             8453 => Some("mainnet"),
             84532 => Some("sepolia"),
