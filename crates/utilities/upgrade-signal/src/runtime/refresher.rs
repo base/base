@@ -1,3 +1,5 @@
+use base_common_genesis::RuntimeUpgradeRegistry;
+
 use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
     AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
@@ -26,6 +28,11 @@ impl UpgradeSignalRefresher {
         metrics_layer: UpgradeSignalMetricLayer,
     ) -> Self {
         Self { config, reader, chain_id, metrics_layer }
+    }
+
+    /// Advances this process's monotonic processed-head watermark for the configured chain.
+    pub fn record_processed_head_timestamp(&self, timestamp: u64) {
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(self.chain_id, timestamp);
     }
 
     /// Validates and applies an already-read schedule without touching L1.
@@ -79,10 +86,12 @@ impl UpgradeSignalRefresher {
     /// Validation happens once in [`Self::apply`].
     pub async fn refresh(
         &self,
-        l2_head_timestamp: impl FnOnce() -> u64,
+        l2_head_timestamp: impl FnOnce() -> Option<u64>,
     ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
         let schedule = self.read_schedule().await?;
-        self.apply(&schedule, l2_head_timestamp())
+        let l2_head_timestamp =
+            l2_head_timestamp().ok_or(UpgradeSignalError::ProcessedHeadUnavailable)?;
+        self.apply(&schedule, l2_head_timestamp)
     }
 }
 
@@ -273,6 +282,28 @@ mod tests {
 
         seed_registry(chain_id, UpgradeActivation::Timestamp(1_000));
         assert!(refresher(chain_id).apply(&supported_schedule(0), 999).unwrap().committed);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn apply_uses_the_process_wide_monotonic_processed_head() {
+        let chain_id = 9_100_027;
+        let refresher = refresher(chain_id);
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        assert!(refresher.apply(&supported_schedule(8_000), 5_000).unwrap().committed);
+
+        let error = refresher.apply(&supported_schedule(4_000), 1_000).unwrap_err();
+        assert!(matches!(
+            error,
+            UpgradeSignalError::RetroactiveScheduleChange { l2_head_timestamp: 5_000, .. }
+        ));
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(5_000));
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(8_000))
+        );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }

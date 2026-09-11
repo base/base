@@ -4,7 +4,7 @@ use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
 };
-use core::{convert::Infallible, fmt::Display};
+use core::fmt::Display;
 
 use alloy_hardforks::{EthereumHardfork, hardfork};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -424,6 +424,8 @@ pub struct RuntimeUpgradeRegistryEntry {
     pub overrides: UpgradeActivationOverrides,
     /// Latest L1 block number whose schedule was applied to the overrides.
     pub last_updated_block_number: Option<u64>,
+    /// Highest L2 block timestamp observed by this process.
+    pub processed_head_timestamp: Option<u64>,
 }
 
 /// Process-local runtime upgrade activation registry.
@@ -471,6 +473,20 @@ impl RuntimeUpgradeRegistry {
         Self::read_registry().get(&chain_id).and_then(|entry| entry.last_updated_block_number)
     }
 
+    /// Returns the highest L2 block timestamp observed for a chain.
+    pub fn processed_head_timestamp(chain_id: u64) -> Option<u64> {
+        Self::read_registry().get(&chain_id).and_then(|entry| entry.processed_head_timestamp)
+    }
+
+    /// Advances the process-wide processed-head watermark for a chain without allowing regressions.
+    pub fn record_processed_head_timestamp(chain_id: u64, timestamp: u64) {
+        let mut registry = Self::write_registry();
+        let entry = registry.entry(chain_id).or_default();
+        entry.processed_head_timestamp = Some(
+            entry.processed_head_timestamp.map_or(timestamp, |processed| processed.max(timestamp)),
+        );
+    }
+
     /// Replaces all runtime activation overrides unless their L1 block predates stored state.
     ///
     /// The ordering check and replacement happen under one write lock so concurrent refreshes
@@ -481,49 +497,61 @@ impl RuntimeUpgradeRegistry {
         l1_block_number: u64,
         overrides: UpgradeActivationOverrides,
     ) -> bool {
-        Self::replace_overrides_checked(chain_id, l1_block_number, overrides, |_, _| {
-            Ok::<(), Infallible>(())
-        })
-        .unwrap_or_else(|never| match never {})
+        let mut registry = Self::write_registry();
+        let entry = registry.entry(chain_id).or_default();
+        if entry
+            .last_updated_block_number
+            .is_some_and(|last_updated| l1_block_number < last_updated)
+        {
+            return false;
+        }
+
+        entry.overrides = overrides;
+        entry.last_updated_block_number = Some(l1_block_number);
+        true
     }
 
     /// Validates and replaces all runtime activation overrides unless their L1 block predates
     /// stored state.
     ///
-    /// The ordering check, `validate` callback, and replacement happen under one write lock so a
-    /// stale concurrent refresh is rejected before validation and a newer schedule cannot land
-    /// between validation and replacement. Returns `true` when the overrides were replaced and
-    /// `false` when a stale schedule was rejected.
+    /// The supplied processed head is first folded into the process-wide monotonic watermark. The
+    /// ordering check, `validate` callback, watermark, and replacement share one write lock, so
+    /// validation sees the highest head reported by any layer and cannot race another registry
+    /// writer. Returns `true` when the overrides were replaced and `false` when a stale schedule was
+    /// rejected.
     pub fn replace_overrides_checked<E>(
         chain_id: u64,
         l1_block_number: u64,
+        processed_head_timestamp: u64,
         overrides: UpgradeActivationOverrides,
         validate: impl FnOnce(
             Option<&UpgradeActivationOverrides>,
             &UpgradeActivationOverrides,
+            u64,
         ) -> Result<(), E>,
     ) -> Result<bool, E> {
         let mut registry = Self::write_registry();
-        if registry
-            .get(&chain_id)
-            .and_then(|entry| entry.last_updated_block_number)
+        let had_entry = registry.contains_key(&chain_id);
+        let entry = registry.entry(chain_id).or_default();
+        let processed_head_timestamp = entry
+            .processed_head_timestamp
+            .map_or(processed_head_timestamp, |processed| processed.max(processed_head_timestamp));
+        entry.processed_head_timestamp = Some(processed_head_timestamp);
+
+        if entry
+            .last_updated_block_number
             .is_some_and(|last_updated| l1_block_number < last_updated)
         {
             return Ok(false);
         }
 
-        validate(registry.get(&chain_id).map(|entry| &entry.overrides), &overrides)?;
-        registry.insert(
-            chain_id,
-            RuntimeUpgradeRegistryEntry {
-                overrides,
-                last_updated_block_number: Some(l1_block_number),
-            },
-        );
+        validate(had_entry.then_some(&entry.overrides), &overrides, processed_head_timestamp)?;
+        entry.overrides = overrides;
+        entry.last_updated_block_number = Some(l1_block_number);
         Ok(true)
     }
 
-    /// Clears all runtime activation overrides and their L1 block watermark for a chain.
+    /// Clears all runtime activation overrides and watermarks for a chain.
     pub fn clear_chain(chain_id: u64) {
         Self::write_registry().remove(&chain_id);
     }

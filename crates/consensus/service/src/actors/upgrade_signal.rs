@@ -101,13 +101,19 @@ impl UpgradeSignalMetricsActor {
         Self { reader, monitor, poll_interval, refresher, engine_state, cancellation }
     }
 
+    /// Records the highest initialized engine-head timestamp in the process-wide watermark.
+    pub fn record_processed_head_timestamp(&self) -> Option<u64> {
+        let timestamp = self.engine_state.borrow().processed_head_timestamp()?;
+        self.refresher.as_ref()?.record_processed_head_timestamp(timestamp);
+        Some(timestamp)
+    }
+
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
     /// runtime refresh is enabled. Returns whether the node must fail closed.
     pub async fn poll_l1_signal(&mut self) -> UpgradeSignalPollOutcome {
+        let l2_head_timestamp = self.record_processed_head_timestamp();
         self.monitor
-            .poll_and_apply(&self.reader, self.refresher.as_ref(), || {
-                Some(self.engine_state.borrow().sync_state.unsafe_head().block_info.timestamp)
-            })
+            .poll_and_apply(&self.reader, self.refresher.as_ref(), || l2_head_timestamp)
             .await
     }
 }
@@ -121,10 +127,18 @@ impl NodeActor for UpgradeSignalMetricsActor {
         let cancellation = self.cancellation.clone();
         let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        self.record_processed_head_timestamp();
 
         loop {
             tokio::select! {
                 _ = cancellation.cancelled() => return Ok(()),
+                result = self.engine_state.changed() => {
+                    if result.is_err() {
+                        return Ok(());
+                    }
+                    self.record_processed_head_timestamp();
+                    continue;
+                }
                 _ = interval.tick() => {}
             }
 

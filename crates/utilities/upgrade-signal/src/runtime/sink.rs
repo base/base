@@ -91,10 +91,9 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
         RuntimeUpgradeRegistry::replace_overrides_checked(
             self.chain_id,
             self.l1_block_number,
+            self.l2_head_timestamp,
             updates,
-            |current, incoming| {
-                Self::reject_retroactive_change(current, incoming, self.l2_head_timestamp)
-            },
+            Self::reject_retroactive_change,
         )
     }
 }

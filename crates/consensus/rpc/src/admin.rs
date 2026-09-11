@@ -245,10 +245,7 @@ where
             return Err(upgrade_signal_unavailable());
         };
 
-        match refresher
-            .refresh(|| engine_state.borrow().sync_state.unsafe_head().block_info.timestamp)
-            .await
-        {
+        match refresher.refresh(|| engine_state.borrow().processed_head_timestamp()).await {
             Ok(summary) => Ok(summary),
             Err(error) => {
                 warn!(

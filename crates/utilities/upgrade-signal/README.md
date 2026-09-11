@@ -73,6 +73,11 @@ schedule that would change the fork rules of a block at or before the node's pro
 activation change flips the window `[min(current, incoming), max(current, incoming))`, so it is
 refused exactly when that window has already opened; a cleared activation is treated as unbounded,
 and the boundary itself counts as settled because a block bearing that timestamp may already exist.
+A process-wide monotonic watermark combines heads reported by the consensus and execution layers,
+so a reorg, reset, or lagging layer cannot lower the validation boundary. Until a real head is
+available, runtime application is deferred instead of treating the default engine state as
+timestamp zero.
+
 A refusal leaves the registry on its last coherent schedule, raises
 `retroactive_rejections_total` alongside the sticky `apply_failed` gauge, and alarms at `error` on
 first occurrence. It never halts the node: the divergence predates the read, so halting every node

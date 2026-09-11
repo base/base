@@ -16,9 +16,10 @@ use reth_discv5::NetworkStackId;
 use reth_ethereum_forks::EnrForkIdEntry;
 use reth_network::{NetworkHandle, NetworkPrimitives};
 use reth_network_p2p::sync::NetworkSyncUpdater;
-use reth_provider::{BlockNumReader, HeaderProvider};
+use reth_provider::{BlockNumReader, CanonStateSubscriptions, HeaderProvider};
 use reth_rpc_server_types::RethRpcModule;
 use tokio::sync::Notify;
+use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
 
@@ -373,6 +374,14 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
             let provider = ctx.provider.clone();
             let chain_spec = ctx.chain_spec();
             let executor = ctx.task_executor;
+            let mut canonical_stream = provider.canonical_state_stream();
+            let mut canonical_stream_open = auto_refresher.is_some();
+
+            if let Some(refresher) = auto_refresher.as_ref()
+                && let Ok(head) = ExecutionUpgradeSignal::current_head(&provider)
+            {
+                refresher.record_processed_head_timestamp(head.timestamp);
+            }
 
             // Spawned as a critical task so a fail-closed panic propagates to reth's TaskManager and
             // exits the process non-zero, instead of being silently swallowed by a plain spawn.
@@ -404,6 +413,20 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                         loop {
                             tokio::select! {
                                 _ = &mut signal => break,
+                                notification = canonical_stream.next(), if canonical_stream_open => {
+                                    match notification {
+                                        Some(notification) => {
+                                            if let Some(tip) = notification.tip_checked()
+                                                && let Some(refresher) = auto_refresher.as_ref()
+                                            {
+                                                refresher.record_processed_head_timestamp(
+                                                    tip.timestamp(),
+                                                );
+                                            }
+                                        }
+                                        None => canonical_stream_open = false,
+                                    }
+                                }
                                 // An admin refresh committed a schedule change; reconcile at once
                                 // rather than waiting for the next L1 poll.
                                 _ = filter_refresh.notified() => {

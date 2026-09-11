@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use alloy_rpc_types_engine::{INVALID_FORK_CHOICE_STATE_ERROR, PayloadStatusEnum};
 use async_trait::async_trait;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry};
 use base_protocol::L2BlockInfo;
 use tokio::time::Instant;
 
@@ -206,6 +206,12 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         let applied_update =
             if confirmed { self.state_update } else { self.safe_only_sync_update(state) };
         state.sync_state = state.sync_state.apply_update(applied_update);
+        if let Some(timestamp) = state.processed_head_timestamp() {
+            RuntimeUpgradeRegistry::record_processed_head_timestamp(
+                self.rollup.l2_chain_id.id(),
+                timestamp,
+            );
+        }
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(

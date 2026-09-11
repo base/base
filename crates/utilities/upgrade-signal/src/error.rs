@@ -44,6 +44,9 @@ pub enum UpgradeSignalError {
         /// Node protocol version supported by this binary.
         node_protocol_version: String,
     },
+    /// The node has not reported a processed L2 head yet.
+    #[error("processed L2 head is not available")]
+    ProcessedHeadUnavailable,
     /// A schedule change would alter the fork rules of L2 blocks the node has already processed.
     ///
     /// Applying it would silently reinterpret canonical history, so it is refused: the runtime

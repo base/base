@@ -2,6 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use base_protocol::L2BlockInfo;
 use serde::{Deserialize, Serialize};
@@ -141,6 +142,20 @@ pub struct EngineState {
 }
 
 impl EngineState {
+    /// Returns the highest timestamp from a non-default engine head.
+    pub fn processed_head_timestamp(&self) -> Option<u64> {
+        [
+            self.sync_state.unsafe_head(),
+            self.sync_state.local_safe_head(),
+            self.sync_state.safe_head(),
+            self.sync_state.finalized_head(),
+        ]
+        .into_iter()
+        .filter(|head| head.block_info.hash != B256::ZERO)
+        .map(|head| head.block_info.timestamp)
+        .max()
+    }
+
     /// Returns if consolidation is needed.
     ///
     /// [Consolidation] is only performed by a rollup node when the unsafe head
@@ -158,7 +173,6 @@ mod tests {
     #[cfg(feature = "metrics")]
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[cfg(feature = "metrics")]
     use base_protocol::BlockInfo;
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
@@ -166,6 +180,34 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+
+    #[test]
+    fn processed_head_timestamp_ignores_defaults_and_returns_the_highest_engine_head() {
+        let mut state = EngineState::default();
+        assert_eq!(state.processed_head_timestamp(), None);
+
+        state.sync_state = state.sync_state.updated(EngineSyncStateUpdate {
+            unsafe_head: Some(L2BlockInfo {
+                block_info: BlockInfo {
+                    hash: B256::with_last_byte(1),
+                    timestamp: 100,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            safe_head: Some(L2BlockInfo {
+                block_info: BlockInfo {
+                    hash: B256::with_last_byte(2),
+                    timestamp: 200,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        assert_eq!(state.processed_head_timestamp(), Some(200));
+    }
 
     impl EngineState {
         /// Set the unsafe head.
