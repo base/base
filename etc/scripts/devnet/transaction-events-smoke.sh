@@ -3,13 +3,13 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-RPC_URL="${1:-$L2_INGRESS_RPC_URL}"
+RPC_URL="${1:-$L2_CLIENT_RPC_URL}"
 AUDIT_RPC_URL="${2:-http://localhost:${AUDIT_RPC_PORT:-9100}}"
 PK="${3:-$ANVIL_ACCOUNT_5_KEY}"
 TO="${4:-$ANVIL_ACCOUNT_6_ADDR}"
 
 echo "=== Transaction Events Smoke ==="
-echo "Sending L2 tx through ingress..."
+echo "Sending L2 tx to the client node..."
 from="$(cast wallet address --private-key "$PK")"
 nonce="$(cast nonce --block pending --rpc-url "$RPC_URL" "$from")"
 tx_hash="$(
@@ -43,8 +43,7 @@ for attempt in $(seq 1 60); do
           and .producer == $producer
           and (.event_type as $event_type | $event_types | index($event_type)));
 
-      has_event("base-routing/proxyd"; ["PROXY_RECEIVED"])
-      and has_event("base-reth-node"; [
+      has_event("base-reth-node"; [
         "TXPOOL_PENDING",
         "TXPOOL_QUEUED",
         "TXPOOL_BUILDER_FORWARD_ATTEMPT",
@@ -63,7 +62,7 @@ for attempt in $(seq 1 60); do
   fi
 
   if [ "$attempt" = 60 ]; then
-    echo "Timed out waiting for proxyd, txpool, and builder transaction events for ${tx_hash}" >&2
+    echo "Timed out waiting for txpool and builder transaction events for ${tx_hash}" >&2
     if [ -n "$last_response" ]; then
       echo "$last_response" | jq . >&2 || echo "$last_response" >&2
     fi

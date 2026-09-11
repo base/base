@@ -13,7 +13,7 @@ one event JSON object per line, not a wrapped JSON batch.
 
 `audit-archiver` stores events in Postgres for operational queries. Postgres is
 not the long-term archive. A background worker deletes rows by event type:
-high-volume proxy and builder-decision events default to 3 days, ingress and
+high-volume builder-decision events default to 3 days, ingress and
 forwarding events default to 7 days, and failures, drops, inclusion, and
 block events default to 30 days. Autovacuum reclaims the resulting table
 bloat. `TXPOOL_SEND_RAW_TRANSACTION_VALIDITY` uses the same warm window as
@@ -36,20 +36,6 @@ producer-specific prefix:
 | `required` | boolean | If true, fail service initialization when the file writer cannot open. Runtime write failures remain observable and non-fatal. |
 | `producer` | string | One of the producer identities below. |
 | `network` | string | Network label, for example `base-mainnet` or `base-sepolia`. |
-
-For Go/proxyd, mirror the same names in TOML:
-
-```toml
-[transaction_events]
-enabled = true
-file_path = "/var/log/base/transaction-events.jsonl"
-queue_capacity = 16384
-max_file_bytes = 134217728
-max_files = 8
-required = false
-producer = "base-routing/proxyd"
-network = "base-mainnet"
-```
 
 ## Envelope
 
@@ -84,7 +70,7 @@ Required fields:
 
 At least one join key should normally be present: `tx_hash`,
 `block_hash`/`block_number`, or `payload_id`. `request_id` is optional but useful
-for proxy and ingress correlation. Producers should not emit transaction journal
+for ingress correlation. Producers should not emit transaction journal
 events for aggregate operational conditions that cannot be tied to one of these
 join keys. For example, broadcast lag is reported through logs and metrics
 because the receiver only knows a skipped count, while
@@ -113,25 +99,15 @@ and `privateKey` before ingest.
 Core devnet (`just devnet up` / `just devnet up-single`) enables durable
 transaction event journals on `base-client` and `base-builder`, writing JSONL
 under `.devnet/transaction-events/`. The ingress overlay adds the collection
-pipeline (Vector, Postgres, `audit-archiver`) plus ingress/proxyd producers; it
-does not own node journal config.
+pipeline (Vector, Postgres, `audit-archiver`); it does not own node journal config.
 
 ```bash
 just devnet ingress
 just devnet tx-observability-smoke
 ```
 
-Set `BASE_ROUTING_CONTEXT` to a local `protocols/base-routing` checkout when
-testing proxyd transaction events before that implementation has landed in the
-default proxyd image:
-
-```bash
-BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet ingress
-just devnet tx-observability-smoke
-```
-
-The smoke test sends one transaction through ingress, waits for Vector to ship
-JSONL events from ingress, proxyd, txpool tracing, and builder producers, and
+The smoke test sends one transaction directly to the client node, waits for Vector
+to ship JSONL events from txpool tracing and builder producers, and
 verifies `audit-archiver` can read the persisted events back from Postgres by
 transaction hash.
 
@@ -144,7 +120,6 @@ For local Vector health, alert or inspect `component_discarded_events_total`.
 - `base-reth-node` (stable event producer identifier for execution inside `base`)
 - `base-builder`
 - `ingress-rpc`
-- `base-routing/proxyd`
 
 ## Txpool Tracing Example
 
@@ -157,19 +132,6 @@ durable journal when `--enable-transaction-event-journal` and
 ```
 
 ## Event Vocabulary
-
-Edge/proxy:
-
-- `PROXY_RECEIVED`
-- `PROXY_REJECTED`
-- `PROXY_VALIDATION_ACCEPTED`
-- `PROXY_VALIDATION_REJECTED`
-- `PROXY_ROUTED_TO_BACKEND`
-- `PROXY_BACKEND_SUCCESS`
-- `PROXY_BACKEND_FAILURE`
-- `PROXY_INGRESS_RPC_ATTEMPT`
-- `PROXY_INGRESS_RPC_SUCCESS`
-- `PROXY_INGRESS_RPC_FAILURE`
 
 Ingress/audit:
 
@@ -280,74 +242,6 @@ Recommended components:
 If a source cannot produce an exactly deterministic ID, document why in the
 producer implementation and include enough fields in `data` for
 `audit-archiver` to enforce database-side uniqueness.
-
-## proxyd Examples
-
-Received raw transaction request:
-
-```json
-{
-  "schema_version": "transaction-event/v1",
-  "event_id": "0x1f3f...",
-  "event_time": "2026-06-02T00:00:00.000000000Z",
-  "producer": "base-routing/proxyd",
-  "event_type": "PROXY_RECEIVED",
-  "network": "base-mainnet",
-  "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
-  "block_hash": null,
-  "block_number": null,
-  "payload_id": null,
-  "request_id": "req-abc",
-  "data": {
-    "rpc_method": "eth_sendRawTransaction"
-  }
-}
-```
-
-Validation rejection:
-
-```json
-{
-  "schema_version": "transaction-event/v1",
-  "event_id": "0x2a4b...",
-  "event_time": "2026-06-02T00:00:00.000000000Z",
-  "producer": "base-routing/proxyd",
-  "event_type": "PROXY_VALIDATION_REJECTED",
-  "network": "base-mainnet",
-  "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
-  "block_hash": null,
-  "block_number": null,
-  "payload_id": null,
-  "request_id": "req-abc",
-  "data": {
-    "rpc_method": "eth_sendRawTransaction",
-    "validation_service": "tx-validation",
-    "fail_open": false
-  }
-}
-```
-
-Routed to node:
-
-```json
-{
-  "schema_version": "transaction-event/v1",
-  "event_id": "0x3b5c...",
-  "event_time": "2026-06-02T00:00:00.000000000Z",
-  "producer": "base-routing/proxyd",
-  "event_type": "PROXY_ROUTED_TO_BACKEND",
-  "network": "base-mainnet",
-  "tx_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
-  "block_hash": null,
-  "block_number": null,
-  "payload_id": null,
-  "request_id": "req-abc",
-  "data": {
-    "backend": "reth-mainnet-0",
-    "attempt_index": 0
-  }
-}
-```
 
 ## Mempool / Builder Examples
 

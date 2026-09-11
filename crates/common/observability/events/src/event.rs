@@ -32,9 +32,6 @@ pub enum TransactionEventProducer {
     /// Ingress RPC/audit clients.
     #[serde(rename = "ingress-rpc")]
     IngressRpc,
-    /// base-routing proxyd.
-    #[serde(rename = "base-routing/proxyd")]
-    BaseRoutingProxyd,
 }
 
 impl fmt::Display for TransactionEventProducer {
@@ -43,7 +40,6 @@ impl fmt::Display for TransactionEventProducer {
             Self::BaseRethNode => "base-reth-node",
             Self::BaseBuilder => "base-builder",
             Self::IngressRpc => "ingress-rpc",
-            Self::BaseRoutingProxyd => "base-routing/proxyd",
         };
         f.write_str(value)
     }
@@ -52,36 +48,6 @@ impl fmt::Display for TransactionEventProducer {
 /// Versioned transaction event vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum TransactionEventType {
-    /// Proxyd accepted a transaction request from a client.
-    #[serde(rename = "PROXY_RECEIVED")]
-    ProxyReceived,
-    /// Proxyd rejected a transaction request before backend routing.
-    #[serde(rename = "PROXY_REJECTED")]
-    ProxyRejected,
-    /// Proxyd validation accepted a transaction request.
-    #[serde(rename = "PROXY_VALIDATION_ACCEPTED")]
-    ProxyValidationAccepted,
-    /// Proxyd validation rejected a transaction request.
-    #[serde(rename = "PROXY_VALIDATION_REJECTED")]
-    ProxyValidationRejected,
-    /// Proxyd routed a transaction request to a configured backend.
-    #[serde(rename = "PROXY_ROUTED_TO_BACKEND")]
-    ProxyRoutedToBackend,
-    /// A proxyd backend returned a successful response.
-    #[serde(rename = "PROXY_BACKEND_SUCCESS")]
-    ProxyBackendSuccess,
-    /// A proxyd backend returned an error or failed before responding.
-    #[serde(rename = "PROXY_BACKEND_FAILURE")]
-    ProxyBackendFailure,
-    /// Proxyd attempted to forward a transaction to ingress-rpc.
-    #[serde(rename = "PROXY_INGRESS_RPC_ATTEMPT")]
-    ProxyIngressRpcAttempt,
-    /// Proxyd successfully forwarded a transaction to ingress-rpc.
-    #[serde(rename = "PROXY_INGRESS_RPC_SUCCESS")]
-    ProxyIngressRpcSuccess,
-    /// Proxyd failed to forward a transaction to ingress-rpc.
-    #[serde(rename = "PROXY_INGRESS_RPC_FAILURE")]
-    ProxyIngressRpcFailure,
     /// Ingress-rpc received a transaction request.
     #[serde(rename = "INGRESS_RECEIVED")]
     IngressReceived,
@@ -196,16 +162,6 @@ impl TransactionEventType {
 impl fmt::Display for TransactionEventType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
-            Self::ProxyReceived => "PROXY_RECEIVED",
-            Self::ProxyRejected => "PROXY_REJECTED",
-            Self::ProxyValidationAccepted => "PROXY_VALIDATION_ACCEPTED",
-            Self::ProxyValidationRejected => "PROXY_VALIDATION_REJECTED",
-            Self::ProxyRoutedToBackend => "PROXY_ROUTED_TO_BACKEND",
-            Self::ProxyBackendSuccess => "PROXY_BACKEND_SUCCESS",
-            Self::ProxyBackendFailure => "PROXY_BACKEND_FAILURE",
-            Self::ProxyIngressRpcAttempt => "PROXY_INGRESS_RPC_ATTEMPT",
-            Self::ProxyIngressRpcSuccess => "PROXY_INGRESS_RPC_SUCCESS",
-            Self::ProxyIngressRpcFailure => "PROXY_INGRESS_RPC_FAILURE",
             Self::IngressReceived => "INGRESS_RECEIVED",
             Self::SimulationStarted => "SIMULATION_STARTED",
             Self::SimulationSucceeded => "SIMULATION_SUCCEEDED",

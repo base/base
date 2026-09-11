@@ -13,7 +13,7 @@ stdout/stderr and the normal Kubernetes log pipeline.
 
 - **`TransactionEvent`**: Stable JSON envelope shared by Rust producers and
   mirrored by non-Rust producers.
-- **`TransactionEventType`**: Versioned vocabulary for proxy, ingress, txpool,
+- **`TransactionEventType`**: Versioned vocabulary for ingress, txpool,
   and builder transaction lifecycle events.
 - **`EventIdBuilder`**: Helper for deterministic event IDs so downstream ingest
   can deduplicate retries.

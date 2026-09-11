@@ -57,7 +57,7 @@ The embedded contract artifact in the Optimism branch contains the upgrade
 registration order. When adding contract-backed upgrades, update that artifact
 using the order from `cargo run --quiet -p base-common-chain-activation --bin contract_upgrade_ids`.
 
-`Dockerfile.nitro-enclave` and `Dockerfile.proxyd` remain separate because they have different toolchains and runtime requirements.
+`Dockerfile.nitro-enclave` remains separate because it has different toolchain and runtime requirements.
 
 ## Docker Compose
 

@@ -187,7 +187,7 @@ upgrade-signal-future upgrade='azul' offset='120':
 # Runs full devnet checks (status + smoke tests)
 checks: status smoke
 
-# Sends an ingress transaction and verifies transaction events reached audit-archiver Postgres
+# Sends a client-node transaction and verifies transaction events reached audit-archiver Postgres
 tx-observability-smoke:
     ./etc/scripts/devnet/transaction-events-smoke.sh
 

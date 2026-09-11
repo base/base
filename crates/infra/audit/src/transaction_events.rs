@@ -61,7 +61,7 @@ const TRANSACTION_EVENT_LOCK_TIMEOUT_SQL: &str = "SET LOCAL lock_timeout = '1s'"
 /// Attempts per INSERT chunk or expire DELETE batch, including the first try.
 const TRANSACTION_EVENT_DB_MAX_ATTEMPTS: u32 = 3;
 
-/// Default days to keep high-volume proxy and builder-decision events.
+/// Default days to keep high-volume builder-decision events.
 pub const DEFAULT_TRANSACTION_EVENT_HOT_RETENTION_DAYS: u32 = 3;
 /// Default days to keep ingress, simulation-success, and txpool-forward events.
 pub const DEFAULT_TRANSACTION_EVENT_WARM_RETENTION_DAYS: u32 = 7;
@@ -172,13 +172,7 @@ impl TransactionEventRetentionClass {
     /// compile until they are assigned a retention class deliberately.
     pub const fn for_event_type(event_type: TransactionEventType) -> Self {
         match event_type {
-            TransactionEventType::ProxyReceived
-            | TransactionEventType::ProxyValidationAccepted
-            | TransactionEventType::ProxyRoutedToBackend
-            | TransactionEventType::ProxyBackendSuccess
-            | TransactionEventType::ProxyIngressRpcAttempt
-            | TransactionEventType::ProxyIngressRpcSuccess
-            | TransactionEventType::BuilderConsidered
+            TransactionEventType::BuilderConsidered
             | TransactionEventType::BuilderAccepted
             | TransactionEventType::BuilderRejected
             | TransactionEventType::BuilderDeferred
@@ -198,11 +192,7 @@ impl TransactionEventRetentionClass {
             | TransactionEventType::TxpoolValidatedInsertAccepted
             | TransactionEventType::TxpoolSendRawTransaction
             | TransactionEventType::TxpoolSendRawTransactionValidity => Self::Warm,
-            TransactionEventType::ProxyRejected
-            | TransactionEventType::ProxyValidationRejected
-            | TransactionEventType::ProxyBackendFailure
-            | TransactionEventType::ProxyIngressRpcFailure
-            | TransactionEventType::SimulationFailed
+            TransactionEventType::SimulationFailed
             | TransactionEventType::IngressMeteringSendFailure
             | TransactionEventType::IngressMeteringSendDropped
             | TransactionEventType::Dropped
@@ -1750,9 +1740,7 @@ mod tests {
     #[test]
     fn classifies_transaction_event_retention() {
         assert_eq!(
-            TransactionEventRetentionClass::for_event_type(
-                TransactionEventType::ProxyBackendSuccess
-            ),
+            TransactionEventRetentionClass::for_event_type(TransactionEventType::BuilderAccepted),
             TransactionEventRetentionClass::Hot
         );
         assert_eq!(
