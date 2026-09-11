@@ -841,12 +841,13 @@ impl AccountChangeApplier {
     pub fn apply_create(
         storage: &mut AccountConfigurationStorage<'_>,
         entry: &CreateEntry,
+        max_code_size: usize,
     ) -> Result<CreatedAccount, ApplyError> {
         // Validate the runtime before deriving the address so every caller (pool
         // admission and block inclusion) rejects the same set of malformed
         // runtimes at the shared choke point, matching the reference contract's
-        // CREATE2 deploy (EIP-170 size, EIP-3541 leading-byte).
-        Self::validate_create_runtime(&entry.code)?;
+        // CREATE2 deploy (active code-size cap, EIP-3541 leading-byte).
+        Self::validate_create_runtime(&entry.code, max_code_size)?;
         let address = Self::compute_address(entry.user_salt, &entry.code, &entry.initial_actors)?;
         // Block re-initialization of an account that already holds EIP-8130 state.
         // `local_sequence` doubles as the created/imported flag; `local_epoch`
@@ -1030,16 +1031,21 @@ impl AccountChangeApplier {
     ///
     /// - non-empty ([`ApplyError::EmptyBytecode`]): a codeless create would leave
     ///   an account with actor config but no code, breaking the EOA invariant.
-    /// - at most EIP-170 `MAX_CODE_SIZE` ([`ApplyError::CreateCodeExceedsMaxSize`]).
+    /// - at most `max_code_size` ([`ApplyError::CreateCodeExceedsMaxSize`]), the
+    ///   block's active deployed-code cap (EIP-170 pre-Amsterdam, EIP-7954 after),
+    ///   matching the limit the EVM enforces for ordinary `CREATE`.
     /// - not `0xEF`-prefixed per EIP-3541 ([`ApplyError::CreateCodeStartsWithEf`]),
     ///   which also keeps a `0xEF01`-prefixed runtime away from the panicking
     ///   `Bytecode` designator constructor and from being reinterpreted as an
     ///   EIP-7702 delegation.
-    pub fn validate_create_runtime(bytecode: &[u8]) -> Result<(), ApplyError> {
+    pub fn validate_create_runtime(
+        bytecode: &[u8],
+        max_code_size: usize,
+    ) -> Result<(), ApplyError> {
         if bytecode.is_empty() {
             return Err(ApplyError::EmptyBytecode);
         }
-        if bytecode.len() > Eip8130Constants::MAX_CODE_SIZE {
+        if bytecode.len() > max_code_size {
             return Err(ApplyError::CreateCodeExceedsMaxSize);
         }
         if bytecode[0] == 0xEF {
@@ -1088,6 +1094,8 @@ mod tests {
     use crate::{AccountCreated, ActorAuthorized, ActorRevoked, DelegationApplied};
 
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000a1");
+    /// Pre-Amsterdam (EIP-170) deployed-code cap used by the tests.
+    const MAX_CODE: usize = Eip8130Constants::MAX_CODE_SIZE;
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
     const AUTHENTICATOR: Address = address!("0x00000000000000000000000000000000000000bb");
     const MANAGER: Address = address!("0x00000000000000000000000000000000000000cc");
@@ -2035,39 +2043,45 @@ mod tests {
 
     #[test]
     fn validate_create_runtime_enforces_create2_deploy_rules() {
-        // Empty runtime is rejected (codeless create).
+        const PRE: usize = Eip8130Constants::MAX_CODE_SIZE;
+        const AMS: usize = Eip8130Constants::MAX_CODE_SIZE_AMSTERDAM;
+        // Empty runtime is rejected (codeless create), regardless of the cap.
         assert_eq!(
-            AccountChangeApplier::validate_create_runtime(&[]),
+            AccountChangeApplier::validate_create_runtime(&[], PRE),
             Err(ApplyError::EmptyBytecode)
         );
-        // A runtime at exactly MAX_CODE_SIZE is allowed; one byte over is not.
-        assert!(
-            AccountChangeApplier::validate_create_runtime(&vec![
-                0x00u8;
-                Eip8130Constants::MAX_CODE_SIZE
-            ])
-            .is_ok()
-        );
+        // A runtime at exactly the active cap is allowed; one byte over is not.
+        assert!(AccountChangeApplier::validate_create_runtime(&vec![0x00u8; PRE], PRE).is_ok());
         assert_eq!(
-            AccountChangeApplier::validate_create_runtime(&vec![
-                0x00u8;
-                Eip8130Constants::MAX_CODE_SIZE + 1
-            ]),
+            AccountChangeApplier::validate_create_runtime(&vec![0x00u8; PRE + 1], PRE),
+            Err(ApplyError::CreateCodeExceedsMaxSize)
+        );
+        // EIP-7954: under the Amsterdam cap a runtime between the old and new
+        // limits is accepted, and the new boundary is enforced.
+        assert!(AccountChangeApplier::validate_create_runtime(&vec![0x00u8; PRE + 1], AMS).is_ok());
+        assert!(AccountChangeApplier::validate_create_runtime(&vec![0x00u8; AMS], AMS).is_ok());
+        assert_eq!(
+            AccountChangeApplier::validate_create_runtime(&vec![0x00u8; AMS + 1], AMS),
+            Err(ApplyError::CreateCodeExceedsMaxSize)
+        );
+        // A runtime over the old cap is still rejected under the pre-Amsterdam cap.
+        assert_eq!(
+            AccountChangeApplier::validate_create_runtime(&vec![0x00u8; AMS], PRE),
             Err(ApplyError::CreateCodeExceedsMaxSize)
         );
         // EIP-3541: any runtime beginning with 0xEF is rejected, including the
         // 3-byte 0xEF0100 prefix that would otherwise panic the EIP-7702
         // designator constructor, and a full 0xEF0100||target designator.
         assert_eq!(
-            AccountChangeApplier::validate_create_runtime(&[0xEF, 0x00]),
+            AccountChangeApplier::validate_create_runtime(&[0xEF, 0x00], PRE),
             Err(ApplyError::CreateCodeStartsWithEf)
         );
         assert_eq!(
-            AccountChangeApplier::validate_create_runtime(&[0xEF, 0x01, 0x00]),
+            AccountChangeApplier::validate_create_runtime(&[0xEF, 0x01, 0x00], PRE),
             Err(ApplyError::CreateCodeStartsWithEf)
         );
         // An ordinary runtime is accepted.
-        assert!(AccountChangeApplier::validate_create_runtime(&[0x60, 0x00]).is_ok());
+        assert!(AccountChangeApplier::validate_create_runtime(&[0x60, 0x00], PRE).is_ok());
     }
 
     #[test]
@@ -2113,7 +2127,7 @@ mod tests {
             )
             .unwrap();
 
-            let created = AccountChangeApplier::apply_create(acc, &entry).unwrap();
+            let created = AccountChangeApplier::apply_create(acc, &entry, MAX_CODE).unwrap();
             assert_eq!(created.address, expected);
             assert_eq!(created.code, entry.code);
 
@@ -2129,7 +2143,7 @@ mod tests {
 
             // Re-creating the same account is rejected.
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &entry),
+                AccountChangeApplier::apply_create(acc, &entry, MAX_CODE),
                 Err(ApplyError::AlreadyInitialized { account: expected })
             );
         });
@@ -2160,7 +2174,7 @@ mod tests {
 
             // create must still reject (the guard checks both sequences).
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &entry),
+                AccountChangeApplier::apply_create(acc, &entry, MAX_CODE),
                 Err(ApplyError::AlreadyInitialized { account: expected })
             );
         });
@@ -2192,7 +2206,7 @@ mod tests {
             acc.set_account_state(expected, state).unwrap();
 
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &entry),
+                AccountChangeApplier::apply_create(acc, &entry, MAX_CODE),
                 Err(ApplyError::AlreadyInitialized { account: expected })
             );
         });
@@ -2209,7 +2223,7 @@ mod tests {
             let empty =
                 CreateEntry { user_salt: B256::ZERO, code: code.clone(), initial_actors: vec![] };
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &empty),
+                AccountChangeApplier::apply_create(acc, &empty, MAX_CODE),
                 Err(ApplyError::NoInitialActors)
             );
 
@@ -2222,7 +2236,7 @@ mod tests {
                 ],
             };
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &unsorted),
+                AccountChangeApplier::apply_create(acc, &unsorted, MAX_CODE),
                 Err(ApplyError::ActorsNotSortedOrDuplicate)
             );
         });
@@ -2241,7 +2255,7 @@ mod tests {
                 initial_actors: vec![InitialActor::owner(B256::repeat_byte(1), AUTHENTICATOR)],
             };
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &entry),
+                AccountChangeApplier::apply_create(acc, &entry, MAX_CODE),
                 Err(ApplyError::EmptyBytecode)
             );
         });
@@ -2270,7 +2284,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &entry),
+                AccountChangeApplier::apply_create(acc, &entry, MAX_CODE),
                 Err(ApplyError::CreateCodeStartsWithEf)
             );
             // No partially-initialized account is left behind on rejection.
@@ -2292,7 +2306,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
-                AccountChangeApplier::apply_create(acc, &entry),
+                AccountChangeApplier::apply_create(acc, &entry, MAX_CODE),
                 Err(ApplyError::CreateCodeExceedsMaxSize)
             );
             assert!(!acc.get_account_state(expected).unwrap().is_initialized());
@@ -2305,7 +2319,7 @@ mod tests {
                 code: Bytes::from(vec![0x00u8; Eip8130Constants::MAX_CODE_SIZE]),
                 initial_actors: actors.clone(),
             };
-            assert!(AccountChangeApplier::apply_create(acc, &entry).is_ok());
+            assert!(AccountChangeApplier::apply_create(acc, &entry, MAX_CODE).is_ok());
         });
     }
 
@@ -2420,7 +2434,7 @@ mod tests {
             initial_actors: vec![InitialActor::owner(actor_id, Eip8130Constants::K1_AUTHENTICATOR)],
         };
         with_storage(|acc| {
-            let created = AccountChangeApplier::apply_create(acc, &entry).unwrap();
+            let created = AccountChangeApplier::apply_create(acc, &entry, MAX_CODE).unwrap();
             let state = acc.get_account_state(created.address).unwrap();
             assert!(state.default_eoa_revoked(), "create must revoke the default EOA");
         });
@@ -2534,7 +2548,7 @@ mod tests {
         .unwrap();
 
         let events = with_storage_events(|acc| {
-            AccountChangeApplier::apply_create(acc, &entry).unwrap();
+            AccountChangeApplier::apply_create(acc, &entry, MAX_CODE).unwrap();
         });
         assert_eq!(events.len(), 2);
 

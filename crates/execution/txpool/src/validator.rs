@@ -47,6 +47,7 @@ use reth_transaction_pool::{
 };
 use revm::{
     context::journaled_state::JournalCheckpoint,
+    primitives::hardfork::SpecId,
     state::{AccountInfo, Bytecode},
 };
 
@@ -1001,6 +1002,14 @@ where
         let classification_generation = self.limit_class_cache_generation();
         let local_chain_id = self.inner.chain_spec().chain().id();
         let now = self.block_timestamp();
+        // Active runtime code-size cap for enshrined creates (EIP-170
+        // pre-Amsterdam, EIP-7954 after). Derived from the same resolved spec the
+        // EVM uses at inclusion, so admission and execution agree.
+        let max_code_size = Eip8130Constants::max_code_size(
+            BaseSpecId::from_timestamp(self.chain_spec(), now)
+                .into_eth_spec()
+                .is_enabled_in(SpecId::AMSTERDAM),
+        );
         let state = self.client().latest().map_err(|error| Self::provider_unavailable(error))?;
 
         // Authorize *and apply* the account changes against a writable overlay so
@@ -1022,6 +1031,7 @@ where
                     &mut account_config,
                     local_chain_id,
                     now,
+                    max_code_size,
                 )?
             };
             if let Some(delegation) = applied.applied.delegation {
@@ -1877,11 +1887,16 @@ where
                         return Err(InvalidTransactionError::TxTypeNotSupported.into());
                     }
                     // Reject at admission the runtime code shapes the enshrined
-                    // deploy (`AccountChangeApplier::apply_create`) refuses:
-                    // EIP-170 oversize and the EIP-3541 reserved leading `0xEF`
-                    // byte (which `CREATE2` would reject with `address(0)`).
+                    // deploy (`AccountChangeApplier::apply_create`) refuses: the
+                    // EIP-3541 reserved leading `0xEF` byte (which `CREATE2` would
+                    // reject with `address(0)`) and grossly oversized code. This is
+                    // a coarse structural fast-fail bounded by the largest possible
+                    // cap (EIP-7954); the exact fork-aware code-size limit (EIP-170
+                    // pre-Amsterdam, EIP-7954 after) is enforced authoritatively by
+                    // `apply_create` in `validate_eip8130_full`, which always runs
+                    // after this precheck during admission.
                     if create.code.is_empty()
-                        || create.code.len() > Eip8130Constants::MAX_CODE_SIZE
+                        || create.code.len() > Eip8130Constants::MAX_CODE_SIZE_AMSTERDAM
                         || create.code.first() == Some(&0xEF)
                         || create.initial_actors.is_empty()
                     {

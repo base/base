@@ -72,6 +72,10 @@ impl TransactionAuthorizer {
     ///    sender to be an admin (unrestricted) actor on the unlocked account,
     ///    via any canonical authenticator.
     ///
+    /// `max_code_size` is the block's active deployed-code cap (EIP-170
+    /// pre-Amsterdam, EIP-7954 after), applied to a create entry's runtime so the
+    /// enshrined deploy honors the same limit the EVM enforces for `CREATE`.
+    ///
     /// Returns the [`AppliedTransaction`] (with every `AccountConfiguration`
     /// storage transition already written to `storage`), or the first
     /// [`TxAuthError`] encountered. On error the caller MUST discard `storage`'s
@@ -83,6 +87,7 @@ impl TransactionAuthorizer {
         storage: &mut AccountConfigurationStorage<'_>,
         local_chain_id: u64,
         now: u64,
+        max_code_size: usize,
     ) -> Result<AppliedTransaction, TxAuthError> {
         // Resolve the sender account up front (without authenticating it yet):
         // config changes mutate this account and a create must derive to it. For
@@ -122,7 +127,8 @@ impl TransactionAuthorizer {
                     if index != 0 || applied.created.is_some() {
                         return Err(ApplyError::InvalidCreatePosition.into());
                     }
-                    let created = AccountChangeApplier::apply_create(storage, entry)?;
+                    let created =
+                        AccountChangeApplier::apply_create(storage, entry, max_code_size)?;
                     if created.address != sender_account {
                         return Err(ApplyError::CreateAddressMismatch {
                             derived: created.address,
@@ -276,6 +282,8 @@ mod tests {
 
     const NOW: u64 = 1_000;
     const LOCAL: u64 = 8453;
+    /// Pre-Amsterdam (EIP-170) deployed-code cap used by the tests.
+    const MAX_CODE: usize = Eip8130Constants::MAX_CODE_SIZE;
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
 
     fn key(byte: u8) -> K256SigningKey {
@@ -421,7 +429,9 @@ mod tests {
             &k,
         );
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert_eq!(out.actors.sender.account, account);
             assert!(out.actors.payer.is_none());
             assert_eq!(out.config_changes.len(), 2);
@@ -449,7 +459,7 @@ mod tests {
         );
         with_storage(|acc| {
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE),
                 Err(TxAuthError::BadSequence { expected: 1, got: 0 }),
             );
         });
@@ -476,7 +486,9 @@ mod tests {
             &k,
         );
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert_eq!(out.config_changes.len(), 3);
             assert_eq!(acc.get_change_sequences(account).unwrap(), (2, 1));
         });
@@ -496,7 +508,7 @@ mod tests {
             b[16..20].copy_from_slice(&1u32.to_be_bytes());
             acc.account_state.at_mut(&account).write(U256::from_be_bytes(b)).unwrap();
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE),
                 Err(TxAuthError::StaleEpoch { expected: 1, got: 0 }),
             );
         });
@@ -515,7 +527,7 @@ mod tests {
         with_storage(|acc| {
             acc.account_state.at_mut(&account).write(pack_state(u64::MAX, 0, 0, 0)).unwrap();
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE),
                 Err(TxAuthError::SequenceSaturated),
             );
         });
@@ -553,10 +565,11 @@ mod tests {
                 .unwrap();
 
             let ordinary =
-                TransactionAuthorizer::authorize_and_apply(&ordinary, acc, LOCAL, NOW).unwrap();
+                TransactionAuthorizer::authorize_and_apply(&ordinary, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert_eq!(ordinary.actors.sender.resolved.scope, Eip8130Constants::SCOPE_OPERATOR);
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&delegation, acc, LOCAL, NOW),
+                TransactionAuthorizer::authorize_and_apply(&delegation, acc, LOCAL, NOW, MAX_CODE),
                 Err(TxAuthError::DelegationUnauthorized),
             );
         });
@@ -583,7 +596,9 @@ mod tests {
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert_eq!(out.actors.sender.account, account);
             assert_eq!(out.actors.sender.resolved.actor_id, signer_id);
             assert_ne!(
@@ -633,7 +648,7 @@ mod tests {
                 .write(pack(K1, Eip8130Constants::SCOPE_SPONSOR_PAYER, 0))
                 .unwrap();
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE),
                 Err(TxAuthError::DelegationUnauthorized),
             );
         });
@@ -655,7 +670,7 @@ mod tests {
                 .write(pack_state(0, 0, Eip8130Constants::FLAG_LOCKED, 0))
                 .unwrap();
             assert_eq!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE),
                 Err(TxAuthError::AccountIsLocked),
             );
         });
@@ -672,7 +687,9 @@ mod tests {
         );
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert_eq!(out.applied.delegation, Some(DelegationEffect::new(account, target)));
         });
     }
@@ -691,7 +708,9 @@ mod tests {
         assert!(signed.sender_auth().starts_with(K1.as_slice()));
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
 
             assert_eq!(out.actors.sender.account, account);
             assert_eq!(
@@ -786,8 +805,9 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
-            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect_err("create + delegation must be rejected");
+            let err =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .expect_err("create + delegation must be rejected");
             assert!(
                 matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
                 "expected CreateAndDelegation, got {err:?}"
@@ -841,8 +861,9 @@ mod tests {
         let hash = tx.sender_signature_hash();
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
         with_storage(|acc| {
-            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect_err("delegation + create must be rejected");
+            let err =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .expect_err("delegation + create must be rejected");
             assert!(
                 matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
                 "expected CreateAndDelegation, got {err:?}"
@@ -869,7 +890,9 @@ mod tests {
                 .at_mut(&account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert!(out.config_changes[0].is_admin());
             assert_eq!(acc.get_change_sequences(account).unwrap(), (1, 0));
         });
@@ -920,7 +943,9 @@ mod tests {
                 .at_mut(&sender_account)
                 .write(pack(K1, Eip8130Constants::SCOPE_UNRESTRICTED, 0))
                 .unwrap();
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).unwrap();
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .unwrap();
             assert_eq!(out.actors.sender.account, sender_account);
             assert_eq!(out.actors.payer.expect("payer present").account, payer_account);
             assert_eq!(out.config_changes.len(), 1);
@@ -994,8 +1019,9 @@ mod tests {
         let (derived, signed) = create_tx_and_signed(&k, vec![]);
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect("create tx on empty account must authorize");
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .expect("create tx on empty account must authorize");
             assert_eq!(out.actors.sender.account, derived);
             assert!(out.actors.sender.resolved.is_admin(), "create sender must be unrestricted");
             assert!(out.actors.payer.is_none());
@@ -1055,8 +1081,9 @@ mod tests {
         let signed = Eip8130Signed::new(tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
 
         with_storage(|acc| {
-            let out = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect("create + config change must authorize against post-create state");
+            let out =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .expect("create + config change must authorize against post-create state");
             assert_eq!(out.actors.sender.account, derived);
             assert_eq!(out.config_changes.len(), 1, "config change applied after create");
             assert!(out.applied.created.is_some(), "create entry applied");
@@ -1113,7 +1140,7 @@ mod tests {
         with_storage(|acc| {
             assert!(
                 matches!(
-                    TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW),
+                    TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE),
                     Err(TxAuthError::Authorize(AuthorizeError::AuthenticatorMismatch { .. }))
                 ),
                 "signer not in initial_actors must be rejected"
@@ -1158,7 +1185,8 @@ mod tests {
 
         with_storage(|acc| {
             assert!(
-                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW).is_err(),
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .is_err(),
                 "create without explicit sender must be rejected"
             );
         });
@@ -1182,8 +1210,9 @@ mod tests {
         signed = Eip8130Signed::new(new_tx, auth_blob(K1, &sig(&k, hash)), Bytes::new());
 
         with_storage(|acc| {
-            let err = TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW)
-                .expect_err("create + delegation must be rejected");
+            let err =
+                TransactionAuthorizer::authorize_and_apply(&signed, acc, LOCAL, NOW, MAX_CODE)
+                    .expect_err("create + delegation must be rejected");
             assert!(
                 matches!(err, TxAuthError::Apply(ApplyError::CreateAndDelegation)),
                 "expected CreateAndDelegation, got {err:?}"
