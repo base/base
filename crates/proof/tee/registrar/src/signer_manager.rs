@@ -560,7 +560,7 @@ where
         // `isValidSigner` does not consult certificate revocation state, so a signer that was
         // registered before its chain was revoked stays valid until it is explicitly deregistered.
         if matches!(result, Err(RegistrarError::RevokedCertificate { .. })) {
-            self.deregister_revoked_signer(plan.signer, signer_cancel).await;
+            self.deregister_revoked_signer(plan.signer).await;
         }
         result
     }
@@ -691,14 +691,10 @@ where
 
     /// Deregisters a signer whose certificate chain is confirmed revoked.
     ///
-    /// Best effort: a failure here is retried on the next discovery cycle, which re-runs the
-    /// same revocation checks for as long as the instance stays discoverable.
-    async fn deregister_revoked_signer(&self, signer: Address, signer_cancel: &CancellationToken) {
-        let Some(registered) =
-            signer_cancel.run_until_cancelled(self.registry.is_registered_signer(signer)).await
-        else {
-            return;
-        };
+    /// This intentionally runs after its registration task is cancelled: a confirmed revocation
+    /// must remove an existing signer even when its source becomes non-registerable.
+    async fn deregister_revoked_signer(&self, signer: Address) {
+        let registered = self.registry.is_registered_signer(signer).await;
         match registered {
             Ok(false) => return,
             Ok(true) => {}
@@ -1303,6 +1299,7 @@ mod tests {
         CompositeKey, MetricKind,
         debugging::{DebugValue, DebuggingRecorder},
     };
+    use tokio::sync::Notify;
 
     use super::*;
     use crate::{
@@ -1445,6 +1442,9 @@ mod tests {
     struct MockRegistry {
         chain: MockChain,
         stall_get_registered: Arc<AtomicBool>,
+        stall_is_registered: Arc<AtomicBool>,
+        is_registered_started: Arc<Notify>,
+        resume_is_registered: Arc<Notify>,
     }
 
     #[async_trait]
@@ -1468,6 +1468,10 @@ mod tests {
             &self,
             signer: Address,
         ) -> std::result::Result<bool, ContractError> {
+            if self.stall_is_registered.load(Ordering::SeqCst) {
+                self.is_registered_started.notify_one();
+                self.resume_is_registered.notified().await;
+            }
             Ok(self.chain.0.lock().unwrap().registered.contains(&signer))
         }
 
@@ -1715,6 +1719,9 @@ mod tests {
             MockRegistry {
                 chain: chain.clone(),
                 stall_get_registered: Arc::new(AtomicBool::new(false)),
+                stall_is_registered: Arc::new(AtomicBool::new(false)),
+                is_registered_started: Arc::new(Notify::new()),
+                resume_is_registered: Arc::new(Notify::new()),
             },
             MockCertManager { chain: chain.clone() },
             MockTxManager { chain: chain.clone() },
@@ -1934,6 +1941,35 @@ mod tests {
         assert_eq!(sent.len(), 1);
         let call = ITEEProverRegistry::deregisterSignerCall::abi_decode(&sent[0].1).unwrap();
         assert_eq!(call.signer, SIGNER_A);
+    }
+
+    #[tokio::test]
+    async fn revoked_signer_is_deregistered_after_registration_task_cancellation() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+        }
+        manager.registry.stall_is_registered.store(true, Ordering::SeqCst);
+        let cancel = CancellationToken::new();
+        let task_manager = Arc::clone(&manager);
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            task_manager
+                .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &task_cancel)
+                .await
+        });
+
+        manager.registry.is_registered_started.notified().await;
+        cancel.cancel();
+        manager.registry.resume_is_registered.notify_one();
+
+        let result = task.await.unwrap();
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
     #[tokio::test]
