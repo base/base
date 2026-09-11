@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, fmt, sync::Arc};
 
+use alloy_consensus::constants::EIP1559_TX_TYPE_ID;
 use alloy_eips::{
     eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
     eip7594::BlobTransactionSidecarVariant,
@@ -22,7 +23,7 @@ use reth_transaction_pool::{
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::{
     Admission, BasePooledTx, BaseTransactionValidator, GuardLimits, GuardMetrics,
@@ -452,6 +453,207 @@ where
             .map(|existing| *existing.hash())
     }
 
+    /// Clones a successful validation outcome so a validity replacement can be retried
+    /// after reth rejects its standard fee-bump policy. Validation errors are never retryable.
+    fn clone_validated_outcome(
+        validated: &TransactionValidationOutcome<T>,
+    ) -> Option<TransactionValidationOutcome<T>> {
+        let TransactionValidationOutcome::Valid {
+            balance,
+            state_nonce,
+            bytecode_hash,
+            transaction,
+            propagate,
+            authorities,
+        } = validated
+        else {
+            return None;
+        };
+        let transaction = match transaction {
+            reth_transaction_pool::validate::ValidTransaction::Valid(transaction) => {
+                reth_transaction_pool::validate::ValidTransaction::Valid(transaction.clone())
+            }
+            reth_transaction_pool::validate::ValidTransaction::ValidWithSidecar {
+                transaction,
+                sidecar,
+            } => reth_transaction_pool::validate::ValidTransaction::ValidWithSidecar {
+                transaction: transaction.clone(),
+                sidecar: sidecar.clone(),
+            },
+        };
+        Some(TransactionValidationOutcome::Valid {
+            balance: *balance,
+            state_nonce: *state_nonce,
+            bytecode_hash: *bytecode_hash,
+            transaction,
+            propagate: *propagate,
+            authorities: authorities.clone(),
+        })
+    }
+
+    /// Rebuilds validation metadata around a previously pooled EIP-1559 transaction.
+    /// Used only to restore the original transaction if a relaxed replacement retry fails.
+    fn restore_validated_outcome(
+        validated: &TransactionValidationOutcome<T>,
+        transaction: T,
+        propagate: bool,
+    ) -> Option<TransactionValidationOutcome<T>> {
+        let TransactionValidationOutcome::Valid { balance, state_nonce, bytecode_hash, .. } =
+            validated
+        else {
+            return None;
+        };
+        Some(TransactionValidationOutcome::Valid {
+            balance: *balance,
+            state_nonce: *state_nonce,
+            bytecode_hash: *bytecode_hash,
+            transaction: reth_transaction_pool::validate::ValidTransaction::Valid(transaction),
+            propagate,
+            authorities: None,
+        })
+    }
+
+    /// Returns a retryable copy when reth rejects a validity replacement whose
+    /// max fee is strictly higher but does not satisfy the standard percentage bump.
+    ///
+    /// The incoming transaction defines whether the relaxed rule applies. A plain
+    /// replacement retains reth's standard replacement policy even when the pooled
+    /// transaction carries validity predicates.
+    fn validity_replacement_retry(
+        &self,
+        replaced: Option<TxHash>,
+        validated: &TransactionValidationOutcome<T>,
+    ) -> Option<(TxHash, TransactionValidationOutcome<T>, Arc<ValidPoolTransaction<T>>)> {
+        let replaced = replaced?;
+        let replacement = validated.as_valid_transaction()?.transaction();
+        if replacement.ty() != EIP1559_TX_TYPE_ID || replacement.validity_predicates().is_empty() {
+            return None;
+        }
+        let existing = self.protocol_pool.get(&replaced)?;
+        if existing.transaction.ty() != EIP1559_TX_TYPE_ID
+            || replacement.max_fee_per_gas() <= existing.transaction.max_fee_per_gas()
+        {
+            return None;
+        }
+        let price_bump = self.protocol_pool.config().price_bumps.price_bump(EIP1559_TX_TYPE_ID);
+        let required_bumped_fee = |fee: u128| fee.saturating_mul(100 + price_bump).div_ceil(100);
+        let max_fee_underpriced = replacement.max_fee_per_gas()
+            < required_bumped_fee(existing.transaction.max_fee_per_gas());
+        let existing_priority_fee =
+            existing.transaction.max_priority_fee_per_gas().unwrap_or_default();
+        let replacement_priority_fee = replacement.max_priority_fee_per_gas().unwrap_or_default();
+        let priority_fee_underpriced = existing_priority_fee != 0
+            && replacement_priority_fee != 0
+            && replacement_priority_fee < required_bumped_fee(existing_priority_fee);
+        if !max_fee_underpriced && !priority_fee_underpriced {
+            return None;
+        }
+        Some((replaced, Self::clone_validated_outcome(validated)?, existing))
+    }
+
+    /// Inserts one validated transaction through reth's protocol pool.
+    fn insert_validated_protocol_inner(
+        &self,
+        origin: TransactionOrigin,
+        hash: TxHash,
+        validated: TransactionValidationOutcome<T>,
+    ) -> PoolResult<AddedTransactionOutcome> {
+        let mut outcomes =
+            self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
+        outcomes.pop().unwrap_or_else(|| {
+            Err(reth_transaction_pool::error::PoolError::other(
+                hash,
+                "inner pool returned no outcome",
+            ))
+        })
+    }
+
+    /// Tries reth's standard replacement first, then retries eligible EIP-1559
+    /// validity transactions after temporarily removing the pooled transaction.
+    ///
+    /// The public reth API makes the fallback observable: listeners receive
+    /// `Discarded` for the original transaction and `Pending` for the replacement
+    /// instead of a single `Replaced` event. This matches the accepted temporary
+    /// exclusion window for validity transactions that reduce their priority fee.
+    fn insert_with_validity_replacement_fallback<R, F>(
+        &self,
+        hash: TxHash,
+        replaced: Option<TxHash>,
+        validated: TransactionValidationOutcome<T>,
+        mut insert: F,
+    ) -> PoolResult<R>
+    where
+        F: FnMut(TransactionValidationOutcome<T>) -> PoolResult<R>,
+    {
+        let retry = self.validity_replacement_retry(replaced, &validated);
+        let error = match insert(validated) {
+            Ok(outcome) => return Ok(outcome),
+            Err(error) => error,
+        };
+        if !matches!(
+            &error.kind,
+            reth_transaction_pool::error::PoolErrorKind::ReplacementUnderpriced
+        ) {
+            return Err(error);
+        }
+        let Some((replaced_hash, retry, original)) = retry else {
+            return Err(error);
+        };
+        let restore_origin = original.origin;
+        let Some(restore) = Self::restore_validated_outcome(
+            &retry,
+            original.transaction.clone(),
+            original.propagate,
+        ) else {
+            error!(
+                transaction = %hash,
+                replaced = %replaced_hash,
+                "failed to prepare transaction restoration before validity replacement retry"
+            );
+            return Err(error);
+        };
+
+        if self.protocol_pool.remove_transactions(vec![replaced_hash]).is_empty() {
+            return Err(error);
+        }
+        debug!(
+            transaction = %hash,
+            replaced = %replaced_hash,
+            "retrying validity replacement under relaxed fee rules"
+        );
+
+        match insert(retry) {
+            Ok(outcome) => Ok(outcome),
+            Err(retry_error) => {
+                // Reth reports `DiscardedOnInsert` only after accepting the retry and
+                // enforcing pool limits. Like a standard replacement, neither the old
+                // nor new transaction remains; only the observable event sequence differs.
+                if matches!(
+                    &retry_error.kind,
+                    reth_transaction_pool::error::PoolErrorKind::DiscardedOnInsert
+                ) {
+                    self.guard.write().release(&replaced_hash);
+                    self.block_expiry.write().remove(&replaced_hash);
+                    return Err(retry_error);
+                }
+                let restored = self
+                    .insert_validated_protocol_inner(restore_origin, replaced_hash, restore)
+                    .is_ok();
+                if !restored {
+                    self.guard.write().release(&replaced_hash);
+                    self.block_expiry.write().remove(&replaced_hash);
+                    error!(
+                        transaction = %hash,
+                        replaced = %replaced_hash,
+                        error = %retry_error,
+                        "failed to restore transaction after validity replacement retry"
+                    );
+                }
+                Err(retry_error)
+            }
+        }
+    }
+
     fn stale_classification_error(hash: TxHash) -> reth_transaction_pool::error::PoolError {
         reth_transaction_pool::error::PoolError::other(
             hash,
@@ -515,24 +717,19 @@ where
         // `validated` is consumed below.
         let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
         let is_validity = Self::has_validity_predicates(&validated);
-        let mut outcomes =
-            self.protocol_pool.inner().add_transactions(origin, std::iter::once(validated));
-        let outcome = match outcomes.pop() {
-            Some(Ok(outcome)) => outcome,
-            Some(Err(error)) => {
+        let outcome = self.insert_with_validity_replacement_fallback(
+            hash,
+            replaced,
+            validated,
+            |validated| self.insert_validated_protocol_inner(origin, hash, validated),
+        );
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
                 if pre_admitted {
                     self.guard.write().release(&hash);
                 }
                 return Err(error);
-            }
-            None => {
-                if pre_admitted {
-                    self.guard.write().release(&hash);
-                }
-                return Err(reth_transaction_pool::error::PoolError::other(
-                    hash,
-                    "inner pool returned no outcome",
-                ));
             }
         };
         self.gate_protocol_admission(hash, replaced, pre_admitted)?;
@@ -881,16 +1078,23 @@ where
             // `validated` is consumed below.
             let block_expiry_bound = Self::validity_block_expiry_bound(&validated);
             let is_validity = Self::has_validity_predicates(&validated);
-            let events =
-                match self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated) {
-                    Ok(events) => events,
-                    Err(error) => {
-                        if pre_admitted {
-                            self.guard.write().release(&hash);
-                        }
-                        return Err(error);
+            let events = self.insert_with_validity_replacement_fallback(
+                hash,
+                replaced,
+                validated,
+                |validated| {
+                    self.protocol_pool.inner().add_transaction_and_subscribe(origin, validated)
+                },
+            );
+            let events = match events {
+                Ok(events) => events,
+                Err(error) => {
+                    if pre_admitted {
+                        self.guard.write().release(&hash);
                     }
-                };
+                    return Err(error);
+                }
+            };
             self.gate_protocol_admission(hash, replaced, pre_admitted)?;
             self.register_block_expiry(hash, block_expiry_bound, replaced);
             if is_validity {
@@ -2061,12 +2265,21 @@ mod tests {
     }
 
     fn signed_1559(signer: &PrivateKeySigner, nonce: u64) -> BasePooledTransaction {
+        signed_1559_with_fees(signer, nonce, 0, 1_000)
+    }
+
+    fn signed_1559_with_fees(
+        signer: &PrivateKeySigner,
+        nonce: u64,
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let tx = TxEip1559 {
             chain_id: test_chain_id(),
             nonce,
             gas_limit: 50_000,
-            max_fee_per_gas: 1_000,
-            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
             to: TxKind::Call(Address::repeat_byte(0xEE)),
             value: U256::ZERO,
             access_list: Default::default(),
@@ -2076,6 +2289,14 @@ mod tests {
         let envelope = BaseTxEnvelope::Eip1559(tx.into_signed(signature));
         let recovered = envelope.clone().try_into_recovered().unwrap();
         BasePooledTransaction::new(recovered, envelope.encode_2718_len())
+    }
+
+    fn validity_predicate() -> crate::ValidityPredicate {
+        crate::ValidityPredicate::Balance {
+            address: Address::repeat_byte(0xAA),
+            op: crate::ValidityOperator::GreaterThanOrEqual,
+            value: U256::ZERO,
+        }
     }
 
     fn self_paid_eoa_8130(
@@ -2101,6 +2322,110 @@ mod tests {
             assert!(result.is_ok(), "standard transaction {nonce} was guard-rejected: {result:?}");
         }
         assert!(pool.guard.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn validity_replacement_allows_arbitrary_priority_fee_when_max_fee_increases() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let original = signed_1559_with_fees(&signer, 0, 100, 1_000);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        // Neither fee satisfies reth's configured percentage bump. The validity
+        // replacement is retried after removing the old transaction because its
+        // max fee is nevertheless strictly higher.
+        let replacement = signed_1559_with_fees(&signer, 0, 1, 1_001)
+            .with_validity_predicates(vec![validity_predicate()]);
+        let replacement_hash = *replacement.hash();
+        let outcome = pool
+            .add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("validity replacement should relax the priority fee bump");
+
+        assert_eq!(outcome.hash, replacement_hash);
+        assert!(pool.get(&original_hash).is_none());
+        assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn subscribed_validity_replacement_uses_relaxed_fee_rules() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let original = signed_1559_with_fees(&signer, 0, 100, 1_000);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        let replacement = signed_1559_with_fees(&signer, 0, 1, 1_001)
+            .with_validity_predicates(vec![validity_predicate()]);
+        let replacement_hash = *replacement.hash();
+        let mut events = pool
+            .add_transaction_and_subscribe(TransactionOrigin::Local, replacement)
+            .await
+            .expect("subscribed validity replacement should use the relaxed fee rules");
+
+        assert!(matches!(events.next().await, Some(TransactionEvent::Pending)));
+        assert!(pool.get(&original_hash).is_none());
+        assert!(pool.get(&replacement_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn validity_replacement_requires_strictly_higher_max_fee() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let original = signed_1559_with_fees(&signer, 0, 100, 1_000);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        let replacement = signed_1559_with_fees(&signer, 0, 1, 1_000)
+            .with_validity_predicates(vec![validity_predicate()]);
+        let replacement_hash = *replacement.hash();
+        let error = pool
+            .add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect_err("equal max fee must not replace the pooled transaction");
+
+        assert!(matches!(
+            error.kind,
+            reth_transaction_pool::error::PoolErrorKind::ReplacementUnderpriced
+        ));
+        assert!(pool.get(&original_hash).is_some());
+        assert!(pool.get(&replacement_hash).is_none());
+    }
+
+    #[tokio::test]
+    async fn non_validity_replacement_retains_priority_fee_bump() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+
+        let original = signed_1559_with_fees(&signer, 0, 100, 1_000)
+            .with_validity_predicates(vec![validity_predicate()]);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        // The max fee satisfies the default 10% bump, but the priority fee does
+        // not. Since the incoming replacement has no predicates, reth's standard
+        // replacement policy remains authoritative.
+        let replacement = signed_1559_with_fees(&signer, 0, 1, 1_100);
+        let replacement_hash = *replacement.hash();
+        let error = pool
+            .add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect_err("plain replacement must retain the priority fee bump");
+
+        assert!(matches!(
+            error.kind,
+            reth_transaction_pool::error::PoolErrorKind::ReplacementUnderpriced
+        ));
+        assert!(pool.get(&original_hash).is_some());
+        assert!(pool.get(&replacement_hash).is_none());
     }
 
     #[tokio::test]
