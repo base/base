@@ -436,31 +436,9 @@ where
             return Ok(());
         }
 
-        // Keep revocation monitoring active for already-registered signers. Persisting a newly
-        // observed CRL entry protects every future registration that shares this certificate chain.
-        if !self.check_revocation_state(&plan, signer_cancel).await? {
-            return Ok(());
-        }
-
-        let Some(already_registered) = signer_cancel
-            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
-            .await
-            .transpose()?
-        else {
-            return Ok(());
-        };
-        if already_registered {
-            RegistrarMetrics::record_registration_stage(
-                RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
-            );
-            debug!(signer = %signer_address, instance = %instance_id, "already registered");
-            return Ok(());
-        }
-
-        if !self.validate_root_cache(&plan, signer_cancel).await? {
-            return Ok(());
-        }
-
+        // Generating the hints verifies every certificate signature under the pinned root and
+        // the COSE signature under the leaf. Do that before CRL results can persist revocation
+        // state or deregister a signer.
         let hints = match prepared_hints {
             Some(hints) => hints,
             None => {
@@ -512,6 +490,31 @@ where
                 hints
             }
         };
+
+        // Keep revocation monitoring active for already-registered signers. Persisting a newly
+        // observed CRL entry protects every future registration that shares this certificate chain.
+        if !self.check_revocation_state(&plan, signer_cancel).await? {
+            return Ok(());
+        }
+
+        let Some(already_registered) = signer_cancel
+            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
+            .await
+            .transpose()?
+        else {
+            return Ok(());
+        };
+        if already_registered {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
+            );
+            debug!(signer = %signer_address, instance = %instance_id, "already registered");
+            return Ok(());
+        }
+
+        if !self.validate_root_cache(&plan, signer_cancel).await? {
+            return Ok(());
+        }
 
         if hints.cert_signature_hints.len() != plan.certs.len() {
             return Err(RegistrarError::InvalidAttestationProof(format!(
@@ -2004,6 +2007,33 @@ mod tests {
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
+    }
+
+    #[tokio::test]
+    async fn counterfeit_certificate_chain_cannot_persist_or_deregister_from_a_crl() {
+        let attestation =
+            hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let mut plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        let signer = plan.signer;
+        plan.timestamp = TestManager::now().1.saturating_sub(1_000);
+        plan.nonce =
+            Some(TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, signer).to_vec());
+        *plan.certs[0].cert.last_mut().unwrap() ^= 1;
+        let cert_id = plan.certs[0].revocation_id;
+        let mut source = MockCrlSource::new();
+        source.expect_check_chain().never();
+        let (manager, chain) = manager_with_crl(&plan, Box::new(source));
+        chain.0.lock().unwrap().registered.insert(signer);
+
+        let result = manager
+            .register_plan(TEST_INSTANCE, signer, plan, None, &CancellationToken::new())
+            .await;
+
+        assert!(matches!(result, Err(RegistrarError::Planning(_))));
+        let state = chain.0.lock().unwrap();
+        assert!(!state.revoked.contains(&cert_id));
+        assert!(state.registered.contains(&signer));
+        assert!(state.sent.is_empty());
     }
 
     #[tokio::test]
