@@ -8,9 +8,9 @@ use base_common_chain_config::RollupConfig;
 use base_consensus_batch::BlockInfo;
 
 use crate::{
-    AttributesBuilder, AttributesQueue, BatchValidator, ChainProvider, ChannelAssembler,
-    ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue, L1Retrieval,
-    L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
+    AttributesBuilder, AttributesQueue, BatchStream, BatchValidator, ChainProvider,
+    ChannelAssembler, ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue,
+    L1Retrieval, L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
 };
 
 /// The `PipelineBuilder` constructs a [`DerivationPipeline`] using a builder pattern.
@@ -140,10 +140,10 @@ where
             .with_da_batcher_sender_override(builder.da_batcher_sender_override);
         let frame_queue = FrameQueue::new(l1_retrieval);
         let channel_provider = ChannelAssembler::new(Arc::clone(&rollup_config), frame_queue);
-        let channel_reader = ChannelReader::new(channel_provider);
+        let channel_reader = ChannelReader::new(channel_provider, Arc::clone(&rollup_config));
         let batch_provider = BatchValidator::new(
             Arc::clone(&rollup_config),
-            channel_reader,
+            BatchStream::new(channel_reader, Arc::clone(&rollup_config), l2_chain_provider.clone()),
             l2_chain_provider.clone(),
         );
         let attributes =

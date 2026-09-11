@@ -6,7 +6,9 @@ use alloy_primitives::Bytes;
 use alloy_rlp::Decodable;
 use miniz_oxide::inflate::{TINFLStatus, decompress_to_vec_zlib_with_limit};
 
-use crate::{BatchDecodingError, Brotli, BrotliDecompressionError, SingleBatch};
+use base_common_chain_config::RollupConfig;
+
+use crate::{Batch, BatchDecodingError, Brotli, BrotliDecompressionError, SingleBatch};
 
 /// Error type for decompression failures.
 #[derive(Debug, thiserror::Error)]
@@ -39,8 +41,8 @@ pub enum BatchReaderError {
     Batch(#[from] BatchDecodingError),
 }
 
-/// Iteratively decodes singular batches from compressed channel data.
-/// Unsupported batch formats are rejected during decoding.
+/// Iteratively decodes batches from compressed channel data.
+/// Use [`Self::next_protocol_batch`] for derivation that supports singular and span batches.
 #[derive(Debug)]
 pub struct BatchReader {
     /// The raw data to decode.
@@ -133,6 +135,22 @@ impl BatchReader {
         Ok(())
     }
 
+    /// Reads a singular or span batch, preserving decoding errors.
+    pub fn next_protocol_batch(
+        &mut self,
+        config: &RollupConfig,
+    ) -> Result<Option<Batch>, BatchReaderError> {
+        self.decompress()?;
+        if self.cursor >= self.decompressed.len() {
+            return Ok(None);
+        }
+        let mut remaining = &self.decompressed[self.cursor..];
+        let bytes = Bytes::decode(&mut remaining)?;
+        let batch = Batch::decode(&mut bytes.as_ref(), config)?;
+        self.cursor = self.decompressed.len() - remaining.len();
+        Ok(Some(batch))
+    }
+
     /// Pulls out the next batch from the reader.
     pub fn next_batch(&mut self) -> Option<SingleBatch> {
         self.next_batch_strict().ok().flatten()
@@ -175,6 +193,22 @@ mod tests {
         let file_contents = &(&*file_contents)[..file_contents.len() - 1];
         let data = alloy_primitives::hex::decode(file_contents).unwrap();
         data.into()
+    }
+
+    #[test]
+    fn compressed_span_channel_decodes_transactions() {
+        let data =
+            alloy_primitives::hex::decode(include_str!("../../testdata/span_batch.hex").trim())
+                .unwrap();
+        let config = RollupConfig::default();
+        let mut reader =
+            BatchReader::new(data, RollupConfig::MAX_RLP_BYTES_PER_CHANNEL_FJORD as usize);
+        let Batch::Span(span) = reader.next_protocol_batch(&config).unwrap().unwrap() else {
+            panic!("expected span batch");
+        };
+        assert!(!span.batches.is_empty());
+        assert!(span.batches.iter().any(|batch| !batch.transactions.is_empty()));
+        assert!(reader.next_protocol_batch(&config).unwrap().is_none());
     }
 
     #[test]

@@ -13,18 +13,19 @@ workspace = true
 
 [dependencies]
 brotli = { workspace = true }
+tracing = { workspace = true }
 alloy-rlp = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 ambassador = { workspace = true }
 async-trait = { workspace = true }
 alloy-genesis = { workspace = true }
+unsigned-varint = { workspace = true }
 alloc-no-stdlib = { workspace = true }
 base-common-types-rpc = { workspace = true }
 serde = { workspace = true, optional = true }
 base-common-types-chain = { workspace = true }
 base-common-chain-config = { workspace = true }
-tracing = { workspace = true, optional = true }
 base-common-types-payload = { workspace = true }
 miniz_oxide = { workspace = true, features = ["default"] }
 alloy-primitives = { workspace = true, features = ["map"] }
@@ -67,7 +68,7 @@ harness = false
 
 [features]
 default = ["std"]
-test-utils = ["base-common-chain-config/test-utils", "dep:spin", "dep:tracing", "dep:tracing-subscriber"]
+test-utils = ["base-common-chain-config/test-utils", "dep:spin", "dep:tracing-subscriber"]
 std = [
     "base-common-types-chain/std",
     "alloy-eips/std",
@@ -82,7 +83,7 @@ std = [
     "serde?/std",
     "spin?/std",
     "thiserror/std",
-    "tracing?/std",
+    "tracing/std",
 ]
 serde = [
     "base-common-types-chain/serde",

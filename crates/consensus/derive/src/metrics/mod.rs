@@ -71,6 +71,9 @@ base_common_observability_metrics::define_metrics! {
     #[describe("Wall-clock duration to decompress channel batch data")]
     pipeline_batch_decompress_duration_seconds: histogram,
 
+    #[describe("Wall-clock duration to validate a span batch prefix")]
+    pipeline_span_prefix_validation_duration_seconds: histogram,
+
     #[describe("Wall-clock duration to decode the next batch from decompressed channel data")]
     pipeline_batch_decode_duration_seconds: histogram,
 

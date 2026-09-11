@@ -5,7 +5,7 @@ use alloc::{boxed::Box, vec::Vec};
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
 use base_common_chain_config::SystemConfig;
-use base_consensus_batch::{BlockInfo, SingleBatch};
+use base_consensus_batch::{BlockInfo, L2BlockInfo, SingleBatch};
 
 use crate::{
     errors::PipelineError,
@@ -46,7 +46,11 @@ impl NextBatchProvider for TestNextBatchProvider {
         self.flushed = true;
     }
 
-    async fn next_batch(&mut self) -> PipelineResult<SingleBatch> {
+    async fn next_batch(
+        &mut self,
+        _parent: L2BlockInfo,
+        _l1_origins: &[BlockInfo],
+    ) -> PipelineResult<SingleBatch> {
         self.batches.pop().ok_or(PipelineError::Eof.temp())?
     }
 }

@@ -36,9 +36,9 @@ pub use sources::{
 
 mod stages;
 pub use stages::{
-    AttributesQueue, BatchValidator, ChannelAssembler, ChannelReader, ChannelReaderProvider,
-    FrameQueue, FrameQueueProvider, L1Retrieval, L1RetrievalProvider, NextBatchProvider,
-    NextFrameProvider, PollingTraversal,
+    AttributesQueue, BatchStream, BatchStreamProvider, BatchValidator, ChannelAssembler,
+    ChannelReader, ChannelReaderProvider, FrameQueue, FrameQueueProvider, L1Retrieval,
+    L1RetrievalProvider, NextBatchProvider, NextFrameProvider, PollingTraversal,
 };
 
 mod traits;

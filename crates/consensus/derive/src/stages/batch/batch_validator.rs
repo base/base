@@ -197,7 +197,7 @@ where
         // If the origin is behind, we must drain previous stages to catch up.
         let stage_origin = self.origin.ok_or(PipelineError::MissingOrigin.crit())?;
         if self.origin_behind(&parent) || parent.l1_origin.number == stage_origin.number {
-            self.prev.next_batch().await?;
+            self.prev.next_batch(parent, self.l1_blocks.as_ref()).await?;
             return Err(PipelineError::NotEnoughData.temp());
         }
 
@@ -223,7 +223,7 @@ where
         let (next_batch, inclusion_block) = match self.pending_batch.take() {
             Some(pending_batch) => pending_batch,
             None => {
-                let next_batch = match self.prev.next_batch().await {
+                let next_batch = match self.prev.next_batch(parent, self.l1_blocks.as_ref()).await {
                     Ok(batch) => batch,
                     Err(PipelineErrorKind::Temporary(PipelineError::Eof)) => {
                         return self.try_derive_empty_batch(&parent);
@@ -283,6 +283,10 @@ where
             }
             BatchValidity::Drop(reason) => {
                 warn!(target: "batch_validator", reason = %reason, "Invalid singular batch, flushing current channel");
+                self.prev.flush();
+                Err(PipelineError::NotEnoughData.temp())
+            }
+            BatchValidity::Future => {
                 self.prev.flush();
                 Err(PipelineError::NotEnoughData.temp())
             }

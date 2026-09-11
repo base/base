@@ -15,8 +15,13 @@ pub(crate) const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
 
 mod batch;
 pub use batch::{
-    BatchDecodingError, BatchDropReason, BatchReader, BatchReaderError, BatchTransaction,
-    BatchValidationProvider, BatchValidity, DecompressionError, SingleBatch,
+    Batch, BatchDecodingError, BatchDropReason, BatchEncodingError, BatchReader, BatchReaderError,
+    BatchTransaction, BatchType, BatchValidationProvider, BatchValidity, BatchWithInclusionBlock,
+    DecompressionError, RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits,
+    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchEip7702TransactionData, SpanBatchEip8130TransactionData, SpanBatchElement,
+    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
+    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError, SpanTransactionReader,
 };
 
 mod brotli;

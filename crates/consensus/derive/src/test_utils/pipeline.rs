@@ -15,7 +15,7 @@ use crate::{
     test_utils::{TestAttributesBuilder, TestDAP},
 };
 use crate::{
-    BatchValidator, PipelineResult,
+    BatchStream, BatchValidator, PipelineResult,
     test_utils::{TestChainProvider, TestL2ChainProvider},
 };
 
@@ -81,7 +81,8 @@ pub type TestChannelProvider = ChannelAssembler<TestFrameQueue>;
 pub type TestChannelReader = ChannelReader<TestChannelProvider>;
 
 /// A [`BatchValidator`] using test providers and sources.
-pub type TestBatchProvider = BatchValidator<TestChannelReader, TestL2ChainProvider>;
+pub type TestBatchProvider =
+    BatchValidator<BatchStream<TestChannelReader, TestL2ChainProvider>, TestL2ChainProvider>;
 
 /// An [`AttributesQueue`] using test providers and sources.
 pub type TestAttributesQueue = AttributesQueue<TestBatchProvider, TestAttributesBuilder>;

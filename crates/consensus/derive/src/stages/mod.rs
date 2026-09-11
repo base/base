@@ -13,7 +13,7 @@ mod channel;
 pub use channel::{ChannelAssembler, ChannelReader, ChannelReaderProvider, NextFrameProvider};
 
 mod batch;
-pub use batch::{BatchValidator, NextBatchProvider};
+pub use batch::{BatchStream, BatchStreamProvider, BatchValidator, NextBatchProvider};
 
 mod attributes_queue;
 pub use attributes_queue::AttributesQueue;
