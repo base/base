@@ -1,11 +1,10 @@
 #![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-mod cert_manager;
-pub use cert_manager::CertManager;
-
 mod crl;
-pub use crl::{CertCrlInfo, CrlError, check_chain_against_crls};
+pub use crl::{
+    CertCrlInfo, CrlChainStatus, CrlChecker, CrlError, CrlSource, IndeterminateCert, RevokedCert,
+};
 
 mod discovery;
 pub use discovery::AwsTargetGroupDiscovery;

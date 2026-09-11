@@ -97,6 +97,18 @@ pub enum RegistrarError {
         cert_id: B256,
     },
 
+    /// A certificate's CRL could not be fetched and parsed, so its revocation status is
+    /// unknown and registration fails closed.
+    #[error("certificate {label} has an indeterminate revocation status ({cert_id}): {reason}")]
+    IndeterminateRevocation {
+        /// Human-readable certificate role.
+        label: String,
+        /// Issuer/serial revocation identity.
+        cert_id: B256,
+        /// Why the CRL check did not complete.
+        reason: String,
+    },
+
     /// Configuration is invalid.
     #[error("config error: {0}")]
     Config(String),
