@@ -29,6 +29,7 @@ use reth_basic_payload_builder::{
     PayloadConfig, is_better_payload,
 };
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
+use reth_engine_tree::tree::instrumented_state::InstrumentedStateProvider;
 use reth_evm::{
     BlockExecutorForEvm, ConfigureEvm, Database,
     execute::{
@@ -241,6 +242,9 @@ where
                 execution_cache.cache().clone(),
                 Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
             ));
+        }
+        if self.config.state_provider_metrics {
+            state_provider = Box::new(InstrumentedStateProvider::new(state_provider, "builder"));
         }
         let state = StateProviderDatabase::new(state_provider.as_ref());
 
@@ -1532,7 +1536,10 @@ mod tests {
     use std::{
         collections::{HashMap, VecDeque},
         mem::ManuallyDrop,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
         time::Duration,
     };
 
@@ -1550,8 +1557,10 @@ mod tests {
     use base_observability_events::{TransactionEventCapture, TransactionEventType};
     use reth_basic_payload_builder::{BuildOutcomeKind, PayloadConfig};
     use reth_chainspec::ChainSpec;
+    use reth_engine_tree::tree::instrumented_state::InstrumentedStateProvider;
     use reth_ethereum_forks::ForkCondition;
     use reth_evm::execute::BlockBuilder;
+    use reth_execution_cache::CachedStateProvider;
     use reth_payload_builder::PayloadId;
     use reth_payload_util::{NoopPayloadTransactions, PayloadTransactions};
     use reth_primitives_traits::{Account, SealedHeader, SignedTransaction, WithEncoded};
@@ -2675,5 +2684,77 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 1);
         assert!(evicted.lock().unwrap().is_empty());
         assert!(invalid.lock().unwrap().is_empty());
+    }
+
+    /// The build loop wraps its state provider in `InstrumentedStateProvider` *outside*
+    /// `CachedStateProvider`, so the recorded latency is the total cost of a read as the builder
+    /// experiences it. This asserts the consequence: a cache hit and a read-through are both
+    /// timed. Wrapping the other way round would record only the read-through, and a warm cache
+    /// would then look like no improvement rather than a faster one.
+    ///
+    /// Hits are told apart from read-throughs by value: the cache and the provider underneath
+    /// hold different balances for the same address, so the returned balance names the source.
+    /// `CachedStateProvider::new` is lookup-only and never populates on a miss, so the cached
+    /// entry here stands in for one the engine placed there.
+    #[test]
+    fn instrumentation_times_both_cache_hits_and_read_throughs() {
+        const FROM_CACHE: u64 = 1;
+        const FROM_PROVIDER: u64 = 999;
+
+        let cached_address = Address::with_last_byte(0x11);
+        let uncached_address = Address::with_last_byte(0x22);
+
+        let mut provider = reth_revm::test_utils::StateProviderTest::default();
+        for address in [cached_address, uncached_address] {
+            provider.insert_account(
+                address,
+                reth_primitives_traits::Account {
+                    balance: U256::from(FROM_PROVIDER),
+                    ..Default::default()
+                },
+                None,
+                HashMap::default(),
+            );
+        }
+
+        let cache = reth_execution_cache::ExecutionCache::new(1_000_000);
+        cache.insert_account(
+            cached_address,
+            Some(reth_primitives_traits::Account {
+                balance: U256::from(FROM_CACHE),
+                ..Default::default()
+            }),
+        );
+
+        let instrumented = InstrumentedStateProvider::new(
+            CachedStateProvider::new(provider, cache, None),
+            "builder",
+        );
+        let stats = instrumented.stats();
+
+        let hit = reth_storage_api::AccountReader::basic_account(&instrumented, &cached_address)
+            .unwrap()
+            .expect("cached account");
+        assert_eq!(
+            hit.balance,
+            U256::from(FROM_CACHE),
+            "read should have been served by the cache, not the provider underneath"
+        );
+
+        let miss = reth_storage_api::AccountReader::basic_account(&instrumented, &uncached_address)
+            .unwrap()
+            .expect("uncached account");
+        assert_eq!(
+            miss.balance,
+            U256::from(FROM_PROVIDER),
+            "read should have fallen through to the provider underneath"
+        );
+
+        assert_eq!(
+            stats.total_account_fetches(),
+            2,
+            "the cache hit must be timed as well as the read-through; recording only the \
+             read-through would hide the benefit of a warm cache"
+        );
     }
 }

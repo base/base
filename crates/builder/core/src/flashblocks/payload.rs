@@ -33,6 +33,7 @@ use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
+use reth_engine_tree::tree::instrumented_state::InstrumentedStateProvider;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::ChangedAccount;
@@ -295,6 +296,9 @@ where
                 execution_cache.cache().clone(),
                 Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
             ));
+        }
+        if self.config.state_provider_metrics {
+            state_provider = Box::new(InstrumentedStateProvider::new(state_provider, "builder"));
         }
         let db = StateProviderDatabase::new(state_provider);
 

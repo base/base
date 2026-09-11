@@ -38,6 +38,13 @@ pub struct BaseBuilderConfig {
     /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
     /// skipping those descendants across later jobs is Flashblocks-only.
     pub rejection_cache: RejectionCache,
+    /// Whether to record per-call state fetch latency for the build loop.
+    ///
+    /// Mirrors the Flashblocks builder: wraps the payload builder's state provider so account,
+    /// storage, and code reads are timed under `sync.state_provider` with a `builder` source
+    /// label. Adds overhead to every state read, so it follows reth's
+    /// `--engine.state-provider-metrics` and stays off by default.
+    pub state_provider_metrics: bool,
 }
 
 impl Default for BaseBuilderConfig {
@@ -49,6 +56,7 @@ impl Default for BaseBuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            state_provider_metrics: false,
         }
     }
 }
@@ -67,7 +75,15 @@ impl BaseBuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            state_provider_metrics: false,
         }
+    }
+
+    /// Sets whether build-loop state reads are timed.
+    #[must_use]
+    pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
+        self.state_provider_metrics = enabled;
+        self
     }
 
     /// Sets resource-unit metering used to throttle transactions in the native
