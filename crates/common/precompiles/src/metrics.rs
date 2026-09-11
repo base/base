@@ -1,7 +1,7 @@
 //! Low-cardinality metadata for observing native precompile calls.
 
 use alloc::{borrow::Cow, string::ToString};
-#[cfg(feature = "std")]
+#[cfg(feature = "metrics")]
 use std::time::Instant;
 
 use alloy_primitives::Bytes;
@@ -542,33 +542,35 @@ impl PrecompileMetricLabels {
 }
 
 /// Call timer used by precompile call recorders.
+///
+/// Wall-clock timing is gated on `metrics`. zkVM guests leave that feature off.
 #[derive(Debug)]
 pub struct PrecompileCallTimer {
-    #[cfg(feature = "std")]
+    #[cfg(feature = "metrics")]
     start: Instant,
 }
 
 impl PrecompileCallTimer {
     /// Starts a new call timer.
-    #[cfg(feature = "std")]
+    #[cfg(feature = "metrics")]
     pub fn start() -> Self {
         Self { start: Instant::now() }
     }
 
     /// Starts a new no-op call timer.
-    #[cfg(not(feature = "std"))]
+    #[cfg(not(feature = "metrics"))]
     pub const fn start() -> Self {
         Self {}
     }
 
-    /// Returns elapsed wall-clock time in seconds when std timing is available.
-    #[cfg(feature = "std")]
+    /// Returns elapsed wall-clock time in seconds when metrics timing is available.
+    #[cfg(feature = "metrics")]
     pub fn elapsed_seconds(&self) -> Option<f64> {
         Some(self.start.elapsed().as_secs_f64())
     }
 
-    /// Returns no elapsed wall-clock time when std timing is unavailable.
-    #[cfg(not(feature = "std"))]
+    /// Returns no elapsed wall-clock time when metrics timing is unavailable.
+    #[cfg(not(feature = "metrics"))]
     pub const fn elapsed_seconds(&self) -> Option<f64> {
         None
     }
@@ -595,13 +597,13 @@ where
     O: crate::PrecompileCallObserver,
 {
     /// Starts a recorder for a precompile call.
-    #[cfg(feature = "std")]
+    #[cfg(feature = "metrics")]
     pub fn start(observer: O, call: PrecompileCallMetric) -> Self {
         Self { observer, timer: PrecompileCallTimer::start(), call, error: None }
     }
 
     /// Starts a recorder for a precompile call.
-    #[cfg(not(feature = "std"))]
+    #[cfg(not(feature = "metrics"))]
     pub const fn start(observer: O, call: PrecompileCallMetric) -> Self {
         Self { observer, timer: PrecompileCallTimer::start(), call, error: None }
     }
@@ -688,11 +690,19 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolInterface};
     use base_precompile_storage::{BasePrecompileError, PrecompileError, PrecompileOutput};
 
+    #[cfg(not(feature = "metrics"))]
+    use crate::PrecompileCallTimer;
     use crate::{
         CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Asset, IB20Factory, IPolicyRegistry,
         NoopPrecompileCallObserver, PrecompileCallRecorder, PrecompileCallStatus,
         PrecompileErrorKind, PrecompileMetricLabels, PrecompileSelector,
     };
+
+    #[cfg(not(feature = "metrics"))]
+    #[test]
+    fn call_timer_is_noop_without_metrics() {
+        assert_eq!(PrecompileCallTimer::start().elapsed_seconds(), None);
+    }
 
     #[test]
     fn b20_method_labels_strip_precompile_prefixes() {
