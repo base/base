@@ -32,6 +32,10 @@ base-consensus-node = { workspace = true, features = ["metrics"] }
 base-consensus-providers = { workspace = true, features = ["metrics"] }
 reth-node-core.workspace = true
 
+# telemetry
+base-telemetry-types.workspace = true
+base-telemetry-client.workspace = true
+
 # retry
 backon.workspace = true
 base-retry.workspace = true

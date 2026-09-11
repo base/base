@@ -26,6 +26,15 @@ pub use cl_prober::{
     Libp2pProbeResult, Libp2pProbeStage, Libp2pProbeTarget, Libp2pProber,
 };
 
+mod ingest;
+pub use ingest::{
+    DEFAULT_NODE_REPORT_REQUESTS_PER_HOUR, IngestApiError, IngestErrorResponse, IngestRoutes,
+    IngestState, NODE_REPORT_MAX_REQUEST_BYTES, NODE_REPORT_PATH,
+};
+
+mod recorder;
+pub use recorder::{DEFAULT_RECORDER_QUEUE_CAPACITY, JsonlRecorder, ReportRecorder};
+
 mod rate_limit;
 pub use rate_limit::{
     CLIENT_IP_HEADER, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE, IpRateLimiter, PerIpRateLimit,

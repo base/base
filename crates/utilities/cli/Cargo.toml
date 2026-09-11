@@ -24,6 +24,9 @@ opentelemetry_sdk.workspace = true
 reth-node-core.workspace = true
 reth-tracing-otlp = { workspace = true, optional = true }
 
+# telemetry
+base-telemetry-client.workspace = true
+
 # metrics
 metrics.workspace = true
 base-metrics = { workspace = true, features = ["metrics"] }

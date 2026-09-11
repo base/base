@@ -14,6 +14,8 @@ mod backtrace;
 pub use backtrace::Backtracing;
 
 mod prometheus;
+/// Re-exported so `define_telemetry_args!` can name the type it builds.
+pub use base_telemetry_client::TelemetryConfig;
 pub use prometheus::{BuildError, MetricsConfig, PrometheusServer};
 
 mod styles;

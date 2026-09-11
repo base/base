@@ -35,6 +35,7 @@ use crate::{
     },
     setup::{L1GenesisOutput, L2DeploymentOutput, SetupContainer},
     system_config::StableSystemTestConfig,
+    telemetry::{TelemetryIngest, TelemetryStackOptions},
 };
 
 const DEFAULT_L1_CHAIN_ID: u64 = 1337;
@@ -43,6 +44,11 @@ const DEFAULT_L2_CHAIN_ID: u64 = 84538453;
 /// slot, so this dominates stack startup time.
 const DEFAULT_SLOT_DURATION: u64 = 1;
 const DEFAULT_SHADOW_BLOCKS_PER_CYCLE: NonZeroU64 = NonZeroU64::new(3).unwrap();
+/// Prefix for the network name reported by a telemetry-enabled stack.
+///
+/// A system test chain has no registered network name, so reports are labelled by chain ID
+/// behind a prefix that can never be mistaken for a real network.
+const TELEMETRY_NETWORK_PREFIX: &str = "system-test-";
 
 /// Longest wait for a live L1 schedule change to be re-applied by a runtime-admin node (the
 /// upgrade signal poll interval is 12s).
@@ -110,6 +116,7 @@ pub struct SystemTestStack {
     l1_stack: L1Stack,
     l2_stack: L2Stack,
     l1_rpc_proxy: Option<L1RpcProxy>,
+    telemetry: Option<TelemetryIngest>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<MockProtocolVersionsClient>,
     /// Must be the last field: it clears the runtime registry on drop, so the stacks above
@@ -215,6 +222,16 @@ impl SystemTestStack {
         Ok(RootProvider::<Base>::new(client))
     }
 
+    /// Returns the telemetry ingest endpoint, when the stack was built with
+    /// [`SystemTestStackBuilder::with_telemetry`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stack was built without telemetry.
+    pub const fn telemetry(&self) -> &TelemetryIngest {
+        self.telemetry.as_ref().expect("stack was not built with telemetry enabled")
+    }
+
     /// Returns the mock L1 upgrade signal contract client, when the stack was built with
     /// [`SystemTestStackBuilder::with_upgrade_signal`].
     #[cfg(feature = "upgrade-signal")]
@@ -299,6 +316,7 @@ pub struct SystemTestStackBuilder {
     l1_fault_injection: bool,
     extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
     extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
+    telemetry: Option<TelemetryStackOptions>,
     #[cfg(feature = "upgrade-signal")]
     upgrade_signal: Option<UpgradeSignalStackOptions>,
 }
@@ -460,6 +478,13 @@ impl SystemTestStackBuilder {
     /// method — onto the standard client wiring without forking this crate.
     pub fn with_client_extension(mut self, extension: Box<dyn BaseNodeExtension>) -> Self {
         self.extra_client_extensions.push(extension);
+        self
+    }
+
+    /// Enables node telemetry: starts an ingest endpoint on an ephemeral loopback port and
+    /// starts the client consensus node reporting to it.
+    pub const fn with_telemetry(mut self, options: TelemetryStackOptions) -> Self {
+        self.telemetry = Some(options);
         self
     }
 
@@ -671,6 +696,15 @@ impl SystemTestStackBuilder {
             .as_ref()
             .map_or_else(|| direct_l1_rpc_url.to_string(), |proxy| proxy.url().to_string());
 
+        // Started before the L2 stack so the node has an endpoint to report to from its first
+        // reporting cycle, rather than failing the first one against a port nothing is on yet.
+        let telemetry = match self.telemetry {
+            Some(options) => Some(
+                options.start().await.wrap_err("Failed to start the telemetry ingest endpoint")?,
+            ),
+            None => None,
+        };
+
         let l2_config = L2StackConfig {
             l2_genesis: l2_genesis_bytes,
             rollup_config: rollup_config_bytes,
@@ -690,6 +724,12 @@ impl SystemTestStackBuilder {
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,
+            telemetry: telemetry.as_ref().map(|ingest| {
+                ingest.node_config(
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    format!("{TELEMETRY_NETWORK_PREFIX}{l2_chain_id}"),
+                )
+            }),
             shadow_sequencers,
             extra_builder_extensions: self.extra_builder_extensions,
             extra_client_extensions: self.extra_client_extensions,
@@ -706,6 +746,7 @@ impl SystemTestStackBuilder {
             l1_stack,
             l2_stack,
             l1_rpc_proxy,
+            telemetry,
             #[cfg(feature = "upgrade-signal")]
             upgrade_signal,
             #[cfg(feature = "upgrade-signal")]

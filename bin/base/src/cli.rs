@@ -9,6 +9,7 @@ use crate::{
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
+base_cli_utils::define_telemetry_args!("BASE_NODE");
 
 /// The `base` CLI.
 #[derive(Parser, Debug)]
@@ -36,6 +37,10 @@ pub(crate) struct BaseCli {
     #[command(flatten)]
     pub(crate) metrics: MetricsArgs,
 
+    /// Telemetry configuration.
+    #[command(flatten)]
+    pub(crate) telemetry: TelemetryArgs,
+
     /// The command to run.
     #[command(subcommand)]
     pub(crate) command: BaseCommand,
@@ -55,14 +60,18 @@ impl BaseCli {
             })
             .wrap_err("failed to install Prometheus recorder")?;
 
-        self.command.run(ChainResolver::new(self.chain), metrics_enabled)
+        self.command.run(ChainResolver::new(self.chain), metrics_enabled, self.telemetry)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
+    use std::{
+        ffi::OsStr,
+        path::{Path, PathBuf},
+    };
 
+    use base_cli_utils::TelemetryConfig;
     use clap::{CommandFactory, Parser};
 
     use super::*;
@@ -123,6 +132,85 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("cannot be used multiple times"));
+    }
+
+    #[test]
+    fn telemetry_is_opt_out_and_inert_without_an_endpoint() {
+        let cli = BaseCli::parse_from(["base", "bootnode"]);
+
+        assert!(cli.telemetry.enabled, "telemetry is opt-out, so it parses as enabled");
+        assert_eq!(cli.telemetry.endpoint, None, "no endpoint means the node reports nowhere");
+        assert!(!cli.telemetry.config(8453).is_active());
+    }
+
+    #[test]
+    fn parses_telemetry_endpoint_and_opt_out() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "--telemetry.endpoint",
+            "http://127.0.0.1:8080/v1/ingest",
+            "--telemetry.enabled=false",
+            "bootnode",
+        ]);
+
+        assert_eq!(
+            cli.telemetry.endpoint.as_ref().map(url::Url::as_str),
+            Some("http://127.0.0.1:8080/v1/ingest")
+        );
+        assert!(
+            !cli.telemetry.config(8453).is_active(),
+            "opting out must win over a configured endpoint"
+        );
+    }
+
+    #[test]
+    fn telemetry_id_path_is_chain_scoped_under_home_and_absent_without_one() {
+        assert_eq!(
+            TelemetryConfig::id_path_under(Some(Path::new("/var/lib/base")), 8453),
+            Some(PathBuf::from("/var/lib/base/.base/8453/telemetry-id"))
+        );
+        assert_eq!(
+            TelemetryConfig::id_path_under(None, 8453),
+            None,
+            "with no home directory there is nowhere durable to keep an identity, and a \
+             working-directory path would re-mint one on every restart"
+        );
+    }
+
+    #[test]
+    fn telemetry_id_path_flag_wins_over_the_default() {
+        let cli = BaseCli::parse_from([
+            "base",
+            "--telemetry.id-path",
+            "/srv/base/telemetry-id",
+            "bootnode",
+        ]);
+
+        assert_eq!(
+            cli.telemetry.config(8453).id_path.as_deref(),
+            Some(Path::new("/srv/base/telemetry-id")),
+            "an explicit path must be used as given, whatever $HOME says"
+        );
+    }
+
+    #[test]
+    fn telemetry_data_dir_is_independent_of_the_identity_path() {
+        let cli =
+            BaseCli::parse_from(["base", "--telemetry.data-dir", "/mnt/base-data", "bootnode"]);
+
+        let config = cli.telemetry.config(8453);
+        assert_eq!(config.data_dir.as_deref(), Some(Path::new("/mnt/base-data")));
+        assert!(
+            config.id_path.as_deref().is_none_or(|path| !path.starts_with("/mnt/base-data")),
+            "naming the data volume must not move the identity file"
+        );
+
+        let defaulted = BaseCli::parse_from(["base", "bootnode"]).telemetry.config(8453);
+        assert_eq!(
+            defaulted.data_dir, None,
+            "with no data directory named, the disk fields stay absent rather than describing \
+             whichever volume holds $HOME"
+        );
     }
 
     #[test]

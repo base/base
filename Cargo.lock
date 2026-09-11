@@ -2917,6 +2917,8 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-telemetry-client",
+ "base-telemetry-types",
  "base-txpool-rpc",
  "base-upgrade-signal",
  "clap",
@@ -2925,6 +2927,7 @@ dependencies = [
  "reth-cli-commands",
  "reth-cli-runner",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3439,6 +3442,7 @@ version = "1.3.0"
 dependencies = [
  "backtrace",
  "base-metrics",
+ "base-telemetry-client",
  "clap",
  "dirs-next",
  "eyre",
@@ -3747,6 +3751,8 @@ dependencies = [
  "base-jwt",
  "base-protocol",
  "base-retry",
+ "base-telemetry-client",
+ "base-telemetry-types",
  "base-upgrade-signal",
  "clap",
  "dirs 6.0.0",
@@ -3949,6 +3955,8 @@ dependencies = [
  "base-health",
  "base-metrics",
  "base-protocol",
+ "base-telemetry-client",
+ "base-telemetry-types",
  "base-upgrade-signal",
  "bytes",
  "derive_more 2.1.1",
@@ -6212,7 +6220,11 @@ dependencies = [
  "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-shadow-metrics",
+ "base-telemetry-client",
+ "base-telemetry-service",
+ "base-telemetry-types",
  "base-test-utils",
+ "base-trusted-proxy",
  "base-tx-forwarding",
  "base-tx-manager",
  "base-txpool-rpc",
@@ -6264,6 +6276,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-telemetry-client"
+version = "1.3.0"
+dependencies = [
+ "async-trait",
+ "backon",
+ "base-metrics",
+ "base-retry",
+ "base-telemetry-types",
+ "chrono",
+ "libc",
+ "metrics",
+ "mockall",
+ "reqwest 0.13.4",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "base-telemetry-service"
 version = "1.3.0"
 dependencies = [
@@ -6272,7 +6307,11 @@ dependencies = [
  "async-trait",
  "axum 0.8.9",
  "base-health",
+ "base-retry",
+ "base-telemetry-client",
+ "base-telemetry-types",
  "base-trusted-proxy",
+ "chrono",
  "clap",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures",
@@ -6287,10 +6326,25 @@ dependencies = [
  "reth-network-peers",
  "secp256k1 0.30.0",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-appender",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "base-telemetry-types"
+version = "1.3.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

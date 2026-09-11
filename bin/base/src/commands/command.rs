@@ -6,9 +6,10 @@ use clap::Subcommand;
 use reth_cli_runner::CliRunner;
 
 use crate::{
+    cli::TelemetryArgs,
     commands::{
         bootnode::BootnodeCommand, reth::RethCommand, rpc::RpcCommand, sequencer::SequencerCommand,
-        snapshot::SnapshotCommand, update::UpdateCommand,
+        snapshot::SnapshotCommand, telemetry::TelemetryCommand, update::UpdateCommand,
     },
     config::ChainResolver,
 };
@@ -38,6 +39,9 @@ pub(crate) enum BaseCommand {
     /// Snapshot manifest generation and download utilities (uses its own --chain flag).
     #[command(name = "snapshot")]
     Snapshot(Box<SnapshotCommand>),
+    /// Inspect what this node would report to Base telemetry.
+    #[command(name = "telemetry")]
+    Telemetry(Box<TelemetryCommand>),
 }
 
 impl BaseCommand {
@@ -45,12 +49,13 @@ impl BaseCommand {
         self,
         chain_resolver: ChainResolver,
         metrics_enabled: bool,
+        telemetry: TelemetryArgs,
     ) -> eyre::Result<()> {
         match self {
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
-            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
+            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled, telemetry),
             Self::Sequencer(sequencer) => {
-                (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)
+                (*sequencer).run(chain_resolver.resolve()?, metrics_enabled, telemetry)
             }
             Self::Update(update) => (*update).run(),
             Self::Reth(reth) => {
@@ -67,6 +72,9 @@ impl BaseCommand {
                 chain_resolver.reject_for_reth_command("base snapshot")?;
                 (*snapshot).run()
             }
+            Self::Telemetry(command) => {
+                (*command).run(chain_resolver.resolve()?, metrics_enabled, telemetry)
+            }
         }
     }
 }
@@ -75,7 +83,10 @@ impl BaseCommand {
 mod tests {
     use clap::Parser;
 
-    use crate::{cli::BaseCli, config::ChainResolver};
+    use crate::{
+        cli::{BaseCli, TelemetryArgs},
+        config::ChainResolver,
+    };
 
     #[test]
     fn rejects_legacy_node_rpc_path() {
@@ -119,7 +130,10 @@ mod tests {
     fn rejects_top_level_chain_for_reth_subcommands() {
         let cli =
             BaseCli::try_parse_from(["base", "--chain", "sepolia", "reth", "db", "stats"]).unwrap();
-        let err = cli.command.run(ChainResolver::new(cli.chain), false).unwrap_err();
+        let err = cli
+            .command
+            .run(ChainResolver::new(cli.chain), false, TelemetryArgs::default())
+            .unwrap_err();
 
         assert!(err.to_string().contains("base reth"));
         assert!(err.to_string().contains("base --chain"));

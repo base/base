@@ -14,7 +14,7 @@ use reth_cli_runner::CliRunner;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::config::ResolvedChainConfig;
+use crate::{cli::TelemetryArgs, config::ResolvedChainConfig};
 
 /// Arguments for `base rpc`.
 #[derive(Args, Clone, Debug)]
@@ -49,6 +49,7 @@ impl RpcCommand {
         self,
         resolved_chain: ResolvedChainConfig,
         metrics_enabled: bool,
+        telemetry: TelemetryArgs,
     ) -> eyre::Result<()> {
         let Self { execution_chain, execution, consensus } = self;
         let mut execution_chain = match execution_chain {
@@ -65,6 +66,10 @@ impl RpcCommand {
             .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();
         let consensus_args = ConsensusNodeArgs::new(consensus_chain, consensus_config);
+        let telemetry = consensus_args.telemetry_node_config(
+            telemetry.config(consensus_args.chain.l2_chain_id.id()),
+            metrics_enabled,
+        );
         let mut rollup_config = consensus_args.load_rollup_config()?;
 
         CliRunner::try_default_runtime()?.run_command_until_exit(|ctx| async move {
@@ -109,7 +114,8 @@ impl RpcCommand {
                         upgrade_signal_l1_rpc,
                     ))
                     .with_cancellation(consensus_cancellation.clone())
-                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied),
+                    .with_upgrade_signal_startup_mode(UpgradeSignalStartupMode::AlreadyApplied)
+                    .with_telemetry(Some(telemetry)),
             );
             tokio::pin!(execution_exit);
             tokio::pin!(consensus_exit);

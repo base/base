@@ -1,6 +1,7 @@
 use std::{
     net::SocketAddr,
     num::NonZeroU32,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -18,9 +19,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::{
-    CLIENT_IP_HEADER, ClReachabilityProber, DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE,
-    DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES, IpRateLimiter, Libp2pProber, P2pRoutes,
-    PerIpRateLimit, ReachabilityProber, RlpxProber,
+    CLIENT_IP_HEADER, ClReachabilityProber, DEFAULT_NODE_REPORT_REQUESTS_PER_HOUR,
+    DEFAULT_P2P_PROBE_REQUESTS_PER_MINUTE, DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+    IngestRoutes, IpRateLimiter, JsonlRecorder, Libp2pProber, P2pRoutes, PerIpRateLimit,
+    ReachabilityProber, ReportRecorder, RlpxProber,
 };
 
 /// Configuration for the Base telemetry HTTP server.
@@ -52,6 +54,18 @@ pub struct ServerConfig {
         value_parser = RangedU64ValueParser::<usize>::new().range(1..=Semaphore::MAX_PERMITS as u64)
     )]
     pub p2p_max_concurrent_probes: usize,
+    /// Node reports accepted per hour from each client IP.
+    #[arg(
+        long,
+        env = "BASE_TELEMETRY_NODE_REPORT_REQUESTS_PER_HOUR",
+        default_value_t = DEFAULT_NODE_REPORT_REQUESTS_PER_HOUR
+    )]
+    pub node_report_requests_per_hour: NonZeroU32,
+    /// File accepted node reports are appended to as JSONL.
+    ///
+    /// When unset, reports are only emitted as structured log events.
+    #[arg(long, env = "BASE_TELEMETRY_NODE_REPORT_PATH")]
+    pub node_report_path: Option<PathBuf>,
 }
 
 /// Base telemetry Axum server scaffold.
@@ -76,6 +90,15 @@ impl BaseTelemetryServer {
         HealthServer::router(ready).merge(p2p)
     }
 
+    /// Returns the node report ingest router, rate limited on its own quota.
+    ///
+    /// Ingest is limited separately from the reachability probes: a probe costs an outbound
+    /// connection and a report costs an append, so one quota cannot serve both.
+    pub fn ingest_router(recorder: Arc<dyn ReportRecorder>, per_ip: PerIpRateLimit) -> Router {
+        IngestRoutes::router(recorder, Arc::clone(per_ip.proxy()))
+            .layer(middleware::from_fn_with_state(per_ip, PerIpRateLimit::enforce))
+    }
+
     /// Starts the telemetry service with the provided configuration.
     pub async fn serve(config: ServerConfig, cancel: CancellationToken) -> anyhow::Result<()> {
         let listen_addr = config.listen_addr;
@@ -85,15 +108,25 @@ impl BaseTelemetryServer {
         ));
         let limiter = Arc::new(IpRateLimiter::per_minute(config.p2p_probe_requests_per_minute));
         let eviction = limiter.spawn_eviction_task(cancel.clone());
+        let ingest_limiter =
+            Arc::new(IpRateLimiter::per_hour(config.node_report_requests_per_hour));
+        let ingest_eviction = ingest_limiter.spawn_eviction_task(cancel.clone());
+
+        let recorder = Arc::new(match config.node_report_path {
+            Some(path) => JsonlRecorder::new(&path)
+                .with_context(|| format!("failed to open node report file {}", path.display()))?,
+            None => JsonlRecorder::log_only(),
+        });
 
         let ready = Arc::new(AtomicBool::new(false));
         let app = Self::router_with_probers(
             Arc::clone(&ready),
-            PerIpRateLimit::new(limiter, proxy),
+            PerIpRateLimit::new(limiter, Arc::clone(&proxy)),
             config.p2p_max_concurrent_probes,
             Arc::new(RlpxProber::ephemeral()),
             Arc::new(Libp2pProber::ephemeral()),
-        );
+        )
+        .merge(Self::ingest_router(recorder, PerIpRateLimit::new(ingest_limiter, proxy)));
         let listener = TcpListener::bind(listen_addr)
             .await
             .with_context(|| format!("failed to bind base telemetry server to {listen_addr}"))?;
@@ -110,6 +143,7 @@ impl BaseTelemetryServer {
             .context("base telemetry server exited unexpectedly")?;
 
         let _ = eviction.await;
+        let _ = ingest_eviction.await;
 
         Ok(())
     }
@@ -125,14 +159,15 @@ mod tests {
     };
 
     use axum::{Router, http::StatusCode};
+    use base_telemetry_types::NodeReport;
     use base_trusted_proxy::TrustedProxyConfig;
     use tokio::{net::TcpListener, sync::Semaphore, task::JoinHandle};
 
     use crate::{
         BaseTelemetryServer, BlockingProber, DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
-        ElReachabilityRequest, IpRateLimiter, MockClReachabilityProber, MockReachabilityProber,
-        P2P_REACHABILITY_EL_PATH, PerIpRateLimit, RlpxProbeOutcome, RlpxProbeResult,
-        RlpxProbeStage, TEST_NODE_ID,
+        ElReachabilityRequest, IpRateLimiter, JsonlRecorder, MockClReachabilityProber,
+        MockReachabilityProber, NODE_REPORT_PATH, P2P_REACHABILITY_EL_PATH, PerIpRateLimit,
+        RlpxProbeOutcome, RlpxProbeResult, RlpxProbeStage, TEST_NODE_ID,
     };
 
     /// Returns a mock prober that answers every probe as reachable.
@@ -271,6 +306,43 @@ mod tests {
         // Health routes are not subject to the per-IP limit.
         let health = client.get(format!("http://{addr}/healthz")).send().await.unwrap();
         assert_eq!(health.status(), StatusCode::OK);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn ingest_is_rate_limited_on_its_own_quota() {
+        let router = BaseTelemetryServer::router_with_probers(
+            Arc::new(AtomicBool::new(true)),
+            per_ip(1, vec![]),
+            DEFAULT_P2P_REACHABILITY_MAX_CONCURRENT_PROBES,
+            reachable_prober(),
+            Arc::new(MockClReachabilityProber::new()),
+        )
+        .merge(BaseTelemetryServer::ingest_router(
+            Arc::new(JsonlRecorder::log_only()),
+            per_ip(1, vec![]),
+        ));
+        let (addr, handle) = start_router(router).await;
+        let client = reqwest::Client::new();
+        let ingest_url = format!("http://{addr}{NODE_REPORT_PATH}");
+        let report = NodeReport::default();
+
+        let first = client.post(&ingest_url).json(&report).send().await.unwrap();
+        assert_eq!(first.status(), StatusCode::ACCEPTED);
+
+        let second = client.post(&ingest_url).json(&report).send().await.unwrap();
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(second.headers().contains_key("retry-after"));
+
+        // The probe quota is a separate bucket, so exhausting ingest does not close probing.
+        let probe = client
+            .post(format!("http://{addr}{P2P_REACHABILITY_EL_PATH}"))
+            .json(&test_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(probe.status(), StatusCode::OK);
 
         handle.abort();
     }

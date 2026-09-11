@@ -10,6 +10,7 @@ use crate::{
 
 base_cli_utils::define_log_args!("BASE_NODE");
 base_cli_utils::define_metrics_args!("BASE_NODE", 9090);
+base_cli_utils::define_telemetry_args!("BASE_NODE");
 
 /// The Base Consensus CLI.
 #[derive(Parser, Clone, Debug)]
@@ -88,6 +89,60 @@ mod tests {
         let cli = ConsensusCli::parse_from(["base-consensus", "bootnode-enr"]);
 
         assert!(matches!(cli.command, ConsensusCommands::BootnodeEnr(_)));
+    }
+
+    /// The standalone binary is what the node containers launch, so telemetry flags reaching
+    /// `base-consensus node` is the property that decides whether a deployed node reports at all.
+    #[test]
+    fn node_command_accepts_telemetry_arguments() {
+        let cli = ConsensusCli::parse_from([
+            "base-consensus",
+            "node",
+            "--l1-eth-rpc",
+            "http://localhost:8545",
+            "--l1-beacon",
+            "http://localhost:5052",
+            "--l2-engine-rpc",
+            "http://localhost:8551",
+            "--telemetry.endpoint",
+            "https://telemetry.example.com/v1/ingest",
+            "--telemetry.report-interval",
+            "120",
+        ]);
+
+        let ConsensusCommands::Node(node) = cli.command else {
+            panic!("expected the node command");
+        };
+        assert_eq!(
+            node.telemetry.endpoint.map(|endpoint| endpoint.to_string()),
+            Some("https://telemetry.example.com/v1/ingest".to_string())
+        );
+        assert_eq!(node.telemetry.report_interval, 120);
+    }
+
+    /// Deployments configure telemetry entirely through the environment, so a rename of these
+    /// variables silently disables reporting rather than failing to start.
+    #[test]
+    fn node_telemetry_arguments_read_the_deployed_environment_variables() {
+        let node = ConsensusCli::command()
+            .get_subcommands()
+            .find(|command| command.get_name() == "node")
+            .expect("node subcommand")
+            .clone();
+        let env_for = |id: &str| {
+            node.get_arguments()
+                .find(|arg| arg.get_id() == id)
+                .and_then(|arg| arg.get_env())
+                .map(|env| env.to_string_lossy().into_owned())
+        };
+
+        assert_eq!(env_for("telemetry_enabled").as_deref(), Some("BASE_NODE_TELEMETRY_ENABLED"));
+        assert_eq!(env_for("telemetry_endpoint").as_deref(), Some("BASE_NODE_TELEMETRY_ENDPOINT"));
+        assert_eq!(env_for("telemetry_data_dir").as_deref(), Some("BASE_NODE_TELEMETRY_DATA_DIR"));
+        assert_eq!(
+            env_for("telemetry_report_interval").as_deref(),
+            Some("BASE_NODE_TELEMETRY_REPORT_INTERVAL")
+        );
     }
 
     #[test]

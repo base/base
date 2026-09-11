@@ -1,0 +1,59 @@
+[package]
+name = "base-telemetry-client"
+description = "Collection and transport for Base node telemetry reports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Telemetry
+base-telemetry-types.workspace = true
+
+# Retry
+base-retry.workspace = true
+backon.workspace = true
+
+# Async
+tokio-util.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+
+# HTTP
+url.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+
+# Serialization
+chrono.workspace = true
+
+# Platform
+libc.workspace = true
+
+# Utilities
+uuid = { workspace = true, features = ["v4"] }
+
+# Error handling
+thiserror.workspace = true
+
+# Observability
+base-metrics.workspace = true
+metrics = { workspace = true, optional = true }
+tracing = { workspace = true, features = ["std"] }
+
+# Test doubles
+mockall = { workspace = true, optional = true }
+
+[dev-dependencies]
+mockall.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = [ "metrics" ]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]
+test-utils = [ "dep:mockall" ]
