@@ -259,6 +259,10 @@ impl UpgradeSignalMonitor {
     /// * **Malformed L1 signal** — an L1/governance misconfiguration, not a node-version problem, so
     ///   the node alarms loudly but never halts (halting every node on a governance typo would be a
     ///   self-inflicted outage).
+    /// * **Retroactive change** — the schedule would move or clear an activation that has already
+    ///   elapsed, rewriting the fork rules of settled blocks (see
+    ///   [`UpgradeSignalRefresher::reject_retroactive_change`]). The node keeps its current schedule
+    ///   and alarms; like a malformed signal it never halts.
     ///
     /// Failures raise the sticky `apply_failed` gauge and increment `apply_failures_total`; the
     /// first occurrence of a distinct failure pages at `error`, later re-observations drop to
@@ -269,7 +273,7 @@ impl UpgradeSignalMonitor {
         schedule: &UpgradeSignalSchedule,
         now_secs: u64,
     ) -> UpgradeSignalPollOutcome {
-        let apply_error = match refresher.apply(schedule) {
+        let apply_error = match refresher.apply(schedule, now_secs) {
             Ok(summary) => {
                 // The registry rejects a schedule read from an older L1 block than the one it has
                 // already committed (a lower-block reorg on a non-finalized tag), returning `Ok`
@@ -291,6 +295,36 @@ impl UpgradeSignalMonitor {
             self.last_apply_failure.as_deref() != Some(schedule.signals.as_slice());
         if first_occurrence {
             self.last_apply_failure = Some(schedule.signals.clone());
+        }
+
+        // A retroactive change is neither an outdated node nor a malformed signal: the schedule is
+        // well-formed and supportable, but it disagrees with fork rules this node has already
+        // applied to settled blocks. No local action reconciles that, so it never halts — the
+        // disagreement predates the read (the node already built on the superseded rules), and
+        // stopping every node that observes a late governance change would convert a detectable
+        // divergence into an outage. The registry keeps its last coherent schedule and a human
+        // reconciles the node against L1.
+        if let UpgradeSignalError::RetroactiveScheduleChange { upgrade_id, .. } = &apply_error {
+            UpgradeSignalMetrics::record_retroactive_rejection(self.metrics_layer, upgrade_id);
+            if first_occurrence {
+                error!(
+                    target: "upgrade_signal",
+                    upgrade = %upgrade_id,
+                    l1_block_number = schedule.l1_block_number,
+                    error = %apply_error,
+                    "refusing an L1 upgrade schedule that would retroactively change the fork rules of blocks this node has already processed; the node keeps its current schedule and is now diverged from L1. Reconcile this node against the L1 schedule"
+                );
+            } else {
+                debug!(
+                    target: "upgrade_signal",
+                    upgrade = %upgrade_id,
+                    l1_block_number = schedule.l1_block_number,
+                    error = %apply_error,
+                    "still refusing an L1 upgrade schedule that would retroactively change the fork rules of blocks this node has already processed"
+                );
+            }
+
+            return UpgradeSignalPollOutcome::Continue;
         }
 
         // Both sides of the protocol-version comparison, logged as semver so an operator reads the
@@ -807,7 +841,7 @@ mod tests {
             1,
             vec![upgrade(BaseUpgrade::Azul, 42), upgrade(BaseUpgrade::Beryl, 84)],
         );
-        assert!(refresher.apply(&admin).unwrap().committed);
+        assert!(refresher.apply(&admin, 0).unwrap().committed);
 
         // This monitor never applied anything itself, so it has no private record of Beryl. Because
         // the apply gate reads the authoritative registry — which the admin refresh left overriding
@@ -860,7 +894,7 @@ mod tests {
         // touching this monitor's own view of what it applied.
         assert!(
             refresher
-                .apply(&UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 50)]))
+                .apply(&UpgradeSignalSchedule::new(2, vec![upgrade(BaseUpgrade::Azul, 50)]), 0)
                 .unwrap()
                 .committed
         );
@@ -1060,6 +1094,41 @@ mod tests {
         let outcome = monitor.apply_and_evaluate(&refresher, &schedule, u64::MAX);
 
         assert_eq!(outcome, UpgradeSignalPollOutcome::Continue);
+
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
+    fn apply_and_evaluate_alarms_but_never_halts_on_a_retroactive_change() {
+        let chain_id = 9_100_014;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        // The node commits Azul@1_000 and runs past it.
+        let version = UpgradeSignalDefaults::packed_protocol_version(1, 1, 0);
+        let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
+        let committed = versioned_schedule(1_000, version);
+        let mut monitor = monitor();
+        monitor.update_schedule(committed.clone());
+        assert_eq!(
+            monitor.apply_and_evaluate(&refresher, &committed, 500),
+            UpgradeSignalPollOutcome::Continue
+        );
+
+        // L1 then clears Azul, and the node only observes the clear well after activation. The
+        // schedule is well-formed and supportable, so nothing about it fails closed — but adopting
+        // it would reinterpret every block since 1_000, so the node keeps Azul@1_000 and alarms.
+        let cleared = versioned_schedule(0, version);
+        monitor.update_schedule(cleared.clone());
+        let outcome = monitor.apply_and_evaluate(&refresher, &cleared, 5_000);
+
+        assert_eq!(outcome, UpgradeSignalPollOutcome::Continue);
+        assert_eq!(
+            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
+            Some(UpgradeActivation::Timestamp(1_000))
+        );
+        // The refusal left the registry untouched, so the gate keeps re-offering the clear and the
+        // alarm stays up on every later poll rather than resolving itself.
+        assert!(monitor.schedule_needs_apply(chain_id, &cleared));
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }

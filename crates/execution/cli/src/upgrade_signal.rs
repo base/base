@@ -184,7 +184,7 @@ impl ExecutionUpgradeSignal {
         refresher: &UpgradeSignalRefresher,
     ) -> RpcResult<UpgradeSignalApplySummary> {
         match refresher.read_schedule().await {
-            Ok(schedule) => match refresher.apply(&schedule) {
+            Ok(schedule) => match refresher.apply(&schedule, UpgradeSignalDefaults::now_secs()) {
                 Ok(summary) => {
                     UpgradeSignalMetrics::record_apply_success(refresher.metrics_layer, &schedule);
                     Ok(summary)
@@ -589,8 +589,9 @@ mod tests {
         let chain_id = 9_100_004;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
-        let summary =
-            runtime_refresher(chain_id).apply(&versioned_schedule(BaseUpgrade::Azul, 42)).unwrap();
+        let summary = runtime_refresher(chain_id)
+            .apply(&versioned_schedule(BaseUpgrade::Azul, 42), 0)
+            .unwrap();
 
         assert_eq!(summary.applied_upgrades, 1);
         assert_eq!(

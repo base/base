@@ -332,6 +332,15 @@ impl UpgradeActivation {
     }
 }
 
+impl Display for UpgradeActivation {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Never => f.write_str("not scheduled"),
+            Self::Timestamp(timestamp) => write!(f, "{timestamp}"),
+        }
+    }
+}
+
 /// A target that can receive contract-backed upgrade activation updates.
 ///
 /// Implemented by every schedule destination (rollup config, execution chain spec, runtime

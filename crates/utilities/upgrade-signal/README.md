@@ -61,6 +61,29 @@ refresh without mutation. Entries that a specific activation sink does not suppo
 ignored, and contract schedule entries for upgrades newer than the binary knows are logged and
 ignored while mapping the contract schedule.
 
+## Retroactive Schedule Changes
+
+A runtime override is not a forward-only setting. Fork checks consult `RuntimeUpgradeRegistry` live
+for *any* timestamp, so moving or clearing an activation that has already elapsed reinterprets
+blocks the node has already built or validated — surfacing later and far from its cause, as a
+mismatched state root during replay, reorg handling, or proving.
+
+Every runtime apply (the live poller and `admin_refreshUpgradeSignal` alike) therefore refuses a
+schedule that would change the fork rules of a block at or before the current time. An activation
+change flips the window `[min(current, incoming), max(current, incoming))`, so it is refused exactly
+when that window has already opened; a cleared activation is treated as unbounded, and the boundary
+itself counts as settled because a block bearing that timestamp may already exist. A refusal leaves
+the registry on its last coherent schedule, raises `retroactive_rejections_total` alongside the
+sticky `apply_failed` gauge, and alarms at `error` on first occurrence. It never halts the node: the
+divergence predates the read, so halting every node that observes a late change would turn a
+detectable disagreement into an outage.
+
+Two changes are not covered, because the registry cannot see what the node would fall back to: an
+upgrade with no current override (the effective activation lives in the startup chain spec or rollup
+config), and an upgrade dropped by a shorter schedule (the commit removes the override, reverting to
+that same value). Closing both requires the node's real L2 head and effective fork schedule rather
+than wall clock and the registry.
+
 ## Protocol Versions
 
 The contract exposes one global `minimumProtocolVersion()` as a packed-semver `uint256`, so this

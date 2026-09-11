@@ -61,6 +61,12 @@ base_metrics::define_metrics! {
     #[label(layer)]
     #[label(upgrade)]
     fail_closed_total: counter,
+    #[describe(
+        "Total live upgrade signal applies refused because they would retroactively change fork rules"
+    )]
+    #[label(layer)]
+    #[label(upgrade)]
+    retroactive_rejections_total: counter,
 }
 
 impl UpgradeSignalMetrics {
@@ -166,6 +172,16 @@ impl UpgradeSignalMetrics {
         Self::init();
         Self::fail_closed_total(layer.label(), signal.upgrade_id.contract_id().to_string())
             .increment(1);
+    }
+
+    /// Records an apply refused because it would retroactively change an upgrade's fork rules.
+    ///
+    /// Kept separate from `apply_failures_total` because the operator response is different: no
+    /// node-side action fixes it, so it pages a human to reconcile the node against L1 rather than
+    /// prompting a binary upgrade or an L1 signal correction.
+    pub fn record_retroactive_rejection(layer: UpgradeSignalMetricLayer, upgrade_id: &str) {
+        Self::init();
+        Self::retroactive_rejections_total(layer.label(), upgrade_id.to_string()).increment(1);
     }
 
     /// Converts a packed-semver protocol version to a compact metric gauge value.
