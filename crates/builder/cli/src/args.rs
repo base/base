@@ -404,6 +404,7 @@ impl Args {
         );
 
         Ok(BuilderConfig {
+            state_provider_metrics: false,
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
             da_config: Default::default(),
