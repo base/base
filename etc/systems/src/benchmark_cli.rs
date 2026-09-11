@@ -26,10 +26,10 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 
 use crate::{
-    ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
-    PrometheusBlockCollector, SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult,
-    SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
-    VisualizerMetadata, VisualizerRun,
+    ANVIL_ACCOUNT_1, BuilderEngineCacheConfig, DevnetBlockInterval, DevnetConfig, DevnetL2State,
+    DevnetPrefund, PrometheusBlockCollector, SnapshotBenchmarkReportConfig,
+    SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
+    SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
 };
 
 /// Base benchmark launcher.
@@ -47,7 +47,7 @@ pub enum BenchmarkCommand {
     /// Run the default transfer benchmark against a fresh temporary local devnet.
     Local,
     /// Run one load test against a Base snapshot continuation.
-    Snapshot(SnapshotBenchmarkArgs),
+    Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
 }
@@ -104,6 +104,9 @@ pub struct SnapshotBenchmarkArgs {
     /// process immediately because snapshot datadirs are disposable.
     #[arg(long, default_value_t = 0)]
     pub shutdown_timeout_seconds: u64,
+    /// Reth engine execution-cache and prewarming toggles for the snapshot builder.
+    #[command(flatten)]
+    pub builder_engine_cache: BuilderEngineCacheConfig,
 }
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
@@ -331,6 +334,7 @@ impl SnapshotBenchmarkArgs {
         };
         snapshot.block_interval = block_interval;
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
+        snapshot.builder_engine_cache = self.builder_engine_cache;
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 
@@ -629,7 +633,10 @@ mod tests {
 
     use clap::Parser;
 
-    use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+    use super::{
+        AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, BuilderEngineCacheConfig,
+        SnapshotBenchmarkArgs,
+    };
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
@@ -660,6 +667,40 @@ mod tests {
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
         assert_eq!(args.shutdown_timeout_seconds, 0);
+        assert_eq!(args.builder_engine_cache, BuilderEngineCacheConfig::default());
+    }
+
+    #[test]
+    fn parses_builder_engine_cache_flags() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "snapshot",
+            "--builder-datadir",
+            "/snapshot/builder",
+            "--client-datadir",
+            "/snapshot/client",
+            "--load-test-config",
+            "load.yaml",
+            "--output-dir",
+            "results/enabled",
+            "--scenario",
+            "example-scenario",
+            "--builder-share-execution-cache",
+            "--builder-txpool-prewarming",
+        ]);
+
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
+            panic!("expected snapshot benchmark command");
+        };
+        assert_eq!(
+            args.builder_engine_cache,
+            BuilderEngineCacheConfig {
+                share_execution_cache: true,
+                txpool_prewarming: true,
+                state_provider_metrics: false,
+                cross_block_cache_size: None,
+            }
+        );
     }
 
     #[test]

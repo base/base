@@ -10,7 +10,7 @@ mod in_process_batcher;
 pub use in_process_batcher::{InProcessBatcher, InProcessBatcherConfig};
 
 mod in_process_builder;
-pub use in_process_builder::{InProcessBuilder, InProcessBuilderConfig};
+pub use in_process_builder::{BuilderEngineCacheConfig, InProcessBuilder, InProcessBuilderConfig};
 
 mod in_process_client;
 pub use in_process_client::{ChainSpecSource, InProcessClient, InProcessClientConfig};

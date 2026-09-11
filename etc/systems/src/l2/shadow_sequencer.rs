@@ -26,7 +26,8 @@ use eyre::{Result, WrapErr};
 use url::Url;
 
 use super::{
-    InProcessBuilder, InProcessBuilderConfig, InProcessConsensus, InProcessConsensusConfig,
+    BuilderEngineCacheConfig, InProcessBuilder, InProcessBuilderConfig, InProcessConsensus,
+    InProcessConsensusConfig,
 };
 
 /// Configuration for starting a single [`ShadowSequencer`].
@@ -101,6 +102,7 @@ impl ShadowSequencer {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            engine_cache: BuilderEngineCacheConfig::default(),
         })
         .await
         .wrap_err("Failed to start shadow builder")?;

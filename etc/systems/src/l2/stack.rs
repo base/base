@@ -30,10 +30,10 @@ use tokio::time::{sleep, timeout};
 use url::Url;
 
 use super::{
-    ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
-    InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
-    InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
+    BuilderEngineCacheConfig, ChainSpecSource, InProcessBatcher, InProcessBatcherConfig,
+    InProcessBuilder, InProcessBuilderConfig, InProcessClient, InProcessClientConfig,
+    InProcessConsensus, InProcessConsensusConfig, InProcessFollowConsensus,
+    InProcessFollowConsensusConfig, L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
 };
 use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
@@ -231,6 +231,7 @@ impl L2Stack {
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
+            engine_cache: BuilderEngineCacheConfig::default(),
         };
         let builder = InProcessBuilder::start(builder_config)
             .await

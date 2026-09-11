@@ -17,6 +17,8 @@ use clap::ValueEnum;
 use eyre::{Result, WrapErr, bail, ensure};
 use serde::{Deserialize, Serialize};
 
+use crate::BuilderEngineCacheConfig;
+
 const DEFAULT_SLOT_DURATION: u64 = 1;
 
 /// L1 implementation used by a devnet stack.
@@ -180,6 +182,9 @@ pub struct DevnetSnapshotConfig {
     /// modify the captured snapshot's system configuration.
     #[serde(default)]
     pub eip1559_elasticity_override: Option<u32>,
+    /// Reth engine execution-cache and prewarming toggles applied to the snapshot builder.
+    #[serde(default)]
+    pub builder_engine_cache: BuilderEngineCacheConfig,
 }
 
 /// Initial execution state used by a devnet stack.
@@ -356,6 +361,7 @@ impl DevnetConfig {
                 prefund: None,
                 block_interval: DevnetBlockInterval::default(),
                 eip1559_elasticity_override: None,
+                builder_engine_cache: BuilderEngineCacheConfig::default(),
             })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,

@@ -8,8 +8,8 @@ use eyre::{Result, WrapErr};
 use serde::Serialize;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead, SharedL1,
-    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
+    BuilderEngineCacheConfig, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
+    DevnetSnapshotHead, SharedL1, SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
 /// Local Base development network launcher.
@@ -25,7 +25,7 @@ pub struct DevnetCli {
 #[derive(Debug, Subcommand)]
 pub enum DevnetCommand {
     /// Continue Base snapshot datadirs without an L1.
-    Snapshot(SnapshotArgs),
+    Snapshot(Box<SnapshotArgs>),
     /// Start a CI-scoped shared L1 and write its runtime manifest.
     SharedL1(SharedL1Args),
 }
@@ -80,6 +80,9 @@ pub struct SnapshotArgs {
     /// Machine-readable endpoint and boundary output.
     #[arg(long, default_value = "runtime.json")]
     pub runtime_file: PathBuf,
+    /// Reth engine execution-cache and prewarming toggles for the snapshot builder.
+    #[command(flatten)]
+    pub builder_engine_cache: BuilderEngineCacheConfig,
 }
 
 /// Machine-readable state emitted by the snapshot devnet launcher.
@@ -149,6 +152,7 @@ impl SnapshotArgs {
         };
         snapshot.expected_head = expected_head;
         snapshot.block_interval = self.block_interval;
+        snapshot.builder_engine_cache = self.builder_engine_cache;
         snapshot.prefund = self
             .prefund_address
             .map(|address| DevnetPrefund { address, amount: self.prefund_amount });
@@ -195,7 +199,7 @@ mod tests {
     use clap::Parser;
 
     use super::{DevnetCli, DevnetCommand};
-    use crate::DevnetBlockInterval;
+    use crate::{BuilderEngineCacheConfig, DevnetBlockInterval};
 
     #[test]
     fn parses_snapshot_command() {
@@ -222,5 +226,35 @@ mod tests {
         assert_eq!(args.builder_datadir.to_str(), Some("/tmp/builder"));
         assert!(args.prefund_address.is_some());
         assert_eq!(args.block_interval, DevnetBlockInterval::TwoHundredMilliseconds);
+        assert_eq!(args.builder_engine_cache, BuilderEngineCacheConfig::default());
+    }
+
+    #[test]
+    fn parses_builder_engine_cache_flags() {
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "snapshot",
+            "--builder-datadir",
+            "/tmp/builder",
+            "--client-datadir",
+            "/tmp/client",
+            "--builder-share-execution-cache",
+            "--builder-txpool-prewarming",
+            "--builder-state-provider-metrics",
+        ])
+        .unwrap();
+
+        let DevnetCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot command");
+        };
+        assert_eq!(
+            args.builder_engine_cache,
+            BuilderEngineCacheConfig {
+                share_execution_cache: true,
+                txpool_prewarming: true,
+                state_provider_metrics: true,
+                cross_block_cache_size: None,
+            }
+        );
     }
 }

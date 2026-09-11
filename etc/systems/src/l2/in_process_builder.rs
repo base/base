@@ -18,6 +18,7 @@ use base_execution_txpool::{
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
+use clap::Args;
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -30,12 +31,39 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
+use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
 use super::TestNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
+
+/// Reth engine execution-cache and prewarming toggles for an in-process builder.
+///
+/// Each field maps to one reth `--engine.*` flag. All default to `false`, matching reth's own
+/// defaults, so an unconfigured builder behaves exactly as before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Args, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct BuilderEngineCacheConfig {
+    /// `--engine.share-execution-cache-with-payload-builder`: hands the engine's warmed
+    /// execution cache to the payload builder. Without it the builder's `CachedStateProvider`
+    /// is never constructed and every build reads through to the database.
+    #[arg(long = "builder-share-execution-cache")]
+    pub share_execution_cache: bool,
+    /// `--engine.txpool-prewarming`: runs reth's speculative txpool prewarm worker.
+    #[arg(long = "builder-txpool-prewarming")]
+    pub txpool_prewarming: bool,
+    /// `--engine.state-provider-metrics`: emits per-call state fetch latency. Adds overhead to
+    /// every state provider call, so enable it only for measurement runs.
+    #[arg(long = "builder-state-provider-metrics")]
+    pub state_provider_metrics: bool,
+    /// `--engine.cross-block-cache-size`: size of the shared execution cache in megabytes.
+    /// Reth's default is 4096. Slot counts are derived per tier and rounded down to a power of
+    /// two, so this moves capacity in doubling steps rather than continuously.
+    #[arg(long = "builder-cross-block-cache-size")]
+    pub cross_block_cache_size: Option<usize>,
+}
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
@@ -80,6 +108,8 @@ pub struct InProcessBuilderConfig {
     pub txpool_max_size_mb: Option<usize>,
     /// Optional maximum number of transaction slots retained per sender.
     pub txpool_max_account_slots: Option<usize>,
+    /// Reth engine execution-cache and prewarming toggles.
+    pub engine_cache: BuilderEngineCacheConfig,
 }
 
 impl InProcessBuilderConfig {
@@ -472,6 +502,14 @@ fn create_node_config(
         node_config.txpool.max_account_slots = max_account_slots;
     }
 
+    node_config.engine.share_execution_cache_with_payload_builder =
+        config.engine_cache.share_execution_cache;
+    node_config.engine.txpool_prewarming_enabled = config.engine_cache.txpool_prewarming;
+    node_config.engine.state_provider_metrics = config.engine_cache.state_provider_metrics;
+    if let Some(size_mb) = config.engine_cache.cross_block_cache_size {
+        node_config.engine.cross_block_cache_size = size_mb;
+    }
+
     if config.http_port.is_none()
         && config.ws_port.is_none()
         && config.auth_port.is_none()
@@ -504,9 +542,87 @@ fn pool_component(_rollup_args: &RollupArgs) -> BasePoolBuilder<BasePooledTransa
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use alloy_rpc_types_engine::JwtSecret;
     use tempfile::TempDir;
 
-    use super::InProcessBuilder;
+    use super::{
+        BuilderEngineCacheConfig, InProcessBuilder, InProcessBuilderConfig, create_node_config,
+    };
+
+    fn builder_config(engine_cache: BuilderEngineCacheConfig) -> InProcessBuilderConfig {
+        InProcessBuilderConfig {
+            chain_spec: InProcessBuilderConfig::chain_spec_from_genesis_json(
+                br#"{"config":{"chainId":8453},"alloc":{}}"#,
+            )
+            .unwrap(),
+            datadir: None,
+            jwt_secret: JwtSecret::random(),
+            http_port: None,
+            ws_port: None,
+            auth_port: None,
+            p2p_port: None,
+            flashblocks_port: None,
+            metrics_port: None,
+            enable_experimental_validity_transactions: false,
+            payload_builder_cutover: false,
+            extra_extensions: Vec::new(),
+            block_time: Duration::from_secs(2),
+            persistence_threshold: None,
+            persistence_backpressure_threshold: None,
+            txpool_max_transactions: None,
+            txpool_max_size_mb: None,
+            txpool_max_account_slots: None,
+            engine_cache,
+        }
+    }
+
+    #[test]
+    fn engine_cache_toggles_reach_reth_engine_args() {
+        let datadir = TempDir::new().unwrap();
+        let config = builder_config(BuilderEngineCacheConfig {
+            share_execution_cache: true,
+            txpool_prewarming: true,
+            state_provider_metrics: true,
+            cross_block_cache_size: Some(8192),
+        });
+
+        let node_config = create_node_config(
+            Arc::clone(&config.chain_spec),
+            datadir.path(),
+            &datadir.path().join("jwt.hex"),
+            &config,
+        )
+        .unwrap();
+
+        assert!(node_config.engine.share_execution_cache_with_payload_builder);
+        assert!(node_config.engine.txpool_prewarming_enabled);
+        assert!(node_config.engine.state_provider_metrics);
+        assert_eq!(node_config.engine.cross_block_cache_size, 8192);
+
+        let tree_config = node_config.engine.tree_config();
+        assert!(tree_config.share_execution_cache_with_payload_builder());
+        assert!(tree_config.txpool_prewarming());
+    }
+
+    #[test]
+    fn engine_cache_defaults_leave_reth_flags_off() {
+        let datadir = TempDir::new().unwrap();
+        let config = builder_config(BuilderEngineCacheConfig::default());
+
+        let node_config = create_node_config(
+            Arc::clone(&config.chain_spec),
+            datadir.path(),
+            &datadir.path().join("jwt.hex"),
+            &config,
+        )
+        .unwrap();
+
+        assert!(!node_config.engine.share_execution_cache_with_payload_builder);
+        assert!(!node_config.engine.txpool_prewarming_enabled);
+        assert!(!node_config.engine.state_provider_metrics);
+    }
 
     #[test]
     fn retains_caller_owned_datadir() {
