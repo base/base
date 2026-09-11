@@ -39,16 +39,16 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::progress::{UploadProgress, UploadStage};
+use crate::{
+    config::DEFAULT_MAX_STREAMING_PART_UPLOADS,
+    progress::{UploadProgress, UploadStage},
+};
 
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_FILE_UPLOADS: usize = 10;
 
 /// Maximum number of multipart upload parts in flight across all uploads.
 const MAX_CONCURRENT_MULTIPART_PARTS: usize = 100;
-
-/// Default global concurrency for streamed S3 multipart parts.
-const DEFAULT_MAX_STREAMING_PART_UPLOADS: usize = 64;
 
 /// Files larger than this threshold use multipart upload.
 /// S3 `put_object` has a 5 `GiB` limit; we switch well below that.
@@ -59,18 +59,16 @@ const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
 
 /// Part size used for unknown-length streamed archives.
 ///
-/// S3 limits a multipart object to 10,000 parts and 5 `TiB`. 640 `MiB` permits an archive as large
-/// as the S3 object limit while leaving headroom below the part-count limit. This is deliberately
-/// separate from the smaller file-backed upload part size: a file's total size is known before
-/// upload, while a zstd stream's final compressed size is not.
+/// A `128 MiB` part keeps enough parts in flight to saturate R2 without excessive memory use.
+/// It supports streamed archives up to roughly `1.22 TiB` before S3's 10,000-part limit. This is
+/// deliberately separate from the smaller file-backed upload part size: a file's total size is
+/// known before upload, while a zstd stream's final compressed size is not.
 const STREAMING_MULTIPART_PART_SIZE: usize = 128 * 1024 * 1024;
 
-/// Number of complete multipart parts allowed to wait for upload per archive stream.
+/// Per-archive queue capacity for completed streamed parts.
 ///
-/// A stream producer also holds its current part while it is being filled. With the part size
-/// above, a value of one bounds a single archive stream to roughly 1.25 `GiB` of compressed output
-/// in memory (plus SDK request overhead), while still allowing the producer and uploader to run
-/// concurrently.
+/// A global semaphore bounds queued plus in-flight part memory across every archive; this queue
+/// only prevents one archive from monopolizing the multipart scheduler.
 const STREAMING_MULTIPART_CHANNEL_CAPACITY: usize = 16;
 
 /// Base delay between upload retries. Backoff is linear to keep behavior simple and predictable.
@@ -198,7 +196,7 @@ impl StreamingMultipartUpload {
     }
 
     /// Flushes the final (possibly smaller than 5 `MiB`) multipart part and marks the archive input
-    /// complete. The final part is legal because all preceding parts are exactly 640 `MiB`.
+    /// complete. The final part is legal because all preceding parts are exactly `128 MiB`.
     ///
     /// This does not wait for the remote object to become visible; use [`Self::complete`] for
     /// that. It is idempotent so cleanup paths can safely call it after a successful finish.
@@ -315,8 +313,8 @@ impl io::Write for StreamingMultipartUpload {
 /// Bridges Base's synchronous snapshot archive sink to direct S3 multipart uploads.
 ///
 /// Reth archive generation invokes the sink from Rayon workers. The supplied Tokio runtime handle
-/// starts and awaits S3 work from those synchronous workers; the limiter prevents Rayon from
-/// creating unbounded 640 `MiB` streaming buffers in parallel.
+/// starts and awaits S3 work from those synchronous workers; the limiter bounds concurrent archive
+/// writers while the uploader's global part permits bound compressed-buffer memory.
 /// Maps a generated archive filename to its S3 object key.
 type StreamingArchiveDestination = dyn Fn(&str) -> Result<String> + Send + Sync;
 
@@ -337,8 +335,8 @@ impl std::fmt::Debug for StreamingS3ArchiveSink {
 impl StreamingS3ArchiveSink {
     /// Creates a streaming sink whose `destination` maps relative archive names to S3 keys.
     ///
-    /// `max_active_archives` bounds concurrent archive generation and streaming-memory use. Use
-    /// one for state snapshots unless the deployment has memory for multiple ~1.25 `GiB` streams.
+    /// `max_active_archives` bounds concurrent archive generation. The uploader separately bounds
+    /// total queued and in-flight multipart buffers across all active streams.
     pub fn new<F>(
         uploader: SnapshotUploader,
         runtime: Handle,
