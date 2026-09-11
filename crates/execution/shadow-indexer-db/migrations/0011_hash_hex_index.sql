@@ -1,0 +1,22 @@
+-- no-transaction
+--
+-- Backs `WHERE hash = $1` once the reader moves onto the text column. Until this
+-- exists, the by-hash endpoints would fall back to a sequential scan the moment
+-- migration 0015 drops the BYTEA index they use today.
+--
+-- CONCURRENTLY, so the build does not lock out the writer for the length of a
+-- full index build on this table. sqlx wraps a migration in a transaction and
+-- Postgres refuses CONCURRENTLY inside one, hence the `-- no-transaction`
+-- directive on the first line; sqlx 0.8 matches it with a literal
+-- `starts_with`, so nothing may precede it. That also means this file must hold
+-- exactly one statement: a multi-statement simple query is an implicit
+-- transaction and would fail the same way.
+--
+-- IF NOT EXISTS so that building the index by hand on mainnet first -- the
+-- recommended order, since a concurrent build on a large table is measured in
+-- minutes -- leaves this a catalog lookup rather than a second build. A failed
+-- concurrent build leaves an INVALID index behind that IF NOT EXISTS will then
+-- skip forever, so verify `pg_index.indisvalid` before relying on it and drop
+-- any invalid index before retrying.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_shadow_blocks_hash_hex
+  ON shadow_blocks (hash_hex);
