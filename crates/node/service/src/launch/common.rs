@@ -162,8 +162,8 @@ pub struct ConfiguredLaunch {
 }
 
 impl ConfiguredLaunch {
-    /// Resolves the trusted peers and adds them to the toml config.
-    pub fn with_resolved_peers(mut self) -> eyre::Result<Self> {
+    /// Adds the configured trusted peers to the TOML settings.
+    pub fn with_resolved_peers(mut self) -> Self {
         if !self.configs.config.network.trusted_peers.is_empty() {
             info!(target: "reth::cli", "Adding trusted nodes");
 
@@ -173,8 +173,9 @@ impl ConfiguredLaunch {
                 .trusted_nodes
                 .extend(self.configs.config.network.trusted_peers.clone());
         }
-        Ok(self)
+        self
     }
+
     /// Adjust certain settings in the config to make sure they are set correctly
     ///
     /// This includes:
@@ -441,14 +442,6 @@ pub struct ProviderLaunch {
 }
 
 impl ProviderLaunch {
-    /// This launches the prometheus endpoint.
-    ///
-    /// Convenience function to [`Self::start_prometheus_endpoint`]
-    pub async fn with_prometheus_server(self) -> eyre::Result<Self> {
-        self.start_prometheus_endpoint().await?;
-        Ok(self)
-    }
-
     /// Starts the prometheus endpoint.
     pub async fn start_prometheus_endpoint(&self) -> eyre::Result<()> {
         // ensure recorder runs upkeep periodically

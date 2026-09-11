@@ -26,8 +26,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
     AddOnsContext, EngineShutdown, FullNode, LaunchContext, NodeHandle, handle_node_events,
-    rpc::{BasicEngineValidatorBuilder, RpcHandle},
-    setup::build_networked_pipeline,
+    rpc::BasicEngineValidatorBuilder, setup::build_networked_pipeline,
 };
 
 impl crate::NodeLaunch {
@@ -53,14 +52,14 @@ impl crate::NodeLaunch {
             // load the toml config
             .with_loaded_toml_config(config)?
             // add resolved peers
-            .with_resolved_peers()?
+            .with_resolved_peers()
             // ensure certain settings take effect
             .with_adjusted_configs()
             // Create the provider factory with the shared overlay manager
             .with_provider_factory(&database, overlay_manager.clone(), disabled_stages)
             .await?;
         info!(target: "reth::cli", "Database opened");
-        let ctx = ctx.with_prometheus_server().await?;
+        ctx.start_prometheus_endpoint().await?;
         debug!(target: "reth::cli", chain=%ctx.configured.configs.config.chain.chain(), genesis=?ctx.configured.configs.config.chain.genesis_hash(), "Initializing genesis");
         let ctx = ctx.with_genesis()?;
         info!(target: "reth::cli", hardforks=%ctx.configured.configs.config.chain.display_hardforks(), "Loaded hardfork schedule");
@@ -202,7 +201,7 @@ impl crate::NodeLaunch {
             ),
         );
 
-        let RpcHandle { rpc_server_handles, rpc_registry } =
+        let add_ons_handle =
             crate::BaseRpcServer::launch(add_ons_ctx, &base, rpc, &services).await?;
 
         // Create engine shutdown handle
@@ -343,7 +342,7 @@ impl crate::NodeLaunch {
             task_executor: ctx.configured.context.task_executor.clone(),
             config: ctx.configured.configs.config.clone(),
             data_dir: ctx.configured.context.data_dir.clone(),
-            add_ons_handle: RpcHandle { rpc_server_handles, rpc_registry },
+            add_ons_handle,
         };
         services.start(&full_node)?;
 

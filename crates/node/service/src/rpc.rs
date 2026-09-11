@@ -28,15 +28,6 @@ use crate::{AddOnsContext, InvalidBlockHookBuilder, RpcConfig, TxpoolPrewarmSour
 /// Handles for the Base node's public RPC services.
 pub type BaseNodeRpcHandle = RpcHandle;
 
-/// Contains the handles to the spawned RPC servers.
-///
-/// This can be used to access the endpoints of the servers.
-#[derive(Debug, Clone)]
-pub struct RethRpcServerHandles {
-    /// The regular RPC server handle to all configured transports.
-    pub rpc: RpcServerHandle,
-}
-
 /// Helper container for [`RpcRegistryInner`], [`TransportRpcModules`] and
 /// their runtime configuration.
 ///
@@ -97,8 +88,8 @@ impl RpcContext<'_> {
 
 /// Handle to the launched RPC servers.
 pub struct RpcHandle {
-    /// Handles to launched servers.
-    pub rpc_server_handles: RethRpcServerHandles,
+    /// Handle to all configured RPC transports.
+    pub rpc_server_handle: RpcServerHandle,
     /// Configured RPC modules.
     pub rpc_registry: RpcRegistryInner,
 }
@@ -106,7 +97,7 @@ pub struct RpcHandle {
 impl Clone for RpcHandle {
     fn clone(&self) -> Self {
         Self {
-            rpc_server_handles: self.rpc_server_handles.clone(),
+            rpc_server_handle: self.rpc_server_handle.clone(),
             rpc_registry: self.rpc_registry.clone(),
         }
     }
@@ -123,18 +114,13 @@ impl Deref for RpcHandle {
 impl Debug for RpcHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RpcHandle")
-            .field("rpc_server_handles", &self.rpc_server_handles)
+            .field("rpc_server_handle", &self.rpc_server_handle)
             .field("rpc_registry", &self.rpc_registry)
             .finish()
     }
 }
 
 impl RpcHandle {
-    /// Returns the RPC server handles.
-    pub const fn rpc_server_handles(&self) -> &RethRpcServerHandles {
-        &self.rpc_server_handles
-    }
-
     /// Returns the `EthApi` instance of the rpc server.
     pub const fn eth_api(&self) -> &BaseEthApi {
         self.rpc_registry.eth_api()
@@ -176,9 +162,9 @@ impl BaseRpcServer {
     ) -> eyre::Result<RpcHandle> {
         let setup = Self::setup_rpc_components(ctx, base, services, node_services).await?;
         let server_config = setup.server_config;
-        let rpc = Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
-        let handles = RethRpcServerHandles { rpc };
-        Ok(RpcHandle { rpc_server_handles: handles, rpc_registry: setup.registry })
+        let rpc_server_handle =
+            Self::launch_rpc_server_internal(server_config, &setup.modules).await?;
+        Ok(RpcHandle { rpc_server_handle, rpc_registry: setup.registry })
     }
 
     /// Common setup for RPC server initialization

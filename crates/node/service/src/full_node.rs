@@ -82,7 +82,7 @@ impl FullNode {
 impl FullNode {
     /// Returns the [`RpcServerHandle`] to the started rpc server.
     pub const fn rpc_server_handle(&self) -> &RpcServerHandle {
-        &self.add_ons_handle.rpc_server_handles.rpc
+        &self.add_ons_handle.rpc_server_handle
     }
 }
 
