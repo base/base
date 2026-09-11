@@ -9,8 +9,8 @@ use tokio::sync::{mpsc, watch};
 use crate::{
     EngineClientError, EngineClientResult, EngineState,
     actors::engine::{
-        BuildRequest, EngineActorRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-        ReconcileShadowRequest, ResetOrigin, ResetReason, ResetRequest,
+        EndBuildingRequest, EngineActorRequest, InsertUnsafePayloadRequest, ReconcileShadowRequest,
+        ResetOrigin, ResetReason, ResetRequest, StartBuildingRequest,
     },
 };
 
@@ -37,22 +37,22 @@ pub trait SequencerEngineClient: Debug + Send + Sync {
     /// Starts building a block with the provided attributes.
     ///
     /// Returns a `PayloadId` that can be used to seal the block later.
-    async fn start_build_block(
+    async fn start_building(
         &self,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId>;
 
     /// Fetches the sealed payload envelope from the engine WITHOUT inserting it.
-    /// Call this before attempting conductor commit, then call `insert_unsafe_payload` on success.
-    async fn get_sealed_payload(
+    /// Call this before attempting conductor commit, then call `append_payload` on success.
+    async fn end_building(
         &self,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope>;
 
-    /// Submits the sealed payload to the engine for insertion (`new_payload` + FCU), returning the
+    /// Appends and canonicalizes the sealed payload, returning the
     /// inserted unsafe head after the engine acknowledges insertion.
-    async fn insert_unsafe_payload(
+    async fn append_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> EngineClientResult<L2BlockInfo>;
@@ -91,26 +91,26 @@ impl<T: SequencerEngineClient> SequencerEngineClient for Arc<T> {
         (**self).reset_engine_forkchoice_coordinated(reason).await
     }
 
-    async fn start_build_block(
+    async fn start_building(
         &self,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
-        (**self).start_build_block(attributes).await
+        (**self).start_building(attributes).await
     }
 
-    async fn get_sealed_payload(
+    async fn end_building(
         &self,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<BaseExecutionPayloadEnvelope> {
-        (**self).get_sealed_payload(payload_id, attributes).await
+        (**self).end_building(payload_id, attributes).await
     }
 
-    async fn insert_unsafe_payload(
+    async fn append_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> EngineClientResult<L2BlockInfo> {
-        (**self).insert_unsafe_payload(payload).await
+        (**self).append_payload(payload).await
     }
 
     async fn get_unsafe_head(&self) -> EngineClientResult<L2BlockInfo> {
@@ -204,7 +204,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         self.send_reset(ResetOrigin::ShadowCycleCoordinated, reason).await
     }
 
-    async fn start_build_block(
+    async fn start_building(
         &self,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
@@ -213,7 +213,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         trace!(target: "sequencer", "Sending start build request to engine.");
         if self
             .engine_actor_request_tx
-            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+            .send(EngineActorRequest::StartBuildingRequest(Box::new(StartBuildingRequest {
                 attributes,
                 result_tx: payload_id_tx,
                 otel_cx: opentelemetry::Context::current(),
@@ -240,7 +240,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         }
     }
 
-    async fn get_sealed_payload(
+    async fn end_building(
         &self,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
@@ -249,7 +249,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
 
         trace!(target: "sequencer", ?attributes, "Sending get payload request to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::GetPayloadRequest(Box::new(GetPayloadRequest {
+            .send(EngineActorRequest::EndBuildingRequest(Box::new(EndBuildingRequest {
                 payload_id,
                 attributes,
                 result_tx,
@@ -274,7 +274,7 @@ impl SequencerEngineClient for QueuedSequencerEngineClient {
         }
     }
 
-    async fn insert_unsafe_payload(
+    async fn append_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> EngineClientResult<L2BlockInfo> {
@@ -373,7 +373,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_unsafe_payload_returns_engine_ack() {
+    async fn append_payload_returns_engine_ack() {
         let (request_tx, mut request_rx) = mpsc::channel(1);
         let (_, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (_, engine_state_rx) = watch::channel(EngineState::default());
@@ -381,7 +381,7 @@ mod tests {
         let client = QueuedSequencerEngineClient::new(request_tx, unsafe_head_rx, engine_state_rx);
 
         let insert_handle =
-            tokio::spawn(async move { client.insert_unsafe_payload(dummy_envelope()).await });
+            tokio::spawn(async move { client.append_payload(dummy_envelope()).await });
 
         let request = request_rx.recv().await.expect("insert request");
         let EngineActorRequest::ProcessLocalUnsafeL2BlockRequest(request) = request else {

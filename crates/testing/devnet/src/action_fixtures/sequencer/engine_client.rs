@@ -46,28 +46,28 @@ impl SequencerEngineClient for ActionSequencerEngineClient {
         self.inner.reset_engine_forkchoice(reason).await
     }
 
-    async fn start_build_block(
+    async fn start_building(
         &self,
         attributes: AttributesWithParent,
     ) -> Result<PayloadId, base_consensus_driver::EngineClientError> {
-        self.inner.start_build_block(attributes).await
+        self.inner.start_building(attributes).await
     }
 
-    async fn get_sealed_payload(
+    async fn end_building(
         &self,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, base_consensus_driver::EngineClientError> {
-        self.inner.get_sealed_payload(payload_id, attributes).await
+        self.inner.end_building(payload_id, attributes).await
     }
 
-    async fn insert_unsafe_payload(
+    async fn append_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> Result<L2BlockInfo, base_consensus_driver::EngineClientError> {
         let block = ExecutionPayloadConverter::block_from_envelope(&payload)
             .map_err(|e| base_consensus_driver::EngineClientError::ResponseError(e.to_string()))?;
-        let inserted_head = self.inner.insert_unsafe_payload(payload).await?;
+        let inserted_head = self.inner.append_payload(payload).await?;
         let _ = self.inserted_tx.send((block, inserted_head)).await;
         Ok(inserted_head)
     }

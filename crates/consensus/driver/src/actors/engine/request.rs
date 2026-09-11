@@ -62,14 +62,14 @@ pub enum EngineClientError {
 #[derive(Debug)]
 pub enum EngineActorRequest {
     /// Request to build.
-    BuildRequest(Box<BuildRequest>),
+    StartBuildingRequest(Box<StartBuildingRequest>),
     /// Request to get the sealed payload without inserting it.
-    GetPayloadRequest(Box<GetPayloadRequest>),
+    EndBuildingRequest(Box<EndBuildingRequest>),
     /// Request to consolidate using a safe L2 signal from attributes or delegated safe-block
     /// derivation
-    ProcessSafeL2SignalRequest(ConsolidateInput),
+    SetSafeRequest(ConsolidateInput),
     /// Request to finalize the L2 block at the provided block number.
-    ProcessFinalizedL2BlockNumberRequest(Box<u64>),
+    SetFinalizedRequest(Box<u64>),
     /// Request to process an unsafe block authenticated by the P2P gossip layer.
     ProcessUnsafeL2BlockRequest(Box<BaseExecutionPayloadEnvelope>),
     /// Request to insert an unsafe block supplied through the admin API.
@@ -101,7 +101,7 @@ pub enum EngineRpcRequest {
 /// A request to build a payload.
 /// Contains the attributes to build and a channel to send back the resulting `PayloadId`.
 #[derive(Debug)]
-pub struct BuildRequest {
+pub struct StartBuildingRequest {
     /// The [`AttributesWithParent`] from which the block build should be started.
     pub attributes: AttributesWithParent,
     /// The channel on which the result, successful or not, will be sent.
@@ -235,7 +235,7 @@ pub struct InsertUnsafePayloadRequest {
 /// A request to get the sealed payload without inserting it into the engine.
 /// Contains the `PayloadId`, attributes, and a channel to send back the result.
 #[derive(Debug)]
-pub struct GetPayloadRequest {
+pub struct EndBuildingRequest {
     /// The `PayloadId` to fetch.
     pub payload_id: PayloadId,
     /// The attributes associated with the payload.

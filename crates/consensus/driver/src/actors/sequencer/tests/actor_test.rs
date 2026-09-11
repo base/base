@@ -154,12 +154,12 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     let mut client = MockSequencerEngineClient::new();
     client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
-    client.expect_start_build_block().times(2).returning(move |attributes| {
+    client.expect_start_building().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
         Ok(Default::default())
     });
-    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
-    client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(inserted_head));
+    client.expect_end_building().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_append_payload().times(1).return_once(move |_| Ok(inserted_head));
 
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
@@ -221,7 +221,7 @@ async fn shadow_funding_only_applies_to_first_private_block() {
     let mut client = MockSequencerEngineClient::new();
     client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(3).returning(move || Ok(initial_head));
-    client.expect_start_build_block().times(2).returning(move |attributes| {
+    client.expect_start_building().times(2).returning(move |attributes| {
         build_tx
             .send((
                 attributes.parent().block_info.number,
@@ -230,8 +230,8 @@ async fn shadow_funding_only_applies_to_first_private_block() {
             .unwrap();
         Ok(Default::default())
     });
-    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
-    client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(inserted_head));
+    client.expect_end_building().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_append_payload().times(1).return_once(move |_| Ok(inserted_head));
 
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
@@ -292,12 +292,12 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     let mut client = MockSequencerEngineClient::new();
     client.expect_reset_engine_forkchoice().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(2).returning(move || Ok(initial_head));
-    client.expect_start_build_block().times(2).returning(move |attributes| {
+    client.expect_start_building().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
         Ok(Default::default())
     });
-    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
-    client.expect_insert_unsafe_payload().times(1).return_once(move |_| {
+    client.expect_end_building().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_append_payload().times(1).return_once(move |_| {
         insert_tx.send(()).unwrap();
         Ok(inserted_head)
     });
@@ -385,12 +385,12 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
             })
         }
     });
-    client.expect_start_build_block().times(2).returning(move |attributes| {
+    client.expect_start_building().times(2).returning(move |attributes| {
         build_tx.send(attributes.parent().block_info.number).unwrap();
         Ok(Default::default())
     });
-    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
-    client.expect_insert_unsafe_payload().times(1).return_once(move |_| {
+    client.expect_end_building().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_append_payload().times(1).return_once(move |_| {
         insert_tx.send(()).unwrap();
         Ok(inserted_head)
     });
@@ -472,7 +472,7 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     let mut client = MockSequencerEngineClient::new();
     client.expect_reset_engine_forkchoice_coordinated().times(1).return_once(|_| Ok(()));
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(cycle_start));
-    client.expect_insert_unsafe_payload().times(1).return_once(move |_| Ok(private_head));
+    client.expect_append_payload().times(1).return_once(move |_| Ok(private_head));
     client
         .expect_reconcile_shadow()
         .withf(move |target| *target == private_head)
@@ -504,7 +504,7 @@ async fn test_try_seal_handle_current_head_equals_parent_seals() {
 
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(head_at_with_hash(5, hash)));
-    client.expect_get_sealed_payload().times(1).return_once(|_, _| Ok(dummy_envelope()));
+    client.expect_end_building().times(1).return_once(|_, _| Ok(dummy_envelope()));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -519,7 +519,7 @@ async fn test_try_seal_handle_current_head_ahead_of_parent_discards() {
     // head > parent → stale; seal_payload must NOT be called.
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(6)));
-    client.expect_get_sealed_payload().times(0);
+    client.expect_end_building().times(0);
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -540,7 +540,7 @@ async fn test_try_seal_handle_same_height_reorg_discards() {
         .expect_get_unsafe_head()
         .times(1)
         .return_once(move || Ok(head_at_with_hash(5, reorged_hash)));
-    client.expect_get_sealed_payload().times(0);
+    client.expect_end_building().times(0);
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -557,7 +557,7 @@ async fn test_try_seal_handle_get_unsafe_head_error_propagates() {
         .expect_get_unsafe_head()
         .times(1)
         .return_once(|| Err(EngineClientError::RequestError("channel closed".to_string())));
-    client.expect_get_sealed_payload().times(0);
+    client.expect_end_building().times(0);
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -572,7 +572,7 @@ async fn test_try_seal_handle_fatal_seal_error_cancels_and_propagates() {
     // A fatal seal error must cancel the token and return Err.
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(5)));
-    client.expect_get_sealed_payload().times(1).return_once(|_, _| {
+    client.expect_end_building().times(1).return_once(|_, _| {
         Err(EngineClientError::SealError(SealTaskError::DepositOnlyPayloadFailed))
     });
 
@@ -591,7 +591,7 @@ async fn test_try_seal_handle_non_fatal_seal_error_returns_none() {
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(|| Ok(head_at(5)));
     client
-        .expect_get_sealed_payload()
+        .expect_end_building()
         .times(1)
         .return_once(|_, _| Err(EngineClientError::SealError(SealTaskError::HoloceneInvalidFlush)));
 
@@ -624,7 +624,7 @@ async fn test_build_retries_are_paced_after_immediate_budget(
         .expect_get_unsafe_head()
         .times(expected_attempts)
         .returning(|| Ok(L2BlockInfo::default()));
-    client.expect_start_build_block().times(0);
+    client.expect_start_building().times(0);
 
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(expected_attempts).returning(move |_| {
@@ -681,7 +681,7 @@ async fn shadow_funding_is_included_in_payload_attributes() {
     let l1_origin = BlockInfo::default();
     let mut client = MockSequencerEngineClient::new();
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
-    client.expect_start_build_block().times(1).return_once(|_| Ok(Default::default()));
+    client.expect_start_building().times(1).return_once(|_| Ok(Default::default()));
 
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(1).return_once(move |_| Ok(l1_origin));
@@ -726,7 +726,7 @@ async fn test_orphaned_l1_origin_resets_once_without_starting_block_build() {
         .with(mockall::predicate::eq(ResetReason::L1OriginOrphaned))
         .times(1)
         .return_once(|_| Ok(()));
-    client.expect_start_build_block().times(0);
+    client.expect_start_building().times(0);
 
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(1).return_once(|_| {
@@ -753,7 +753,7 @@ async fn test_orphaned_l1_origin_propagates_engine_reset_failure() {
         .with(mockall::predicate::eq(ResetReason::L1OriginOrphaned))
         .times(1)
         .return_once(|_| Err(EngineClientError::ResetForkchoiceError("mock reset failure".into())));
-    client.expect_start_build_block().times(0);
+    client.expect_start_building().times(0);
 
     let mut origin_selector = MockOriginSelector::new();
     origin_selector.expect_next_l1_origin().times(1).return_once(|_| {
@@ -787,7 +787,7 @@ async fn test_build_unsealed_payload_prepare_payload_attributes_error(
 
     let unsafe_head = L2BlockInfo::default();
     client.expect_get_unsafe_head().times(1).return_once(move || Ok(unsafe_head));
-    client.expect_start_build_block().times(0);
+    client.expect_start_building().times(0);
     // Reset pipeline errors no longer trigger engine reset — the attributes builder is stateless
     // so resetting the engine would only rewind the unsafe head without aiding recovery.
     client.expect_reset_engine_forkchoice().times(0);
@@ -823,7 +823,7 @@ async fn test_seal_payload_success_returns_sealer() {
     let envelope = dummy_envelope();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(envelope));
+    client.expect_end_building().times(1).return_once(move |_, _| Ok(envelope));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -843,7 +843,7 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
     let envelope = dummy_envelope();
 
     let mut client = MockSequencerEngineClient::new();
-    client.expect_get_sealed_payload().times(1).return_once(move |_, _| Ok(envelope));
+    client.expect_end_building().times(1).return_once(move |_, _| Ok(envelope));
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
@@ -862,7 +862,7 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
 async fn test_seal_payload_failure_propagates() {
     let mut client = MockSequencerEngineClient::new();
     client
-        .expect_get_sealed_payload()
+        .expect_end_building()
         .times(1)
         .return_once(|_, _| Err(EngineClientError::RequestError("engine offline".to_string())));
 
@@ -891,7 +891,7 @@ async fn test_private_sealer_only_inserts() {
     gossip.expect_schedule_execution_payload_gossip().times(0);
 
     let mut engine = MockSequencerEngineClient::new();
-    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
+    engine.expect_append_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let mut sealer = PayloadSealer::new_private(envelope);
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
@@ -912,7 +912,7 @@ async fn test_private_sealer_insert_failure_stays_private() {
 
     let mut engine = MockSequencerEngineClient::new();
     engine
-        .expect_insert_unsafe_payload()
+        .expect_append_payload()
         .times(1)
         .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
 
@@ -931,7 +931,7 @@ async fn test_sealer_full_pipeline_no_conductor() {
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let mut engine = MockSequencerEngineClient::new();
-    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
+    engine.expect_append_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let conductor: Option<MockConductor> = None;
     let mut sealer = PayloadSealer::new(envelope);
@@ -961,7 +961,7 @@ async fn test_sealer_full_pipeline_with_conductor() {
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let mut engine = MockSequencerEngineClient::new();
-    engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
+    engine.expect_append_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let conductor = Some(conductor);
     let mut sealer = PayloadSealer::new(envelope);
@@ -1028,7 +1028,7 @@ async fn test_sealer_insert_failure_stays_gossiped() {
 
     let mut engine = MockSequencerEngineClient::new();
     engine
-        .expect_insert_unsafe_payload()
+        .expect_append_payload()
         .times(1)
         .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
 

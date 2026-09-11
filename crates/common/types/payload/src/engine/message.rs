@@ -5,7 +5,7 @@ use core::{
     task::{Context, Poll, ready},
 };
 
-use futures::{FutureExt, TryFutureExt, future::Either};
+use futures::{FutureExt, future::Either};
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
 /// This is a future that resolves to [`ForkChoiceUpdateResult`]
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 #[derive(Debug)]
-pub struct OnForkChoiceUpdated {
+pub struct PendingHeadUpdate {
     /// Represents the status of the forkchoice update.
     ///
     /// Note: This is separate from the response `fut`, because we still can return an error
@@ -29,15 +29,15 @@ pub struct OnForkChoiceUpdated {
     fut: Either<futures::future::Ready<ForkChoiceUpdateResult>, PendingPayloadId>,
 }
 
-// === impl OnForkChoiceUpdated ===
+// === impl PendingHeadUpdate ===
 
-impl OnForkChoiceUpdated {
+impl PendingHeadUpdate {
     /// Returns the determined status of the received `ForkchoiceState`.
     pub const fn forkchoice_status(&self) -> ForkchoiceStatus {
         self.forkchoice_status
     }
 
-    /// Creates a new instance of `OnForkChoiceUpdated` for the `SYNCING` state
+    /// Creates a new instance of `PendingHeadUpdate` for the `SYNCING` state
     pub fn syncing() -> Self {
         let status = PayloadStatus::from_status(PayloadStatusEnum::Syncing);
         Self {
@@ -46,7 +46,7 @@ impl OnForkChoiceUpdated {
         }
     }
 
-    /// Creates a new instance of `OnForkChoiceUpdated` if the forkchoice update succeeded and no
+    /// Creates a new instance of `PendingHeadUpdate` if the forkchoice update succeeded and no
     /// payload attributes were provided.
     pub fn valid(status: PayloadStatus) -> Self {
         Self {
@@ -55,7 +55,7 @@ impl OnForkChoiceUpdated {
         }
     }
 
-    /// Creates a new instance of `OnForkChoiceUpdated` with the given payload status, if the
+    /// Creates a new instance of `PendingHeadUpdate` with the given payload status, if the
     /// forkchoice update failed due to an invalid payload.
     pub fn with_invalid(status: PayloadStatus) -> Self {
         Self {
@@ -64,7 +64,7 @@ impl OnForkChoiceUpdated {
         }
     }
 
-    /// Creates a new instance of `OnForkChoiceUpdated` if the forkchoice update failed because the
+    /// Creates a new instance of `PendingHeadUpdate` if the forkchoice update failed because the
     /// given state is considered invalid
     pub fn invalid_state() -> Self {
         Self {
@@ -73,7 +73,7 @@ impl OnForkChoiceUpdated {
         }
     }
 
-    /// Creates a new instance of `OnForkChoiceUpdated` if the forkchoice update failed because the
+    /// Creates a new instance of `PendingHeadUpdate` if the forkchoice update failed because the
     /// requested reorg to the head block exceeds the supported reorg depth.
     pub fn too_deep_reorg() -> Self {
         Self {
@@ -82,7 +82,7 @@ impl OnForkChoiceUpdated {
         }
     }
 
-    /// Creates a new instance of `OnForkChoiceUpdated` if the forkchoice update was successful but
+    /// Creates a new instance of `PendingHeadUpdate` if the forkchoice update was successful but
     /// payload attributes were invalid.
     pub fn invalid_payload_attributes() -> Self {
         Self {
@@ -109,7 +109,7 @@ impl OnForkChoiceUpdated {
     }
 }
 
-impl Future for OnForkChoiceUpdated {
+impl Future for PendingHeadUpdate {
     type Output = ForkChoiceUpdateResult;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -144,108 +144,175 @@ impl Future for PendingPayloadId {
     }
 }
 
-/// A message for the beacon engine from other components of the node (engine RPC API invoked by the
-/// consensus layer).
-#[derive(Debug)]
-pub enum BeaconEngineMessage {
-    /// Message with new payload.
-    NewPayload {
-        /// The execution payload received by Engine API.
-        payload: crate::ExecutionData,
-        /// The sender for returning payload status result.
-        tx: oneshot::Sender<Result<PayloadStatus, BeaconOnNewPayloadError>>,
+/// Acknowledgment of a native head-changing operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeadUpdateOutcome {
+    /// Execution can serve the requested canonical head.
+    Applied {
+        /// Acknowledged canonical head.
+        head: alloy_primitives::B256,
     },
-    /// Message with updated forkchoice state.
-    ForkchoiceUpdated {
-        /// The updated forkchoice state.
-        state: ForkchoiceState,
-        /// The payload attributes for block building.
-        payload_attrs: Option<BasePayloadBuilderAttributes>,
-        /// The sender for returning forkchoice updated result.
-        tx: oneshot::Sender<Result<OnForkChoiceUpdated, crate::engine::EngineRequestError>>,
-    },
+    /// The requested head is not yet available; callers must not acknowledge insertion.
+    Syncing,
 }
 
-impl Display for BeaconEngineMessage {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl HeadUpdateOutcome {
+    /// Converts the tree's validation result into a native acknowledgment.
+    pub fn from_status(
+        status: PayloadStatus,
+        head: alloy_primitives::B256,
+    ) -> Result<Self, BeaconForkChoiceUpdateError> {
+        match status.status {
+            PayloadStatusEnum::Valid => Ok(Self::Applied { head }),
+            PayloadStatusEnum::Syncing => Ok(Self::Syncing),
+            _ => Err(BeaconForkChoiceUpdateError::InvalidHeads(status)),
+        }
+    }
+
+    /// Whether the execution engine acknowledged canonicalization.
+    pub const fn is_applied(self) -> bool {
+        matches!(self, Self::Applied { .. })
+    }
+
+    /// Converts an acknowledgment for reference-client comparison fixtures.
+    pub const fn into_payload_status(self) -> PayloadStatus {
         match self {
-            Self::NewPayload { payload, .. } => {
-                write!(
-                    f,
-                    "NewPayload(parent: {}, number: {}, hash: {})",
-                    payload.parent_hash(),
-                    payload.block_number(),
-                    payload.block_hash()
-                )
+            Self::Applied { head } => {
+                PayloadStatus { status: PayloadStatusEnum::Valid, latest_valid_hash: Some(head) }
             }
-            Self::ForkchoiceUpdated { state, payload_attrs, .. } => {
-                // we don't want to print the entire payload attributes, because for OP this
-                // includes all txs
-                write!(
-                    f,
-                    "ForkchoiceUpdated {{ state: {state:?}, has_payload_attributes: {} }}",
-                    payload_attrs.is_some()
-                )
-            }
+            Self::Syncing => PayloadStatus::from_status(PayloadStatusEnum::Syncing),
         }
     }
 }
 
-/// A cloneable sender type that can be used to send engine API messages.
-///
-/// This type mirrors consensus related functions of the engine API.
+/// A serialized request to the execution tree.
+#[derive(Debug)]
+pub enum ExecutionCommand {
+    /// Import a payload and select its canonical heads.
+    AppendPayload {
+        /// Payload to execute.
+        payload: Box<crate::ExecutionData>,
+        /// Heads to apply after importing the payload.
+        heads: ForkchoiceState,
+        /// Debug injection: skip importing the payload.
+        skip_import: bool,
+        /// Debug injection: skip applying the heads.
+        skip_heads: bool,
+        /// Completion after both stages have run.
+        tx: oneshot::Sender<Result<HeadUpdateOutcome, AppendPayloadError>>,
+    },
+    /// Select a parent and begin building on it.
+    StartBuilding {
+        /// Heads containing the build parent.
+        heads: ForkchoiceState,
+        /// Attributes for the new build.
+        attributes: Box<BasePayloadBuilderAttributes>,
+        /// Build completion receiver, resolved outside the tree thread.
+        tx: oneshot::Sender<Result<PendingHeadUpdate, crate::EngineRequestError>>,
+    },
+    /// Select heads without starting a build.
+    UpdateHeads {
+        /// Complete head selection.
+        heads: ForkchoiceState,
+        /// Head application response.
+        tx: oneshot::Sender<Result<PendingHeadUpdate, crate::EngineRequestError>>,
+    },
+}
+
+/// Failures importing and canonicalizing a payload, distinguished by stage.
+#[derive(Debug, thiserror::Error)]
+pub enum AppendPayloadError {
+    /// Payload execution failed.
+    #[error(transparent)]
+    Import(#[from] BeaconOnNewPayloadError),
+    /// Payload validation rejected the block.
+    #[error("invalid payload: {0:?}")]
+    InvalidPayload(PayloadStatus),
+    /// Applying the requested heads failed.
+    #[error(transparent)]
+    Heads(#[from] BeaconForkChoiceUpdateError),
+}
+
+impl Display for ExecutionCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AppendPayload { payload, heads, .. } => {
+                write!(f, "AppendPayload({}, {heads:?})", payload.block_hash())
+            }
+            Self::StartBuilding { heads, .. } => write!(f, "StartBuilding({heads:?})"),
+            Self::UpdateHeads { heads, .. } => write!(f, "UpdateHeads({heads:?})"),
+        }
+    }
+}
+
+/// A cloneable sender for serialized execution operations.
 #[derive(Debug, Clone)]
 pub struct ConsensusEngineHandle {
-    to_engine: UnboundedSender<BeaconEngineMessage>,
+    /// Sender to the execution tree.
+    pub to_engine: UnboundedSender<ExecutionCommand>,
 }
 
 impl ConsensusEngineHandle {
-    /// Creates a new beacon consensus engine handle.
-    pub const fn new(to_engine: UnboundedSender<BeaconEngineMessage>) -> Self {
+    /// Connects to an execution command stream.
+    pub const fn new(to_engine: UnboundedSender<ExecutionCommand>) -> Self {
         Self { to_engine }
     }
 
-    /// Sends a new payload message to the beacon consensus engine and waits for a response.
-    ///
-    /// See also <https://github.com/ethereum/execution-apis/blob/3d627c95a4d3510a8187dd02e0250ecb4331d27e/src/engine/shanghai.md#engine_newpayloadv2>
-    pub async fn new_payload(
+    /// Imports a payload and applies its heads before acknowledging it.
+    pub async fn append_payload(
         &self,
         payload: crate::ExecutionData,
-    ) -> Result<PayloadStatus, BeaconOnNewPayloadError> {
+        heads: ForkchoiceState,
+    ) -> Result<HeadUpdateOutcome, AppendPayloadError> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.to_engine.send(BeaconEngineMessage::NewPayload { payload, tx });
+        let _ = self.to_engine.send(ExecutionCommand::AppendPayload {
+            payload: Box::new(payload),
+            heads,
+            skip_import: false,
+            skip_heads: false,
+            tx,
+        });
         rx.await.map_err(|_| BeaconOnNewPayloadError::EngineUnavailable)?
     }
 
-    /// Sends a forkchoice update message to the beacon consensus engine and waits for a response.
-    ///
-    /// See also <https://github.com/ethereum/execution-apis/blob/3d627c95a4d3510a8187dd02e0250ecb4331d27e/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
-    pub async fn fork_choice_updated(
+    /// Applies a complete head selection without building.
+    pub async fn update_heads(
         &self,
-        state: ForkchoiceState,
-        payload_attrs: Option<BasePayloadBuilderAttributes>,
-    ) -> Result<ForkchoiceUpdated, BeaconForkChoiceUpdateError> {
-        Ok(self
-            .send_fork_choice_updated(state, payload_attrs)
-            .map_err(|_| BeaconForkChoiceUpdateError::EngineUnavailable)
-            .await?
+        heads: ForkchoiceState,
+    ) -> Result<HeadUpdateOutcome, BeaconForkChoiceUpdateError> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self.to_engine.send(ExecutionCommand::UpdateHeads { heads, tx });
+        let response = rx
+            .await
+            .map_err(|_| BeaconForkChoiceUpdateError::EngineUnavailable)?
             .map_err(BeaconForkChoiceUpdateError::Internal)?
-            .await?)
+            .await?;
+        HeadUpdateOutcome::from_status(response.payload_status, heads.head_block_hash)
     }
 
-    /// Sends a forkchoice update message to the beacon consensus engine and returns the receiver to
-    /// wait for a response.
-    fn send_fork_choice_updated(
+    /// Applies the build parent and returns the required build identifier.
+    pub async fn start_building(
         &self,
-        state: ForkchoiceState,
-        payload_attrs: Option<BasePayloadBuilderAttributes>,
-    ) -> oneshot::Receiver<Result<OnForkChoiceUpdated, crate::engine::EngineRequestError>> {
+        heads: ForkchoiceState,
+        attributes: BasePayloadBuilderAttributes,
+    ) -> Result<PayloadId, BeaconForkChoiceUpdateError> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.to_engine.send(BeaconEngineMessage::ForkchoiceUpdated {
-            state,
-            payload_attrs,
+        let _ = self.to_engine.send(ExecutionCommand::StartBuilding {
+            heads,
+            attributes: Box::new(attributes),
             tx,
         });
-        rx
+        let response = rx
+            .await
+            .map_err(|_| BeaconForkChoiceUpdateError::EngineUnavailable)?
+            .map_err(BeaconForkChoiceUpdateError::Internal)?
+            .await?;
+        if response.payload_status.is_syncing() {
+            return Err(BeaconForkChoiceUpdateError::Syncing);
+        }
+        if !response.is_valid() {
+            return Err(BeaconForkChoiceUpdateError::InvalidHeads(response.payload_status));
+        }
+        response.payload_id.ok_or(BeaconForkChoiceUpdateError::MissingBuild)
     }
 }

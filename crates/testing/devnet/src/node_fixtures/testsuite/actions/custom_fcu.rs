@@ -100,16 +100,26 @@ impl Action for SendForkchoiceUpdate {
             }
 
             let engine = env.node_clients[node_idx].engine.clone();
-            let fcu_response = engine.update_forkchoice(fork_choice_state, None).await?;
+            let fcu_response = engine
+                .driver
+                .update_heads(fork_choice_state)
+                .await
+                .map(|outcome| outcome.into_payload_status())
+                .or_else(|error| match error {
+                    base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(
+                        status,
+                    ) => Ok(status),
+                    error => Err(error),
+                })?;
 
             debug!(
                 "Node {node_idx}: FCU response - status: {:?}, latest_valid_hash: {:?}",
-                fcu_response.payload_status.status, fcu_response.payload_status.latest_valid_hash
+                fcu_response.status, fcu_response.latest_valid_hash
             );
 
             // If we have an expected status, validate it
             if let Some(expected) = &self.expected_status {
-                match (&fcu_response.payload_status.status, expected) {
+                match (&fcu_response.status, expected) {
                     (PayloadStatusEnum::Valid, PayloadStatusEnum::Valid) => {
                         debug!("Node {node_idx}: FCU returned VALID as expected");
                     }
@@ -135,10 +145,10 @@ impl Action for SendForkchoiceUpdate {
                 }
             } else {
                 // Just validate it's not an error
-                if matches!(fcu_response.payload_status.status, PayloadStatusEnum::Invalid { .. }) {
+                if matches!(fcu_response.status, PayloadStatusEnum::Invalid { .. }) {
                     return Err(eyre::eyre!(
                         "Node {node_idx}: FCU returned unexpected INVALID status: {:?}",
-                        fcu_response.payload_status.status
+                        fcu_response.status
                     ));
                 }
             }

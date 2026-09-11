@@ -18,7 +18,7 @@ pub trait DerivationEngineClient: Debug + Send + Sync {
 
     /// Sends a request to finalize the L2 block at the provided block number.
     /// Note: This does not wait for the engine to process it.
-    async fn send_finalized_l2_block(&self, block_number: u64) -> EngineClientResult<()>;
+    async fn set_finalized(&self, block_number: u64) -> EngineClientResult<()>;
 
     /// Sends a consolidation signal to the engine.
     ///
@@ -27,7 +27,7 @@ pub trait DerivationEngineClient: Debug + Send + Sync {
     /// by [`ConsolidateInput`].
     ///
     /// Note: This does not wait for the engine to process it.
-    async fn send_safe_l2_signal(&self, signal: ConsolidateInput) -> EngineClientResult<()>;
+    async fn set_safe(&self, signal: ConsolidateInput) -> EngineClientResult<()>;
 }
 
 /// Client to use to send messages to the Engine Actor's inbound channel.
@@ -62,20 +62,20 @@ impl DerivationEngineClient for QueuedDerivationEngineClient {
             })?
     }
 
-    async fn send_finalized_l2_block(&self, block_number: u64) -> EngineClientResult<()> {
+    async fn set_finalized(&self, block_number: u64) -> EngineClientResult<()> {
         trace!(target: "derivation", block_number, "Sending finalized L2 block number to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(block_number)))
+            .send(EngineActorRequest::SetFinalizedRequest(Box::new(block_number)))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 
         Ok(())
     }
 
-    async fn send_safe_l2_signal(&self, signal: ConsolidateInput) -> EngineClientResult<()> {
+    async fn set_safe(&self, signal: ConsolidateInput) -> EngineClientResult<()> {
         trace!(target: "derivation", ?signal, "Sending safe L2 signal info to engine.");
         self.engine_actor_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(signal))
+            .send(EngineActorRequest::SetSafeRequest(signal))
             .await
             .map_err(|_| EngineClientError::RequestError("request channel closed.".to_string()))?;
 

@@ -24,6 +24,20 @@ pub enum SynchronizeTaskError {
     UnexpectedPayloadStatus(PayloadStatusEnum),
 }
 
+impl From<EngineClientError> for SynchronizeTaskError {
+    fn from(error: EngineClientError) -> Self {
+        match error {
+            EngineClientError::Execution(
+                base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                    base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(status),
+                ),
+            ) => Self::UnexpectedPayloadStatus(status.status),
+            error if error.is_invalid_forkchoice() => Self::InvalidForkchoiceState,
+            error => Self::ForkchoiceUpdateFailed(error),
+        }
+    }
+}
+
 impl EngineTaskError for SynchronizeTaskError {
     fn severity(&self) -> EngineTaskErrorSeverity {
         match self {

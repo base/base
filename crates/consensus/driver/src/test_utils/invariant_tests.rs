@@ -250,13 +250,14 @@ async fn e2e_invalid_fcu_reset_and_recovery() {
         (harness.engine_request_sender(), harness.fake_engine_handle().clone())
     };
 
-    // Send ProcessSafeL2SignalRequest directly instead of via fake_l1.extend().
+    // Send SetSafeRequest directly instead of via fake_l1.extend().
     // fake_l1.extend() calls inject_forkchoice_call() which pops the first scripted response before
     // the engine actor ever calls update_forkchoice(), defeating the test.
     engine_tx
-        .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-            L2BlockInfo { block_info: block(1, B256::ZERO, hash_for(1), 1), ..Default::default() },
-        )))
+        .send(EngineActorRequest::SetSafeRequest(ConsolidateInput::BlockInfo(L2BlockInfo {
+            block_info: block(1, B256::ZERO, hash_for(1), 1),
+            ..Default::default()
+        })))
         .await
         .expect("engine actor must accept the signal");
 

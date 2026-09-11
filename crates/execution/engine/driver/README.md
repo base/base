@@ -86,3 +86,20 @@ indefinitely.
 
 - `test-utils`: Export utilities for testing
 
+
+## Native commands
+
+The serialized tree accepts `AppendPayload`, `StartBuilding`, and `UpdateHeads`.
+Append imports and applies heads before replying; an imported block may remain cached
+when head application fails, so retrying append is supported. Import failures remain
+distinct from head-selection failures. A syncing response is not an acknowledgment
+that the requested head is canonical.
+
+Build resolution runs through the payload builder outside the tree queue. Selecting
+heads never starts a build. `StartBuilding` selects its parent first, then validates
+and starts the job, without undoing an applied head selection if attributes fail.
+
+Debug command recordings use version `2` and reject legacy unversioned recordings.
+Fault injection can skip import or head application independently within append.
+The external reference-client comparison fixture continues to use that client's
+standard wire API; local execution uses only native commands.

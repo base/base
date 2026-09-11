@@ -122,8 +122,7 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
 
         let build_request_start = Instant::now();
 
-        let payload_id =
-            self.engine_client.start_build_block(attributes_with_parent.clone()).await?;
+        let payload_id = self.engine_client.start_building(attributes_with_parent.clone()).await?;
 
         Metrics::sequencer_block_building_start_task_duration()
             .record(build_request_start.elapsed());

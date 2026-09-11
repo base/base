@@ -187,7 +187,7 @@ impl ExternalNode {
 
             let status = self
                 .engine_api()
-                .new_payload(payload, vec![], B256::ZERO, Requests::default())
+                .append_payload(payload, vec![], B256::ZERO, Requests::default())
                 .await?;
 
             if status.status != PayloadStatusEnum::Valid {
@@ -198,7 +198,7 @@ impl ExternalNode {
             }
 
             let new_chain_hash = status.latest_valid_hash.unwrap_or_default();
-            self.engine_api().update_forkchoice(latest_hash, new_chain_hash, None).await?;
+            self.engine_api().update_heads(latest_hash, new_chain_hash).await?;
 
             our_current_height += 1;
         }
@@ -224,7 +224,7 @@ impl ExternalNode {
     pub async fn post_block(&self, payload: &BaseExecutionPayloadV4) -> eyre::Result<()> {
         let result = self
             .engine_api
-            .new_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
+            .append_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
             .await?;
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
@@ -242,7 +242,7 @@ impl ExternalNode {
 
         let (latest_hash, _) = self.provider.latest_block_hash_and_number().await?;
 
-        self.engine_api.update_forkchoice(latest_hash, new_block_hash, None).await?;
+        self.engine_api.update_heads(latest_hash, new_block_hash).await?;
 
         Ok(())
     }

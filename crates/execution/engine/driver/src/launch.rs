@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use base_common_runtime::Runtime;
-use base_common_types_payload::BeaconEngineMessage;
+use base_common_types_payload::ExecutionCommand;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_wire::BlockClient;
 use base_execution_payload::PayloadBuilderHandle;
@@ -65,7 +65,7 @@ pub fn build_engine_orchestrator<Client, S>(
 ) -> ChainOrchestrator<S, Client>
 where
     Client: BlockClient + 'static,
-    S: Stream<Item = BeaconEngineMessage> + Send + Sync + Unpin + 'static,
+    S: Stream<Item = ExecutionCommand> + Send + Sync + Unpin + 'static,
 {
     let downloader = BasicBlockDownloader::new(client, consensus.clone());
 

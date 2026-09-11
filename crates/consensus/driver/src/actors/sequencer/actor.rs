@@ -128,7 +128,7 @@ where
 
         let envelope = self
             .engine_client
-            .get_sealed_payload(handle.payload_id, handle.attributes_with_parent.clone())
+            .end_building(handle.payload_id, handle.attributes_with_parent.clone())
             .await?;
 
         Metrics::sequencer_block_building_seal_task_duration().record(seal_request_start.elapsed());

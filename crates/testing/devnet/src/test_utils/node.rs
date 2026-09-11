@@ -218,23 +218,23 @@ mod tests {
         assert!(handle.node.rpc_server_handle().ws_local_addr().is_none());
         let execution = &handle.node.execution;
         let started = execution
-            .update_forkchoice(
+            .start_building(
                 ForkchoiceState::same_hash(head),
-                Some(BasePayloadBuilderAttributes::try_new(head, attributes, 3).unwrap()),
+                BasePayloadBuilderAttributes::try_new(head, attributes, 3).unwrap(),
             )
             .await
             .unwrap();
-        let built = execution.resolve_payload(started.payload_id.unwrap()).await.unwrap();
+        let built = execution.end_building(started).await.unwrap();
         let hash = built.block().hash();
         let payload: BaseExecutionPayloadEnvelopeV4 = built.into();
         let imported = EngineApi { execution: execution.clone() }
-            .new_payload(payload.execution_payload, Vec::new(), B256::ZERO, Requests::default())
+            .append_payload(payload.execution_payload, Vec::new(), B256::ZERO, Requests::default())
             .await
             .unwrap();
         assert!(imported.is_valid());
         let canonical =
-            execution.update_forkchoice(ForkchoiceState::same_hash(hash), None).await.unwrap();
-        assert!(canonical.payload_status.is_valid());
+            execution.driver.update_heads(ForkchoiceState::same_hash(hash)).await.unwrap();
+        assert!(canonical.is_applied());
         let done = handle.node.engine_shutdown.shutdown().unwrap();
         tokio::time::timeout(Duration::from_secs(10), done).await.unwrap().unwrap();
         assert_eq!(

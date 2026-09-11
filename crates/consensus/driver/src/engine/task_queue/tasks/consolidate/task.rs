@@ -8,7 +8,7 @@ use base_consensus_batch::{AttributesWithParent, L2BlockInfo};
 
 use crate::engine::{
     ConsolidateTaskError, EngineClient, EngineState, EngineTaskExt, InsertPayloadSafety,
-    SynchronizeTask, state::EngineSyncStateUpdate, task_queue::build_and_seal,
+    SynchronizeTask, state::EngineSyncStateUpdate, task_queue::BuildAndAppend,
 };
 
 /// Input for consolidation - either derived attributes or safe L2 block
@@ -84,7 +84,7 @@ impl<EngineClient_: EngineClient> ConsolidateTask<EngineClient_> {
         state: &mut EngineState,
         attributes: &AttributesWithParent,
     ) -> Result<(), ConsolidateTaskError> {
-        build_and_seal(
+        BuildAndAppend::execute(
             state,
             Arc::clone(&self.client),
             Arc::clone(&self.cfg),

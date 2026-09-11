@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::engine::{
     BuildTaskError, EngineTaskError, SealTaskError, SynchronizeTaskError,
-    task_queue::tasks::{BuildAndSealError, task::EngineTaskErrorSeverity},
+    task_queue::tasks::{BuildAndAppendError, task::EngineTaskErrorSeverity},
 };
 
 /// An error that occurs when running the [`crate::engine::ConsolidateTask`].
@@ -33,11 +33,11 @@ pub enum ConsolidateTaskError {
     ForkchoiceUpdateDidNotApply,
 }
 
-impl From<BuildAndSealError> for ConsolidateTaskError {
-    fn from(err: BuildAndSealError) -> Self {
+impl From<BuildAndAppendError> for ConsolidateTaskError {
+    fn from(err: BuildAndAppendError) -> Self {
         match err {
-            BuildAndSealError::Build(e) => Self::BuildTaskFailed(e),
-            BuildAndSealError::Seal(e) => Self::SealTaskFailed(e),
+            BuildAndAppendError::Build(e) => Self::BuildTaskFailed(e),
+            BuildAndAppendError::Seal(e) => Self::SealTaskFailed(e),
         }
     }
 }

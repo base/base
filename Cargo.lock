@@ -2921,7 +2921,6 @@ dependencies = [
  "futures",
  "futures-util",
  "indexmap 2.14.0",
- "itertools 0.14.0",
  "metrics",
  "metrics-util",
  "moka",

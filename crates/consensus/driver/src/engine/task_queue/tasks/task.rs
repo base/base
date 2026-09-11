@@ -12,8 +12,7 @@ use tokio::task::yield_now;
 use super::{ConsolidateTask, FinalizeTask, InsertTask};
 use crate::engine::{
     BuildTaskError, ConsolidateTaskError, EngineClient, EngineState, FinalizeTaskError,
-    InsertTaskError, Metrics,
-    task_queue::{SealTask, SealTaskError},
+    InsertTaskError, Metrics, task_queue::SealTaskError,
 };
 
 /// The severity of an engine task error.
@@ -113,9 +112,6 @@ impl EngineTaskError for EngineTaskErrors {
 pub enum EngineTask<EngineClient_: EngineClient> {
     /// Inserts a payload into the execution engine.
     Insert(Box<InsertTask<EngineClient_>>),
-    /// Seals the block with the given payload ID and attributes, inserting it into the execution
-    /// engine.
-    Seal(Box<SealTask<EngineClient_>>),
     /// Performs consolidation on the engine state, reverting to payload attribute processing
     /// via the direct build-and-seal fallback if consolidation fails.
     Consolidate(Box<ConsolidateTask<EngineClient_>>),
@@ -128,7 +124,6 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
     async fn execute_inner(&self, state: &mut EngineState) -> Result<(), EngineTaskErrors> {
         match self {
             Self::Insert(task) => task.execute(state).await?,
-            Self::Seal(task) => task.execute(state).await?,
             Self::Consolidate(task) => task.execute(state).await?,
             Self::Finalize(task) => task.execute(state).await?,
         };
@@ -140,14 +135,12 @@ impl<EngineClient_: EngineClient> EngineTask<EngineClient_> {
         match self {
             Self::Insert(_) => Metrics::INSERT_TASK_LABEL,
             Self::Consolidate(_) => Metrics::CONSOLIDATE_TASK_LABEL,
-            Self::Seal(_) => Metrics::SEAL_TASK_LABEL,
             Self::Finalize(_) => Metrics::FINALIZE_TASK_LABEL,
         }
     }
 
     const fn task_priority(&self) -> u8 {
         match self {
-            Self::Seal(_) => 4,
             Self::Insert(_) => 3,
             Self::Consolidate(_) => 2,
             Self::Finalize(_) => 1,
@@ -160,7 +153,6 @@ impl<EngineClient_: EngineClient> PartialEq for EngineTask<EngineClient_> {
         matches!(
             (self, other),
             (Self::Insert(_), Self::Insert(_))
-                | (Self::Seal(_), Self::Seal(_))
                 | (Self::Consolidate(_), Self::Consolidate(_))
                 | (Self::Finalize(_), Self::Finalize(_))
         )

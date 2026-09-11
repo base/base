@@ -18,7 +18,6 @@ use base_common_types_payload::{
 use base_execution_payload::PayloadBuilderHandle;
 use base_execution_state_types::BlockReader;
 use base_execution_txpool::TransactionPool;
-use eyre::OptionExt;
 use futures_util::{Stream, StreamExt, stream::Fuse};
 use tokio::time::Interval;
 use tokio_stream::wrappers::ReceiverStream;
@@ -227,9 +226,9 @@ where
     /// Sends a FCU to the engine.
     async fn update_forkchoice_state(&self) -> eyre::Result<()> {
         let state = self.forkchoice_state();
-        let res = self.to_engine.fork_choice_updated(state, None).await?;
+        let res = self.to_engine.update_heads(state).await?;
 
-        if !res.is_valid() {
+        if !res.is_applied() {
             eyre::bail!("Invalid fork choice update {state:?}: {res:?}");
         }
 
@@ -239,19 +238,13 @@ where
     /// Generates payload attributes for a new block, passes them to FCU and inserts built payload
     /// through newPayload.
     async fn advance(&mut self) -> eyre::Result<()> {
-        let res = self
+        let payload_id = self
             .to_engine
-            .fork_choice_updated(
+            .start_building(
                 self.forkchoice_state(),
-                Some(self.payload_attributes_builder.build(&self.last_header)),
+                self.payload_attributes_builder.build(&self.last_header),
             )
             .await?;
-
-        if !res.is_valid() {
-            eyre::bail!("Invalid payload status");
-        }
-
-        let payload_id = res.payload_id.ok_or_eyre("No payload id")?;
 
         if let Some(wait_time) = self.payload_wait_time {
             tokio::time::sleep(wait_time).await;
@@ -264,9 +257,11 @@ where
         };
 
         let header = payload.block().sealed_header().clone();
-        let res = self.to_engine.new_payload(payload.into()).await?;
+        let mut heads = self.forkchoice_state();
+        heads.head_block_hash = header.hash();
+        let res = self.to_engine.append_payload(payload.into(), heads).await?;
 
-        if !res.is_valid() {
+        if !res.is_applied() {
             eyre::bail!("Invalid payload");
         }
 

@@ -1,6 +1,6 @@
 //! The [`Engine`] owns execution-layer state and drains queued [`EngineTask`]s.
 
-use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc, time::Instant};
+use std::{cmp::Reverse, collections::BinaryHeap, sync::Arc};
 
 use base_common_chain_config::RollupConfig;
 use base_common_types_payload::{BaseExecutionPayloadEnvelope, PayloadId, PayloadStatusEnum};
@@ -69,7 +69,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     }
 
     /// Starts a block build directly against the execution layer.
-    pub async fn build(
+    pub async fn start_building(
         &mut self,
         client: Arc<EngineClient_>,
         attributes: AttributesWithParent,
@@ -78,7 +78,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             Metrics::BUILD_TASK_LABEL
         ));
 
-        match Self::build_with_state(&self.state, client.as_ref(), attributes).await {
+        match Self::start_building_with_state(&self.state, client.as_ref(), attributes).await {
             Ok(payload_id) => {
                 Metrics::engine_task_count(Metrics::BUILD_TASK_LABEL).increment(1);
                 Ok(payload_id)
@@ -111,65 +111,29 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         }
     }
 
-    /// Starts a block build using the provided engine state.
-    pub async fn build_with_state(
-        state: &EngineState,
-        engine_client: &EngineClient_,
-        attributes_envelope: AttributesWithParent,
-    ) -> Result<PayloadId, BuildTaskError> {
-        debug!(
-            target: "engine_builder",
-            txs = attributes_envelope
-                .attributes()
-                .transactions
-                .as_ref()
-                .map_or(0, |txs| txs.len()),
-            is_deposits = attributes_envelope.is_deposits_only(),
-            "Starting new build job"
-        );
-
-        let fcu_start_time = Instant::now();
-        let payload_id = Self::start_build(state, engine_client, attributes_envelope).await?;
-        let fcu_duration = fcu_start_time.elapsed();
-
-        info!(
-            target: "engine_builder",
-            fcu_duration = ?fcu_duration,
-            "block build started"
-        );
-
-        Ok(payload_id)
-    }
-
     /// Fetches a sealed payload from the execution layer without inserting it.
-    pub async fn get_payload(
+    pub async fn end_building(
         &mut self,
         client: Arc<EngineClient_>,
-        config: Arc<RollupConfig>,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
         let _task_timer = base_common_observability_metrics::timed!(Metrics::engine_task_duration(
-            Metrics::GET_PAYLOAD_TASK_LABEL
+            Metrics::END_BUILDING_TASK_LABEL
         ));
 
-        let result = Self::get_payload_with_state(
-            &self.state,
-            client.as_ref(),
-            config.as_ref(),
-            payload_id,
-            &attributes,
-        )
-        .await;
+        let result =
+            Self::end_building_with_state(&self.state, client.as_ref(), payload_id, &attributes)
+                .await;
 
         match result {
             Ok(envelope) => {
-                Metrics::engine_task_count(Metrics::GET_PAYLOAD_TASK_LABEL).increment(1);
+                Metrics::engine_task_count(Metrics::END_BUILDING_TASK_LABEL).increment(1);
                 Ok(envelope)
             }
             Err(err) => {
                 Metrics::engine_task_failure(
-                    Metrics::GET_PAYLOAD_TASK_LABEL,
+                    Metrics::END_BUILDING_TASK_LABEL,
                     err.severity().as_label(),
                 )
                 .increment(1);
@@ -179,16 +143,15 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     }
 
     /// Fetches a sealed payload using the provided engine state.
-    pub async fn get_payload_with_state(
+    pub async fn end_building_with_state(
         state: &EngineState,
         engine: &EngineClient_,
-        _cfg: &RollupConfig,
         payload_id: PayloadId,
         payload_attrs: &AttributesWithParent,
     ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
         debug!(
             target: "engine",
-            "Starting new get-payload job"
+            "Resolving payload build"
         );
 
         let unsafe_block_info = state.sync_state.unsafe_head().block_info;
@@ -207,7 +170,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             return Err(SealTaskError::UnsafeHeadChangedSinceBuild);
         }
 
-        Self::fetch_payload(engine, payload_id).await
+        engine.end_building(payload_id).await.map_err(SealTaskError::GetPayloadFailed)
     }
 
     /// Validates a forkchoice update status returned while starting a build.
@@ -231,7 +194,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     }
 
     /// Sends the forkchoice update that starts an execution-layer build job.
-    pub async fn start_build(
+    pub async fn start_building_with_state(
         state: &EngineState,
         engine_client: &EngineClient_,
         attributes_envelope: AttributesWithParent,
@@ -255,11 +218,22 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             })
             .create_forkchoice_state();
 
-        let update = engine_client
-            .update_forkchoice(new_forkchoice, Some(attributes_envelope.attributes))
+        let payload_id = engine_client
+            .start_building(new_forkchoice, attributes_envelope.attributes)
             .await
             .map_err(|e| {
                 error!(target: "engine_builder", error = %e, "Forkchoice update failed");
+                if let crate::engine::EngineClientError::Execution(
+                    base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                        base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(
+                            status,
+                        ),
+                    ),
+                ) = &e
+                {
+                    return Self::validate_forkchoice_status(status.status.clone())
+                        .expect_err("invalid build heads");
+                }
                 let error = if e.is_invalid_forkchoice() {
                     EngineBuildError::ForkchoiceStateInvalid
                 } else if e.is_invalid_attributes() {
@@ -271,8 +245,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
                 BuildTaskError::EngineBuildError(error)
             })?;
 
-        Self::validate_forkchoice_status(update.payload_status.status)?;
-
         debug!(
             target: "engine_builder",
             unsafe_hash = new_forkchoice.head_block_hash.to_string(),
@@ -281,20 +253,7 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
             "Forkchoice update with attributes successful"
         );
 
-        update
-            .payload_id
-            .ok_or(BuildTaskError::EngineBuildError(EngineBuildError::MissingPayloadId))
-    }
-
-    /// Resolves the build owned by the execution layer.
-    pub async fn fetch_payload(
-        engine: &EngineClient_,
-        payload_id: PayloadId,
-    ) -> Result<BaseExecutionPayloadEnvelope, SealTaskError> {
-        engine.resolve_payload(payload_id).await.map_err(|error| {
-            error!(target: "engine", error = %error, "Payload fetch failed");
-            SealTaskError::GetPayloadFailed(error)
-        })
+        Ok(payload_id)
     }
 
     /// Enqueues a new [`EngineTask`] for execution.
@@ -527,7 +486,7 @@ mod tests {
 
     use crate::engine::{
         Engine, EngineState, EngineSyncStateUpdate, EngineTask, EngineTaskError,
-        EngineTaskErrorSeverity, InsertPayloadSafety, SealTask, SealTaskError,
+        EngineTaskErrorSeverity, SealTaskError,
         test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
             test_engine_client_builder,
@@ -573,46 +532,22 @@ mod tests {
     }
 
     #[test]
-    fn equal_priority_seal_tasks_are_fifo() {
+    fn equal_priority_finalize_tasks_are_fifo() {
         let client = Arc::new(test_engine_client_builder().build());
         let cfg = Arc::new(RollupConfig::default());
-        let attributes = TestAttributesBuilder::new().build();
         let mut engine = test_engine();
-        let first_payload_id = PayloadId::new([1; 8]);
-        let second_payload_id = PayloadId::new([2; 8]);
-
-        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
-            Arc::clone(&client),
-            Arc::clone(&cfg),
-            first_payload_id,
-            attributes.clone(),
-            InsertPayloadSafety::Unsafe,
-            None,
-        ))));
-        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
-            Arc::clone(&client),
-            Arc::clone(&cfg),
-            second_payload_id,
-            attributes,
-            InsertPayloadSafety::Unsafe,
-            None,
-        ))));
-
-        let (first, _) = engine.tasks.pop().expect("first task should be queued");
-        let (second, _) = engine.tasks.pop().expect("second task should be queued");
-
-        match first {
-            EngineTask::Seal(task) => {
-                assert_eq!(task.payload_id, first_payload_id);
-            }
-            other => panic!("expected first seal task, got {other:?}"),
+        for number in [2, 1] {
+            engine.enqueue(EngineTask::Finalize(Box::new(crate::FinalizeTask::new(
+                Arc::clone(&client),
+                Arc::clone(&cfg),
+                number,
+            ))));
         }
-
-        match second {
-            EngineTask::Seal(task) => {
-                assert_eq!(task.payload_id, second_payload_id);
-            }
-            other => panic!("expected second seal task, got {other:?}"),
+        for expected in [2, 1] {
+            let (EngineTask::Finalize(task), _) = engine.tasks.pop().unwrap() else {
+                panic!("expected finalize")
+            };
+            assert_eq!(task.block_number, expected);
         }
     }
 
@@ -623,19 +558,9 @@ mod tests {
         let client = Arc::new(test_engine_client_builder().build());
         let cfg = Arc::new(RollupConfig::default());
         let mut engine = Engine::new(EngineState::default(), state_tx, queue_tx);
-
-        engine.enqueue(EngineTask::Seal(Box::new(SealTask::new(
-            client,
-            cfg,
-            PayloadId::new([1; 8]),
-            TestAttributesBuilder::new().build(),
-            InsertPayloadSafety::Unsafe,
-            None,
-        ))));
+        engine.enqueue(EngineTask::Finalize(Box::new(crate::FinalizeTask::new(client, cfg, 1))));
         assert_eq!(*queue_rx.borrow(), 1);
-
         engine.clear();
-
         assert_eq!(*queue_rx.borrow(), 0);
     }
 
@@ -650,7 +575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn build_with_state_returns_payload_id() {
+    async fn start_building_with_state_returns_payload_id() {
         let payload_id = PayloadId::new([1u8; 8]);
         let parent_block = test_block_info(0);
         let unsafe_block = test_block_info(1);
@@ -664,7 +589,7 @@ mod tests {
             .with_finalized_head(parent_block)
             .build();
 
-        let result = Engine::build_with_state(&state, &client, attributes)
+        let result = Engine::start_building_with_state(&state, &client, attributes)
             .await
             .expect("build should return payload id");
 
@@ -672,38 +597,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_payload_with_state_rejects_parent_mismatch() {
+    async fn end_building_with_state_rejects_parent_mismatch() {
         let attributes = TestAttributesBuilder::new().build();
         let mismatched_unsafe_head = test_block_info(2);
         let state = TestEngineStateBuilder::new().with_unsafe_head(mismatched_unsafe_head).build();
         let client = test_engine_client_builder().build();
 
-        let result = Engine::get_payload_with_state(
-            &state,
-            &client,
-            &RollupConfig::default(),
-            PayloadId::default(),
-            &attributes,
-        )
-        .await;
+        let result =
+            Engine::end_building_with_state(&state, &client, PayloadId::default(), &attributes)
+                .await;
 
         assert!(matches!(result, Err(SealTaskError::UnsafeHeadChangedSinceBuild)));
     }
 
     #[tokio::test]
-    async fn get_payload_with_state_propagates_fetch_error() {
+    async fn end_building_with_state_propagates_fetch_error() {
         let attributes = TestAttributesBuilder::new().build();
         let state = TestEngineStateBuilder::new().with_unsafe_head(attributes.parent).build();
         let client = test_engine_client_builder().build();
 
-        let result = Engine::get_payload_with_state(
-            &state,
-            &client,
-            &RollupConfig::default(),
-            PayloadId::default(),
-            &attributes,
-        )
-        .await;
+        let result =
+            Engine::end_building_with_state(&state, &client, PayloadId::default(), &attributes)
+                .await;
 
         assert!(matches!(result, Err(SealTaskError::GetPayloadFailed(_))));
     }
@@ -824,7 +739,7 @@ mod tests {
         let mut engine = Engine::new(initial_state, state_tx, queue_tx);
 
         let err = engine
-            .build(Arc::clone(&client), attributes)
+            .start_building(Arc::clone(&client), attributes)
             .await
             .expect_err("invalid FCU must fail build");
         assert_eq!(err.severity(), EngineTaskErrorSeverity::Flush);

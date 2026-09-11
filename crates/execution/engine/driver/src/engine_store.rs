@@ -8,29 +8,46 @@ use std::{
 };
 
 use base_common_io as fs;
-use base_common_types_payload::{
-    BasePayloadBuilderAttributes, BeaconEngineMessage, ForkchoiceState,
-};
+use base_common_types_payload::{BasePayloadBuilderAttributes, ExecutionCommand, ForkchoiceState};
 use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use tracing::*;
+use tracing::error;
 
-/// A message from the engine API that has been stored to disk.
+/// Versioned recording of a native execution command.
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(tag = "version", content = "command")]
 pub enum StoredEngineApiMessage {
-    /// The on-disk representation of an `engine_forkchoiceUpdated` method call.
-    ForkchoiceUpdated {
-        /// The [`ForkchoiceState`] sent in the persisted call.
-        state: ForkchoiceState,
-        /// The payload attributes sent in the persisted call, if any.
-        payload_attrs: Option<BasePayloadBuilderAttributes>,
+    /// Native domain commands; legacy recordings are intentionally unsupported.
+    #[serde(rename = "2")]
+    V2(StoredExecutionCommand),
+}
+
+/// Serializable inputs to an execution command.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+pub enum StoredExecutionCommand {
+    /// Import and canonicalize a block.
+    AppendPayload {
+        /// Payload to execute.
+        payload: Box<base_common_types_payload::ExecutionData>,
+        /// Requested heads.
+        heads: ForkchoiceState,
+        /// Whether fault injection skips import.
+        skip_import: bool,
+        /// Whether fault injection skips head application.
+        skip_heads: bool,
     },
-    /// The on-disk representation of an `engine_newPayload` method call.
-    NewPayload {
-        /// The [`base_common_types_payload::ExecutionData`] sent in the persisted call.
-        #[serde(flatten)]
-        payload: base_common_types_payload::ExecutionData,
+    /// Start a build on the selected parent.
+    StartBuilding {
+        /// Requested heads.
+        heads: ForkchoiceState,
+        /// Build attributes.
+        attributes: Box<BasePayloadBuilderAttributes>,
+    },
+    /// Apply heads without starting a build.
+    UpdateHeads {
+        /// Requested heads.
+        heads: ForkchoiceState,
     },
 }
 
@@ -49,36 +66,41 @@ impl EngineMessageStore {
         Self { path }
     }
 
-    /// Stores the received [`BeaconEngineMessage`] to disk, appending the `received_at` time to the
+    /// Stores the received [`ExecutionCommand`] to disk, appending the `received_at` time to the
     /// path.
-    pub fn on_message(
-        &self,
-        msg: &BeaconEngineMessage,
-        received_at: SystemTime,
-    ) -> eyre::Result<()> {
+    pub fn on_message(&self, msg: &ExecutionCommand, received_at: SystemTime) -> eyre::Result<()> {
         fs::Files::create_dir_all(&self.path)?; // ensure that store path had been created
-        let timestamp = received_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
-        match msg {
-            BeaconEngineMessage::ForkchoiceUpdated { state, payload_attrs, tx: _tx } => {
-                let filename = format!("{}-fcu-{}.json", timestamp, state.head_block_hash);
-                fs::Files::write(
-                    self.path.join(filename),
-                    serde_json::to_vec(&StoredEngineApiMessage::ForkchoiceUpdated {
-                        state: *state,
-                        payload_attrs: payload_attrs.clone(),
-                    })?,
-                )?;
-            }
-            BeaconEngineMessage::NewPayload { payload, .. } => {
-                let filename = format!("{}-new_payload-{}.json", timestamp, payload.block_hash());
-                fs::Files::write(
-                    self.path.join(filename),
-                    serde_json::to_vec(&StoredEngineApiMessage::NewPayload {
-                        payload: payload.clone(),
-                    })?,
-                )?;
+        let timestamp = received_at.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos();
+        let (hash, command) = match msg {
+            ExecutionCommand::AppendPayload { payload, heads, skip_import, skip_heads, .. } => (
+                heads.head_block_hash,
+                StoredExecutionCommand::AppendPayload {
+                    payload: payload.clone(),
+                    heads: *heads,
+                    skip_import: *skip_import,
+                    skip_heads: *skip_heads,
+                },
+            ),
+            ExecutionCommand::StartBuilding { heads, attributes, .. } => (
+                heads.head_block_hash,
+                StoredExecutionCommand::StartBuilding {
+                    heads: *heads,
+                    attributes: attributes.clone(),
+                },
+            ),
+            ExecutionCommand::UpdateHeads { heads, .. } => {
+                (heads.head_block_hash, StoredExecutionCommand::UpdateHeads { heads: *heads })
             }
         };
+        let operation = match msg {
+            ExecutionCommand::AppendPayload { .. } => "append",
+            ExecutionCommand::StartBuilding { .. } => "start-building",
+            ExecutionCommand::UpdateHeads { .. } => "update-heads",
+        };
+        fs::Files::write(
+            self.path.join(format!("{timestamp}-{operation}-{hash}.json")),
+            serde_json::to_vec(&StoredEngineApiMessage::V2(command))?,
+        )?;
         Ok(())
     }
 }
@@ -104,7 +126,7 @@ impl<S> EngineStoreStream<S> {
 
 impl<S> Stream for EngineStoreStream<S>
 where
-    S: Stream<Item = BeaconEngineMessage>,
+    S: Stream<Item = ExecutionCommand>,
 {
     type Item = S::Item;
 
@@ -117,5 +139,24 @@ where
             error!(target: "engine::stream::store", ?msg, %error, "Error handling Engine API message");
         }
         Poll::Ready(next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_recordings_round_trip_and_legacy_recordings_are_rejected() {
+        let recording = StoredEngineApiMessage::V2(StoredExecutionCommand::UpdateHeads {
+            heads: ForkchoiceState::default(),
+        });
+        let json = serde_json::to_vec(&recording).unwrap();
+        assert!(matches!(
+            serde_json::from_slice::<StoredEngineApiMessage>(&json).unwrap(),
+            StoredEngineApiMessage::V2(StoredExecutionCommand::UpdateHeads { .. })
+        ));
+        let legacy = serde_json::json!({ "forkchoiceUpdated": { "state": ForkchoiceState::default(), "payload_attrs": null } });
+        assert!(serde_json::from_value::<StoredEngineApiMessage>(legacy).is_err());
     }
 }

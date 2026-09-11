@@ -6,7 +6,7 @@ use base_common_observability_metrics::{
     thread::{ThreadResourceUsage, ThreadResourceUsageDelta},
 };
 use base_common_types_payload::{
-    ForkchoiceStatus, OnForkChoiceUpdated, PayloadStatus, PayloadStatusEnum,
+    ForkchoiceStatus, PayloadStatus, PayloadStatusEnum, PendingHeadUpdate,
 };
 use base_execution_evm_blocks::ExecutorMetrics;
 use base_execution_state_trie::updates::TrieUpdates;
@@ -236,7 +236,7 @@ impl ForkchoiceUpdatedMetrics {
         start: Instant,
         latest_new_payload_at: &mut Option<Instant>,
         has_attrs: bool,
-        result: &Result<TreeOutcome<OnForkChoiceUpdated>, ProviderError>,
+        result: &Result<TreeOutcome<PendingHeadUpdate>, ProviderError>,
     ) {
         let finish = Instant::now();
         let elapsed = finish - start;

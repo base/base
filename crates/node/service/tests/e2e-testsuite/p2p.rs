@@ -50,7 +50,7 @@ async fn can_sync() -> eyre::Result<()> {
 
     // Trigger backfill sync until block 80
     third_node
-        .update_forkchoice(canonical_chain[tip_index - 10], canonical_chain[tip_index - 10])
+        .update_heads(canonical_chain[tip_index - 10], canonical_chain[tip_index - 10])
         .await?;
     third_node.wait_block((tip - 10) as u64, canonical_chain[tip_index - 10], true).await?;
     // Trigger live sync to block 90
@@ -67,10 +67,10 @@ async fn can_sync() -> eyre::Result<()> {
 
     // Creates fork chain by submitting 89b payload.
     // By returning Valid here, the consensus node will finally return a finalized hash
-    let _ = third_node.submit_payload(side_payload_chain[0].clone()).await;
+    let _ = third_node.append_payload(side_payload_chain[0].clone()).await;
 
     // It will issue a pipeline reorg to 88a, and then make 89b canonical AND finalized.
-    third_node.update_forkchoice(side_chain[0], side_chain[0]).await?;
+    third_node.update_heads(side_chain[0], side_chain[0]).await?;
 
     // Make sure we have the updated block
     third_node.wait_unwind((tip - reorg_depth) as u64).await?;

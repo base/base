@@ -1,22 +1,10 @@
-//! Latency benchmark for `engine_forkchoiceUpdatedV3` on the unsafe-head path.
+//! Latency benchmark for native append on the unsafe-head path.
 //!
-//! Per iteration:
-//!  1. Build a fresh empty block via FCU-with-attrs + `get_payload` + `new_payload`.
-//!     The block lands in the engine's tree but is not yet canonical.
-//!  2. Time only the canonical FCU that promotes that block to the head, with
-//!     `safe`/`finalized` parked at genesis to mirror the production unsafe-head
-//!     case where consensus advances the head ahead of the safe head.
+//! Each iteration builds and resolves a fresh block, then times its import and
+//! canonicalization in one serialized command. Safety markers remain at genesis.
+//! The harness uses the node's in-process execution handle.
 //!
-//! The harness talks to a real reth node over IPC, so the measurement covers
-//! the full reth FCU handler — validation, tree update, canonical-chain update,
-//! state-root checks, persistence — over a real JSON-RPC transport.
-//!
-//! Run with:
-//!
-//! ```bash
-//! cargo bench -p base-testing-devnet --bench fcu_unsafe
-//! ```
-//!
+//! Run with `cargo bench -p base-testing-devnet --bench fcu_unsafe`.
 //! Set `FCU_BENCH_VERBOSE=1` for tracing output during the run.
 
 use std::{
@@ -25,8 +13,9 @@ use std::{
 };
 
 use base_common_client_ethereum::Provider;
+use base_common_types_payload::ForkchoiceState;
 use base_common_types_rpc::BlockNumberOrTag;
-use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, PreparedBlock, TestHarness};
+use base_testing_devnet::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
@@ -50,7 +39,7 @@ fn fcu_unsafe_benches(c: &mut Criterion) {
         .header
         .hash;
 
-    let mut group = c.benchmark_group("engine_forkchoiceUpdatedV3");
+    let mut group = c.benchmark_group("append_payload");
     group.sample_size(10);
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(20));
@@ -60,7 +49,7 @@ fn fcu_unsafe_benches(c: &mut Criterion) {
             runtime.block_on(async {
                 let mut total = Duration::ZERO;
                 for _ in 0..iters {
-                    let PreparedBlock { new_block_hash, .. } = harness
+                    let block = harness
                         .prepare_unsafe_block(vec![L1_BLOCK_INFO_DEPOSIT_TX])
                         .await
                         .expect("prepare_unsafe_block should succeed");
@@ -68,20 +57,21 @@ fn fcu_unsafe_benches(c: &mut Criterion) {
                     let start = Instant::now();
                     let result = harness
                         .engine()
-                        .update_forkchoice(genesis_hash, new_block_hash, None)
+                        .execution
+                        .driver
+                        .append_payload(
+                            block.payload,
+                            ForkchoiceState {
+                                head_block_hash: block.new_block_hash,
+                                safe_block_hash: genesis_hash,
+                                finalized_block_hash: genesis_hash,
+                            },
+                        )
                         .await
-                        .expect("forkchoice update should succeed");
+                        .expect("append should succeed");
                     total += start.elapsed();
 
-                    assert!(
-                        !result.payload_status.status.is_invalid(),
-                        "engine reported invalid status during fcu: {result:?}"
-                    );
-                    assert_eq!(
-                        result.payload_status.latest_valid_hash,
-                        Some(new_block_hash),
-                        "engine did not promote new block to head"
-                    );
+                    assert!(result.is_applied(), "engine did not append block: {result:?}");
                 }
                 total
             })

@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use base_common_types_payload::{BeaconEngineMessage, ConsensusEngineEvent};
+use base_common_types_payload::{ConsensusEngineEvent, ExecutionCommand};
 use base_execution_network_wire::BlockClient;
 use base_execution_sync::{ControlFlow, PipelineTarget};
 use futures::Stream;
@@ -46,7 +46,7 @@ pub struct ChainOrchestrator<S, Client: BlockClient + 'static> {
 
 impl<S, Client: BlockClient + 'static> ChainOrchestrator<S, Client>
 where
-    S: Stream<Item = BeaconEngineMessage> + Unpin,
+    S: Stream<Item = ExecutionCommand> + Unpin,
 {
     /// Creates a new [`ChainOrchestrator`] with the given handler and backfill sync.
     pub const fn new(handler: EngineHandler<S, Client>, backfill_sync: PipelineSync) -> Self {
@@ -144,7 +144,7 @@ where
 
 impl<S, Client: BlockClient + 'static> Stream for ChainOrchestrator<S, Client>
 where
-    S: Stream<Item = BeaconEngineMessage> + Unpin,
+    S: Stream<Item = ExecutionCommand> + Unpin,
 {
     type Item = ChainEvent;
 

@@ -7,8 +7,8 @@ use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::{EthGetBlock, Ethereum, Network, Provider, RootProvider};
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
-    BasePayloadAttributes, CancunPayloadFields, ExecutionData, ForkchoiceState, ForkchoiceUpdated,
-    PayloadId, PayloadStatus, PraguePayloadFields,
+    BasePayloadAttributes, CancunPayloadFields, ExecutionData, ForkchoiceState, PayloadId,
+    PraguePayloadFields,
 };
 use base_consensus_batch::L2BlockInfo;
 use base_consensus_source::LocalL2Provider;
@@ -80,10 +80,11 @@ impl EngineClient for LocalEngineClient {
         Ok(self.network.is_syncing())
     }
 
-    async fn submit_payload(
+    async fn append_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<PayloadStatus, EngineClientError> {
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
         let started = Instant::now();
         let result = async {
             let sidecar = match envelope.parent_beacon_block_root {
@@ -102,44 +103,57 @@ impl EngineClient for LocalEngineClient {
             };
             self.execution
                 .driver
-                .new_payload(ExecutionData::new(envelope.execution_payload, sidecar, None))
+                .append_payload(
+                    ExecutionData::new(envelope.execution_payload, sidecar, None),
+                    heads,
+                )
                 .await
                 .map_err(Into::into)
         }
         .await;
-        Metrics::engine_method_request_duration(Metrics::NEW_PAYLOAD_METHOD)
+        Metrics::engine_method_request_duration(Metrics::APPEND_PAYLOAD_METHOD)
             .record(started.elapsed().as_secs_f64());
         result
     }
 
-    async fn update_forkchoice(
+    async fn update_heads(
         &self,
-        state: ForkchoiceState,
-        attributes: Option<BasePayloadAttributes>,
-    ) -> Result<ForkchoiceUpdated, EngineClientError> {
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
         let started = Instant::now();
-        let result = async {
-            let attributes = attributes
-                .map(|attributes| {
-                    BasePayloadBuilderAttributes::try_new(state.head_block_hash, attributes, 3)
-                })
-                .transpose()
-                .map_err(|error| EngineClientError::InvalidAttributes(error.to_string()))?;
-            self.execution.update_forkchoice(state, attributes).await.map_err(Into::into)
-        }
-        .await;
-        Metrics::engine_method_request_duration(Metrics::FORKCHOICE_UPDATE_METHOD)
+        let result = self
+            .execution
+            .driver
+            .update_heads(heads)
+            .await
+            .map_err(base_execution_engine_driver::ExecutionCommandError::from);
+        Metrics::engine_method_request_duration(Metrics::UPDATE_HEADS_METHOD)
             .record(started.elapsed().as_secs_f64());
-        result
+        Ok(result?)
     }
 
-    async fn resolve_payload(
+    async fn start_building(
+        &self,
+        heads: ForkchoiceState,
+        attributes: BasePayloadAttributes,
+    ) -> Result<PayloadId, EngineClientError> {
+        let attributes =
+            BasePayloadBuilderAttributes::try_new(heads.head_block_hash, attributes, 3)
+                .map_err(|error| EngineClientError::InvalidAttributes(error.to_string()))?;
+        let started = Instant::now();
+        let result = self.execution.start_building(heads, attributes).await;
+        Metrics::engine_method_request_duration(Metrics::START_BUILDING_METHOD)
+            .record(started.elapsed().as_secs_f64());
+        Ok(result?)
+    }
+
+    async fn end_building(
         &self,
         id: PayloadId,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
         let started = Instant::now();
         let result = async {
-            let built = self.execution.resolve_payload(id).await?;
+            let built = self.execution.end_building(id).await?;
             let block = built.block();
             let hash = block.hash();
             let parent_beacon_block_root = block.parent_beacon_block_root;
@@ -148,7 +162,7 @@ impl EngineClient for LocalEngineClient {
             Ok(BaseExecutionPayloadEnvelope { execution_payload, parent_beacon_block_root })
         }
         .await;
-        Metrics::engine_method_request_duration(Metrics::GET_PAYLOAD_METHOD)
+        Metrics::engine_method_request_duration(Metrics::END_BUILDING_METHOD)
             .record(started.elapsed().as_secs_f64());
         result
     }

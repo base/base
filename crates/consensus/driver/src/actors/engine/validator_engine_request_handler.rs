@@ -8,11 +8,11 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{error, warn};
 
 use crate::{
-    BuildRequest, ConsolidateTask, EngineActorRequest, EngineClient, EngineClientError,
+    ConsolidateTask, EndBuildingRequest, EngineActorRequest, EngineClient, EngineClientError,
     EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver, EngineTask,
-    EngineTaskError, EngineTaskErrors, FinalizeTask, GetPayloadRequest, InsertUnsafePayloadRequest,
+    EngineTaskError, EngineTaskErrors, FinalizeTask, InsertUnsafePayloadRequest,
     Metrics as EngineMetrics, Metrics, ReconcileShadowRequest, ResetRequest, ResetRequestOutcome,
-    SealTaskError,
+    SealTaskError, StartBuildingRequest,
 };
 
 /// Receives validator engine requests without carrying sequencer configuration.
@@ -77,14 +77,14 @@ where
                 };
 
                 match request {
-                    EngineActorRequest::BuildRequest(request) => {
-                        let BuildRequest { attributes, result_tx, otel_cx } = *request;
+                    EngineActorRequest::StartBuildingRequest(request) => {
+                        let StartBuildingRequest { attributes, result_tx, otel_cx } = *request;
                         let client = Arc::clone(self.processor.client());
 
                         let result = self
                             .processor
                             .engine_mut()
-                            .build(client, attributes)
+                            .start_building(client, attributes)
                             .with_context(otel_cx)
                             .await;
                         let error = result
@@ -98,15 +98,14 @@ where
                                 .await?;
                         }
                     }
-                    EngineActorRequest::GetPayloadRequest(request) => {
-                        let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
+                    EngineActorRequest::EndBuildingRequest(request) => {
+                        let EndBuildingRequest { payload_id, attributes, result_tx, otel_cx } =
                             *request;
                         let client = Arc::clone(self.processor.client());
-                        let rollup = Arc::clone(self.processor.rollup());
                         let result = self
                             .processor
                             .engine_mut()
-                            .get_payload(client, rollup, payload_id, attributes)
+                            .end_building(client, payload_id, attributes)
                             .with_context(otel_cx)
                             .await;
                         let error = result
@@ -122,7 +121,7 @@ where
                                 .await?;
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::SetSafeRequest(safe_signal) => {
                         self.processor.enqueue(EngineTask::Consolidate(Box::new(
                             ConsolidateTask::new(
                                 Arc::clone(self.processor.client()),
@@ -131,7 +130,7 @@ where
                             ),
                         )));
                     }
-                    EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(block_number) => {
+                    EngineActorRequest::SetFinalizedRequest(block_number) => {
                         self.processor.enqueue(EngineTask::Finalize(Box::new(FinalizeTask::new(
                             Arc::clone(self.processor.client()),
                             Arc::clone(self.processor.rollup()),

@@ -29,6 +29,15 @@ impl BeaconOnNewPayloadError {
 /// beacon node.
 #[derive(Debug, thiserror::Error)]
 pub enum BeaconForkChoiceUpdateError {
+    /// The parent is waiting for execution synchronization.
+    #[error("execution is syncing")]
+    Syncing,
+    /// Head selection was rejected.
+    #[error("invalid heads: {0:?}")]
+    InvalidHeads(crate::PayloadStatus),
+    /// The builder did not return a job identifier.
+    #[error("missing build identifier")]
+    MissingBuild,
     /// Thrown when a forkchoice update resulted in an error.
     #[error("forkchoice update error: {0}")]
     ForkchoiceUpdateError(#[from] ForkchoiceUpdateError),

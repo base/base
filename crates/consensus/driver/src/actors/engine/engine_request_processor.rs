@@ -697,12 +697,12 @@ mod tests {
     use tokio::sync::{mpsc, watch};
 
     use crate::{
-        BuildRequest, ConsolidateInput, Engine, EngineActorRequest, EngineClient,
-        EngineClientError, EngineProcessor, EngineRequestReceiver, EngineState, EngineTaskError,
+        ConsolidateInput, Engine, EngineActorRequest, EngineClient, EngineClientError,
+        EngineProcessor, EngineRequestReceiver, EngineState, EngineTaskError,
         EngineTaskErrorSeverity, ForkchoiceCheckpointError, ForkchoiceCheckpointLabel,
         ForkchoiceCheckpointReader, MockConductor, NodeMode, NoopCheckpointWriter, ResetRequest,
         SequencerEngineRequestCoordinator, SequencerEngineState, ShadowReconciliationGate,
-        ValidatorEngineRequestHandler,
+        StartBuildingRequest, ValidatorEngineRequestHandler,
         actors::engine::client::MockEngineDerivationClient,
         engine_test_utils::{
             TestAttributesBuilder, TestEngineStateBuilder, test_block_info,
@@ -1390,7 +1390,7 @@ mod tests {
 
         let (result_tx, mut result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+            .send(EngineActorRequest::StartBuildingRequest(Box::new(StartBuildingRequest {
                 attributes: TestAttributesBuilder::new().with_parent(genesis_l2_info).build(),
                 result_tx,
                 otel_cx: opentelemetry::Context::new(),
@@ -1472,9 +1472,7 @@ mod tests {
         let mut handle = coordinator.start(request_rx);
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                safe_96,
-            )))
+            .send(EngineActorRequest::SetSafeRequest(ConsolidateInput::BlockInfo(safe_96)))
             .await
             .expect("failed to send safe block 96");
         let mut safe_96_state = state_rx.clone();
@@ -1491,7 +1489,7 @@ mod tests {
         }
 
         request_tx
-            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(96)))
+            .send(EngineActorRequest::SetFinalizedRequest(Box::new(96)))
             .await
             .expect("failed to send finalized block 96");
         state_rx
@@ -1501,9 +1499,7 @@ mod tests {
             .expect("finalized block 96 was not applied during the shadow cycle");
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                safe_97,
-            )))
+            .send(EngineActorRequest::SetSafeRequest(ConsolidateInput::BlockInfo(safe_97)))
             .await
             .expect("failed to send safe block 97");
         state_rx
@@ -1513,13 +1509,14 @@ mod tests {
             .expect("safe block 97 was not applied during the same shadow cycle");
 
         request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                l2_head(101, B256::with_last_byte(101)),
-            )))
+            .send(EngineActorRequest::SetSafeRequest(ConsolidateInput::BlockInfo(l2_head(
+                101,
+                B256::with_last_byte(101),
+            ))))
             .await
             .expect("failed to send safe block above the anchor");
         request_tx
-            .send(EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(Box::new(101)))
+            .send(EngineActorRequest::SetFinalizedRequest(Box::new(101)))
             .await
             .expect("failed to send finalized block above the anchor");
 
@@ -2156,7 +2153,7 @@ mod tests {
             .build();
         let (build_result_tx, mut build_result_rx) = mpsc::channel(1);
         req_tx
-            .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+            .send(EngineActorRequest::StartBuildingRequest(Box::new(StartBuildingRequest {
                 attributes,
                 result_tx: build_result_tx,
                 otel_cx: opentelemetry::Context::new(),

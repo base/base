@@ -142,7 +142,7 @@ where
                 let node = NodeTestContext::new(node, self.attributes_generator).await?;
                 let genesis_number = self.chain_spec.genesis_header().number();
                 let genesis = node.block_hash(genesis_number);
-                node.update_forkchoice(genesis, genesis).await?;
+                node.update_heads(genesis, genesis).await?;
 
                 eyre::Ok(node)
             })

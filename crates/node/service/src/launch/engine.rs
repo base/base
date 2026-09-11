@@ -140,11 +140,11 @@ impl crate::NodeLaunch {
         )
         .await?;
 
-        let consensus_engine_stream = EngineMessageStream::skip_fcu(
+        let consensus_engine_stream = EngineMessageStream::skip_heads(
             UnboundedReceiverStream::from(consensus_engine_rx),
             node_config.debug.skip_fcu,
         );
-        let consensus_engine_stream = EngineMessageStream::skip_new_payload(
+        let consensus_engine_stream = EngineMessageStream::skip_import(
             consensus_engine_stream,
             node_config.debug.skip_new_payload,
         );

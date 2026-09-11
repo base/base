@@ -159,7 +159,7 @@ impl PayloadSealer {
                     );
                 });
                 let inserted_head = engine_client
-                    .insert_unsafe_payload(self.envelope.clone())
+                    .append_payload(self.envelope.clone())
                     .instrument(self.seal_span.clone())
                     .await
                     .map_err(SealStepError::Insert)?;

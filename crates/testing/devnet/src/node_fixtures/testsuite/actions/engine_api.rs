@@ -110,14 +110,24 @@ impl Action for SendNewPayload {
 
             // Send the payload to the target node
             let target_engine = env.node_clients[self.node_idx].engine.clone();
+            let append_input =
+                base_common_types_payload::ExecutionData::v3(payload, vec![], B256::ZERO);
+            let append_heads = base_common_types_payload::ForkchoiceState {
+                head_block_hash: append_input.block_hash(),
+                safe_block_hash: Default::default(),
+                finalized_block_hash: Default::default(),
+            };
             let result = target_engine
                 .driver
-                .new_payload(base_common_types_payload::ExecutionData::v3(
-                    payload,
-                    vec![],
-                    B256::ZERO,
-                ))
-                .await?;
+                .append_payload(append_input, append_heads)
+                .await
+                .map(|outcome| outcome.into_payload_status())
+                .or_else(|error| match error {
+                    base_common_types_payload::AppendPayloadError::InvalidPayload(status) => {
+                        Ok(status)
+                    }
+                    error => Err(error),
+                })?;
 
             debug!(
                 "Node {}: new_payload for block {} response - status: {:?}, latest_valid_hash: {:?}",

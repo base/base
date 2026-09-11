@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
 use base_common_chain_config::ChainSpecProvider;
-use base_common_types_payload::BeaconEngineMessage;
+use base_common_types_payload::ExecutionCommand;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_payload::BaseEngineValidator;
 use futures::Stream;
 use tokio_util::either::Either;
 
-use crate::{EngineReorg, EngineSkipFcu, EngineSkipNewPayload, EngineStoreStream};
+use crate::{EngineReorg, EngineSkipHeads, EngineSkipImport, EngineStoreStream};
 
 /// Configures debugging and recording of execution-driver messages.
 #[derive(Debug)]
@@ -15,29 +15,29 @@ pub struct EngineMessageStream;
 
 impl EngineMessageStream {
     /// Skips fork-choice messages when a skip count is configured.
-    pub fn skip_fcu<S: Stream<Item = BeaconEngineMessage>>(
+    pub const fn skip_heads<S: Stream<Item = ExecutionCommand>>(
         stream: S,
         count: Option<usize>,
-    ) -> Either<EngineSkipFcu<S>, S> {
+    ) -> Either<EngineSkipHeads<S>, S> {
         match count {
-            Some(count) => Either::Left(EngineSkipFcu::new(stream, count)),
+            Some(count) => Either::Left(EngineSkipHeads::new(stream, count)),
             None => Either::Right(stream),
         }
     }
 
     /// Skips payload messages when a skip count is configured.
-    pub fn skip_new_payload<S: Stream<Item = BeaconEngineMessage>>(
+    pub const fn skip_import<S: Stream<Item = ExecutionCommand>>(
         stream: S,
         count: Option<usize>,
-    ) -> Either<EngineSkipNewPayload<S>, S> {
+    ) -> Either<EngineSkipImport<S>, S> {
         match count {
-            Some(count) => Either::Left(EngineSkipNewPayload::new(stream, count)),
+            Some(count) => Either::Left(EngineSkipImport::new(stream, count)),
             None => Either::Right(stream),
         }
     }
 
     /// Records messages after preceding filters have run, when a directory is configured.
-    pub fn store<S: Stream<Item = BeaconEngineMessage>>(
+    pub fn store<S: Stream<Item = ExecutionCommand>>(
         stream: S,
         path: Option<PathBuf>,
     ) -> Either<EngineStoreStream<S>, S> {
@@ -48,7 +48,7 @@ impl EngineMessageStream {
     }
 
     /// Injects synthetic reorgs when a frequency is configured.
-    pub fn reorg<S: Stream<Item = BeaconEngineMessage>, P: ChainSpecProvider>(
+    pub fn reorg<S: Stream<Item = ExecutionCommand>, P: ChainSpecProvider>(
         stream: S,
         provider: P,
         evm_config: BaseEvmConfig,

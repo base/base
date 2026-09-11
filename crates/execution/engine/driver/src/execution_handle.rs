@@ -1,5 +1,5 @@
 use base_common_types_payload::{
-    BeaconForkChoiceUpdateError, ConsensusEngineHandle, ForkchoiceState, ForkchoiceUpdated,
+    BeaconForkChoiceUpdateError, ConsensusEngineHandle, ForkchoiceState,
     InvalidPayloadAttributesError, PayloadBuilderError, PayloadId, PayloadKind,
 };
 use base_execution_payload::{
@@ -35,29 +35,24 @@ pub enum ExecutionCommandError {
 }
 
 impl BaseExecutionHandle {
-    /// Applies forkchoice and optionally starts a validated payload build.
-    ///
-    /// Invalid build attributes must not roll back a valid forkchoice update. An invalid or
-    /// syncing head takes precedence over the build-attribute failure.
-    pub async fn update_forkchoice(
+    /// Applies a build parent and starts a validated payload job.
+    pub async fn start_building(
         &self,
-        state: ForkchoiceState,
-        attributes: Option<BasePayloadBuilderAttributes>,
-    ) -> Result<ForkchoiceUpdated, ExecutionCommandError> {
-        if let Some(attributes) = &attributes {
-            if let Err(error) = self.validator.validate_attributes(attributes) {
-                let result = self.driver.fork_choice_updated(state, None).await?;
-                if result.is_invalid() || result.payload_status.is_syncing() {
-                    return Ok(result);
-                }
-                return Err(error.into());
+        heads: ForkchoiceState,
+        attributes: BasePayloadBuilderAttributes,
+    ) -> Result<PayloadId, ExecutionCommandError> {
+        if let Err(error) = self.validator.validate_attributes(&attributes) {
+            let status = self.driver.update_heads(heads).await?;
+            if matches!(status, base_common_types_payload::HeadUpdateOutcome::Syncing) {
+                return Err(BeaconForkChoiceUpdateError::Syncing.into());
             }
+            return Err(error.into());
         }
-        Ok(self.driver.fork_choice_updated(state, attributes).await?)
+        Ok(self.driver.start_building(heads, attributes).await?)
     }
 
     /// Resolves a build to its native block, receipts, and execution metadata.
-    pub async fn resolve_payload(
+    pub async fn end_building(
         &self,
         id: PayloadId,
     ) -> Result<BaseBuiltPayload, ExecutionCommandError> {
@@ -76,7 +71,7 @@ mod tests {
     use alloy_primitives::B256;
     use base_common_chain_config::BaseChainSpec;
     use base_common_types_payload::{
-        BeaconEngineMessage, OnForkChoiceUpdated, PayloadStatus, PayloadStatusEnum,
+        ExecutionCommand, PayloadStatus, PayloadStatusEnum, PendingHeadUpdate,
     };
     use tokio::sync::mpsc;
 
@@ -92,23 +87,23 @@ mod tests {
                 validator: BaseEngineValidator::new(Arc::new(BaseChainSpec::sepolia())),
             };
             let state = ForkchoiceState::same_hash(B256::repeat_byte(1));
-            let update =
-                handle.update_forkchoice(state, Some(BasePayloadBuilderAttributes::default()));
+            let update = handle.start_building(state, BasePayloadBuilderAttributes::default());
             let driver = async {
-                let BeaconEngineMessage::ForkchoiceUpdated { state: received, payload_attrs, tx } =
+                let ExecutionCommand::UpdateHeads { heads: received, tx } =
                     receiver.recv().await.unwrap()
                 else {
                     panic!("expected forkchoice command");
                 };
                 assert_eq!(received, state);
-                assert!(payload_attrs.is_none());
-                let response =
-                    OnForkChoiceUpdated::valid(PayloadStatus::from_status(status.clone()));
+                let response = PendingHeadUpdate::valid(PayloadStatus::from_status(status.clone()));
                 tx.send(Ok(response)).unwrap();
             };
             let (result, ()) = tokio::join!(update, driver);
             if status == PayloadStatusEnum::Syncing {
-                assert!(result.unwrap().payload_status.is_syncing());
+                assert!(matches!(
+                    result,
+                    Err(ExecutionCommandError::Forkchoice(BeaconForkChoiceUpdateError::Syncing))
+                ));
             } else {
                 assert!(matches!(result, Err(ExecutionCommandError::InvalidAttributes(_))));
             }

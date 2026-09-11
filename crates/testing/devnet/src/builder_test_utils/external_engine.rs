@@ -28,7 +28,7 @@ impl ExternalEngineApi {
     }
 
     /// Submits a payload to the external reference client.
-    pub async fn new_payload(
+    pub async fn append_payload(
         &self,
         payload: BaseExecutionPayloadV4,
         hashes: Vec<B256>,
@@ -36,20 +36,26 @@ impl ExternalEngineApi {
         requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
         let client = self.client()?;
-        Ok(client
+        let head = base_common_types_payload::ExecutionData::v4(
+            payload.clone(),
+            hashes.clone(),
+            root,
+            requests.clone(),
+        )
+        .block_hash();
+        let imported: PayloadStatus = client
             .request("engine_newPayloadV4", rpc_params![payload, hashes, root, requests])
-            .await?)
+            .await?;
+        if !imported.is_valid() {
+            return Ok(imported);
+        }
+        self.update_heads(B256::ZERO, head).await
     }
 
     /// Advances the external reference client's canonical head.
-    pub async fn update_forkchoice(
-        &self,
-        current: B256,
-        head: B256,
-        attributes: Option<BasePayloadBuilderAttributes>,
-    ) -> eyre::Result<ForkchoiceUpdated> {
+    pub async fn update_heads(&self, current: B256, head: B256) -> eyre::Result<PayloadStatus> {
         let client = self.client()?;
-        Ok(client
+        let response: ForkchoiceUpdated = client
             .request(
                 "engine_forkchoiceUpdatedV3",
                 rpc_params![
@@ -58,9 +64,10 @@ impl ExternalEngineApi {
                         safe_block_hash: current,
                         finalized_block_hash: current
                     },
-                    attributes
+                    Option::<BasePayloadBuilderAttributes>::None
                 ],
             )
-            .await?)
+            .await?;
+        Ok(response.payload_status)
     }
 }

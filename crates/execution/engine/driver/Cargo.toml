@@ -18,7 +18,6 @@ workspace = true
 rayon = { workspace = true }
 serde = { workspace = true }
 metrics = { workspace = true }
-itertools = { workspace = true }
 thiserror = { workspace = true }
 alloy-eips = { workspace = true }
 pin-project = { workspace = true }

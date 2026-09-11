@@ -13,9 +13,9 @@ use alloy_primitives::{B256, map::B256Map};
 use base_common_runtime::{spawn_os_thread, utils::increase_thread_priority};
 use base_common_types_chain::{BlockHeader, RecoveredBlock, SealedBlock, SealedHeader};
 use base_common_types_payload::{
-    BasePayloadBuilderAttributes, BeaconEngineMessage, BeaconOnNewPayloadError,
-    ConsensusEngineEvent, ForkchoiceState, ForkchoiceStateTracker, NewPayloadError,
-    OnForkChoiceUpdated, PayloadStatus, PayloadStatusEnum, PayloadValidationError, SlowBlockInfo,
+    BasePayloadBuilderAttributes, BeaconOnNewPayloadError, ConsensusEngineEvent, ExecutionCommand,
+    ForkchoiceState, ForkchoiceStateTracker, NewPayloadError, PayloadStatus, PayloadStatusEnum,
+    PayloadValidationError, PendingHeadUpdate, SlowBlockInfo,
 };
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig, ConsensusError};
 use base_execution_evm_runtime::debug_unreachable;
@@ -498,8 +498,8 @@ impl EngineApiTreeHandler {
     }
 
     /// Returns a [`TreeOutcome`] indicating the forkchoice head is valid and canonical.
-    fn valid_outcome(state: ForkchoiceState) -> TreeOutcome<OnForkChoiceUpdated> {
-        TreeOutcome::new(OnForkChoiceUpdated::valid(PayloadStatus::new(
+    fn valid_outcome(state: ForkchoiceState) -> TreeOutcome<PendingHeadUpdate> {
+        TreeOutcome::new(PendingHeadUpdate::valid(PayloadStatus::new(
             PayloadStatusEnum::Valid,
             Some(state.head_block_hash),
         )))
@@ -1186,34 +1186,115 @@ impl EngineApiTreeHandler {
     /// `engine_forkchoiceUpdated`](https://github.com/ethereum/execution-apis/blob/main/src/engine/paris.md#specification-1).
     ///
     /// Returns an error if an internal error occurred like a database error.
-    #[instrument(level = "debug", target = "engine::tree", skip_all, fields(head = % state.head_block_hash, safe = % state.safe_block_hash,finalized = % state.finalized_block_hash))]
-    fn on_forkchoice_updated(
+    #[instrument(level = "debug", target = "engine::tree", skip_all, fields(head = % heads.head_block_hash, safe = % heads.safe_block_hash, finalized = % heads.finalized_block_hash))]
+    /// Applies heads and processes all resulting tree events.
+    pub fn apply_heads(&mut self, heads: ForkchoiceState) -> ProviderResult<PendingHeadUpdate> {
+        let started = Instant::now();
+        let result = self.select_heads(heads);
+        self.metrics.engine.forkchoice_updated.update_response_metrics(
+            started,
+            &mut self.metrics.engine.new_payload.latest_finish_at,
+            false,
+            &result,
+        );
+        let mut output = result?;
+        self.state.forkchoice_state_tracker.set_latest(heads, output.outcome.forkchoice_status());
+        self.emit_event(ConsensusEngineEvent::ForkchoiceUpdated(
+            heads,
+            output.outcome.forkchoice_status(),
+        ));
+        self.on_maybe_tree_event(output.event.take())?;
+        Ok(output.outcome)
+    }
+
+    /// Applies a build parent before validating and starting its job.
+    pub fn start_building(
+        &mut self,
+        heads: ForkchoiceState,
+        attributes: BasePayloadBuilderAttributes,
+    ) -> ProviderResult<PendingHeadUpdate> {
+        let outcome = self.apply_heads(heads)?;
+        if outcome.forkchoice_status() != base_common_types_payload::ForkchoiceStatus::Valid {
+            return Ok(outcome);
+        }
+        let tip = self
+            .sealed_header_by_hash(heads.head_block_hash)?
+            .ok_or(ProviderError::HeaderNotFound(heads.head_block_hash.into()))?;
+        Ok(self.process_payload_attributes(attributes, &tip, heads))
+    }
+
+    /// Imports and canonicalizes a payload within one serialized tree operation.
+    pub fn append_payload(
+        &mut self,
+        payload: base_common_types_payload::ExecutionData,
+        heads: ForkchoiceState,
+        skip_import: bool,
+        skip_heads: bool,
+    ) -> Result<
+        base_common_types_payload::HeadUpdateOutcome,
+        base_common_types_payload::AppendPayloadError,
+    > {
+        if heads.head_block_hash != payload.block_hash() {
+            return Err(
+                base_common_types_payload::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
+                    base_common_types_payload::ForkchoiceUpdateError::InvalidState,
+                )
+                .into(),
+            );
+        }
+        if !skip_import {
+            let started = Instant::now();
+            let gas_used = payload.gas_used();
+            let result = self.on_new_payload(payload);
+            self.metrics.engine.new_payload.update_response_metrics(
+                started,
+                &mut self.metrics.engine.forkchoice_updated.latest_finish_at,
+                &result,
+                gas_used,
+            );
+            let mut imported = result.map_err(BeaconOnNewPayloadError::internal)?;
+            self.on_maybe_tree_event(imported.event.take())
+                .map_err(BeaconOnNewPayloadError::internal)?;
+            if !matches!(
+                imported.outcome.status,
+                PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing
+            ) {
+                return Err(base_common_types_payload::AppendPayloadError::InvalidPayload(
+                    imported.outcome,
+                ));
+            }
+        }
+        if skip_heads {
+            return Ok(base_common_types_payload::HeadUpdateOutcome::Syncing);
+        }
+        let response = self
+            .apply_heads(heads)
+            .map_err(base_common_types_payload::BeaconForkChoiceUpdateError::internal)?;
+        // Applying heads never starts a payload job, so its result is immediately ready.
+        let response = futures::FutureExt::now_or_never(response)
+            .expect("head-only update is ready")
+            .map_err(base_common_types_payload::BeaconForkChoiceUpdateError::from)?;
+        Ok(base_common_types_payload::HeadUpdateOutcome::from_status(
+            response.payload_status,
+            heads.head_block_hash,
+        )?)
+    }
+
+    /// Selects the canonical chain without creating a build job.
+    pub fn select_heads(
         &mut self,
         state: ForkchoiceState,
-        attrs: Option<BasePayloadBuilderAttributes>,
-    ) -> ProviderResult<TreeOutcome<OnForkChoiceUpdated>> {
-        trace!(target: "engine::tree", ?attrs, "invoked forkchoice update");
-
-        // Record metrics
+    ) -> ProviderResult<TreeOutcome<PendingHeadUpdate>> {
         self.record_forkchoice_metrics();
-
-        // Pre-validation of forkchoice state
         if let Some(early_result) = self.validate_forkchoice_state(state)? {
             return Ok(TreeOutcome::new(early_result));
         }
-
-        // Return early if we are on the correct fork
-        if let Some(result) = self.handle_canonical_head(state, &attrs)? {
+        if let Some(result) = self.handle_canonical_head(state)? {
             return Ok(result);
         }
-
-        // Attempt to apply a chain update when the head differs from our canonical chain.
-        // This handles reorgs and chain extensions by making the specified head canonical.
-        if let Some(result) = self.apply_chain_update(state, &attrs)? {
+        if let Some(result) = self.apply_chain_update(state)? {
             return Ok(result);
         }
-
-        // Fallback that ensures to catch up to the network's state.
         self.handle_missing_block(state)
     }
 
@@ -1224,28 +1305,28 @@ impl EngineApiTreeHandler {
 
     /// Pre-validates the forkchoice state and returns early if validation fails.
     ///
-    /// Returns `Some(OnForkChoiceUpdated)` if validation fails and an early response should be
+    /// Returns `Some(PendingHeadUpdate)` if validation fails and an early response should be
     /// returned. Returns `None` if validation passes and processing should continue.
     fn validate_forkchoice_state(
         &mut self,
         state: ForkchoiceState,
-    ) -> ProviderResult<Option<OnForkChoiceUpdated>> {
+    ) -> ProviderResult<Option<PendingHeadUpdate>> {
         if state.head_block_hash.is_zero() {
-            return Ok(Some(OnForkChoiceUpdated::invalid_state()));
+            return Ok(Some(PendingHeadUpdate::invalid_state()));
         }
 
         // Check if the new head hash is connected to any ancestor that we previously marked as
         // invalid
         let lowest_buffered_ancestor_fcu = self.lowest_buffered_ancestor_or(state.head_block_hash);
         if let Some(status) = self.check_invalid_ancestor(lowest_buffered_ancestor_fcu)? {
-            return Ok(Some(OnForkChoiceUpdated::with_invalid(status)));
+            return Ok(Some(PendingHeadUpdate::with_invalid(status)));
         }
 
         if !self.backfill_sync_state.is_idle() {
             // We can only process new forkchoice updates if the pipeline is idle, since it requires
             // exclusive access to the database
             trace!(target: "engine::tree", "Pipeline is syncing, skipping forkchoice update");
-            return Ok(Some(OnForkChoiceUpdated::syncing()));
+            return Ok(Some(PendingHeadUpdate::syncing()));
         }
 
         Ok(None)
@@ -1253,14 +1334,13 @@ impl EngineApiTreeHandler {
 
     /// Handles the case where the forkchoice head is already canonical.
     ///
-    /// Returns `Some(TreeOutcome<OnForkChoiceUpdated>)` if the head is already canonical and
+    /// Returns `Some(TreeOutcome<PendingHeadUpdate>)` if the head is already canonical and
     /// processing is complete. Returns `None` if the head is not canonical and processing
     /// should continue.
     fn handle_canonical_head(
         &mut self,
         state: ForkchoiceState,
-        attrs: &Option<BasePayloadBuilderAttributes>, // Changed to reference
-    ) -> ProviderResult<Option<TreeOutcome<OnForkChoiceUpdated>>> {
+    ) -> ProviderResult<Option<TreeOutcome<PendingHeadUpdate>>> {
         // Process the forkchoice update by trying to make the head block canonical
         //
         // We can only process this forkchoice update if:
@@ -1290,18 +1370,6 @@ impl EngineApiTreeHandler {
         self.payload_validator.on_canonical_head_changed(state.head_block_hash, &self.state);
 
         // Process payload attributes if the head is already canonical
-        if let Some(attr) = attrs {
-            let tip = self
-                .sealed_header_by_hash(self.state.tree_state.canonical_block_hash())?
-                .ok_or_else(|| {
-                    // If we can't find the canonical block, then something is wrong and we need
-                    // to return an error
-                    ProviderError::HeaderNotFound(state.head_block_hash.into())
-                })?;
-            // Clone only when we actually need to process the attributes
-            let updated = self.process_payload_attributes(attr.clone(), &tip, state);
-            return Ok(Some(TreeOutcome::new(updated)));
-        }
 
         // The head block is already canonical
         Ok(Some(Self::valid_outcome(state)))
@@ -1316,13 +1384,12 @@ impl EngineApiTreeHandler {
     /// - Processing payload attributes if provided
     /// - Returning the appropriate forkchoice update response
     ///
-    /// Returns `Some(TreeOutcome<OnForkChoiceUpdated>)` if a chain update was successfully applied.
+    /// Returns `Some(TreeOutcome<PendingHeadUpdate>)` if a chain update was successfully applied.
     /// Returns `None` if no chain update was needed or possible.
     fn apply_chain_update(
         &mut self,
         state: ForkchoiceState,
-        attrs: &Option<BasePayloadBuilderAttributes>,
-    ) -> ProviderResult<Option<TreeOutcome<OnForkChoiceUpdated>>> {
+    ) -> ProviderResult<Option<TreeOutcome<PendingHeadUpdate>>> {
         // Check if the head is already part of the canonical chain
         if let Ok(Some(canonical_header)) = self.find_canonical_header(state.head_block_hash) {
             debug!(target: "engine::tree", head = canonical_header.number(), "fcu head block is already canonical");
@@ -1337,13 +1404,6 @@ impl EngineApiTreeHandler {
             }
 
             // Base allows building on canonical ancestors when the CL requests a reorg.
-            if let Some(attr) = attrs {
-                debug!(target: "engine::tree", head = canonical_header.number(), "handling payload attributes for canonical head");
-                // Clone only when we actually need to process the attributes
-                let updated =
-                    self.process_payload_attributes(attr.clone(), &canonical_header, state);
-                return Ok(Some(TreeOutcome::new(updated)));
-            }
 
             // The head block is already canonical and we're not processing payload attributes,
             // so we're not triggering a payload job and can return right away
@@ -1352,19 +1412,12 @@ impl EngineApiTreeHandler {
 
         // Ensure we can apply a new chain update for the head block
         if let Some(chain_update) = self.on_new_head(state.head_block_hash)? {
-            let tip = chain_update.tip().clone_sealed_header();
             self.on_canonical_chain_update(chain_update);
 
             // Update the safe and finalized blocks and ensure their values are valid
             if let Err(outcome) = self.ensure_consistent_forkchoice_state(state) {
                 // safe or finalized hashes are invalid
                 return Ok(Some(TreeOutcome::new(outcome)));
-            }
-
-            if let Some(attr) = attrs {
-                // Clone only when we actually need to process the attributes
-                let updated = self.process_payload_attributes(attr.clone(), &tip, state);
-                return Ok(Some(TreeOutcome::new(updated)));
             }
 
             return Ok(Some(Self::valid_outcome(state)));
@@ -1380,7 +1433,7 @@ impl EngineApiTreeHandler {
     fn handle_missing_block(
         &self,
         state: ForkchoiceState,
-    ) -> ProviderResult<TreeOutcome<OnForkChoiceUpdated>> {
+    ) -> ProviderResult<TreeOutcome<PendingHeadUpdate>> {
         // We don't have the block to perform the forkchoice update
         // We assume the FCU is valid and at least the head is missing,
         // so we need to start syncing to it
@@ -1401,7 +1454,7 @@ impl EngineApiTreeHandler {
         let target = self.lowest_buffered_ancestor_or(target);
         trace!(target: "engine::tree", %target, "downloading missing block");
 
-        Ok(TreeOutcome::new(OnForkChoiceUpdated::valid(PayloadStatus::from_status(
+        Ok(TreeOutcome::new(PendingHeadUpdate::valid(PayloadStatus::from_status(
             PayloadStatusEnum::Syncing,
         )))
         .with_event(TreeEvent::Download(DownloadRequest::single_block(target))))
@@ -1690,84 +1743,27 @@ impl EngineApiTreeHandler {
                             ConsensusEngineEvent::CanonicalBlockAdded(block, now.elapsed()),
                         ));
                     }
-                    EngineApiRequest::Beacon(request) => {
-                        match request {
-                            BeaconEngineMessage::ForkchoiceUpdated { state, payload_attrs, tx } => {
-                                let has_attrs = payload_attrs.is_some();
-
-                                let start = Instant::now();
-                                let mut output = self.on_forkchoice_updated(state, payload_attrs);
-
-                                if let Ok(res) = &mut output {
-                                    // track last received forkchoice state
-                                    self.state
-                                        .forkchoice_state_tracker
-                                        .set_latest(state, res.outcome.forkchoice_status());
-
-                                    // emit an event about the handled FCU
-                                    self.emit_event(ConsensusEngineEvent::ForkchoiceUpdated(
-                                        state,
-                                        res.outcome.forkchoice_status(),
-                                    ));
-
-                                    // handle the event if any
-                                    self.on_maybe_tree_event(res.event.take())?;
-                                }
-
-                                if let Err(ref err) = output {
-                                    error!(target: "engine::tree", %err, ?state, "Error processing forkchoice update");
-                                }
-
-                                self.metrics.engine.forkchoice_updated.update_response_metrics(
-                                    start,
-                                    &mut self.metrics.engine.new_payload.latest_finish_at,
-                                    has_attrs,
-                                    &output,
-                                );
-
-                                if let Err(err) =
-                                    tx.send(output.map(|o| o.outcome).map_err(Into::into))
-                                {
-                                    self.metrics
-                                        .engine
-                                        .failed_forkchoice_updated_response_deliveries
-                                        .increment(1);
-                                    warn!(target: "engine::tree", ?state, elapsed=?start.elapsed(), "Failed to deliver forkchoiceUpdated response, receiver dropped (request cancelled): {err:?}");
-                                }
-                            }
-                            BeaconEngineMessage::NewPayload { payload, tx } => {
-                                let start = Instant::now();
-                                let gas_used = payload.gas_used();
-                                let num_hash = payload.num_hash();
-                                let mut output = self.on_new_payload(payload);
-                                self.metrics.engine.new_payload.update_response_metrics(
-                                    start,
-                                    &mut self.metrics.engine.forkchoice_updated.latest_finish_at,
-                                    &output,
-                                    gas_used,
-                                );
-
-                                let maybe_event =
-                                    output.as_mut().ok().and_then(|out| out.event.take());
-
-                                // emit response
-                                if let Err(err) =
-                                    tx.send(output.map(|o| o.outcome).map_err(|e| {
-                                        BeaconOnNewPayloadError::Internal(Box::new(e))
-                                    }))
-                                {
-                                    warn!(target: "engine::tree", payload=?num_hash, elapsed=?start.elapsed(), "Failed to deliver newPayload response, receiver dropped (request cancelled): {err:?}");
-                                    self.metrics
-                                        .engine
-                                        .failed_new_payload_response_deliveries
-                                        .increment(1);
-                                }
-
-                                // handle the event if any
-                                self.on_maybe_tree_event(maybe_event)?;
-                            }
+                    EngineApiRequest::Beacon(request) => match request {
+                        ExecutionCommand::UpdateHeads { heads, tx } => {
+                            let output = self.apply_heads(heads);
+                            let _ = tx.send(output.map_err(Into::into));
                         }
-                    }
+                        ExecutionCommand::StartBuilding { heads, attributes, tx } => {
+                            let output = self.start_building(heads, *attributes);
+                            let _ = tx.send(output.map_err(Into::into));
+                        }
+                        ExecutionCommand::AppendPayload {
+                            payload,
+                            heads,
+                            skip_import,
+                            skip_heads,
+                            tx,
+                        } => {
+                            let output =
+                                self.append_payload(*payload, heads, skip_import, skip_heads);
+                            let _ = tx.send(output);
+                        }
+                    },
                 }
             }
             FromEngine::DownloadedBlocks(blocks) => {
@@ -3146,10 +3142,7 @@ impl EngineApiTreeHandler {
     }
 
     /// Updates the tracked finalized block if we have it.
-    fn update_finalized_block(
-        &self,
-        finalized_block_hash: B256,
-    ) -> Result<(), OnForkChoiceUpdated> {
+    fn update_finalized_block(&self, finalized_block_hash: B256) -> Result<(), PendingHeadUpdate> {
         if finalized_block_hash.is_zero() {
             return Ok(());
         }
@@ -3158,7 +3151,7 @@ impl EngineApiTreeHandler {
             Ok(None) => {
                 debug!(target: "engine::tree", "Finalized block not found in canonical chain");
                 // if the finalized block is not known, we can't update the finalized block
-                return Err(OnForkChoiceUpdated::invalid_state());
+                return Err(PendingHeadUpdate::invalid_state());
             }
             Ok(Some(finalized)) => {
                 if Some(finalized.num_hash())
@@ -3181,7 +3174,7 @@ impl EngineApiTreeHandler {
     }
 
     /// Updates the tracked safe block if we have it
-    fn update_safe_block(&self, safe_block_hash: B256) -> Result<(), OnForkChoiceUpdated> {
+    fn update_safe_block(&self, safe_block_hash: B256) -> Result<(), PendingHeadUpdate> {
         if safe_block_hash.is_zero() {
             return Ok(());
         }
@@ -3190,7 +3183,7 @@ impl EngineApiTreeHandler {
             Ok(None) => {
                 debug!(target: "engine::tree", "Safe block not found in canonical chain");
                 // if the safe block is not known, we can't update the safe block
-                return Err(OnForkChoiceUpdated::invalid_state());
+                return Err(PendingHeadUpdate::invalid_state());
             }
             Ok(Some(safe)) => {
                 if Some(safe.num_hash()) != self.canonical_in_memory_state.get_safe_num_hash() {
@@ -3214,14 +3207,14 @@ impl EngineApiTreeHandler {
     /// made canonical.
     ///
     /// If the forkchoice state is consistent, this will return Ok(()). Otherwise, this will
-    /// return an instance of [`OnForkChoiceUpdated`] that is INVALID.
+    /// return an instance of [`PendingHeadUpdate`] that is INVALID.
     ///
     /// This also updates the safe and finalized blocks in the [`CanonicalInMemoryState`], if they
     /// are consistent with the head block.
     fn ensure_consistent_forkchoice_state(
         &self,
         state: ForkchoiceState,
-    ) -> Result<(), OnForkChoiceUpdated> {
+    ) -> Result<(), PendingHeadUpdate> {
         // Ensure that the finalized block, if not zero, is known and in the canonical chain
         // after the head block is canonicalized.
         //
@@ -3256,12 +3249,12 @@ impl EngineApiTreeHandler {
         attributes: BasePayloadBuilderAttributes,
         head: &base_common_types_chain::Header,
         state: ForkchoiceState,
-    ) -> OnForkChoiceUpdated {
+    ) -> PendingHeadUpdate {
         if let Err(err) =
             self.payload_validator.validate_payload_attributes_against_header(&attributes, head)
         {
             warn!(target: "engine::tree", %err, ?head, "Invalid payload attributes");
-            return OnForkChoiceUpdated::invalid_payload_attributes();
+            return PendingHeadUpdate::invalid_payload_attributes();
         }
 
         // 8. Client software MUST begin a payload build process building on top of
@@ -3302,7 +3295,7 @@ impl EngineApiTreeHandler {
         // }
         //
         // if the payload is deemed VALID and the build process has begun.
-        OnForkChoiceUpdated::updated_with_pending_payload_id(
+        PendingHeadUpdate::updated_with_pending_payload_id(
             PayloadStatus::new(PayloadStatusEnum::Valid, Some(state.head_block_hash)),
             pending_payload_id,
         )

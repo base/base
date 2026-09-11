@@ -15,7 +15,7 @@ use tracing::debug;
 
 use crate::node_fixtures::testsuite::{
     BlockInfo, Environment,
-    actions::{Action, Sequence, expect_fcu_not_syncing_or_accepted, validate_fcu_response},
+    actions::{Action, Sequence, validate_fcu_response},
 };
 
 /// Mine a single block with the given transactions and verify the block was created
@@ -77,13 +77,10 @@ impl Action for AssertMineBlock {
             };
 
             let result = engine_client
-                .update_forkchoice(fork_choice_state, Some(self.payload_attributes.clone()))
+                .start_building(fork_choice_state, self.payload_attributes.clone())
                 .await?;
-            if !result.payload_status.is_valid() {
-                return Err(eyre::eyre!("Payload status not valid: {:?}", result.payload_status));
-            }
-            let id = result.payload_id.ok_or_else(|| eyre::eyre!("No payload build started"))?;
-            engine_client.resolve_payload(id).await?;
+            let id = result;
+            engine_client.end_building(id).await?;
             Ok(())
         })
     }
@@ -192,68 +189,16 @@ impl Action for GenerateNextPayload {
             let fcu_result = env.node_clients[producer_idx]
                 .engine
                 .clone()
-                .update_forkchoice(
+                .start_building(
                     fork_choice_state,
-                    Some(env.payload_attributes_converter.map_or_else(
+                    env.payload_attributes_converter.map_or_else(
                         || payload_attributes.clone().into(),
                         |convert| convert(payload_attributes.clone()),
-                    )),
+                    ),
                 )
                 .await?;
 
-            debug!("FCU result: {:?}", fcu_result);
-
-            // validate the FCU status before proceeding
-            // Note: In the context of GenerateNextPayload, Syncing usually means the engine
-            // doesn't have the requested head block, which should be an error
-            expect_fcu_not_syncing_or_accepted(&fcu_result, "GenerateNextPayload")?;
-
-            let payload_id = if let Some(payload_id) = fcu_result.payload_id {
-                debug!("Received new payload ID: {:?}", payload_id);
-                payload_id
-            } else {
-                debug!("No payload ID returned, generating fresh payload attributes for forking");
-
-                let fresh_payload_attributes = PayloadAttributes {
-                    timestamp: env.active_node_state()?.latest_header_time
-                        + env.block_timestamp_increment,
-                    prev_randao: B256::random(),
-                    suggested_fee_recipient: alloy_primitives::Address::random(),
-                    withdrawals: Some(vec![]),
-                    parent_beacon_block_root: Some(B256::ZERO),
-                    slot_number: None,
-                    target_gas_limit: None,
-                };
-
-                let fresh_fcu_result = env.node_clients[producer_idx]
-                    .engine
-                    .clone()
-                    .update_forkchoice(
-                        fork_choice_state,
-                        Some(env.payload_attributes_converter.map_or_else(
-                            || fresh_payload_attributes.clone().into(),
-                            |convert| convert(fresh_payload_attributes.clone()),
-                        )),
-                    )
-                    .await?;
-
-                debug!("Fresh FCU result: {:?}", fresh_fcu_result);
-
-                // validate the fresh FCU status
-                expect_fcu_not_syncing_or_accepted(
-                    &fresh_fcu_result,
-                    "GenerateNextPayload (fresh)",
-                )?;
-
-                if let Some(payload_id) = fresh_fcu_result.payload_id {
-                    payload_id
-                } else {
-                    debug!(
-                        "Engine considers the fork base already canonical, skipping payload generation"
-                    );
-                    return Ok(());
-                }
-            };
+            let payload_id = fcu_result;
 
             env.active_node_state_mut()?.next_payload_id = Some(payload_id);
 
@@ -261,11 +206,7 @@ impl Action for GenerateNextPayload {
 
             let built_payload_envelope =
                 base_common_types_payload::BaseExecutionPayloadEnvelopeV3::from(
-                    env.node_clients[producer_idx]
-                        .engine
-                        .clone()
-                        .resolve_payload(payload_id)
-                        .await?,
+                    env.node_clients[producer_idx].engine.clone().end_building(payload_id).await?,
                 );
 
             // Store the payload attributes that were used to generate this payload
@@ -334,12 +275,10 @@ impl Action for BroadcastLatestForkchoice {
             );
 
             for (idx, client) in env.node_clients.iter().enumerate() {
-                match client.engine.clone().update_forkchoice(fork_choice_state, None).await {
+                match client.engine.driver.update_heads(fork_choice_state).await {
                     Ok(resp) => {
-                        debug!(
-                            "Client {}: Forkchoice update status: {:?}",
-                            idx, resp.payload_status.status
-                        );
+                        let resp = resp.into_payload_status();
+                        debug!("Client {}: Forkchoice update status: {:?}", idx, resp.status);
                         // validate that the forkchoice update was accepted
                         validate_fcu_response(&resp, &format!("Client {idx}"))?;
                     }
@@ -484,7 +423,7 @@ impl Action for CheckPayloadAccepted {
                     .ok_or_else(|| eyre::eyre!("No next built payload found"))?;
 
                 let built_payload = base_common_types_payload::BaseExecutionPayloadEnvelopeV3::from(
-                    client.engine.clone().resolve_payload(payload_id).await?,
+                    client.engine.clone().end_building(payload_id).await?,
                 );
 
                 let execution_payload_envelope: ExecutionPayloadEnvelopeV3 = built_payload.into();
@@ -595,14 +534,27 @@ impl Action for BroadcastNextNewPayload {
                 let active_idx = env.active_node_idx;
                 let engine = env.node_clients[active_idx].engine.clone();
 
+                let append_input = base_common_types_payload::ExecutionData::v3(
+                    execution_payload.clone(),
+                    vec![],
+                    parent_beacon_block_root,
+                );
+                let append_heads = base_common_types_payload::ForkchoiceState {
+                    head_block_hash: append_input.block_hash(),
+                    safe_block_hash: Default::default(),
+                    finalized_block_hash: Default::default(),
+                };
                 let result = engine
                     .driver
-                    .new_payload(base_common_types_payload::ExecutionData::v3(
-                        execution_payload.clone(),
-                        vec![],
-                        parent_beacon_block_root,
-                    ))
-                    .await?;
+                    .append_payload(append_input, append_heads)
+                    .await
+                    .map(|outcome| outcome.into_payload_status())
+                    .or_else(|error| match error {
+                        base_common_types_payload::AppendPayloadError::InvalidPayload(status) => {
+                            Ok(status)
+                        }
+                        error => Err(error),
+                    })?;
 
                 debug!("Active node {}: new_payload status: {:?}", active_idx, result.status);
 
@@ -628,14 +580,27 @@ impl Action for BroadcastNextNewPayload {
                     let engine = client.engine.clone();
 
                     // Broadcast the execution payload
+                    let append_input = base_common_types_payload::ExecutionData::v3(
+                        execution_payload.clone(),
+                        vec![],
+                        parent_beacon_block_root,
+                    );
+                    let append_heads = base_common_types_payload::ForkchoiceState {
+                        head_block_hash: append_input.block_hash(),
+                        safe_block_hash: Default::default(),
+                        finalized_block_hash: Default::default(),
+                    };
                     let result = engine
                         .driver
-                        .new_payload(base_common_types_payload::ExecutionData::v3(
-                            execution_payload.clone(),
-                            vec![],
-                            parent_beacon_block_root,
-                        ))
-                        .await?;
+                        .append_payload(append_input, append_heads)
+                        .await
+                        .map(|outcome| outcome.into_payload_status())
+                        .or_else(|error| match error {
+                            base_common_types_payload::AppendPayloadError::InvalidPayload(
+                                status,
+                            ) => Ok(status),
+                            error => Err(error),
+                        })?;
 
                     broadcast_results.push((idx, result.status.clone()));
                     debug!("Node {}: new_payload broadcast status: {:?}", idx, result.status);
@@ -747,10 +712,20 @@ impl Action for TestFcuToTag {
                 finalized_block_hash: target_block.hash,
             };
 
-            let fcu_response = engine_client.update_forkchoice(fcu_state, None).await?;
+            let fcu_response = engine_client
+                .driver
+                .update_heads(fcu_state)
+                .await
+                .map(|outcome| outcome.into_payload_status())
+                .or_else(|error| match error {
+                    base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(
+                        status,
+                    ) => Ok(status),
+                    error => Err(error),
+                })?;
 
             // validate the response matches expected status
-            match (&fcu_response.payload_status.status, &self.expected_status) {
+            match (&fcu_response.status, &self.expected_status) {
                 (PayloadStatusEnum::Valid, PayloadStatusEnum::Valid) => {
                     debug!("FCU to '{}' returned VALID as expected", self.tag);
                 }
@@ -961,14 +936,27 @@ impl Action for ProduceInvalidBlocks {
                     // use a random parent beacon block root since this is for invalid block testing
                     let parent_beacon_block_root = B256::random();
 
+                    let append_input = base_common_types_payload::ExecutionData::v3(
+                        corrupted_payload.clone(),
+                        versioned_hashes,
+                        parent_beacon_block_root,
+                    );
+                    let append_heads = base_common_types_payload::ForkchoiceState {
+                        head_block_hash: append_input.block_hash(),
+                        safe_block_hash: Default::default(),
+                        finalized_block_hash: Default::default(),
+                    };
                     let new_payload_response = engine_client
                         .driver
-                        .new_payload(base_common_types_payload::ExecutionData::v3(
-                            corrupted_payload.clone(),
-                            versioned_hashes,
-                            parent_beacon_block_root,
-                        ))
-                        .await?;
+                        .append_payload(append_input, append_heads)
+                        .await
+                        .map(|outcome| outcome.into_payload_status())
+                        .or_else(|error| match error {
+                            base_common_types_payload::AppendPayloadError::InvalidPayload(
+                                status,
+                            ) => Ok(status),
+                            error => Err(error),
+                        })?;
 
                     // expect the payload to be rejected as invalid
                     match new_payload_response.status {

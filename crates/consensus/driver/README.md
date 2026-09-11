@@ -95,7 +95,7 @@ The delegation variants differ significantly. `DelegateDerivationActor` polls an
 
 The sequencer actor owns the block production loop. It runs a `tokio::select!` with five arms in priority order: cancellation, admin queries, the seal pipeline step, the build ticker (gated on `sealer.is_none()`), and initial reset retries before the main loop starts.
 
-The ticker fires every `rollup_config.block_time` seconds (default two seconds) and is wall-clock synchronized. After each successful seal the next seal target is provisionally scheduled for `UNIX_EPOCH + (sealed_block_timestamp + block_time) * 1s - last_seal_duration`. Here `last_seal_duration` measures only the Engine `getPayload` wait; conductor commit, gossip, and insertion happen afterward in the separate seal pipeline. Once insertion is acknowledged, that provisional target is replaced with the inserted parent's timestamp so an early next build is deferred until then. On-time and late builds remain immediately runnable; after the child build starts, its seal target is scheduled using the existing `last_seal_duration` adjustment.
+The ticker fires every `rollup_config.block_time` seconds (default two seconds) and is wall-clock synchronized. After each successful seal the next seal target is provisionally scheduled for `UNIX_EPOCH + (sealed_block_timestamp + block_time) * 1s - last_seal_duration`. Here `last_seal_duration` measures only the engine `end_building` wait; conductor commit, gossip, and insertion happen afterward in the separate seal pipeline. Once insertion is acknowledged, that provisional target is replaced with the inserted parent's timestamp so an early next build is deferred until then. On-time and late builds remain immediately runnable; after the child build starts, its seal target is scheduled using the existing `last_seal_duration` adjustment.
 
 The build-seal cycle works as follows. On each tick, if an inserted parent is queued and its timestamp has arrived, the sequencer starts the child build on that exact parent. If there is instead a payload handle from a previous `start_build_block` call, the sequencer calls `get_sealed_payload` to retrieve the finalized `BaseExecutionPayloadEnvelope` from the engine. If the unsafe head has advanced past the handle's parent, the stale build is discarded and a fresh build is started. If the seal succeeds, a `PayloadSealer` is constructed to drive the three-stage pipeline. The acknowledged inserted head is then queued as the next build parent.
 
@@ -142,3 +142,17 @@ The complete channel graph between actors is as follows. The L1 watcher actor wr
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+
+## Execution operations
+
+Consensus uses `append_payload` to import and canonicalize a block, `start_building`
+to select a parent and obtain a `PayloadId`, and `end_building` to resolve that job.
+Ending a build does not canonicalize it: the sequencer still commits to its conductor
+and schedules gossip before appending. Derivation uses the same build operations,
+with a single deposits-only retry for invalid execution and a flush after successful
+fallback.
+
+`set_safe` and `set_finalized` enqueue consensus safety decisions. Consolidation,
+combined safety updates, reset, and synchronization probes share the native
+`UpdateHeads` operation. Consensus retains its existing local-safe state and only
+advances the unsafe head after execution acknowledges canonicalization.

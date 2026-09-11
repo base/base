@@ -12,11 +12,12 @@ use tracing::{debug, error, info, warn};
 
 use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 use crate::{
-    BuildRequest, ConsolidateTask, EngineActorRequest, EngineClient, EngineClientError,
+    ConsolidateTask, EndBuildingRequest, EngineActorRequest, EngineClient, EngineClientError,
     EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver, EngineTask,
-    EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask, GetPayloadRequest,
+    EngineTaskError, EngineTaskErrorSeverity, EngineTaskErrors, FinalizeTask,
     InsertUnsafePayloadRequest, Metrics as EngineMetrics, Metrics, ReconcileShadowRequest,
-    ResetOrigin, ResetRequest, ResetRequestOutcome, SealTaskError, actors::engine::ResetOutcome,
+    ResetOrigin, ResetRequest, ResetRequestOutcome, SealTaskError, StartBuildingRequest,
+    actors::engine::ResetOutcome,
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
@@ -272,14 +273,15 @@ where
                 };
 
                 match request {
-                    EngineActorRequest::BuildRequest(build_request) => {
-                        let BuildRequest { attributes, result_tx, otel_cx } = *build_request;
+                    EngineActorRequest::StartBuildingRequest(build_request) => {
+                        let StartBuildingRequest { attributes, result_tx, otel_cx } =
+                            *build_request;
                         let client = Arc::clone(self.processor.client());
 
                         let build_result = self
                             .processor
                             .engine_mut()
-                            .build(client, attributes)
+                            .start_building(client, attributes)
                             .with_context(otel_cx)
                             .await;
                         match build_result {
@@ -306,15 +308,14 @@ where
                             }
                         }
                     }
-                    EngineActorRequest::GetPayloadRequest(get_payload_request) => {
-                        let GetPayloadRequest { payload_id, attributes, result_tx, otel_cx } =
+                    EngineActorRequest::EndBuildingRequest(get_payload_request) => {
+                        let EndBuildingRequest { payload_id, attributes, result_tx, otel_cx } =
                             *get_payload_request;
                         let client = Arc::clone(self.processor.client());
-                        let rollup = Arc::clone(self.processor.rollup());
                         let result = self
                             .processor
                             .engine_mut()
-                            .get_payload(client, rollup, payload_id, attributes)
+                            .end_building(client, payload_id, attributes)
                             .with_context(otel_cx)
                             .await;
 
@@ -333,7 +334,7 @@ where
                             }
                         }
                     }
-                    EngineActorRequest::ProcessSafeL2SignalRequest(safe_signal) => {
+                    EngineActorRequest::SetSafeRequest(safe_signal) => {
                         // Canonical ancestors of the cycle anchor cannot reorg the private unsafe
                         // branch, so confirm them immediately and let derivation keep advancing.
                         let should_defer = self
@@ -352,9 +353,7 @@ where
                         )));
                         self.processor.enqueue(task);
                     }
-                    EngineActorRequest::ProcessFinalizedL2BlockNumberRequest(
-                        finalized_l2_block_number,
-                    ) => {
+                    EngineActorRequest::SetFinalizedRequest(finalized_l2_block_number) => {
                         // Finalization is equally safe through the anchor once the corresponding
                         // block is safe; applying it promptly also keeps ExEx WAL pruning moving.
                         let safe_head_number =

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
-use base_common_types_payload::PayloadStatusEnum;
 use base_consensus_batch::L2BlockInfo;
 use tokio::time::Instant;
 
@@ -92,46 +91,32 @@ impl<EngineClient_: EngineClient> SynchronizeTask<EngineClient_> {
         }
     }
 
-    /// Checks the response of the `engine_forkchoiceUpdated` call, and updates the sync status if
-    /// necessary.
-    ///
-    /// Returns `true` if the EL confirmed the forkchoice (`Valid`), meaning the caller
-    /// should apply the proposed sync-state update.  Returns `false` for `Syncing`,
-    /// indicating the EL accepted the hint but has **not** canonicalised the head — the
-    /// caller must leave `state.sync_state` unchanged so that the node's view of the
-    /// chain does not advance beyond what the EL can actually serve.
-    fn check_forkchoice_updated_status(
+    /// Rejects a requested unsafe head below the finalized head before dispatch.
+    pub fn validate_update(&self, state: &EngineState) -> Result<(), SynchronizeTaskError> {
+        let heads = state.sync_state.updated(self.state_update);
+        if heads.unsafe_head().block_info.number < heads.finalized_head().block_info.number {
+            return Err(SynchronizeTaskError::FinalizedAheadOfUnsafe(
+                heads.unsafe_head().block_info.number,
+                heads.finalized_head().block_info.number,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Applies only the acknowledged portion of an execution head update.
+    pub fn apply_response(
         &self,
         state: &mut EngineState,
-        status: &PayloadStatusEnum,
-    ) -> Result<bool, SynchronizeTaskError> {
-        match status {
-            PayloadStatusEnum::Valid => {
-                if !state.el_sync_finished {
-                    info!(
-                        target: "engine",
-                        "Finished execution layer sync."
-                    );
-                    state.el_sync_finished = true;
-                }
-
-                Ok(true)
-            }
-            PayloadStatusEnum::Syncing => {
-                // The EL stored the block but cannot validate it yet (e.g. missing
-                // parent).  We intentionally do NOT apply the sync-state update so
-                // that unsafe_head stays at the last *confirmed* value.  This
-                // prevents a gap between the node's logical unsafe head and what the
-                // EL can actually serve, which would cause derivation consolidation
-                // to fail with `MissingUnsafeL2Block` and trigger a reset loop.
-                debug!(target: "engine", "Forkchoice update returned Syncing; state not advanced");
-                Ok(false)
-            }
-            s => {
-                // Other codes are not expected.
-                Err(SynchronizeTaskError::UnexpectedPayloadStatus(s.clone()))
-            }
+        outcome: base_common_types_payload::HeadUpdateOutcome,
+    ) -> bool {
+        let confirmed = outcome.is_applied();
+        if confirmed && !state.el_sync_finished {
+            info!(target: "engine", "Finished execution layer sync");
+            state.el_sync_finished = true;
         }
+        let update = if confirmed { self.state_update } else { self.safe_only_sync_update(state) };
+        state.sync_state = state.sync_state.apply_update(update);
+        confirmed
     }
 }
 
@@ -162,15 +147,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
             return Ok(());
         }
 
-        // Check if the head is behind the finalized head.
-        if new_sync_state.unsafe_head().block_info.number
-            < new_sync_state.finalized_head().block_info.number
-        {
-            return Err(SynchronizeTaskError::FinalizedAheadOfUnsafe(
-                new_sync_state.unsafe_head().block_info.number,
-                new_sync_state.finalized_head().block_info.number,
-            ));
-        }
+        self.validate_update(state)?;
 
         let fcu_time_start = Instant::now();
 
@@ -181,29 +158,11 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // NOTE: it doesn't matter which version we use here, because we're not sending any
         // payload attributes. The forkchoice updated call is version agnostic if no payload
         // attributes are provided.
-        let response = self.client.update_forkchoice(forkchoice, None).await;
+        let response = self.client.update_heads(forkchoice).await;
 
-        let valid_response = response.map_err(|e| {
-            // Fatal forkchoice update error.
-            let error = if e.is_invalid_forkchoice() {
-                SynchronizeTaskError::InvalidForkchoiceState
-            } else {
-                SynchronizeTaskError::ForkchoiceUpdateFailed(e)
-            };
+        let valid_response = response.map_err(SynchronizeTaskError::from)?;
 
-            debug!(target: "engine", error = ?error, "Unexpected forkchoice update error");
-
-            error
-        })?;
-
-        let confirmed =
-            self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
-
-        // On `Valid`, commit the full sync-state update. On `Syncing`, commit only
-        // the filtered safe-side update that is actually allowed to survive.
-        let applied_update =
-            if confirmed { self.state_update } else { self.safe_only_sync_update(state) };
-        state.sync_state = state.sync_state.apply_update(applied_update);
+        let confirmed = self.apply_response(state, valid_response);
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(

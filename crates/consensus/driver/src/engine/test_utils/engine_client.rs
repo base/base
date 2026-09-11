@@ -311,41 +311,75 @@ impl MockEngineClient {
 
 #[async_trait]
 impl EngineClient for MockEngineClient {
-    async fn submit_payload(
+    async fn append_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<PayloadStatus, EngineClientError> {
-        let mut storage = self.storage.write().await;
-        storage.last_payload = Some(envelope);
-        storage
-            .payload_response
-            .clone()
-            .ok_or_else(|| {
-                TransportErrorKind::custom_str("no submission response configured").into()
-            })
-            .map_err(EngineClientError::RpcError)
-    }
-
-    async fn update_forkchoice(
-        &self,
-        state: ForkchoiceState,
-        attributes: Option<BasePayloadAttributes>,
-    ) -> Result<ForkchoiceUpdated, EngineClientError> {
-        let mut storage = self.storage.write().await;
-        storage.forkchoice_requests.push((state, attributes.is_some()));
-        if let Some(error) = storage.forkchoice_error.clone() {
-            return Err(TransportError::ErrorResp(error).into());
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
+        let imported = self.simulate_import(envelope).await?;
+        if !matches!(
+            imported.status,
+            base_common_types_payload::PayloadStatusEnum::Valid
+                | base_common_types_payload::PayloadStatusEnum::Syncing
+        ) {
+            return Err(
+                base_common_types_payload::AppendPayloadError::InvalidPayload(imported).into()
+            );
         }
-        storage
-            .forkchoice_response
-            .clone()
-            .ok_or_else(|| {
-                TransportErrorKind::custom_str("no forkchoice response configured").into()
-            })
-            .map_err(EngineClientError::RpcError)
+        base_common_types_payload::HeadUpdateOutcome::from_status(
+            self.simulate_heads(heads, None)
+                .await
+                .map_err(|error| {
+                    base_common_types_payload::AppendPayloadError::Heads(
+                        base_common_types_payload::BeaconForkChoiceUpdateError::internal(error),
+                    )
+                })?
+                .payload_status,
+            heads.head_block_hash,
+        )
+        .map_err(|error| base_common_types_payload::AppendPayloadError::Heads(error).into())
     }
 
-    async fn resolve_payload(
+    async fn update_heads(
+        &self,
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
+        base_common_types_payload::HeadUpdateOutcome::from_status(
+            self.simulate_heads(heads, None).await?.payload_status,
+            heads.head_block_hash,
+        )
+        .map_err(|error| base_execution_engine_driver::ExecutionCommandError::from(error).into())
+    }
+
+    async fn start_building(
+        &self,
+        heads: ForkchoiceState,
+        attributes: BasePayloadAttributes,
+    ) -> Result<PayloadId, EngineClientError> {
+        let result = self.simulate_heads(heads, Some(attributes)).await?;
+        if result.payload_status.is_syncing() {
+            return Err(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::Syncing,
+            )
+            .into());
+        }
+        if !result.is_valid() {
+            return Err(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(
+                    result.payload_status,
+                ),
+            )
+            .into());
+        }
+        result.payload_id.ok_or_else(|| {
+            base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::MissingBuild,
+            )
+            .into()
+        })
+    }
+
+    async fn end_building(
         &self,
         _id: PayloadId,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
@@ -446,5 +480,43 @@ fn block_id_to_key(block_id: &BlockId) -> String {
     match block_id {
         BlockId::Hash(hash) => format!("hash:{}", hash.block_hash),
         BlockId::Number(num) => format!("number:{num}"),
+    }
+}
+
+impl MockEngineClient {
+    /// Executes the scripted import stage for an append.
+    pub async fn simulate_import(
+        &self,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let mut storage = self.storage.write().await;
+        storage.last_payload = Some(envelope);
+        storage
+            .payload_response
+            .clone()
+            .ok_or_else(|| {
+                TransportErrorKind::custom_str("no submission response configured").into()
+            })
+            .map_err(EngineClientError::RpcError)
+    }
+
+    /// Executes a scripted head-selection or build stage.
+    pub async fn simulate_heads(
+        &self,
+        state: ForkchoiceState,
+        attributes: Option<BasePayloadAttributes>,
+    ) -> Result<ForkchoiceUpdated, EngineClientError> {
+        let mut storage = self.storage.write().await;
+        storage.forkchoice_requests.push((state, attributes.is_some()));
+        if let Some(error) = storage.forkchoice_error.clone() {
+            return Err(TransportError::ErrorResp(error).into());
+        }
+        storage
+            .forkchoice_response
+            .clone()
+            .ok_or_else(|| {
+                TransportErrorKind::custom_str("no forkchoice response configured").into()
+            })
+            .map_err(EngineClientError::RpcError)
     }
 }

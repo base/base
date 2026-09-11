@@ -178,12 +178,12 @@ where
         self.derivation_origin_tx.send_replace(Some(sync_status.current_l1));
 
         self.engine_client
-            .send_safe_l2_signal(sync_status.safe_l2.into())
+            .set_safe(sync_status.safe_l2.into())
             .await
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
 
         self.engine_client
-            .send_finalized_l2_block(sync_status.finalized_l2.block_info.number)
+            .set_finalized(sync_status.finalized_l2.block_info.number)
             .await
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
 

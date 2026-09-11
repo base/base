@@ -109,7 +109,7 @@ where
     async fn try_finalize_pending(&mut self) -> Result<(), DerivationError> {
         if let Some(l2_block_number) = self.finalizer.try_finalize_pending() {
             self.engine_client
-                .send_finalized_l2_block(l2_block_number)
+                .set_finalized(l2_block_number)
                 .await
                 .map_err(|e| DerivationError::Sender(Box::new(e)))?;
         }
@@ -257,7 +257,7 @@ where
                     self.finalizer.process_finalized_l1_block(*finalized_l1_block)
                 {
                     self.engine_client
-                        .send_finalized_l2_block(l2_block_number)
+                        .set_finalized(l2_block_number)
                         .await
                         .map_err(|e| DerivationError::Sender(Box::new(e)))?;
                 }
@@ -374,7 +374,7 @@ where
 
         // Send payload attributes out for processing.
         self.engine_client
-            .send_safe_l2_signal(payload_attributes.into())
+            .set_safe(payload_attributes.into())
             .await
             .map_err(|e| DerivationError::Sender(Box::new(e)))?;
 

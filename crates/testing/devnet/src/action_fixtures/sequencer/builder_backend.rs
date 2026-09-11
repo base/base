@@ -124,13 +124,13 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
     async fn reset_engine_forkchoice(&self, _reason: ResetReason) -> EngineClientResult<()> {
         let head = self.head.lock().expect("head lock").block_info.hash;
         self.engine()
-            .update_forkchoice(head, head, None)
+            .update_heads(head, head)
             .await
             .map_err(|e| EngineClientError::ResetForkchoiceError(e.to_string()))?;
         Ok(())
     }
 
-    async fn start_build_block(
+    async fn start_building(
         &self,
         attributes: AttributesWithParent,
     ) -> EngineClientResult<PayloadId> {
@@ -142,20 +142,13 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         let fcu = self
             .engine()
-            .update_forkchoice(parent, parent, Some(builder_attrs))
+            .start_building(parent, parent, builder_attrs)
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
-        if !fcu.payload_status.is_valid() {
-            return Err(EngineClientError::ResponseError(format!(
-                "engine rejected build-block forkchoice: {:?}",
-                fcu.payload_status
-            )));
-        }
-        fcu.payload_id
-            .ok_or_else(|| EngineClientError::ResponseError("no payload id returned".into()))
+        Ok(fcu)
     }
 
-    async fn get_sealed_payload(
+    async fn end_building(
         &self,
         payload_id: PayloadId,
         attributes: AttributesWithParent,
@@ -165,7 +158,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         tokio::time::sleep(self.block_time).await;
         let envelope = self
             .engine()
-            .get_payload(payload_id)
+            .end_building(payload_id)
             .await
             .map_err(|error| EngineClientError::ResponseError(error.to_string()))?;
         let execution_payload = envelope.execution_payload;
@@ -188,7 +181,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         })
     }
 
-    async fn insert_unsafe_payload(
+    async fn append_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> EngineClientResult<L2BlockInfo> {
@@ -204,7 +197,7 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
 
         let engine = self.engine();
         let status = engine
-            .new_payload(v4, vec![], parent_beacon_block_root, Requests::default())
+            .append_payload(v4, vec![], parent_beacon_block_root, Requests::default())
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
         if !status.is_valid() {
@@ -220,13 +213,13 @@ impl SequencerEngineClient for BuilderBackedEngineClient {
         // backend needs to drive the builder through a real safe/finalized forkchoice sequence.
         let current_head = self.head.lock().expect("head lock").block_info.hash;
         let fcu = engine
-            .update_forkchoice(current_head, new_hash, None)
+            .update_heads(current_head, new_hash)
             .await
             .map_err(|e| EngineClientError::RequestError(e.to_string()))?;
-        if !fcu.payload_status.is_valid() {
+        if !fcu.is_valid() {
             return Err(EngineClientError::RequestError(format!(
                 "engine rejected forkchoice update: {:?}",
-                fcu.payload_status
+                fcu
             )));
         }
 

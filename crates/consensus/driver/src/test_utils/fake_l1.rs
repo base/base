@@ -80,7 +80,7 @@ impl FakeL1 {
     ///
     /// When not stalled, each call dispatches the block through `dispatch_safe_l2_for`, which
     /// consumes **two** scripted FCU responses: one synthetic (via `inject_forkchoice_call`) and one
-    /// real (from the engine actor processing `ProcessSafeL2SignalRequest`). Script the response
+    /// real (from the engine actor processing `SetSafeRequest`). Script the response
     /// queue with this in mind.
     ///
     /// Not safe to call concurrently: the state mutex is released between the `canonical` push
@@ -119,7 +119,7 @@ impl FakeL1 {
     ///
     /// The injected FCU call-log entry sets head==safe==finalized to the same hash, which is a
     /// deliberate simplification: the real protocol advances these three heads independently.
-    /// Tests must therefore drive progress via the `ProcessSafeL2SignalRequest` channel and must
+    /// Tests must therefore drive progress via the `SetSafeRequest` channel and must
     /// NOT derive unsafe/finalized-head ordering from the call log.
     async fn dispatch_safe_l2_for(&self, block: BlockInfo) {
         assert!(
@@ -143,9 +143,7 @@ impl FakeL1 {
         };
 
         self.engine_request_tx
-            .send(EngineActorRequest::ProcessSafeL2SignalRequest(ConsolidateInput::BlockInfo(
-                safe_l2,
-            )))
+            .send(EngineActorRequest::SetSafeRequest(ConsolidateInput::BlockInfo(safe_l2)))
             .await
             .expect("engine actor request channel closed while dispatching safe l2 signal");
 
@@ -204,7 +202,7 @@ impl L1RetrievalProvider for FakeL1 {
     /// Returns the next pending block, or `None` during normal (non-stalled) operation.
     ///
     /// In this harness, L1 data flows through the engine actor channel (`dispatch_safe_l2_for` →
-    /// `ProcessSafeL2SignalRequest`) rather than through pipeline polling. The `pending` queue is
+    /// `SetSafeRequest`) rather than through pipeline polling. The `pending` queue is
     /// only populated while the chain is stalled; in the normal path `extend()` dispatches blocks
     /// directly and `next_l1_block` returns `Ok(None)`.
     async fn next_l1_block(&mut self) -> PipelineResult<Option<BlockInfo>> {

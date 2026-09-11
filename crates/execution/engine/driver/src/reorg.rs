@@ -12,29 +12,26 @@ use base_common_chain_config::ChainSpecProvider;
 use base_common_types_chain::{
     BlockBodyExt as _, BlockHeader, SealedBlock, SignedTransaction, Transaction,
 };
-use base_common_types_payload::{
-    BaseBuiltPayload, BeaconEngineMessage, BeaconOnNewPayloadError, ForkchoiceState,
-    OnForkChoiceUpdated, PayloadStatus,
-};
+use base_common_types_payload::{BaseBuiltPayload, ExecutionCommand, ForkchoiceState};
 use base_execution_evm_blocks::{BaseEvmConfig, BlockBuilderOutcome};
 use base_execution_evm_runtime::{BlockExecutionError, BlockValidationError, State};
 use base_execution_payload::BaseEngineValidator;
 use base_execution_state_types::{BlockReader, ProviderError, StateProviderFactory};
-use futures::{Stream, StreamExt, TryFutureExt, stream::FuturesUnordered};
-use itertools::Either;
+use futures::{Stream, StreamExt, stream::FuturesUnordered};
 use tokio::sync::oneshot;
-use tracing::*;
+use tracing::{debug, error, trace};
 
 #[derive(Debug)]
 enum EngineReorgState {
     Forward,
-    Reorg { queue: VecDeque<BeaconEngineMessage> },
+    Reorg { queue: VecDeque<ExecutionCommand> },
 }
 
-type EngineReorgResponse = Result<
-    Either<
-        Result<PayloadStatus, BeaconOnNewPayloadError>,
-        Result<OnForkChoiceUpdated, base_common_types_payload::EngineRequestError>,
+/// Completion of an injected authoritative append.
+pub type EngineReorgResponse = Result<
+    Result<
+        base_common_types_payload::HeadUpdateOutcome,
+        base_common_types_payload::AppendPayloadError,
     >,
     oneshot::error::RecvError,
 >;
@@ -96,7 +93,7 @@ impl<S, Provider> EngineReorg<S, Provider> {
 
 impl<S, Provider> Stream for EngineReorg<S, Provider>
 where
-    S: Stream<Item = BeaconEngineMessage>,
+    S: Stream<Item = ExecutionCommand>,
     Provider: BlockReader + StateProviderFactory + ChainSpecProvider,
 {
     type Item = S::Item;
@@ -107,20 +104,14 @@ where
         loop {
             if let Poll::Ready(Some(response)) = this.reorg_responses.poll_next_unpin(cx) {
                 match response {
-                    Ok(Either::Left(Ok(payload_status))) => {
-                        debug!(target: "engine::stream::reorg", ?payload_status, "Received response for reorg new payload");
+                    Ok(Ok(status)) => {
+                        debug!(target: "engine::stream::reorg", ?status, "Reorg append completed")
                     }
-                    Ok(Either::Left(Err(payload_error))) => {
-                        error!(target: "engine::stream::reorg", %payload_error, "Error on reorg new payload");
-                    }
-                    Ok(Either::Right(Ok(fcu_status))) => {
-                        debug!(target: "engine::stream::reorg", ?fcu_status, "Received response for reorg forkchoice update");
-                    }
-                    Ok(Either::Right(Err(fcu_error))) => {
-                        error!(target: "engine::stream::reorg", %fcu_error, "Error on reorg forkchoice update");
+                    Ok(Err(error)) => {
+                        error!(target: "engine::stream::reorg", %error, "Reorg append failed")
                     }
                     Err(_) => {}
-                };
+                }
                 continue;
             }
 
@@ -137,7 +128,13 @@ where
             let next = ready!(this.stream.poll_next_unpin(cx));
             let item = match (next, &this.last_forkchoice_state) {
                 (
-                    Some(BeaconEngineMessage::NewPayload { payload, tx }),
+                    Some(ExecutionCommand::AppendPayload {
+                        payload,
+                        heads,
+                        skip_import,
+                        skip_heads,
+                        tx,
+                    }),
                     Some(last_forkchoice_state),
                 ) if this.forkchoice_states_forwarded > this.frequency &&
                         // Only enter reorg state if new payload attaches to current head.
@@ -157,15 +154,18 @@ where
                         this.evm_config,
                         this.payload_validator,
                         *this.depth,
-                        payload.clone(),
+                        *payload.clone(),
                     ) {
                         Ok(result) => result,
                         Err(error) => {
                             error!(target: "engine::stream::reorg", %error, "Error attempting to create reorg head");
                             // Forward the payload and attempt to create reorg on top of
                             // the next one
-                            return Poll::Ready(Some(BeaconEngineMessage::NewPayload {
+                            return Poll::Ready(Some(ExecutionCommand::AppendPayload {
                                 payload,
+                                heads,
+                                skip_import,
+                                skip_heads,
                                 tx,
                             }));
                         }
@@ -177,37 +177,38 @@ where
                     };
 
                     let (reorg_payload_tx, reorg_payload_rx) = oneshot::channel();
-                    let (reorg_fcu_tx, reorg_fcu_rx) = oneshot::channel();
-                    this.reorg_responses.extend([
-                        Box::pin(reorg_payload_rx.map_ok(Either::Left)) as ReorgResponseFut,
-                        Box::pin(reorg_fcu_rx.map_ok(Either::Right)) as ReorgResponseFut,
-                    ]);
-
+                    this.reorg_responses.push(Box::pin(reorg_payload_rx) as ReorgResponseFut);
                     let queue = VecDeque::from([
-                        // Current payload
-                        BeaconEngineMessage::NewPayload { payload, tx },
-                        // Reorg payload
-                        BeaconEngineMessage::NewPayload {
-                            payload: BaseBuiltPayload::block_to_payload(reorg_block, encoded_bal),
-                            tx: reorg_payload_tx,
+                        ExecutionCommand::AppendPayload {
+                            payload,
+                            heads,
+                            skip_import,
+                            skip_heads,
+                            tx,
                         },
-                        // Reorg forkchoice state
-                        BeaconEngineMessage::ForkchoiceUpdated {
-                            state: reorg_forkchoice_state,
-                            payload_attrs: None,
-                            tx: reorg_fcu_tx,
+                        ExecutionCommand::AppendPayload {
+                            payload: Box::new(BaseBuiltPayload::block_to_payload(
+                                reorg_block,
+                                encoded_bal,
+                            )),
+                            heads: reorg_forkchoice_state,
+                            skip_import: false,
+                            skip_heads: false,
+                            tx: reorg_payload_tx,
                         },
                     ]);
                     *this.state = EngineReorgState::Reorg { queue };
                     continue;
                 }
-                (Some(BeaconEngineMessage::ForkchoiceUpdated { state, payload_attrs, tx }), _) => {
-                    // Record last forkchoice state forwarded to the engine.
-                    // We do not care if it's valid since engine should be able to handle
-                    // reorgs that rely on invalid forkchoice state.
-                    *this.last_forkchoice_state = Some(state);
+                (Some(command), _) => {
+                    let heads = match &command {
+                        ExecutionCommand::AppendPayload { heads, .. }
+                        | ExecutionCommand::UpdateHeads { heads, .. }
+                        | ExecutionCommand::StartBuilding { heads, .. } => *heads,
+                    };
+                    *this.last_forkchoice_state = Some(heads);
                     *this.forkchoice_states_forwarded += 1;
-                    Some(BeaconEngineMessage::ForkchoiceUpdated { state, payload_attrs, tx })
+                    Some(command)
                 }
                 (item, _) => item,
             };

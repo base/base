@@ -11,8 +11,8 @@ use std::{
 use base_common_types_payload::{BasePayloadAttributes, PayloadId};
 use base_consensus_batch::{AttributesWithParent, L2BlockInfo};
 use base_consensus_driver::{
-    BuildRequest, EngineActor, EngineActorRequest, EngineError, EngineQueries,
-    EngineRequestReceiver, EngineRpcClient, NodeActor,
+    EngineActor, EngineActorRequest, EngineError, EngineQueries, EngineRequestReceiver,
+    EngineRpcClient, NodeActor, StartBuildingRequest,
 };
 use jsonrpsee::types::ErrorCode;
 use opentelemetry::Context;
@@ -39,7 +39,7 @@ impl EngineRequestReceiver for CountingEngineReceiver {
                     return Err(EngineError::ChannelClosed);
                 };
 
-                if let EngineActorRequest::BuildRequest(build_request) = request {
+                if let EngineActorRequest::StartBuildingRequest(build_request) = request {
                     builds_processed.fetch_add(1, Ordering::SeqCst);
                     let payload_id = PayloadId::new([0x01; 8]);
                     let _ = build_request.result_tx.send(Ok(payload_id)).await;
@@ -79,7 +79,7 @@ async fn full_public_rpc_queue_does_not_block_engine_processing_requests() {
     let attributes =
         AttributesWithParent::new(BasePayloadAttributes::default(), L2BlockInfo::default(), None);
     engine_actor_request_tx
-        .send(EngineActorRequest::BuildRequest(Box::new(BuildRequest {
+        .send(EngineActorRequest::StartBuildingRequest(Box::new(StartBuildingRequest {
             attributes,
             result_tx: payload_id_tx,
             otel_cx: Context::new(),

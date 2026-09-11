@@ -526,13 +526,13 @@ async fn test_rocksdb_reorg_unwind() -> Result<()> {
 
     // Build an alternate payload (this builds on top of the current head, i.e., block 3)
     // But we want to reorg back to block 1, so we'll use the payload and then FCU to it
-    let alt_payload = nodes[0].new_payload().await?;
-    let alt_block_hash = nodes[0].submit_payload(alt_payload.clone()).await?;
+    let alt_payload = nodes[0].build_payload().await?;
+    let alt_block_hash = nodes[0].append_payload(alt_payload.clone()).await?;
 
     // Trigger reorg: make the alternate chain canonical by sending FCU pointing to block 1's hash
     // as finalized, which should trigger an unwind of blocks 2 and 3
     // The alt block becomes the new head
-    nodes[0].update_forkchoice(block1_hash, alt_block_hash).await?;
+    nodes[0].update_heads(block1_hash, alt_block_hash).await?;
 
     // Give time for the reorg to complete
     tokio::time::sleep(Duration::from_millis(500)).await;

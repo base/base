@@ -373,30 +373,27 @@ mod tests {
             ..Default::default()
         };
         let update = client
-            .update_forkchoice(ForkchoiceState::same_hash(head_hash), Some(attributes.clone()))
+            .start_building(ForkchoiceState::same_hash(head_hash), attributes.clone())
             .await
             .unwrap();
-        assert!(update.payload_status.is_valid());
-        let payload = client.resolve_payload(update.payload_id.unwrap()).await.unwrap();
+        let payload = client.end_building(update).await.unwrap();
         let hash = payload.execution_payload.block_hash();
         let mut malformed = payload.clone();
         malformed.parent_beacon_block_root =
             if payload.parent_beacon_block_root.is_some() { None } else { Some(B256::ZERO) };
-        assert!(client.submit_payload(malformed).await.unwrap().is_invalid());
-        let inserted = client.submit_payload(payload).await.unwrap();
-        assert!(inserted.is_valid());
-        let update = client
-            .update_forkchoice(
-                ForkchoiceState {
-                    head_block_hash: hash,
-                    safe_block_hash: head_hash,
-                    finalized_block_hash: head_hash,
-                },
-                None,
-            )
-            .await
-            .unwrap();
-        assert!(update.payload_status.is_valid());
+        let heads = ForkchoiceState {
+            head_block_hash: hash,
+            safe_block_hash: head_hash,
+            finalized_block_hash: head_hash,
+        };
+        assert!(matches!(
+            client.append_payload(malformed, heads).await,
+            Err(crate::ExecutionClientError::Append(
+                base_common_types_payload::AppendPayloadError::InvalidPayload(_)
+            ))
+        ));
+        let inserted = client.append_payload(payload, heads).await.unwrap();
+        assert!(inserted.is_applied());
         let canonical =
             client.l2.block(alloy_eips::BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
         assert_eq!(canonical.header.hash_slow(), hash);

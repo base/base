@@ -53,6 +53,7 @@ pub enum EngineClientCall {
     L2BlockByLabel(BlockNumberOrTag),
 }
 
+/// Scripted engine responses and the ordered call history shared by fake clients.
 #[derive(Debug, Default)]
 pub struct FakeEngineClientState {
     calls: Vec<EngineClientCall>,
@@ -187,43 +188,75 @@ impl FakeEngineClient {
 
 #[async_trait]
 impl EngineClient for FakeEngineClient {
-    async fn submit_payload(
+    async fn append_payload(
         &self,
-        payload: BaseExecutionPayloadEnvelope,
-    ) -> Result<PayloadStatus, EngineClientError> {
-        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::SubmitPayload(Box::new(payload)));
-        Ok(state.scripted_payload.pop_front().or_else(|| state.single_payload.clone()).unwrap_or(
-            PayloadStatus {
-                status: base_common_types_payload::PayloadStatusEnum::Valid,
-                latest_valid_hash: None,
-            },
-        ))
-    }
-
-    async fn update_forkchoice(
-        &self,
-        fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<BasePayloadAttributes>,
-    ) -> Result<ForkchoiceUpdated, EngineClientError> {
-        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
-        state.calls.push(EngineClientCall::UpdateForkchoice {
-            fcs: fork_choice_state,
-            payload_attributes: Box::new(payload_attributes),
-        });
-        match state.scripted_forkchoice.pop_front().unwrap_or_else(|| {
-            ScriptedForkchoiceResponse::Err(
-                "FAKE_EXHAUSTED: no scripted forkchoice response available".to_string(),
-            )
-        }) {
-            ScriptedForkchoiceResponse::Ok(value) => Ok(value),
-            ScriptedForkchoiceResponse::Err(message) => {
-                Err(EngineClientError::RpcError(TransportErrorKind::custom_str(&message).into()))
-            }
+        envelope: BaseExecutionPayloadEnvelope,
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
+        let imported = self.simulate_import(envelope).await?;
+        if !matches!(
+            imported.status,
+            base_common_types_payload::PayloadStatusEnum::Valid
+                | base_common_types_payload::PayloadStatusEnum::Syncing
+        ) {
+            return Err(
+                base_common_types_payload::AppendPayloadError::InvalidPayload(imported).into()
+            );
         }
+        base_common_types_payload::HeadUpdateOutcome::from_status(
+            self.simulate_heads(heads, None)
+                .await
+                .map_err(|error| {
+                    base_common_types_payload::AppendPayloadError::Heads(
+                        base_common_types_payload::BeaconForkChoiceUpdateError::internal(error),
+                    )
+                })?
+                .payload_status,
+            heads.head_block_hash,
+        )
+        .map_err(|error| base_common_types_payload::AppendPayloadError::Heads(error).into())
     }
 
-    async fn resolve_payload(
+    async fn update_heads(
+        &self,
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
+        base_common_types_payload::HeadUpdateOutcome::from_status(
+            self.simulate_heads(heads, None).await?.payload_status,
+            heads.head_block_hash,
+        )
+        .map_err(|error| base_execution_engine_driver::ExecutionCommandError::from(error).into())
+    }
+
+    async fn start_building(
+        &self,
+        heads: ForkchoiceState,
+        attributes: BasePayloadAttributes,
+    ) -> Result<PayloadId, EngineClientError> {
+        let result = self.simulate_heads(heads, Some(attributes)).await?;
+        if result.payload_status.is_syncing() {
+            return Err(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::Syncing,
+            )
+            .into());
+        }
+        if !result.is_valid() {
+            return Err(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(
+                    result.payload_status,
+                ),
+            )
+            .into());
+        }
+        result.payload_id.ok_or_else(|| {
+            base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::MissingBuild,
+            )
+            .into()
+        })
+    }
+
+    async fn end_building(
         &self,
         payload_id: PayloadId,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
@@ -302,5 +335,45 @@ impl EngineClient for FakeEngineClient {
         let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
         state.calls.push(EngineClientCall::L2BlockInfoByLabel(numtag));
         Ok(state.l2_block_info_by_tag.get(&numtag).copied())
+    }
+}
+
+impl FakeEngineClient {
+    /// Executes the scripted import stage for an append.
+    pub async fn simulate_import(
+        &self,
+        payload: BaseExecutionPayloadEnvelope,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
+        state.calls.push(EngineClientCall::SubmitPayload(Box::new(payload)));
+        Ok(state.scripted_payload.pop_front().or_else(|| state.single_payload.clone()).unwrap_or(
+            PayloadStatus {
+                status: base_common_types_payload::PayloadStatusEnum::Valid,
+                latest_valid_hash: None,
+            },
+        ))
+    }
+
+    /// Executes a scripted head-selection or build stage.
+    pub async fn simulate_heads(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> Result<ForkchoiceUpdated, EngineClientError> {
+        let mut state = self.state.lock().expect("FakeEngineClient state mutex poisoned");
+        state.calls.push(EngineClientCall::UpdateForkchoice {
+            fcs: fork_choice_state,
+            payload_attributes: Box::new(payload_attributes),
+        });
+        match state.scripted_forkchoice.pop_front().unwrap_or_else(|| {
+            ScriptedForkchoiceResponse::Err(
+                "FAKE_EXHAUSTED: no scripted forkchoice response available".to_string(),
+            )
+        }) {
+            ScriptedForkchoiceResponse::Ok(value) => Ok(value),
+            ScriptedForkchoiceResponse::Err(message) => {
+                Err(EngineClientError::RpcError(TransportErrorKind::custom_str(&message).into()))
+            }
+        }
     }
 }

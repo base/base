@@ -4,9 +4,7 @@ use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
 use base_common_client_ethereum::{Base, Provider, RootProvider};
 use base_common_types_chain::{BaseTypedTransaction, TxDeposit};
-use base_common_types_payload::{
-    BasePayloadAttributes, ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum,
-};
+use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes, PayloadStatusEnum};
 use base_common_types_rpc::{BaseTransaction as Transaction, Block};
 use base_execution_payload::BasePayloadBuilderAttributes;
 use base_node_service::BuilderConfig;
@@ -188,13 +186,7 @@ impl ChainDriver {
             })
             .await?;
 
-        if fcu_result.payload_status.is_invalid() {
-            return Err(eyre::eyre!("Forkchoice update failed: {fcu_result:?}"));
-        }
-
-        let payload_id = fcu_result
-            .payload_id
-            .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
+        let payload_id = fcu_result;
 
         // wait for the block to be built for the specified chain block time
         if let Some(timestamp_jitter) = timestamp_jitter {
@@ -209,11 +201,11 @@ impl ChainDriver {
             tokio::time::sleep(self.builder_config.block_time.max(Self::MIN_BLOCK_TIME)).await;
         }
 
-        let payload = self.engine_api.get_payload(payload_id).await?.execution_payload;
+        let payload = self.engine_api.end_building(payload_id).await?.execution_payload;
 
         if self
             .engine_api
-            .new_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
+            .append_payload(payload.clone(), vec![], B256::ZERO, Requests::default())
             .await?
             .status
             != PayloadStatusEnum::Valid
@@ -223,7 +215,7 @@ impl ChainDriver {
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
 
-        self.engine_api.update_forkchoice(latest.header.hash, new_block_hash, None).await?;
+        self.engine_api.update_heads(latest.header.hash, new_block_hash).await?;
 
         let block =
             self.provider.get_block_by_number(BlockNumberOrTag::Latest).full().await?.ok_or_else(
@@ -319,10 +311,13 @@ impl ChainDriver {
 
 // internal methods
 impl ChainDriver {
-    async fn fcu(&self, attribs: BasePayloadAttributes) -> eyre::Result<ForkchoiceUpdated> {
+    async fn fcu(
+        &self,
+        attribs: BasePayloadAttributes,
+    ) -> eyre::Result<base_common_types_payload::PayloadId> {
         let latest = self.latest().await?.header.hash;
         let attribs = BasePayloadBuilderAttributes::try_new(latest, attribs, 3)?;
-        let response = self.engine_api.update_forkchoice(latest, latest, Some(attribs)).await?;
+        let response = self.engine_api.start_building(latest, latest, attribs).await?;
 
         Ok(response)
     }

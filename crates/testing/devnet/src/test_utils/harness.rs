@@ -8,7 +8,9 @@ use alloy_rpc_client::RpcClient;
 use base_common_chain_config::{BaseChainSpec, Upgrades};
 use base_common_client_ethereum::{Base, Provider, RootProvider};
 use base_common_types_chain::{Predeploys, RecoveredBlock};
-use base_common_types_payload::{BasePayloadAttributes, PayloadAttributes};
+use base_common_types_payload::{
+    BasePayloadAttributes, ExecutionData, ForkchoiceState, PayloadAttributes,
+};
 use base_common_types_rpc::BlockNumberOrTag;
 use base_consensus_batch::BaseTimeUpdateTx;
 use base_execution_evm_runtime::BaseTime;
@@ -27,10 +29,11 @@ use crate::test_utils::{
     tracing::init_silenced_tracing,
 };
 
-/// A block that has been built and accepted via `engine_newPayload` but not yet
-/// promoted to the canonical head via a forkchoice update.
-#[derive(Debug, Clone, Copy)]
+/// A resolved block ready to import and canonicalize with native append.
+#[derive(Debug, Clone)]
 pub struct PreparedBlock {
+    /// Built execution data, not yet imported or canonicalized.
+    pub payload: ExecutionData,
     /// Hash of the parent the new block was built on.
     pub parent_hash: B256,
     /// Hash of the newly-built block.
@@ -160,17 +163,12 @@ impl TestHarness {
         Ok(RpcClient::new_http(url))
     }
 
-    /// Direct access to the IPC-backed Engine API client.
+    /// Direct access to the native execution commands and payload builder.
     pub const fn engine(&self) -> &EngineApi {
         &self.engine
     }
 
-    /// Build a block using the provided transactions and push it through the engine
-    /// up to (but not including) the final canonical forkchoice update.
-    ///
-    /// Returns the parent hash and the new block hash so callers can issue the
-    /// final FCU themselves — useful for benchmarks that want to time only the
-    /// canonical FCU step.
+    /// Builds and resolves a block without importing or canonicalizing it.
     pub async fn prepare_unsafe_block(&self, transactions: Vec<Bytes>) -> Result<PreparedBlock> {
         let latest_block = self
             .provider()
@@ -224,18 +222,12 @@ impl TestHarness {
             3,
         )?;
 
-        let forkchoice_result = self
-            .engine
-            .update_forkchoice(parent_hash, parent_hash, Some(payload_attributes))
-            .await?;
-
-        let payload_id = forkchoice_result
-            .payload_id
-            .ok_or_else(|| eyre!("Forkchoice update did not return payload ID"))?;
+        let payload_id =
+            self.engine.start_building(parent_hash, parent_hash, payload_attributes).await?;
 
         sleep(Duration::from_millis(BLOCK_BUILD_DELAY_MS)).await;
 
-        let payload_envelope = self.engine.get_payload(payload_id).await?;
+        let payload_envelope = self.engine.end_building(payload_id).await?;
         let execution_payload = payload_envelope.execution_payload;
         let execution_requests = payload_envelope.execution_requests;
 
@@ -245,30 +237,36 @@ impl TestHarness {
             Requests::new(execution_requests)
         };
 
-        let payload_status = self
-            .engine
-            .new_payload(execution_payload, vec![], parent_beacon_block_root, execution_requests)
-            .await?;
-
-        if payload_status.status.is_invalid() {
-            return Err(eyre!("Engine rejected payload: {:?}", payload_status));
-        }
-
-        let new_block_hash = payload_status
-            .latest_valid_hash
-            .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
-
-        Ok(PreparedBlock { parent_hash, new_block_hash, new_block_number })
+        let payload = ExecutionData::v4(
+            execution_payload,
+            vec![],
+            parent_beacon_block_root,
+            execution_requests,
+        );
+        let new_block_hash = payload.block_hash();
+        Ok(PreparedBlock { payload, parent_hash, new_block_hash, new_block_number })
     }
 
-    /// Build a block using the provided transactions and push it through the engine.
+    /// Builds, imports, and canonicalizes a block using the provided transactions.
     pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
-        let PreparedBlock { parent_hash, new_block_hash, new_block_number } =
-            self.prepare_unsafe_block(transactions).await?;
-
-        self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
-        self.wait_for_header(new_block_hash, new_block_number).await?;
-
+        let block = self.prepare_unsafe_block(transactions).await?;
+        let outcome = self
+            .engine
+            .execution
+            .driver
+            .append_payload(
+                block.payload,
+                ForkchoiceState {
+                    head_block_hash: block.new_block_hash,
+                    safe_block_hash: block.parent_hash,
+                    finalized_block_hash: block.parent_hash,
+                },
+            )
+            .await?;
+        if !outcome.is_applied() {
+            return Err(eyre!("Engine is syncing instead of appending the built block"));
+        }
+        self.wait_for_header(block.new_block_hash, block.new_block_number).await?;
         Ok(())
     }
 

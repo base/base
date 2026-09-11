@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use alloy_primitives::B256;
-use base_common_types_payload::{ForkchoiceState, ForkchoiceUpdated, PayloadStatusEnum};
+use base_common_types_payload::{ForkchoiceState, PayloadStatusEnum};
 use eyre::Result;
 use futures_util::future::BoxFuture;
 use tracing::debug;
@@ -139,11 +139,12 @@ impl Action for MakeCanonical {
                 let active_idx = env.active_node_idx;
                 let engine = env.node_clients[active_idx].engine.clone();
 
-                let fcu_response = engine.update_forkchoice(fork_choice_state, None).await?;
+                let fcu_response =
+                    engine.driver.update_heads(fork_choice_state).await?.into_payload_status();
 
                 debug!(
                     "Active node {}: Forkchoice update status: {:?}",
-                    active_idx, fcu_response.payload_status.status
+                    active_idx, fcu_response.status
                 );
 
                 validate_fcu_response(&fcu_response, &format!("Active node {active_idx}"))?;
@@ -207,8 +208,11 @@ impl Action for CaptureBlock {
 }
 
 /// Validates a forkchoice update response and returns an error if invalid
-pub fn validate_fcu_response(response: &ForkchoiceUpdated, context: &str) -> Result<()> {
-    match &response.payload_status.status {
+pub fn validate_fcu_response(
+    response: &base_common_types_payload::PayloadStatus,
+    context: &str,
+) -> Result<()> {
+    match &response.status {
         PayloadStatusEnum::Valid => {
             debug!("{}: FCU accepted as valid", context);
             Ok(())
@@ -228,8 +232,11 @@ pub fn validate_fcu_response(response: &ForkchoiceUpdated, context: &str) -> Res
 }
 
 /// Expects that the `ForkchoiceUpdated` response status is VALID.
-pub fn expect_fcu_valid(response: &ForkchoiceUpdated, context: &str) -> Result<()> {
-    match &response.payload_status.status {
+pub fn expect_fcu_valid(
+    response: &base_common_types_payload::PayloadStatus,
+    context: &str,
+) -> Result<()> {
+    match &response.status {
         PayloadStatusEnum::Valid => {
             debug!("{}: FCU status is VALID as expected.", context);
             Ok(())
@@ -241,8 +248,11 @@ pub fn expect_fcu_valid(response: &ForkchoiceUpdated, context: &str) -> Result<(
 }
 
 /// Expects that the `ForkchoiceUpdated` response status is INVALID.
-pub fn expect_fcu_invalid(response: &ForkchoiceUpdated, context: &str) -> Result<()> {
-    match &response.payload_status.status {
+pub fn expect_fcu_invalid(
+    response: &base_common_types_payload::PayloadStatus,
+    context: &str,
+) -> Result<()> {
+    match &response.status {
         PayloadStatusEnum::Invalid { validation_error } => {
             debug!("{}: FCU status is INVALID as expected: {:?}", context, validation_error);
             Ok(())
@@ -254,8 +264,11 @@ pub fn expect_fcu_invalid(response: &ForkchoiceUpdated, context: &str) -> Result
 }
 
 /// Expects that the `ForkchoiceUpdated` response status is either SYNCING or ACCEPTED.
-pub fn expect_fcu_syncing_or_accepted(response: &ForkchoiceUpdated, context: &str) -> Result<()> {
-    match &response.payload_status.status {
+pub fn expect_fcu_syncing_or_accepted(
+    response: &base_common_types_payload::PayloadStatus,
+    context: &str,
+) -> Result<()> {
+    match &response.status {
         PayloadStatusEnum::Syncing => {
             debug!("{}: FCU status is SYNCING as expected (SYNCING or ACCEPTED).", context);
             Ok(())
@@ -274,10 +287,10 @@ pub fn expect_fcu_syncing_or_accepted(response: &ForkchoiceUpdated, context: &st
 
 /// Expects that the `ForkchoiceUpdated` response status is not SYNCING and not ACCEPTED.
 pub fn expect_fcu_not_syncing_or_accepted(
-    response: &ForkchoiceUpdated,
+    response: &base_common_types_payload::PayloadStatus,
     context: &str,
 ) -> Result<()> {
-    match &response.payload_status.status {
+    match &response.status {
         PayloadStatusEnum::Valid => {
             debug!("{}: FCU status is VALID as expected (not SYNCING or ACCEPTED).", context);
             Ok(())

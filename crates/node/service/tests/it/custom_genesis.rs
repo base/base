@@ -69,7 +69,7 @@ async fn test_base_node_custom_genesis_number() {
     node.inner
         .execution
         .driver
-        .fork_choice_updated(ForkchoiceState::same_hash(genesis_hash), None)
+        .update_heads(ForkchoiceState::same_hash(genesis_hash))
         .await
         .expect("able to seed forkchoice for custom genesis");
 

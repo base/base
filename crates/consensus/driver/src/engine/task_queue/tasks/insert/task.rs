@@ -8,7 +8,7 @@ use base_common_chain_config::RollupConfig;
 use base_common_types_chain::BaseBlock;
 use base_common_types_payload::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
-    CancunPayloadFields, PayloadStatusEnum, PraguePayloadFields,
+    CancunPayloadFields, PraguePayloadFields,
 };
 use base_consensus_batch::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
@@ -158,11 +158,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         Self::new(client, rollup_config, envelope, InsertPayloadSafety::Safe)
     }
 
-    /// Checks the response of the `engine_newPayload` call.
-    const fn check_new_payload_status(&self, status: &PayloadStatusEnum) -> bool {
-        matches!(status, PayloadStatusEnum::Valid | PayloadStatusEnum::Syncing)
-    }
-
     fn is_unsafe_payload_applicable(
         &self,
         state: &EngineState,
@@ -279,29 +274,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                 block.header.timestamp,
             )?;
 
-            // Insert the new payload.
-            let insert_time_start = Instant::now();
-            let response = self.client.submit_payload(self.envelope.clone()).await;
-
-            // Check the `engine_newPayload` response.
-            let response = match response {
-                Ok(resp) => resp,
-                Err(e) => {
-                    warn!(
-                        target: "engine",
-                        error = %e,
-                        payload_safety = self.payload_safety.as_label(),
-                        payload_policy = self.payload_policy.as_label(),
-                        "Failed to insert new payload"
-                    );
-                    return Err(InsertTaskError::InsertFailed(e));
-                }
-            };
-            if !self.check_new_payload_status(&response.status) {
-                return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
-            }
-            let insert_duration = insert_time_start.elapsed();
-
             let advances_safe_head = self.payload_safety.advances_safe_head();
             // Send a FCU to canonicalize the imported block.
             let state_update = EngineSyncStateUpdate {
@@ -310,20 +282,35 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
                 safe_head: advances_safe_head.then_some(new_block_ref),
                 ..Default::default()
             };
-            let synchronize_task = if self.payload_policy.is_authoritative() {
-                SynchronizeTask::new_forced(
-                    Arc::clone(&self.client),
-                    Arc::clone(&self.rollup_config),
-                    state_update,
+            let synchronize_task = SynchronizeTask::new(
+                Arc::clone(&self.client),
+                Arc::clone(&self.rollup_config),
+                state_update,
+            );
+            synchronize_task.validate_update(state)?;
+            let insert_time_start = Instant::now();
+            let response = self
+                .client
+                .append_payload(
+                    self.envelope.clone(),
+                    state.sync_state.updated(state_update).create_forkchoice_state(),
                 )
-            } else {
-                SynchronizeTask::new(
-                    Arc::clone(&self.client),
-                    Arc::clone(&self.rollup_config),
-                    state_update,
-                )
-            };
-            synchronize_task.execute(state).await?;
+                .await
+                .map_err(|error| match error {
+                    crate::engine::EngineClientError::Append(
+                        base_common_types_payload::AppendPayloadError::InvalidPayload(status),
+                    ) => InsertTaskError::UnexpectedPayloadStatus(status.status),
+                    crate::engine::EngineClientError::Append(
+                        base_common_types_payload::AppendPayloadError::Heads(error),
+                    ) => InsertTaskError::ForkchoiceUpdateFailed(
+                        crate::engine::SynchronizeTaskError::from(
+                            crate::engine::EngineClientError::Execution(error.into()),
+                        ),
+                    ),
+                    error => InsertTaskError::InsertFailed(error),
+                })?;
+            let insert_duration = insert_time_start.elapsed();
+            synchronize_task.apply_response(state, response);
 
             if (self.result_tx.is_some() || self.payload_policy.is_authoritative())
                 && state.sync_state.unsafe_head() != new_block_ref

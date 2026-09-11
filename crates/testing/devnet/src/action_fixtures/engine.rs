@@ -671,48 +671,75 @@ impl ActionEngineClient {
 
 #[async_trait]
 impl EngineClient for ActionEngineClient {
-    async fn submit_payload(
+    async fn append_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<PayloadStatus, EngineClientError> {
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-        let hash = Self::execute_v1_inner(
-            &mut guard,
-            &self.block_registry,
-            &self.rollup_config,
-            envelope.execution_payload.as_v1(),
-        )?;
-        Ok(Self::make_valid(hash))
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
+        let imported = self.simulate_import(envelope).await?;
+        if !matches!(
+            imported.status,
+            base_common_types_payload::PayloadStatusEnum::Valid
+                | base_common_types_payload::PayloadStatusEnum::Syncing
+        ) {
+            return Err(
+                base_common_types_payload::AppendPayloadError::InvalidPayload(imported).into()
+            );
+        }
+        base_common_types_payload::HeadUpdateOutcome::from_status(
+            self.simulate_heads(heads, None)
+                .await
+                .map_err(|error| {
+                    base_common_types_payload::AppendPayloadError::Heads(
+                        base_common_types_payload::BeaconForkChoiceUpdateError::internal(error),
+                    )
+                })?
+                .payload_status,
+            heads.head_block_hash,
+        )
+        .map_err(|error| base_common_types_payload::AppendPayloadError::Heads(error).into())
     }
 
-    async fn update_forkchoice(
+    async fn update_heads(
         &self,
-        fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<BasePayloadAttributes>,
-    ) -> Result<ForkchoiceUpdated, EngineClientError> {
-        let head = fork_choice_state.head_block_hash;
-        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
-
-        // Update canonical head if the block is in our executed headers.
-        if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned()
-            && let Some(info) = guard.executed_infos.get(&h.number)
-        {
-            guard.canonical_head = *info;
-        }
-
-        // Sequencer mode: build a block from the provided attributes.
-        if let Some(ref attrs) = payload_attributes {
-            let payload_id = Self::build_payload_inner(&mut guard, head, attrs)?;
-            return Ok(ForkchoiceUpdated {
-                payload_status: Self::make_valid(head),
-                payload_id: Some(payload_id),
-            });
-        }
-
-        Ok(Self::make_fcu_valid(head))
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError> {
+        base_common_types_payload::HeadUpdateOutcome::from_status(
+            self.simulate_heads(heads, None).await?.payload_status,
+            heads.head_block_hash,
+        )
+        .map_err(|error| base_execution_engine_driver::ExecutionCommandError::from(error).into())
     }
 
-    async fn resolve_payload(
+    async fn start_building(
+        &self,
+        heads: ForkchoiceState,
+        attributes: BasePayloadAttributes,
+    ) -> Result<PayloadId, EngineClientError> {
+        let result = self.simulate_heads(heads, Some(attributes)).await?;
+        if result.payload_status.is_syncing() {
+            return Err(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::Syncing,
+            )
+            .into());
+        }
+        if !result.is_valid() {
+            return Err(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::InvalidHeads(
+                    result.payload_status,
+                ),
+            )
+            .into());
+        }
+        result.payload_id.ok_or_else(|| {
+            base_execution_engine_driver::ExecutionCommandError::Forkchoice(
+                base_common_types_payload::BeaconForkChoiceUpdateError::MissingBuild,
+            )
+            .into()
+        })
+    }
+
+    async fn end_building(
         &self,
         id: PayloadId,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError> {
@@ -848,7 +875,7 @@ impl SequencerEngineClient for ActionEngineClient {
         Ok(())
     }
 
-    async fn start_build_block(
+    async fn start_building(
         &self,
         attributes: AttributesWithParent,
     ) -> Result<PayloadId, NodeEngineClientError> {
@@ -858,7 +885,7 @@ impl SequencerEngineClient for ActionEngineClient {
             .map_err(|e| NodeEngineClientError::RequestError(e.to_string()))
     }
 
-    async fn get_sealed_payload(
+    async fn end_building(
         &self,
         payload_id: PayloadId,
         _attributes: AttributesWithParent,
@@ -875,7 +902,7 @@ impl SequencerEngineClient for ActionEngineClient {
         Ok(BaseExecutionPayloadEnvelope { parent_beacon_block_root, execution_payload: payload })
     }
 
-    async fn insert_unsafe_payload(
+    async fn append_payload(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> Result<L2BlockInfo, NodeEngineClientError> {
@@ -964,5 +991,50 @@ mod tests {
         };
 
         ActionEngineClient::build_genesis_for_rollup(&config);
+    }
+}
+
+impl ActionEngineClient {
+    /// Executes the scripted import stage for an append.
+    pub async fn simulate_import(
+        &self,
+        envelope: BaseExecutionPayloadEnvelope,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+        let hash = Self::execute_v1_inner(
+            &mut guard,
+            &self.block_registry,
+            &self.rollup_config,
+            envelope.execution_payload.as_v1(),
+        )?;
+        Ok(Self::make_valid(hash))
+    }
+
+    /// Executes a scripted head-selection or build stage.
+    pub async fn simulate_heads(
+        &self,
+        fork_choice_state: ForkchoiceState,
+        payload_attributes: Option<BasePayloadAttributes>,
+    ) -> Result<ForkchoiceUpdated, EngineClientError> {
+        let head = fork_choice_state.head_block_hash;
+        let mut guard = self.inner.lock().expect("action engine inner lock poisoned");
+
+        // Update canonical head if the block is in our executed headers.
+        if let Some(h) = guard.executed_headers.values().find(|h| h.hash_slow() == head).cloned()
+            && let Some(info) = guard.executed_infos.get(&h.number)
+        {
+            guard.canonical_head = *info;
+        }
+
+        // Sequencer mode: build a block from the provided attributes.
+        if let Some(ref attrs) = payload_attributes {
+            let payload_id = Self::build_payload_inner(&mut guard, head, attrs)?;
+            return Ok(ForkchoiceUpdated {
+                payload_status: Self::make_valid(head),
+                payload_id: Some(payload_id),
+            });
+        }
+
+        Ok(Self::make_fcu_valid(head))
     }
 }

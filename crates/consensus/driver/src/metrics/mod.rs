@@ -166,7 +166,7 @@ base_common_observability_metrics::define_metrics! {
             "build",
             "finalize",
             "seal",
-            "get-payload"
+            "end-building"
         ]
     )]
     engine_task_count: counter,
@@ -180,7 +180,7 @@ base_common_observability_metrics::define_metrics! {
             "build",
             "finalize",
             "seal",
-            "get-payload"
+            "end-building"
         ]
     )]
     #[label(name = "severity", default = ["temporary", "critical", "reset", "flush"])]
@@ -227,7 +227,7 @@ base_common_observability_metrics::define_metrics! {
             "build",
             "finalize",
             "seal",
-            "get-payload"
+            "end-building"
         ]
     )]
     engine_task_duration: histogram,
@@ -443,7 +443,7 @@ impl Metrics {
     /// Seal task label.
     pub const SEAL_TASK_LABEL: &str = "seal";
     /// Get-payload task label.
-    pub const GET_PAYLOAD_TASK_LABEL: &str = "get-payload";
+    pub const END_BUILDING_TASK_LABEL: &str = "end-building";
     /// Finalize task label.
     pub const FINALIZE_TASK_LABEL: &str = "finalize";
 
@@ -457,9 +457,12 @@ impl Metrics {
     pub const FLUSH_SEVERITY_LABEL: &str = "flush";
 
     /// `engine_forkchoiceUpdatedV<N>` label
-    pub const FORKCHOICE_UPDATE_METHOD: &str = "engine_forkchoiceUpdated";
+    pub const START_BUILDING_METHOD: &str = "start_building";
+
+    /// Native head-update operation.
+    pub const UPDATE_HEADS_METHOD: &str = "update_heads";
     /// `engine_newPayloadV<N>` label.
-    pub const NEW_PAYLOAD_METHOD: &str = "engine_newPayload";
+    pub const APPEND_PAYLOAD_METHOD: &str = "append_payload";
     /// `engine_getPayloadV<N>` label.
-    pub const GET_PAYLOAD_METHOD: &str = "engine_getPayload";
+    pub const END_BUILDING_METHOD: &str = "end_building";
 }

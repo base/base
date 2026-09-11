@@ -7,8 +7,7 @@ use async_trait::async_trait;
 use base_common_chain_config::RollupConfig;
 use base_common_client_ethereum::{EthGetBlock, Ethereum, Network};
 use base_common_types_payload::{
-    BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, ForkchoiceUpdated,
-    PayloadId, PayloadStatus,
+    BaseExecutionPayloadEnvelope, BasePayloadAttributes, ForkchoiceState, PayloadId,
 };
 use base_consensus_batch::{FromBlockError, L2BlockInfo};
 use thiserror::Error;
@@ -16,6 +15,9 @@ use thiserror::Error;
 /// An error that occurred in the [`EngineClient`].
 #[derive(Error, Debug)]
 pub enum EngineClientError {
+    /// Appending failed during import or head selection.
+    #[error(transparent)]
+    Append(#[from] base_common_types_payload::AppendPayloadError),
     /// An RPC error occurred
     #[error("An RPC error occurred: {0}")]
     RpcError(#[from] RpcError<TransportErrorKind>),
@@ -39,24 +41,25 @@ pub enum EngineClientError {
 }
 impl EngineClientError {
     /// Whether the execution driver rejected the requested forkchoice state.
-    pub fn is_invalid_forkchoice(&self) -> bool {
-        match self {
+    pub const fn is_invalid_forkchoice(&self) -> bool {
+        matches!(
+            self,
             Self::Execution(base_execution_engine_driver::ExecutionCommandError::Forkchoice(
                 base_common_types_payload::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(
-                    base_common_types_payload::ForkchoiceUpdateError::InvalidState,
-                ),
-            )) => true,
-            _ => false,
-        }
+                    base_common_types_payload::ForkchoiceUpdateError::InvalidState
+                )
+            ))
+        )
     }
 
     /// Whether a build request violates the active chain rules.
-    pub fn is_invalid_attributes(&self) -> bool {
+    pub const fn is_invalid_attributes(&self) -> bool {
         matches!(
             self,
             Self::InvalidAttributes(_)
                 | Self::Execution(
                     base_execution_engine_driver::ExecutionCommandError::InvalidAttributes(_)
+                    | base_execution_engine_driver::ExecutionCommandError::Forkchoice(base_common_types_payload::BeaconForkChoiceUpdateError::ForkchoiceUpdateError(base_common_types_payload::ForkchoiceUpdateError::UpdatedInvalidPayloadAttributes))
                 )
         )
     }
@@ -65,19 +68,25 @@ impl EngineClientError {
 /// Commands and reads used by consensus, implemented by the local execution client.
 #[async_trait]
 pub trait EngineClient: Send + Sync {
-    /// Submits a payload for execution.
-    async fn submit_payload(
+    /// Imports and canonicalizes a payload with the supplied heads.
+    async fn append_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
-    ) -> Result<PayloadStatus, EngineClientError>;
-    /// Applies forkchoice and optionally starts a build.
-    async fn update_forkchoice(
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError>;
+    /// Applies heads without starting a build.
+    async fn update_heads(
         &self,
-        state: ForkchoiceState,
-        attributes: Option<BasePayloadAttributes>,
-    ) -> Result<ForkchoiceUpdated, EngineClientError>;
-    /// Resolves the payload built for the supplied attributes.
-    async fn resolve_payload(
+        heads: ForkchoiceState,
+    ) -> Result<base_common_types_payload::HeadUpdateOutcome, EngineClientError>;
+    /// Applies the parent heads and returns the required build identifier.
+    async fn start_building(
+        &self,
+        heads: ForkchoiceState,
+        attributes: BasePayloadAttributes,
+    ) -> Result<PayloadId, EngineClientError>;
+    /// Resolves a build without canonicalizing its payload.
+    async fn end_building(
         &self,
         id: PayloadId,
     ) -> Result<BaseExecutionPayloadEnvelope, EngineClientError>;

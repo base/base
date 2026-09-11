@@ -283,12 +283,7 @@ impl TestHarness {
         let _ = self
             .tree
             .on_engine_message(FromEngine::Request(
-                BeaconEngineMessage::ForkchoiceUpdated {
-                    state: fcu_state,
-                    payload_attrs: None,
-                    tx,
-                }
-                .into(),
+                ExecutionCommand::UpdateHeads { heads: fcu_state, tx }.into(),
             ))
             .unwrap();
 
@@ -908,13 +903,12 @@ async fn test_engine_request_during_backfill() {
     let _ = test_harness
         .tree
         .on_engine_message(FromEngine::Request(
-            BeaconEngineMessage::ForkchoiceUpdated {
-                state: ForkchoiceState {
+            ExecutionCommand::UpdateHeads {
+                heads: ForkchoiceState {
                     head_block_hash: B256::random(),
                     safe_block_hash: B256::random(),
                     finalized_block_hash: B256::random(),
                 },
-                payload_attrs: None,
                 tx,
             }
             .into(),
@@ -1025,12 +1019,19 @@ async fn test_holesky_payload() {
     let _ = test_harness
         .tree
         .on_engine_message(FromEngine::Request(
-            BeaconEngineMessage::NewPayload {
-                payload: ExecutionData {
+            ExecutionCommand::AppendPayload {
+                heads: ForkchoiceState {
+                    head_block_hash: hash,
+                    safe_block_hash: B256::ZERO,
+                    finalized_block_hash: B256::ZERO,
+                },
+                skip_import: false,
+                skip_heads: false,
+                payload: Box::new(ExecutionData {
                     block_access_list: None,
                     payload: BaseExecutionPayload::V1(payload.clone()),
                     sidecar: ExecutionPayloadSidecar::default(),
-                },
+                }),
                 tx,
             }
             .into(),
@@ -1038,7 +1039,7 @@ async fn test_holesky_payload() {
         .unwrap();
 
     let resp = rx.await.unwrap().unwrap();
-    assert!(resp.is_syncing());
+    assert_eq!(resp, base_common_types_payload::HeadUpdateOutcome::Syncing);
 }
 
 #[test]
@@ -1063,13 +1064,12 @@ fn test_backpressure_waits_for_persistence_before_reading_incoming() {
     test_harness
         .to_tree_tx
         .send(FromEngine::Request(
-            BeaconEngineMessage::ForkchoiceUpdated {
-                state: ForkchoiceState {
+            ExecutionCommand::UpdateHeads {
+                heads: ForkchoiceState {
                     head_block_hash: B256::random(),
                     safe_block_hash: B256::random(),
                     finalized_block_hash: B256::random(),
                 },
-                payload_attrs: None,
                 tx,
             }
             .into(),
@@ -1580,27 +1580,35 @@ async fn test_fcu_with_canonical_ancestor_updates_latest_block() {
     // Now perform FCU to a canonical ancestor (block 2)
     let ancestor_block = blocks[1].recovered_block().clone(); // BaseBlock 2 (0-indexed as blocks[1])
 
-    // Send FCU to the canonical ancestor
+    let heads = ForkchoiceState {
+        head_block_hash: ancestor_block.hash(),
+        safe_block_hash: B256::ZERO,
+        finalized_block_hash: B256::ZERO,
+    };
+    let payload = base_common_types_payload::BaseBuiltPayload::block_to_payload(
+        ancestor_block.clone_sealed_block(),
+        None,
+    );
+    let deferred = test_harness.tree.append_payload(payload.clone(), heads, false, true).unwrap();
+    assert_eq!(deferred, base_common_types_payload::HeadUpdateOutcome::Syncing);
+    assert_eq!(test_harness.tree.state.tree_state.canonical_block_hash(), current_head.hash());
+
     let (tx, rx) = oneshot::channel();
     let _ = test_harness
         .tree
         .on_engine_message(FromEngine::Request(
-            BeaconEngineMessage::ForkchoiceUpdated {
-                state: ForkchoiceState {
-                    head_block_hash: ancestor_block.hash(),
-                    safe_block_hash: B256::ZERO,
-                    finalized_block_hash: B256::ZERO,
-                },
-                payload_attrs: None,
+            ExecutionCommand::AppendPayload {
+                payload: Box::new(payload),
+                heads,
+                skip_import: false,
+                skip_heads: false,
                 tx,
             }
             .into(),
         ))
         .unwrap();
-
-    // Verify FCU succeeds
-    let response = rx.await.unwrap().unwrap().await.unwrap();
-    assert!(response.payload_status.is_valid());
+    let response = rx.await.unwrap().unwrap();
+    assert!(response.is_applied());
 
     // The critical test: verify that Latest block has been updated to the canonical ancestor
     // Check tree state
@@ -1648,7 +1656,7 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_starts_payload_build()
         safe_block_hash: B256::ZERO,
         finalized_block_hash: B256::ZERO,
     };
-    let outcome = test_harness.tree.on_forkchoice_updated(state, None).unwrap();
+    let outcome = test_harness.tree.select_heads(state).unwrap();
     assert_eq!(outcome.outcome.forkchoice_status(), ForkchoiceStatus::Valid);
     assert!(test_harness.payload_command_rx.try_recv().is_err());
 
@@ -1661,8 +1669,8 @@ async fn test_fcu_with_canonical_ancestor_below_finalized_starts_payload_build()
         slot_number: None,
         target_gas_limit: None,
     });
-    let outcome = test_harness.tree.on_forkchoice_updated(state, Some(payload_attributes)).unwrap();
-    assert_eq!(outcome.outcome.forkchoice_status(), ForkchoiceStatus::Valid);
+    let outcome = test_harness.tree.start_building(state, payload_attributes).unwrap();
+    assert_eq!(outcome.forkchoice_status(), ForkchoiceStatus::Valid);
     let command = test_harness.payload_command_rx.try_recv().unwrap();
     let PayloadServiceCommand::BuildNewPayload(input, _, _) = command else {
         panic!("expected build new payload command")
@@ -1696,17 +1704,17 @@ async fn test_fcu_with_canonical_ancestor_above_finalized_starts_payload_build()
     });
     let outcome = test_harness
         .tree
-        .on_forkchoice_updated(
+        .start_building(
             ForkchoiceState {
                 head_block_hash: ancestor.hash(),
                 safe_block_hash: B256::ZERO,
                 finalized_block_hash: B256::ZERO,
             },
-            Some(payload_attributes),
+            payload_attributes,
         )
         .unwrap();
 
-    assert_eq!(outcome.outcome.forkchoice_status(), ForkchoiceStatus::Valid);
+    assert_eq!(outcome.forkchoice_status(), ForkchoiceStatus::Valid);
 
     // a payload build is started on top of the ancestor
     let command = test_harness.payload_command_rx.try_recv().unwrap();
@@ -2400,7 +2408,7 @@ mod forkchoice_updated_tests {
         assert!(result.is_some(), "Zero head block hash should return early");
         let outcome = result.unwrap();
         // For invalid state, we expect an error response
-        assert!(matches!(outcome, OnForkChoiceUpdated { .. }));
+        assert!(matches!(outcome, PendingHeadUpdate { .. }));
 
         // Test 2: Valid state with backfill active should return syncing
         test_harness.tree.backfill_sync_state = BackfillSyncState::Active;
@@ -2448,7 +2456,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.handle_canonical_head(state, &None).unwrap();
+        let result = test_harness.tree.handle_canonical_head(state).unwrap();
         assert!(result.is_some(), "Should return outcome for canonical head");
         let outcome = result.unwrap();
         let fcu_result = outcome.outcome.await.unwrap();
@@ -2461,7 +2469,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.handle_canonical_head(non_canonical_state, &None).unwrap();
+        let result = test_harness.tree.handle_canonical_head(non_canonical_state).unwrap();
         assert!(result.is_none(), "Non-canonical head should return None");
     }
 
@@ -2484,7 +2492,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.apply_chain_update(state, &None).unwrap();
+        let result = test_harness.tree.apply_chain_update(state).unwrap();
         assert!(result.is_some(), "Should apply chain update for new head");
         let outcome = result.unwrap();
         let fcu_result = outcome.outcome.await.unwrap();
@@ -2497,7 +2505,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.apply_chain_update(missing_state, &None).unwrap();
+        let result = test_harness.tree.apply_chain_update(missing_state).unwrap();
         assert!(result.is_none(), "Missing block should return None");
     }
 
@@ -2551,7 +2559,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: canonical_head,
         };
 
-        let result = test_harness.tree.on_forkchoice_updated(state, None).unwrap();
+        let result = test_harness.tree.select_heads(state).unwrap();
         let fcu_result = result.outcome.await.unwrap();
         assert!(fcu_result.payload_status.is_valid());
 
@@ -2562,7 +2570,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.on_forkchoice_updated(missing_state, None).unwrap();
+        let result = test_harness.tree.select_heads(missing_state).unwrap();
         let fcu_result = result.outcome.await.unwrap();
         assert!(fcu_result.payload_status.is_syncing());
         assert!(result.event.is_some(), "Should trigger download event for missing block");
@@ -2575,7 +2583,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.on_forkchoice_updated(state, None).unwrap();
+        let result = test_harness.tree.select_heads(state).unwrap();
         let fcu_result = result.outcome.await.unwrap();
         assert!(fcu_result.payload_status.is_syncing(), "Should return syncing during backfill");
     }
@@ -2622,7 +2630,7 @@ mod forkchoice_updated_tests {
             finalized_block_hash: B256::ZERO,
         };
 
-        let result = test_harness.tree.handle_canonical_head(state, &None).unwrap();
+        let result = test_harness.tree.handle_canonical_head(state).unwrap();
         assert!(result.is_some(), "OpStack should handle canonical head");
     }
 

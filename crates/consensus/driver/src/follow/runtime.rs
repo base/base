@@ -80,7 +80,7 @@ where
             }
 
             info!(target: "follow", block = current_block, "Inserting source payload");
-            engine.insert_payload(payload).await?;
+            engine.append_payload(payload).await?;
             if !insert_delay.is_zero() {
                 debug!(
                     target: "follow",
@@ -378,7 +378,7 @@ mod tests {
 
     #[async_trait]
     impl FollowEngine for RecordingEngine {
-        async fn insert_payload(
+        async fn append_payload(
             &self,
             envelope: BaseExecutionPayloadEnvelope,
         ) -> Result<(), FollowError> {

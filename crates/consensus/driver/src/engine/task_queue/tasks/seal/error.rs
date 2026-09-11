@@ -10,7 +10,7 @@ use crate::engine::{
     task_queue::tasks::task::EngineTaskErrorSeverity,
 };
 
-/// An error that occurs when running the [`crate::engine::SealTask`].
+/// An error resolving a build or appending its derived payload.
 #[derive(Debug, Error)]
 pub enum SealTaskError {
     /// Impossible to insert the payload into the engine.

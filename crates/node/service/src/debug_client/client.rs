@@ -91,7 +91,6 @@ where
             previous_block_hashes.enqueue(block_hash);
 
             // Send new events to execution client
-            let _ = self.engine_handle.new_payload(payload).await;
 
             // Load previous block hashes. We're using (head - 32) and (head - 64) as the safe and
             // finalized block hashes.
@@ -124,7 +123,7 @@ where
                 safe_block_hash,
                 finalized_block_hash,
             };
-            let _ = self.engine_handle.fork_choice_updated(state, None).await;
+            let _ = self.engine_handle.append_payload(payload, state).await;
         }
     }
 }

@@ -13,7 +13,7 @@ use crate::{
 
 #[async_trait]
 pub(super) trait FollowEngine: Debug + Send + Sync {
-    async fn insert_payload(
+    async fn append_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
     ) -> Result<(), FollowError>;
@@ -53,7 +53,7 @@ impl<E: EngineClient> EngineApiFollowEngine<E> {
 
 #[async_trait]
 impl<E: EngineClient + Debug + 'static> FollowEngine for EngineApiFollowEngine<E> {
-    async fn insert_payload(
+    async fn append_payload(
         &self,
         envelope: BaseExecutionPayloadEnvelope,
     ) -> Result<(), FollowError> {
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_payload_retries_temporary_engine_errors() {
+    async fn append_payload_retries_temporary_engine_errors() {
         let rollup_config = Arc::new(RollupConfig::default());
         let client = Arc::new(
             test_engine_client_builder()
@@ -177,7 +177,7 @@ mod tests {
         ));
 
         let insert_engine = Arc::clone(&engine);
-        let insert = tokio::spawn(async move { insert_engine.insert_payload(payload(1)).await });
+        let insert = tokio::spawn(async move { insert_engine.append_payload(payload(1)).await });
 
         let deadline = Instant::now() + Duration::from_secs(1);
         while client.last_payload().await.is_none() && Instant::now() < deadline {

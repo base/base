@@ -719,10 +719,7 @@ impl<P: Pipeline + SignalReceiver + Debug + Send> TestRollupNode<P> {
             safe_block_hash: block_hash,
             finalized_block_hash: self.finalized_head.block_info.hash,
         };
-        self.engine
-            .update_forkchoice(fcu, None)
-            .await
-            .expect("TestRollupNode: forkchoice update failed");
+        self.engine.update_heads(fcu).await.expect("TestRollupNode: forkchoice update failed");
     }
 
     /// Decode the L1 epoch from the first L1 info deposit in a raw transaction list.

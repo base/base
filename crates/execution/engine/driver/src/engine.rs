@@ -8,7 +8,7 @@ use std::{
 use alloy_primitives::{B256, map::B256Set};
 use base_common_types_chain::SealedBlock;
 use base_common_types_payload::{
-    BeaconEngineMessage, BuiltPayloadExecutedBlock, ConsensusEngineEvent,
+    BuiltPayloadExecutedBlock, ConsensusEngineEvent, ExecutionCommand,
 };
 use base_execution_network_wire::BlockClient;
 use crossbeam_channel::Sender;
@@ -49,7 +49,7 @@ impl<S, Client: BlockClient + 'static> EngineHandler<S, Client> {
 
 impl<S, Client: BlockClient + 'static> EngineHandler<S, Client>
 where
-    S: Stream<Item = BeaconEngineMessage> + Unpin,
+    S: Stream<Item = ExecutionCommand> + Unpin,
 {
     /// Advances tree events, consensus requests, and block downloads.
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<HandlerEvent> {
@@ -88,7 +88,7 @@ where
 #[derive(Debug)]
 pub enum EngineApiRequest {
     /// A request received from the consensus engine.
-    Beacon(BeaconEngineMessage),
+    Beacon(ExecutionCommand),
     /// Request to insert an already executed block, e.g. via payload building.
     InsertExecutedBlock(BuiltPayloadExecutedBlock),
 }
@@ -104,8 +104,8 @@ impl Display for EngineApiRequest {
     }
 }
 
-impl From<BeaconEngineMessage> for EngineApiRequest {
-    fn from(msg: BeaconEngineMessage) -> Self {
+impl From<ExecutionCommand> for EngineApiRequest {
+    fn from(msg: ExecutionCommand) -> Self {
         Self::Beacon(msg)
     }
 }

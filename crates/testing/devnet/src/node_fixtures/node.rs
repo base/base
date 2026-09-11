@@ -113,16 +113,14 @@ impl NodeTestContext {
     /// expects a payload attribute event and waits until the payload is built.
     ///
     /// It triggers the resolve payload via engine api and expects the built payload event.
-    pub async fn new_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
+    pub async fn build_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
         let eth_attr = self.payload.next_attributes();
         let payload_id = self
             .inner
             .execution
             .driver
-            .fork_choice_updated(self.current_forkchoice_state()?, Some(eth_attr.clone()))
-            .await?
-            .payload_id
-            .unwrap();
+            .start_building(self.current_forkchoice_state()?, eth_attr.clone())
+            .await?;
         // first event is the payload attributes
         self.payload.expect_attr_event(eth_attr).await?;
         // wait for the payload builder to have finished building
@@ -132,20 +130,20 @@ impl NodeTestContext {
     }
 
     /// Triggers payload building job and submits it to the engine.
-    pub async fn build_and_submit_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
-        let payload = self.new_payload().await?;
+    pub async fn build_and_append_payload(&mut self) -> eyre::Result<BaseBuiltPayload> {
+        let payload = self.build_payload().await?;
 
-        self.submit_payload(payload.clone()).await?;
+        self.append_payload(payload.clone()).await?;
 
         Ok(payload)
     }
 
     /// Advances the node forward one block
     pub async fn advance_block(&mut self) -> eyre::Result<BaseBuiltPayload> {
-        let payload = self.build_and_submit_payload().await?;
+        let payload = self.build_and_append_payload().await?;
 
         // trigger forkchoice update via engine api to commit the block to the blockchain
-        self.update_forkchoice(payload.block().hash(), payload.block().hash()).await?;
+        self.update_heads(payload.block().hash(), payload.block().hash()).await?;
 
         Ok(payload)
     }
@@ -250,7 +248,7 @@ impl NodeTestContext {
             .is_none_or(|h| h.hash() != block)
         {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            self.update_forkchoice(block, block).await?;
+            self.update_heads(block, block).await?;
 
             assert!(start.elapsed() <= std::time::Duration::from_secs(40), "timed out");
         }
@@ -264,18 +262,15 @@ impl NodeTestContext {
     }
 
     /// Sends a forkchoice update message to the engine.
-    pub async fn update_forkchoice(&self, current_head: B256, new_head: B256) -> eyre::Result<()> {
+    pub async fn update_heads(&self, current_head: B256, new_head: B256) -> eyre::Result<()> {
         self.inner
             .execution
             .driver
-            .fork_choice_updated(
-                ForkchoiceState {
-                    head_block_hash: new_head,
-                    safe_block_hash: current_head,
-                    finalized_block_hash: current_head,
-                },
-                None,
-            )
+            .update_heads(ForkchoiceState {
+                head_block_hash: new_head,
+                safe_block_hash: current_head,
+                finalized_block_hash: current_head,
+            })
             .await?;
 
         Ok(())
@@ -283,13 +278,15 @@ impl NodeTestContext {
 
     /// Sends forkchoice update to the engine api with a zero finalized hash
     pub async fn update_optimistic_forkchoice(&self, hash: B256) -> eyre::Result<()> {
-        self.update_forkchoice(B256::ZERO, hash).await
+        self.update_heads(B256::ZERO, hash).await
     }
 
     /// Submits a payload to the engine.
-    pub async fn submit_payload(&self, payload: BaseBuiltPayload) -> eyre::Result<B256> {
+    pub async fn append_payload(&self, payload: BaseBuiltPayload) -> eyre::Result<B256> {
         let block_hash = payload.block().hash();
-        self.inner.execution.driver.new_payload(payload.into()).await?;
+        let mut heads = self.current_forkchoice_state()?;
+        heads.head_block_hash = block_hash;
+        self.inner.execution.driver.append_payload(payload.into(), heads).await?;
 
         Ok(block_hash)
     }
