@@ -47,3 +47,17 @@ define_metrics! {
 ## License
 
 Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+
+## Build label
+
+`MetricsBuild::NAME` is embedded at compile time from `BASE_BUILD_NAME`, with `dev`
+as the default. Both CLI and execution-node Prometheus recorders attach it as the
+`build` label to every exported sample. For example:
+
+```sh
+BASE_BUILD_NAME=mdbx-baseline cargo build -p base-bin-base --release
+```
+
+Set the name when compiling, not when launching the binary. Cargo tracks changes to
+this compile-time environment variable; no clean build is required. The existing
+metric-specific labels and execution recorder's `reth_` prefix are preserved.

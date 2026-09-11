@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use base_common_observability_metrics::MetricsBuild;
 pub use metrics_exporter_prometheus::BuildError;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use metrics_process::Collector;
@@ -20,7 +21,9 @@ impl PrometheusServer {
     /// The interval specifies how often system metrics are collected, in seconds.
     pub fn init(addr: IpAddr, metrics_port: u16, interval: u64) -> Result<(), BuildError> {
         let prometheus_addr = SocketAddr::from((addr, metrics_port));
-        let builder = PrometheusBuilder::new().with_http_listener(prometheus_addr);
+        let builder = PrometheusBuilder::new()
+            .add_global_label("build", MetricsBuild::NAME)
+            .with_http_listener(prometheus_addr);
 
         builder.install()?;
         base_common_observability_metrics::initialize_registered_metrics();

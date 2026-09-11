@@ -13,11 +13,12 @@ use base_common_types_payload::{
 use base_consensus_batch::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
 
-use crate::metrics::Metrics;
-
-use crate::engine::{
-    EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,
-    state::EngineSyncStateUpdate,
+use crate::{
+    engine::{
+        EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,
+        state::EngineSyncStateUpdate,
+    },
+    metrics::Metrics,
 };
 
 /// Result sent to callers waiting for payload insertion acknowledgement.
@@ -222,13 +223,164 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     /// head to the current safe head.
     pub async fn execute_with_result(&self, state: &mut EngineState) -> InsertTaskResult {
         let time_start = Instant::now();
-        let result = self.execute_insert(state, time_start).await;
+        let result = async {
+            // Form a block ref before insertion so stale unsafe payloads can be dropped before import.
+            let parent_beacon_block_root =
+                self.envelope.parent_beacon_block_root.unwrap_or_default();
+            let execution_payload = self.envelope.execution_payload.clone();
+            let block: BaseBlock = match &execution_payload {
+                BaseExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?,
+                BaseExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload.clone())
+                    .try_into_block()
+                    .map_err(InsertTaskError::FromBlockError)?,
+                BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload.clone())
+                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
+                        CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                    ))
+                    .map_err(InsertTaskError::FromBlockError)?,
+                BaseExecutionPayload::V4(payload) => BaseExecutionPayload::V4(payload.clone())
+                    .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
+                        CancunPayloadFields::new(parent_beacon_block_root, vec![]),
+                        PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
+                    ))
+                    .map_err(InsertTaskError::FromBlockError)?,
+            };
+
+            let new_block_ref = base_consensus_batch::L2BlockInfoDecoder::from_block_and_genesis(
+                &block,
+                &self.rollup_config.genesis,
+            )
+            .map_err(InsertTaskError::L2BlockInfoConstruction)?;
+
+            if !self.is_unsafe_payload_applicable(state, &new_block_ref) {
+                Metrics::engine_block_insert_attempts_total(
+                    self.payload_safety.as_label(),
+                    self.payload_policy.as_label(),
+                    "skipped",
+                )
+                .increment(1);
+                info!(
+                    target: "engine",
+                    hash = %new_block_ref.block_info.hash,
+                    number = new_block_ref.block_info.number,
+                    payload_safety = self.payload_safety.as_label(),
+                    payload_policy = self.payload_policy.as_label(),
+                    "Block insert attempt skipped"
+                );
+                return Ok(state.sync_state.unsafe_head());
+            }
+
+            BaseTimeUpdateTx::validate_block_timestamp(
+                &self.rollup_config,
+                &block.body.transactions,
+                block.header.number,
+                block.header.timestamp,
+            )?;
+
+            // Insert the new payload.
+            let insert_time_start = Instant::now();
+            let response = self.client.submit_payload(self.envelope.clone()).await;
+
+            // Check the `engine_newPayload` response.
+            let response = match response {
+                Ok(resp) => resp,
+                Err(e) => {
+                    warn!(
+                        target: "engine",
+                        error = %e,
+                        payload_safety = self.payload_safety.as_label(),
+                        payload_policy = self.payload_policy.as_label(),
+                        "Failed to insert new payload"
+                    );
+                    return Err(InsertTaskError::InsertFailed(e));
+                }
+            };
+            if !self.check_new_payload_status(&response.status) {
+                return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
+            }
+            let insert_duration = insert_time_start.elapsed();
+
+            let advances_safe_head = self.payload_safety.advances_safe_head();
+            // Send a FCU to canonicalize the imported block.
+            let state_update = EngineSyncStateUpdate {
+                unsafe_head: Some(new_block_ref),
+                local_safe_head: advances_safe_head.then_some(new_block_ref),
+                safe_head: advances_safe_head.then_some(new_block_ref),
+                ..Default::default()
+            };
+            let synchronize_task = if self.payload_policy.is_authoritative() {
+                SynchronizeTask::new_forced(
+                    Arc::clone(&self.client),
+                    Arc::clone(&self.rollup_config),
+                    state_update,
+                )
+            } else {
+                SynchronizeTask::new(
+                    Arc::clone(&self.client),
+                    Arc::clone(&self.rollup_config),
+                    state_update,
+                )
+            };
+            synchronize_task.execute(state).await?;
+
+            if (self.result_tx.is_some() || self.payload_policy.is_authoritative())
+                && state.sync_state.unsafe_head() != new_block_ref
+            {
+                return Err(InsertTaskError::ForkchoiceUpdateDidNotApply);
+            }
+
+            if self.payload_policy.is_authoritative() {
+                state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
+                    local_safe_head: Some(state.sync_state.safe_head()),
+                    ..Default::default()
+                });
+            }
+
+            let total_duration = time_start.elapsed();
+            Metrics::engine_block_insert_duration_seconds(
+                self.payload_safety.as_label(),
+                self.payload_policy.as_label(),
+            )
+            .record(total_duration.as_secs_f64());
+            Metrics::engine_block_insert_submission_duration_seconds(
+                self.payload_safety.as_label(),
+                self.payload_policy.as_label(),
+            )
+            .record(insert_duration.as_secs_f64());
+            Metrics::engine_block_insert_attempts_total(
+                self.payload_safety.as_label(),
+                self.payload_policy.as_label(),
+                "success",
+            )
+            .increment(1);
+
+            info!(
+                target: "engine",
+                hash = %new_block_ref.block_info.hash,
+                number = new_block_ref.block_info.number,
+                payload_safety = self.payload_safety.as_label(),
+                payload_policy = self.payload_policy.as_label(),
+                total_duration = ?total_duration,
+                insert_duration = ?insert_duration,
+                total_duration_seconds = total_duration.as_secs_f64(),
+                insert_duration_seconds = insert_duration.as_secs_f64(),
+                gas_used = block.header.gas_used,
+                transaction_count = block.body.transactions.len(),
+                "Inserted new payload"
+            );
+
+            Ok(new_block_ref)
+        }
+        .await;
         if let Err(error) = &result {
             Metrics::engine_block_insert_attempts_total(
                 self.payload_safety.as_label(),
                 self.payload_policy.as_label(),
                 "failed",
-            ).increment(1);
+            )
+            .increment(1);
             warn!(
                 target: "engine",
                 hash = %self.envelope.execution_payload.block_hash(),
@@ -241,147 +393,6 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             );
         }
         result
-    }
-
-    /// Runs insertion while retaining the consensus task's original timing boundary.
-    pub async fn execute_insert(&self, state: &mut EngineState, time_start: Instant) -> InsertTaskResult {
-        // Form a block ref before insertion so stale unsafe payloads can be dropped before import.
-        let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
-        let execution_payload = self.envelope.execution_payload.clone();
-        let block: BaseBlock = match &execution_payload {
-            BaseExecutionPayload::V1(payload) => BaseExecutionPayload::V1(payload.clone())
-                .try_into_block()
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V2(payload) => BaseExecutionPayload::V2(payload.clone())
-                .try_into_block()
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V3(payload) => BaseExecutionPayload::V3(payload.clone())
-                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v3(
-                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                ))
-                .map_err(InsertTaskError::FromBlockError)?,
-            BaseExecutionPayload::V4(payload) => BaseExecutionPayload::V4(payload.clone())
-                .try_into_block_with_sidecar(&BaseExecutionPayloadSidecar::v4(
-                    CancunPayloadFields::new(parent_beacon_block_root, vec![]),
-                    PraguePayloadFields::new(EMPTY_REQUESTS_HASH),
-                ))
-                .map_err(InsertTaskError::FromBlockError)?,
-        };
-
-        let new_block_ref = base_consensus_batch::L2BlockInfoDecoder::from_block_and_genesis(
-            &block,
-            &self.rollup_config.genesis,
-        )
-        .map_err(InsertTaskError::L2BlockInfoConstruction)?;
-
-        if !self.is_unsafe_payload_applicable(state, &new_block_ref) {
-            Metrics::engine_block_insert_attempts_total(
-                self.payload_safety.as_label(), self.payload_policy.as_label(), "skipped",
-            ).increment(1);
-            info!(
-                target: "engine",
-                hash = %new_block_ref.block_info.hash,
-                number = new_block_ref.block_info.number,
-                payload_safety = self.payload_safety.as_label(),
-                payload_policy = self.payload_policy.as_label(),
-                "Block insert attempt skipped"
-            );
-            return Ok(state.sync_state.unsafe_head());
-        }
-
-        BaseTimeUpdateTx::validate_block_timestamp(
-            &self.rollup_config,
-            &block.body.transactions,
-            block.header.number,
-            block.header.timestamp,
-        )?;
-
-        // Insert the new payload.
-        let insert_time_start = Instant::now();
-        let response = self.client.submit_payload(self.envelope.clone()).await;
-
-        // Check the `engine_newPayload` response.
-        let response = match response {
-            Ok(resp) => resp,
-            Err(e) => {
-                warn!(
-                    target: "engine",
-                    error = %e,
-                    payload_safety = self.payload_safety.as_label(),
-                    payload_policy = self.payload_policy.as_label(),
-                    "Failed to insert new payload"
-                );
-                return Err(InsertTaskError::InsertFailed(e));
-            }
-        };
-        if !self.check_new_payload_status(&response.status) {
-            return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
-        }
-        let insert_duration = insert_time_start.elapsed();
-
-        let advances_safe_head = self.payload_safety.advances_safe_head();
-        // Send a FCU to canonicalize the imported block.
-        let state_update = EngineSyncStateUpdate {
-            unsafe_head: Some(new_block_ref),
-            local_safe_head: advances_safe_head.then_some(new_block_ref),
-            safe_head: advances_safe_head.then_some(new_block_ref),
-            ..Default::default()
-        };
-        let synchronize_task = if self.payload_policy.is_authoritative() {
-            SynchronizeTask::new_forced(
-                Arc::clone(&self.client),
-                Arc::clone(&self.rollup_config),
-                state_update,
-            )
-        } else {
-            SynchronizeTask::new(
-                Arc::clone(&self.client),
-                Arc::clone(&self.rollup_config),
-                state_update,
-            )
-        };
-        synchronize_task.execute(state).await?;
-
-        if (self.result_tx.is_some() || self.payload_policy.is_authoritative())
-            && state.sync_state.unsafe_head() != new_block_ref
-        {
-            return Err(InsertTaskError::ForkchoiceUpdateDidNotApply);
-        }
-
-        if self.payload_policy.is_authoritative() {
-            state.sync_state = state.sync_state.apply_update(EngineSyncStateUpdate {
-                local_safe_head: Some(state.sync_state.safe_head()),
-                ..Default::default()
-            });
-        }
-
-        let total_duration = time_start.elapsed();
-        Metrics::engine_block_insert_duration_seconds(
-            self.payload_safety.as_label(), self.payload_policy.as_label(),
-        ).record(total_duration.as_secs_f64());
-        Metrics::engine_block_insert_submission_duration_seconds(
-            self.payload_safety.as_label(), self.payload_policy.as_label(),
-        ).record(insert_duration.as_secs_f64());
-        Metrics::engine_block_insert_attempts_total(
-            self.payload_safety.as_label(), self.payload_policy.as_label(), "success",
-        ).increment(1);
-
-        info!(
-            target: "engine",
-            hash = %new_block_ref.block_info.hash,
-            number = new_block_ref.block_info.number,
-            payload_safety = self.payload_safety.as_label(),
-            payload_policy = self.payload_policy.as_label(),
-            total_duration = ?total_duration,
-            insert_duration = ?insert_duration,
-            total_duration_seconds = total_duration.as_secs_f64(),
-            insert_duration_seconds = insert_duration.as_secs_f64(),
-            gas_used = block.header.gas_used,
-            transaction_count = block.body.transactions.len(),
-            "Inserted new payload"
-        );
-
-        Ok(new_block_ref)
     }
 
     async fn send_channel_result(&self, result: InsertTaskResult) {

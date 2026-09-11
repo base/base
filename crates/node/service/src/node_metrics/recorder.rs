@@ -2,6 +2,7 @@
 
 use std::sync::{OnceLock, atomic::AtomicBool};
 
+use base_common_observability_metrics::MetricsBuild;
 use eyre::WrapErr;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use metrics_util::layers::{PrefixLayer, Stack};
@@ -100,7 +101,7 @@ impl PrometheusRecorder {
     /// Caution: This only configures the global recorder and does not spawn the exporter.
     /// Callers must run [`Self::spawn_upkeep`] manually.
     pub fn install_with_builder(builder: PrometheusBuilder) -> eyre::Result<Self> {
-        let recorder = builder.build_recorder();
+        let recorder = builder.add_global_label("build", MetricsBuild::NAME).build_recorder();
         let handle = recorder.handle();
 
         // Build metrics stack
