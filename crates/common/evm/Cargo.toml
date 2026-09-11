@@ -89,6 +89,7 @@ serde = [
 reth = [ "dep:reth-evm", "std" ]
 metrics = [
 	"base-metrics/metrics",
+	"base-common-precompiles/metrics",
 	"dep:base-metrics",
 	"dep:metrics",
 	"reth-evm?/metrics",

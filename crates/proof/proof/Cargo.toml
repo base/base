@@ -93,6 +93,5 @@ std = [
 	"thiserror/std",
 	"tracing/std",
 ]
-# EIP-8130 execution in the EVM without Tokio (`std` pulls Tokio). SP1 range
-# guests enable this; bare-metal FPVM builds (`check-no-std-proof`) leave it off.
+# 8130 without Tokio. Off in guests until Everest; do not pair with `metrics`.
 evm-std = [ "base-common-evm/std" ]

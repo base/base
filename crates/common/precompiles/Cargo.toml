@@ -91,3 +91,5 @@ test-utils = [
 	"base-common-genesis/test-utils",
 	"base-precompile-storage/test-utils",
 ]
+# Node-only wall-clock call timing. Leave off in zkVM guests.
+metrics = [ "std" ]
