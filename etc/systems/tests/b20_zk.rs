@@ -6,9 +6,9 @@ mod balance;
 mod beryl;
 #[path = "common/cobalt.rs"]
 mod cobalt;
+mod common;
 #[path = "common/zk_dry_run.rs"]
 mod zk_dry_run;
-mod common;
 
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{B256, U256};

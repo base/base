@@ -70,6 +70,7 @@ std = [
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
+	"base-common-eip8130/std",
 	"base-common-genesis/std",
 	"base-precompile-storage/std",
 	"revm/std",

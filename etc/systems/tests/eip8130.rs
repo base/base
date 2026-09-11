@@ -2,11 +2,11 @@
 
 #[path = "common/balance.rs"]
 mod balance;
-#[path = "common/zk_dry_run.rs"]
-mod zk_dry_run;
 mod common;
 #[path = "common/zenith.rs"]
 mod zenith;
+#[path = "common/zk_dry_run.rs"]
+mod zk_dry_run;
 
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;

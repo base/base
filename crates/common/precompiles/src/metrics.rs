@@ -690,10 +690,12 @@ mod tests {
     use alloy_sol_types::{SolCall, SolError, SolInterface};
     use base_precompile_storage::{BasePrecompileError, PrecompileError, PrecompileOutput};
 
+    #[cfg(not(feature = "metrics"))]
+    use crate::PrecompileCallTimer;
     use crate::{
         CALLDATA_WORD_GAS, IActivationRegistry, IB20, IB20Asset, IB20Factory, IPolicyRegistry,
         NoopPrecompileCallObserver, PrecompileCallRecorder, PrecompileCallStatus,
-        PrecompileCallTimer, PrecompileErrorKind, PrecompileMetricLabels, PrecompileSelector,
+        PrecompileErrorKind, PrecompileMetricLabels, PrecompileSelector,
     };
 
     #[cfg(not(feature = "metrics"))]
