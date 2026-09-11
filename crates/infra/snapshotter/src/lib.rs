@@ -15,7 +15,8 @@ pub use base_reth_cli::{
 
 mod config;
 pub use config::{
-    DEFAULT_MAX_STREAMING_ARCHIVES, DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig,
+    DEFAULT_MAX_STREAMING_ARCHIVES, DEFAULT_MAX_STREAMING_PART_UPLOADS, DEFAULT_TIP_THRESHOLD_SECS,
+    S3ConfigType, SnapshotterConfig,
 };
 
 mod progress;

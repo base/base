@@ -33,7 +33,7 @@ use bytes::Bytes;
 use futures::stream::{self, StreamExt, TryStreamExt};
 use tokio::{
     runtime::Handle,
-    sync::{Semaphore, mpsc},
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
     time::sleep,
 };
@@ -46,6 +46,9 @@ const MAX_CONCURRENT_FILE_UPLOADS: usize = 10;
 
 /// Maximum number of multipart upload parts in flight across all uploads.
 const MAX_CONCURRENT_MULTIPART_PARTS: usize = 100;
+
+/// Default global concurrency for streamed S3 multipart parts.
+const DEFAULT_MAX_STREAMING_PART_UPLOADS: usize = 64;
 
 /// Files larger than this threshold use multipart upload.
 /// S3 `put_object` has a 5 `GiB` limit; we switch well below that.
@@ -60,7 +63,7 @@ const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
 /// as the S3 object limit while leaving headroom below the part-count limit. This is deliberately
 /// separate from the smaller file-backed upload part size: a file's total size is known before
 /// upload, while a zstd stream's final compressed size is not.
-const STREAMING_MULTIPART_PART_SIZE: usize = 640 * 1024 * 1024;
+const STREAMING_MULTIPART_PART_SIZE: usize = 128 * 1024 * 1024;
 
 /// Number of complete multipart parts allowed to wait for upload per archive stream.
 ///
@@ -68,7 +71,7 @@ const STREAMING_MULTIPART_PART_SIZE: usize = 640 * 1024 * 1024;
 /// above, a value of one bounds a single archive stream to roughly 1.25 `GiB` of compressed output
 /// in memory (plus SDK request overhead), while still allowing the producer and uploader to run
 /// concurrently.
-const STREAMING_MULTIPART_CHANNEL_CAPACITY: usize = 1;
+const STREAMING_MULTIPART_CHANNEL_CAPACITY: usize = 16;
 
 /// Base delay between upload retries. Backoff is linear to keep behavior simple and predictable.
 const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -150,6 +153,7 @@ pub struct SnapshotUploader {
     prefix: String,
     public_base_url: Option<String>,
     multipart_part_permits: Arc<Semaphore>,
+    streaming_part_permits: Arc<Semaphore>,
 }
 
 /// A synchronous [`io::Write`] sink backed by an asynchronous S3 multipart upload.
@@ -172,11 +176,13 @@ pub struct StreamingMultipartUpload {
     bytes_written: u64,
     finished: bool,
     task: Option<JoinHandle<Result<u64>>>,
+    part_permits: Arc<Semaphore>,
+    runtime: Handle,
 }
 
 #[derive(Debug)]
 enum StreamingUploadMessage {
-    Part(Vec<u8>),
+    Part { bytes: Vec<u8>, permit: OwnedSemaphorePermit },
     Finish,
 }
 
@@ -239,12 +245,16 @@ impl StreamingMultipartUpload {
             .context("streaming multipart upload task panicked")?
     }
 
-    fn send_part(&self, part: Vec<u8>) -> io::Result<()> {
-        debug_assert!(!part.is_empty());
+    fn send_part(&self, bytes: Vec<u8>) -> io::Result<()> {
+        debug_assert!(!bytes.is_empty());
+        let permit =
+            self.runtime.block_on(self.part_permits.clone().acquire_owned()).map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "streaming part limiter closed")
+            })?;
         self.sender
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "streaming upload is closed"))?
-            .blocking_send(StreamingUploadMessage::Part(part))
+            .blocking_send(StreamingUploadMessage::Part { bytes, permit })
             .map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -445,7 +455,14 @@ impl SnapshotUploader {
             prefix,
             public_base_url,
             multipart_part_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_MULTIPART_PARTS)),
+            streaming_part_permits: Arc::new(Semaphore::new(DEFAULT_MAX_STREAMING_PART_UPLOADS)),
         }
+    }
+
+    /// Sets the global number of queued or in-flight streamed multipart parts.
+    pub fn with_max_streaming_part_uploads(mut self, max_parts: usize) -> Self {
+        self.streaming_part_permits = Arc::new(Semaphore::new(max_parts));
+        self
     }
 
     /// Starts a multipart upload that accepts archive bytes through a synchronous
@@ -468,6 +485,7 @@ impl SnapshotUploader {
         let (sender, receiver) = mpsc::channel(STREAMING_MULTIPART_CHANNEL_CAPACITY);
         let task_uploader = self.clone();
         let task_key = key.clone();
+        let runtime = Handle::current();
         let task = tokio::spawn(async move {
             task_uploader.consume_streaming_multipart_upload(task_key, upload_id, receiver).await
         });
@@ -480,6 +498,8 @@ impl SnapshotUploader {
             bytes_written: 0,
             finished: false,
             task: Some(task),
+            part_permits: Arc::clone(&self.streaming_part_permits),
+            runtime,
         })
     }
 
@@ -528,27 +548,37 @@ impl SnapshotUploader {
     ) -> Result<u64> {
         let result = async {
             let mut completed_parts = Vec::new();
+            let mut uploads = futures::stream::FuturesUnordered::new();
             let mut bytes_uploaded = 0u64;
             let mut part_number = 1i32;
             let mut received_finish = false;
 
-            while let Some(message) = receiver.recv().await {
-                match message {
-                    StreamingUploadMessage::Part(part) => {
+            while !received_finish || !uploads.is_empty() {
+                tokio::select! {
+                    message = receiver.recv(), if !received_finish => match message {
+                    Some(StreamingUploadMessage::Part { bytes, permit }) => {
                         if part_number > 10_000 {
                             bail!("streaming multipart upload for {key} exceeds S3's 10,000-part limit");
                         }
-                        let part_len = u64::try_from(part.len())?;
-                        let completed = self
-                            .upload_streaming_part(&key, &upload_id, part_number, part)
-                            .await?;
-                        completed_parts.push(completed);
-                        bytes_uploaded = bytes_uploaded.saturating_add(part_len);
+                        let part_len = u64::try_from(bytes.len())?;
+                        let number = part_number;
+                        let part_key = key.clone();
+                        let part_upload_id = upload_id.clone();
+                        uploads.push(async move {
+                            let completed = self.upload_streaming_part(&part_key, &part_upload_id, number, bytes, permit).await?;
+                            Ok::<_, anyhow::Error>((number, part_len, completed))
+                        });
                         part_number += 1;
                     }
-                    StreamingUploadMessage::Finish => {
+                    Some(StreamingUploadMessage::Finish) => {
                         received_finish = true;
-                        break;
+                    }
+                    None => bail!("streaming archive writer for {key} was dropped before it finalized the zstd stream"),
+                    },
+                    Some(result) = uploads.next(), if !uploads.is_empty() => {
+                        let (_number, part_len, completed) = result?;
+                        completed_parts.push(completed);
+                        bytes_uploaded = bytes_uploaded.saturating_add(part_len);
                     }
                 }
             }
@@ -559,6 +589,8 @@ impl SnapshotUploader {
             if completed_parts.is_empty() {
                 bail!("streaming multipart upload for {key} contained no archive bytes");
             }
+
+            completed_parts.sort_unstable_by_key(|part| part.part_number);
 
             self.complete_streaming_multipart_upload(
                 &key,
@@ -586,16 +618,12 @@ impl SnapshotUploader {
         upload_id: &str,
         part_number: i32,
         bytes: Vec<u8>,
+        _permit: OwnedSemaphorePermit,
     ) -> Result<CompletedPart> {
         let bytes = Bytes::from(bytes);
         let length = bytes.len();
         retry_upload(
             || async {
-                let _permit = self
-                    .multipart_part_permits
-                    .acquire()
-                    .await
-                    .map_err(|error| UploadAttemptError::fatal(error.into()))?;
                 let upload_resp = self
                     .client
                     .upload_part()
