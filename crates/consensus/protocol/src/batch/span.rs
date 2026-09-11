@@ -471,6 +471,18 @@ impl SpanBatch {
                 }
             }
 
+            // If this is the first block in the Jovian upgrade, and the batch contains any
+            // transactions, it must be dropped.
+            if cfg.is_first_jovian_block(batch.timestamp, l2_safe_head.block_info.timestamp)
+                && !batch.transactions.is_empty()
+            {
+                warn!(
+                    target: "batch_span",
+                    "Sequencer included user transactions in jovian transition block. Dropping batch."
+                );
+                return BatchValidity::Drop(BatchDropReason::NonEmptyTransitionBlock);
+            }
+
             // Check that the transactions are not empty and do not contain any deposits.
             for (i, tx) in batch.transactions.iter().enumerate() {
                 if tx.is_empty() {
@@ -1319,6 +1331,48 @@ mod tests {
         let logs = trace_store.get_by_level(Level::WARN);
         assert_eq!(logs.len(), 1);
         assert!(logs[0].contains("overlapped block's transaction does not match"));
+    }
+
+    #[tokio::test]
+    async fn test_check_batch_drop_non_empty_jovian_transition() {
+        let (trace_store, _guard) = crate::capture_traces!();
+
+        let cfg = RollupConfig {
+            upgrades: UpgradeConfig {
+                delta_time: Some(0),
+                jovian_time: Some(20),
+                ..Default::default()
+            },
+            block_time: 10,
+            max_sequencer_drift: 100,
+            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
+            ..Default::default()
+        };
+        let l1_blocks = vec![BlockInfo { number: 10, timestamp: 10, ..Default::default() }];
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { timestamp: 10, ..Default::default() },
+            l1_origin: BlockNumHash { number: 10, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo::default();
+        let mut fetcher = TestBatchValidator::default();
+        let first = SpanBatchElement {
+            epoch_num: 10,
+            timestamp: 20,
+            transactions: vec![Bytes(vec![EIP1559_TX_TYPE_ID].into())],
+        };
+        let batch = SpanBatch { batches: vec![first], ..Default::default() };
+
+        assert_eq!(
+            batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block, &mut fetcher).await,
+            BatchValidity::Drop(BatchDropReason::NonEmptyTransitionBlock)
+        );
+        assert!(
+            trace_store
+                .get_by_level(Level::WARN)
+                .iter()
+                .any(|s| s.contains("Sequencer included user transactions"))
+        );
     }
 
     #[tokio::test]
