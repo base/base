@@ -1,7 +1,6 @@
 //! Common test harness for audit integration tests with S3 fixtures.
 
-use testcontainers::runners::AsyncRunner;
-use testcontainers::ImageExt;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::minio::MinIO;
 use uuid::Uuid;
 

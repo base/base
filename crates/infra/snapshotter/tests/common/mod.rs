@@ -1,8 +1,7 @@
 //! Common test harness for snapshotter integration tests with `MinIO`.
 
 use anyhow::Result;
-use testcontainers::runners::AsyncRunner;
-use testcontainers::ImageExt;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::minio::MinIO;
 
 pub(crate) struct TestHarness {
