@@ -17,7 +17,7 @@ use base_execution_txpool::{
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool_rpc::SendRawTransactionValidityExtension;
+use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -192,7 +192,7 @@ impl InProcessBuilder {
         let mut hooks = NodeHooks::new();
         if accept_validity_transactions {
             hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                DEFAULT_MAX_VALIDITY_PREDICATES,
+                SendRawTransactionValidityConfig::default(),
             ))
             .apply(hooks);
         }

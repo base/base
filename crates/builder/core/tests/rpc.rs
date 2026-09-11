@@ -15,7 +15,10 @@ use base_execution_txpool::{
 };
 use base_node_runner::test_utils::TestHarness;
 use base_test_utils::Account;
-use base_txpool_rpc::{SendRawTransactionValidityExtension, SendRawTransactionValidityOptions};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension,
+    SendRawTransactionValidityOptions,
+};
 
 /// Sets up a test harness with the `BuilderApiExtension` installed.
 async fn setup(
@@ -54,7 +57,9 @@ async fn setup_with_validity_ingress(
     let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
     let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
     if accept_validity {
-        builder = builder.with_ext::<SendRawTransactionValidityExtension>(max_validity_predicates);
+        builder = builder.with_ext::<SendRawTransactionValidityExtension>(
+            SendRawTransactionValidityConfig { max_validity_predicates, ..Default::default() },
+        );
     }
     let harness = builder.build().await?;
     let client = harness.rpc_client()?;
@@ -253,11 +258,17 @@ async fn test_send_raw_transaction_validity_requires_explicit_opt_in() -> eyre::
             (
                 signed_eip1559_tx(enabled_harness.chain_id()),
                 SendRawTransactionValidityOptions {
-                    validity: vec![ValidityPredicate::Balance {
-                        address: Account::Alice.address(),
-                        op: ValidityOperator::Equal,
-                        value: U256::ZERO,
-                    }],
+                    validity: vec![
+                        ValidityPredicate::Balance {
+                            address: Account::Alice.address(),
+                            op: ValidityOperator::Equal,
+                            value: U256::ZERO,
+                        },
+                        ValidityPredicate::BlockNumber {
+                            op: ValidityOperator::LessThanOrEqual,
+                            value: U256::from(31),
+                        },
+                    ],
                 },
             ),
         )
