@@ -1,9 +1,7 @@
-use base_common_genesis::{RuntimeUpgradeRegistry, UpgradeActivation};
-
 use super::{UpgradeSignalApplySummary, UpgradeSignalRuntimeApplier};
 use crate::{
-    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalError,
-    UpgradeSignalMetricLayer, UpgradeSignalSchedule,
+    AlloyUpgradeSignalReader, UpgradeSignalConfig, UpgradeSignalError, UpgradeSignalMetricLayer,
+    UpgradeSignalMetrics, UpgradeSignalSchedule,
 };
 
 /// Reads and applies upgrade signal schedules while the node is running.
@@ -38,85 +36,37 @@ impl UpgradeSignalRefresher {
     /// this call succeeds, so a failed apply leaves the schedule offered for retry on the next
     /// poll rather than being silently adopted as the baseline.
     ///
-    /// `now_secs` is the time the schedule is judged against by
-    /// [`Self::reject_retroactive_change`]. Protocol versions are validated first, so a schedule
-    /// this binary is too old to support still surfaces as
-    /// [`UpgradeSignalError::UnsupportedProtocolVersion`] (and can still fail the node closed)
+    /// `l2_head_timestamp` is the latest L2 block timestamp the node has processed. Protocol
+    /// versions are validated first, so a schedule this binary is too old to support still surfaces
+    /// as [`UpgradeSignalError::UnsupportedProtocolVersion`] (and can still fail the node closed)
     /// rather than being masked by a retroactivity rejection.
     pub fn apply(
         &self,
         schedule: &UpgradeSignalSchedule,
-        now_secs: u64,
+        l2_head_timestamp: u64,
     ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
-        self.config.validate_schedule_protocol_versions(schedule)?;
-        self.reject_retroactive_change(schedule, now_secs)?;
-        let summary = UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, schedule);
-        summary.log("runtime registry");
+        let result = self.config.validate_schedule_protocol_versions(schedule).and_then(|()| {
+            UpgradeSignalRuntimeApplier::apply_schedule(self.chain_id, schedule, l2_head_timestamp)
+        });
 
-        Ok(summary)
-    }
-
-    /// Returns an error if applying `schedule` would change the fork rules of any L2 block at or
-    /// before `now_secs`.
-    ///
-    /// A runtime override is not a forward-only setting: [`crate::RuntimeRegistrySink`] writes it
-    /// into [`RuntimeUpgradeRegistry`], which every fork check consults live for *any* timestamp.
-    /// Moving or clearing an activation that has already elapsed therefore reinterprets blocks the
-    /// node has already built or validated, and the divergence surfaces later and far from its
-    /// cause — as a mismatched state root during replay, reorg handling, or proving. Refusing the
-    /// apply keeps the node on one coherent rule set and turns a silent retroactive rewrite into a
-    /// loud, deterministic alarm.
-    ///
-    /// The window an activation change flips is `[min(current, incoming), max(current, incoming))`,
-    /// so the change reaches settled history exactly when that window has already opened. A cleared
-    /// activation is unbounded, hence [`u64::MAX`]. Equality is treated as retroactive: a block
-    /// bearing exactly `now_secs` may already exist.
-    ///
-    /// Two changes are deliberately *not* refused here, because the registry cannot see what the
-    /// node would fall back to:
-    ///
-    /// * an upgrade with no current override — the effective activation comes from the startup
-    ///   chain spec or rollup config, which this crate does not read, so there is no baseline to
-    ///   compare against. This is the first live apply after a `startup-apply` boot.
-    /// * an upgrade dropped by a shorter schedule — the commit removes the override, reverting the
-    ///   fork check to that same unreadable startup value.
-    ///
-    /// Closing both requires the node's real L2 head and effective fork schedule rather than wall
-    /// clock and the registry; until then this guard covers every change to an activation the
-    /// registry itself already applies.
-    pub fn reject_retroactive_change(
-        &self,
-        schedule: &UpgradeSignalSchedule,
-        now_secs: u64,
-    ) -> Result<(), UpgradeSignalError> {
-        for signal in &schedule.signals {
-            let Some(current) =
-                RuntimeUpgradeRegistry::activation(self.chain_id, signal.upgrade_id)
-            else {
-                continue;
-            };
-            let incoming =
-                UpgradeActivation::from_timestamp(signal.positive_activation_timestamp());
-            if current == incoming {
-                continue;
+        match &result {
+            Ok(summary) if summary.committed => {
+                UpgradeSignalMetrics::record_apply_success(self.metrics_layer, schedule);
+                summary.log("runtime registry");
             }
-
-            let earliest_affected_timestamp = current
-                .timestamp()
-                .unwrap_or(u64::MAX)
-                .min(incoming.timestamp().unwrap_or(u64::MAX));
-            if earliest_affected_timestamp <= now_secs {
-                return Err(UpgradeSignalError::retroactive_schedule_change(
-                    signal.upgrade_id.contract_id().to_string(),
-                    current,
-                    incoming,
-                    earliest_affected_timestamp,
-                    now_secs,
-                ));
+            Ok(summary) => summary.log("runtime registry"),
+            Err(error) => {
+                UpgradeSignalMetrics::record_apply_failure(self.metrics_layer, schedule);
+                if let UpgradeSignalError::RetroactiveScheduleChange { upgrade_id, .. } = error {
+                    UpgradeSignalMetrics::record_retroactive_rejection(
+                        self.metrics_layer,
+                        upgrade_id,
+                    );
+                }
             }
         }
 
-        Ok(())
+        result
     }
 
     /// Reads the current L1 schedule with retries, recording this refresher's metric layer.
@@ -127,9 +77,12 @@ impl UpgradeSignalRefresher {
     /// Reads, metrics-records, logs, and applies the current L1 schedule.
     ///
     /// Validation happens once in [`Self::apply`].
-    pub async fn refresh(&self) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
+    pub async fn refresh(
+        &self,
+        l2_head_timestamp: impl FnOnce() -> u64,
+    ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
         let schedule = self.read_schedule().await?;
-        self.apply(&schedule, UpgradeSignalDefaults::now_secs())
+        self.apply(&schedule, l2_head_timestamp())
     }
 }
 
@@ -308,8 +261,9 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
-    /// Equality is retroactive: a block bearing exactly `now_secs` may already exist, so the guard
-    /// refuses at the boundary and only permits the change one second earlier.
+    /// Equality is retroactive: the processed head may bear exactly the earliest affected
+    /// timestamp, so the guard refuses at the boundary and only permits the change one second
+    /// earlier.
     #[test]
     fn apply_treats_the_earliest_affected_timestamp_as_already_settled() {
         let chain_id = 9_100_025;

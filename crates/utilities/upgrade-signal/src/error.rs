@@ -51,7 +51,7 @@ pub enum UpgradeSignalError {
     /// or clearing an activation that has already elapsed changes the fork membership of blocks the
     /// node has already built or validated.
     #[error(
-        "upgrade signal for {upgrade_id} would retroactively change fork rules: activation moves from {current_activation} to {incoming_activation}, and the earliest affected timestamp {earliest_affected_timestamp} is not after the current time {now_secs}"
+        "upgrade signal for {upgrade_id} would retroactively change fork rules: activation moves from {current_activation} to {incoming_activation}, and the earliest affected timestamp {earliest_affected_timestamp} is not after the processed L2 head timestamp {l2_head_timestamp}"
     )]
     RetroactiveScheduleChange {
         /// Upgrade ID whose activation change reaches already-processed blocks.
@@ -62,8 +62,8 @@ pub enum UpgradeSignalError {
         incoming_activation: String,
         /// Earliest L2 timestamp whose fork membership the change would flip.
         earliest_affected_timestamp: u64,
-        /// Time the change was evaluated against.
-        now_secs: u64,
+        /// Processed L2 head timestamp the change was evaluated against.
+        l2_head_timestamp: u64,
     },
     /// The node halted (fail closed) because a scheduled upgrade it is too old to support is
     /// activating imminently; continuing would fork the node off the network.
@@ -117,14 +117,14 @@ impl UpgradeSignalError {
         current_activation: impl ToString,
         incoming_activation: impl ToString,
         earliest_affected_timestamp: u64,
-        now_secs: u64,
+        l2_head_timestamp: u64,
     ) -> Self {
         Self::RetroactiveScheduleChange {
             upgrade_id,
             current_activation: current_activation.to_string(),
             incoming_activation: incoming_activation.to_string(),
             earliest_affected_timestamp,
-            now_secs,
+            l2_head_timestamp,
         }
     }
 }

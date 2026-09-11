@@ -7,7 +7,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
 use base_upgrade_signal::{
     PackedProtocolVersion, UpgradeSignalApplySummary, UpgradeSignalConfig, UpgradeSignalDefaults,
-    UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
+    UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
     UpgradeSignalRefresher, UpgradeSignalRuntimeApplier, UpgradeSignalSchedule,
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObject};
@@ -180,17 +180,21 @@ impl ExecutionUpgradeSignal {
     }
 
     /// Refreshes the runtime upgrade signal schedule for a running execution node.
-    pub async fn refresh_runtime_upgrade_signal(
+    pub async fn refresh_runtime_upgrade_signal<Provider>(
         refresher: &UpgradeSignalRefresher,
-    ) -> RpcResult<UpgradeSignalApplySummary> {
+        provider: &Provider,
+    ) -> RpcResult<UpgradeSignalApplySummary>
+    where
+        Provider: BlockNumReader + HeaderProvider,
+    {
         match refresher.read_schedule().await {
-            Ok(schedule) => match refresher.apply(&schedule, UpgradeSignalDefaults::now_secs()) {
-                Ok(summary) => {
-                    UpgradeSignalMetrics::record_apply_success(refresher.metrics_layer, &schedule);
-                    Ok(summary)
-                }
+            Ok(schedule) => match Self::current_head(provider)
+                .map_err(|error| error.to_string())
+                .and_then(|head| {
+                    refresher.apply(&schedule, head.timestamp).map_err(|error| error.to_string())
+                }) {
+                Ok(summary) => Ok(summary),
                 Err(error) => {
-                    UpgradeSignalMetrics::record_apply_failure(refresher.metrics_layer, &schedule);
                     warn!(
                         target: "upgrade_signal",
                         error = %error,
@@ -225,6 +229,7 @@ impl ExecutionUpgradeSignal {
         }
 
         let chain_id = ctx.config().chain.chain().id();
+        let provider = ctx.provider().clone();
         let reader = config.signal_config.reader(config.l1_rpc)?;
         let refresher = UpgradeSignalRefresher::new(
             config.signal_config,
@@ -236,8 +241,9 @@ impl ExecutionUpgradeSignal {
         module
             .register_async_method("admin_refreshUpgradeSignal", move |_, refresher, _| {
                 let filter_refresh = Arc::clone(&filter_refresh);
+                let provider = provider.clone();
                 async move {
-                    let result = Self::refresh_runtime_upgrade_signal(&refresher).await;
+                    let result = Self::refresh_runtime_upgrade_signal(&refresher, &provider).await;
                     if result.is_ok() {
                         // The registry is already mutated (apply returned Ok); wake the monitor to
                         // reinstall the fork filter against the new schedule right away.
@@ -412,7 +418,21 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                                     let outcome = tokio::select! {
                                         _ = &mut signal => break,
                                         outcome = monitor
-                                            .poll_and_apply(&reader, auto_refresher.as_ref()) =>
+                                            .poll_and_apply(
+                                                &reader,
+                                                auto_refresher.as_ref(),
+                                                || match ExecutionUpgradeSignal::current_head(&provider) {
+                                                    Ok(head) => Some(head.timestamp),
+                                                    Err(error) => {
+                                                        warn!(
+                                                            target: "upgrade_signal",
+                                                            error = %error,
+                                                            "failed to read processed L2 head; skipping runtime upgrade signal apply"
+                                                        );
+                                                        None
+                                                    }
+                                                },
+                                            ) =>
                                             outcome,
                                     };
                                     // Fail closed: a scheduled upgrade this node cannot support is

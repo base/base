@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base_consensus_engine::EngineState;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::{
     AdminApiServer, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc, DevEngineApiServer,
@@ -19,7 +20,7 @@ use jsonrpsee::{
     RpcModule,
     server::{Server, ServerConfig, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tower_http::timeout::TimeoutLayer;
 
@@ -39,6 +40,7 @@ where
     sequencer_admin_rpc_client: Option<SequencerAdminApiClient_>,
     safe_db_reader: Arc<dyn SafeDBReader>,
     upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
+    engine_state: watch::Receiver<EngineState>,
     /// Public `base`-namespace RPC server, present when the upgrade signal is configured.
     base_rpc: Option<BaseRpc>,
 }
@@ -144,7 +146,7 @@ where
         {
             modules.merge(
                 AdminRpc::new(self.sequencer_admin_rpc_client, network_admin)
-                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
+                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher, self.engine_state)
                     .into_rpc(),
             )?;
         }

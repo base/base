@@ -570,10 +570,13 @@ impl RollupNode {
         // sequencer admin RPC.
         let upgrade_signal_refresher =
             self.upgrade_signal_config.as_ref().and_then(|c| c.refresher());
-        let upgrade_signal_metrics_actor = self
-            .upgrade_signal_config
-            .as_ref()
-            .map(|c| c.metrics_actor(upgrade_signal_refresher.clone(), cancellation.clone()));
+        let upgrade_signal_metrics_actor = self.upgrade_signal_config.as_ref().map(|c| {
+            c.metrics_actor(
+                upgrade_signal_refresher.clone(),
+                sequencer_engine_state_rx.clone(),
+                cancellation.clone(),
+            )
+        });
         let node_mode = self.mode();
         // Create the sequencer if needed
         let (sequencer_actor, sequencer_admin_client) = if node_mode.is_sequencer() {
@@ -589,7 +592,7 @@ impl RollupNode {
             let sequencer_engine_client = QueuedSequencerEngineClient {
                 engine_actor_request_tx: engine_actor_request_tx.clone(),
                 unsafe_head_rx,
-                engine_state_rx: sequencer_engine_state_rx,
+                engine_state_rx: sequencer_engine_state_rx.clone(),
             };
 
             // Create the admin API channel
@@ -649,6 +652,7 @@ impl RollupNode {
                 sequencer_admin_client,
                 safe_db_reader,
                 upgrade_signal_refresher,
+                sequencer_engine_state_rx,
                 base_rpc,
             )
         });

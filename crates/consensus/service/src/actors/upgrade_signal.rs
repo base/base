@@ -2,11 +2,13 @@
 
 use core::time::Duration;
 
+use base_consensus_engine::EngineState;
 use base_upgrade_signal::{
     AlloyUpgradeSignalReader, PackedProtocolVersion, UpgradeSignalConfig, UpgradeSignalError,
     UpgradeSignalMetricLayer, UpgradeSignalMonitor, UpgradeSignalPollOutcome,
     UpgradeSignalRefresher,
 };
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -42,12 +44,14 @@ impl UpgradeSignalNodeConfig {
     pub fn metrics_actor(
         &self,
         refresher: Option<UpgradeSignalRefresher>,
+        engine_state: watch::Receiver<EngineState>,
         cancellation: CancellationToken,
     ) -> UpgradeSignalMetricsActor {
         UpgradeSignalMetricsActor::new(
             self.reader.clone(),
             self.config.l1_block_tag.poll_interval(),
             refresher,
+            engine_state,
             cancellation,
         )
     }
@@ -77,6 +81,8 @@ pub struct UpgradeSignalMetricsActor {
     pub poll_interval: Duration,
     /// Runtime refresher applied automatically on observed live updates, when enabled.
     pub refresher: Option<UpgradeSignalRefresher>,
+    /// Latest state of the L2 engine processed by this node.
+    pub engine_state: watch::Receiver<EngineState>,
     /// Cancellation token shared with the rollup node.
     pub cancellation: CancellationToken,
 }
@@ -87,17 +93,22 @@ impl UpgradeSignalMetricsActor {
         reader: AlloyUpgradeSignalReader,
         poll_interval: Duration,
         refresher: Option<UpgradeSignalRefresher>,
+        engine_state: watch::Receiver<EngineState>,
         cancellation: CancellationToken,
     ) -> Self {
         let monitor = UpgradeSignalMonitor::new(UpgradeSignalMetricLayer::Consensus);
 
-        Self { reader, monitor, poll_interval, refresher, cancellation }
+        Self { reader, monitor, poll_interval, refresher, engine_state, cancellation }
     }
 
     /// Polls L1 upgrade signal state, records metrics, and auto-applies observed changes when
     /// runtime refresh is enabled. Returns whether the node must fail closed.
     pub async fn poll_l1_signal(&mut self) -> UpgradeSignalPollOutcome {
-        self.monitor.poll_and_apply(&self.reader, self.refresher.as_ref()).await
+        self.monitor
+            .poll_and_apply(&self.reader, self.refresher.as_ref(), || {
+                Some(self.engine_state.borrow().sync_state.unsafe_head().block_info.timestamp)
+            })
+            .await
     }
 }
 

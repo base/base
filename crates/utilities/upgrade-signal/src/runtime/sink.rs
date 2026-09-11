@@ -4,7 +4,7 @@ use base_common_genesis::{
 };
 
 use super::{UpgradeSignalApplyAction, UpgradeSignalApplyChange, UpgradeSignalApplySummary};
-use crate::UpgradeSignalSchedule;
+use crate::{UpgradeSignalError, UpgradeSignalSchedule};
 
 /// Upgrade activation sink backed by the process-local runtime registry for one chain.
 #[derive(Debug, Clone)]
@@ -13,19 +13,62 @@ pub struct RuntimeRegistrySink {
     pub chain_id: u64,
     /// L1 block number used to read the buffered schedule.
     pub l1_block_number: u64,
+    /// Timestamp of the latest L2 block processed by the node.
+    pub l2_head_timestamp: u64,
     /// Buffered updates to apply to the runtime registry at finalize time.
     pub updates: UpgradeActivationOverrides,
 }
 
 impl RuntimeRegistrySink {
     /// Creates a runtime registry sink for one chain.
-    pub const fn new(chain_id: u64, l1_block_number: u64) -> Self {
-        Self { chain_id, l1_block_number, updates: UpgradeActivationOverrides::new() }
+    pub const fn new(chain_id: u64, l1_block_number: u64, l2_head_timestamp: u64) -> Self {
+        Self {
+            chain_id,
+            l1_block_number,
+            l2_head_timestamp,
+            updates: UpgradeActivationOverrides::new(),
+        }
+    }
+
+    /// Rejects activation changes that would alter fork rules at or before the processed L2 head.
+    pub fn reject_retroactive_change(
+        current: Option<&UpgradeActivationOverrides>,
+        incoming: &UpgradeActivationOverrides,
+        l2_head_timestamp: u64,
+    ) -> Result<(), UpgradeSignalError> {
+        let Some(current) = current else {
+            return Ok(());
+        };
+
+        for (&upgrade_id, &incoming_activation) in &incoming.activations {
+            let Some(current_activation) = current.activation(upgrade_id) else {
+                continue;
+            };
+            if current_activation == incoming_activation {
+                continue;
+            }
+
+            let earliest_affected_timestamp = current_activation
+                .timestamp()
+                .unwrap_or(u64::MAX)
+                .min(incoming_activation.timestamp().unwrap_or(u64::MAX));
+            if earliest_affected_timestamp <= l2_head_timestamp {
+                return Err(UpgradeSignalError::retroactive_schedule_change(
+                    upgrade_id.contract_id().to_string(),
+                    current_activation,
+                    incoming_activation,
+                    earliest_affected_timestamp,
+                    l2_head_timestamp,
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
 
 impl UpgradeActivationSink for RuntimeRegistrySink {
-    type Error = core::convert::Infallible;
+    type Error = UpgradeSignalError;
 
     fn apply_activation(
         &mut self,
@@ -45,7 +88,14 @@ impl UpgradeActivationSink for RuntimeRegistrySink {
 
         // The runtime registry mirrors the latest authoritative L1 schedule for this chain, so a
         // refresh replaces the chain's entire override set instead of merging into prior state.
-        Ok(RuntimeUpgradeRegistry::replace_overrides(self.chain_id, self.l1_block_number, updates))
+        RuntimeUpgradeRegistry::replace_overrides_checked(
+            self.chain_id,
+            self.l1_block_number,
+            updates,
+            |current, incoming| {
+                Self::reject_retroactive_change(current, incoming, self.l2_head_timestamp)
+            },
+        )
     }
 }
 
@@ -105,10 +155,11 @@ impl UpgradeSignalRuntimeApplier {
     pub fn apply_schedule(
         chain_id: u64,
         schedule: &UpgradeSignalSchedule,
-    ) -> UpgradeSignalApplySummary {
-        let mut sink = RuntimeRegistrySink::new(chain_id, schedule.l1_block_number);
+        l2_head_timestamp: u64,
+    ) -> Result<UpgradeSignalApplySummary, UpgradeSignalError> {
+        let mut sink =
+            RuntimeRegistrySink::new(chain_id, schedule.l1_block_number, l2_head_timestamp);
         Self::apply_schedule_to_sink(chain_id, schedule, &mut sink)
-            .unwrap_or_else(|never| match never {})
     }
 }
 
@@ -152,7 +203,9 @@ mod tests {
                 (BaseUpgrade::Beryl, 0),
                 (BaseUpgrade::Cobalt, 10),
             ]),
-        );
+            0,
+        )
+        .unwrap();
 
         assert_eq!(summary.applied_upgrades, 2);
         assert_eq!(summary.cleared_upgrades, 1);
@@ -221,7 +274,7 @@ mod tests {
     fn runtime_registry_sink_only_flushes_in_finalize() {
         let chain_id = 9_000_008;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
-        let mut sink = RuntimeRegistrySink::new(chain_id, 11);
+        let mut sink = RuntimeRegistrySink::new(chain_id, 11, 0);
 
         sink.apply_activation(BaseUpgrade::Azul, UpgradeActivation::Timestamp(42)).unwrap();
 
@@ -243,7 +296,7 @@ mod tests {
         RuntimeUpgradeRegistry::clear_chain(chain_id);
         RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 84);
 
-        let mut sink = RuntimeRegistrySink::new(chain_id, 11);
+        let mut sink = RuntimeRegistrySink::new(chain_id, 11, 0);
         sink.apply_activation(BaseUpgrade::Azul, UpgradeActivation::Timestamp(42)).unwrap();
         assert!(sink.finalize().unwrap());
 
@@ -257,18 +310,22 @@ mod tests {
     }
 
     #[test]
-    fn stale_schedule_does_not_replace_newer_runtime_overrides() {
+    fn stale_schedule_is_rejected_before_retroactivity_validation() {
         let chain_id = 9_000_010;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
         let newer_summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule_at(101, &[(BaseUpgrade::Jovian, 200)]),
-        );
+            500,
+        )
+        .unwrap();
         let stale_summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule_at(100, &[(BaseUpgrade::Jovian, 100)]),
-        );
+            500,
+        )
+        .unwrap();
 
         assert!(newer_summary.committed);
         assert!(!stale_summary.committed);
@@ -289,11 +346,15 @@ mod tests {
         let older_summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule_at(100, &[(BaseUpgrade::Jovian, 100)]),
-        );
+            0,
+        )
+        .unwrap();
         let newer_summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule_at(101, &[(BaseUpgrade::Jovian, 200)]),
-        );
+            0,
+        )
+        .unwrap();
 
         assert!(older_summary.committed);
         assert!(newer_summary.committed);
@@ -314,15 +375,21 @@ mod tests {
         UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule_at(100, &[(BaseUpgrade::Jovian, 200)]),
-        );
+            0,
+        )
+        .unwrap();
         let empty_summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &UpgradeSignalSchedule::new(101, Vec::new()),
-        );
+            0,
+        )
+        .unwrap();
         let stale_summary = UpgradeSignalRuntimeApplier::apply_schedule(
             chain_id,
             &schedule_at(100, &[(BaseUpgrade::Jovian, 100)]),
-        );
+            0,
+        )
+        .unwrap();
 
         assert!(empty_summary.committed);
         assert!(!stale_summary.committed);

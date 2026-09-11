@@ -4,7 +4,7 @@ use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
 };
-use core::fmt::Display;
+use core::{convert::Infallible, fmt::Display};
 
 use alloy_hardforks::{EthereumHardfork, hardfork};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -481,15 +481,38 @@ impl RuntimeUpgradeRegistry {
         l1_block_number: u64,
         overrides: UpgradeActivationOverrides,
     ) -> bool {
+        Self::replace_overrides_checked(chain_id, l1_block_number, overrides, |_, _| {
+            Ok::<(), Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {})
+    }
+
+    /// Validates and replaces all runtime activation overrides unless their L1 block predates
+    /// stored state.
+    ///
+    /// The ordering check, `validate` callback, and replacement happen under one write lock so a
+    /// stale concurrent refresh is rejected before validation and a newer schedule cannot land
+    /// between validation and replacement. Returns `true` when the overrides were replaced and
+    /// `false` when a stale schedule was rejected.
+    pub fn replace_overrides_checked<E>(
+        chain_id: u64,
+        l1_block_number: u64,
+        overrides: UpgradeActivationOverrides,
+        validate: impl FnOnce(
+            Option<&UpgradeActivationOverrides>,
+            &UpgradeActivationOverrides,
+        ) -> Result<(), E>,
+    ) -> Result<bool, E> {
         let mut registry = Self::write_registry();
         if registry
             .get(&chain_id)
             .and_then(|entry| entry.last_updated_block_number)
             .is_some_and(|last_updated| l1_block_number < last_updated)
         {
-            return false;
+            return Ok(false);
         }
 
+        validate(registry.get(&chain_id).map(|entry| &entry.overrides), &overrides)?;
         registry.insert(
             chain_id,
             RuntimeUpgradeRegistryEntry {
@@ -497,7 +520,7 @@ impl RuntimeUpgradeRegistry {
                 last_updated_block_number: Some(l1_block_number),
             },
         );
-        true
+        Ok(true)
     }
 
     /// Clears all runtime activation overrides and their L1 block watermark for a chain.

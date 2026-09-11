@@ -5,13 +5,14 @@ use core::fmt::Debug;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
+use base_consensus_engine::EngineState;
 use base_consensus_gossip::Metrics;
 use base_upgrade_signal::{UpgradeSignalApplySummary, UpgradeSignalRefresher};
 use jsonrpsee::{
     core::RpcResult,
     types::{ErrorCode, ErrorObject},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::warn;
 
 use crate::{AdminApiServer, SequencerAdminAPIClient, SequencerAdminAPIError};
@@ -42,6 +43,8 @@ pub struct AdminRpc<SequencerAdminAPIClient> {
     pub network_sender: NetworkAdminQuerySender,
     /// Runtime upgrade signal refresher.
     pub upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
+    /// Latest state of the L2 engine processed by this node.
+    pub engine_state: Option<watch::Receiver<EngineState>>,
 }
 
 impl<SequencerAdminAPIClient_> AdminRpc<SequencerAdminAPIClient_>
@@ -63,15 +66,22 @@ where
         sequencer_admin_client: Option<SequencerAdminAPIClient_>,
         network_sender: NetworkAdminQuerySender,
     ) -> Self {
-        Self { sequencer_admin_client, network_sender, upgrade_signal_refresher: None }
+        Self {
+            sequencer_admin_client,
+            network_sender,
+            upgrade_signal_refresher: None,
+            engine_state: None,
+        }
     }
 
     /// Sets the runtime upgrade signal refresher.
     pub fn with_upgrade_signal_refresher(
         self,
         upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
+        engine_state: watch::Receiver<EngineState>,
     ) -> Self {
-        Self { upgrade_signal_refresher, ..self }
+        let engine_state = upgrade_signal_refresher.as_ref().map(|_| engine_state);
+        Self { upgrade_signal_refresher, engine_state, ..self }
     }
 }
 
@@ -231,8 +241,14 @@ where
         let Some(ref refresher) = self.upgrade_signal_refresher else {
             return Err(upgrade_signal_unavailable());
         };
+        let Some(ref engine_state) = self.engine_state else {
+            return Err(upgrade_signal_unavailable());
+        };
 
-        match refresher.refresh().await {
+        match refresher
+            .refresh(|| engine_state.borrow().sync_state.unsafe_head().block_info.timestamp)
+            .await
+        {
             Ok(summary) => Ok(summary),
             Err(error) => {
                 warn!(
