@@ -2,7 +2,7 @@
 
 use std::{num::NonZeroUsize, path::PathBuf};
 
-use clap::{Parser, ValueEnum};
+use clap::{Args, ValueEnum};
 use url::Url;
 
 /// Default tip threshold in seconds: how fresh the latest block must be for the
@@ -19,11 +19,7 @@ pub enum S3ConfigType {
 }
 
 /// Configuration for the snapshotter sidecar.
-#[derive(Debug, Parser)]
-#[command(
-    name = "base-snapshotter",
-    about = "Snapshot and upload reth node data to S3-compatible storage"
-)]
+#[derive(Debug, Args)]
 pub struct SnapshotterConfig {
     /// Docker container name of the execution layer node to stop/start.
     #[arg(long)]

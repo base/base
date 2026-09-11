@@ -6225,12 +6225,13 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "base-cli-utils",
  "base-snapshotter",
  "clap",
  "rayon",
+ "serde",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
