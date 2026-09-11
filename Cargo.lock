@@ -4611,9 +4611,11 @@ name = "base-execution-state-prefetch"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
+ "base-metrics",
  "base-node-runner",
  "base-precompile-storage",
  "criterion",
+ "metrics",
  "reth-provider",
  "tracing",
 ]

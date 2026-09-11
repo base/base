@@ -15,6 +15,7 @@ workspace = true
 
 [dependencies]
 # base
+base-metrics.workspace = true
 base-node-runner.workspace = true
 base-precompile-storage = { workspace = true, features = ["std"] }
 
@@ -25,6 +26,7 @@ reth-provider.workspace = true
 alloy-primitives.workspace = true
 
 # misc
+metrics = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
@@ -34,3 +36,10 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 [[bench]]
 name = "pool"
 harness = false
+
+[features]
+default = ["metrics"]
+metrics = [
+    "base-metrics/metrics",
+    "dep:metrics",
+]

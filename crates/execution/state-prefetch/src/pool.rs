@@ -7,12 +7,15 @@ use std::{
         mpsc,
     },
     thread,
+    time::Instant,
 };
 
 use alloy_primitives::B256;
 use base_precompile_storage::{PrefetchRequest, StatePrefetcher};
 use reth_provider::{StateProvider, StateProviderFactory};
 use tracing::trace;
+
+use crate::PrefetchMetrics;
 
 /// Global cap for queued requests across all workers. Increasing worker count
 /// does not increase the maximum retained queue memory.
@@ -88,6 +91,7 @@ impl StatePrefetchPool {
             let state = match provider.latest() {
                 Ok(state) => state,
                 Err(error) => {
+                    PrefetchMetrics::read_errors_total().increment(1);
                     trace!(error = %error, request = ?request, "prefetch state provider unavailable");
                     continue;
                 }
@@ -107,13 +111,18 @@ impl StatePrefetchPool {
 
     /// Performs one hinted read and discards the value.
     fn read<S: StateProvider + ?Sized>(state: &S, request: PrefetchRequest) {
-        if let Err(error) = state.storage(request.address, B256::from(request.slot)) {
-            trace!(
-                error = %error,
-                address = %request.address,
-                slot = %request.slot,
-                "prefetch read failed"
-            );
+        let started = Instant::now();
+        match state.storage(request.address, B256::from(request.slot)) {
+            Ok(_) => PrefetchMetrics::read_seconds().record(started.elapsed()),
+            Err(error) => {
+                PrefetchMetrics::read_errors_total().increment(1);
+                trace!(
+                    error = %error,
+                    address = %request.address,
+                    slot = %request.slot,
+                    "prefetch read failed"
+                );
+            }
         }
     }
 
@@ -137,13 +146,19 @@ impl StatePrefetchPool {
 
 impl StatePrefetcher for StatePrefetchPool {
     fn prefetch(&self, requests: &[PrefetchRequest]) {
+        PrefetchMetrics::hints_total().increment(1);
         for &request in requests {
             if !self.try_reserve_queue_slot() {
+                PrefetchMetrics::requests_dropped_total().increment(1);
                 continue;
             }
             let index = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len();
-            if self.senders[index].try_send(request).is_err() {
-                self.queued_requests.fetch_sub(1, Ordering::Relaxed);
+            match self.senders[index].try_send(request) {
+                Ok(()) => PrefetchMetrics::requests_enqueued_total().increment(1),
+                Err(_) => {
+                    self.queued_requests.fetch_sub(1, Ordering::Relaxed);
+                    PrefetchMetrics::requests_dropped_total().increment(1);
+                }
             }
         }
     }
