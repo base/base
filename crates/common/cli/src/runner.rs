@@ -26,7 +26,7 @@ impl CliRunner {
     pub fn try_with_runtime_config(
         config: base_common_runtime::RuntimeConfig,
     ) -> Result<Self, base_common_runtime::RuntimeBuildError> {
-        let runtime = base_common_runtime::RuntimeBuilder::new(config).build()?;
+        let runtime = base_common_runtime::Runtime::new(config)?;
         Ok(Self { config: CliRunnerConfig::default(), runtime })
     }
 

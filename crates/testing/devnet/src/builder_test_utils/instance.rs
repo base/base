@@ -13,7 +13,7 @@ use std::{
 use async_trait::async_trait;
 use base_common_chain_config::BaseChainSpec;
 use base_common_client_ethereum::{Base, Identity, ProviderBuilder, RootProvider};
-use base_common_runtime::{Runtime, RuntimeBuilder, RuntimeConfig};
+use base_common_runtime::{Runtime, RuntimeConfig};
 use base_execution_payload::SharedMeteringStore;
 use base_execution_txpool::{BasePooledTransaction, TransactionPool};
 use base_node_config::{DatadirArgs, NetworkArgs, NodeExitFuture, RpcServerArgs};
@@ -183,7 +183,7 @@ impl LocalInstance {
     ) -> eyre::Result<Self> {
         clear_otel_env_vars();
         init_silenced_tracing();
-        let runtime = RuntimeBuilder::new(RuntimeConfig::default()).build()?;
+        let runtime = Runtime::new(RuntimeConfig::default())?;
 
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();

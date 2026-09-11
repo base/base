@@ -5,7 +5,7 @@
 use std::{any::Any, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use base_common_runtime::{Runtime, RuntimeConfig, TokioConfig};
 use base_execution_state_database::{ClientVersion, DatabaseEnv, init_db, mdbx::DatabaseArguments};
 use base_execution_txpool::TxForwardingConfig;
 use base_node_cli::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
@@ -110,11 +110,10 @@ impl InProcessClient {
         );
 
         let (data_dir, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
-        let runtime = RuntimeBuilder::new(
+        let runtime = Runtime::new(
             RuntimeConfig::default()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
-        )
-        .build()?;
+        )?;
 
         let chain_spec = match &config.chain_spec {
             ChainSpecSource::Parsed(chain_spec) => Arc::clone(chain_spec),

@@ -1,8 +1,8 @@
 # base-common-runtime
 
 Shared runtime and task infrastructure: task supervision, graceful shutdown, event streams,
-rate limiting, retry policies, and deterministic scheduling for tests. `Runtime` and
-`RuntimeBuilder` own the production Tokio and optional Rayon executors. `AsyncRuntime` is the
+rate limiting, retry policies, and deterministic scheduling for tests. `Runtime`, constructed
+with `Runtime::new(config)`, owns the production Tokio and optional Rayon executors. `AsyncRuntime` is the
 clock/spawner/cancellation contract used by pipeline components that also run under a
 deterministic executor. `RetryConfig`, `EventSender`, and `EventStream` are shared by those services.
 

@@ -17,13 +17,13 @@ use jsonrpsee::{
     server::{Server, ServerConfig, ServerHandle, middleware::http::ProxyGetRequestLayer},
 };
 use tokio::sync::mpsc;
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::{
     AdminRpc, BaseRpc, DevEngineRpc, EngineRpcClient, HealthzRpc, L1WatcherQueries,
     NetworkAdminQuery, NodeActor, P2pRpc, RollupRpc, RpcActorError, RpcBuilder, SafeDBReader,
-    SequencerAdminClient, WsRPC, actors::CancellableContext,
+    SequencerAdminClient, WsRPC,
 };
 
 /// An actor that handles the RPC server for the rollup node.
@@ -51,12 +51,6 @@ pub struct RpcContext {
     pub l1_watcher_queries: mpsc::Sender<L1WatcherQueries>,
     /// The cancellation token, shared between all tasks.
     pub cancellation: CancellationToken,
-}
-
-impl CancellableContext for RpcContext {
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation.cancelled()
-    }
 }
 
 /// Launches the jsonrpsee [`Server`].

@@ -17,11 +17,11 @@ use tokio::{
     task::JoinError,
     time::Interval,
 };
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminAPIError,
-    SequencerAdminQuery, UnsafePayloadGossipClient,
+    Metrics, NodeActor, ResetReason, SequencerAdminAPIError, SequencerAdminQuery,
+    UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
         engine::{EngineClientError, EngineClientResult},
@@ -748,32 +748,6 @@ where
                 }
             }
         }
-    }
-}
-
-impl<
-    AttributesBuilder_,
-    Conductor_,
-    OriginSelector_,
-    SequencerEngineClient_,
-    UnsafePayloadGossipClient_,
-> CancellableContext
-    for SequencerActor<
-        AttributesBuilder_,
-        Conductor_,
-        OriginSelector_,
-        SequencerEngineClient_,
-        UnsafePayloadGossipClient_,
-    >
-where
-    AttributesBuilder_: AttributesBuilder,
-    Conductor_: Conductor,
-    OriginSelector_: OriginSelector,
-    SequencerEngineClient_: SequencerEngineClient,
-    UnsafePayloadGossipClient_: UnsafePayloadGossipClient,
-{
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation_token.cancelled()
     }
 }
 

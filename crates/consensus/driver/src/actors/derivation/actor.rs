@@ -14,12 +14,12 @@ use tokio::{
     select,
     sync::{mpsc, watch},
 };
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CancellableContext, DerivationActorRequest, DerivationEngineClient, DerivationState,
-    DerivationStateMachine, DerivationStateTransitionError, DerivationStateUpdate, Metrics,
-    NodeActor, ResetReason, SafeHeadListener, actors::derivation::L2Finalizer,
+    DerivationActorRequest, DerivationEngineClient, DerivationState, DerivationStateMachine,
+    DerivationStateTransitionError, DerivationStateUpdate, Metrics, NodeActor, ResetReason,
+    SafeHeadListener, actors::derivation::L2Finalizer,
 };
 
 /// The [`NodeActor`] for the derivation sub-routine.
@@ -59,17 +59,6 @@ where
     /// [`attempt_derivation`]: Self::attempt_derivation
     /// [`ProcessEngineSafeHeadUpdateRequest`]: DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest
     pending_derived_from: Option<BlockInfo>,
-}
-
-impl<DerivationEngineClient_, PipelineSignalReceiver> CancellableContext
-    for DerivationActor<DerivationEngineClient_, PipelineSignalReceiver>
-where
-    DerivationEngineClient_: DerivationEngineClient,
-    PipelineSignalReceiver: Pipeline + SignalReceiver + Send + Sync,
-{
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation_token.cancelled()
-    }
 }
 
 impl<DerivationEngineClient_, PipelineSignalReceiver>

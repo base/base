@@ -57,9 +57,7 @@ pub use lazy::LazyHandle;
 
 pub mod metrics;
 pub mod runtime;
-pub use runtime::{
-    Runtime, RuntimeBuildError, RuntimeBuilder, RuntimeConfig, TaskExecutor, TokioConfig,
-};
+pub use runtime::{Runtime, RuntimeBuildError, RuntimeConfig, TaskExecutor, TokioConfig};
 
 pub mod shutdown;
 pub mod utils;

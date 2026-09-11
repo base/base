@@ -92,7 +92,7 @@ pub struct TaskManager {
 
 impl TaskManager {
     /// Create a new [`TaskManager`] without an associated [`crate::Runtime`], returning
-    /// the shutdown/event primitives for [`crate::RuntimeBuilder`] to wire up.
+    /// the shutdown/event primitives for [`crate::Runtime::new`] to wire up.
     pub(crate) fn new_parts(
         _handle: Handle,
     ) -> (Self, Shutdown, UnboundedSender<TaskEvent>, Arc<AtomicUsize>) {

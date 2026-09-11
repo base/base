@@ -275,7 +275,7 @@ mod tests {
     use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
     use alloy_primitives::{Address, B256, Bytes};
-    use base_common_runtime::{RuntimeBuilder, RuntimeConfig, TokioConfig};
+    use base_common_runtime::{Runtime, RuntimeConfig, TokioConfig};
     use jsonrpsee::{RpcModule, server::Server};
     use serde_json::Value;
     use tokio::sync::oneshot;
@@ -286,11 +286,10 @@ mod tests {
     /// A [`TaskExecutor`] attached to the test's own tokio runtime, so spawned forwarders share it
     /// rather than standing up a second one per test.
     fn test_runtime() -> TaskExecutor {
-        RuntimeBuilder::new(
+        Runtime::new(
             RuntimeConfig::default()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
-        .build()
         .expect("test runtime builds")
     }
 

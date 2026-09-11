@@ -163,7 +163,7 @@ impl RuntimeConfig {
     }
 }
 
-/// Error returned when [`RuntimeBuilder::build`] fails.
+/// Error returned when [`Runtime::new`] fails.
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeBuildError {
     /// Failed to build the tokio runtime.
@@ -327,7 +327,7 @@ impl Runtime {
             Ok(handle) => Self::test_config().with_tokio(TokioConfig::existing_handle(handle)),
             Err(_) => Self::test_config(),
         };
-        RuntimeBuilder::new(config).build().expect("failed to build test Runtime")
+        Self::new(config).expect("failed to build test Runtime")
     }
 
     const fn test_config() -> RuntimeConfig {
@@ -754,29 +754,17 @@ impl Runtime {
     }
 }
 
-// ── RuntimeBuilder ────────────────────────────────────────────────────
+// ── Construction ─────────────────────────────────────────────────────
 
-/// Builder for constructing a [`Runtime`].
-#[derive(Debug, Clone)]
-pub struct RuntimeBuilder {
-    config: RuntimeConfig,
-}
-
-impl RuntimeBuilder {
-    /// Create a new builder with the given configuration.
-    pub const fn new(config: RuntimeConfig) -> Self {
-        Self { config }
-    }
-
+impl Runtime {
     /// Build the [`Runtime`].
     ///
     /// The [`TaskManager`] is automatically spawned as a background task that monitors
     /// critical tasks for panics. Use [`Runtime::take_task_manager_handle`] to extract
     /// the join handle if you need to poll for panic errors.
-    #[tracing::instrument(name = "RuntimeBuilder::build", level = "debug", skip_all)]
-    pub fn build(self) -> Result<Runtime, RuntimeBuildError> {
-        debug!(?self.config, "Building runtime");
-        let config = self.config;
+    #[tracing::instrument(name = "Runtime::new", level = "debug", skip_all)]
+    pub fn new(config: RuntimeConfig) -> Result<Self, RuntimeBuildError> {
+        debug!(?config, "Building runtime");
 
         let (owned_runtime, handle) = match &config.tokio {
             TokioConfig::Owned { worker_threads, thread_keep_alive, thread_name } => {
@@ -925,7 +913,7 @@ impl RuntimeBuilder {
             task_manager_handle: Mutex::new(Some(task_manager_handle)),
         };
 
-        Ok(Runtime(Arc::new(inner)))
+        Ok(Self(Arc::new(inner)))
     }
 }
 
@@ -959,11 +947,11 @@ mod tests {
     }
 
     #[test]
-    fn test_runtime_builder() {
+    fn test_runtime_construction() {
         let rt = TokioRuntime::new().unwrap();
         let config =
             Runtime::test_config().with_tokio(TokioConfig::existing_handle(rt.handle().clone()));
-        let runtime = RuntimeBuilder::new(config).build().unwrap();
+        let runtime = Runtime::new(config).unwrap();
         let _ = runtime.handle();
     }
 

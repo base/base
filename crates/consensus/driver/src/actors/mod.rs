@@ -3,7 +3,7 @@
 //! [NodeActor]: super::NodeActor
 
 mod traits;
-pub use traits::{CancellableContext, NodeActor};
+pub use traits::NodeActor;
 
 mod checkpoint;
 pub use checkpoint::{

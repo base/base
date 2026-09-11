@@ -6,10 +6,10 @@ use base_consensus_source::BlockSignerError;
 use libp2p::TransportError;
 use thiserror::Error;
 use tokio::{self, select, sync::mpsc};
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CancellableContext, NetworkAdminQuery, NetworkEngineClient, NodeActor,
+    NetworkAdminQuery, NetworkEngineClient, NodeActor,
     actors::network::{
         builder::NetworkBuilder, driver::NetworkDriverError, error::NetworkBuilderError,
         handler::NetworkHandler, transport::GossipTransport,
@@ -116,12 +116,6 @@ impl<E: NetworkEngineClient, T: GossipTransport> NetworkActor<E, T> {
             gossip_payload_tx: publish_tx,
         };
         (inbound_data, actor)
-    }
-}
-
-impl<E: NetworkEngineClient, T: GossipTransport> CancellableContext for NetworkActor<E, T> {
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation_token.cancelled()
     }
 }
 

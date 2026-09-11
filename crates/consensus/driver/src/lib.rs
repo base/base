@@ -27,7 +27,7 @@ pub use standalone::{
 
 mod actors;
 pub use actors::{
-    AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState, CancellableContext,
+    AlloyL1BlockFetcher, BlockStream, BuildOutcome, BuildPipelineState,
     CanonicalReconciliationInputs, CanonicalUnsafeCatchup, CheckpointActor, CheckpointClient,
     CheckpointDB, CheckpointError, CheckpointRequest, CheckpointWriter, Conductor, ConductorClient,
     ConductorError, DelayedL1OriginSelectorProvider, DelegateDerivationActor, DerivationActor,

@@ -4,14 +4,9 @@ use async_trait::async_trait;
 use derive_more::Constructor;
 use futures::FutureExt;
 use tokio::sync::mpsc;
-use tokio_util::{
-    future::FutureExt as _,
-    sync::{CancellationToken, WaitForCancellationFuture},
-};
+use tokio_util::{future::FutureExt as _, sync::CancellationToken};
 
-use crate::{
-    EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor, actors::CancellableContext,
-};
+use crate::{EngineActorRequest, EngineError, EngineRequestReceiver, NodeActor};
 
 /// The [`EngineActor`] is an intermediary that receives [`EngineActorRequest`] and delegates:
 /// - Node engine requests to the configured [`EngineRequestReceiver`].
@@ -26,15 +21,6 @@ where
     inbound_request_rx: mpsc::Receiver<EngineActorRequest>,
     /// The processor for engine requests
     engine_receiver: EngineRequestReceiver_,
-}
-
-impl<EngineRequestReceiver_> CancellableContext for EngineActor<EngineRequestReceiver_>
-where
-    EngineRequestReceiver_: EngineRequestReceiver,
-{
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation_token.cancelled()
-    }
 }
 
 #[async_trait]

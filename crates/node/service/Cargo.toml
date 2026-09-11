@@ -21,7 +21,6 @@ alloy-rlp = { workspace = true }
 jsonrpsee = { workspace = true }
 auto_impl = { workspace = true }
 pin-project = { workspace = true }
-alloy-chains = { workspace = true }
 futures-util = { workspace = true }
 metrics-util = { workspace = true }
 alloy-eip2124 = { workspace = true }
@@ -81,6 +80,7 @@ base-execution-evm-runtime = { features = ["blst", "c-kzg", "memory_limit", "p25
 
 [dev-dependencies]
 socket2 = { workspace = true }
+alloy-chains = { workspace = true }
 alloy-genesis = { workspace = true }
 alloy-hardforks = { workspace = true }
 base-execution-rpc = { workspace = true }

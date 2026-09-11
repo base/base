@@ -1,5 +1,7 @@
 //! Engine node related functionality.
 
+use std::sync::Arc;
+
 use alloy_eip2124::Head;
 use base_common_observability_tracing::tracing::{debug, error, info};
 use base_common_runtime::EventSender;
@@ -52,36 +54,37 @@ impl crate::NodeLaunch {
             .with_loaded_toml_config(config)?
             // add resolved peers
             .with_resolved_peers()?
-            // attach the database
-            .attach(database.clone())
             // ensure certain settings take effect
             .with_adjusted_configs()
             // Create the provider factory with the shared overlay manager
-            .with_provider_factory(overlay_manager.clone(), disabled_stages)
+            .with_provider_factory(&database, overlay_manager.clone(), disabled_stages)
             .await?;
         info!(target: "reth::cli", "Database opened");
         let ctx = ctx.with_prometheus_server().await?;
-        debug!(target: "reth::cli", chain=%ctx.chain_id(), genesis=?ctx.genesis_hash(), "Initializing genesis");
+        debug!(target: "reth::cli", chain=%ctx.configured.configs.config.chain.chain(), genesis=?ctx.configured.configs.config.chain.genesis_hash(), "Initializing genesis");
         let ctx = ctx.with_genesis()?;
-        info!(target: "reth::cli", hardforks=%ctx.chain_spec().display_hardforks(), "Loaded hardfork schedule");
-        let settings = ctx.provider_factory().cached_storage_settings();
-        let pruning_mode =
-            PruneConfigKind::from_config(&ctx.prune_config(), ctx.chain_spec().as_ref()).as_str();
+        info!(target: "reth::cli", hardforks=%ctx.configured.configs.config.chain.display_hardforks(), "Loaded hardfork schedule");
+        let settings = ctx.provider_factory.cached_storage_settings();
+        let pruning_mode = PruneConfigKind::from_config(
+            &ctx.configured.prune_config(),
+            ctx.configured.configs.config.chain.as_ref(),
+        )
+        .as_str();
         info!(target: "reth::cli", ?settings, ?pruning_mode, "Loaded storage settings");
-        let ctx =
-            ctx.with_metrics_task().with_blockchain_db()?.with_components(&base, payload).await?;
+        let ctx = ctx.with_components(&base, payload).await?;
 
-        services.start_tracing(ctx.node_adapter());
+        services.start_tracing(&ctx.node);
 
         // spawn the configured canonical processors
-        let maybe_exex_manager_handle = ctx.launch_exex(services.execution_services()).await?;
+        let maybe_exex_manager_handle =
+            ctx.exex_launcher(services.execution_services()).launch().await?;
 
         // create pipeline
-        let network_handle = ctx.node_adapter().network().clone();
+        let network_handle = ctx.node.network().clone();
         let network_client = network_handle.fetch_client().await?;
         let (consensus_engine_tx, consensus_engine_rx) = unbounded_channel();
 
-        let node_config = ctx.node_config();
+        let node_config = &ctx.configured.configs.config;
 
         // We always assume that node is syncing after a restart
         network_handle.update_sync_state(SyncState::Syncing);
@@ -92,33 +95,33 @@ impl crate::NodeLaunch {
         let static_file_producer_events = static_file_producer.lock().events();
         info!(target: "reth::cli", "StaticFileProducer initialized");
 
-        let consensus = ctx.node_adapter().consensus().clone();
+        let consensus = Arc::clone(ctx.node.consensus());
 
         let pipeline = build_networked_pipeline(
-            &ctx.toml_config().stages,
+            &ctx.configured.configs.toml_config.stages,
             network_client.clone(),
-            consensus.clone(),
-            ctx.provider_factory().clone(),
-            ctx.task_executor(),
-            ctx.sync_metrics_tx(),
-            ctx.prune_config(),
+            Arc::clone(&consensus),
+            ctx.provider_factory.clone(),
+            &ctx.configured.context.task_executor,
+            ctx.metrics_sender.clone(),
+            ctx.configured.prune_config(),
             max_block,
             static_file_producer,
-            ctx.node_adapter().evm_config().clone(),
+            ctx.node.evm_config().clone(),
             maybe_exex_manager_handle.clone().unwrap_or_else(ExExManagerHandle::empty),
             disabled_stages,
         )?;
 
         let pipeline_events = pipeline.events();
 
-        let mut pruner_builder = ctx.pruner_builder();
+        let mut pruner_builder = ctx.configured.pruner_builder();
         if let Some(exex_manager_handle) = &maybe_exex_manager_handle {
             pruner_builder =
                 pruner_builder.finished_exex_height(exex_manager_handle.finished_height());
         }
-        let pruner = pruner_builder.build_with_provider_factory(ctx.provider_factory().clone());
+        let pruner = pruner_builder.build_with_provider_factory(ctx.provider_factory.clone());
         let pruner_events = pruner.events();
-        info!(target: "reth::cli", prune_config=?ctx.prune_config(), "Pruner initialized");
+        info!(target: "reth::cli", prune_config=?ctx.configured.prune_config(), "Pruner initialized");
 
         let event_sender = EventSender::default();
 
@@ -127,8 +130,8 @@ impl crate::NodeLaunch {
         // extract the jwt secret from the args if possible
 
         let add_ons_ctx = AddOnsContext {
-            node: ctx.node_adapter().clone(),
-            config: ctx.node_config(),
+            node: ctx.node.clone(),
+            config: &ctx.configured.configs.config,
             engine_events: event_sender.clone(),
         };
 
@@ -150,8 +153,8 @@ impl crate::NodeLaunch {
         );
         let consensus_engine_stream = EngineMessageStream::reorg(
             consensus_engine_stream,
-            ctx.blockchain_db().clone(),
-            ctx.node_adapter().evm_config().clone(),
+            ctx.node.provider.clone(),
+            ctx.node.evm_config().clone(),
             node_config.debug.reorg_frequency,
             node_config.debug.reorg_depth,
         );
@@ -162,21 +165,21 @@ impl crate::NodeLaunch {
         );
 
         let mut orchestrator = build_engine_orchestrator(
-            consensus.clone(),
+            Arc::clone(&consensus),
             network_client.clone(),
             Box::pin(consensus_engine_stream),
             pipeline,
-            ctx.task_executor().clone(),
-            ctx.provider_factory().clone(),
-            ctx.blockchain_db().clone(),
+            ctx.configured.context.task_executor.clone(),
+            ctx.provider_factory.clone(),
+            ctx.node.provider.clone(),
             pruner,
-            ctx.node_adapter().payload_builder_handle().clone(),
+            ctx.node.payload_builder_handle().clone(),
             engine_validator,
             overlay_manager,
             engine_tree_config,
-            ctx.sync_metrics_tx(),
-            ctx.node_adapter().evm_config().clone(),
-            ctx.task_executor().clone(),
+            ctx.metrics_sender.clone(),
+            ctx.node.evm_config().clone(),
+            ctx.configured.context.task_executor.clone(),
         );
 
         info!(target: "reth::cli", "Consensus engine initialized");
@@ -190,11 +193,11 @@ impl crate::NodeLaunch {
             static_file_producer_events.map(Into::into),
         );
 
-        ctx.task_executor().spawn_critical_task(
+        ctx.configured.context.task_executor.spawn_critical_task(
             "events task",
             handle_node_events(
-                Some(Box::new(ctx.node_adapter().network().clone())),
-                Some(ctx.head().number),
+                Some(Box::new(ctx.node.network().clone())),
+                Some(ctx.head.number),
                 events,
             ),
         );
@@ -208,7 +211,7 @@ impl crate::NodeLaunch {
         // Run consensus engine to completion
         let initial_target = ctx.initial_backfill_target(disabled_stages)?;
         let mut built_payloads = ctx
-            .node_adapter()
+            .node
             .payload_builder_handle()
             .subscribe()
             .await
@@ -216,10 +219,10 @@ impl crate::NodeLaunch {
             .into_built_payload_stream()
             .fuse();
 
-        let provider = ctx.blockchain_db().clone();
+        let provider = ctx.node.provider.clone();
         let (exit, rx) = oneshot::channel();
         let terminate_after_backfill = ctx.terminate_after_initial_backfill();
-        let startup_sync_state_idle = ctx.node_config().debug.startup_sync_state_idle;
+        let startup_sync_state_idle = ctx.configured.configs.config.debug.startup_sync_state_idle;
 
         info!(target: "reth::cli", "Starting consensus engine");
         let engine_events = event_sender.clone();
@@ -316,30 +319,30 @@ impl crate::NodeLaunch {
 
             let _ = exit.send(res);
         };
-        ctx.task_executor()
+        ctx.configured
+            .context
+            .task_executor
             .spawn_critical_with_graceful_shutdown_signal("consensus engine", consensus_engine);
 
         let engine_events_for_ethstats = engine_events.new_listener();
 
         let full_node = FullNode {
-            evm_config: ctx.node_adapter().evm_config().clone(),
-            pool: ctx.node_adapter().pool().clone(),
-            network: ctx.node_adapter().network().clone(),
-            provider: ctx.node_adapter().provider.clone(),
-            payload_builder_handle: ctx.node_adapter().payload_builder_handle().clone(),
+            evm_config: ctx.node.evm_config().clone(),
+            pool: ctx.node.pool().clone(),
+            network: ctx.node.network().clone(),
+            provider: ctx.node.provider.clone(),
+            payload_builder_handle: ctx.node.payload_builder_handle().clone(),
             execution: BaseExecutionHandle {
                 driver: beacon_engine_handle,
-                payload_builder: ctx.node_adapter().payload_builder_handle().clone(),
-                validator: BaseEngineValidator::new(
-                    ctx.node_adapter().evm_config().chain_spec().clone(),
-                ),
+                payload_builder: ctx.node.payload_builder_handle().clone(),
+                validator: BaseEngineValidator::new(Arc::clone(ctx.node.evm_config().chain_spec())),
             },
             engine_events,
             engine_shutdown,
             proofs_progress: Default::default(),
-            task_executor: ctx.task_executor().clone(),
-            config: ctx.node_config().clone(),
-            data_dir: ctx.data_dir().clone(),
+            task_executor: ctx.configured.context.task_executor.clone(),
+            config: ctx.configured.configs.config.clone(),
+            data_dir: ctx.configured.context.data_dir.clone(),
             add_ons_handle: RpcHandle { rpc_server_handles, rpc_registry },
         };
         services.start(&full_node)?;

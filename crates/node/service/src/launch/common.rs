@@ -1,47 +1,19 @@
-//! Helper types that can be used by launchers.
+//! Concrete stages for configuring storage and assembling a Base node.
 //!
-//! ## Launch Context Type System
-//!
-//! The node launch process uses a type-state pattern to ensure correct initialization
-//! order at compile time. Methods are only available when their prerequisites are met.
-//!
-//! ### Core Types
-//!
-//! - [`LaunchContext`]: Base context with executor and data directory
-//! - [`LaunchContextWith<T>`]: Context with an attached value of type `T`
-//! - [`Attached<L, R>`]: Pairs values, preserving both previous (L) and new (R) state
-//!
-//! ### Helper Attachments
-//!
-//! - [`WithConfigs`]: Node config + TOML config
-//! - [`WithMeteredProvider`]: Provider factory with metrics
-//! - [`WithMeteredProviders`]: Provider factory + blockchain provider
-//! - [`WithComponents`]: Final form with all components
-//!
-//! ### Method Availability
-//!
-//! Methods are implemented on specific type combinations:
-//! - `impl<T> LaunchContextWith<T>`: Generic methods available for any attachment
-//! - `impl LaunchContextWith<WithConfigs>`: Config-specific methods
-//! - `impl LaunchContextWith<Attached<WithConfigs, DB>>`: Database operations
-//! - `impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>>`: Provider operations
-//! - etc.
-//!
-//! This ensures correct initialization order without runtime checks.
+//! Configuration is loaded before creating the provider factory. The provider stage
+//! initializes storage before assembling the node's runtime components.
 
 use std::{num::NonZeroUsize, sync::Arc, thread::available_parallelism, time::Duration};
 
-use alloy_chains::Chain;
 use alloy_eips::eip2124::Head;
 use alloy_primitives::{B256, BlockNumber};
-use base_common_chain_config::BaseChainSpec;
 use base_common_io as fs;
 use base_common_observability_tracing::{
     throttle,
     tracing::{debug, error, info, warn},
 };
 use base_common_runtime::TaskExecutor;
-use base_execution_engine_observers::ExExManagerHandle;
+use base_common_types_payload::ConsensusEngineEvent;
 use base_execution_evm_blocks::{BaseBeaconConsensus, BaseEvmConfig};
 use base_execution_network_wire::HeadersClient;
 use base_execution_state_database::{DatabaseMetrics, models::PartialStateTrieUnwindMarker};
@@ -55,7 +27,7 @@ use base_execution_state_provider::{
     DatabaseProviderROFactory, InMemoryBalStore, MetadataProvider, OverlayManager, ProviderError,
     ProviderFactory, ProviderResult, RocksDBProviderFactory, StageCheckpointReader,
     StaticFileProviderBuilder, StaticFileProviderFactory, StorageSettingsCache,
-    providers::{BlockchainProvider, RocksDBProvider, StaticFileProvider},
+    providers::{BlockchainProvider, RocksDBProvider},
 };
 use base_execution_state_types::{EtlConfig, PruneConfig};
 use base_execution_sync::{
@@ -77,24 +49,7 @@ use crate::{
     StorageSettingsInfo, VersionInfo, install_prometheus_recorder,
 };
 
-/// Reusable setup for launching a node.
-///
-/// This is the entry point for the node launch process. It implements a builder
-/// pattern using type-state programming to enforce correct initialization order.
-///
-/// ## Type Evolution
-///
-/// Starting from `LaunchContext`, each method transforms the type to reflect
-/// accumulated state:
-///
-/// ```text
-/// LaunchContext
-///   └─> LaunchContextWith<WithConfigs>
-///       └─> LaunchContextWith<Attached<WithConfigs, DB>>
-///           └─> LaunchContextWith<Attached<WithConfigs, ProviderFactory>>
-///               └─> LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>>
-///                   └─> LaunchContextWith<Attached<WithConfigs, WithComponents>>
-/// ```
+/// Process resources shared by the node launch stages.
 #[derive(Debug, Clone)]
 pub struct LaunchContext {
     /// The task executor for the node.
@@ -109,27 +64,17 @@ impl LaunchContext {
         Self { task_executor, data_dir }
     }
 
-    /// Create launch context with attachment.
-    pub const fn with<T>(self, attachment: T) -> LaunchContextWith<T> {
-        LaunchContextWith { inner: self, attachment }
-    }
-
     /// Loads the reth config with the configured `data_dir` and overrides settings according to the
     /// `config`.
     ///
-    /// Attaches both the `NodeConfig` and the loaded `reth.toml` config to the launch context.
-    pub fn with_loaded_toml_config(
-        self,
-        config: NodeConfig,
-    ) -> eyre::Result<LaunchContextWith<WithConfigs>> {
+    /// Returns the configuration stage with the loaded `reth.toml` settings.
+    pub fn with_loaded_toml_config(self, config: NodeConfig) -> eyre::Result<ConfiguredLaunch> {
         let toml_config = self.load_toml_config(&config)?;
-        Ok(self.with(WithConfigs { config, toml_config }))
+        Ok(ConfiguredLaunch { context: self, configs: WithConfigs { config, toml_config } })
     }
 
     /// Loads the reth config with the configured `data_dir` and overrides settings according to the
     /// `config`.
-    ///
-    /// This is async because the trusted peers may have to be resolved.
     pub fn load_toml_config(
         &self,
         config: &NodeConfig,
@@ -207,82 +152,29 @@ impl LaunchContext {
     }
 }
 
-/// A [`LaunchContext`] along with an additional value.
-///
-/// The type parameter `T` represents the current state of the launch process.
-/// Methods are conditionally implemented based on `T`, ensuring operations
-/// are only available when their prerequisites are met.
-///
-/// For example:
-/// - Config methods when `T = WithConfigs<BaseChainSpec>`
-/// - Database operations when `T = Attached<WithConfigs<BaseChainSpec>, DB>`
-/// - Provider operations when `T = Attached<WithConfigs<BaseChainSpec>, ProviderFactory<N>>`
+/// Loaded configuration and process resources for opening node storage.
 #[derive(Debug, Clone)]
-pub struct LaunchContextWith<T> {
-    /// The wrapped launch context.
-    pub inner: LaunchContext,
-    /// The additional attached value.
-    pub attachment: T,
+pub struct ConfiguredLaunch {
+    /// Process resources used throughout startup.
+    pub context: LaunchContext,
+    /// CLI and file configuration.
+    pub configs: WithConfigs,
 }
 
-impl<T> LaunchContextWith<T> {
-    /// Returns the data directory.
-    pub const fn data_dir(&self) -> &ChainPath<DataDirPath> {
-        &self.inner.data_dir
-    }
-
-    /// Returns the task executor.
-    pub const fn task_executor(&self) -> &TaskExecutor {
-        &self.inner.task_executor
-    }
-
-    /// Attaches another value to the launch context.
-    pub fn attach<A>(self, attachment: A) -> LaunchContextWith<Attached<T, A>> {
-        LaunchContextWith {
-            inner: self.inner,
-            attachment: Attached::new(self.attachment, attachment),
-        }
-    }
-}
-
-impl LaunchContextWith<WithConfigs> {
+impl ConfiguredLaunch {
     /// Resolves the trusted peers and adds them to the toml config.
     pub fn with_resolved_peers(mut self) -> eyre::Result<Self> {
-        if !self.attachment.config.network.trusted_peers.is_empty() {
+        if !self.configs.config.network.trusted_peers.is_empty() {
             info!(target: "reth::cli", "Adding trusted nodes");
 
-            self.attachment
+            self.configs
                 .toml_config
                 .peers
                 .trusted_nodes
-                .extend(self.attachment.config.network.trusted_peers.clone());
+                .extend(self.configs.config.network.trusted_peers.clone());
         }
         Ok(self)
     }
-}
-
-impl<L, R> LaunchContextWith<Attached<L, R>> {
-    /// Get a reference to the left value.
-    pub const fn left(&self) -> &L {
-        &self.attachment.left
-    }
-
-    /// Get a reference to the right value.
-    pub const fn right(&self) -> &R {
-        &self.attachment.right
-    }
-
-    /// Get a mutable reference to the left value.
-    pub const fn left_mut(&mut self) -> &mut L {
-        &mut self.attachment.left
-    }
-
-    /// Get a mutable reference to the right value.
-    pub const fn right_mut(&mut self) -> &mut R {
-        &mut self.attachment.right
-    }
-}
-impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     /// Adjust certain settings in the config to make sure they are set correctly
     ///
     /// This includes:
@@ -294,15 +186,15 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
 
     /// Make sure ETL doesn't default to /tmp/, but to whatever datadir is set to
     pub fn ensure_etl_datadir(mut self) -> Self {
-        if self.toml_config_mut().stages.etl.dir.is_none() {
-            let etl_path = EtlConfig::from_datadir(self.data_dir().data_dir());
+        if self.configs.toml_config.stages.etl.dir.is_none() {
+            let etl_path = EtlConfig::from_datadir(self.context.data_dir.data_dir());
             if etl_path.exists() {
                 // Remove etl-path files on launch
                 if let Err(err) = fs::Files::remove_dir_all(&etl_path) {
                     warn!(target: "reth::cli", ?etl_path, %err, "Failed to remove ETL path on launch");
                 }
             }
-            self.toml_config_mut().stages.etl.dir = Some(etl_path);
+            self.configs.toml_config.stages.etl.dir = Some(etl_path);
         }
 
         self
@@ -310,66 +202,21 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
 
     /// Change rpc port numbers based on the instance number.
     pub fn with_adjusted_instance_ports(mut self) -> Self {
-        self.node_config_mut().adjust_instance_ports();
+        self.configs.config.adjust_instance_ports();
         self
-    }
-
-    /// Returns the container for all config types
-    pub const fn configs(&self) -> &WithConfigs {
-        self.attachment.left()
-    }
-
-    /// Returns the attached [`NodeConfig`].
-    pub const fn node_config(&self) -> &NodeConfig {
-        &self.left().config
-    }
-
-    /// Returns the attached [`NodeConfig`].
-    pub const fn node_config_mut(&mut self) -> &mut NodeConfig {
-        &mut self.left_mut().config
-    }
-
-    /// Returns the attached toml config [`base_node_config::NodeFileConfig`].
-    pub const fn toml_config(&self) -> &base_node_config::NodeFileConfig {
-        &self.left().toml_config
-    }
-
-    /// Returns the attached toml config [`base_node_config::NodeFileConfig`].
-    pub const fn toml_config_mut(&mut self) -> &mut base_node_config::NodeFileConfig {
-        &mut self.left_mut().toml_config
-    }
-
-    /// Returns the configured chain spec.
-    pub fn chain_spec(&self) -> Arc<BaseChainSpec> {
-        self.node_config().chain.clone()
-    }
-
-    /// Get the hash of the genesis block.
-    pub fn genesis_hash(&self) -> B256 {
-        self.node_config().chain.genesis_hash()
-    }
-
-    /// Returns the chain identifier of the node.
-    pub fn chain_id(&self) -> Chain {
-        self.node_config().chain.chain()
-    }
-
-    /// Returns true if the node is configured as --dev
-    pub const fn is_dev(&self) -> bool {
-        self.node_config().dev.dev
     }
 
     /// Returns the configured [`PruneConfig`]
     ///
     /// Any configuration set in CLI will take precedence over those set in toml
     pub fn prune_config(&self) -> PruneConfig {
-        let Some(mut node_prune_config) = self.node_config().prune_config() else {
+        let Some(mut node_prune_config) = self.configs.config.prune_config() else {
             // No CLI config is set, use the toml config.
-            return self.toml_config().prune.clone();
+            return self.configs.toml_config.prune.clone();
         };
 
         // Otherwise, use the CLI configuration and merge with toml config.
-        node_prune_config.merge(self.toml_config().prune.clone());
+        node_prune_config.merge(self.configs.toml_config.prune.clone());
         node_prune_config
     }
 
@@ -382,19 +229,18 @@ impl<R> LaunchContextWith<Attached<WithConfigs, R>> {
     pub fn pruner_builder(&self) -> PrunerBuilder {
         PrunerBuilder::new(self.prune_config())
     }
-}
 
-impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::DatabaseEnv>> {
-    /// Returns the [`ProviderFactory`] for the attached storage after executing a consistent check
+    /// Returns the [`ProviderFactory`] after checking consistency
     /// between the database and static files. **It may execute a pipeline unwind if it fails this
     /// check.**
     pub async fn create_provider_factory(
         &self,
+        database: &base_execution_state_database::DatabaseEnv,
         overlay_manager: OverlayManager,
         disabled_stages: &[StageId],
     ) -> eyre::Result<ProviderFactory> {
         // Validate static files configuration
-        let static_files_config = &self.toml_config().static_files;
+        let static_files_config = &self.configs.toml_config.static_files;
         static_files_config.validate()?;
 
         let prune_config = self.prune_config();
@@ -413,20 +259,23 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
 
         // Apply per-segment blocks_per_file configuration
         let static_file_provider =
-            StaticFileProviderBuilder::read_write(self.data_dir().static_files())
+            StaticFileProviderBuilder::read_write(self.context.data_dir.static_files())
                 .with_metrics()
                 .with_blocks_per_file_for_segments(&blocks_per_file)
-                .with_genesis_block_number(self.chain_spec().genesis().number.unwrap_or_default())
+                .with_genesis_block_number(
+                    self.configs.config.chain.genesis().number.unwrap_or_default(),
+                )
                 .build()?;
 
-        let rocksdb_provider = RocksDBProvider::builder(self.data_dir().rocksdb())
+        let rocksdb_provider = RocksDBProvider::builder(self.context.data_dir.rocksdb())
             .with_default_tables()
             .with_metrics()
             .with_statistics()
             .build()?;
 
         let balstore_cache_size = self
-            .node_config()
+            .configs
+            .config
             .db
             .balstore_cache_size
             .unwrap_or(BalConfig::DEFAULT_IN_MEMORY_RETENTION_DISTANCE);
@@ -434,11 +283,11 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
             BalConfig::with_in_memory_retention_distance(balstore_cache_size),
         ));
         let factory = ProviderFactory::new(
-            self.right().clone(),
-            self.chain_spec(),
+            database.clone(),
+            Arc::clone(&self.configs.config.chain),
             static_file_provider,
             rocksdb_provider,
-            self.task_executor().clone(),
+            self.context.task_executor.clone(),
         )?
         .with_prune_modes(prune_config.segments)
         .with_minimum_pruning_distance(prune_config.minimum_pruning_distance)
@@ -478,7 +327,7 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
                     NoopHeaderDownloader::default(),
                     NoopBodiesDownloader::default(),
                     BaseEvmConfig::default(),
-                    self.toml_config().stages.clone(),
+                    self.configs.toml_config.stages.clone(),
                     self.prune_modes(),
                 )
                 .builder()
@@ -541,7 +390,7 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
             let factory = factory.clone();
 
             // Pipeline should be run as blocking and panic if it fails.
-            self.task_executor().spawn_critical_blocking_task("pipeline task", async move {
+            self.context.task_executor.spawn_critical_blocking_task("pipeline task", async move {
                 let result: Result<(), base_execution_sync::PipelineError> = async {
                     for (unwind_target, inconsistency_source, pipeline, clear_partial_trie_unwind) in
                         unwinds
@@ -569,38 +418,29 @@ impl LaunchContextWith<Attached<WithConfigs, base_execution_state_database::Data
         Ok(factory)
     }
 
-    /// Creates a new [`ProviderFactory`] and attaches it to the launch context.
+    /// Opens and checks storage, returning the provider stage of startup.
     pub async fn with_provider_factory(
         self,
+        database: &base_execution_state_database::DatabaseEnv,
         overlay_manager: OverlayManager,
         disabled_stages: &[StageId],
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, ProviderFactory>>> {
-        let factory = self.create_provider_factory(overlay_manager, disabled_stages).await?;
-        let ctx = LaunchContextWith {
-            inner: self.inner,
-            attachment: self.attachment.map_right(|_| factory),
-        };
-
-        Ok(ctx)
+    ) -> eyre::Result<ProviderLaunch> {
+        let provider_factory =
+            self.create_provider_factory(database, overlay_manager, disabled_stages).await?;
+        Ok(ProviderLaunch { configured: self, provider_factory })
     }
 }
 
-impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
-    /// Returns access to the underlying database.
-    pub const fn database(&self) -> &base_execution_state_database::DatabaseEnv {
-        self.right().db_ref()
-    }
+/// Checked storage ready for genesis initialization and component assembly.
+#[derive(Debug)]
+pub struct ProviderLaunch {
+    /// Loaded configuration and process resources.
+    pub configured: ConfiguredLaunch,
+    /// Factory for the checked node storage.
+    pub provider_factory: ProviderFactory,
+}
 
-    /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory {
-        self.right()
-    }
-
-    /// Returns the static file provider to interact with the static files.
-    pub fn static_file_provider(&self) -> StaticFileProvider {
-        self.right().static_file_provider()
-    }
-
+impl ProviderLaunch {
     /// This launches the prometheus endpoint.
     ///
     /// Convenience function to [`Self::start_prometheus_endpoint`]
@@ -614,27 +454,30 @@ impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
         // ensure recorder runs upkeep periodically
         install_prometheus_recorder().spawn_upkeep();
 
-        let listen_addr = self.node_config().metrics.prometheus;
+        let listen_addr = self.configured.configs.config.metrics.prometheus;
         if let Some(addr) = listen_addr {
-            let prune_config = self.prune_config();
-            let pruning_mode =
-                PruneConfigKind::from_config(&prune_config, self.chain_spec().as_ref()).as_str();
+            let prune_config = self.configured.prune_config();
+            let pruning_mode = PruneConfigKind::from_config(
+                &prune_config,
+                self.configured.configs.config.chain.as_ref(),
+            )
+            .as_str();
             // On existing databases, stored settings are authoritative and already cached by the
             // provider factory. Fresh databases do not have storage metadata until genesis is
             // initialized, so report the configured setting during this pre-genesis startup window.
             let _storage_settings =
-                if self.provider_factory().get_stage_checkpoint(StageId::Headers)?.is_some() {
-                    self.provider_factory().cached_storage_settings()
+                if self.provider_factory.get_stage_checkpoint(StageId::Headers)?.is_some() {
+                    self.provider_factory.cached_storage_settings()
                 } else {
-                    self.node_config().storage_settings()
+                    self.configured.configs.config.storage_settings()
                 };
             let config = MetricServerConfig::new(
                 addr,
                 VersionInfo { version: version_metadata().cargo_pkg_version.as_ref() },
-                ChainSpecInfo { name: self.chain_id().to_string() },
-                self.task_executor().clone(),
-                metrics_hooks(self.provider_factory()),
-                self.data_dir().pprof_dumps(),
+                ChainSpecInfo { name: self.configured.configs.config.chain.chain().to_string() },
+                self.configured.context.task_executor.clone(),
+                metrics_hooks(&self.provider_factory),
+                self.configured.context.data_dir.pprof_dumps(),
             )
             .with_storage_settings_info(StorageSettingsInfo {
                 storage_v2: true,
@@ -643,8 +486,8 @@ impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
                     .expect("serializing PruneConfig should not fail"),
             })
             .with_push_gateway(
-                self.node_config().metrics.push_gateway_url.clone(),
-                self.node_config().metrics.push_gateway_interval,
+                self.configured.configs.config.metrics.push_gateway_url.clone(),
+                self.configured.configs.config.metrics.push_gateway_interval,
             );
 
             MetricServer::new(config).serve().await?;
@@ -656,187 +499,89 @@ impl LaunchContextWith<Attached<WithConfigs, ProviderFactory>> {
     /// Convenience function to [`Self::init_genesis`]
     pub fn with_genesis(self) -> Result<Self, InitStorageError> {
         init_genesis_with_settings_and_validate(
-            self.provider_factory(),
-            self.node_config().storage_settings(),
-            !self.node_config().debug.skip_genesis_validation,
+            &self.provider_factory,
+            self.configured.configs.config.storage_settings(),
+            !self.configured.configs.config.debug.skip_genesis_validation,
         )?;
         Ok(self)
     }
 
     /// Write the genesis block and state if it has not already been written
     pub fn init_genesis(&self) -> Result<B256, InitStorageError> {
-        init_genesis_with_settings(self.provider_factory(), self.node_config().storage_settings())
+        init_genesis_with_settings(
+            &self.provider_factory,
+            self.configured.configs.config.storage_settings(),
+        )
     }
 
-    /// Creates a new `WithMeteredProvider` container and attaches it to the
-    /// launch context.
-    ///
-    /// This spawns a metrics task that listens for metrics related events and updates metrics for
-    /// prometheus.
-    pub fn with_metrics_task(
-        self,
-    ) -> LaunchContextWith<Attached<WithConfigs, WithMeteredProvider>> {
-        let (metrics_sender, metrics_receiver) = unbounded_channel();
-
-        let with_metrics =
-            WithMeteredProvider { provider_factory: self.right().clone(), metrics_sender };
-
-        debug!(target: "reth::cli", "Spawning stages metrics listener task");
-        let sync_metrics_listener = base_execution_sync::MetricsListener::new(metrics_receiver);
-        self.task_executor()
-            .spawn_critical_task("stages metrics listener task", sync_metrics_listener);
-
-        LaunchContextWith {
-            inner: self.inner,
-            attachment: self.attachment.map_right(|_| with_metrics),
-        }
-    }
-}
-
-impl LaunchContextWith<Attached<WithConfigs, WithMeteredProvider>> {
-    /// Returns the configured `ProviderFactory`.
-    const fn provider_factory(&self) -> &ProviderFactory {
-        &self.right().provider_factory
-    }
-
-    /// Returns the metrics sender.
-    fn sync_metrics_tx(&self) -> UnboundedSender<MetricEvent> {
-        self.right().metrics_sender.clone()
-    }
-
-    /// Creates a `BlockchainProvider` and attaches it to the launch context.
-    pub fn with_blockchain_db(
-        self,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>>> {
-        let blockchain_db = BlockchainProvider::new(self.provider_factory().clone())?;
-
-        let metered_providers = WithMeteredProviders {
-            db_provider_container: WithMeteredProvider {
-                provider_factory: self.provider_factory().clone(),
-                metrics_sender: self.sync_metrics_tx(),
-            },
-            blockchain_db,
-        };
-
-        let ctx = LaunchContextWith {
-            inner: self.inner,
-            attachment: self.attachment.map_right(|_| metered_providers),
-        };
-
-        Ok(ctx)
-    }
-}
-
-impl LaunchContextWith<Attached<WithConfigs, WithMeteredProviders>> {
-    /// Returns access to the underlying database.
-    pub const fn database(&self) -> &base_execution_state_database::DatabaseEnv {
-        self.provider_factory().db_ref()
-    }
-
-    /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory {
-        &self.right().db_provider_container.provider_factory
-    }
-
-    /// Fetches the head block from the database.
-    ///
-    /// If the database is empty, returns the genesis block.
-    pub fn lookup_head(&self) -> eyre::Result<Head> {
-        self.node_config()
-            .lookup_head(self.provider_factory())
-            .wrap_err("the head block is missing")
-    }
-
-    /// Returns the metrics sender.
-    pub fn sync_metrics_tx(&self) -> UnboundedSender<MetricEvent> {
-        self.right().db_provider_container.metrics_sender.clone()
-    }
-
-    /// Returns a reference to the blockchain provider.
-    pub const fn blockchain_db(&self) -> &BlockchainProvider {
-        &self.right().blockchain_db
-    }
-
-    /// Creates a `BaseNodeContext` and attaches it to the launch context.
+    /// Starts stage metrics, opens the blockchain provider, and builds node components.
     pub async fn with_components(
         self,
         base: &BaseNode,
         payload: Option<crate::BasePayloadServiceConfig>,
-    ) -> eyre::Result<LaunchContextWith<Attached<WithConfigs, WithComponents>>> {
-        // fetch the head block from the database
-        let head = self.lookup_head()?;
+    ) -> eyre::Result<ComponentLaunch> {
+        let (metrics_sender, metrics_receiver) = unbounded_channel();
+        debug!(target: "reth::cli", "Spawning stages metrics listener task");
+        let sync_metrics_listener = base_execution_sync::MetricsListener::new(metrics_receiver);
+        self.configured
+            .context
+            .task_executor
+            .spawn_critical_task("stages metrics listener task", sync_metrics_listener);
 
+        let blockchain_db = BlockchainProvider::new(self.provider_factory.clone())?;
+        let head = self
+            .configured
+            .configs
+            .config
+            .lookup_head(&self.provider_factory)
+            .wrap_err("the head block is missing")?;
         let builder_ctx = BuilderContext::new(
             head,
-            self.blockchain_db().clone(),
-            self.task_executor().clone(),
-            self.configs().clone(),
+            blockchain_db,
+            self.configured.context.task_executor.clone(),
+            self.configured.configs.clone(),
         );
 
         debug!(target: "reth::cli", "creating components");
-        let node_adapter = base.build_components(&builder_ctx, payload).await?;
-
-        let components_container = WithComponents {
-            db_provider_container: WithMeteredProvider {
-                provider_factory: self.provider_factory().clone(),
-                metrics_sender: self.sync_metrics_tx(),
-            },
-            node_adapter,
+        let node = base.build_components(&builder_ctx, payload).await?;
+        Ok(ComponentLaunch {
+            configured: self.configured,
+            provider_factory: self.provider_factory,
+            metrics_sender,
+            node,
             head,
-        };
-
-        let ctx = LaunchContextWith {
-            inner: self.inner,
-            attachment: self.attachment.map_right(|_| components_container),
-        };
-
-        Ok(ctx)
+        })
     }
 }
 
-impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
-    /// Returns the configured `ProviderFactory`.
-    pub const fn provider_factory(&self) -> &ProviderFactory {
-        &self.right().db_provider_container.provider_factory
-    }
+/// Assembled components ready for engine and RPC startup.
+#[derive(Debug)]
+pub struct ComponentLaunch {
+    /// Loaded configuration and process resources.
+    pub configured: ConfiguredLaunch,
+    /// Factory for the node storage.
+    pub provider_factory: ProviderFactory,
+    /// Sender for stage metrics.
+    pub metrics_sender: UnboundedSender<MetricEvent>,
+    /// Built node services and providers.
+    pub node: BaseNodeContext,
+    /// Head read before component assembly.
+    pub head: Head,
+}
 
+impl ComponentLaunch {
     /// Returns the max block that the node should run to, looking it up from the network if
     /// necessary
     pub async fn max_block<C>(&self, client: C) -> eyre::Result<Option<BlockNumber>>
     where
         C: HeadersClient,
     {
-        self.node_config().max_block(client, self.provider_factory().clone()).await
+        self.configured.configs.config.max_block(client, self.provider_factory.clone()).await
     }
 
-    /// Returns the static file provider to interact with the static files.
-    pub fn static_file_provider(&self) -> StaticFileProvider {
-        self.provider_factory().static_file_provider()
-    }
-
-    /// Creates a new [`StaticFileProducer`] with the attached database.
+    /// Creates a new [`StaticFileProducer`] for the node storage.
     pub fn static_file_producer(&self) -> StaticFileProducer<ProviderFactory> {
-        StaticFileProducer::new(self.provider_factory().clone(), self.prune_modes())
-    }
-
-    /// Returns the current head block.
-    pub const fn head(&self) -> Head {
-        self.right().head
-    }
-
-    /// Returns the configured `BaseNodeContext`.
-    pub const fn node_adapter(&self) -> &BaseNodeContext {
-        &self.right().node_adapter
-    }
-
-    /// Returns mutable reference to the configured `BaseNodeContext`.
-    pub const fn node_adapter_mut(&mut self) -> &mut BaseNodeContext {
-        &mut self.right_mut().node_adapter
-    }
-
-    /// Returns a reference to the blockchain provider.
-    pub const fn blockchain_db(&self) -> &BlockchainProvider {
-        &self.node_adapter().provider
+        StaticFileProducer::new(self.provider_factory.clone(), self.configured.prune_modes())
     }
 
     /// Returns the initial backfill to sync to at launch.
@@ -848,7 +593,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
         &self,
         disabled_stages: &[StageId],
     ) -> ProviderResult<Option<B256>> {
-        let mut initial_target = self.node_config().debug.tip;
+        let mut initial_target = self.configured.configs.config.debug.tip;
 
         if initial_target.is_none() {
             initial_target = self.check_pipeline_consistency(disabled_stages)?;
@@ -863,7 +608,8 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     ///  `--debug.max-block`
     ///  `--debug.terminate`
     pub const fn terminate_after_initial_backfill(&self) -> bool {
-        self.node_config().debug.terminate || self.node_config().debug.max_block.is_some()
+        self.configured.configs.config.debug.terminate
+            || self.configured.configs.config.debug.max_block.is_some()
     }
 
     /// Check if the pipeline is consistent (all stages have the checkpoint block numbers no less
@@ -888,19 +634,13 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
 
         // If no target was provided, check if the stages are congruent - check if the
         // checkpoint of the last stage matches the checkpoint of the first.
-        let first_stage_checkpoint = self
-            .blockchain_db()
-            .get_stage_checkpoint(first_stage)?
-            .unwrap_or_default()
-            .block_number;
+        let first_stage_checkpoint =
+            self.node.provider.get_stage_checkpoint(first_stage)?.unwrap_or_default().block_number;
 
         // Compare all other stages against the first
         for stage_id in all_stages {
-            let stage_checkpoint = self
-                .blockchain_db()
-                .get_stage_checkpoint(stage_id)?
-                .unwrap_or_default()
-                .block_number;
+            let stage_checkpoint =
+                self.node.provider.get_stage_checkpoint(stage_id)?.unwrap_or_default().block_number;
 
             // If the checkpoint of any stage is less than the checkpoint of the first stage,
             // retrieve and return the block hash of the latest header and use it as the target.
@@ -921,28 +661,14 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
                     inconsistent_stage_checkpoint = stage_checkpoint,
                     "Pipeline sync progress is inconsistent"
                 );
-                return self.blockchain_db().block_hash(first_stage_checkpoint);
+                return self.node.provider.block_hash(first_stage_checkpoint);
             }
         }
 
         Ok(None)
     }
 
-    /// Returns the metrics sender.
-    pub fn sync_metrics_tx(&self) -> UnboundedSender<MetricEvent> {
-        self.right().db_provider_container.metrics_sender.clone()
-    }
-
-    /// Launches ExEx (Execution Extensions) and returns the ExEx manager handle.
-    #[expect(clippy::type_complexity)]
-    pub async fn launch_exex(
-        &self,
-        installed_exex: Vec<crate::BaseExecutionService>,
-    ) -> eyre::Result<Option<ExExManagerHandle>> {
-        self.exex_launcher(installed_exex).launch().await
-    }
-
-    /// Creates an [`ExExLauncher`] for the installed ExExes.
+    /// Creates an [`ExExLauncher`] for the installed execution extensions.
     ///
     /// This returns the launcher before calling `.launch()`, allowing custom configuration
     /// such as setting the WAL blocks warning threshold for L2 chains with faster block times:
@@ -953,13 +679,12 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     ///     .launch()
     ///     .await
     /// ```
-    #[expect(clippy::type_complexity)]
     pub fn exex_launcher(&self, installed_exex: Vec<crate::BaseExecutionService>) -> ExExLauncher {
         ExExLauncher::new(
-            self.head(),
-            self.node_adapter().clone(),
+            self.head,
+            self.node.clone(),
             installed_exex,
-            self.configs().clone(),
+            self.configured.configs.clone(),
         )
     }
 
@@ -974,9 +699,11 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     where
         BlockchainProvider: base_execution_state_provider::CanonChainTracker,
     {
-        if self.node_config().debug.tip.is_none() && !self.is_dev() {
+        if self.configured.configs.config.debug.tip.is_none()
+            && !self.configured.configs.config.dev.dev
+        {
             Either::Left(
-                ConsensusLayerHealthEvents::new(Box::new(self.blockchain_db().clone()))
+                ConsensusLayerHealthEvents::new(Box::new(self.node.provider.clone()))
                     .map(Into::into),
             )
         } else {
@@ -989,22 +716,23 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     where
         St: Stream<Item = base_common_types_payload::ConsensusEngineEvent> + Send + Unpin + 'static,
     {
-        let Some(url) = self.node_config().debug.ethstats.as_ref() else { return Ok(()) };
+        let Some(url) = self.configured.configs.config.debug.ethstats.as_ref() else {
+            return Ok(());
+        };
 
-        let network = self.node_adapter().network().clone();
-        let pool = self.node_adapter().pool().clone();
-        let provider = self.node_adapter().provider.clone();
+        let network = self.node.network().clone();
+        let pool = self.node.pool().clone();
+        let provider = self.node.provider.clone();
 
-        info!(target: "reth::cli", "Starting EthStats service at {}", url);
+        info!(target: "reth::cli", %url, "Starting EthStats service");
 
         let ethstats = EthStatsService::new(url, network, provider, pool).await?;
 
         // If engine events are provided, spawn listener for new payload reporting
         let ethstats_for_events = ethstats.clone();
-        let task_executor = self.task_executor().clone();
+        let task_executor = self.configured.context.task_executor.clone();
         task_executor.spawn_task(async move {
             while let Some(event) = engine_events.next().await {
-                use base_common_types_payload::ConsensusEngineEvent;
                 match event {
                     ConsensusEngineEvent::ForkBlockAdded(executed, duration)
                     | ConsensusEngineEvent::CanonicalBlockAdded(executed, duration) => {
@@ -1016,7 +744,7 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
                         {
                             debug!(
                                 target: "ethstats",
-                                "Failed to report new payload: {}", e
+                                error = %e, "Failed to report new payload"
                             );
                         }
                     }
@@ -1034,60 +762,6 @@ impl LaunchContextWith<Attached<WithConfigs, WithComponents>> {
     }
 }
 
-/// Joins two attachments together, preserving access to both values.
-///
-/// This type enables the launch process to accumulate state while maintaining
-/// access to all previously attached components. The `left` field holds the
-/// previous state, while `right` holds the newly attached component.
-#[derive(Clone, Copy, Debug)]
-pub struct Attached<L, R> {
-    left: L,
-    right: R,
-}
-
-impl<L, R> Attached<L, R> {
-    /// Creates a new `Attached` with the given values.
-    pub const fn new(left: L, right: R) -> Self {
-        Self { left, right }
-    }
-
-    /// Maps the left value to a new value.
-    pub fn map_left<F, T>(self, f: F) -> Attached<T, R>
-    where
-        F: FnOnce(L) -> T,
-    {
-        Attached::new(f(self.left), self.right)
-    }
-
-    /// Maps the right value to a new value.
-    pub fn map_right<F, T>(self, f: F) -> Attached<L, T>
-    where
-        F: FnOnce(R) -> T,
-    {
-        Attached::new(self.left, f(self.right))
-    }
-
-    /// Get a reference to the left value.
-    pub const fn left(&self) -> &L {
-        &self.left
-    }
-
-    /// Get a reference to the right value.
-    pub const fn right(&self) -> &R {
-        &self.right
-    }
-
-    /// Get a mutable reference to the left value.
-    pub const fn left_mut(&mut self) -> &mut L {
-        &mut self.left
-    }
-
-    /// Get a mutable reference to the right value.
-    pub const fn right_mut(&mut self) -> &mut R {
-        &mut self.right
-    }
-}
-
 /// Helper container type to bundle the initial [`NodeConfig`] and the loaded settings from the
 /// reth.toml config
 #[derive(Debug)]
@@ -1102,30 +776,6 @@ impl Clone for WithConfigs {
     fn clone(&self) -> Self {
         Self { config: self.config.clone(), toml_config: self.toml_config.clone() }
     }
-}
-
-/// Helper container type to bundle the [`ProviderFactory`] and the metrics
-/// sender.
-#[derive(Debug, Clone)]
-pub struct WithMeteredProvider {
-    provider_factory: ProviderFactory,
-    metrics_sender: UnboundedSender<MetricEvent>,
-}
-
-/// Helper container to bundle the [`ProviderFactory`], the Base blockchain provider
-/// and a metrics sender.
-#[expect(missing_debug_implementations)]
-pub struct WithMeteredProviders {
-    db_provider_container: WithMeteredProvider,
-    blockchain_db: BlockchainProvider,
-}
-
-/// Helper container to bundle the metered providers container and [`BaseNodeContext`].
-#[expect(missing_debug_implementations)]
-pub struct WithComponents {
-    db_provider_container: WithMeteredProvider,
-    node_adapter: BaseNodeContext,
-    head: Head,
 }
 
 /// Returns the metrics hooks for the node.

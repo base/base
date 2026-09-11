@@ -9,10 +9,10 @@ use tokio::{
     sync::{mpsc, watch},
     time,
 };
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
-    CancellableContext, DerivationActorRequest, DerivationEngineClient, NodeActor,
+    DerivationActorRequest, DerivationEngineClient, NodeActor,
     actors::derivation::{DerivationDelegateClient, DerivationError},
 };
 
@@ -48,16 +48,6 @@ where
     engine_l2_safe_head: L2BlockInfo,
     /// Whether the engine sync has completed. This will only ever go from false -> true.
     has_engine_sync_completed: bool,
-}
-
-impl<DerivationEngineClient_> CancellableContext
-    for DelegateDerivationActor<DerivationEngineClient_>
-where
-    DerivationEngineClient_: DerivationEngineClient,
-{
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation_token.cancelled()
-    }
 }
 
 impl<DerivationEngineClient_> DelegateDerivationActor<DerivationEngineClient_>

@@ -25,13 +25,10 @@ use tokio::{
         watch,
     },
 };
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 
 use super::{L1BlockFetcher, L1WatcherDerivationClient};
-use crate::{
-    Metrics, NodeActor,
-    actors::{CancellableContext, l1_watcher::error::L1WatcherActorError},
-};
+use crate::{Metrics, NodeActor, actors::l1_watcher::error::L1WatcherActorError};
 
 /// Stateless helper that wraps the log-fetch retry loop for [`L1WatcherActor`].
 ///
@@ -320,18 +317,6 @@ where
                 }
             }
         }
-    }
-}
-
-impl<BlockStream, L1Provider, L1WatcherDerivationClient_> CancellableContext
-    for L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
-where
-    BlockStream: Stream<Item = BlockInfo> + Unpin + Send + 'static,
-    L1Provider: L1BlockFetcher,
-    L1WatcherDerivationClient_: L1WatcherDerivationClient + 'static,
-{
-    fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancellation.cancelled()
     }
 }
 

@@ -8,7 +8,7 @@ use core::net::{Ipv4Addr, SocketAddr};
 use std::{any::Any, path::PathBuf, sync::Arc, time::Duration};
 
 use base_common_chain_config::BaseChainSpec;
-use base_common_runtime::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use base_common_runtime::{Runtime, RuntimeConfig, TokioConfig};
 use base_execution_state_database::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
@@ -118,11 +118,10 @@ impl InProcessBuilder {
 
         std::fs::create_dir_all(&data_path).wrap_err("Failed to create data directory")?;
 
-        let runtime = RuntimeBuilder::new(
+        let runtime = Runtime::new(
             RuntimeConfig::default()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
-        )
-        .build()?;
+        )?;
 
         let chain_spec = Arc::clone(&config.chain_spec);
 
