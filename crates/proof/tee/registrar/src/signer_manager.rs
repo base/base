@@ -17,7 +17,7 @@ use base_proof_contracts::{
     encode_register_signer_calldata, encode_revoke_cert_calldata,
     encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
-use base_tx_manager::{TxCandidate, TxManager, TxManagerError};
+use base_tx_manager::{SendResponse, TxCandidate, TxManager, TxManagerError};
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
     task::{self, JoinError, JoinSet},
@@ -726,10 +726,28 @@ where
             to: Some(self.registry_address),
             ..Default::default()
         };
-        match tokio::time::timeout(REVOCATION_CLEANUP_TIMEOUT, self.tx_manager.send(candidate))
-            .await
-        {
-            Ok(Ok(receipt)) if receipt.inner.status() => {
+        let send = self.tx_manager.send_async(candidate).await;
+        let task = task::spawn(async move {
+            Self::record_deregistration_result(signer, reason, send.await);
+        });
+        match tokio::time::timeout(REVOCATION_CLEANUP_TIMEOUT, task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                warn!(error = %error, signer = %signer, reason, "deregistration task failed");
+                RegistrarMetrics::processing_errors_total().increment(1);
+            }
+            Err(_) => warn!(
+                signer = %signer,
+                reason,
+                timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                "deregistration is still pending"
+            ),
+        }
+    }
+
+    fn record_deregistration_result(signer: Address, reason: &'static str, result: SendResponse) {
+        match result {
+            Ok(receipt) if receipt.inner.status() => {
                 info!(
                     signer = %signer,
                     tx_hash = %receipt.transaction_hash,
@@ -738,7 +756,7 @@ where
                 );
                 RegistrarMetrics::deregistrations_total().increment(1);
             }
-            Ok(Ok(receipt)) => {
+            Ok(receipt) => {
                 warn!(
                     signer = %signer,
                     tx_hash = %receipt.transaction_hash,
@@ -747,17 +765,8 @@ where
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
             }
-            Ok(Err(e)) => {
-                warn!(error = %e, signer = %signer, reason, "failed to deregister signer");
-                RegistrarMetrics::processing_errors_total().increment(1);
-            }
-            Err(_) => {
-                warn!(
-                    signer = %signer,
-                    reason,
-                    timeout = ?REVOCATION_CLEANUP_TIMEOUT,
-                    "timed out deregistering signer"
-                );
+            Err(error) => {
+                warn!(error = %error, signer = %signer, reason, "failed to deregister signer");
                 RegistrarMetrics::processing_errors_total().increment(1);
             }
         }
@@ -1608,6 +1617,8 @@ mod tests {
         chain: MockChain,
         stall_send: Arc<AtomicBool>,
         send_started: Arc<Notify>,
+        resume_send: Arc<Notify>,
+        send_completed: Arc<Notify>,
     }
 
     impl TxManager for MockTxManager {
@@ -1619,9 +1630,9 @@ mod tests {
             };
             if self.stall_send.load(Ordering::SeqCst) {
                 self.send_started.notify_one();
-                std::future::pending::<()>().await;
+                self.resume_send.notified().await;
             }
-            match outcome {
+            let response = match outcome {
                 MockTxOutcome::Success => {
                     self.chain.apply(&candidate);
                     Ok(stub_receipt_with_status(true))
@@ -1635,11 +1646,18 @@ mod tests {
                     self.chain.apply(&candidate);
                     Ok(stub_receipt_with_status(false))
                 }
-            }
+            };
+            self.send_completed.notify_one();
+            response
         }
 
-        async fn send_async(&self, _candidate: TxCandidate) -> SendHandle {
-            unreachable!("registrar tests use synchronous transaction submission")
+        async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let manager = self.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(manager.send(candidate).await);
+            });
+            SendHandle::new(rx)
         }
 
         fn sender_address(&self) -> Address {
@@ -1753,6 +1771,8 @@ mod tests {
                 chain: chain.clone(),
                 stall_send: Arc::new(AtomicBool::new(false)),
                 send_started: Arc::new(Notify::new()),
+                resume_send: Arc::new(Notify::new()),
+                send_completed: Arc::new(Notify::new()),
             },
             crl_source,
             SignerManagerConfig {
@@ -2004,7 +2024,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn revoked_signer_cleanup_times_out_stalled_deregistration() {
+    async fn deregistration_continues_after_cleanup_timeout() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -2031,6 +2051,13 @@ mod tests {
         let result = task.await.unwrap();
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+        assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+
+        manager.tx_manager.resume_send.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), manager.tx_manager.send_completed.notified())
+            .await
+            .expect("deregistration send should continue after the cleanup timeout");
+        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
     }
 
     #[tokio::test]
