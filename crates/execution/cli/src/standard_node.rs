@@ -353,9 +353,15 @@ pub struct RpcStandardNodeArgs {
     pub enable_experimental_validity_transactions: bool,
 
     /// Maximum validity predicates accepted per experimental transaction.
+    ///
+    /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
+    /// request deserializer enforces. Values above it can never be honored and
+    /// are rejected at startup rather than silently truncated.
     #[arg(
         long = "experimental-validity-max-predicates",
         default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new()
+            .range(1..=DEFAULT_MAX_VALIDITY_PREDICATES as u64),
         requires = "enable_experimental_validity_transactions"
     )]
     pub experimental_validity_max_predicates: usize,
@@ -1073,6 +1079,48 @@ mod tests {
         assert!(args.rpc.enable_experimental_validity_transactions);
         assert_eq!(args.rpc.experimental_validity_max_predicates, 8);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
+    }
+
+    #[test]
+    fn experimental_validity_max_predicates_rejects_values_above_the_wire_ceiling() {
+        // The request deserializer bounds batches at DEFAULT_MAX_VALIDITY_PREDICATES,
+        // so a larger configured maximum could never be honored. Reject it at
+        // startup instead of silently accepting an unenforceable limit.
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            &(DEFAULT_MAX_VALIDITY_PREDICATES + 1).to_string(),
+        ])
+        .expect_err("a maximum above the wire ceiling should be rejected");
+
+        assert!(error.to_string().contains("--experimental-validity-max-predicates"));
+    }
+
+    #[test]
+    fn experimental_validity_max_predicates_rejects_zero() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            "0",
+        ])
+        .expect_err("a maximum of zero should be rejected");
+
+        assert!(error.to_string().contains("--experimental-validity-max-predicates"));
+    }
+
+    #[test]
+    fn experimental_validity_max_predicates_accepts_the_wire_ceiling() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            &DEFAULT_MAX_VALIDITY_PREDICATES.to_string(),
+        ])
+        .args;
+
+        assert_eq!(args.rpc.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
     }
 
     #[test]

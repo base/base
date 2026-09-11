@@ -31,6 +31,7 @@ mod validity;
 pub use validity::{
     DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX, PredicateContext,
     TransactionValidity, ValidityOperator, ValidityPredicate, ValidityPredicateError,
+    deserialize_bounded_predicates,
 };
 
 mod block_expiry;

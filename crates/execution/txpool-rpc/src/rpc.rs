@@ -6,6 +6,7 @@ use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_PREDICATES, ValidityPredicate,
+    deserialize_bounded_predicates,
 };
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -49,9 +50,17 @@ pub struct TransactionStatusResponse {
 }
 
 /// Options for `base_sendRawTransactionValidity` accompanying the raw transaction.
+///
+/// Unknown fields are rejected so a caller cannot pad the request body with
+/// irrelevant data, and `validity` is deserialized with a bounded visitor that
+/// aborts once the batch exceeds [`DEFAULT_MAX_VALIDITY_PREDICATES`], capping the
+/// allocation before the count is enforced by
+/// [`ValidityPredicate::validate_batch`].
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct SendRawTransactionValidityOptions {
     /// Experimental predicates transported to builders alongside the transaction.
+    #[serde(deserialize_with = "deserialize_bounded_predicates")]
     pub validity: Vec<ValidityPredicate>,
 }
 
@@ -673,6 +682,65 @@ mod tests {
 
         assert_eq!(error.code(), ErrorCode::InvalidParams.code());
         assert!(error.message().contains("can never be satisfied"));
+    }
+
+    /// A single storage predicate encoded as JSON, used to build oversized
+    /// `validity` arrays cheaply.
+    fn storage_predicate_json() -> String {
+        r#"{"type":"storage","params":{"address":"0xabababababababababababababababababababab","slot":"0x1","op":"=","value":"0x789"}}"#
+            .to_string()
+    }
+
+    /// Builds a JSON `SendRawTransactionValidityOptions` body carrying `count`
+    /// identical storage predicates.
+    fn options_json_with_predicates(count: usize) -> String {
+        let predicates = vec![storage_predicate_json(); count].join(",");
+        format!(r#"{{"validity":[{predicates}]}}"#)
+    }
+
+    #[test]
+    fn options_deserialize_accepts_exactly_the_maximum_predicates() {
+        let json = options_json_with_predicates(DEFAULT_MAX_VALIDITY_PREDICATES);
+        let options: SendRawTransactionValidityOptions =
+            serde_json::from_str(&json).expect("a full batch at the limit must decode");
+        assert_eq!(options.validity.len(), DEFAULT_MAX_VALIDITY_PREDICATES);
+    }
+
+    #[test]
+    fn options_deserialize_rejects_predicate_past_the_maximum() {
+        // One over the limit must be rejected during decoding, not after.
+        let json = options_json_with_predicates(DEFAULT_MAX_VALIDITY_PREDICATES + 1);
+        let error = serde_json::from_str::<SendRawTransactionValidityOptions>(&json)
+            .expect_err("a batch past the limit must fail to decode");
+        assert!(
+            error.to_string().contains("too many validity predicates"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn options_deserialize_stops_before_allocating_an_oversized_batch() {
+        // A grossly oversized body (the DoS shape) must be rejected without
+        // materializing every predicate. The bounded visitor aborts at item
+        // 65, so decoding fails regardless of how many follow.
+        let json = options_json_with_predicates(100_000);
+        let error = serde_json::from_str::<SendRawTransactionValidityOptions>(&json)
+            .expect_err("a massively oversized batch must fail to decode");
+        assert!(
+            error.to_string().contains("too many validity predicates"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn options_deserialize_rejects_unknown_fields() {
+        // Padding the options object with unrelated fields must be rejected so a
+        // caller cannot inflate the request body with ignored data.
+        let predicate = storage_predicate_json();
+        let json = format!(r#"{{"validity":[{predicate}],"padding":"junk"}}"#);
+        let error = serde_json::from_str::<SendRawTransactionValidityOptions>(&json)
+            .expect_err("unknown fields must be rejected");
+        assert!(error.to_string().contains("unknown field"), "unexpected error: {error}");
     }
 
     #[tokio::test]
