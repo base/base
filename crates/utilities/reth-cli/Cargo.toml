@@ -20,6 +20,7 @@ rayon.workspace = true
 tracing.workspace = true
 humantime.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 reth-node-core.workspace = true
 reth-prune-types.workspace = true
 reth-cli-commands.workspace = true
