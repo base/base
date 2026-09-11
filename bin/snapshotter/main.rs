@@ -56,7 +56,8 @@ async fn main() -> Result<()> {
         config.bucket.clone(),
         config.prefix.clone(),
         config.public_base_url.clone(),
-    );
+    )
+    .with_max_streaming_part_uploads(config.max_streaming_part_uploads.get());
 
     let snapshotter = Snapshotter::new(container_manager, tip_checker, uploader, config);
     snapshotter.run().await
@@ -112,7 +113,6 @@ mod tests {
             "--consensus-container-name=consensus",
             "--el-rpc-url=http://execution:8545",
             "--source-datadir=/data",
-            "--output-dir=/snapshots",
             "--bucket=snapshots",
         ])
         .unwrap();

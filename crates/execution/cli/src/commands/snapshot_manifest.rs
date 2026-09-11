@@ -75,7 +75,7 @@ impl SnapshotManifestCommand {
         );
         SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
             source_datadir: &self.source_datadir,
-            output_dir: &self.output_dir,
+            output_dir: Some(&self.output_dir),
             chain_id: self.chain_id,
             base_url: self.base_url.as_deref(),
             block: Some(block),
