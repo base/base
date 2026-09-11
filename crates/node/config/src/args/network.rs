@@ -103,18 +103,6 @@ impl DefaultNetworkArgs {
         NETWORK_DEFAULTS.get_or_init(Self::default)
     }
 
-    /// Set the default DNS retries.
-    pub const fn with_dns_retries(mut self, v: usize) -> Self {
-        self.dns_retries = v;
-        self
-    }
-
-    /// Set the default NAT resolver.
-    pub fn with_nat(mut self, v: NatResolver) -> Self {
-        self.nat = v;
-        self
-    }
-
     /// Set the default network listening address.
     pub const fn with_addr(mut self, v: IpAddr) -> Self {
         self.addr = v;
@@ -124,79 +112,6 @@ impl DefaultNetworkArgs {
     /// Set the default network listening port.
     pub const fn with_port(mut self, v: u16) -> Self {
         self.port = v;
-        self
-    }
-
-    /// Set the default max concurrent `GetPooledTransactions` requests.
-    pub const fn with_max_concurrent_tx_requests(mut self, v: u32) -> Self {
-        self.max_concurrent_tx_requests = v;
-        self
-    }
-
-    /// Set the default max concurrent `GetPooledTransactions` requests per peer.
-    pub const fn with_max_concurrent_tx_requests_per_peer(mut self, v: u8) -> Self {
-        self.max_concurrent_tx_requests_per_peer = v;
-        self
-    }
-
-    /// Set the default max number of seen transactions to remember per peer.
-    pub const fn with_max_seen_tx_history(mut self, v: u32) -> Self {
-        self.max_seen_tx_history = v;
-        self
-    }
-
-    /// Set the default max number of transactions to import concurrently.
-    pub const fn with_max_pending_pool_imports(mut self, v: usize) -> Self {
-        self.max_pending_pool_imports = v;
-        self
-    }
-
-    /// Set the default max accumulated byte size of transactions to pack in one response.
-    pub const fn with_soft_limit_byte_size_pooled_transactions_response(
-        mut self,
-        v: usize,
-    ) -> Self {
-        self.soft_limit_byte_size_pooled_transactions_response = v;
-        self
-    }
-
-    /// Set the default max accumulated byte size of transactions to request in one request.
-    pub const fn with_soft_limit_byte_size_pooled_transactions_response_on_pack_request(
-        mut self,
-        v: usize,
-    ) -> Self {
-        self.soft_limit_byte_size_pooled_transactions_response_on_pack_request = v;
-        self
-    }
-
-    /// Set the default max capacity of cache of hashes for transactions pending fetch.
-    pub const fn with_max_capacity_cache_txns_pending_fetch(mut self, v: u32) -> Self {
-        self.max_capacity_cache_txns_pending_fetch = v;
-        self
-    }
-
-    /// Set the default memory limit (in bytes) for the network manager → transactions
-    /// manager channel.
-    pub const fn with_tx_channel_memory_limit_bytes(mut self, v: usize) -> Self {
-        self.tx_channel_memory_limit_bytes = v;
-        self
-    }
-
-    /// Set the default transaction propagation policy.
-    pub const fn with_tx_propagation_policy(mut self, v: TransactionPropagationKind) -> Self {
-        self.tx_propagation_policy = v;
-        self
-    }
-
-    /// Set the default transaction ingress policy.
-    pub const fn with_tx_ingress_policy(mut self, v: TransactionIngressPolicy) -> Self {
-        self.tx_ingress_policy = v;
-        self
-    }
-
-    /// Set the default transaction propagation mode.
-    pub const fn with_propagation_mode(mut self, v: TransactionPropagationMode) -> Self {
-        self.propagation_mode = v;
         self
     }
 
@@ -623,12 +538,6 @@ impl NetworkArgs {
         self.no_persist_peers.not().then_some(peers_file)
     }
 
-    /// Configures the [`DiscoveryArgs`].
-    pub const fn with_discovery(mut self, discovery: DiscoveryArgs) -> Self {
-        self.discovery = discovery;
-        self
-    }
-
     /// Sets the p2p port to zero, to allow the OS to assign a random unused port when
     /// the network components bind to a socket.
     pub const fn with_unused_p2p_port(mut self) -> Self {
@@ -808,36 +717,6 @@ impl DefaultDiscoveryArgs {
         DISCOVERY_DEFAULTS.get_or_init(Self::default)
     }
 
-    /// Set the default for `--disable-discovery`.
-    pub const fn with_disable_discovery(mut self, disable: bool) -> Self {
-        self.disable_discovery = disable;
-        self
-    }
-
-    /// Set the default for `--disable-dns-discovery`.
-    pub const fn with_disable_dns_discovery(mut self, disable: bool) -> Self {
-        self.disable_dns_discovery = disable;
-        self
-    }
-
-    /// Set the default for `--disable-discv4-discovery`.
-    pub const fn with_disable_discv4_discovery(mut self, disable: bool) -> Self {
-        self.disable_discv4_discovery = disable;
-        self
-    }
-
-    /// Set the default for `--disable-discv5-discovery`.
-    pub const fn with_disable_discv5_discovery(mut self, disable: bool) -> Self {
-        self.disable_discv5_discovery = disable;
-        self
-    }
-
-    /// Set the default for `--disable-nat`.
-    pub const fn with_disable_nat(mut self, disable: bool) -> Self {
-        self.disable_nat = disable;
-        self
-    }
-
     /// Set the default discovery v4 address.
     pub const fn with_addr(mut self, addr: IpAddr) -> Self {
         self.addr = addr;
@@ -850,45 +729,9 @@ impl DefaultDiscoveryArgs {
         self
     }
 
-    /// Set the default discovery v5 IPv4 address.
-    pub fn with_discv5_addr(mut self, addr: impl Into<Option<Ipv4Addr>>) -> Self {
-        self.discv5_addr = addr.into();
-        self
-    }
-
-    /// Set the default discovery v5 IPv6 address.
-    pub fn with_discv5_addr_ipv6(mut self, addr: impl Into<Option<Ipv6Addr>>) -> Self {
-        self.discv5_addr_ipv6 = addr.into();
-        self
-    }
-
     /// Set the default discovery V5 port.
     pub fn with_discv5_port(mut self, port: impl Into<Option<u16>>) -> Self {
         self.discv5_port = port.into();
-        self
-    }
-
-    /// Set the default discovery v5 IPv6 port.
-    pub fn with_discv5_port_ipv6(mut self, port: impl Into<Option<u16>>) -> Self {
-        self.discv5_port_ipv6 = port.into();
-        self
-    }
-
-    /// Set the default discv5 periodic lookup interval (seconds).
-    pub const fn with_discv5_lookup_interval(mut self, interval: u64) -> Self {
-        self.discv5_lookup_interval = interval;
-        self
-    }
-
-    /// Set the default discv5 bootstrap lookup interval (seconds).
-    pub const fn with_discv5_bootstrap_lookup_interval(mut self, interval: u64) -> Self {
-        self.discv5_bootstrap_lookup_interval = interval;
-        self
-    }
-
-    /// Set the default discv5 bootstrap lookup countdown.
-    pub const fn with_discv5_bootstrap_lookup_countdown(mut self, countdown: u64) -> Self {
-        self.discv5_bootstrap_lookup_countdown = countdown;
         self
     }
 }

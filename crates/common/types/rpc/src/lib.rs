@@ -70,10 +70,7 @@ pub use work::Work;
 
 /// This module provides implementations for ERC-4337.
 pub mod erc4337;
-pub use erc4337::{
-    PackedUserOperation, SendUserOperation, SendUserOperationResponse, UserOperation,
-    UserOperationGasEstimation, UserOperationReceipt,
-};
+pub use erc4337::{PackedUserOperation, UserOperation};
 
 pub mod simulate;
 
@@ -101,15 +98,6 @@ pub use trace_parity::*;
 
 mod trace_tracerequest;
 pub use trace_tracerequest::*;
-
-mod bundle_call;
-pub use bundle_call::*;
-
-mod bundle_common;
-pub use bundle_common::*;
-
-mod bundle_sim;
-pub use bundle_sim::*;
 
 mod u256_numeric_string;
 

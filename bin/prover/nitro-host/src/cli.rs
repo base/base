@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use alloy_primitives::Address;
 #[cfg(any(target_os = "linux", feature = "local"))]
-use base_common_chain_config::rollup_config;
 use base_common_cli::{LogConfig, RuntimeManager};
 #[cfg(any(target_os = "linux", feature = "local"))]
 use base_proof_client::{ProverServiceClientConfig, ProverWorkerClient};
@@ -116,8 +115,9 @@ impl ProverRuntimeArgs {
     }
 
     fn prover_config(self) -> eyre::Result<ProverConfig> {
-        let rollup_config = rollup_config!(self.l2_chain_id)
-            .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
+        let rollup_config =
+            base_common_chain_config::ChainConfig::rollup_config_by_chain_id(self.l2_chain_id)
+                .ok_or_else(|| eyre!("unknown L2 chain ID: {}", self.l2_chain_id))?;
 
         let l1_config = base_common_chain_config::L1_CONFIGS
             .get(&rollup_config.l1_chain_id)

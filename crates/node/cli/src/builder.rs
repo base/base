@@ -4,13 +4,11 @@ use core::time::Duration;
 use std::path::PathBuf;
 
 use base_common_observability_events::{
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
-    TransactionEventWriterConfig,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
 };
 use base_execution_payload::{MeteringStore, SharedMeteringStore};
 use base_execution_rpc::{BuilderApiConfig, DEFAULT_MAX_VALIDITY_PREDICATES, ShadowValidityConfig};
 use base_node_service::{BuilderConfig, RollupArgs};
-use tracing::warn;
 
 use crate::ShadowIndexerArgs;
 
@@ -76,22 +74,6 @@ impl Default for TransactionEventsArgs {
     }
 }
 
-impl TransactionEventsArgs {
-    /// Converts these args into the shared transaction event writer config.
-    pub fn writer_config(&self) -> TransactionEventWriterConfig {
-        TransactionEventWriterConfig {
-            enabled: self.enabled,
-            file_path: self.file_path.clone(),
-            queue_capacity: self.queue_capacity,
-            max_file_bytes: self.max_file_bytes,
-            max_files: self.max_files,
-            required: self.required,
-            producer: TransactionEventProducer::BaseBuilder,
-            network: self.network.clone(),
-        }
-    }
-}
-
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -107,21 +89,6 @@ pub struct BuilderArgs {
     /// max gas a transaction can use
     #[arg(long = "builder.max_gas_per_txn")]
     pub max_gas_per_txn: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.block-state-root-gas-limit", hide = true)]
-    pub block_state_root_gas_limit: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.state-root-gas-coefficient", hide = true)]
-    pub state_root_gas_coefficient: Option<f64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    /// Scheduled for removal in v1.4.0 after rolling deployments have migrated.
-    #[arg(long = "builder.state-root-gas-anchor-us", hide = true)]
-    pub state_root_gas_anchor_us: Option<u128>,
 
     /// How much extra time to wait for the block building job to complete and not get garbage collected
     #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
@@ -217,10 +184,6 @@ impl Default for BuilderArgs {
             chain_block_time: 1000,
             max_gas_per_txn: None,
 
-            block_state_root_gas_limit: None,
-            state_root_gas_coefficient: None,
-            state_root_gas_anchor_us: None,
-
             extra_block_deadline_secs: 20,
             enable_resource_metering: false,
             enable_experimental_validity_transactions: false,
@@ -267,13 +230,6 @@ impl BuilderArgs {
         self,
         metering_provider: SharedMeteringStore,
     ) -> eyre::Result<BuilderConfig> {
-        if self.block_state_root_gas_limit.is_some()
-            || self.state_root_gas_coefficient.is_some()
-            || self.state_root_gas_anchor_us.is_some()
-        {
-            warn!("deprecated builder resource limit flags are ignored");
-        }
-
         Ok(BuilderConfig {
             block_time: Duration::from_millis(self.chain_block_time),
             block_time_leeway: Duration::from_secs(self.extra_block_deadline_secs),
@@ -297,7 +253,7 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_primitives::{B256, TxHash, U256};
-    use base_common_types_payload::MeterBundleResponse;
+    use base_common_types_payload::TransactionResult;
     use clap::Parser;
     use rstest::rstest;
 
@@ -424,21 +380,16 @@ mod tests {
         let tx_hash = TxHash::random();
         metering_provider.insert(
             tx_hash,
-            MeterBundleResponse {
-                bundle_hash: B256::ZERO,
-                bundle_gas_price: U256::ZERO,
-                coinbase_diff: U256::ZERO,
-                eth_sent_to_coinbase: U256::ZERO,
-                gas_fees: U256::ZERO,
-                results: vec![],
-                state_block_number: 0,
-                total_gas_used: 21000,
-                total_execution_time_us: 500,
+            TransactionResult {
+                tx_hash,
+                gas_used: 21_000,
+                execution_time_us: 500,
+                ..Default::default()
             },
         );
 
         let result = config.metering_provider.get(&tx_hash);
-        assert_eq!(result.unwrap().total_execution_time_us, 500);
+        assert_eq!(result.unwrap().execution_time_us, 500);
     }
 
     #[rstest]
@@ -462,16 +413,11 @@ mod tests {
         let tx_hash = TxHash::random();
         store.insert(
             tx_hash,
-            MeterBundleResponse {
-                bundle_hash: B256::ZERO,
-                bundle_gas_price: U256::ZERO,
-                coinbase_diff: U256::ZERO,
-                eth_sent_to_coinbase: U256::ZERO,
-                gas_fees: U256::ZERO,
-                results: vec![],
-                state_block_number: 0,
-                total_gas_used: 21000,
-                total_execution_time_us: 0,
+            TransactionResult {
+                tx_hash,
+                gas_used: 21_000,
+                execution_time_us: 500,
+                ..Default::default()
             },
         );
         assert!(store.get(&tx_hash).is_some(), "entry should be present within TTL");
@@ -481,24 +427,6 @@ mod tests {
     fn metering_store_ttl_defaults_to_30s() {
         let args = BuilderArgs::default();
         assert_eq!(args.metering_store_ttl_secs, 30);
-    }
-
-    #[test]
-    fn deprecated_resource_limit_flags_remain_accepted() {
-        let args = CommandParser::parse_from([
-            "builder",
-            "--builder.block-state-root-gas-limit",
-            "1000000",
-            "--builder.state-root-gas-coefficient",
-            "0.1",
-            "--builder.state-root-gas-anchor-us",
-            "5000",
-        ])
-        .args;
-
-        assert_eq!(args.block_state_root_gas_limit, Some(1_000_000));
-        assert_eq!(args.state_root_gas_coefficient, Some(0.1));
-        assert_eq!(args.state_root_gas_anchor_us, Some(5_000));
     }
 
     #[test]
@@ -515,5 +443,18 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(2000));
         assert_eq!(config.max_gas_per_txn, Some(100000));
         assert_eq!(config.block_time_leeway, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn removed_resource_limit_flags_are_rejected() {
+        for flag in [
+            "--builder.block-state-root-gas-limit",
+            "--builder.state-root-gas-coefficient",
+            "--builder.state-root-gas-anchor-us",
+        ] {
+            let error = CommandParser::try_parse_from(["base", flag, "1"])
+                .expect_err("removed resource limit flags must not be accepted");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 }

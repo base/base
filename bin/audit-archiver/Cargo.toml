@@ -27,6 +27,5 @@ aws-credential-types = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["default"] }
-moka = { workspace = true, features = ["default", "sync"] }
 base-infra-audit = { workspace = true, features = ["default"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }

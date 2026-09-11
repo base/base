@@ -247,22 +247,6 @@ where
     /// Fixed delay between retry attempts in [`Self::prepare`].
     pub const PREPARE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
-    /// Creates a new [`SimpleTxManager`] with an injected runtime.
-    ///
-    /// This mirrors [`Self::new`] but lets deterministic tests control
-    /// timers and spawned tasks through `base-common-runtime`.
-    pub async fn new_with_runtime(
-        runtime: R,
-        provider: P,
-        signer_config: SignerConfig,
-        config: TxManagerConfig,
-        chain_id: u64,
-        metrics: Arc<dyn TxMetrics>,
-    ) -> TxManagerResult<Self> {
-        let wallet = signer_config.build_wallet()?;
-        Self::from_wallet_with_runtime(runtime, provider, wallet, config, chain_id, metrics).await
-    }
-
     /// Creates a new [`SimpleTxManager`] from a pre-built wallet and runtime.
     ///
     /// See [`Self::from_wallet`] for the production Tokio-backed constructor.

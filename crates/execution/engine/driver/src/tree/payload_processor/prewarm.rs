@@ -27,11 +27,7 @@ use base_common_observability_metrics::Metrics;
 use base_common_runtime::{Runtime, pool::WorkerPool};
 use base_execution_evm_blocks::{BaseEvmConfig, Evm, ExecutableTxFor, RecoveredTx};
 use base_execution_evm_runtime::StoredAccount as Account;
-use base_execution_state_provider::{
-    AccountReader, BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory,
-    PruneCheckpointReader, StageCheckpointReader, StorageSettingsCache,
-    TryIntoHistoricalStateProvider,
-};
+use base_execution_state_provider::{AccountReader, BlockExecutionOutput};
 use base_execution_state_types::MultiProofTargetsV2;
 use metrics::{Counter, Gauge, Histogram};
 use rayon::prelude::*;

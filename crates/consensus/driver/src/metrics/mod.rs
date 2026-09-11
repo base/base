@@ -185,6 +185,19 @@ base_common_observability_metrics::define_metrics! {
     )]
     #[label(name = "severity", default = ["temporary", "critical", "reset", "flush"])]
     engine_task_failure: counter,
+    #[describe("Successful consensus block insert duration in seconds, including preparation, payload submission and forkchoice synchronization; excludes consensus queue wait and asynchronous persistence")]
+    #[label(name = "payload_safety", default = ["unsafe", "safe"])]
+    #[label(name = "payload_policy", default = ["extending_only", "authoritative"])]
+    engine_block_insert_duration_seconds: histogram,
+    #[describe("Payload submission duration in seconds for successful consensus block inserts")]
+    #[label(name = "payload_safety", default = ["unsafe", "safe"])]
+    #[label(name = "payload_policy", default = ["extending_only", "authoritative"])]
+    engine_block_insert_submission_duration_seconds: histogram,
+    #[describe("Consensus block insert attempts by outcome; retries count as separate attempts")]
+    #[label(name = "payload_safety", default = ["unsafe", "safe"])]
+    #[label(name = "payload_policy", default = ["extending_only", "authoritative"])]
+    #[label(name = "outcome", default = ["success", "skipped", "failed"])]
+    engine_block_insert_attempts_total: counter,
     #[describe("Engine method request duration")]
     #[label(method)]
     engine_method_request_duration: histogram,

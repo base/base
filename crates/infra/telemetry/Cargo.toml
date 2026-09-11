@@ -14,7 +14,6 @@ workspace = true
 discv5 = { workspace = true }
 async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
-base-common-http = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
 thiserror = { workspace = true, features = ["std"] }
@@ -26,8 +25,8 @@ anyhow = { workspace = true, features = ["default", "std"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
 secp256k1 = { workspace = true, features = ["default", "rand"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
+base-common-http = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env", "std"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
 libp2p = { workspace = true, features = ["tokio", "tcp", "noise", "yamux", "identify"] }
 base-execution-network-wire = { workspace = true, features = ["transport", "default", "secp256k1"] }
 tokio = { workspace = true, features = ["default", "macros", "net", "rt-multi-thread", "sync", "time"] }

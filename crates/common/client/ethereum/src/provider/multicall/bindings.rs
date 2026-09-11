@@ -69,7 +69,4 @@ sol! {
         ) external payable returns (uint256 blockNumber, bytes32 blockHash, Result[] memory returnData);
     }
 
-    interface ArbSys {
-        function arbBlockNumber() external view returns (uint256);
-    }
 }

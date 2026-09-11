@@ -13,7 +13,7 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_types_chain::{BlockHeader, SealedHeader};
 use base_common_types_payload::TreeConfig;
 pub use base_common_types_payload::{
-    DEFAULT_MEMORY_BLOCK_BUFFER_TARGET, DEFAULT_PERSISTENCE_THRESHOLD, DEFAULT_RESERVED_CPU_CORES,
+    DEFAULT_MEMORY_BLOCK_BUFFER_TARGET, DEFAULT_PERSISTENCE_THRESHOLD,
 };
 use base_execution_network_wire::HeadersClient;
 use base_execution_state_database::DatabaseProviderFactory;
@@ -237,17 +237,6 @@ impl NodeConfig {
         self
     }
 
-    /// Set the instance for the node
-    pub const fn with_instance(mut self, instance: u16) -> Self {
-        self.instance = Some(instance);
-        self
-    }
-
-    /// Returns the instance value, defaulting to 1 if not set.
-    pub fn get_instance(&self) -> u16 {
-        self.instance.unwrap_or(1)
-    }
-
     /// Set the network args for the node
     pub fn with_network(mut self, network: NetworkArgs) -> Self {
         self.network = network;
@@ -257,18 +246,6 @@ impl NodeConfig {
     /// Set the rpc args for the node
     pub fn with_rpc(mut self, rpc: RpcServerArgs) -> Self {
         self.rpc = rpc;
-        self
-    }
-
-    /// Set the txpool args for the node
-    pub fn with_txpool(mut self, txpool: TxPoolArgs) -> Self {
-        self.txpool = txpool;
-        self
-    }
-
-    /// Set the builder args for the node
-    pub fn with_payload_builder(mut self, builder: PayloadBuilderArgs) -> Self {
-        self.builder = builder;
         self
     }
 
@@ -287,14 +264,6 @@ impl NodeConfig {
     /// Set the dev args for the node
     pub fn with_dev(mut self, dev: DevArgs) -> Self {
         self.dev = dev;
-        self
-    }
-
-    /// Set the dev block time for the node.
-    ///
-    /// This sets the interval at which the dev miner produces new blocks.
-    pub const fn with_dev_block_time(mut self, block_time: std::time::Duration) -> Self {
-        self.dev.block_time = Some(block_time);
         self
     }
 
@@ -442,21 +411,6 @@ impl NodeConfig {
     pub fn with_unused_ports(mut self) -> Self {
         self.rpc = self.rpc.with_unused_ports();
         self.network = self.network.with_unused_ports();
-        self
-    }
-
-    /// Disables all discovery services for the node.
-    pub const fn with_disabled_discovery(mut self) -> Self {
-        self.network.discovery.disable_discovery = true;
-        self
-    }
-
-    /// Effectively disables the RPC state cache by setting the cache sizes to `0`.
-    ///
-    /// By setting the cache sizes to 0, caching of newly executed or fetched blocks will be
-    /// effectively disabled.
-    pub const fn with_disabled_rpc_cache(mut self) -> Self {
-        self.rpc.rpc_state_cache.set_zero_lengths();
         self
     }
 

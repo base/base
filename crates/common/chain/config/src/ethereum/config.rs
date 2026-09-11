@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn devnet_rollup_l1_config_resolves() {
-        let rollup_config = crate::rollup_config!(crate::ChainConfig::devnet().chain_id).unwrap();
+        let rollup_config = crate::ChainConfig::devnet().rollup_config();
         let l1_config = L1_CONFIGS.get(&rollup_config.l1_chain_id).unwrap();
 
         assert_eq!(l1_config.chain_id, Devnet::CHAIN_ID);

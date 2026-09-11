@@ -1,20 +1,12 @@
 //! Provider-related utilities.
 
-use std::{
-    fmt::{self, Formatter},
-    sync::Arc,
-};
-
 pub use alloy_eips::eip1559::Eip1559Estimation;
 use alloy_json_rpc::RpcRecv;
 use alloy_primitives::{B256, U64, U128};
 use alloy_rpc_client::WeakClient;
 use alloy_transport::{TransportError, TransportResult};
 
-use crate::{
-    BlockResponse, Identity,
-    fillers::{BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller},
-};
+use crate::BlockResponse;
 
 /// The number of blocks from the past for which the fee rewards are fetched for fee estimation.
 pub const EIP1559_FEE_ESTIMATION_PAST_BLOCKS: u64 = 10;
@@ -24,71 +16,6 @@ pub const EIP1559_BASE_FEE_MULTIPLIER: u128 = 2;
 pub const EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE: f64 = 20.0;
 /// The minimum priority fee to provide.
 pub const EIP1559_MIN_PRIORITY_FEE: u128 = 1;
-
-/// An estimator function for EIP1559 fees.
-pub type EstimatorFunction = fn(u128, &[Vec<u128>]) -> Eip1559Estimation;
-
-/// A trait responsible for estimating EIP-1559 values
-pub trait Eip1559EstimatorFn: Send + Sync + Unpin {
-    /// Estimates the EIP-1559 values given the latest basefee and the recent rewards.
-    fn estimate(&self, base_fee: u128, rewards: &[Vec<u128>]) -> Eip1559Estimation;
-}
-
-/// EIP-1559 estimator variants
-#[derive(Default, Clone)]
-pub enum Eip1559Estimator {
-    /// Uses the builtin estimator
-    #[default]
-    Default,
-    /// Uses a custom estimator
-    Custom(Arc<dyn Eip1559EstimatorFn>),
-}
-
-impl Eip1559Estimator {
-    /// Creates a new estimator from a closure
-    pub fn new<F>(f: F) -> Self
-    where
-        F: Fn(u128, &[Vec<u128>]) -> Eip1559Estimation + Send + Sync + Unpin + 'static,
-    {
-        Self::new_estimator(f)
-    }
-
-    /// Creates a new estimate fn
-    pub fn new_estimator<F: Eip1559EstimatorFn + 'static>(f: F) -> Self {
-        Self::Custom(Arc::new(f))
-    }
-
-    /// Estimates the EIP-1559 values given the latest basefee and the recent rewards.
-    pub fn estimate(self, base_fee: u128, rewards: &[Vec<u128>]) -> Eip1559Estimation {
-        match self {
-            Self::Default => eip1559_default_estimator(base_fee, rewards),
-            Self::Custom(val) => val.estimate(base_fee, rewards),
-        }
-    }
-}
-
-impl<F> Eip1559EstimatorFn for F
-where
-    F: Fn(u128, &[Vec<u128>]) -> Eip1559Estimation + Send + Sync + Unpin,
-{
-    fn estimate(&self, base_fee: u128, rewards: &[Vec<u128>]) -> Eip1559Estimation {
-        (self)(base_fee, rewards)
-    }
-}
-
-impl fmt::Debug for Eip1559Estimator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Eip1559Estimator")
-            .field(
-                "estimator",
-                &match self {
-                    Self::Default => "default",
-                    Self::Custom(_) => "custom",
-                },
-            )
-            .finish()
-    }
-}
 
 fn estimate_priority_fee(rewards: &[Vec<u128>]) -> u128 {
     let mut rewards =
@@ -177,13 +104,6 @@ pub(crate) async fn hashes_to_headers<
     .await?;
     Ok(headers)
 }
-
-/// Helper type representing the joined recommended fillers i.e [`GasFiller`],
-/// [`BlobGasFiller`], [`NonceFiller`], and [`ChainIdFiller`].
-pub type JoinedRecommendedFillers = JoinFill<
-    Identity,
-    JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
->;
 
 #[cfg(test)]
 mod tests {

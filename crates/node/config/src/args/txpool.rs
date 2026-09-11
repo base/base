@@ -6,9 +6,8 @@ use alloy_eips::eip1559::{ETHEREUM_BLOCK_GAS_LIMIT_30M, MIN_PROTOCOL_BASE_FEE};
 use alloy_primitives::Address;
 use base_common_cli::{format_duration_as_secs_or_ms, parse_duration_from_secs_or_ms};
 use base_execution_txpool::{
-    DEFAULT_MAX_CACHED_BLOBS, DEFAULT_MAX_TX_INPUT_BYTES, DEFAULT_PRICE_BUMP,
-    DEFAULT_TXPOOL_ADDITIONAL_VALIDATION_TASKS, LocalTransactionConfig,
-    MAX_NEW_PENDING_TXS_NOTIFICATIONS, MAX_QUEUED_TRANSACTION_LIFETIME,
+    DEFAULT_MAX_TX_INPUT_BYTES, DEFAULT_PRICE_BUMP, DEFAULT_TXPOOL_ADDITIONAL_VALIDATION_TASKS,
+    LocalTransactionConfig, MAX_NEW_PENDING_TXS_NOTIFICATIONS, MAX_QUEUED_TRANSACTION_LIFETIME,
     NEW_TX_LISTENER_BUFFER_SIZE, PENDING_TX_LISTENER_BUFFER_SIZE, PoolConfig, PriceBumpConfig,
     REPLACE_BLOB_PRICE_BUMP, SubPoolLimit, TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER,
     TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT, TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
@@ -31,8 +30,6 @@ pub struct DefaultTxPoolValues {
     queued_max_size: usize,
     blobpool_max_count: usize,
     blobpool_max_size: usize,
-    blob_cache_size: Option<u32>,
-    disable_blobs_support: bool,
     max_account_slots: usize,
     price_bump: u128,
     minimal_protocol_basefee: u64,
@@ -41,7 +38,6 @@ pub struct DefaultTxPoolValues {
     max_tx_gas_limit: Option<u64>,
     blob_transaction_price_bump: u128,
     max_tx_input_bytes: usize,
-    max_cached_entries: u32,
     no_locals: bool,
     locals: Vec<Address>,
     no_local_transactions_propagation: bool,
@@ -66,93 +62,9 @@ impl DefaultTxPoolValues {
         TXPOOL_DEFAULTS.get_or_init(Self::default)
     }
 
-    /// Set the default pending sub-pool max transaction count
-    pub const fn with_pending_max_count(mut self, v: usize) -> Self {
-        self.pending_max_count = v;
-        self
-    }
-
-    /// Set the default pending sub-pool max size in MB
-    pub const fn with_pending_max_size(mut self, v: usize) -> Self {
-        self.pending_max_size = v;
-        self
-    }
-
-    /// Set the default basefee sub-pool max transaction count
-    pub const fn with_basefee_max_count(mut self, v: usize) -> Self {
-        self.basefee_max_count = v;
-        self
-    }
-
-    /// Set the default basefee sub-pool max size in MB
-    pub const fn with_basefee_max_size(mut self, v: usize) -> Self {
-        self.basefee_max_size = v;
-        self
-    }
-
-    /// Set the default queued sub-pool max transaction count
-    pub const fn with_queued_max_count(mut self, v: usize) -> Self {
-        self.queued_max_count = v;
-        self
-    }
-
-    /// Set the default queued sub-pool max size in MB
-    pub const fn with_queued_max_size(mut self, v: usize) -> Self {
-        self.queued_max_size = v;
-        self
-    }
-
-    /// Set the default blobpool max transaction count
-    pub const fn with_blobpool_max_count(mut self, v: usize) -> Self {
-        self.blobpool_max_count = v;
-        self
-    }
-
-    /// Set the default blobpool max size in MB
-    pub const fn with_blobpool_max_size(mut self, v: usize) -> Self {
-        self.blobpool_max_size = v;
-        self
-    }
-
-    /// Set the default blob cache size
-    pub const fn with_blob_cache_size(mut self, v: Option<u32>) -> Self {
-        self.blob_cache_size = v;
-        self
-    }
-
-    /// Set whether to disable blob transaction support by default
-    pub const fn with_disable_blobs_support(mut self, v: bool) -> Self {
-        self.disable_blobs_support = v;
-        self
-    }
-
-    /// Set the default max account slots
-    pub const fn with_max_account_slots(mut self, v: usize) -> Self {
-        self.max_account_slots = v;
-        self
-    }
-
-    /// Set the default price bump percentage
-    pub const fn with_price_bump(mut self, v: u128) -> Self {
-        self.price_bump = v;
-        self
-    }
-
-    /// Set the default minimal protocol base fee
-    pub const fn with_minimal_protocol_basefee(mut self, v: u64) -> Self {
-        self.minimal_protocol_basefee = v;
-        self
-    }
-
     /// Set the default minimum priority fee
     pub const fn with_minimum_priority_fee(mut self, v: Option<u128>) -> Self {
         self.minimum_priority_fee = v;
-        self
-    }
-
-    /// Set the default enforced gas limit
-    pub const fn with_enforced_gas_limit(mut self, v: u64) -> Self {
-        self.enforced_gas_limit = v;
         self
     }
 
@@ -162,81 +74,9 @@ impl DefaultTxPoolValues {
         self
     }
 
-    /// Set the default blob transaction price bump
-    pub const fn with_blob_transaction_price_bump(mut self, v: u128) -> Self {
-        self.blob_transaction_price_bump = v;
-        self
-    }
-
     /// Set the default max transaction input bytes
     pub const fn with_max_tx_input_bytes(mut self, v: usize) -> Self {
         self.max_tx_input_bytes = v;
-        self
-    }
-
-    /// Set the default max cached entries
-    pub const fn with_max_cached_entries(mut self, v: u32) -> Self {
-        self.max_cached_entries = v;
-        self
-    }
-
-    /// Set whether to disable local transaction exemptions by default
-    pub const fn with_no_locals(mut self, v: bool) -> Self {
-        self.no_locals = v;
-        self
-    }
-
-    /// Set the default local addresses
-    pub fn with_locals(mut self, v: Vec<Address>) -> Self {
-        self.locals = v;
-        self
-    }
-
-    /// Set whether to disable local transaction propagation by default
-    pub const fn with_no_local_transactions_propagation(mut self, v: bool) -> Self {
-        self.no_local_transactions_propagation = v;
-        self
-    }
-
-    /// Set the default additional validation tasks
-    pub const fn with_additional_validation_tasks(mut self, v: usize) -> Self {
-        self.additional_validation_tasks = v;
-        self
-    }
-
-    /// Set the default pending transaction listener buffer size
-    pub const fn with_pending_tx_listener_buffer_size(mut self, v: usize) -> Self {
-        self.pending_tx_listener_buffer_size = v;
-        self
-    }
-
-    /// Set the default new transaction listener buffer size
-    pub const fn with_new_tx_listener_buffer_size(mut self, v: usize) -> Self {
-        self.new_tx_listener_buffer_size = v;
-        self
-    }
-
-    /// Set the default max new pending transactions notifications
-    pub const fn with_max_new_pending_txs_notifications(mut self, v: usize) -> Self {
-        self.max_new_pending_txs_notifications = v;
-        self
-    }
-
-    /// Set the default max queued lifetime
-    pub const fn with_max_queued_lifetime(mut self, v: Duration) -> Self {
-        self.max_queued_lifetime = v;
-        self
-    }
-
-    /// Set the default transactions backup path
-    pub fn with_transactions_backup_path(mut self, v: Option<PathBuf>) -> Self {
-        self.transactions_backup_path = v;
-        self
-    }
-
-    /// Set whether to disable transaction backup by default
-    pub const fn with_disable_transactions_backup(mut self, v: bool) -> Self {
-        self.disable_transactions_backup = v;
         self
     }
 
@@ -258,8 +98,6 @@ impl Default for DefaultTxPoolValues {
             queued_max_size: TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT,
             blobpool_max_count: TXPOOL_SUBPOOL_MAX_TXS_DEFAULT,
             blobpool_max_size: TXPOOL_SUBPOOL_MAX_SIZE_MB_DEFAULT,
-            blob_cache_size: None,
-            disable_blobs_support: false,
             max_account_slots: TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER,
             price_bump: DEFAULT_PRICE_BUMP,
             minimal_protocol_basefee: MIN_PROTOCOL_BASE_FEE,
@@ -268,7 +106,6 @@ impl Default for DefaultTxPoolValues {
             max_tx_gas_limit: None,
             blob_transaction_price_bump: REPLACE_BLOB_PRICE_BUMP,
             max_tx_input_bytes: DEFAULT_MAX_TX_INPUT_BYTES,
-            max_cached_entries: DEFAULT_MAX_CACHED_BLOBS,
             no_locals: false,
             locals: Vec::new(),
             no_local_transactions_propagation: false,
@@ -316,14 +153,6 @@ pub struct TxPoolArgs {
     #[arg(long = "txpool.blobpool-max-size", alias = "txpool.blobpool_max_size", default_value_t = DefaultTxPoolValues::get_global().blobpool_max_size)]
     pub blobpool_max_size: usize,
 
-    /// Max number of entries for the in memory cache of the blob store.
-    #[arg(long = "txpool.blob-cache-size", alias = "txpool.blob_cache_size", default_value = Resettable::from(DefaultTxPoolValues::get_global().blob_cache_size.map(|v| v.to_string().into())))]
-    pub blob_cache_size: Option<u32>,
-
-    /// Disable EIP-4844 blob transaction support
-    #[arg(long = "txpool.disable-blobs-support", alias = "txpool.disable_blobs_support", default_value_t = DefaultTxPoolValues::get_global().disable_blobs_support, conflicts_with_all = ["blobpool_max_count", "blobpool_max_size", "blob_cache_size", "blob_transaction_price_bump"])]
-    pub disable_blobs_support: bool,
-
     /// Max number of executable transaction slots guaranteed per account
     #[arg(long = "txpool.max-account-slots", alias = "txpool.max_account_slots", default_value_t = DefaultTxPoolValues::get_global().max_account_slots)]
     pub max_account_slots: usize,
@@ -357,10 +186,6 @@ pub struct TxPoolArgs {
     /// Max size in bytes of a single transaction allowed to enter the pool
     #[arg(long = "txpool.max-tx-input-bytes", alias = "txpool.max_tx_input_bytes", default_value_t = DefaultTxPoolValues::get_global().max_tx_input_bytes)]
     pub max_tx_input_bytes: usize,
-
-    /// The maximum number of blobs to keep in the in memory blob cache.
-    #[arg(long = "txpool.max-cached-entries", alias = "txpool.max_cached_entries", default_value_t = DefaultTxPoolValues::get_global().max_cached_entries)]
-    pub max_cached_entries: u32,
 
     /// Flag to disable local transaction exemptions.
     #[arg(long = "txpool.nolocals", default_value_t = DefaultTxPoolValues::get_global().no_locals)]
@@ -440,8 +265,6 @@ impl Default for TxPoolArgs {
             queued_max_size,
             blobpool_max_count,
             blobpool_max_size,
-            blob_cache_size,
-            disable_blobs_support,
             max_account_slots,
             price_bump,
             minimal_protocol_basefee,
@@ -450,7 +273,6 @@ impl Default for TxPoolArgs {
             max_tx_gas_limit,
             blob_transaction_price_bump,
             max_tx_input_bytes,
-            max_cached_entries,
             no_locals,
             locals,
             no_local_transactions_propagation,
@@ -472,8 +294,6 @@ impl Default for TxPoolArgs {
             queued_max_size,
             blobpool_max_count,
             blobpool_max_size,
-            blob_cache_size,
-            disable_blobs_support,
             max_account_slots,
             price_bump,
             minimal_protocol_basefee,
@@ -482,7 +302,6 @@ impl Default for TxPoolArgs {
             max_tx_gas_limit,
             blob_transaction_price_bump,
             max_tx_input_bytes,
-            max_cached_entries,
             no_locals,
             locals,
             no_local_transactions_propagation,
@@ -524,7 +343,6 @@ impl TxPoolArgs {
                 max_txs: self.blobpool_max_count,
                 max_size: self.blobpool_max_size.saturating_mul(1024 * 1024),
             },
-            blob_cache_size: self.blob_cache_size,
             max_account_slots: self.max_account_slots,
             price_bumps: PriceBumpConfig {
                 default_price_bump: self.price_bump,
@@ -594,8 +412,6 @@ mod tests {
             queued_max_size: 400,
             blobpool_max_count: 4000,
             blobpool_max_size: 500,
-            blob_cache_size: Some(100),
-            disable_blobs_support: false,
             max_account_slots: 20,
             price_bump: 15,
             minimal_protocol_basefee: 1000000000,
@@ -604,7 +420,6 @@ mod tests {
             max_tx_gas_limit: Some(50000000),
             blob_transaction_price_bump: 25,
             max_tx_input_bytes: 131072,
-            max_cached_entries: 200,
             no_locals: true,
             locals: vec![
                 address!("0x0000000000000000000000000000000000000001"),
@@ -639,8 +454,6 @@ mod tests {
             "4000",
             "--txpool.blobpool-max-size",
             "500",
-            "--txpool.blob-cache-size",
-            "100",
             "--txpool.max-account-slots",
             "20",
             "--txpool.pricebump",
@@ -657,8 +470,6 @@ mod tests {
             "25",
             "--txpool.max-tx-input-bytes",
             "131072",
-            "--txpool.max-cached-entries",
-            "200",
             "--txpool.nolocals",
             "--txpool.locals",
             "0x0000000000000000000000000000000000000001",

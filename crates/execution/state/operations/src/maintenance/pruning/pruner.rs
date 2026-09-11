@@ -22,9 +22,6 @@ use crate::maintenance::pruning::{
 /// Result of [`Pruner::run`] execution.
 pub type PrunerResult = Result<PrunerOutput, PrunerError>;
 
-/// The pruner type itself with the result of [`Pruner::run`]
-pub type PrunerWithResult<S, DB> = (Pruner<S, DB>, PrunerResult);
-
 /// Pruner with preset provider factory.
 pub type PrunerWithFactory<PF> = Pruner<<PF as DatabaseProviderFactory>::ProviderRW, PF>;
 

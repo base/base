@@ -2,8 +2,7 @@
 
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
-use alloy_eips::BlockId;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::Bytes;
 use alloy_rpc_client::RpcClient;
 use alloy_transport::{RpcError, TransportErrorKind};
 use alloy_transport_http::{
@@ -33,8 +32,6 @@ const L2_BLOCK_VISIBILITY_RETRY_DELAY: Duration = Duration::from_millis(20);
 pub struct AlloyL2ChainProvider {
     /// The inner Ethereum JSON-RPC provider.
     inner: RootProvider<Base>,
-    /// Whether to trust the RPC without verification.
-    trust_rpc: bool,
     /// The rollup configuration.
     rollup_config: Arc<RollupConfig>,
     /// The `block_by_number` LRU cache.
@@ -42,7 +39,7 @@ pub struct AlloyL2ChainProvider {
 }
 
 impl AlloyL2ChainProvider {
-    /// Creates a new [`AlloyL2ChainProvider`] with the given alloy provider and [`RollupConfig`].
+    /// Creates a new [`AlloyL2ChainProvider`] with the given provider and [`RollupConfig`].
     ///
     /// ## Panics
     /// - Panics if `cache_size` is zero.
@@ -51,23 +48,8 @@ impl AlloyL2ChainProvider {
         rollup_config: Arc<RollupConfig>,
         cache_size: usize,
     ) -> Self {
-        Self::new_with_trust(inner, rollup_config, cache_size, true)
-    }
-
-    /// Creates a new [`AlloyL2ChainProvider`] with the given alloy provider, [`RollupConfig`], and
-    /// trust setting.
-    ///
-    /// ## Panics
-    /// - Panics if `cache_size` is zero.
-    pub fn new_with_trust(
-        inner: RootProvider<Base>,
-        rollup_config: Arc<RollupConfig>,
-        cache_size: usize,
-        trust_rpc: bool,
-    ) -> Self {
         Self {
             inner,
-            trust_rpc,
             rollup_config,
             block_by_number_cache: LruCache::new(NonZeroUsize::new(cache_size).unwrap()),
         }
@@ -81,92 +63,6 @@ impl AlloyL2ChainProvider {
     /// Returns the latest L2 block number.
     pub async fn latest_block_number(&mut self) -> Result<u64, RpcError<TransportErrorKind>> {
         self.inner.get_block_number().await
-    }
-
-    /// Verifies that a block's hash matches the expected hash when `trust_rpc` is false.
-    fn verify_block_hash(
-        &self,
-        block_hash: B256,
-        expected_hash: B256,
-    ) -> Result<(), RpcError<TransportErrorKind>> {
-        if self.trust_rpc {
-            return Ok(());
-        }
-
-        if block_hash != expected_hash {
-            return Err(RpcError::local_usage_str(&format!(
-                "Block hash mismatch: expected {expected_hash:?}, got {block_hash:?}"
-            )));
-        }
-
-        Ok(())
-    }
-
-    /// Returns the [`L2BlockInfo`] for the given [`BlockId`]. [None] is returned if the block
-    /// does not exist.
-    pub async fn block_info_by_id(
-        &mut self,
-        id: BlockId,
-    ) -> Result<Option<L2BlockInfo>, RpcError<TransportErrorKind>> {
-        let method_name = match id {
-            BlockId::Number(_) => "l2_block_ref_by_number",
-            BlockId::Hash(_) => "l2_block_ref_by_hash",
-        };
-
-        Metrics::l2_chain_requests(method_name).increment(1);
-
-        let raw_block =
-            base_common_observability_metrics::time!(Metrics::request_duration(method_name), {
-                match &id {
-                    BlockId::Number(num) => self.inner.get_block_by_number(*num).full().await,
-                    BlockId::Hash(hash) => {
-                        self.inner.get_block_by_hash(hash.block_hash).full().await
-                    }
-                }
-            });
-
-        let result = async {
-            let block = match id {
-                BlockId::Number(_) => raw_block?,
-                BlockId::Hash(hash) => {
-                    let block = raw_block?;
-
-                    // Verify block hash matches if we fetched by hash
-                    if let Some(ref b) = block {
-                        self.verify_block_hash(b.header.hash, hash.block_hash)?;
-                    }
-
-                    block
-                }
-            };
-
-            match block {
-                Some(block) => {
-                    let consensus_block =
-                        block.into_consensus().map_transactions(|t| t.inner.inner);
-
-                    let l2_block =
-                        base_consensus_batch::L2BlockInfoDecoder::from_block_and_genesis(
-                            &consensus_block,
-                            &self.rollup_config.genesis,
-                        )
-                        .map_err(|_| {
-                            RpcError::local_usage_str(
-                                "failed to construct L2BlockInfo from block and genesis",
-                            )
-                        })?;
-                    Ok(Some(l2_block))
-                }
-                None => Ok(None),
-            }
-        }
-        .await;
-
-        if result.is_err() {
-            Metrics::l2_chain_errors(method_name).increment(1);
-        }
-
-        result
     }
 
     /// Creates a new [`AlloyL2ChainProvider`] from the provided [`url::Url`].

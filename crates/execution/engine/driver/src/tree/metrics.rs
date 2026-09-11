@@ -78,11 +78,6 @@ impl EngineApiMetrics {
         self.executor.bytecodes_updated_histogram.record(bytecodes as f64);
     }
 
-    /// Returns a reference to the executor metrics for use in state hooks.
-    pub const fn executor_metrics(&self) -> &ExecutorMetrics {
-        &self.executor
-    }
-
     /// Records the duration of block pre-execution changes (e.g., beacon root update).
     pub fn record_pre_execution(&self, elapsed: Duration) {
         self.executor.pre_execution_histogram.record(elapsed);

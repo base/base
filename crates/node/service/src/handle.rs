@@ -13,13 +13,6 @@ pub struct NodeHandle {
     pub node_exit_future: NodeExitFuture,
 }
 
-impl NodeHandle {
-    /// Waits for the node to exit, if it was configured to exit.
-    pub async fn wait_for_node_exit(self) -> eyre::Result<()> {
-        self.node_exit_future.await
-    }
-}
-
 impl fmt::Debug for NodeHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NodeHandle")

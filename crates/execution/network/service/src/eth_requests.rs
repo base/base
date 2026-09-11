@@ -26,7 +26,6 @@ use base_execution_state_types::{
     HeaderProvider, ProviderResult, RangeEnd, RangeResponse, ReceiptProvider, StateProviderFactory,
     StateRangeProviderFactory,
 };
-use base_execution_txpool::{BlobStore, NoopBlobStore};
 use futures::StreamExt;
 use tokio::sync::{mpsc::Receiver, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -59,11 +58,6 @@ pub const MAX_BODIES_SERVE: usize = 1024;
 /// Used to limit lookups.
 pub const MAX_BLOCK_ACCESS_LISTS_SERVE: usize = 1024;
 
-/// Maximum number of cell lookups to serve.
-///
-/// Used to limit lookups.
-pub const MAX_CELLS_SERVE: usize = 1024;
-
 /// Maximum number of bytecode lookups to serve.
 ///
 /// Used to limit lookups.
@@ -86,8 +80,6 @@ pub struct EthRequestHandler {
     /// Scripted range reads exercise partial storage failures only in unit tests.
     #[cfg(test)]
     pub snap_fixture: Option<base_execution_state_provider::test_utils::MockEthProvider>,
-    /// Blob store used for serving blob cell requests.
-    blob_store: Box<dyn BlobStore>,
     /// Used for reporting peers.
     // TODO use to report spammers
     #[expect(dead_code)]
@@ -110,17 +102,10 @@ impl EthRequestHandler {
             client,
             #[cfg(test)]
             snap_fixture: None,
-            blob_store: Box::<NoopBlobStore>::default(),
             peers,
             incoming_requests: ReceiverStream::new(incoming),
             metrics: Default::default(),
         }
-    }
-
-    /// Set blob store for the request handler
-    pub fn with_blob_store(mut self, blob_store: Box<dyn BlobStore>) -> Self {
-        self.blob_store = blob_store;
-        self
     }
 }
 
@@ -376,22 +361,7 @@ impl EthRequestHandler {
         request: GetCells,
         response: oneshot::Sender<RequestResult<Cells>>,
     ) {
-        let mut cells_response = Cells { cell_mask: request.cell_mask, ..Default::default() };
-
-        for hash in request.hashes.into_iter().take(MAX_CELLS_SERVE) {
-            let Some(cells) =
-                self.blob_store.get_cells(hash, request.cell_mask).unwrap_or_default()
-            else {
-                continue;
-            };
-
-            cells_response.hashes.push(hash);
-            cells_response.cells.push(cells);
-
-            if cells_response.length() > SOFT_RESPONSE_LIMIT {
-                break;
-            }
-        }
+        let cells_response = Cells { cell_mask: request.cell_mask, ..Default::default() };
 
         let _ = response.send(Ok(cells_response));
     }
@@ -812,159 +782,32 @@ pub enum IncomingEthRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
+    use std::sync::Arc;
 
-    use alloy_eips::{
-        eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-        eip7594::{BlobTransactionSidecarVariant, Cell},
-    };
-    use alloy_primitives::{Address, B128, TxHash, U256, keccak256};
+    use alloy_primitives::{Address, B128, U256, keccak256};
     use base_common_types_chain::constants::EMPTY_ROOT_HASH;
     use base_execution_evm_runtime::StoredAccount as Account;
-    use base_execution_state_database::NoopProvider;
     use base_execution_state_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use base_execution_txpool::{BlobStoreCleanupStat, BlobStoreError, PooledBlobSidecar};
     use test_case::test_case;
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::PeersHandle;
 
-    #[derive(Debug, Default)]
-    struct CountingBlobStore {
-        get_cells_calls: Arc<AtomicUsize>,
-    }
-
-    impl BlobStore for CountingBlobStore {
-        fn insert(&self, _tx: B256, _data: PooledBlobSidecar) -> Result<(), BlobStoreError> {
-            Ok(())
-        }
-
-        fn insert_all(&self, _txs: Vec<(B256, PooledBlobSidecar)>) -> Result<(), BlobStoreError> {
-            Ok(())
-        }
-
-        fn delete(&self, _tx: B256) -> Result<(), BlobStoreError> {
-            Ok(())
-        }
-
-        fn delete_all(&self, _txs: Vec<B256>) -> Result<(), BlobStoreError> {
-            Ok(())
-        }
-
-        fn cleanup(&self) -> BlobStoreCleanupStat {
-            BlobStoreCleanupStat::default()
-        }
-
-        fn get(
-            &self,
-            _tx: B256,
-        ) -> Result<Option<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-            Ok(None)
-        }
-
-        fn contains(&self, _tx: B256) -> Result<bool, BlobStoreError> {
-            Ok(false)
-        }
-
-        fn get_all(
-            &self,
-            _txs: Vec<B256>,
-        ) -> Result<Vec<(B256, Arc<BlobTransactionSidecarVariant>)>, BlobStoreError> {
-            Ok(vec![])
-        }
-
-        fn get_exact(
-            &self,
-            txs: Vec<B256>,
-        ) -> Result<Vec<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-            if txs.is_empty() {
-                return Ok(vec![]);
-            }
-
-            Err(BlobStoreError::MissingSidecar(txs[0]))
-        }
-
-        fn get_by_versioned_hashes_v1(
-            &self,
-            versioned_hashes: &[B256],
-        ) -> Result<Vec<Option<BlobAndProofV1>>, BlobStoreError> {
-            Ok(vec![None; versioned_hashes.len()])
-        }
-
-        fn get_by_versioned_hashes_v2(
-            &self,
-            _versioned_hashes: &[B256],
-        ) -> Result<Option<Vec<BlobAndProofV2>>, BlobStoreError> {
-            Ok(None)
-        }
-
-        fn get_by_versioned_hashes_v3(
-            &self,
-            versioned_hashes: &[B256],
-        ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError> {
-            Ok(vec![None; versioned_hashes.len()])
-        }
-
-        fn get_by_versioned_hashes_v4(
-            &self,
-            versioned_hashes: &[B256],
-            _indices_bitarray: B128,
-        ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-            Ok(vec![None; versioned_hashes.len()])
-        }
-
-        fn has_versioned_hashes(
-            &self,
-            versioned_hashes: &[B256],
-        ) -> Result<Vec<bool>, BlobStoreError> {
-            Ok(vec![false; versioned_hashes.len()])
-        }
-
-        fn get_cells(
-            &self,
-            _tx_hash: TxHash,
-            _indices_bitarray: B128,
-        ) -> Result<Option<Vec<Cell>>, BlobStoreError> {
-            self.get_cells_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(None)
-        }
-
-        fn data_size_hint(&self) -> Option<usize> {
-            Some(0)
-        }
-
-        fn blobs_len(&self) -> usize {
-            0
-        }
-    }
-
     #[tokio::test]
-    async fn get_cells_request_limits_blob_store_lookups() {
-        let (peers_tx, _) = mpsc::unbounded_channel();
-        let (_incoming_tx, incoming_rx) = mpsc::channel(1);
-        let get_cells_calls = Arc::new(AtomicUsize::new(0));
-        let blob_store = CountingBlobStore { get_cells_calls: Arc::clone(&get_cells_calls) };
-        let handler = EthRequestHandler::new(
-            base_execution_state_provider::test_utils::ProviderTestUtils::empty(Arc::new(
-                base_common_chain_config::BaseChainSpec::mainnet(),
-            )),
-            PeersHandle::new(peers_tx),
-            incoming_rx,
-        )
-        .with_blob_store(Box::new(blob_store));
+    async fn get_cells_returns_empty_response_on_base() {
+        let handler = snap_handler(MockEthProvider::default());
         let (response, rx) = oneshot::channel();
-        let request =
-            GetCells { hashes: vec![B256::ZERO; MAX_CELLS_SERVE + 1], cell_mask: B128::default() };
-
-        handler.on_cells_request(PeerId::default(), request, response);
-
+        let cell_mask = B128::from([0xff; 16]);
+        handler.on_cells_request(
+            PeerId::default(),
+            GetCells { hashes: vec![B256::ZERO], cell_mask },
+            response,
+        );
         let cells = rx.await.unwrap().unwrap();
+        assert_eq!(cells.cell_mask, cell_mask);
         assert!(cells.hashes.is_empty());
-        assert_eq!(get_cells_calls.load(Ordering::Relaxed), MAX_CELLS_SERVE);
+        assert!(cells.cells.is_empty());
     }
 
     #[tokio::test]

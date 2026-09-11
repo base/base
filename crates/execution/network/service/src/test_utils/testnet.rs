@@ -15,12 +15,9 @@ use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_wire::{DisconnectReason, HelloMessageWithProtocols, PeerId, Protocol};
 use base_execution_state_database::NoopProvider;
 use base_execution_state_types::{
-    BalProvider, BlockReader, BlockReaderIdExt, HeaderProvider, StateProviderFactory,
-    StateRangeProviderFactory,
+    BalProvider, BlockReader, HeaderProvider, StateProviderFactory, StateRangeProviderFactory,
 };
-use base_execution_txpool::{
-    InMemoryBlobStore, TransactionPool, TransactionValidationTaskExecutor,
-};
+use base_execution_txpool::TransactionValidationTaskExecutor;
 use futures::{FutureExt, StreamExt};
 use pin_project::pin_project;
 use secp256k1::SecretKey;
@@ -39,9 +36,8 @@ use crate::{
     eth_requests::EthRequestHandler,
     transactions::{
         TransactionsHandle, TransactionsManager, TransactionsManagerConfig,
-        config::{StrictEthAnnouncementFilter, TransactionPropagationKind},
+        config::TransactionPropagationKind,
         constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
-        policy::NetworkPolicies,
     },
 };
 
@@ -126,7 +122,7 @@ where
     ) -> Result<(), NetworkError> {
         let PeerConfig { config, client, secret_key } = config;
 
-        let network = NetworkManager::new(config, client.clone()).await?;
+        let network = NetworkManager::new(config).await?;
         let peer = Peer {
             network,
             client,
@@ -173,7 +169,6 @@ impl Testnet<base_execution_state_provider::BlockchainProvider> {
     /// Installs an eth pool on each peer
     pub fn with_eth_pool(self) -> Testnet<base_execution_state_provider::BlockchainProvider> {
         self.map_pool(|peer| {
-            let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
                 peer.client.clone(),
                 BaseEvmConfig::default(),
@@ -183,7 +178,6 @@ impl Testnet<base_execution_state_provider::BlockchainProvider> {
                 base_execution_txpool::Pool::new(
                     pool,
                     base_execution_txpool::BaseOrdering::default(),
-                    blob_store,
                     Default::default(),
                 ),
                 base_execution_txpool::BaseOrdering::default(),
@@ -206,7 +200,6 @@ impl Testnet<base_execution_state_provider::BlockchainProvider> {
         policy: TransactionPropagationKind,
     ) -> Testnet<base_execution_state_provider::BlockchainProvider> {
         self.map_pool(|peer| {
-            let blob_store = InMemoryBlobStore::default();
             let pool = TransactionValidationTaskExecutor::eth(
                 peer.client.clone(),
                 BaseEvmConfig::default(),
@@ -218,7 +211,6 @@ impl Testnet<base_execution_state_provider::BlockchainProvider> {
                     base_execution_txpool::Pool::new(
                         pool,
                         base_execution_txpool::BaseOrdering::default(),
-                        blob_store,
                         Default::default(),
                     ),
                     base_execution_txpool::BaseOrdering::default(),
@@ -380,7 +372,7 @@ pub struct Peer<C> {
     #[pin]
     request_handler: Option<EthRequestHandler>,
     #[pin]
-    transactions_manager: Option<TransactionsManager<InMemoryBlobStore>>,
+    transactions_manager: Option<TransactionsManager>,
     pool: Option<TestPool>,
     client: C,
     secret_key: SecretKey,
@@ -513,15 +505,12 @@ where {
         );
         network.set_transactions(tx);
 
-        let announcement_policy = StrictEthAnnouncementFilter::default();
-        let policies = NetworkPolicies::new(policy, announcement_policy);
-
         let transactions_manager = TransactionsManager::with_policy(
             network.handle().clone(),
             pool.clone(),
             rx,
             config,
-            policies,
+            policy,
         );
 
         Peer {
@@ -636,7 +625,7 @@ where
     /// Launches the network and returns the [Peer] that manages it
     pub async fn launch(self) -> Result<Peer<C>, NetworkError> {
         let Self { config, client, secret_key } = self;
-        let network = NetworkManager::new(config, client.clone()).await?;
+        let network = NetworkManager::new(config).await?;
         let peer = Peer {
             network,
             client,

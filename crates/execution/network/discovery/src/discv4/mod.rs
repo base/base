@@ -317,18 +317,6 @@ impl Discv4 {
         self.lookup_node(Some(node_id)).await
     }
 
-    /// Performs a random lookup for node records.
-    pub async fn lookup_random(&self) -> Result<Vec<NodeRecord>, Discv4Error> {
-        let target = PeerId::random();
-        self.lookup_node(Some(target)).await
-    }
-
-    /// Sends a message to the service to lookup the closest nodes
-    pub fn send_lookup(&self, node_id: PeerId) {
-        let cmd = Discv4Command::Lookup { node_id: Some(node_id), tx: None };
-        self.send_to_service(cmd);
-    }
-
     async fn lookup_node(&self, node_id: Option<PeerId>) -> Result<Vec<NodeRecord>, Discv4Error> {
         let (tx, rx) = oneshot::channel();
         let cmd = Discv4Command::Lookup { node_id, tx: Some(tx) };

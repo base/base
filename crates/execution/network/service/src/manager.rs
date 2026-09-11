@@ -31,15 +31,13 @@ use alloy_eip2124::EnrForkIdEntry;
 use base_common_io::{Files as fs, FsPathError};
 use base_common_observability_metrics::common::mpsc::MemoryBoundedSender;
 use base_common_runtime::{EventSender, shutdown::GracefulShutdown};
-use base_common_types_chain::BaseBlock;
 use base_execution_network_wire::{DisconnectReason, NodeRecord, PeerId, ReputationChangeKind};
-use base_execution_state_types::BlockNumReader;
 use futures::{Future, StreamExt};
 use parking_lot::Mutex;
 use secp256k1::SecretKey;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, trace};
 
 use crate::{
     EthProtocolInfo, FetchClient, NetworkBuilder, NetworkEvent, NetworkStatus, PeerEvent, PeerInfo,
@@ -49,9 +47,8 @@ use crate::{
     discovery::Discovery,
     error::{NetworkError, ServiceKind},
     eth_requests::IncomingEthRequest,
-    import::{BlockImport, BlockImportEvent, BlockImportOutcome, BlockValidation, NewBlockEvent},
     listener::ConnectionListener,
-    message::{NewBlockMessage, PeerMessage},
+    message::PeerMessage,
     metrics::{
         BackedOffPeersMetrics, ClosedSessionsMetrics, DirectionalDisconnectMetrics, NetworkMetrics,
         PendingSessionFailureMetrics,
@@ -107,8 +104,6 @@ pub struct NetworkManager {
     handle: NetworkHandle,
     /// Receiver half of the command channel set up between this type and the [`NetworkHandle`]
     from_handle_rx: UnboundedReceiverStream<NetworkHandleMessage>,
-    /// Handles block imports according to the `eth` protocol.
-    block_import: Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>,
     /// Sender for high level network events.
     event_sender: EventSender<NetworkEvent<PeerRequest>>,
     /// Sender half to send events to the
@@ -143,27 +138,6 @@ pub struct NetworkManager {
     pending_session_failure_metrics: PendingSessionFailureMetrics,
     /// Backed off peers metrics, split by reason.
     backed_off_peers_metrics: BackedOffPeersMetrics,
-}
-
-impl NetworkManager {
-    /// Creates the manager of a new network with Base wire types.
-    ///
-    /// ```no_run
-    /// # async fn f() {
-    ///
-    /// use base_execution_network_service::{NetworkConfig, NetworkManager};
-    /// use base_common_runtime::Runtime;
-    /// let config = NetworkConfig::builder_with_rng_secret_key(Runtime::test())
-    ///     .build_with_noop_provider(std::sync::Arc::new(base_common_chain_config::BaseChainSpec::mainnet()));
-    /// let manager = NetworkManager::eth(config, base_execution_state_database::NoopProvider::default()).await;
-    /// # }
-    /// ```
-    pub async fn eth<C: BlockNumReader + 'static>(
-        config: NetworkConfig,
-        client: C,
-    ) -> Result<Self, NetworkError> {
-        Self::new(config, client).await
-    }
 }
 
 impl NetworkManager {
@@ -222,10 +196,7 @@ impl NetworkManager {
     ///
     /// The [`NetworkManager`] is an endless future that needs to be polled in order to advance the
     /// state of the entire network.
-    pub async fn new<C: BlockNumReader + 'static>(
-        config: NetworkConfig,
-        client: C,
-    ) -> Result<Self, NetworkError> {
+    pub async fn new(config: NetworkConfig) -> Result<Self, NetworkError> {
         let NetworkConfig {
             secret_key,
             discovery_v4_addr,
@@ -235,8 +206,6 @@ impl NetworkManager {
             peers_config,
             sessions_config,
             chain_id,
-            block_import,
-            network_mode,
             boot_nodes,
             executor,
             hello_message,
@@ -246,7 +215,7 @@ impl NetworkManager {
             tx_gossip_disabled,
             transactions_manager_config: _,
             nat,
-            handshake,
+
             eth_max_message_size,
             required_block_hashes,
         } = config;
@@ -301,17 +270,10 @@ impl NetworkManager {
             status,
             hello_message,
             fork_filter,
-            handshake,
             eth_max_message_size,
-            network_mode.is_stake(),
         );
 
-        let state = NetworkState::new(
-            crate::state::BlockNumReader::new(client),
-            discovery,
-            peers_manager,
-            Arc::clone(&num_active_peers),
-        );
+        let state = NetworkState::new(discovery, peers_manager, Arc::clone(&num_active_peers));
 
         let swarm = Swarm::new(incoming, sessions, state);
 
@@ -326,7 +288,6 @@ impl NetworkManager {
             secret_key,
             local_peer_id,
             peers_handle,
-            network_mode,
             Arc::new(AtomicU64::new(chain_id)),
             tx_gossip_disabled,
             discv4,
@@ -345,7 +306,6 @@ impl NetworkManager {
             swarm,
             handle,
             from_handle_rx: UnboundedReceiverStream::new(from_handle_rx),
-            block_import,
             event_sender,
             to_transactions_manager: None,
             to_eth_request_handler: None,
@@ -371,17 +331,14 @@ impl NetworkManager {
     ///         .build(client.clone());
     ///     let transactions_config = config.transactions_manager_config.clone();
     ///     let (handle, network, transactions, request_handler) =
-    ///         NetworkManager::builder(config, client.clone()).await.unwrap()
+    ///         NetworkManager::builder(config).await.unwrap()
     ///             .transactions(pool, transactions_config)
     ///             .request_handler(client)
     ///             .split_with_handle();
     /// }
     /// ```
-    pub async fn builder<C: BlockNumReader + 'static>(
-        config: NetworkConfig,
-        client: C,
-    ) -> Result<NetworkBuilder<(), ()>, NetworkError> {
-        let network = Self::new(config, client).await?;
+    pub async fn builder(config: NetworkConfig) -> Result<NetworkBuilder<(), ()>, NetworkError> {
+        let network = Self::new(config).await?;
         Ok(network.into_builder())
     }
 
@@ -562,84 +519,13 @@ impl NetworkManager {
         }
     }
 
-    /// Invoked after a `NewBlock` message from the peer was validated
-    fn on_block_import_result(
-        &mut self,
-        event: BlockImportEvent<base_execution_network_wire::NewBlock<BaseBlock>>,
-    ) {
-        match event {
-            BlockImportEvent::Announcement(validation) => match validation {
-                BlockValidation::ValidHeader { block } => {
-                    self.swarm.state_mut().announce_new_block(block);
-                }
-                BlockValidation::ValidBlock { block } => {
-                    self.swarm.state_mut().announce_new_block_hash(block);
-                }
-            },
-            BlockImportEvent::Outcome(outcome) => {
-                let BlockImportOutcome { peer, result } = outcome;
-                match result {
-                    Ok(validated_block) => match validated_block {
-                        BlockValidation::ValidHeader { block } => {
-                            self.swarm.state_mut().update_peer_block(
-                                &peer,
-                                block.hash,
-                                block.number(),
-                            );
-                            self.swarm.state_mut().announce_new_block(block);
-                        }
-                        BlockValidation::ValidBlock { block } => {
-                            self.swarm.state_mut().announce_new_block_hash(block);
-                        }
-                    },
-                    Err(_err) => {
-                        self.swarm
-                            .state_mut()
-                            .peers_mut()
-                            .apply_reputation_change(&peer, ReputationChangeKind::BadBlock);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Enforces [EIP-3675](https://eips.ethereum.org/EIPS/eip-3675#devp2p) consensus rules for the network protocol
-    ///
-    /// Depending on the mode of the network:
-    ///    - disconnect peer if in POS
-    ///    - execute the closure if in POW
-    fn within_pow_or_disconnect<F>(&mut self, peer_id: PeerId, only_pow: F)
-    where
-        F: FnOnce(&mut Self),
-    {
-        // reject message in POS
-        if self.handle.mode().is_stake() {
-            // connections to peers which send invalid messages should be terminated
-            self.swarm
-                .sessions_mut()
-                .disconnect(peer_id, Some(DisconnectReason::SubprotocolSpecific));
-        } else {
-            only_pow(self);
-        }
-    }
-
     /// Handles a received Message from the peer's session.
     fn on_peer_message(&mut self, peer_id: PeerId, msg: PeerMessage) {
         match msg {
-            PeerMessage::NewBlockHashes(hashes) => {
-                self.within_pow_or_disconnect(peer_id, |this| {
-                    // update peer's state, to track what blocks this peer has seen
-                    this.swarm.state_mut().on_new_block_hashes(peer_id, hashes.to_vec());
-                    // start block import process for the hashes
-                    this.block_import.on_new_block(peer_id, NewBlockEvent::Hashes(hashes));
-                })
-            }
-            PeerMessage::NewBlock(block) => {
-                self.within_pow_or_disconnect(peer_id, move |this| {
-                    this.swarm.state_mut().on_new_block(peer_id, block.hash);
-                    // start block import process
-                    this.block_import.on_new_block(peer_id, NewBlockEvent::Block(block));
-                });
+            PeerMessage::NewBlockHashes(_) | PeerMessage::NewBlock(_) => {
+                self.swarm
+                    .sessions_mut()
+                    .disconnect(peer_id, Some(DisconnectReason::SubprotocolSpecific));
             }
             PeerMessage::PooledTransactions(msg) => {
                 self.notify_tx_manager(NetworkTransactionEvent::IncomingPooledTransactionHashes {
@@ -671,15 +557,6 @@ impl NetworkManager {
         match msg {
             NetworkHandleMessage::DiscoveryListener(tx) => {
                 self.swarm.state_mut().discovery_mut().add_listener(tx);
-            }
-            NetworkHandleMessage::AnnounceBlock(block, hash) => {
-                if self.handle.mode().is_stake() {
-                    // See [EIP-3675](https://eips.ethereum.org/EIPS/eip-3675#devp2p)
-                    warn!(target: "net", "Peer performed block propagation, but it is not supported in proof of stake (EIP-3675)");
-                    return;
-                }
-                let msg = NewBlockMessage { hash, block: Arc::new(block) };
-                self.swarm.state_mut().announce_new_block(msg);
             }
             NetworkHandleMessage::EthRequest { peer_id, request } => {
                 self.swarm.sessions_mut().send_message(&peer_id, PeerMessage::EthRequest(request))
@@ -770,13 +647,7 @@ impl NetworkManager {
                 let peer_ids = self.swarm.peers().peers_by_kind(kind);
                 let _ = tx.send(self.get_peer_infos_by_ids(peer_ids));
             }
-            NetworkHandleMessage::GetTransactionsHandle(tx) => {
-                if let Some(ref tx_inner) = self.to_transactions_manager {
-                    let _ = tx_inner.try_send(NetworkTransactionEvent::GetTransactionsHandle(tx));
-                } else {
-                    let _ = tx.send(None);
-                }
-            }
+
             NetworkHandleMessage::InternalBlockRangeUpdate(block_range_update) => {
                 self.swarm.sessions_mut().update_advertised_block_range(block_range_update);
             }
@@ -1114,11 +985,6 @@ impl Future for NetworkManager {
         let mut poll_durations = NetworkManagerPollDurations::default();
 
         let this = self.get_mut();
-
-        // poll new block imports (expected to be a noop for POS)
-        while let Poll::Ready(outcome) = this.block_import.poll(cx) {
-            this.on_block_import_result(outcome);
-        }
 
         // These loops drive the entire state of network and does a lot of work. Under heavy load
         // (many messages/events), data may arrive faster than it can be processed (incoming

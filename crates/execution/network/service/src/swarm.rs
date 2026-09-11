@@ -132,7 +132,6 @@ impl Swarm {
                 self.state.on_session_activated(SessionActivation {
                     peer: peer_id,
                     capabilities: capabilities.clone(),
-                    status: status.clone(),
                     request_tx: messages.clone(),
                     timeout,
                     range_info,
@@ -239,14 +238,7 @@ impl Swarm {
             StateAction::Disconnect { peer_id, reason } => {
                 self.sessions.disconnect(peer_id, reason);
             }
-            StateAction::NewBlock { peer_id, block: msg } => {
-                let msg = PeerMessage::NewBlock(msg);
-                self.sessions.send_message(&peer_id, msg);
-            }
-            StateAction::NewBlockHashes { peer_id, hashes } => {
-                let msg = PeerMessage::NewBlockHashes(hashes);
-                self.sessions.send_message(&peer_id, msg);
-            }
+
             StateAction::PeerAdded(peer_id) => return Some(SwarmEvent::PeerAdded(peer_id)),
             StateAction::PeerRemoved(peer_id) => return Some(SwarmEvent::PeerRemoved(peer_id)),
             StateAction::DiscoveredNode { peer_id, addr, fork_id } => {

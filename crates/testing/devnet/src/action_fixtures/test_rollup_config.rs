@@ -1,5 +1,5 @@
 use alloy_primitives::Address;
-use base_common_chain_config::{ChainConfig, RollupConfig, UpgradeConfig, rollup_config};
+use base_common_chain_config::{ChainConfig, RollupConfig, UpgradeConfig};
 
 use crate::action_fixtures::BatcherConfig;
 
@@ -12,7 +12,7 @@ pub struct TestRollupConfigBuilder {
 impl TestRollupConfigBuilder {
     /// Returns the Base mainnet [`RollupConfig`] from [`ChainConfig::MAINNET`].
     pub fn mainnet() -> RollupConfig {
-        rollup_config!(ChainConfig::MAINNET)
+        ChainConfig::MAINNET.rollup_config()
     }
 
     /// Starts from the Base mainnet config and applies the common harness overrides.
@@ -21,7 +21,7 @@ impl TestRollupConfigBuilder {
     /// addresses, zeroing genesis for the in-memory L1 miner, and activating the
     /// Canyon-through-Fjord path from genesis.
     pub fn base_mainnet(batcher: &BatcherConfig) -> Self {
-        let mut config = rollup_config!(ChainConfig::MAINNET);
+        let mut config = ChainConfig::MAINNET.rollup_config();
 
         config.batch_inbox_address = batcher.inbox_address;
         config

@@ -1,7 +1,7 @@
 //! Contains all updates to the [`crate::SystemConfig`] type.
 
 mod validator;
-pub use validator::{UpdateDataValidator, ValidatedUpdateData, ValidationError, Validator};
+pub use validator::{UpdateDataValidator, ValidatedUpdateData, ValidationError};
 
 mod batcher;
 pub use batcher::BatcherUpdate;

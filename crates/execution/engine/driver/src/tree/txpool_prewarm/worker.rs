@@ -6,10 +6,6 @@ use std::{
 use alloy_primitives::B256;
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_evm_runtime::{CachedReads, Evm, State};
-use base_execution_state_provider::{
-    BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader, StageCheckpointReader,
-    StorageSettingsCache, TryIntoHistoricalStateProvider,
-};
 use crossbeam_channel::{Receiver, RecvTimeoutError, TryRecvError};
 use tracing::{debug, trace};
 
@@ -308,7 +304,6 @@ mod tests {
     use alloy_primitives::{Address, Signature, TxKind, U256};
     use base_common_types_chain::{BaseTxEnvelope, Signed, TxLegacy, transaction::Recovered};
     use base_execution_state_provider::test_utils::ProviderTestUtils;
-    use base_execution_sync::{StageCheckpoint, StageId};
     use crossbeam_channel::{Sender, unbounded};
     use parking_lot::{Mutex, RwLock};
 

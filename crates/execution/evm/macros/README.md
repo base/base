@@ -41,5 +41,4 @@ pub struct B20Asset {
 
 This crate includes code adapted from Tempo's `precompiles-macros` crate in the
 [`tempoxyz/tempo`](https://github.com/tempoxyz/tempo/tree/main/crates/precompiles-macros)
-repository. The upstream license notices are retained in `LICENSE-MIT` and
-`LICENSE-APACHE`.
+repository.

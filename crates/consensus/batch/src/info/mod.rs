@@ -23,22 +23,22 @@ mod variant;
 pub use variant::L1BlockInfoTx;
 
 mod bedrock;
-pub use bedrock::{L1BlockInfoBedrock, L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields};
+pub use bedrock::{L1BlockInfoBedrock, L1BlockInfoBedrockOnlyFields};
 
 mod bedrock_base;
 pub use bedrock_base::{L1BlockInfoBedrockBase, L1BlockInfoBedrockBaseFields};
 
 mod ecotone;
-pub use ecotone::{L1BlockInfoEcotone, L1BlockInfoEcotoneFields, L1BlockInfoEcotoneOnlyFields};
+pub use ecotone::{L1BlockInfoEcotone, L1BlockInfoEcotoneOnlyFields};
 
 mod ecotone_base;
 pub use ecotone_base::{L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields};
 
 mod isthmus;
-pub use isthmus::{L1BlockInfoIsthmus, L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields};
+pub use isthmus::{L1BlockInfoIsthmus, L1BlockInfoIsthmusBaseFields};
 
 mod jovian;
-pub use jovian::{L1BlockInfoJovian, L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields};
+pub use jovian::{L1BlockInfoJovian, L1BlockInfoJovianBaseFields};
 
 mod errors;
 pub use errors::{BlockInfoError, DecodeError};

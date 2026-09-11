@@ -13,6 +13,8 @@ use base_common_types_payload::{
 use base_consensus_batch::{BaseTimeUpdateTx, L2BlockInfo};
 use tokio::sync::mpsc;
 
+use crate::metrics::Metrics;
+
 use crate::engine::{
     EngineClient, EngineState, EngineTaskExt, InsertTaskError, SynchronizeTask,
     state::EngineSyncStateUpdate,
@@ -220,7 +222,29 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
     /// head to the current safe head.
     pub async fn execute_with_result(&self, state: &mut EngineState) -> InsertTaskResult {
         let time_start = Instant::now();
+        let result = self.execute_insert(state, time_start).await;
+        if let Err(error) = &result {
+            Metrics::engine_block_insert_attempts_total(
+                self.payload_safety.as_label(),
+                self.payload_policy.as_label(),
+                "failed",
+            ).increment(1);
+            warn!(
+                target: "engine",
+                hash = %self.envelope.execution_payload.block_hash(),
+                number = self.envelope.execution_payload.block_number(),
+                payload_safety = self.payload_safety.as_label(),
+                payload_policy = self.payload_policy.as_label(),
+                total_duration_seconds = time_start.elapsed().as_secs_f64(),
+                error = %error,
+                "Block insert attempt failed"
+            );
+        }
+        result
+    }
 
+    /// Runs insertion while retaining the consensus task's original timing boundary.
+    pub async fn execute_insert(&self, state: &mut EngineState, time_start: Instant) -> InsertTaskResult {
         // Form a block ref before insertion so stale unsafe payloads can be dropped before import.
         let parent_beacon_block_root = self.envelope.parent_beacon_block_root.unwrap_or_default();
         let execution_payload = self.envelope.execution_payload.clone();
@@ -251,6 +275,17 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         .map_err(InsertTaskError::L2BlockInfoConstruction)?;
 
         if !self.is_unsafe_payload_applicable(state, &new_block_ref) {
+            Metrics::engine_block_insert_attempts_total(
+                self.payload_safety.as_label(), self.payload_policy.as_label(), "skipped",
+            ).increment(1);
+            info!(
+                target: "engine",
+                hash = %new_block_ref.block_info.hash,
+                number = new_block_ref.block_info.number,
+                payload_safety = self.payload_safety.as_label(),
+                payload_policy = self.payload_policy.as_label(),
+                "Block insert attempt skipped"
+            );
             return Ok(state.sync_state.unsafe_head());
         }
 
@@ -321,6 +356,15 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         }
 
         let total_duration = time_start.elapsed();
+        Metrics::engine_block_insert_duration_seconds(
+            self.payload_safety.as_label(), self.payload_policy.as_label(),
+        ).record(total_duration.as_secs_f64());
+        Metrics::engine_block_insert_submission_duration_seconds(
+            self.payload_safety.as_label(), self.payload_policy.as_label(),
+        ).record(insert_duration.as_secs_f64());
+        Metrics::engine_block_insert_attempts_total(
+            self.payload_safety.as_label(), self.payload_policy.as_label(), "success",
+        ).increment(1);
 
         info!(
             target: "engine",
@@ -330,6 +374,10 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             payload_policy = self.payload_policy.as_label(),
             total_duration = ?total_duration,
             insert_duration = ?insert_duration,
+            total_duration_seconds = total_duration.as_secs_f64(),
+            insert_duration_seconds = insert_duration.as_secs_f64(),
+            gas_used = block.header.gas_used,
+            transaction_count = block.body.transactions.len(),
             "Inserted new payload"
         );
 

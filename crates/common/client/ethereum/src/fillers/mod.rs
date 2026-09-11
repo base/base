@@ -38,10 +38,7 @@ mod nonce;
 pub use nonce::{CachedNonceManager, NonceFiller, NonceManager, SimpleNonceManager};
 
 mod gas;
-pub use gas::{
-    BlobGasEstimator, BlobGasEstimatorFn, BlobGasEstimatorFunction, BlobGasFiller, GasFillable,
-    GasFiller,
-};
+pub use gas::{BlobGasFiller, GasFillable, GasFiller};
 
 mod join_fill;
 use std::marker::PhantomData;
@@ -64,16 +61,10 @@ use tracing::error;
 #[cfg(feature = "pubsub")]
 use crate::GetSubscription;
 use crate::{
-    EthCall, EthCallMany, EthGetBlock, Ethereum, FilterPollerBuilder, Identity, Network,
-    PendingTransaction, PendingTransactionBuilder, PendingTransactionConfig,
-    PendingTransactionError, Provider, ProviderCall, ProviderLayer, RootProvider, RpcWithBlock,
-    SendableTxErr, provider::SendableTx,
+    EthCall, EthCallMany, EthGetBlock, Ethereum, FilterPollerBuilder, Network, PendingTransaction,
+    PendingTransactionBuilder, PendingTransactionConfig, PendingTransactionError, Provider,
+    ProviderCall, ProviderLayer, RootProvider, RpcWithBlock, SendableTxErr, provider::SendableTx,
 };
-
-/// The recommended filler, a preconfigured set of layers handling gas estimation, nonce
-/// management, and chain-id fetching.
-pub type RecommendedFiller =
-    JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>;
 
 /// Error type for failures in the `fill_envelope` function.
 #[derive(Debug, thiserror::Error)]

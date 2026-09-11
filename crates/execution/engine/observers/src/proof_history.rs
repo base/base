@@ -17,7 +17,7 @@ pub use sync_target::{CachedBlockTrieData, SyncTarget, SyncTargetState};
 use tokio::task;
 use tracing::{debug, error, info};
 
-use crate::{ExExContext, ExExEvent, ExExNotification, ExExNotificationsStream};
+use crate::{ExExContext, ExExEvent, ExExNotification};
 
 /// Default safety threshold for the gap between stored earliest block and the configured
 /// window target. When exceeded on startup, the node refuses to auto-prune and asks the

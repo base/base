@@ -1,8 +1,7 @@
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 use alloy_primitives::{
-    Address, B256, B512, Bytes, KECCAK256_EMPTY, StorageKey, StorageValue, U256,
-    map::AddressHashMap,
+    Address, B256, Bytes, KECCAK256_EMPTY, StorageKey, StorageValue, U256, map::AddressHashMap,
 };
 // re-export account type for `eth_getAccount`
 pub use base_common_types_chain::TrieAccount as Account;
@@ -221,34 +220,6 @@ impl From<AddressHashMap<Vec<StorageValue>>> for StorageValuesResponse {
     fn from(map: AddressHashMap<Vec<StorageValue>>) -> Self {
         Self(map)
     }
-}
-
-/// Extended account information (used by `parity_allAccountInfo`).
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ExtAccountInfo {
-    /// Account name
-    pub name: String,
-    /// Account meta JSON
-    pub meta: String,
-    /// Account UUID (`None` for address book entries)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub uuid: Option<String>,
-}
-
-/// account derived from a signature
-/// as well as information that tells if it is valid for
-/// the current chain
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecoveredAccount {
-    /// address of the recovered account
-    pub address: Address,
-    /// public key of the recovered account
-    pub public_key: B512,
-    /// If the signature contains chain replay protection,
-    /// And the chain_id encoded within the signature
-    /// matches the current chain this would be true, otherwise false.
-    pub is_valid_for_current_chain: bool,
 }
 
 #[test]

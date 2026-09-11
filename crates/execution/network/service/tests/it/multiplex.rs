@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use base_execution_network_service::{
     BlockDownloaderProvider, Peers,
-    test_utils::{PeerConfig, TestPool, Testnet},
+    test_utils::{PeerConfig, Testnet},
 };
 use base_execution_network_wire::{BodiesClient, Capability, EthVersion, Protocol};
 use base_execution_state_provider::test_utils::MockEthProvider;

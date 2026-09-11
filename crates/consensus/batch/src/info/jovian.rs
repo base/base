@@ -60,14 +60,6 @@ impl L1BlockInfoJovianBaseFields for L1BlockInfoJovian {
     }
 }
 
-/// Accessors for all Jovian fields.
-pub trait L1BlockInfoJovianFields:
-    L1BlockInfoIsthmusBaseFields + L1BlockInfoJovianBaseFields
-{
-}
-
-impl L1BlockInfoJovianFields for L1BlockInfoJovian {}
-
 impl L1BlockInfoJovian {
     /// The default DA footprint gas scalar
     /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/l1-attributes.md#overview>

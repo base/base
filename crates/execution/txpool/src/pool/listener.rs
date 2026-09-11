@@ -22,7 +22,7 @@ use crate::{
         QueuedReason,
         events::{FullTransactionEvent, NewTransactionEvent, TransactionEvent},
     },
-    traits::{NewBlobSidecar, PropagateKind},
+    traits::PropagateKind,
 };
 
 /// The size of the event channel used to propagate transaction events.
@@ -348,12 +348,6 @@ impl TransactionListener {
         }
         true
     }
-}
-
-/// An active listener for new blobs
-#[derive(Debug)]
-pub struct BlobTransactionSidecarListener {
-    pub sender: mpsc::Sender<NewBlobSidecar>,
 }
 
 /// Determines what kind of new transactions should be emitted by a stream of transactions.

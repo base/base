@@ -22,12 +22,10 @@ use base_execution_evm_runtime::debug_unreachable;
 use base_execution_payload::{BuildNewPayload, PayloadBuilderHandle, PayloadBuilderLease};
 use base_execution_state_provider::{
     BalProvider, BlockExecutionOutput, BlockExecutionResult, BlockHashReader, BlockNumReader,
-    BlockReader, CanonicalInMemoryState, ChangeSetReader, DatabaseProviderFactory,
-    DatabaseProviderROFactory, HeaderProvider, LatestStateProvider, MemoryOverlayStateProvider,
-    NewCanonicalChain, OverlayManager, ProviderError, PruneCheckpointReader, SaveBlocksInput,
-    StageCheckpointReader, StateProviderBox, StateProviderFactory, StateReader,
-    StorageChangeSetReader, StorageSettingsCache, TransactionVariant,
-    TryIntoHistoricalStateProvider,
+    BlockReader, CanonicalInMemoryState, DatabaseProviderROFactory, HeaderProvider,
+    LatestStateProvider, MemoryOverlayStateProvider, NewCanonicalChain, OverlayManager,
+    ProviderError, SaveBlocksInput, StateProviderBox, StateProviderFactory, StateReader,
+    TransactionVariant, TryIntoHistoricalStateProvider,
 };
 use base_execution_state_trie::ComputedTrieData;
 use base_execution_state_types::{ExecutedBlock, ExecutionTimingStats, ProviderResult};
@@ -44,7 +42,7 @@ use tracing::*;
 use crate::{
     backfill::{BackfillAction, BackfillSyncState},
     chain::FromOrchestrator,
-    engine::{DownloadRequest, EngineApiEvent, EngineApiKind, EngineApiRequest, FromEngine},
+    engine::{DownloadRequest, EngineApiEvent, EngineApiRequest, FromEngine},
     persistence::PersistenceHandle,
     tree::{error::InsertPayloadError, payload_validator::TreeCtx},
 };
@@ -184,7 +182,6 @@ impl EngineApiTreeState {
         max_invalid_header_cache_length: u32,
         invalid_header_hit_eviction_threshold: u8,
         canonical_block: BlockNumHash,
-        engine_kind: EngineApiKind,
         overlay_manager: OverlayManager,
     ) -> Self {
         Self {
@@ -193,7 +190,7 @@ impl EngineApiTreeState {
                 invalid_header_hit_eviction_threshold,
             ),
             buffer: BlockBuffer::new(block_buffer_limit),
-            tree_state: TreeState::new(canonical_block, engine_kind, overlay_manager),
+            tree_state: TreeState::new(canonical_block, overlay_manager),
             pending_sparse_trie_prune: false,
             forkchoice_state_tracker: ForkchoiceStateTracker::default(),
         }
@@ -235,11 +232,6 @@ impl EngineApiTreeState {
                 .map(|(_, blocks)| blocks)
                 .unwrap_or_default(),
         )
-    }
-
-    /// Returns true if the block has been marked as invalid.
-    pub fn has_invalid_header(&mut self, hash: &B256) -> bool {
-        self.invalid_headers.get(hash).is_some()
     }
 }
 
@@ -360,8 +352,6 @@ pub struct EngineApiTreeHandler {
     config: TreeConfig,
     /// Metrics for the engine api.
     metrics: EngineApiMetrics,
-    /// The engine API variant of this handler
-    engine_kind: EngineApiKind,
     /// The EVM configuration.
     evm_config: BaseEvmConfig,
     /// Timing statistics for executed blocks, keyed by block hash.
@@ -394,7 +384,6 @@ impl std::fmt::Debug for EngineApiTreeHandler {
             .field("payload_builder", &self.payload_builder)
             .field("config", &self.config)
             .field("metrics", &self.metrics)
-            .field("engine_kind", &self.engine_kind)
             .field("evm_config", &self.evm_config)
             .field("execution_timing_stats", &self.execution_timing_stats.len())
             .field("payload_builds_active", &self.payload_builds.is_active())
@@ -418,13 +407,13 @@ impl EngineApiTreeHandler {
         persistence_state: PersistenceState,
         payload_builder: PayloadBuilderHandle,
         config: TreeConfig,
-        engine_kind: EngineApiKind,
         evm_config: BaseEvmConfig,
         runtime: base_common_runtime::Runtime,
     ) -> Self {
         let (incoming_tx, incoming) = crossbeam_channel::unbounded();
 
         let (payload_builds, payload_build_finished) = PayloadBuildTracker::new();
+        persistence_state.record_metrics();
 
         Self {
             provider,
@@ -441,7 +430,6 @@ impl EngineApiTreeHandler {
             config,
             metrics: Default::default(),
             incoming_tx,
-            engine_kind,
             evm_config,
             execution_timing_stats: B256Map::default(),
             payload_builds,
@@ -466,7 +454,6 @@ impl EngineApiTreeHandler {
         canonical_in_memory_state: CanonicalInMemoryState,
         overlay_manager: OverlayManager,
         config: TreeConfig,
-        kind: EngineApiKind,
         evm_config: BaseEvmConfig,
         runtime: base_common_runtime::Runtime,
     ) -> (Sender<FromEngine>, UnboundedReceiver<EngineApiEvent>) {
@@ -485,7 +472,6 @@ impl EngineApiTreeHandler {
             config.max_invalid_header_cache_length(),
             config.invalid_header_hit_eviction_threshold(),
             header.num_hash(),
-            kind,
             overlay_manager,
         );
 
@@ -500,7 +486,6 @@ impl EngineApiTreeHandler {
             persistence_state,
             payload_builder,
             config,
-            kind,
             evm_config,
             runtime,
         );
@@ -1342,42 +1327,16 @@ impl EngineApiTreeHandler {
         if let Ok(Some(canonical_header)) = self.find_canonical_header(state.head_block_hash) {
             debug!(target: "engine::tree", head = canonical_header.number(), "fcu head block is already canonical");
 
-            // For OpStack, or if explicitly configured, the proposers are allowed to reorg their
-            // own chain at will, so we need to always trigger a new payload job if requested.
-            let always_trigger_payload_job = self.engine_kind.is_opstack()
-                || self.config.always_process_payload_attributes_on_canonical_head();
-
-            // A canonical ancestor below the latest known finalized block can never become the
-            // head again, because this would reorg out the finalized block. Such a forkchoice
-            // update exceeds the supported reorg depth and is rejected regardless of the payload
-            // attributes:
-            // <https://github.com/ethereum/execution-apis/blob/bf20b4083284e677db19e7f3871bd669b88354a6/src/engine/paris.md?plain=1#L221>
-            //
-            // The stored finalized block is used because a forkchoice update MAY carry a zero
-            // finalized hash without clearing previously established finality.
-            if !always_trigger_payload_job
-                && self
-                    .canonical_in_memory_state
-                    .get_finalized_num_hash()
-                    .is_some_and(|finalized| canonical_header.number() < finalized.number)
-            {
-                debug!(target: "engine::tree", head = canonical_header.number(), "rejecting canonical ancestor fcu below the finalized block");
-                return Ok(Some(TreeOutcome::new(OnForkChoiceUpdated::too_deep_reorg())));
-            }
-
             // We need to effectively unwind the _canonical_ chain to the FCU's head, which is
             // part of the canonical chain. We need to update the latest block state to reflect
             // the canonical ancestor. This ensures that state providers and the transaction
             // pool operate with the correct chain state after forkchoice update processing, and
             // new payloads built on the reorg'd head will be added to the tree immediately.
-            if always_trigger_payload_job && self.config.unwind_canonical_header() {
+            if self.config.unwind_canonical_header() {
                 self.update_latest_block_to_canonical_ancestor(&canonical_header)?;
             }
 
-            // A canonical ancestor at or above the latest known finalized block can become the
-            // parent of the next block, e.g. when the CL wants to reorg out the current head.
-            // The canonical chain remains untouched here; the block built on the ancestor
-            // triggers the actual reorg once it is inserted via newPayload and FCU'd.
+            // Base allows building on canonical ancestors when the CL requests a reorg.
             if let Some(attr) = attrs {
                 debug!(target: "engine::tree", head = canonical_header.number(), "handling payload attributes for canonical head");
                 // Clone only when we actually need to process the attributes
@@ -1909,11 +1868,7 @@ impl EngineApiTreeHandler {
         else {
             return Ok(());
         };
-        if !self.engine_kind.is_opstack() && sync_target_state.finalized_block_hash.is_zero() {
-            // no finalized block, can't check distance on non-OP Stack chains
-            return Ok(());
-        }
-        let target_hash = self.backfill_target_hash(sync_target_state);
+        let target_hash = sync_target_state.head_block_hash;
         if target_hash.is_zero() {
             return Ok(());
         }
@@ -2620,24 +2575,9 @@ impl EngineApiTreeHandler {
         if block > local_tip { Some(block - local_tip) } else { None }
     }
 
-    /// Returns the block hash that backfill should target.
-    ///
-    /// Defaults to the finalized block hash. On OP Stack, the CL finalizes in large batches and the
-    /// finalized hash can lag the canonical tip by a wide margin, so backfill targets the head.
-    ///
-    /// The zero-finalized optimistic-sync fallback for non-OP Stack chains is handled by
-    /// [`Self::backfill_sync_target`].
-    const fn backfill_target_hash(&self, state: ForkchoiceState) -> B256 {
-        if self.engine_kind.is_opstack() {
-            state.head_block_hash
-        } else {
-            state.finalized_block_hash
-        }
-    }
-
     /// Returns the target hash to sync to if the distance from the local tip is greater than the
-    /// threshold and we're not yet synced to the backfill target (see
-    /// [`Self::backfill_target_hash`]).
+    /// threshold and we're not yet synced to the head. Base finalizes in batches, so backfill
+    /// targets the head.
     ///
     /// If this is invoked after a new block has been downloaded, the downloaded block could be
     /// the (missing) target block.
@@ -2648,7 +2588,7 @@ impl EngineApiTreeHandler {
         downloaded_block: Option<BlockNumHash>,
     ) -> Option<B256> {
         let state = self.state.forkchoice_state_tracker.sync_target_state()?;
-        let target_hash = self.backfill_target_hash(state);
+        let target_hash = state.head_block_hash;
 
         // check if the downloaded block is the tracked backfill target
         let exceeds_backfill_threshold = match downloaded_block.as_ref() {
@@ -2677,23 +2617,7 @@ impl EngineApiTreeHandler {
                 None
             }
             // we don't have the block yet and the distance exceeds the allowed threshold
-            Ok(None) if !target_hash.is_zero() => Some(target_hash),
-            Ok(None) => {
-                // OPTIMISTIC SYNCING
-                //
-                // It can happen when the node is doing an
-                // optimistic sync, where the CL has no knowledge of the finalized hash,
-                // but is expecting the EL to sync as high
-                // as possible before finalizing.
-                //
-                // This usually doesn't happen on ETH mainnet since CLs use the more
-                // secure checkpoint syncing.
-                //
-                // However, optimism chains will do this. The risk of a reorg is however
-                // low.
-                debug!(target: "engine::tree", hash=?state.head_block_hash, "Setting head hash as an optimistic backfill target.");
-                Some(state.head_block_hash)
-            }
+            Ok(None) => Some(target_hash),
             // we're fully synced to the target block
             Ok(Some(_)) => None,
         }

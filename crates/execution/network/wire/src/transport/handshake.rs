@@ -1,4 +1,4 @@
-use std::{fmt::Debug, future::Future, pin::Pin, time::Duration};
+use std::time::Duration;
 
 use alloy_eip2124::ForkFilter;
 use base_common_types_chain::GotExpected;
@@ -12,18 +12,6 @@ use crate::{
     CanDisconnect, DisconnectReason, EthHandshakeError, EthMessage, EthStreamError,
     MAX_MESSAGE_SIZE, P2PStreamError, ProtocolMessage, StatusMessage, UnifiedStatus,
 };
-
-/// A trait that knows how to perform the P2P handshake.
-pub trait EthRlpxHandshake: Debug + Send + Sync + 'static {
-    /// Perform the P2P handshake for the `eth` protocol.
-    fn handshake<'a>(
-        &'a self,
-        unauth: &'a mut dyn UnauthEth,
-        status: UnifiedStatus,
-        fork_filter: ForkFilter,
-        timeout_limit: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<UnifiedStatus, EthStreamError>> + 'a + Send>>;
-}
 
 /// An unauthenticated stream that can send and receive messages.
 pub trait UnauthEth:
@@ -51,19 +39,17 @@ impl<T> UnauthEth for T where
 #[non_exhaustive]
 pub struct EthHandshake;
 
-impl EthRlpxHandshake for EthHandshake {
-    fn handshake<'a>(
-        &'a self,
-        unauth: &'a mut dyn UnauthEth,
+impl EthHandshake {
+    /// Performs the standard ETH handshake within the configured timeout.
+    pub async fn handshake(
+        unauth: &mut dyn UnauthEth,
         status: UnifiedStatus,
         fork_filter: ForkFilter,
         timeout_limit: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<UnifiedStatus, EthStreamError>> + 'a + Send>> {
-        Box::pin(async move {
-            timeout(timeout_limit, EthereumEthHandshake(unauth).eth_handshake(status, fork_filter))
-                .await
-                .map_err(|_| EthStreamError::StreamTimeout)?
-        })
+    ) -> Result<UnifiedStatus, EthStreamError> {
+        timeout(timeout_limit, EthereumEthHandshake(unauth).eth_handshake(status, fork_filter))
+            .await
+            .map_err(|_| EthStreamError::StreamTimeout)?
     }
 }
 

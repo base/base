@@ -10,7 +10,7 @@ mod limiter;
 pub use limiter::PruneLimiter;
 mod metrics;
 mod pruner;
-pub use pruner::{Pruner, PrunerResult, PrunerWithFactory, PrunerWithResult};
+pub use pruner::{Pruner, PrunerResult, PrunerWithFactory};
 mod segments;
 pub use base_execution_state_types::*;
 pub use segments::{

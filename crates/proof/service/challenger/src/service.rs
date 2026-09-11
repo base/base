@@ -8,8 +8,8 @@ use std::sync::{
 use alloy_primitives::Address;
 use base_common_cli::RuntimeManager;
 use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
+use base_common_http::HealthServer;
 use base_common_l1::{BalanceMonitorLayer, BaseTxMetrics, SimpleTxManager};
-use base_common_observability_health::HealthServer;
 use base_common_runtime::TokioRuntime;
 use base_proof_client::{
     L1Client, L1ClientConfig, L1Provider, L2Client, L2ClientConfig, L2Provider,

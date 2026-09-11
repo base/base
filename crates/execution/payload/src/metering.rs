@@ -13,7 +13,7 @@ use std::{
 };
 
 use alloy_primitives::TxHash;
-use base_common_types_payload::MeterBundleResponse;
+use base_common_types_payload::TransactionResult;
 use moka::{notification::RemovalCause, policy::EvictionPolicy, sync::Cache};
 
 use crate::BuilderMetrics;
@@ -27,7 +27,7 @@ pub const DEFAULT_METERING_STORE_TTL_SECS: u64 = 30;
 /// Concurrent metering store with LRU eviction.
 pub struct MeteringStore {
     /// LRU cache mapping transaction hash to metering data.
-    cache: Cache<TxHash, MeterBundleResponse>,
+    cache: Cache<TxHash, TransactionResult>,
     /// Records when a transaction was committed without metering data.
     ///
     /// Late-arriving data is only terminal for transactions that were already
@@ -92,7 +92,7 @@ impl MeteringStore {
 
 impl MeteringStore {
     /// Retrieves the metering data for a given transaction hash.
-    pub fn get(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
+    pub fn get(&self, tx_hash: &TxHash) -> Option<TransactionResult> {
         if !self.metering_enabled.load(Ordering::Relaxed) {
             return None;
         }
@@ -106,7 +106,7 @@ impl MeteringStore {
     }
 
     /// Inserts metering information for a transaction.
-    pub fn insert(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+    pub fn insert(&self, tx_hash: TxHash, metering: TransactionResult) {
         // If the builder needed metering data for this tx but didn't have it,
         // the data arrived late. Record how late and what the values were.
         if let Some(needed_at) = self.needed_at.remove(&tx_hash) {
@@ -114,7 +114,7 @@ impl MeteringStore {
             BuilderMetrics::metering_late_arrival_total().increment(1);
             BuilderMetrics::metering_late_arrival_latency_ms().record(latency_ms);
             BuilderMetrics::metering_late_arrival_execution_time_us()
-                .record(metering.total_execution_time_us as f64);
+                .record(metering.execution_time_us as f64);
             return;
         }
 
@@ -195,18 +195,8 @@ mod tests {
 
     use super::*;
 
-    fn create_test_metering(gas_used: u64) -> MeterBundleResponse {
-        MeterBundleResponse {
-            bundle_hash: B256::random(),
-            bundle_gas_price: U256::from(123),
-            coinbase_diff: U256::from(123),
-            eth_sent_to_coinbase: U256::from(123),
-            gas_fees: U256::from(123),
-            results: vec![],
-            state_block_number: 4,
-            total_gas_used: gas_used,
-            total_execution_time_us: 533,
-        }
+    fn create_test_metering(gas_used: u64) -> TransactionResult {
+        TransactionResult { gas_used, execution_time_us: 533, ..Default::default() }
     }
 
     #[test]
@@ -217,11 +207,11 @@ mod tests {
 
         store.insert(tx_hash, meter_data);
         let data = store.get(&tx_hash);
-        assert_eq!(data.as_ref().unwrap().total_gas_used, 21000);
+        assert_eq!(data.as_ref().unwrap().gas_used, 21000);
 
         store.insert(tx_hash, create_test_metering(50000));
         let data = store.get(&tx_hash);
-        assert_eq!(data.as_ref().unwrap().total_gas_used, 50000);
+        assert_eq!(data.as_ref().unwrap().gas_used, 50000);
     }
 
     #[test]

@@ -354,7 +354,7 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, FixedBytes, address, b256};
     use arbitrary::{Arbitrary, Unstructured};
-    use base_common_chain_config::{ChainConfig, rollup_config};
+    use base_common_chain_config::ChainConfig;
     use base_common_client_ethereum::TransactionResponse;
     use base_common_types_chain::{EMPTY_ROOT_HASH, HoloceneExtraData, JovianExtraData};
     use base_common_types_payload::BasePayloadAttributes;
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_parent_hash_mismatch() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let attributes = default_attributes();
         let mut block = azul_block();
         block.header.inner.parent_hash =
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_check_timestamp() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let attributes = default_attributes();
         let mut block = azul_block();
         block.header.inner.timestamp = 1234567890;
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_check_prev_randao() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let attributes = default_attributes();
         let mut block = azul_block();
         block.header.inner.mix_hash =
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_missing_gas_limit() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let attributes = default_attributes();
         let mut block = azul_block();
         block.header.inner.gas_limit = 123456;
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_check_gas_limit() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(123457);
         let mut block = azul_block();
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_check_parent_beacon_block_root() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
         attributes.attributes.payload_attributes.parent_beacon_block_root =
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_check_fee_recipient() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
         let mut block = azul_block();
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match_check_transactions() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (attributes, block) = test_transactions_match_helper();
         let check = AttributesMatch::check(&cfg, &attributes, &native_block(&block));
         assert_eq!(check, AttributesMatch::Match);
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn attributes_mismatch_non_canonical_transaction_encoding() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (mut attributes, block) = loop {
             let (attributes, block) = test_transactions_match_helper();
             if attributes.attributes.transactions.as_ref().is_some_and(|transactions| {
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_attributes_mismatch_check_transactions_len() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (mut attributes, block) = test_transactions_match_helper();
         attributes.attributes = BasePayloadAttributes {
             transactions: attributes.attributes.transactions.map(|mut txs| {
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_attributes_mismatch_check_transaction_content() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (attributes, mut block) = test_transactions_match_helper();
         let BlockTransactions::Full(block_txs) = &mut block.transactions else {
             unreachable!("The helper should build a full list of transactions")
@@ -647,7 +647,7 @@ mod tests {
     /// Checks the edge case where the attributes array is empty.
     #[test]
     fn test_attributes_mismatch_empty_tx_attributes() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (mut attributes, block) = test_transactions_match_helper();
         attributes.attributes =
             BasePayloadAttributes { transactions: None, ..attributes.attributes };
@@ -668,7 +668,7 @@ mod tests {
     /// format.
     #[test]
     fn test_attributes_transactions_wrong_format() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (mut attributes, block) = test_transactions_match_helper();
         let txs = attributes.attributes.transactions.as_mut().unwrap();
         let first_tx_bytes = txs.first_mut().unwrap();
@@ -685,7 +685,7 @@ mod tests {
     // `Some(vec![])`, ie an empty vector inside a `Some` option.
     #[test]
     fn test_attributes_and_block_transactions_empty() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (mut attributes, mut block) = test_transactions_match_helper();
 
         attributes.attributes =
@@ -710,7 +710,7 @@ mod tests {
     // use the hash format.
     #[test]
     fn test_attributes_and_block_transactions_empty_hash_format() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let (mut attributes, mut block) = test_transactions_match_helper();
 
         attributes.attributes =
@@ -725,7 +725,7 @@ mod tests {
     // Test that the check fails if the block format is incorrect and the attributes are empty
 
     fn eip1559_test_setup() -> (RollupConfig, AttributesWithParent, Block<Transaction>) {
-        let mut cfg = rollup_config!(ChainConfig::MAINNET);
+        let mut cfg = ChainConfig::MAINNET.rollup_config();
 
         // We need to activate holocene to make sure it works! We set the activation time to zero to
         // make sure that it is activated by default.
@@ -978,7 +978,7 @@ mod tests {
 
     #[test]
     fn test_attributes_match() {
-        let cfg = rollup_config!(ChainConfig::MAINNET);
+        let cfg = ChainConfig::MAINNET.rollup_config();
         let mut attributes = default_attributes();
         attributes.attributes.gas_limit = Some(0);
         let block = azul_block();

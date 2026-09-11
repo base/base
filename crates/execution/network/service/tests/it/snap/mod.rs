@@ -20,7 +20,7 @@ use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_network_service::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, TestPool, Testnet, TestnetHandle},
+    test_utils::{PeerConfig, Testnet, TestnetHandle},
 };
 use base_execution_network_wire::{
     AccountData, AccountRangeMessage, BlockAccessLists, BlockAccessListsMessage, ByteCodesMessage,

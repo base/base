@@ -7,9 +7,8 @@ use std::{
 };
 
 use alloy_eip2124::{ForkFilter, Head};
-use alloy_primitives::B256;
 use base_common_runtime::{EventSender, EventStream};
-use base_common_types_chain::{BaseBlock, BaseTxEnvelope};
+use base_common_types_chain::BaseTxEnvelope;
 use base_execution_network_discovery::{Discv4, Discv5, NatResolver};
 use base_execution_network_wire::{
     BlockRangeUpdate, BroadcastPoolTransactions, DisconnectReason, NetworkSyncUpdater,
@@ -30,8 +29,7 @@ use crate::{
     BlockDownloaderProvider, CellCustody, DiscoveryEvent, FetchClient, NetworkError, NetworkEvent,
     NetworkEventListenerProvider, NetworkInfo, NetworkPeersEvents, NetworkStatus, PeerEvent,
     PeerEventStream, PeerInfo, PeerRequest, Peers, PeersHandle, PeersHandleProvider, PeersInfo,
-    config::NetworkMode, message::PeerMessage, swarm::NetworkConnectionState,
-    transactions::TransactionsHandle,
+    message::PeerMessage, swarm::NetworkConnectionState,
 };
 
 /// A _shareable_ network frontend. Used to interact with the network.
@@ -55,7 +53,6 @@ impl NetworkHandle {
         secret_key: SecretKey,
         local_peer_id: PeerId,
         peers: PeersHandle,
-        network_mode: NetworkMode,
         chain_id: Arc<AtomicU64>,
         tx_gossip_disabled: bool,
         discv4: Option<Discv4>,
@@ -70,7 +67,6 @@ impl NetworkHandle {
             secret_key,
             local_peer_id,
             peers,
-            network_mode,
             is_syncing: Arc::new(AtomicBool::new(false)),
             initial_sync_done: Arc::new(AtomicBool::new(false)),
             chain_id,
@@ -95,7 +91,6 @@ impl NetworkHandle {
             secret_key,
             base_execution_network_wire::pk2id(&secret_key.public_key(secp256k1::SECP256K1)),
             PeersHandle::new(mpsc::unbounded_channel().0),
-            NetworkMode::Stake,
             Arc::new(AtomicU64::new(chain_id)),
             false,
             None,
@@ -112,11 +107,6 @@ impl NetworkHandle {
 
     fn manager(&self) -> &UnboundedSender<NetworkHandleMessage> {
         &self.inner.to_manager_tx
-    }
-
-    /// Returns the mode of the network, either pow, or pos
-    pub fn mode(&self) -> &NetworkMode {
-        &self.inner.network_mode
     }
 
     /// Sends a [`NetworkHandleMessage`] to the manager
@@ -139,19 +129,6 @@ impl NetworkHandle {
     /// activation timestamp so the node announces the upcoming fork ahead of time.
     pub fn set_fork_filter(&self, fork_filter: ForkFilter) {
         self.send_message(NetworkHandleMessage::SetForkFilter { fork_filter });
-    }
-
-    /// Announce a block over devp2p
-    ///
-    /// Caution: in `PoS` this is a noop because new blocks are no longer announced over devp2p.
-    /// Instead they are sent to the node by CL and can be requested over devp2p.
-    /// Broadcasting new blocks is considered a protocol violation.
-    pub fn announce_block(
-        &self,
-        block: base_execution_network_wire::NewBlock<BaseBlock>,
-        hash: B256,
-    ) {
-        self.send_message(NetworkHandleMessage::AnnounceBlock(block, hash))
     }
 
     /// Sends a [`PeerRequest`] to the given peer's session.
@@ -184,15 +161,6 @@ impl NetworkHandle {
     /// Send eth message to the peer.
     pub fn send_eth_message(&self, peer_id: PeerId, message: PeerMessage) {
         self.send_message(NetworkHandleMessage::EthMessage { peer_id, message })
-    }
-
-    /// Send message to get the [`TransactionsHandle`].
-    ///
-    /// Returns `None` if no transaction task is installed.
-    pub async fn transactions_handle(&self) -> Option<TransactionsHandle> {
-        let (tx, rx) = oneshot::channel();
-        let _ = self.manager().send(NetworkHandleMessage::GetTransactionsHandle(tx));
-        rx.await.unwrap()
     }
 
     /// Send message to gracefully shutdown node.
@@ -554,7 +522,6 @@ struct NetworkInner {
     /// Access to all the nodes.
     peers: PeersHandle,
     /// The mode of the network
-    network_mode: NetworkMode,
     /// Represents if the network is currently syncing.
     is_syncing: Arc<AtomicBool>,
     /// Used to differentiate between an initial pipeline sync or a live sync
@@ -592,8 +559,7 @@ pub(crate) enum NetworkHandleMessage {
     BanPeer(PeerId),
     /// Unbans a peer.
     UnbanPeer(PeerId),
-    /// Broadcasts an event to announce a new block to all nodes.
-    AnnounceBlock(base_execution_network_wire::NewBlock<BaseBlock>, B256),
+
     /// Sends a list of transactions to the given peer.
     SendTransaction {
         /// The ID of the peer to which the transactions are sent.
@@ -655,8 +621,7 @@ pub(crate) enum NetworkHandleMessage {
     GetPeerInfosByPeerKind(PeerKind, oneshot::Sender<Vec<PeerInfo>>),
     /// Gets the reputation for a specific peer via a oneshot sender.
     GetReputationById(PeerId, oneshot::Sender<Option<Reputation>>),
-    /// Retrieves the `TransactionsHandle` via a oneshot sender.
-    GetTransactionsHandle(oneshot::Sender<Option<TransactionsHandle>>),
+
     /// Initiates a graceful shutdown of the network via a oneshot sender.
     Shutdown(oneshot::Sender<()>),
     /// Sets the network state between hibernation and active.

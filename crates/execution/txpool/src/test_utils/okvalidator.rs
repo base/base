@@ -1,9 +1,6 @@
 use base_common_types_chain::Transaction;
 
-use crate::{
-    TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
-    validate::ValidTransaction,
-};
+use crate::{TransactionOrigin, TransactionValidationOutcome, TransactionValidator};
 
 /// A transaction validator that determines all transactions to be valid.
 #[derive(Debug, Clone)]
@@ -41,7 +38,7 @@ impl TransactionValidator for OkValidator {
             balance: *transaction.cost(),
             state_nonce: transaction.nonce(),
             bytecode_hash: None,
-            transaction: ValidTransaction::Valid(transaction),
+            transaction,
             propagate: self.propagate,
             authorities,
         }

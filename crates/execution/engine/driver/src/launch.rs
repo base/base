@@ -22,7 +22,7 @@ use crate::{
     backfill::PipelineSync,
     chain::ChainOrchestrator,
     download::BasicBlockDownloader,
-    engine::{EngineApiKind, EngineHandler},
+    engine::EngineHandler,
     persistence::PersistenceHandle,
     tree::{BasicEngineValidator, EngineApiTreeHandler, TreeConfig},
 };
@@ -47,7 +47,6 @@ use crate::{
 /// [`ChainEvent`]: crate::chain::ChainEvent
 #[expect(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn build_engine_orchestrator<Client, S>(
-    engine_kind: EngineApiKind,
     consensus: Arc<BaseBeaconConsensus>,
     client: Client,
     incoming_requests: S,
@@ -83,7 +82,6 @@ where
         canonical_in_memory_state,
         overlay_manager,
         tree_config,
-        engine_kind,
         evm_config,
         runtime,
     );

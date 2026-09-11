@@ -6,7 +6,7 @@ Host-side proof orchestration for Base, including preimage serving, job discover
 
 Manages the host side of the preimage oracle protocol for fault proof generation. The `Host`
 orchestrator runs the preimage oracle server, serving requests from FPVM client programs via
-`PreimageOracleServer`. Key-value stores (`MemoryKeyValueStore`, `DiskKeyValueStore`,
+`PreimageOracleServer`. Key-value stores (`MemoryKeyValueStore`,
 `BootKeyValueStore`) cache preimages fetched from L1/L2 RPCs. Supports online mode (fetching
 data from live nodes) and offline mode (reading from a pre-populated store), and exposes
 `RecordingOracle` for capturing preimage access traces.

@@ -8,7 +8,6 @@ use base_common_chain_config::BaseChainSpec;
 use base_common_runtime::TaskExecutor;
 use base_execution_network_service::{
     NetworkBuilder, NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager,
-    transactions::config::StrictEthAnnouncementFilter,
 };
 use base_execution_state_provider::{ChainSpecProvider, providers::BlockchainProvider};
 use base_execution_txpool::{PoolConfig, TransactionPool};
@@ -114,11 +113,10 @@ impl BuilderContext {
         pool: base_execution_txpool::BaseTransactionPool,
     ) -> NetworkHandle {
         let (handle, network, txpool, eth) = builder
-            .transactions_with_policies(
+            .transactions_with_policy(
                 pool.clone(),
                 self.config().network.transactions_manager_config(),
                 self.config().network.tx_propagation_policy,
-                StrictEthAnnouncementFilter::default(),
             )
             .map_transactions(|transactions| {
                 if let Some(cache) = self.sender_recovery_cache.clone() {
@@ -127,7 +125,7 @@ impl BuilderContext {
                     transactions
                 }
             })
-            .request_handler_with_blob_store(self.provider().clone(), pool.blob_store())
+            .request_handler(self.provider().clone())
             .split_with_handle();
 
         self.executor.spawn_critical_blocking_task("p2p txpool", txpool);
@@ -174,7 +172,7 @@ impl BuilderContext {
     /// Creates the [`NetworkBuilder`] for the node.
     pub async fn network_builder(&self) -> eyre::Result<NetworkBuilder<(), ()>> {
         let network_config = self.network_config()?;
-        let builder = NetworkManager::builder(network_config, self.provider.clone()).await?;
+        let builder = NetworkManager::builder(network_config).await?;
         Ok(builder)
     }
 

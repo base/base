@@ -1,7 +1,7 @@
 use std::{fmt, net::SocketAddr, sync::Arc};
 
 use alloy_signer::utils::public_key_to_address;
-use base_common_observability_health::{HealthzApiServer, HealthzRpc};
+use base_common_http::{HealthzApiServer, HealthzRpc};
 use base_proof_host::ProverConfig;
 use base_proof_types::{EnclaveApiServer, ProofRequest, ProofResult, ProverApiServer};
 use jsonrpsee::{
@@ -336,7 +336,7 @@ mod tests {
             .build(format!("http://{addr}"))
             .unwrap();
 
-        let result: base_common_observability_health::HealthzResponse =
+        let result: base_common_http::HealthzResponse =
             client.request("healthz", jsonrpsee::rpc_params![]).await.unwrap();
         assert_eq!(result.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(call_count.load(Ordering::Relaxed), 1);

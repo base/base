@@ -127,15 +127,6 @@ impl BootStore {
         self.add_rotate(enr);
     }
 
-    /// Returns the number of peers in the bootstore that
-    /// have the [`crate::BaseEnr::OPSTACK_ENR_KEY`] in the ENR.
-    pub fn valid_peers(&self) -> Vec<&Enr> {
-        self.peers
-            .iter()
-            .filter(|enr| enr.get_raw_rlp(crate::BaseEnr::OPSTACK_ENR_KEY.as_bytes()).is_some())
-            .collect()
-    }
-
     /// Returns the number of peers that contain the
     /// [`crate::BaseEnr::OPSTACK_ENR_KEY`] in the ENR *and*
     /// have the correct chain id and version.

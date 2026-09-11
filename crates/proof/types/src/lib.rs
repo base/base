@@ -9,7 +9,7 @@ pub use per_chain_config::{
 };
 
 mod proof;
-pub use proof::{ProofBundle, ProofRequest, ProofResult};
+pub use proof::{ProofRequest, ProofResult};
 
 mod proposal;
 pub use proposal::{ECDSA_SIGNATURE_LENGTH, PROOF_JOURNAL_BASE_LENGTH, ProofJournal, Proposal};

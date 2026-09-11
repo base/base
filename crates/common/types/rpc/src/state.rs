@@ -236,48 +236,6 @@ impl AccountOverride {
     pub const fn set_move_precompile_to(&mut self, address: Address) {
         self.move_precompile_to = Some(address);
     }
-
-    /// Conditionally sets the bytecode override and returns self.
-    pub fn with_code_opt(mut self, code: Option<impl Into<Bytes>>) -> Self {
-        if let Some(code) = code {
-            self.code = Some(code.into());
-        }
-        self
-    }
-
-    /// Convenience function that sets overrides the code with the EIP-7702 delegation designator
-    /// for `delegation_address` if it is provided
-    pub fn with_7702_delegation_designator_opt(self, delegation_address: Option<Address>) -> Self {
-        if let Some(delegation_address) = delegation_address {
-            self.with_7702_delegation_designator(delegation_address)
-        } else {
-            self
-        }
-    }
-
-    /// Conditionally sets the balance override and returns self.
-    pub const fn with_balance_opt(mut self, balance: Option<U256>) -> Self {
-        if let Some(balance) = balance {
-            self.balance = Some(balance);
-        }
-        self
-    }
-
-    /// Conditionally sets the nonce override and returns self.
-    pub const fn with_nonce_opt(mut self, nonce: Option<u64>) -> Self {
-        if let Some(nonce) = nonce {
-            self.nonce = Some(nonce);
-        }
-        self
-    }
-
-    /// Conditionally sets the move precompile address and returns self.
-    pub const fn with_move_precompile_to_opt(mut self, address: Option<Address>) -> Self {
-        if let Some(address) = address {
-            self.move_precompile_to = Some(address);
-        }
-        self
-    }
 }
 
 /// Helper type that bundles various overrides for EVM Execution.

@@ -61,11 +61,10 @@ pub use base_common_types_chain::OutputRoot;
 pub use base_common_types_rpc::RollupSyncStatus as SyncStatus;
 pub use info::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoBedrockBase,
-    L1BlockInfoBedrockBaseFields, L1BlockInfoBedrockFields, L1BlockInfoBedrockOnlyFields,
-    L1BlockInfoEcotone, L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields,
-    L1BlockInfoEcotoneFields, L1BlockInfoEcotoneOnlyFields, L1BlockInfoIsthmus,
-    L1BlockInfoIsthmusBaseFields, L1BlockInfoIsthmusFields, L1BlockInfoJovian,
-    L1BlockInfoJovianBaseFields, L1BlockInfoJovianFields, L1BlockInfoTx,
+    L1BlockInfoBedrockBaseFields, L1BlockInfoBedrockOnlyFields, L1BlockInfoEcotone,
+    L1BlockInfoEcotoneBase, L1BlockInfoEcotoneBaseFields, L1BlockInfoEcotoneOnlyFields,
+    L1BlockInfoIsthmus, L1BlockInfoIsthmusBaseFields, L1BlockInfoJovian,
+    L1BlockInfoJovianBaseFields, L1BlockInfoTx,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

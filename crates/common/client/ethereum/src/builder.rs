@@ -8,13 +8,11 @@ use alloy_transport::{TransportConnect, TransportError, TransportResult};
 use crate::{
     Ethereum, IntoWallet, Network, Provider, RootProvider,
     fillers::{
-        BlobGasEstimator, BlobGasFiller, CachedNonceManager, ChainIdFiller, FillerControlFlow,
-        GasFiller, JoinFill, NonceFiller, NonceManager, RecommendedFillers, SimpleNonceManager,
-        TxFiller, WalletFiller,
+        CachedNonceManager, ChainIdFiller, FillerControlFlow, GasFiller, JoinFill, NonceFiller,
+        NonceManager, RecommendedFillers, SimpleNonceManager, TxFiller, WalletFiller,
     },
     layers::{BlockIdLayer, CallBatchLayer, ChainLayer},
     provider::SendableTx,
-    utils::Eip1559Estimator,
 };
 
 /// A layering abstraction in the vein of [`tower::Layer`]
@@ -163,7 +161,7 @@ impl
     /// management, and chain-ID fetching.
     ///
     /// Building a provider with this setting enabled will return a [`base_common_client_ethereum::fillers::FillProvider`]
-    /// with [`base_common_client_ethereum::utils::JoinedRecommendedFillers`].
+    /// with the recommended gas, nonce, and chain ID fillers.
     ///
     /// You can opt-out of using these fillers by using the `.disable_recommended_fillers()` method.
     pub fn new() -> Self {
@@ -286,38 +284,11 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
 
     // --- Fillers ---
 
-    /// Add blob gas estimation to the stack being built.
-    ///
-    /// See [`BlobGasFiller`] for more information.
-    pub fn with_blob_gas_estimation(self) -> ProviderBuilder<L, JoinFill<F, BlobGasFiller>, N> {
-        self.filler(BlobGasFiller::default())
-    }
-
-    /// Add blob gas estimation to the stack being built, using the provided estimator.
-    ///
-    /// See [`BlobGasFiller`] and [`BlobGasEstimator`] for more information.
-    pub fn with_blob_gas_estimator(
-        self,
-        estimator: BlobGasEstimator,
-    ) -> ProviderBuilder<L, JoinFill<F, BlobGasFiller>, N> {
-        self.filler(BlobGasFiller { estimator })
-    }
-
     /// Add gas estimation to the stack being built.
     ///
     /// See [`GasFiller`] for more information.
     pub fn with_gas_estimation(self) -> ProviderBuilder<L, JoinFill<F, GasFiller>, N> {
-        self.filler(GasFiller::default())
-    }
-
-    /// Add EIP-1559 gas estimation to the stack being built, using the provided estimator.
-    ///
-    /// See [`GasFiller`] and [`Eip1559Estimator`] for more information.
-    pub fn with_eip1559_estimator(
-        self,
-        estimator: Eip1559Estimator,
-    ) -> ProviderBuilder<L, JoinFill<F, GasFiller>, N> {
-        self.filler(GasFiller { estimator })
+        self.filler(GasFiller)
     }
 
     /// Add nonce management to the stack being built.
@@ -386,14 +357,6 @@ impl<L, F, N> ProviderBuilder<L, F, N> {
     /// See [`CallBatchLayer`] for more information.
     pub fn with_call_batching(self) -> ProviderBuilder<Stack<CallBatchLayer, L>, F, N> {
         self.layer(CallBatchLayer::new())
-    }
-
-    /// Aggregate multiple `eth_call` requests with block number queries done by calling Arbsym
-    /// precompile.
-    ///
-    /// See [`CallBatchLayer`] for more information.
-    pub fn with_arbitrum_call_batching(self) -> ProviderBuilder<Stack<CallBatchLayer, L>, F, N> {
-        self.layer(CallBatchLayer::new().arbitrum_compat())
     }
 
     /// Add response caching to the stack being built with the specified maximum cache size.
@@ -831,7 +794,7 @@ mod tests {
     #[test]
     fn network_replaces_fillers() {
         // Add an extra filler before swapping, it should be dropped.
-        let builder = ProviderBuilder::new().filler(GasFiller::default()).network::<Ethereum>();
+        let builder = ProviderBuilder::new().filler(GasFiller).network::<Ethereum>();
 
         let _: ProviderBuilder<
             Identity,
@@ -850,7 +813,7 @@ mod tests {
 
     #[test]
     fn map_filler_replaces_fillers() {
-        let builder = ProviderBuilder::new().map_filler(|_| GasFiller::default());
+        let builder = ProviderBuilder::new().map_filler(|_| GasFiller);
 
         let _: ProviderBuilder<Identity, GasFiller, Ethereum> = builder;
     }

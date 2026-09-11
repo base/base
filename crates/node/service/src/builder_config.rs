@@ -86,13 +86,6 @@ impl BuilderConfig {
         Self { block_time: Duration::from_secs(1), ..Self::default() }
     }
 
-    /// Sets the block time in milliseconds.
-    #[must_use]
-    pub const fn with_block_time_ms(mut self, ms: u64) -> Self {
-        self.block_time = Duration::from_millis(ms);
-        self
-    }
-
     /// Sets the maximum gas per transaction.
     #[must_use]
     pub const fn with_max_gas_per_txn(mut self, max_gas: Option<u64>) -> Self {

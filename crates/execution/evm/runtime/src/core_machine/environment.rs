@@ -185,7 +185,7 @@ impl EvmLimitParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core_machine::{Block, Cfg};
+    use crate::core_machine::Cfg;
 
     #[test]
     fn test_evm_env_with_limits() {

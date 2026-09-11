@@ -39,8 +39,6 @@ pub enum RpcNamespace {
     Reth,
     /// The `miner` namespace.
     Miner,
-    /// The `mev` namespace.
-    Mev,
 }
 
 impl RpcNamespace {
@@ -56,7 +54,6 @@ impl RpcNamespace {
         Self::Rpc,
         Self::Reth,
         Self::Miner,
-        Self::Mev,
     ];
 
     /// Returns the built-in namespaces.

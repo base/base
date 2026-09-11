@@ -2,19 +2,14 @@
 
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
-use base_common_types_payload::{Bundle, MeterBundleResponse};
 use base_execution_payload::MeterBlockResponse;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 /// RPC API for transaction metering.
 ///
-/// The API exposes bundle simulation and block profiling.
+/// The API exposes block profiling.
 #[rpc(server, namespace = "base")]
 pub trait MeteringApi {
-    /// Simulates and meters a bundle of transactions against latest canonical state.
-    #[method(name = "meterBundle")]
-    async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse>;
-
     /// Handler for: `base_meterBlockByHash`
     ///
     /// Re-executes a block and returns timing metrics for signer recovery and EVM execution.

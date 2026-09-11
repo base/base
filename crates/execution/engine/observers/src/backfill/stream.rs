@@ -60,12 +60,6 @@ impl<P, T> StreamBackfillJob<P, T>
 where
     T: Send + Sync + 'static,
 {
-    /// Configures the parallelism of the [`StreamBackfillJob`] to handle active tasks.
-    pub const fn with_parallelism(mut self, parallelism: usize) -> Self {
-        self.parallelism = parallelism;
-        self
-    }
-
     /// Configures the batch size for the [`StreamBackfillJob`].
     pub const fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;

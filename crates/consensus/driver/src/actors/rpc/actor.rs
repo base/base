@@ -8,7 +8,7 @@ use base_common_client_rollup::{
     AdminApiServer, BaseApiServer, BaseP2PApiServer, DevEngineApiServer, HealthzApiServer,
     RollupNodeApiServer, WsServer,
 };
-use base_common_observability_health::EthHealthCheckLayer;
+use base_common_http::EthHealthCheckLayer;
 use base_consensus_network::P2pRpcRequest;
 use derive_more::Constructor;
 use http::StatusCode;

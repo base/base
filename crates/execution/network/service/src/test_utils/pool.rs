@@ -4,14 +4,13 @@ use alloy_eip2124::Head;
 use base_common_chain_config::BaseChainSpec;
 use base_execution_network_wire::UnifiedStatus;
 use base_execution_txpool::{
-    BaseOrdering, InMemoryBlobStore, MockTransactionValidator, Pool,
-    test_utils::BaseTestTransaction,
+    BaseOrdering, MockTransactionValidator, Pool, test_utils::BaseTestTransaction,
 };
 
 use crate::NetworkConfigBuilder;
 
 /// Pool accepting Base transactions for network tests.
-pub type TestPool = base_execution_txpool::BaseTransactionPool<InMemoryBlobStore>;
+pub type TestPool = base_execution_txpool::BaseTransactionPool;
 
 /// Constructs Base fixtures for networking tests.
 #[derive(Debug)]
@@ -37,7 +36,6 @@ impl NetworkTestData {
             Pool::new_test(
                 MockTransactionValidator::default(),
                 BaseOrdering::default(),
-                InMemoryBlobStore::default(),
                 Default::default(),
             ),
             base_execution_txpool::BaseOrdering::default(),

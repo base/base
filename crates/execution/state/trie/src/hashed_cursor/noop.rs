@@ -1,37 +1,9 @@
 use core::marker::PhantomData;
 
 use alloy_primitives::{B256, U256};
-use base_execution_evm_runtime::StoredAccount as Account;
 use base_execution_state_types::DatabaseError;
 
-use super::{HashedCursor, HashedCursorFactory, HashedStorageCursor};
-
-/// Noop hashed cursor factory.
-#[derive(Clone, Default, Debug)]
-#[non_exhaustive]
-pub struct NoopHashedCursorFactory;
-
-impl HashedCursorFactory for NoopHashedCursorFactory {
-    type AccountCursor<'a>
-        = NoopHashedCursor<Account>
-    where
-        Self: 'a;
-    type StorageCursor<'a>
-        = NoopHashedCursor<U256>
-    where
-        Self: 'a;
-
-    fn hashed_account_cursor(&self) -> Result<Self::AccountCursor<'_>, DatabaseError> {
-        Ok(NoopHashedCursor::default())
-    }
-
-    fn hashed_storage_cursor(
-        &self,
-        _hashed_address: B256,
-    ) -> Result<Self::StorageCursor<'_>, DatabaseError> {
-        Ok(NoopHashedCursor::default())
-    }
-}
+use super::{HashedCursor, HashedStorageCursor};
 
 /// Generic noop hashed cursor.
 #[derive(Debug)]

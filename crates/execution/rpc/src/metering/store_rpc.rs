@@ -1,7 +1,7 @@
 //! RPC extensions for the metering store.
 
 use alloy_primitives::TxHash;
-use base_common_types_payload::MeterBundleResponse;
+use base_common_types_payload::TransactionResult;
 use base_execution_payload::SharedMeteringStore;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -18,7 +18,7 @@ pub trait BaseApiExt {
     async fn set_metering_information(
         &self,
         tx_hash: TxHash,
-        meter: MeterBundleResponse,
+        meter: TransactionResult,
     ) -> RpcResult<()>;
 
     /// Enables or disables resource metering.
@@ -48,7 +48,7 @@ impl BaseApiExtServer for MeteringStoreExt {
     async fn set_metering_information(
         &self,
         tx_hash: TxHash,
-        metering: MeterBundleResponse,
+        metering: TransactionResult,
     ) -> RpcResult<()> {
         self.store.insert(tx_hash, metering);
         Ok(())

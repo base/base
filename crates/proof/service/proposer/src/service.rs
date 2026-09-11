@@ -11,8 +11,8 @@ use std::{
 use alloy_primitives::Address;
 use base_common_cli::RuntimeManager;
 use base_common_client_ethereum::{Provider, ProviderBuilder, RootProvider};
+use base_common_http::HealthServer;
 use base_common_l1::{BalanceMonitorLayer, BaseTxMetrics, SimpleTxManager};
-use base_common_observability_health::HealthServer;
 use base_proof_client::{
     L1Client, L1ClientConfig, L2Client, L2ClientConfig, ProofRequesterClient,
     ProofRequesterProvider, ProverServiceClientConfig, RollupClient, RollupClientConfig,

@@ -10,9 +10,6 @@ pub mod config;
 pub mod constants;
 /// Component responsible for fetching transactions from [`NewPooledTransactionHashes`].
 pub mod fetcher;
-/// Defines the traits for transaction-related policies.
-pub mod policy;
-
 use std::{
     pin::Pin,
     sync::{
@@ -27,7 +24,7 @@ use alloy_eips::eip2718::Typed2718;
 use alloy_primitives::{
     B256, TxHash,
     bytes::BufMut,
-    map::{B256Map, B256Set, FbBuildHasher, HashMap, HashSet, hash_map::Entry},
+    map::{B256Map, B256Set, FbBuildHasher, HashMap, hash_map::Entry},
 };
 use alloy_rlp::Encodable;
 use base_common_observability_metrics::common::mpsc::MemoryBoundedReceiver;
@@ -45,15 +42,13 @@ use base_execution_txpool::{
     AddedTransactionOutcome, GetPooledTransactionLimit, PoolError, PoolResult, PropagateKind,
     PropagatedTransactions, TransactionPool, ValidPoolTransaction,
 };
-use config::AnnouncementAcceptance;
 pub use config::{
-    AnnouncementFilteringPolicy, TransactionFetcherConfig, TransactionIngressPolicy,
-    TransactionPropagationMode, TransactionPropagationPolicy, TransactionsManagerConfig,
+    TransactionFetcherConfig, TransactionIngressPolicy, TransactionPropagationMode,
+    TransactionsManagerConfig,
 };
 use constants::SOFT_LIMIT_COUNT_HASHES_IN_NEW_POOLED_TRANSACTIONS_BROADCAST_MESSAGE;
 pub(crate) use fetcher::{FetchEvent, TransactionFetcher};
 use futures::{Future, StreamExt, stream::FuturesUnordered};
-use policy::NetworkPolicies;
 use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::{debug, trace};
@@ -73,7 +68,7 @@ use crate::{
     cache::LruCache,
     duration_metered_exec, metered_poll_nested_stream_with_budget,
     metrics::{AnnouncedTxTypesMetrics, TransactionsManagerMetrics},
-    transactions::config::{StrictEthAnnouncementFilter, TransactionPropagationKind},
+    transactions::config::{TransactionPropagationKind, TypedStrictFilter},
 };
 
 /// The future for importing transactions into the pool.
@@ -100,16 +95,6 @@ impl TransactionsHandle {
         let _ = self.manager_tx.send(cmd);
     }
 
-    /// Fetch the [`PeerRequestSender`] for the given peer.
-    async fn peer_handle(
-        &self,
-        peer_id: PeerId,
-    ) -> Result<Option<PeerRequestSender<PeerRequest>>, RecvError> {
-        let (tx, rx) = oneshot::channel();
-        self.send(TransactionsCommand::GetPeerSender { peer_id, peer_request_sender: tx });
-        rx.await
-    }
-
     /// Manually propagate the transaction that belongs to the hash.
     pub fn propagate(&self, hash: TxHash) {
         self.send(TransactionsCommand::PropagateHash(hash))
@@ -133,23 +118,6 @@ impl TransactionsHandle {
         self.send(TransactionsCommand::PropagateHashesTo(hashes, peer))
     }
 
-    /// Request the active peer IDs from the [`TransactionsManager`].
-    pub async fn get_active_peers(&self) -> Result<HashSet<PeerId>, RecvError> {
-        let (tx, rx) = oneshot::channel();
-        self.send(TransactionsCommand::GetActivePeers(tx));
-        rx.await
-    }
-
-    /// Manually propagate full transaction hashes to a specific peer.
-    ///
-    /// Do nothing if transactions are empty.
-    pub fn propagate_transactions_to(&self, transactions: Vec<TxHash>, peer: PeerId) {
-        if transactions.is_empty() {
-            return;
-        }
-        self.send(TransactionsCommand::PropagateTransactionsTo(transactions, peer))
-    }
-
     /// Manually propagate the given transaction hashes to all peers.
     ///
     /// It's up to the [`TransactionsManager`] whether the transactions are sent as hashes or in
@@ -159,19 +127,6 @@ impl TransactionsHandle {
             return;
         }
         self.send(TransactionsCommand::PropagateTransactions(transactions))
-    }
-
-    /// Manually propagate the given transactions to all peers.
-    ///
-    /// It's up to the [`TransactionsManager`] whether the transactions are sent as hashes or in
-    /// full.
-    pub fn broadcast_transactions(&self, transactions: impl IntoIterator<Item = BaseTxEnvelope>) {
-        let transactions =
-            transactions.into_iter().map(PropagateTransaction::new).collect::<Vec<_>>();
-        if transactions.is_empty() {
-            return;
-        }
-        self.send(TransactionsCommand::BroadcastTransactions(transactions))
     }
 
     /// Request the transaction hashes known by specific peers.
@@ -191,25 +146,6 @@ impl TransactionsHandle {
     pub async fn get_peer_transaction_hashes(&self, peer: PeerId) -> Result<B256Set, RecvError> {
         let res = self.get_transaction_hashes(vec![peer]).await?;
         Ok(res.into_values().next().unwrap_or_default())
-    }
-
-    /// Requests the transactions directly from the given peer.
-    ///
-    /// Returns `None` if the peer is not connected.
-    ///
-    /// **Note**: this returns the response from the peer as received.
-    pub async fn get_pooled_transactions_from(
-        &self,
-        peer_id: PeerId,
-        hashes: Vec<B256>,
-    ) -> Result<Option<Vec<base_common_types_chain::BasePooledTransaction>>, RequestError> {
-        let Some(peer) = self.peer_handle(peer_id).await? else { return Ok(None) };
-
-        let (tx, rx) = oneshot::channel();
-        let request = PeerRequest::GetPooledTransactions { request: hashes.into(), response: tx };
-        peer.try_send(request).ok();
-
-        rx.await?.map(|res| Some(res.0))
     }
 }
 
@@ -231,8 +167,7 @@ impl TransactionsHandle {
 /// It is directly connected to the [`TransactionPool`] to retrieve requested transactions and
 /// propagate new transactions over the network.
 ///
-/// It can be configured with different policies for transaction propagation and announcement
-/// filtering. See [`NetworkPolicies`] for more details.
+/// Transaction propagation is configurable; announcement filtering uses Base transaction types.
 ///
 /// ## Network Transaction Processing
 ///
@@ -269,11 +204,9 @@ impl TransactionsHandle {
 /// Rate limiting via reputation, bad transaction isolation, peer scoring.
 #[derive(Debug)]
 #[must_use = "Manager does nothing unless polled."]
-pub struct TransactionsManager<
-    S: base_execution_txpool::BlobStore + Clone = base_execution_txpool::DiskFileBlobStore,
-> {
+pub struct TransactionsManager {
     /// Access to the transaction pool.
-    pool: base_execution_txpool::BaseTransactionPool<S>,
+    pool: base_execution_txpool::BaseTransactionPool,
     /// Cache of recovered transaction senders shared with payload execution, if enabled.
     sender_recovery_cache: Option<SenderRecoveryCache>,
     /// Network access.
@@ -329,21 +262,21 @@ pub struct TransactionsManager<
     transaction_events: MemoryBoundedReceiver<NetworkTransactionEvent>,
     /// How the `TransactionsManager` is configured.
     config: TransactionsManagerConfig,
-    /// Network Policies
-    policies: NetworkPolicies,
+    /// Selects which peers receive transactions.
+    propagation: TransactionPropagationKind,
     /// `TransactionsManager` metrics
     metrics: TransactionsManagerMetrics,
     /// `AnnouncedTxTypes` metrics
     announced_tx_types_metrics: AnnouncedTxTypesMetrics,
 }
 
-impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
+impl TransactionsManager {
     /// Sets up a new instance.
     ///
     /// Note: This expects an existing [`NetworkManager`](crate::NetworkManager) instance.
     pub fn new(
         network: NetworkHandle,
-        pool: base_execution_txpool::BaseTransactionPool<S>,
+        pool: base_execution_txpool::BaseTransactionPool,
         from_network: MemoryBoundedReceiver<NetworkTransactionEvent>,
         transactions_manager_config: TransactionsManagerConfig,
     ) -> Self {
@@ -352,24 +285,21 @@ impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
             pool,
             from_network,
             transactions_manager_config,
-            NetworkPolicies::new(
-                TransactionPropagationKind::default(),
-                StrictEthAnnouncementFilter::default(),
-            ),
+            TransactionPropagationKind::default(),
         )
     }
 }
 
-impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
+impl TransactionsManager {
     /// Sets up a new instance with given the settings.
     ///
     /// Note: This expects an existing [`NetworkManager`](crate::NetworkManager) instance.
     pub fn with_policy(
         network: NetworkHandle,
-        pool: base_execution_txpool::BaseTransactionPool<S>,
+        pool: base_execution_txpool::BaseTransactionPool,
         from_network: MemoryBoundedReceiver<NetworkTransactionEvent>,
         transactions_manager_config: TransactionsManagerConfig,
-        policies: NetworkPolicies,
+        propagation: TransactionPropagationKind,
     ) -> Self {
         let network_events = network.event_listener();
 
@@ -405,7 +335,7 @@ impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
             pending_transactions: pending,
             transaction_events: from_network,
             config: transactions_manager_config,
-            policies,
+            propagation,
             metrics,
             announced_tx_types_metrics: AnnouncedTxTypesMetrics::default(),
         }
@@ -454,14 +384,6 @@ impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
     fn report_already_seen(&self, peer_id: PeerId) {
         trace!(target: "net::tx", ?peer_id, "Penalizing peer for already seen transaction");
         self.network.reputation_change(peer_id, ReputationChangeKind::AlreadySeenTransaction);
-    }
-
-    /// Handles a closed peer session, removing the peer from transaction-local tracking state.
-    fn on_peer_session_closed(&mut self, peer_id: &PeerId) {
-        if let Some(mut peer) = self.peers.remove(peer_id) {
-            self.policies.propagation_policy_mut().on_session_closed(&mut peer);
-        }
-        self.transaction_fetcher.remove_peer(peer_id);
     }
 
     /// Clear the transaction
@@ -582,7 +504,7 @@ impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
     }
 }
 
-impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
+impl TransactionsManager {
     /// Processes a batch import results.
     fn on_batch_import_result(&mut self, batch_results: Vec<PoolResult<AddedTransactionOutcome>>) {
         for res in batch_results {
@@ -704,21 +626,11 @@ impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
                 }
             }
 
-            let decision = self
-                .policies
-                .announcement_filter()
-                .decide_on_announcement(ty_byte, tx_hash, size_val);
-
-            match decision {
-                AnnouncementAcceptance::Accept => true,
-                AnnouncementAcceptance::Ignore => false,
-                AnnouncementAcceptance::Reject { penalize_peer } => {
-                    if penalize_peer {
-                        should_report_peer = true;
-                    }
-                    false
-                }
+            let accepted = TypedStrictFilter::accepts(ty_byte, tx_hash, size_val);
+            if !accepted {
+                should_report_peer = true;
             }
+            accepted
         });
 
         if has_eth68_metadata {
@@ -851,10 +763,7 @@ impl<S: base_execution_txpool::BlobStore + Clone> TransactionsManager<S> {
     }
 }
 
-impl<S> TransactionsManager<S>
-where
-    S: base_execution_txpool::BlobStore + Clone + Unpin + 'static,
-{
+impl TransactionsManager {
     /// Invoked when transactions in the local mempool are considered __pending__.
     ///
     /// When a transaction in the local mempool is moved to the pending pool, we propagate them to
@@ -877,75 +786,6 @@ where
         trace!(target: "net::tx", num_hashes=?hashes.len(), "Start propagating transactions");
 
         self.propagate_all(hashes);
-    }
-
-    /// Propagate the full transactions to a specific peer.
-    ///
-    /// Returns the propagated transactions.
-    fn propagate_full_transactions_to_peer(
-        &mut self,
-        txs: Vec<TxHash>,
-        peer_id: PeerId,
-        propagation_mode: PropagationMode,
-    ) -> Option<PropagatedTransactions> {
-        let peer = self.peers.get_mut(&peer_id)?;
-        trace!(target: "net::tx", ?peer_id, "Propagating transactions to peer");
-        let mut propagated = PropagatedTransactions::default();
-
-        // filter all transactions unknown to the peer
-        let mut full_transactions = FullTransactionsBuilder::new(peer.version);
-
-        let to_propagate = self.pool.get_all(txs).into_iter().map(PropagateTransaction::pool_tx);
-
-        if propagation_mode.is_forced() {
-            // skip cache check if forced
-            full_transactions.extend(to_propagate);
-        } else {
-            // Iterate through the transactions to propagate and fill the hashes and full
-            // transaction
-            for tx in to_propagate {
-                if !peer.seen_transactions.contains(tx.tx_hash()) {
-                    // Only include if the peer hasn't seen the transaction
-                    full_transactions.push(&tx);
-                }
-            }
-        }
-
-        if full_transactions.is_empty() {
-            // nothing to propagate
-            return None;
-        }
-
-        let PropagateTransactions { pooled, full } = full_transactions.build();
-
-        // send hashes if any
-        if let Some(new_pooled_hashes) = pooled {
-            for hash in new_pooled_hashes.iter_hashes().copied() {
-                propagated.record(hash, PropagateKind::Hash(peer_id));
-                // mark transaction as seen by peer
-                peer.seen_transactions.insert(hash);
-            }
-
-            // send hashes of transactions
-            self.network.send_transactions_hashes(peer_id, new_pooled_hashes);
-        }
-
-        // send full transactions, if any
-        if let Some(new_full_transactions) = full {
-            for hash in new_full_transactions.iter_hashes() {
-                propagated.record(*hash, PropagateKind::Full(peer_id));
-                // mark transaction as seen by peer
-                peer.seen_transactions.insert(*hash);
-            }
-
-            // send full transactions
-            self.network.send_broadcast_pool_transactions(peer_id, new_full_transactions);
-        }
-
-        // Update propagated transactions metrics
-        self.metrics.propagated_transactions.increment(propagated.len() as u64);
-
-        Some(propagated)
     }
 
     /// Propagate the transaction hashes to the given peer
@@ -1035,7 +875,7 @@ where
         // Note: Assuming ~random~ order due to random state of the peers map hasher
         let mut num_full_peers = 0;
         for (peer_id, peer) in &mut self.peers {
-            if !self.policies.propagation_policy().can_propagate(peer) {
+            if !self.propagation.can_propagate(peer) {
                 // skip peers we should not propagate to
                 continue;
             }
@@ -1183,22 +1023,9 @@ where
             TransactionsCommand::PropagateHashesTo(hashes, peer) => {
                 self.propagate_hashes_to(hashes, peer, PropagationMode::Forced)
             }
-            TransactionsCommand::GetActivePeers(tx) => {
-                let peers = self.peers.keys().copied().collect::<HashSet<_>>();
-                tx.send(peers).ok();
-            }
-            TransactionsCommand::PropagateTransactionsTo(txs, peer) => {
-                if let Some(propagated) =
-                    self.propagate_full_transactions_to_peer(txs, peer, PropagationMode::Forced)
-                {
-                    self.pool.on_propagated(propagated);
-                }
-            }
+
             TransactionsCommand::PropagateTransactions(txs) => self.propagate_all(txs),
-            TransactionsCommand::BroadcastTransactions(txs) => {
-                let propagated = self.propagate_transactions(txs, PropagationMode::Forced);
-                self.pool.on_propagated(propagated);
-            }
+
             TransactionsCommand::GetTransactionHashes { peers, tx } => {
                 let mut res = HashMap::with_capacity_and_hasher(peers.len(), Default::default());
                 for peer_id in peers {
@@ -1210,10 +1037,6 @@ where
                     res.insert(peer_id, hashes);
                 }
                 tx.send(res).ok();
-            }
-            TransactionsCommand::GetPeerSender { peer_id, peer_request_sender } => {
-                let sender = self.peers.get(&peer_id).map(|peer| peer.request_tx.clone());
-                peer_request_sender.send(sender).ok();
             }
         }
     }
@@ -1239,8 +1062,6 @@ where
             }
             Entry::Vacant(entry) => entry.insert(peer),
         };
-
-        self.policies.propagation_policy_mut().on_session_established(peer);
 
         // Send a `NewPooledTransactionHashes` to the peer with up to
         // `SOFT_LIMIT_COUNT_HASHES_IN_NEW_POOLED_TRANSACTIONS_BROADCAST_MESSAGE`
@@ -1275,7 +1096,8 @@ where
     fn on_network_event(&mut self, event_result: NetworkEvent<PeerRequest>) {
         match event_result {
             NetworkEvent::Peer(PeerEvent::SessionClosed { peer_id, .. }) => {
-                self.on_peer_session_closed(&peer_id);
+                self.peers.remove(&peer_id);
+                self.transaction_fetcher.remove_peer(&peer_id);
             }
             NetworkEvent::ActivePeerSession { info, messages } => {
                 // process active peer session and broadcast available transaction from the pool
@@ -1344,9 +1166,6 @@ where
             }
             NetworkTransactionEvent::GetPooledTransactions { peer_id, request, response } => {
                 self.on_get_pooled_transactions(peer_id, request, response)
-            }
-            NetworkTransactionEvent::GetTransactionsHandle(response) => {
-                let _ = response.send(Some(self.handle()));
             }
         }
     }
@@ -1554,9 +1373,7 @@ where
 //
 // spawned in `NodeConfig::start_network`(base_node_config::NodeConfig) and
 // `NetworkConfig::start_network`(base_execution_network_service::NetworkConfig)
-impl<S: base_execution_txpool::BlobStore + Clone + Unpin + 'static> Future
-    for TransactionsManager<S>
-{
+impl Future for TransactionsManager {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -1930,15 +1747,6 @@ struct FullTransactionsBuilder {
 }
 
 impl FullTransactionsBuilder {
-    /// Create a builder for the negotiated version of the peer's session
-    fn new(version: EthVersion) -> Self {
-        Self {
-            total_size: 0,
-            pooled: PooledTransactionsHashesBuilder::new(version),
-            transactions: vec![],
-        }
-    }
-
     /// Create a builder with capacity for the expected number of full transactions.
     ///
     /// The overflow hashes builder remains lazily allocated since most transactions are expected
@@ -1962,13 +1770,6 @@ impl FullTransactionsBuilder {
         let full =
             (!self.transactions.is_empty()).then_some(BroadcastPoolTransactions(self.transactions));
         PropagateTransactions { pooled, full }
-    }
-
-    /// Appends all transactions.
-    fn extend(&mut self, txs: impl IntoIterator<Item = PropagateTransaction>) {
-        for tx in txs {
-            self.push(&tx)
-        }
     }
 
     /// Append a transaction to the list of full transaction if the total message bytes size doesn't
@@ -2209,21 +2010,12 @@ enum TransactionsCommand {
     PropagateHash(B256),
     /// Propagate transaction hashes to a specific peer.
     PropagateHashesTo(Vec<B256>, PeerId),
-    /// Request the list of active peer IDs from the [`TransactionsManager`].
-    GetActivePeers(oneshot::Sender<HashSet<PeerId>>),
-    /// Propagate a collection of full transactions to a specific peer.
-    PropagateTransactionsTo(Vec<TxHash>, PeerId),
+
     /// Propagate a collection of hashes to all peers.
     PropagateTransactions(Vec<TxHash>),
-    /// Propagate a collection of broadcastable transactions in full to all peers.
-    BroadcastTransactions(Vec<PropagateTransaction>),
+
     /// Request transaction hashes known by specific peers from the [`TransactionsManager`].
     GetTransactionHashes { peers: Vec<PeerId>, tx: oneshot::Sender<HashMap<PeerId, B256Set>> },
-    /// Requests a clone of the sender channel to the peer.
-    GetPeerSender {
-        peer_id: PeerId,
-        peer_request_sender: oneshot::Sender<Option<PeerRequestSender<PeerRequest>>>,
-    },
 }
 
 /// All events related to transactions emitted by the network.
@@ -2256,8 +2048,6 @@ pub enum NetworkTransactionEvent {
             RequestResult<PooledTransactions<base_common_types_chain::BasePooledTransaction>>,
         >,
     },
-    /// Represents the event of receiving a `GetTransactionsHandle` request.
-    GetTransactionsHandle(oneshot::Sender<Option<TransactionsHandle>>),
 }
 
 /// Tracks stats about the [`TransactionsManager`].
@@ -2315,7 +2105,6 @@ impl InMemorySize for NetworkTransactionEvent {
                     + request.0.len() * core::mem::size_of::<TxHash>()
                     + core::mem::size_of_val(response)
             }
-            Self::GetTransactionsHandle(_) => 0,
         }
     }
 }
@@ -2340,7 +2129,7 @@ mod tests {
     use base_execution_network_wire::{NetworkSyncUpdater, RequestError, RequestResult, SyncState};
     use base_execution_state_database::NoopProvider;
     use base_execution_txpool::{
-        BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError, InMemoryBlobStore,
+        BaseOrdering, BasePooledTransaction, Eip4844PoolTransactionError,
         InvalidPoolTransactionError, Pool, PoolError, SenderIdentifiers, TransactionOrigin,
         ValidPoolTransaction,
         test_utils::{
@@ -2356,15 +2145,12 @@ mod tests {
     use crate::{
         NetworkConfigBuilder, NetworkInfo, NetworkManager, PeerKind,
         test_utils::{
-            NetworkTestData, TestPool, Testnet,
+            NetworkTestData, Testnet,
             transactions::{buffer_hash_to_tx_fetcher, new_mock_session, new_tx_manager},
         },
-        transactions::config::RelaxedEthAnnouncementFilter,
     };
 
-    type BaseTestPool = base_execution_txpool::BaseTransactionPool<InMemoryBlobStore>;
-
-    async fn new_base_tx_manager() -> (TransactionsManager<InMemoryBlobStore>, NetworkManager) {
+    async fn new_base_tx_manager() -> (TransactionsManager, NetworkManager) {
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
         let client = NoopProvider::default();
 
@@ -2374,23 +2160,17 @@ mod tests {
             .build(client);
 
         let pool = base_execution_txpool::BaseTransactionPool::new(
-            Pool::new_test(
-                OkValidator::default(),
-                BaseOrdering::default(),
-                InMemoryBlobStore::default(),
-                Default::default(),
-            ),
+            Pool::new_test(OkValidator::default(), BaseOrdering::default(), Default::default()),
             base_execution_txpool::BaseOrdering::default(),
         );
 
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (_network_handle, network, transactions, _) =
-            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-                .await
-                .unwrap()
-                .into_builder()
-                .transactions(pool.clone(), transactions_manager_config)
-                .split_with_handle();
+        let (_network_handle, network, transactions, _) = NetworkManager::new(config)
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
 
         (transactions, network)
     }
@@ -2446,13 +2226,12 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) =
-            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-                .await
-                .unwrap()
-                .into_builder()
-                .transactions(pool.clone(), transactions_manager_config)
-                .split_with_handle();
+        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
 
         tokio::task::spawn(network);
 
@@ -2517,13 +2296,12 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) =
-            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-                .await
-                .unwrap()
-                .into_builder()
-                .transactions(pool.clone(), transactions_manager_config)
-                .split_with_handle();
+        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
 
         tokio::task::spawn(network);
 
@@ -2588,13 +2366,12 @@ mod tests {
         let pool = NetworkTestData::pool();
 
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (_network_handle, _network, mut tx_manager, _) =
-            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-                .await
-                .unwrap()
-                .into_builder()
-                .transactions(pool.clone(), transactions_manager_config)
-                .split_with_handle();
+        let (_network_handle, _network, mut tx_manager, _) = NetworkManager::new(config)
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
 
         let peer_id_1 = PeerId::new([1; 64]);
         let eth_version = EthVersion::Eth66;
@@ -2693,13 +2470,12 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) =
-            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-                .await
-                .unwrap()
-                .into_builder()
-                .transactions(pool.clone(), transactions_manager_config)
-                .split_with_handle();
+        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
         tokio::task::spawn(network);
 
         network_handle.update_sync_state(SyncState::Idle);
@@ -2875,13 +2651,12 @@ mod tests {
             .listener_port(0)
             .build(client);
         let transactions_manager_config = config.transactions_manager_config.clone();
-        let (network_handle, network, mut transactions, _) =
-            NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-                .await
-                .unwrap()
-                .into_builder()
-                .transactions(pool.clone(), transactions_manager_config)
-                .split_with_handle();
+        let (network_handle, network, mut transactions, _) = NetworkManager::new(config)
+            .await
+            .unwrap()
+            .into_builder()
+            .transactions(pool.clone(), transactions_manager_config)
+            .split_with_handle();
         tokio::task::spawn(network);
 
         network_handle.update_sync_state(SyncState::Idle);
@@ -3361,15 +3136,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relaxed_filter_ignores_unknown_tx_types() {
+    async fn test_strict_filter_rejects_unknown_tx_types() {
         base_common_observability_tracing::init_test_tracing();
 
         let transactions_manager_config = TransactionsManagerConfig::default();
 
         let propagation_policy = TransactionPropagationKind::default();
-        let announcement_policy = RelaxedEthAnnouncementFilter::default();
-
-        let policy_bundle = NetworkPolicies::new(propagation_policy, announcement_policy);
 
         let pool = NetworkTestData::pool();
         let secret_key = SecretKey::new(&mut rand_08::thread_rng());
@@ -3380,12 +3152,7 @@ mod tests {
             .disable_discovery()
             .build(client.clone());
 
-        let mut network_manager = NetworkManager::new(
-            network_config,
-            base_execution_state_database::NoopProvider::default(),
-        )
-        .await
-        .unwrap();
+        let mut network_manager = NetworkManager::new(network_config).await.unwrap();
         let (to_tx_manager_tx, from_network_rx) =
             base_common_observability_metrics::common::mpsc::memory_bounded_channel::<NetworkTransactionEvent>(
                 crate::transactions::constants::tx_manager::DEFAULT_TX_MANAGER_CHANNEL_MEMORY_LIMIT_BYTES,
@@ -3396,12 +3163,12 @@ mod tests {
         let network_handle = network_manager.handle().clone();
         let network_service_handle = tokio::spawn(network_manager);
 
-        let mut tx_manager = TransactionsManager::<InMemoryBlobStore>::with_policy(
+        let mut tx_manager = TransactionsManager::with_policy(
             network_handle.clone(),
             pool.clone(),
             from_network_rx,
             transactions_manager_config,
-            policy_bundle,
+            propagation_policy,
         );
 
         let peer_id = PeerId::random();

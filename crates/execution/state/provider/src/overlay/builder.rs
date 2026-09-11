@@ -64,8 +64,8 @@ pub enum OverlaySource {
 pub struct OverlayBuilder {
     /// Parent hash requested by the caller.
     parent_hash: B256,
-    /// Optional overlay source.
-    overlay_source: Option<OverlaySource>,
+    /// Overlay source.
+    overlay_source: OverlaySource,
     /// Manager used for cached changesets and in-memory parent state.
     overlay_manager: OverlayManager,
     /// Anchor hash of the reused sparse trie, if this task reused one.
@@ -81,20 +81,12 @@ impl OverlayBuilder {
     pub(crate) fn new(parent_hash: B256, overlay_manager: OverlayManager) -> Self {
         Self {
             parent_hash,
-            overlay_source: Some(OverlaySource::Managed),
+            overlay_source: OverlaySource::Managed,
             overlay_manager,
             reused_sparse_trie_anchor_hash: None,
             no_reverts: false,
             metrics: OverlayBuilderMetrics::default(),
         }
-    }
-
-    /// Set the overlay source.
-    ///
-    /// This overlay will be applied on top of any reverts.
-    pub fn with_overlay_source(mut self, source: Option<OverlaySource>) -> Self {
-        self.overlay_source = source;
-        self
     }
 
     /// Skips managed overlay construction when the sparse trie was reused and the DB tip is
@@ -116,7 +108,7 @@ impl OverlayBuilder {
         state: Arc<HashedPostStateSorted>,
         trie: Arc<TrieUpdatesSorted>,
     ) -> Self {
-        self.overlay_source = Some(OverlaySource::Immediate { trie, state });
+        self.overlay_source = OverlaySource::Immediate { trie, state };
         self
     }
 
@@ -140,7 +132,7 @@ impl OverlayBuilder {
         Provider: BlockNumReader + PruneCheckpointReader,
     {
         match &self.overlay_source {
-            Some(OverlaySource::Managed) => anchor_for_parent_with_frontiers(
+            OverlaySource::Managed => anchor_for_parent_with_frontiers(
                 self.parent_hash,
                 self.overlay_manager.parent_chain(self.parent_hash),
                 partial_state_trie,
@@ -343,7 +335,7 @@ impl OverlayBuilder {
         anchor_hash: BlockHash,
     ) -> ProviderResult<(Arc<TrieUpdatesSorted>, Arc<HashedPostStateSorted>)> {
         match &self.overlay_source {
-            Some(OverlaySource::Managed) => {
+            OverlaySource::Managed => {
                 if anchor_hash == self.parent_hash {
                     Ok((
                         Arc::new(TrieUpdatesSorted::default()),
@@ -355,7 +347,7 @@ impl OverlayBuilder {
                         .map_err(ProviderError::other)
                 }
             }
-            Some(OverlaySource::Immediate { trie, state }) => {
+            OverlaySource::Immediate { trie, state } => {
                 if anchor_hash != self.parent_hash {
                     return Err(ProviderError::other(std::io::Error::other(format!(
                         "anchor_hash {anchor_hash} doesn't match OverlayBuilder's configured parent ({})",
@@ -364,10 +356,6 @@ impl OverlayBuilder {
                 }
                 Ok((Arc::clone(trie), Arc::clone(state)))
             }
-            None => Ok((
-                Arc::new(TrieUpdatesSorted::default()),
-                Arc::new(HashedPostStateSorted::default()),
-            )),
         }
     }
 
@@ -380,7 +368,7 @@ impl OverlayBuilder {
         let Some(anchor_hash) = self.reused_sparse_trie_anchor_hash else { return false };
 
         match &self.overlay_source {
-            Some(OverlaySource::Managed) => {
+            OverlaySource::Managed => {
                 self.overlay_manager.contains_hash(
                     self.parent_hash,
                     anchor_hash,

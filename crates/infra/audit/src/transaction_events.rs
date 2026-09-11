@@ -920,41 +920,6 @@ impl PgTransactionEventSink {
         rows.into_iter().map(record_from_row).collect()
     }
 
-    /// Returns events for one bundle UUID or bundle hash sorted by event time.
-    pub async fn events_by_bundle(
-        &self,
-        bundle_key: &str,
-        limit: i64,
-    ) -> Result<Vec<TransactionEventRecord>> {
-        let limit = normalize_limit(limit);
-        let rows = sqlx::query(
-            "WITH bundle_events AS ( \
-                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-                network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-                FROM transaction_events \
-                WHERE data ? 'bundle_hash' AND data->>'bundle_hash' = $1 \
-                UNION ALL \
-                SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-                network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-                FROM transaction_events \
-                WHERE data ? 'bundle_id' AND data->>'bundle_id' = $1 \
-             ), deduped AS ( \
-                SELECT DISTINCT ON (event_id) * FROM bundle_events \
-                ORDER BY event_id, event_time ASC, ingested_at ASC \
-             ) \
-             SELECT event_id, schema_version, event_time, ingested_at, producer, event_type, \
-             network, tx_hash, block_hash, block_number, payload_id, request_id, data \
-             FROM deduped \
-             ORDER BY event_time ASC, ingested_at ASC, event_id ASC \
-             LIMIT $2",
-        )
-        .bind(bundle_key)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.into_iter().map(record_from_row).collect()
-    }
-
     /// Returns rejected transaction events sorted newest first for list views.
     ///
     /// Optional filters are omitted from SQL when unset so Postgres can use

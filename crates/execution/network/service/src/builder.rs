@@ -1,8 +1,6 @@
 //! Builder support for configuring the entire setup.
 
 use base_common_observability_metrics::common::mpsc::memory_bounded_channel;
-use base_execution_state_types::BalProvider;
-use base_execution_txpool::{BlobStore, TransactionPool};
 use tokio::sync::mpsc;
 
 use crate::{
@@ -10,11 +8,7 @@ use crate::{
     eth_requests::EthRequestHandler,
     metrics::NETWORK_POOL_TRANSACTIONS_SCOPE,
     transactions::{
-        TransactionPropagationPolicy, TransactionsManager, TransactionsManagerConfig,
-        config::{
-            AnnouncementFilteringPolicy, StrictEthAnnouncementFilter, TransactionPropagationKind,
-        },
-        policy::NetworkPolicies,
+        TransactionsManager, TransactionsManagerConfig, config::TransactionPropagationKind,
     },
 };
 
@@ -83,24 +77,12 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
         NetworkBuilder { network, request_handler, transactions }
     }
 
-    /// Creates a new [`EthRequestHandler`] with access to a blob store and wires it to the network.
-    pub fn request_handler_with_blob_store(
-        self,
-        client: base_execution_state_provider::BlockchainProvider,
-        blob_store: Box<dyn BlobStore>,
-    ) -> NetworkBuilder<Tx, EthRequestHandler> {
-        let NetworkBuilder { network, transactions, request_handler } =
-            self.request_handler(client);
-        let request_handler = request_handler.with_blob_store(blob_store);
-        NetworkBuilder { network, request_handler, transactions }
-    }
-
     /// Creates a new [`TransactionsManager`] and wires it to the network.
-    pub fn transactions<S: base_execution_txpool::BlobStore + Clone>(
+    pub fn transactions(
         self,
-        pool: base_execution_txpool::BaseTransactionPool<S>,
+        pool: base_execution_txpool::BaseTransactionPool,
         transactions_manager_config: TransactionsManagerConfig,
-    ) -> NetworkBuilder<TransactionsManager<S>, Eth> {
+    ) -> NetworkBuilder<TransactionsManager, Eth> {
         self.transactions_with_policy(
             pool,
             transactions_manager_config,
@@ -108,41 +90,13 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
         )
     }
 
-    /// Creates a new [`TransactionsManager`] and wires it to the network.
-    ///
-    /// Uses the default [`StrictEthAnnouncementFilter`] for announcement filtering.
-    pub fn transactions_with_policy<
-        S: base_execution_txpool::BlobStore + Clone,
-        P: TransactionPropagationPolicy,
-    >(
+    /// Creates a transaction manager with the selected propagation policy and strict Base filtering.
+    pub fn transactions_with_policy(
         self,
-        pool: base_execution_txpool::BaseTransactionPool<S>,
+        pool: base_execution_txpool::BaseTransactionPool,
         transactions_manager_config: TransactionsManagerConfig,
-        propagation_policy: P,
-    ) -> NetworkBuilder<TransactionsManager<S>, Eth> {
-        self.transactions_with_policies(
-            pool,
-            transactions_manager_config,
-            propagation_policy,
-            StrictEthAnnouncementFilter::default(),
-        )
-    }
-
-    /// Creates a new [`TransactionsManager`] with custom propagation and announcement policies.
-    ///
-    /// This allows chains with custom transaction types (like CATX) to configure
-    /// the announcement filter to accept their transaction types.
-    pub fn transactions_with_policies<
-        S: base_execution_txpool::BlobStore + Clone,
-        P: TransactionPropagationPolicy,
-        A: AnnouncementFilteringPolicy,
-    >(
-        self,
-        pool: base_execution_txpool::BaseTransactionPool<S>,
-        transactions_manager_config: TransactionsManagerConfig,
-        propagation_policy: P,
-        announcement_policy: A,
-    ) -> NetworkBuilder<TransactionsManager<S>, Eth> {
+        propagation_policy: TransactionPropagationKind,
+    ) -> NetworkBuilder<TransactionsManager, Eth> {
         let Self { mut network, request_handler, .. } = self;
         let (tx, rx) = memory_bounded_channel(
             transactions_manager_config.tx_channel_memory_limit_bytes,
@@ -151,14 +105,13 @@ impl<Tx, Eth> NetworkBuilder<Tx, Eth> {
         );
         network.set_transactions(tx);
         let handle = network.handle().clone();
-        let policies = NetworkPolicies::new(propagation_policy, announcement_policy);
 
         let transactions = TransactionsManager::with_policy(
             handle,
             pool,
             rx,
             transactions_manager_config,
-            policies,
+            propagation_policy,
         );
         NetworkBuilder { network, request_handler, transactions }
     }

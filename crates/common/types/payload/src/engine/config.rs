@@ -29,11 +29,6 @@ pub const DEFAULT_INVALID_HEADER_HIT_EVICTION_THRESHOLD: u8 = 128;
 /// Gas threshold below which the small block chunk size is used.
 pub const SMALL_BLOCK_GAS_THRESHOLD: u64 = 20_000_000;
 
-/// Default number of reserved CPU cores for non-reth processes.
-///
-/// This will be deducted from the thread count of main reth global threadpool.
-pub const DEFAULT_RESERVED_CPU_CORES: usize = 1;
-
 /// Default depth for sparse trie pruning.
 ///
 /// Nodes at this depth and below are converted to hash stubs to reduce memory.
@@ -157,26 +152,10 @@ pub struct TreeConfig {
     has_enough_parallelism: bool,
     /// Multiproof task chunk size for proof targets.
     multiproof_chunk_size: usize,
-    /// Number of reserved CPU cores for non-reth processes
-    reserved_cpu_cores: usize,
     /// Whether to disable the precompile cache
     precompile_cache_disabled: bool,
     /// Whether to use state root fallback for testing
     state_root_fallback: bool,
-    /// Whether to always process payload attributes and begin a payload build process
-    /// even if `forkchoiceState.headBlockHash` is already the canonical head or an ancestor.
-    ///
-    /// The Engine API specification generally states that client software "MUST NOT begin a
-    /// payload build process if `forkchoiceState.headBlockHash` references a `VALID`
-    /// ancestor of the head of canonical chain".
-    /// See: <https://github.com/ethereum/execution-apis/blob/main/src/engine/paris.md#engine_forkchoiceupdatedv1> (Rule 2)
-    ///
-    /// This flag allows overriding that behavior.
-    /// This is useful for specific chain configurations (e.g., OP Stack where proposers
-    /// can reorg their own chain), various custom chains, or for development/testing purposes
-    /// where immediate payload regeneration is desired despite the head not changing or moving to
-    /// an ancestor.
-    always_process_payload_attributes_on_canonical_head: bool,
     /// Whether to unwind canonical header to ancestor during forkchoice updates.
     allow_unwind_canonical_header: bool,
     /// Whether to disable cache metrics recording (can be expensive with large cached state).
@@ -253,10 +232,8 @@ impl Default for TreeConfig {
             cross_block_cache_size: DEFAULT_CROSS_BLOCK_CACHE_SIZE,
             has_enough_parallelism: has_enough_parallelism(),
             multiproof_chunk_size: DEFAULT_MULTIPROOF_TASK_CHUNK_SIZE,
-            reserved_cpu_cores: DEFAULT_RESERVED_CPU_CORES,
             precompile_cache_disabled: false,
             state_root_fallback: false,
-            always_process_payload_attributes_on_canonical_head: false,
             allow_unwind_canonical_header: false,
             disable_cache_metrics: false,
             sparse_trie_prune_depth: DEFAULT_SPARSE_TRIE_PRUNE_DEPTH,
@@ -295,10 +272,8 @@ impl TreeConfig {
         cross_block_cache_size: usize,
         has_enough_parallelism: bool,
         multiproof_chunk_size: usize,
-        reserved_cpu_cores: usize,
         precompile_cache_disabled: bool,
         state_root_fallback: bool,
-        always_process_payload_attributes_on_canonical_head: bool,
         allow_unwind_canonical_header: bool,
         disable_cache_metrics: bool,
         sparse_trie_prune_depth: usize,
@@ -333,10 +308,8 @@ impl TreeConfig {
             cross_block_cache_size,
             has_enough_parallelism,
             multiproof_chunk_size,
-            reserved_cpu_cores,
             precompile_cache_disabled,
             state_root_fallback,
-            always_process_payload_attributes_on_canonical_head,
             allow_unwind_canonical_header,
             disable_cache_metrics,
             sparse_trie_prune_depth,
@@ -403,16 +376,6 @@ impl TreeConfig {
         self.multiproof_chunk_size
     }
 
-    /// Return the effective multiproof task chunk size.
-    pub const fn effective_multiproof_chunk_size(&self) -> usize {
-        self.multiproof_chunk_size
-    }
-
-    /// Return the number of reserved CPU cores for non-reth processes
-    pub const fn reserved_cpu_cores(&self) -> usize {
-        self.reserved_cpu_cores
-    }
-
     /// Returns whether or not state provider metrics are enabled.
     pub const fn state_provider_metrics(&self) -> bool {
         self.state_provider_metrics
@@ -452,22 +415,6 @@ impl TreeConfig {
     /// Returns whether to use state root fallback.
     pub const fn state_root_fallback(&self) -> bool {
         self.state_root_fallback
-    }
-
-    /// Sets whether to always process payload attributes when the FCU head is already canonical.
-    pub const fn with_always_process_payload_attributes_on_canonical_head(
-        mut self,
-        always_process_payload_attributes_on_canonical_head: bool,
-    ) -> Self {
-        self.always_process_payload_attributes_on_canonical_head =
-            always_process_payload_attributes_on_canonical_head;
-        self
-    }
-
-    /// Returns true if payload attributes should always be processed even when the FCU head is
-    /// canonical.
-    pub const fn always_process_payload_attributes_on_canonical_head(&self) -> bool {
-        self.always_process_payload_attributes_on_canonical_head
     }
 
     /// Returns true if canonical header should be unwound to ancestor during forkchoice updates.
@@ -623,12 +570,6 @@ impl TreeConfig {
     /// Setter for multiproof task chunk size for proof targets.
     pub const fn with_multiproof_chunk_size(mut self, multiproof_chunk_size: usize) -> Self {
         self.multiproof_chunk_size = multiproof_chunk_size;
-        self
-    }
-
-    /// Setter for the number of reserved CPU cores for any non-reth processes
-    pub const fn with_reserved_cpu_cores(mut self, reserved_cpu_cores: usize) -> Self {
-        self.reserved_cpu_cores = reserved_cpu_cores;
         self
     }
 

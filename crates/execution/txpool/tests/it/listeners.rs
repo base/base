@@ -221,20 +221,3 @@ async fn txpool_listener_new_propagate_only() {
     })
     .await;
 }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn txpool_listener_base_has_no_blob_sidecar() {
-    let pool = TestPoolBuilder::default();
-    let tx = MockTransactionFactory::default().create_eip1559();
-    let mut transactions = pool.new_transactions_listener();
-    let mut sidecars = pool.blob_transaction_sidecars_listener();
-    let expected = *tx.hash();
-    pool.add_transaction(TransactionOrigin::External, tx.transaction).await.unwrap();
-    let event = transactions.recv().await.unwrap();
-    assert_eq!(*event.transaction.hash(), expected);
-    poll_fn(|cx| {
-        assert!(sidecars.poll_recv(cx).is_pending());
-        Poll::Ready(())
-    })
-    .await;
-}

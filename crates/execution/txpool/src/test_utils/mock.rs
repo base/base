@@ -29,7 +29,7 @@ use rand::{
 };
 
 use crate::{
-    BaseOrdering, EthBlobTransactionSidecar, TxPool, ValidPoolTransaction,
+    BaseOrdering, TxPool, ValidPoolTransaction,
     identifier::{SenderIdentifiers, TransactionId},
     traits::TransactionOrigin,
 };
@@ -907,15 +907,6 @@ impl base_common_types_chain::Transaction for MockTransaction {
 }
 
 impl MockTransaction {
-    pub fn take_blob(&mut self) -> EthBlobTransactionSidecar {
-        match self {
-            Self::Eip4844 { sidecar, .. } => {
-                EthBlobTransactionSidecar::Present(sidecar.clone().into())
-            }
-            _ => EthBlobTransactionSidecar::None,
-        }
-    }
-
     pub fn try_into_pooled_eip4844(
         self,
         sidecar: Arc<BlobTransactionSidecarVariant>,

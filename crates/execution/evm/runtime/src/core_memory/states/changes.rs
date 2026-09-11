@@ -70,6 +70,3 @@ impl PlainStateReverts {
         Self { accounts: Vec::with_capacity(capacity), storage: Vec::with_capacity(capacity) }
     }
 }
-
-/// Storage reverts
-pub type StorageRevert = Vec<Vec<(Address, bool, Vec<(StorageKey, RevertToSlot)>)>>;

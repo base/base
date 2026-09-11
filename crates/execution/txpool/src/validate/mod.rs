@@ -9,7 +9,6 @@ use futures_util::future::Either;
 
 use crate::{
     PriceBumpConfig,
-    blobstore::PooledBlobSidecar,
     error::InvalidPoolTransactionError,
     identifier::{SenderId, TransactionId},
     traits::TransactionOrigin,
@@ -36,11 +35,8 @@ pub enum TransactionValidationOutcome {
         bytecode_hash: Option<B256>,
         /// The validated transaction.
         ///
-        /// See also [`ValidTransaction`].
-        ///
-        /// If this is a _new_ EIP-4844 blob transaction, then this must contain the extracted
-        /// sidecar.
-        transaction: ValidTransaction,
+        /// See also [`crate::BasePooledTransaction`].
+        transaction: crate::BasePooledTransaction,
         /// Whether to propagate the transaction to the network.
         propagate: bool,
         /// The authorities of EIP-7702 transaction.
@@ -71,8 +67,8 @@ impl TransactionValidationOutcome {
         }
     }
 
-    /// Returns the [`ValidTransaction`] if this is a [`TransactionValidationOutcome::Valid`].
-    pub const fn as_valid_transaction(&self) -> Option<&ValidTransaction> {
+    /// Returns the [`crate::BasePooledTransaction`] if this is a [`TransactionValidationOutcome::Valid`].
+    pub const fn as_valid_transaction(&self) -> Option<&crate::BasePooledTransaction> {
         match self {
             Self::Valid { transaction, .. } => Some(transaction),
             _ => None,
@@ -92,80 +88,6 @@ impl TransactionValidationOutcome {
     /// Returns true if validation resulted in an error.
     pub const fn is_error(&self) -> bool {
         matches!(self, Self::Error(_, _))
-    }
-}
-
-/// A wrapper type for a transaction that is valid and has an optional extracted EIP-4844 blob
-/// transaction sidecar.
-///
-/// If this is provided, then the sidecar will be temporarily stored in the blob store until the
-/// transaction is finalized.
-///
-/// Note: Since blob transactions can be re-injected without their sidecar (after reorg), the
-/// validator can omit the sidecar if it is still in the blob store and return a
-/// [`ValidTransaction::Valid`] instead.
-#[derive(Debug)]
-pub enum ValidTransaction {
-    /// A valid transaction without a sidecar.
-    Valid(crate::BasePooledTransaction),
-    /// A valid transaction for which a sidecar should be stored.
-    ///
-    /// Caution: The [`TransactionValidator`] must ensure that this is only returned for EIP-4844
-    /// transactions.
-    ValidWithSidecar {
-        /// The valid EIP-4844 transaction.
-        transaction: crate::BasePooledTransaction,
-        /// The extracted sidecar of that transaction
-        sidecar: PooledBlobSidecar,
-    },
-}
-
-impl ValidTransaction {
-    /// Creates a new valid transaction with an optional sidecar.
-    pub fn new(
-        transaction: crate::BasePooledTransaction,
-        sidecar: Option<PooledBlobSidecar>,
-    ) -> Self {
-        if let Some(sidecar) = sidecar {
-            Self::ValidWithSidecar { transaction, sidecar }
-        } else {
-            Self::Valid(transaction)
-        }
-    }
-}
-
-impl ValidTransaction {
-    /// Returns the transaction.
-    #[inline]
-    pub const fn transaction(&self) -> &crate::BasePooledTransaction {
-        match self {
-            Self::Valid(transaction) | Self::ValidWithSidecar { transaction, .. } => transaction,
-        }
-    }
-
-    /// Consumes the wrapper and returns the transaction.
-    pub fn into_transaction(self) -> crate::BasePooledTransaction {
-        match self {
-            Self::Valid(transaction) | Self::ValidWithSidecar { transaction, .. } => transaction,
-        }
-    }
-
-    /// Returns the address of that transaction.
-    #[inline]
-    pub fn sender(&self) -> Address {
-        self.transaction().sender()
-    }
-
-    /// Returns the hash of the transaction.
-    #[inline]
-    pub fn hash(&self) -> &B256 {
-        self.transaction().hash()
-    }
-
-    /// Returns the nonce of the transaction.
-    #[inline]
-    pub fn nonce(&self) -> u64 {
-        self.transaction().nonce()
     }
 }
 
@@ -292,8 +214,6 @@ where
 ///
 /// This is used as the internal representation of a transaction inside the pool.
 ///
-/// For EIP-4844 blob transactions this will _not_ contain the blob sidecar which is stored
-/// separately in the [`BlobStore`](crate::blobstore::BlobStore).
 pub struct ValidPoolTransaction {
     /// The transaction
     pub transaction: crate::BasePooledTransaction,

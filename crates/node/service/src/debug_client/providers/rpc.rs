@@ -21,7 +21,6 @@ pub struct RpcBlockProvider<N: Network> {
     #[debug(skip)]
     provider: Arc<dyn Provider<N>>,
     url: String,
-    fetch_block_access_list: bool,
     #[debug(skip)]
     convert: Arc<dyn Fn(N::BlockResponse, PayloadExtras) -> ExecutionData + Send + Sync>,
 }
@@ -47,15 +46,8 @@ impl<N: Network> RpcBlockProvider<N> {
                     .await?,
             ),
             url: rpc_url.to_string(),
-            fetch_block_access_list: true,
             convert: Arc::new(convert),
         })
-    }
-
-    /// Disables fetching raw block access list bytes.
-    pub const fn without_block_access_lists(mut self) -> Self {
-        self.fetch_block_access_list = false;
-        self
     }
 
     /// Obtains a full block stream.
@@ -85,10 +77,6 @@ impl<N: Network> RpcBlockProvider<N> {
     /// Block access lists are best effort here: RPC providers may not support
     /// `eth_getBlockAccessListByHash`, so failed or missing responses fall back to empty extras.
     async fn payload_extras(&self, header: &N::HeaderResponse) -> PayloadExtras {
-        if !self.fetch_block_access_list {
-            return PayloadExtras::default();
-        }
-
         let block_hash = header.hash();
         if header.block_access_list_hash().is_none() {
             return PayloadExtras::default();

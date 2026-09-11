@@ -111,10 +111,9 @@ use alloy_primitives::{
 };
 use base_common_runtime::LazyHandle;
 use base_common_types_chain::{
-    BaseReceipt, BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, EIP1559ParamError,
-    GotExpected, RecoveredBlock, SealedBlock, SealedHeader, SignerRecoverable,
-    constants::KECCAK_EMPTY,
-    transaction::{Either, TxHashRef},
+    BaseTxEnvelope, BlockBodyExt as BlockBody, BlockHeader, EIP1559ParamError, GotExpected,
+    RecoveredBlock, SealedBlock, SealedHeader, SignerRecoverable, constants::KECCAK_EMPTY,
+    transaction::Either,
 };
 use base_common_types_payload::{
     BasePayloadBuilderAttributes, BuiltPayloadExecutedBlock, InvalidPayloadAttributesError,
@@ -129,16 +128,11 @@ use base_execution_evm_runtime::{BlockExecutionError, BundleAccount, BundleReten
 use base_execution_payload::{BaseEngineValidator, PayloadBuilderLease, PayloadBuilderResources};
 use base_execution_state_operations::{CacheFillMode, CacheStats};
 use base_execution_state_provider::{
-    BlockExecutionOutput, BlockReader, CanonicalInMemoryState, ChangeSetReader,
-    DatabaseProviderFactory, DatabaseProviderROFactory, HeaderProvider, OverlayManager,
-    OverlayStateProviderFactory, ProviderError, PruneCheckpointReader, StageCheckpointReader,
-    StateProvider, StateProviderBox, StateProviderFactory, StateReader, StorageChangeSetReader,
-    StorageSettingsCache, TryIntoHistoricalStateProvider,
+    BlockExecutionOutput, BlockReader, CanonicalInMemoryState, HeaderProvider, OverlayManager,
+    OverlayStateProviderFactory, ProviderError, StateProvider, StateProviderBox,
+    StateProviderFactory,
 };
-use base_execution_state_trie::{
-    HashedPostState, LazyTrieData, hashed_cursor::HashedCursorFactory,
-    trie_cursor::TrieCursorFactory, updates::TrieUpdates,
-};
+use base_execution_state_trie::{HashedPostState, LazyTrieData, updates::TrieUpdates};
 use base_execution_state_types::{ExecutedBlock, ExecutionTimingStats, ProviderResult};
 use tracing::{Level, Span, debug, debug_span, error, info, instrument, trace, warn};
 

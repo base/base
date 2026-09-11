@@ -1,5 +1,4 @@
 use alloy_primitives::{Address, B256, BlockHash, TxHash};
-use alloy_sol_types::SolEvent;
 use base_common_types_chain::{ReceiptEnvelope, TxReceipt, TxType};
 
 use crate::{Log, ReceiptResponse};
@@ -210,32 +209,6 @@ impl<T: TxReceipt> TransactionReceipt<T> {
     /// Get the receipt logs.
     pub fn logs(&self) -> &[T::Log] {
         self.inner.logs()
-    }
-}
-impl<T: TxReceipt<Log: AsRef<alloy_primitives::Log>>> TransactionReceipt<T> {
-    /// Attempts to decode the logs to the provided log type.
-    ///
-    /// Returns the first log that decodes successfully.
-    ///
-    /// Returns None, if none of the logs could be decoded to the provided log type or if there
-    /// are no logs.
-    pub fn decoded_log<E: SolEvent>(&self) -> Option<alloy_primitives::Log<E>> {
-        self.logs().iter().find_map(|log| E::decode_log(log.as_ref()).ok())
-    }
-    /// Attempts to decode the first log in the receipt to the provided log type.
-    /// Returns `None` if there are no logs or if decoding fails.
-    pub fn decode_first_log<E: SolEvent>(&self) -> Option<alloy_primitives::Log<E>> {
-        self.logs().first().and_then(|log| E::decode_log(log.as_ref()).ok())
-    }
-
-    /// Decode the log at the given index as the given SolEvent type.
-    pub fn decode_nth_log<E: SolEvent>(&self, idx: usize) -> Option<alloy_primitives::Log<E>> {
-        self.logs().get(idx).and_then(|log| E::decode_log(log.as_ref()).ok())
-    }
-
-    /// Decode the last log in the receipt.
-    pub fn decode_last_log<E: SolEvent>(&self) -> Option<alloy_primitives::Log<E>> {
-        self.logs().last().and_then(|log| E::decode_log(log.as_ref()).ok())
     }
 }
 

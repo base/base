@@ -1,7 +1,7 @@
 //! Versioned resource-metering schedules and their transaction-cost evaluator.
 //!
 //! Resource metering reweights named observations into independent resource-unit
-//! dimensions. Simulated `meterBundle` data is a candidate pre-filter.
+//! dimensions. Simulated transaction observations provide a candidate pre-filter.
 //! Committed payload usage is accounted from executed observations when they
 //! exist: actual gas used and net post-state effects such as
 //! [`ResourceSample::STATE_NEW_STORAGE_SLOT`] replace simulated `STATE_*`
@@ -17,7 +17,7 @@
 use std::{collections::HashMap, fmt, fs, path::Path};
 
 use alloy_primitives::{Address, TxHash};
-use base_common_types_payload::{MeterBundleResponse, OpcodeGas};
+use base_common_types_payload::{OpcodeGas, TransactionResult};
 use base_execution_evm_runtime::EvmState;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -160,7 +160,7 @@ impl ResourceMeteringUsage {
 ///
 /// `gas_used` and net post-state effects are taken from builder execution when
 /// that result is available. Opcode and precompile counts stay on the simulated
-/// `meterBundle` bag. Production execution does not attach opcode bags.
+/// transaction observations. Production execution does not attach opcode bags.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResourceSample {
     /// Transaction gas used for `baseGasWeight`.
@@ -209,16 +209,13 @@ impl ResourceSample {
         Self::STATE_CHANGED_ACCOUNT,
     ];
 
-    /// Builds a simulated sample from the matching `meterBundle` transaction.
+    /// Builds a simulated sample from observations for the matching transaction.
     ///
     /// Returns `None` when the response has no result for `tx_hash` so callers
-    /// can fail open instead of attributing bundle totals to the wrong tx.
-    pub fn from_meter(meter: &MeterBundleResponse, tx_hash: &TxHash) -> Option<Self> {
-        meter
-            .results
-            .iter()
-            .find(|result| result.tx_hash == *tx_hash)
-            .map(|result| Self { gas_used: result.gas_used, operations: result.opcode_gas.clone() })
+    /// can fail open instead of attributing observations to the wrong transaction.
+    pub fn from_meter(meter: &TransactionResult, tx_hash: &TxHash) -> Option<Self> {
+        (meter.tx_hash == *tx_hash)
+            .then(|| Self { gas_used: meter.gas_used, operations: meter.opcode_gas.clone() })
     }
 
     /// Builds an executed-preferred sample.
@@ -785,13 +782,13 @@ impl ResourceThrottlingDecision {
 }
 
 impl ResourceMeteringSchedule {
-    /// Simulated admission check from `meterBundle` data.
+    /// Simulated admission check from `transaction metering` data.
     ///
     /// Missing metering data fails open with zero simulated usage so the
     /// transaction can still execute and be accounted from actual results.
     pub fn evaluate_transaction(
         &self,
-        meter: Option<&MeterBundleResponse>,
+        meter: Option<&TransactionResult>,
         tx_hash: &TxHash,
         cumulative: &[u128],
     ) -> ResourceThrottlingDecision {
@@ -1262,23 +1259,19 @@ mod tests {
         tx_hash: TxHash,
         gas_used: u64,
         operations: Vec<OpcodeGas>,
-    ) -> MeterBundleResponse {
-        MeterBundleResponse {
-            total_gas_used: gas_used.saturating_mul(2),
-            results: vec![base_common_types_payload::TransactionResult {
-                coinbase_diff: U256::ZERO,
-                eth_sent_to_coinbase: U256::ZERO,
-                from_address: Address::ZERO,
-                gas_fees: U256::ZERO,
-                gas_price: U256::ZERO,
-                gas_used,
-                to_address: None,
-                tx_hash,
-                value: U256::ZERO,
-                execution_time_us: 0,
-                opcode_gas: operations,
-            }],
-            ..Default::default()
+    ) -> TransactionResult {
+        base_common_types_payload::TransactionResult {
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            from_address: Address::ZERO,
+            gas_fees: U256::ZERO,
+            gas_price: U256::ZERO,
+            gas_used,
+            to_address: None,
+            tx_hash,
+            value: U256::ZERO,
+            execution_time_us: 0,
+            opcode_gas: operations,
         }
     }
 
@@ -1520,37 +1513,6 @@ mod tests {
                 .count(),
             1
         );
-    }
-
-    #[test]
-    fn from_meter_uses_matching_tx_row_gas_used_not_bundle_total() {
-        let first = TxHash::repeat_byte(0x11);
-        let second = TxHash::repeat_byte(0x22);
-        let mut meter = meter_response(first, 21_000, vec![opcode_gas("SSTORE", 1, 10)]);
-        meter.total_gas_used = 99_999;
-        meter.results.push(base_common_types_payload::TransactionResult {
-            coinbase_diff: U256::ZERO,
-            eth_sent_to_coinbase: U256::ZERO,
-            from_address: Address::ZERO,
-            gas_fees: U256::ZERO,
-            gas_price: U256::ZERO,
-            gas_used: 50_000,
-            to_address: None,
-            tx_hash: second,
-            value: U256::ZERO,
-            execution_time_us: 0,
-            opcode_gas: vec![opcode_gas("SLOAD", 2, 20)],
-        });
-
-        let first_sample = ResourceSample::from_meter(&meter, &first).unwrap();
-        assert_eq!(first_sample.gas_used, 21_000);
-        assert_eq!(first_sample.operations, vec![opcode_gas("SSTORE", 1, 10)]);
-
-        let second_sample = ResourceSample::from_meter(&meter, &second).unwrap();
-        assert_eq!(second_sample.gas_used, 50_000);
-        assert_eq!(second_sample.operations, vec![opcode_gas("SLOAD", 2, 20)]);
-        assert_ne!(first_sample.gas_used, meter.total_gas_used);
-        assert_ne!(second_sample.gas_used, meter.total_gas_used);
     }
 
     #[test]

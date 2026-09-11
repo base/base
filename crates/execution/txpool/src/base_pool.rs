@@ -2,21 +2,17 @@
 
 use std::{collections::HashMap, fmt, sync::Arc};
 
-use alloy_eips::{
-    eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
-};
-use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use alloy_primitives::{Address, B256, TxHash, U256, map::AddressSet};
 use base_common_types_chain::{Recovered, Transaction};
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
 use base_execution_txpool::{
     AddedTransactionOutcome, AddedTransactionState, AllPoolTransactions, AllTransactionsEvents,
-    BestTransactions, BestTransactionsAttributes, BlobStore, BlobStoreError, BlockInfo,
-    FullTransactionEvent, GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool,
-    PoolResult, PoolSize, PropagatedTransactions, SubPool, TransactionEvent, TransactionEvents,
-    TransactionListenerKind, TransactionOrigin, TransactionPool, TransactionValidationOutcome,
-    TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
+    BestTransactions, BestTransactionsAttributes, BlockInfo, FullTransactionEvent,
+    GetPooledTransactionLimit, NewTransactionEvent, Pool, PoolResult, PoolSize,
+    PropagatedTransactions, SubPool, TransactionEvent, TransactionEvents, TransactionListenerKind,
+    TransactionOrigin, TransactionPool, TransactionValidationOutcome, TransactionValidator,
+    ValidPoolTransaction,
 };
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
@@ -24,8 +20,8 @@ use tokio::{spawn, sync::mpsc};
 use tracing::debug;
 
 use crate::{
-    Admission, BasePooledTransaction, BaseTransactionValidator, GuardLimits, GuardMetrics,
-    InvalidationCause, InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
+    Admission, BasePooledTransaction, GuardLimits, GuardMetrics, InvalidationCause,
+    InvalidationKey, LimitRejection, MempoolGuard, ParkableBestTransactions,
     ParkableTransactionPool, ParkedBestTransactions, StateDiffInvalidation, ValidityPoolMetrics,
     best::MergeBestTransactions,
     two_d_nonce_pool::{InsertOutcome, TwoDNoncePool},
@@ -71,11 +67,8 @@ impl AccountStateDiff {
 }
 
 /// Wrapper around reth's transaction pool that adds a 2D nonce sidecar for EIP-8130 channels.
-pub struct BaseTransactionPool<S = crate::DiskFileBlobStore>
-where
-    S: BlobStore + Clone,
-{
-    protocol_pool: Pool<S>,
+pub struct BaseTransactionPool {
+    protocol_pool: Pool,
     ordering: crate::BaseOrdering,
     nonce_pool: Arc<RwLock<TwoDNoncePool>>,
     listeners: Arc<RwLock<SidecarListeners>>,
@@ -91,19 +84,13 @@ where
     protocol_admission_lock: Arc<Mutex<()>>,
 }
 
-impl<S> fmt::Debug for BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl fmt::Debug for BaseTransactionPool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseTransactionPool").finish_non_exhaustive()
     }
 }
 
-impl<S> Clone for BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl Clone for BaseTransactionPool {
     fn clone(&self) -> Self {
         Self {
             protocol_pool: self.protocol_pool.clone(),
@@ -117,14 +104,11 @@ where
     }
 }
 
-impl<S> Unpin for BaseTransactionPool<S> where S: BlobStore + Clone {}
+impl Unpin for BaseTransactionPool {}
 
-impl<S> BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl BaseTransactionPool {
     /// Creates a new wrapper around the reth protocol pool.
-    pub fn new(protocol_pool: Pool<S>, ordering: crate::BaseOrdering) -> Self {
+    pub fn new(protocol_pool: Pool, ordering: crate::BaseOrdering) -> Self {
         let price_bump_config = protocol_pool.config().price_bumps;
         Self {
             protocol_pool,
@@ -164,7 +148,7 @@ where
     }
 
     /// Returns the wrapped reth pool.
-    pub const fn protocol_pool(&self) -> &Pool<S> {
+    pub const fn protocol_pool(&self) -> &Pool {
         &self.protocol_pool
     }
 
@@ -293,9 +277,7 @@ where
     /// predicates, or `None` when they impose no finite block bound.
     fn validity_block_expiry_bound(validated: &TransactionValidationOutcome) -> Option<u64> {
         let transaction = validated.as_valid_transaction()?;
-        crate::ValidityPredicate::block_expiry_bound(
-            transaction.transaction().validity_predicates(),
-        )
+        crate::ValidityPredicate::block_expiry_bound(transaction.validity_predicates())
     }
 
     /// Records a transaction's last valid block in the block-expiry index,
@@ -353,7 +335,7 @@ where
     fn has_validity_predicates(validated: &TransactionValidationOutcome) -> bool {
         validated
             .as_valid_transaction()
-            .is_some_and(|transaction| !transaction.transaction().validity_predicates().is_empty())
+            .is_some_and(|transaction| !transaction.validity_predicates().is_empty())
     }
 
     fn reconcile_guard(&self) {
@@ -413,7 +395,7 @@ where
         validated: &TransactionValidationOutcome,
     ) -> PoolResult<()> {
         let current = validated.as_valid_transaction().is_none_or(|transaction| {
-            transaction.transaction().limit_class().is_none_or(|class| {
+            transaction.limit_class().is_none_or(|class| {
                 class.classification_generation
                     == self.validator().validator().limit_class_cache_generation()
             })
@@ -433,7 +415,7 @@ where
         }
         let Some(admission) = validated
             .as_valid_transaction()
-            .and_then(|transaction| Self::admission_for(transaction.transaction()))
+            .and_then(|transaction| Self::admission_for(transaction))
         else {
             return Ok(false);
         };
@@ -687,13 +669,12 @@ where
 
     fn validated_pool_transaction(
         &self,
-        transaction: base_execution_txpool::ValidTransaction,
+        transaction: base_execution_txpool::BasePooledTransaction,
         origin: TransactionOrigin,
         propagate: bool,
         authorities: Option<Vec<Address>>,
         nonce_pool: &mut TwoDNoncePool,
     ) -> ValidPoolTransaction {
-        let transaction = transaction.into_transaction();
         let sender_id = nonce_pool.sender_id_or_create(transaction.sender());
         let authority_ids = authorities.map(|authorities| {
             authorities
@@ -762,10 +743,7 @@ where
     }
 }
 
-impl<S> StateDiffInvalidation for BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl StateDiffInvalidation for BaseTransactionPool {
     fn invalidate_from_state_diff(&self, diffs: &[AccountStateDiff]) -> usize {
         self.apply_state_diff(diffs).len()
     }
@@ -775,10 +753,7 @@ where
     }
 }
 
-impl<S> TransactionPool for BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl TransactionPool for BaseTransactionPool {
     fn pool_size(&self) -> PoolSize {
         let mut size = self.protocol_pool.pool_size();
         let nonce_pool = self.nonce_pool.read();
@@ -901,10 +876,6 @@ where
         kind: TransactionListenerKind,
     ) -> mpsc::Receiver<TxHash> {
         self.merged_pending_listener(kind)
-    }
-
-    fn blob_transaction_sidecars_listener(&self) -> mpsc::Receiver<NewBlobSidecar> {
-        self.protocol_pool.blob_transaction_sidecars_listener()
     }
 
     fn new_transactions_listener_for(
@@ -1295,73 +1266,9 @@ where
         }
         senders
     }
-
-    fn get_blob(
-        &self,
-        tx_hash: TxHash,
-    ) -> Result<Option<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-        self.protocol_pool.get_blob(tx_hash)
-    }
-
-    fn get_all_blobs(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<(TxHash, Arc<BlobTransactionSidecarVariant>)>, BlobStoreError> {
-        self.protocol_pool.get_all_blobs(tx_hashes)
-    }
-
-    fn get_all_blobs_exact(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-        self.protocol_pool.get_all_blobs_exact(tx_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v1(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV1>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v1(versioned_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v2(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Option<Vec<BlobAndProofV2>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v2(versioned_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v3(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v3(versioned_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v4(
-        &self,
-        versioned_hashes: &[B256],
-        indices_bitarray: B128,
-    ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-        self.protocol_pool.get_blobs_for_versioned_hashes_v4(versioned_hashes, indices_bitarray)
-    }
-
-    fn has_blobs_for_versioned_hashes(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<bool>, BlobStoreError> {
-        self.protocol_pool.has_blobs_for_versioned_hashes(versioned_hashes)
-    }
-
-    fn blob_store(&self) -> Box<dyn BlobStore> {
-        Box::new(self.protocol_pool.blob_store().clone())
-    }
 }
 
-impl<S> ParkableTransactionPool for BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl ParkableTransactionPool for BaseTransactionPool {
     fn best_transactions_with_attributes_and_parking(
         &self,
         attributes: BestTransactionsAttributes,
@@ -1377,10 +1284,7 @@ where
     }
 }
 
-impl<S> BaseTransactionPool<S>
-where
-    S: BlobStore + Clone,
-{
+impl BaseTransactionPool {
     /// Sets the block context used for pool validation and ordering.
     pub fn set_block_info(&self, info: BlockInfo) {
         self.protocol_pool.pool.set_block_info(info)
@@ -1474,21 +1378,6 @@ where
         for hash in discarded {
             guard.release(&hash);
         }
-    }
-
-    /// Deletes the blob sidecar for a transaction.
-    pub fn delete_blob(&self, tx: B256) {
-        self.protocol_pool.pool.delete_blob(tx)
-    }
-
-    /// Deletes blob sidecars for the supplied transactions.
-    pub fn delete_blobs(&self, txs: Vec<B256>) {
-        self.protocol_pool.pool.delete_blobs(txs)
-    }
-
-    /// Cleans up blob sidecars that are no longer needed.
-    pub fn cleanup_blobs(&self) {
-        self.protocol_pool.pool.cleanup_blobs()
     }
 }
 
@@ -1718,14 +1607,17 @@ mod tests {
         test_utils::{ExtendedAccount, MockEthProvider, ProviderTestUtils},
     };
     use base_execution_txpool::{
-        BaseTransactionValidatorBuilder, CanonicalStateUpdate, InMemoryBlobStore, PoolConfig,
-        PoolUpdateKind, PriceBumpConfig, TransactionId, TransactionOrigin,
+        BaseTransactionValidatorBuilder, CanonicalStateUpdate, PoolConfig, PoolUpdateKind,
+        PriceBumpConfig, TransactionId, TransactionOrigin,
     };
     use base_testing_support::build_test_genesis_zenith;
     use futures::{StreamExt, future::join_all};
 
     use super::*;
-    use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};
+    use crate::{
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, BaseTransactionValidator, LimitClass,
+        TransactionValidationTaskExecutor, WatchSet,
+    };
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -1927,7 +1819,7 @@ mod tests {
         assert!(nonce_pool.get(&replacement_hash).is_some());
     }
 
-    type IntegrationPool = BaseTransactionPool<InMemoryBlobStore>;
+    type IntegrationPool = BaseTransactionPool;
 
     fn build_integration_pool() -> (IntegrationPool, BlockchainProvider) {
         let mut genesis = build_test_genesis_zenith();
@@ -1938,7 +1830,6 @@ mod tests {
             .with_genesis_block();
         let client = ProviderTestUtils::from_mock(&client);
         let evm_config = BaseEvmConfig::new(Arc::clone(&chain_spec));
-        let blob_store = InMemoryBlobStore::default();
         let validator = BaseTransactionValidatorBuilder::new(client.clone(), evm_config)
             .no_shanghai()
             .no_cancun()
@@ -1948,7 +1839,7 @@ mod tests {
                 .require_l1_data_gas_fee(false);
         let validator = TransactionValidationTaskExecutor::spawn(validator, &Runtime::test(), 0);
         let ordering = BaseOrdering::default();
-        let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
+        let pool = Pool::new(validator, ordering.clone(), PoolConfig::default());
         (BaseTransactionPool::new(pool, ordering).with_guard_limits(GuardLimits::default()), client)
     }
 

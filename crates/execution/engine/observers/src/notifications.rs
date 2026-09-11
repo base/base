@@ -14,7 +14,6 @@ use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_state_provider::{
     BlockNumReader, BlockReader, Chain, HeaderProvider, StateProviderFactory,
 };
-use base_execution_state_types::ExecutionStageThresholds;
 use futures::{Stream, StreamExt};
 use tokio::sync::mpsc::Receiver;
 
@@ -26,49 +25,6 @@ use crate::{BackfillJobFactory, ExExNotification, StreamBackfillJob, WalHandle};
 #[derive(Debug)]
 pub struct ExExNotifications<P> {
     inner: ExExNotificationsInner<P>,
-}
-
-/// A trait, that represents a stream of [`ExExNotification`]s. The stream will emit notifications
-/// for all blocks. If the stream is configured with a head via [`ExExNotifications::set_with_head`]
-/// or [`ExExNotifications::with_head`], it will run backfill jobs to catch up to the node head.
-pub trait ExExNotificationsStream: Stream<Item = eyre::Result<ExExNotification>> + Unpin {
-    /// Sets [`ExExNotificationsStream`] to a stream of [`ExExNotification`]s without a head.
-    ///
-    /// It's a no-op if the stream has already been configured without a head.
-    ///
-    /// See the documentation of [`ExExNotificationsWithoutHead`] for more details.
-    fn set_without_head(&mut self);
-
-    /// Sets [`ExExNotificationsStream`] to a stream of [`ExExNotification`]s with the provided
-    /// head.
-    ///
-    /// It's a no-op if the stream has already been configured with a head.
-    ///
-    /// See the documentation of [`ExExNotificationsWithHead`] for more details.
-    fn set_with_head(&mut self, exex_head: ExExHead);
-
-    /// Returns a new [`ExExNotificationsStream`] without a head.
-    ///
-    /// See the documentation of [`ExExNotificationsWithoutHead`] for more details.
-    fn without_head(self) -> Self
-    where
-        Self: Sized;
-
-    /// Returns a new [`ExExNotificationsStream`] with the provided head.
-    ///
-    /// See the documentation of [`ExExNotificationsWithHead`] for more details.
-    fn with_head(self, exex_head: ExExHead) -> Self
-    where
-        Self: Sized;
-
-    /// Sets custom thresholds for the backfill job.
-    ///
-    /// These thresholds control how many blocks are included in each backfill notification.
-    /// Only takes effect when the stream is configured with a head.
-    ///
-    /// By default, the backfill job uses [`BackfillJobFactory`] defaults (up to 500,000 blocks
-    /// per batch, bounded by 30s execution time).
-    fn set_backfill_thresholds(&mut self, _thresholds: ExecutionStageThresholds) {}
 }
 
 #[derive(Debug)]
@@ -114,7 +70,7 @@ impl<P> ExExNotifications<P> {
         }
     }
 
-    /// As [`set_with_head`](ExExNotificationsStream::set_with_head), but backfills up to the
+    /// As [`set_with_head`](ExExNotifications::set_with_head), but backfills up to the
     /// node's current canonical head rather than the head captured at construction.
     pub fn catch_up_with_head(&mut self, exex_head: ExExHead) -> eyre::Result<()>
     where
@@ -125,16 +81,16 @@ impl<P> ExExNotifications<P> {
         let local_head: BlockNumHash = self.inner.provider().chain_info()?.into();
 
         let current = std::mem::replace(&mut self.inner, ExExNotificationsInner::Invalid);
-        let (provider, evm_config, notifications, wal_handle, backfill_thresholds) = match current {
+        let (provider, evm_config, notifications, wal_handle) = match current {
             ExExNotificationsInner::WithoutHead(n) => {
-                (n.provider, n.evm_config, n.notifications, n.wal_handle, None)
+                (n.provider, n.evm_config, n.notifications, n.wal_handle)
             }
             ExExNotificationsInner::WithHead(n) => {
-                (n.provider, n.evm_config, n.notifications, n.wal_handle, n.backfill_thresholds)
+                (n.provider, n.evm_config, n.notifications, n.wal_handle)
             }
             ExExNotificationsInner::Invalid => unreachable!(),
         };
-        let mut with_head = ExExNotificationsWithHead::new(
+        let with_head = ExExNotificationsWithHead::new(
             local_head,
             provider,
             evm_config,
@@ -142,19 +98,17 @@ impl<P> ExExNotifications<P> {
             wal_handle,
             exex_head,
         );
-        // Preserve any custom backfill thresholds so the catch-up backfill respects the limits
-        // the ExEx already configured.
-        with_head.backfill_thresholds = backfill_thresholds;
         self.inner = ExExNotificationsInner::WithHead(Box::new(with_head));
         Ok(())
     }
 }
 
-impl<P> ExExNotificationsStream for ExExNotifications<P>
+impl<P> ExExNotifications<P>
 where
     P: BlockReader + HeaderProvider + StateProviderFactory + Clone + Unpin + 'static,
 {
-    fn set_without_head(&mut self) {
+    /// Subscribe to notifications without a head.
+    pub fn set_without_head(&mut self) {
         let current = std::mem::replace(&mut self.inner, ExExNotificationsInner::Invalid);
         self.inner = ExExNotificationsInner::WithoutHead(match current {
             ExExNotificationsInner::WithoutHead(notifications) => notifications,
@@ -169,7 +123,8 @@ where
         });
     }
 
-    fn set_with_head(&mut self, exex_head: ExExHead) {
+    /// Subscribe to notifications after the provided head.
+    pub fn set_with_head(&mut self, exex_head: ExExHead) {
         let current = std::mem::replace(&mut self.inner, ExExNotificationsInner::Invalid);
         self.inner = ExExNotificationsInner::WithHead(match current {
             ExExNotificationsInner::WithoutHead(notifications) => {
@@ -189,20 +144,16 @@ where
         });
     }
 
-    fn without_head(mut self) -> Self {
+    /// Return this stream configured without a head.
+    pub fn without_head(mut self) -> Self {
         self.set_without_head();
         self
     }
 
-    fn with_head(mut self, exex_head: ExExHead) -> Self {
+    /// Return this stream configured with the provided head.
+    pub fn with_head(mut self, exex_head: ExExHead) -> Self {
         self.set_with_head(exex_head);
         self
-    }
-
-    fn set_backfill_thresholds(&mut self, thresholds: ExecutionStageThresholds) {
-        if let ExExNotificationsInner::WithHead(notifications) = &mut self.inner {
-            notifications.backfill_thresholds = Some(thresholds);
-        }
     }
 }
 
@@ -258,7 +209,8 @@ impl<P> ExExNotificationsWithoutHead<P> {
     }
 
     /// Subscribe to notifications with the given head.
-    fn with_head(self, head: ExExHead) -> ExExNotificationsWithHead<P> {
+    /// Return this stream configured with the provided head.
+    pub fn with_head(self, head: ExExHead) -> ExExNotificationsWithHead<P> {
         ExExNotificationsWithHead::new(
             self.node_head,
             self.provider,
@@ -305,8 +257,6 @@ pub struct ExExNotificationsWithHead<P> {
     pending_check_backfill: bool,
     /// The backfill job to run before consuming any notifications.
     backfill_job: Option<StreamBackfillJob<P, Chain>>,
-    /// Custom thresholds for the backfill job, if set.
-    backfill_thresholds: Option<ExecutionStageThresholds>,
     /// Notifications that arrived during backfill and need to be delivered after it completes.
     /// These are notifications for blocks beyond the backfill range that we must not drop.
     pending_notifications: VecDeque<ExExNotification>,
@@ -332,22 +282,8 @@ impl<P> ExExNotificationsWithHead<P> {
             pending_check_canonical: true,
             pending_check_backfill: true,
             backfill_job: None,
-            backfill_thresholds: None,
             pending_notifications: VecDeque::new(),
         }
-    }
-
-    /// Sets custom thresholds for the backfill job.
-    ///
-    /// These thresholds control how many blocks are included in each backfill notification.
-    /// By default, the backfill job uses [`BackfillJobFactory`] defaults (up to 500,000 blocks
-    /// per batch, bounded by 30s execution time).
-    ///
-    /// If your ExEx is memory-constrained, consider setting a lower `max_blocks` value to
-    /// reduce the size of each backfill notification.
-    pub const fn with_backfill_thresholds(mut self, thresholds: ExecutionStageThresholds) -> Self {
-        self.backfill_thresholds = Some(thresholds);
-        self
     }
 }
 
@@ -412,11 +348,8 @@ where
     /// - ExEx is at the same block number as the node head (`exex_head.number ==
     ///   node_head.number`). Nothing to do.
     fn check_backfill(&mut self) -> eyre::Result<()> {
-        let mut backfill_job_factory =
+        let backfill_job_factory =
             BackfillJobFactory::new(self.evm_config.clone(), self.provider.clone());
-        if let Some(thresholds) = self.backfill_thresholds.clone() {
-            backfill_job_factory = backfill_job_factory.with_thresholds(thresholds);
-        }
         match self.initial_exex_head.block.number.cmp(&self.initial_local_head.number) {
             std::cmp::Ordering::Less => {
                 // ExEx is behind the node head, start backfill

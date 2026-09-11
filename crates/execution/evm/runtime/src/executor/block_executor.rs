@@ -568,9 +568,9 @@ mod tests {
         TxEip8130, TxLegacy, transaction::Recovered,
     };
     use base_execution_evm_runtime::{
-        AccountInfo, BaseBlockExecutorFactory, BaseEvm, BaseEvmFactory, BaseSpecId, BlockEnv,
-        Builder, CacheDB, Context, DefaultBase, EmptyDB, EvmEnv, HashMap, InMemoryDB, L1BlockInfo,
-        NoOpInspector, PrecompilesMap, ToTxEnv,
+        AccountInfo, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId, BlockEnv, Builder,
+        CacheDB, Context, DefaultBase, EmptyDB, EvmEnv, HashMap, InMemoryDB, L1BlockInfo,
+        NoOpInspector, ToTxEnv,
     };
 
     use super::*;

@@ -8,9 +8,9 @@ use base_common_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_execution_payload::{
-    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteredOpcodes,
-    MeteringConfig, MeteringStore, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL,
-    RejectionCache, ResourceMeteringConfig, SharedMeteringStore,
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+    REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache, ResourceMeteringConfig,
+    SharedMeteringStore,
 };
 use base_execution_rpc::DEFAULT_MAX_VALIDITY_PREDICATES;
 use base_execution_state_indexer::{
@@ -22,7 +22,6 @@ use base_execution_txpool::{
     TransactionTracingConfig as TxpoolConfig, TxForwardingConfig,
 };
 use base_node_service::{BaseNode, NodeHandle, NodeLaunch, RollupArgs};
-use tracing::warn;
 use url::Url;
 
 use crate::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
@@ -30,7 +29,7 @@ use crate::{ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig};
 /// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
 pub struct MeteringArgs {
-    /// Enable metering RPC for transaction bundle simulation.
+    /// Enable block profiling RPC and payload resource metering.
     ///
     /// Native kill switch for payload resource metering: a loaded schedule is
     /// evaluated only when this is set. The Flashblocks builder uses
@@ -38,26 +37,6 @@ pub struct MeteringArgs {
     #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
-    /// Comma-separated list of EVM opcodes to track for gas metering
-    /// (e.g., "SSTORE,SLOAD,KECCAK256"). Precompile gas is always tracked.
-    #[arg(long = "metering.metered-opcodes", requires = "enable_metering", value_delimiter = ',')]
-    pub metering_metered_opcodes: Vec<String>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "metering.gas-limit", requires = "enable_metering", hide = true)]
-    pub metering_gas_limit: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "metering.execution-time-us", requires = "enable_metering", hide = true)]
-    pub metering_execution_time_us: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "metering.state-root-time-us", requires = "enable_metering", hide = true)]
-    pub metering_state_root_time_us: Option<u64>,
-
-    /// Deprecated and ignored. Kept so older deployment configurations remain accepted.
-    #[arg(long = "metering.da-bytes", requires = "enable_metering", hide = true)]
-    pub metering_da_bytes: Option<u64>,
     /// Resource-metering schedule. Evaluated when `--enable-metering` is set.
     #[command(flatten)]
     pub resource_metering: ResourceMeteringArgs,
@@ -455,19 +434,6 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
 pub struct StandardBaseRethNode;
 
 impl StandardBaseRethNode {
-    /// Applies a configured L1 upgrade signal from rollup args before startup.
-    pub async fn apply_initial_upgrade_signal_from_rollup_args(
-        builder: NodeLaunch,
-        rollup_args: &RollupArgs,
-    ) -> eyre::Result<NodeLaunch> {
-        Self::apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
-            builder,
-            rollup_args,
-            UpgradeSignalStartupMode::ReadAndApply,
-        )
-        .await
-    }
-
     /// Applies a configured L1 upgrade signal from rollup args with explicit startup behavior.
     pub async fn apply_initial_upgrade_signal_from_rollup_args_with_startup_mode(
         mut builder: NodeLaunch,
@@ -561,8 +527,6 @@ impl StandardBaseRethNode {
             args.metering.resource_metering.resource_metering_schedule.as_deref(),
             provider,
         )?;
-        let schedule_operation_names: Vec<String> =
-            resource_metering.schedule.priced_operation_names().map(str::to_string).collect();
         let rejection_cache = RejectionCache::new(
             args.metering.resource_metering.rejection_cache_max_capacity,
             Duration::from_secs(args.metering.resource_metering.rejection_cache_ttl_secs),
@@ -589,31 +553,7 @@ impl StandardBaseRethNode {
             transaction_event_node_role: transaction_event_node_role(),
         });
 
-        if args.metering.metering_execution_time_us.is_some()
-            || args.metering.metering_state_root_time_us.is_some()
-            || args.metering.metering_gas_limit.is_some()
-            || args.metering.metering_da_bytes.is_some()
-        {
-            warn!("deprecated metering resource limit flags are ignored");
-        }
-
-        let metering_config = if args.metering.enable_metering {
-            let opcode_names = inspector_opcode_names(
-                args.metering.metering_metered_opcodes.clone(),
-                schedule_operation_names,
-            );
-            let metered_opcodes = if opcode_names.is_empty() {
-                MeteredOpcodes::default()
-            } else {
-                MeteredOpcodes::parse(&opcode_names)?
-            }
-            .with_all_precompiles();
-
-            MeteringConfig::enabled().with_metered_opcodes(metered_opcodes)
-        } else {
-            MeteringConfig::disabled()
-        };
-        launch.rpc.metering = Some(metering_config);
+        launch.rpc.metering = args.metering.enable_metering;
         launch.services.shadow_indexer = Some((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
@@ -725,32 +665,6 @@ fn parse_otel_resource_attribute(key: &str) -> Option<String> {
                 .filter(|v| !v.is_empty())
         })
     })
-}
-
-/// Opcode and precompile names the metering inspector can parse.
-///
-/// Schedule `STATE_*` post-state effects are not EVM opcodes; unknown names are
-/// skipped so a loaded schedule cannot fail node startup.
-fn inspector_opcode_names(
-    cli_names: impl IntoIterator<Item = String>,
-    schedule_names: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Vec<String> {
-    let mut names: Vec<String> = cli_names.into_iter().collect();
-    for name in schedule_names {
-        let name = name.as_ref();
-        if !is_inspector_opcode_name(name) {
-            continue;
-        }
-        if !names.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
-            names.push(name.to_string());
-        }
-    }
-    names
-}
-
-fn is_inspector_opcode_name(name: &str) -> bool {
-    !name.to_ascii_uppercase().starts_with("STATE_")
-        && MeteredOpcodes::parse(&[name.to_string()]).is_ok()
 }
 
 #[cfg(test)]
@@ -918,26 +832,9 @@ mod tests {
             base_common_runtime::Runtime::test(),
         );
         StandardBaseRethNode::configure(&mut launch, args).unwrap();
-        assert!(launch.rpc.metering.unwrap().enabled);
+        assert!(launch.rpc.metering);
         assert!(!launch.base.resource_metering.enabled);
         assert!(launch.rpc.metering_store.is_none());
-    }
-
-    #[test]
-    fn test_standard_node_args_parses_metering_flags_once() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "reth",
-            "--enable-metering",
-            "--metering.metered-opcodes",
-            "SSTORE,SLOAD",
-        ])
-        .args;
-
-        assert!(args.metering.enable_metering);
-        assert_eq!(
-            args.metering.metering_metered_opcodes,
-            vec!["SSTORE".to_string(), "SLOAD".to_string()]
-        );
     }
 
     #[test]
@@ -1158,27 +1055,6 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_node_args_accepts_deprecated_metering_flags() {
-        let args = CommandParser::<StandardNodeArgs>::parse_from([
-            "reth",
-            "--enable-metering",
-            "--metering.execution-time-us",
-            "5000000",
-            "--metering.state-root-time-us",
-            "1000000",
-            "--metering.gas-limit",
-            "30000000",
-            "--metering.da-bytes",
-            "1572860",
-        ])
-        .args;
-
-        assert_eq!(args.metering.metering_execution_time_us, Some(5_000_000));
-        assert_eq!(args.metering.metering_state_root_time_us, Some(1_000_000));
-        assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
-        assert_eq!(args.metering.metering_da_bytes, Some(1_572_860));
-    }
-    #[test]
     fn test_standard_node_args_parses_rejection_cache_flags() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
@@ -1205,15 +1081,6 @@ mod tests {
             args.metering.resource_metering.rejection_cache_ttl_secs,
             REJECTION_CACHE_TTL.as_secs()
         );
-    }
-
-    #[test]
-    fn inspector_opcode_names_skips_state_prefix_and_unparseable() {
-        let names = inspector_opcode_names(
-            ["SLOAD".to_string()],
-            ["SSTORE", "STATE_NEW_STORAGE_SLOT", "NOT_AN_OPCODE", "sstore"],
-        );
-        assert_eq!(names, vec!["SLOAD".to_string(), "SSTORE".to_string()]);
     }
 
     #[test]
@@ -1253,5 +1120,32 @@ mod tests {
             args,
         )
         .expect("STATE_ and unknown schedule names must not fail opcode parse");
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_metering_flags_once() {
+        let args =
+            CommandParser::<StandardNodeArgs>::parse_from(["reth", "--enable-metering"]).args;
+
+        assert!(args.metering.enable_metering);
+    }
+
+    #[test]
+    fn removed_resource_limit_flags_are_rejected() {
+        for flag in [
+            "--metering.gas-limit",
+            "--metering.execution-time-us",
+            "--metering.state-root-time-us",
+            "--metering.da-bytes",
+        ] {
+            let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+                "base",
+                "--enable-metering",
+                flag,
+                "1",
+            ])
+            .expect_err("removed resource limit flags must not be accepted");
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 }

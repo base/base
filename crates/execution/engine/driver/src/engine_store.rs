@@ -1,7 +1,6 @@
 //! Stores engine API messages to disk for later inspection and replay.
 
 use std::{
-    collections::BTreeMap,
     path::PathBuf,
     pin::Pin,
     task::{Context, Poll, ready},
@@ -81,26 +80,6 @@ impl EngineMessageStore {
             }
         };
         Ok(())
-    }
-
-    /// Finds and iterates through any stored engine API message files, ordered by timestamp.
-    pub fn engine_messages_iter(&self) -> eyre::Result<impl Iterator<Item = PathBuf>> {
-        let mut filenames_by_ts = BTreeMap::<u64, Vec<PathBuf>>::default();
-        for entry in fs::Files::read_dir(&self.path)? {
-            let entry = entry?;
-            let filename = entry.file_name();
-            if let Some(filename) = filename.to_str().filter(|n| n.ends_with(".json")) {
-                if let Some(Ok(timestamp)) = filename.split('-').next().map(|n| n.parse::<u64>()) {
-                    filenames_by_ts.entry(timestamp).or_default().push(entry.path());
-                    tracing::debug!(target: "engine::store", timestamp, filename, "Queued engine API message");
-                } else {
-                    tracing::warn!(target: "engine::store", %filename, "Could not parse timestamp from filename")
-                }
-            } else {
-                tracing::warn!(target: "engine::store", ?filename, "Skipping non json file");
-            }
-        }
-        Ok(filenames_by_ts.into_values().flatten())
     }
 }
 

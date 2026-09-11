@@ -16,8 +16,6 @@ use tokio::{
 };
 use tracing::{Instrument, info, info_span, warn};
 
-#[cfg(feature = "disk")]
-use crate::DiskKeyValueStore;
 use crate::{
     BootKeyValueStore, HostConfig, HostError, HostProviders, MemoryKeyValueStore, Metrics,
     OfflineHostBackend, OnlineHostBackend, PreimageServer, RecordingOracle, Result,
@@ -215,25 +213,9 @@ impl Host {
     fn create_key_value_store_for_config(config: &HostConfig) -> Result<SharedKeyValueStore> {
         let boot_kv = BootKeyValueStore::new(config.clone());
 
-        let kv_store: SharedKeyValueStore = if let Some(ref data_dir) = config.data_dir {
-            #[cfg(feature = "disk")]
-            {
-                let disk_kv_store = DiskKeyValueStore::new(data_dir.clone());
-                let split_kv_store = SplitKeyValueStore::new(boot_kv, disk_kv_store);
-                Arc::new(RwLock::new(split_kv_store))
-            }
-            #[cfg(not(feature = "disk"))]
-            {
-                let _ = data_dir;
-                let mem_kv_store = MemoryKeyValueStore::new();
-                let split_kv_store = SplitKeyValueStore::new(boot_kv, mem_kv_store);
-                Arc::new(RwLock::new(split_kv_store))
-            }
-        } else {
-            let mem_kv_store = MemoryKeyValueStore::new();
-            let split_kv_store = SplitKeyValueStore::new(boot_kv, mem_kv_store);
-            Arc::new(RwLock::new(split_kv_store))
-        };
+        let mem_kv_store = MemoryKeyValueStore::new();
+        let split_kv_store = SplitKeyValueStore::new(boot_kv, mem_kv_store);
+        let kv_store: SharedKeyValueStore = Arc::new(RwLock::new(split_kv_store));
 
         Ok(kv_store)
     }

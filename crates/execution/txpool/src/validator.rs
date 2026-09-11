@@ -11,9 +11,7 @@ use std::{
 
 use alloy_eips::{Typed2718, eip2718::Encodable2718};
 use alloy_primitives::{Address, B256, LogData, U256, map::AddressSet};
-use base_common_chain_config::{
-    BaseChainSpec, ChainSpecProvider, DaFootprintGasScalarUpdate, Upgrades,
-};
+use base_common_chain_config::{DaFootprintGasScalarUpdate, Upgrades};
 use base_common_types_chain::{
     AccountChange, BlockHeader, ChangeType, Eip8130Constants, Eip8130Contracts, Eip8130Signed,
     Eip8130TimestampError, GotExpected, InitialActor, InvalidTransactionError, SealedBlock,
@@ -31,7 +29,7 @@ use base_execution_state_types::{
 };
 use base_execution_txpool::{
     InvalidPoolTransactionError, PoolTransactionError, TransactionOrigin,
-    TransactionValidationOutcome, TransactionValidator, ValidTransaction,
+    TransactionValidationOutcome, TransactionValidator,
 };
 use lru::LruCache;
 use parking_lot::RwLock;
@@ -658,14 +656,6 @@ pub struct BaseTransactionValidator {
     pub chain_id: u64,
     /// tracks activated forks relevant for transaction validation
     pub fork_tracker: Arc<crate::ForkTracker>,
-    /// Fork indicator whether we are using EIP-2718 type transactions.
-    pub eip2718: bool,
-    /// Fork indicator whether we are using EIP-1559 type transactions.
-    pub eip1559: bool,
-    /// Fork indicator whether we are using EIP-4844 blob transactions.
-    pub eip4844: bool,
-    /// Fork indicator whether we are using EIP-7702 type transactions.
-    pub eip7702: bool,
     /// The current max gas limit
     pub block_gas_limit: Arc<AtomicU64>,
     /// The current tx fee cap limit in wei locally submitted into the pool.
@@ -682,17 +672,6 @@ pub struct BaseTransactionValidator {
     pub disable_balance_check: bool,
     /// EVM configuration for fetching execution limits
     pub evm_config: base_execution_evm_blocks::BaseEvmConfig,
-    /// Bitmap of custom transaction types that are allowed.
-    pub other_tx_types: U256,
-    /// Optional additional stateless validation check applied at the end of
-    /// [`validate_stateless`](Self::validate_stateless).
-    pub additional_stateless_validation:
-        Option<crate::StatelessValidationFn<crate::BasePooledTransaction>>,
-    /// Optional additional stateful validation check applied at the end of
-    /// [`validate_stateful`](Self::validate_stateful).
-    pub additional_stateful_validation:
-        Option<crate::StatefulValidationFn<crate::BasePooledTransaction>>,
-
     /// Additional block info required for validation.
     pub block_info: Arc<BaseL1BlockInfo>,
     /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
@@ -941,7 +920,7 @@ impl BaseTransactionValidator {
             let outcome = TransactionValidationOutcome::Valid {
                 balance: state.payer_balance_after_auth,
                 state_nonce: state.sender_nonce,
-                transaction: ValidTransaction::new(transaction, None),
+                transaction,
                 propagate,
                 bytecode_hash: state.sender_bytecode_hash,
                 authorities: (state.payer != state.sender).then_some(vec![state.payer]),
@@ -2082,7 +2061,7 @@ impl BaseTransactionValidator {
 
             // Check to ensure tx doesn't exceed the DA footprint limit
             if self.chain_spec().is_jovian_active_at_timestamp(self.block_timestamp()) {
-                let da_footprint = valid_tx.transaction().estimated_da_size().saturating_mul(
+                let da_footprint = valid_tx.estimated_da_size().saturating_mul(
                     l1_block_info
                         .da_footprint_gas_scalar
                         .unwrap_or(DaFootprintGasScalarUpdate::DEFAULT_DA_FOOTPRINT_GAS_SCALAR)
@@ -2091,7 +2070,7 @@ impl BaseTransactionValidator {
                 let block_gas_limit = self.block_gas_limit();
                 if da_footprint > block_gas_limit {
                     return TransactionValidationOutcome::Invalid(
-                        valid_tx.into_transaction(),
+                        valid_tx,
                         InvalidPoolTransactionError::other(
                             BaseTxPoolError::DaFootprintExceedsBlockGasLimit {
                                 transaction_da_footprint: da_footprint,
@@ -2102,24 +2081,22 @@ impl BaseTransactionValidator {
                 }
             }
 
-            let encoded = valid_tx.transaction().encoded_2718();
+            let encoded = valid_tx.encoded_2718();
 
             // Must mirror the execution-side cost in `BaseHandler` (L1 data fee + operator fee
             // post-Isthmus); otherwise operator-fee-underfunded txs get admitted but never execute.
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), self.block_timestamp());
             let cost_addition = l1_block_info.tx_cost(
                 &encoded,
-                U256::from(
-                    valid_tx.transaction().gas_limit().saturating_add(operator_fee_gas_addition),
-                ),
+                U256::from(valid_tx.gas_limit().saturating_add(operator_fee_gas_addition)),
                 spec_id,
             );
-            let cost = valid_tx.transaction().cost().saturating_add(cost_addition);
+            let cost = valid_tx.cost().saturating_add(cost_addition);
 
             // Checks for max cost
             if cost > balance {
                 return TransactionValidationOutcome::Invalid(
-                    valid_tx.into_transaction(),
+                    valid_tx,
                     InvalidTransactionError::InsufficientFunds(
                         GotExpected { got: balance, expected: cost }.into(),
                     )

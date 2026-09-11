@@ -15,7 +15,7 @@ use eyre::ensure;
 
 use crate::node_config::{
     DEFAULT_CROSS_BLOCK_CACHE_SIZE_MB, DEFAULT_MEMORY_BLOCK_BUFFER_TARGET,
-    DEFAULT_PERSISTENCE_THRESHOLD, DEFAULT_RESERVED_CPU_CORES,
+    DEFAULT_PERSISTENCE_THRESHOLD,
 };
 
 /// Global static engine defaults
@@ -40,10 +40,8 @@ pub struct DefaultEngineValues {
     state_root_task_compare_updates: bool,
     accept_execution_requests_hash: bool,
     multiproof_chunk_size: usize,
-    reserved_cpu_cores: usize,
     precompile_cache_disabled: bool,
     state_root_fallback: bool,
-    always_process_payload_attributes_on_canonical_head: bool,
     allow_unwind_canonical_header: bool,
     storage_worker_count: Option<usize>,
     account_worker_count: Option<usize>,
@@ -100,30 +98,6 @@ impl DefaultEngineValues {
         self
     }
 
-    /// Set whether to disable state cache by default
-    pub const fn with_state_cache_disabled(mut self, v: bool) -> Self {
-        self.state_cache_disabled = v;
-        self
-    }
-
-    /// Set whether to disable prewarming by default
-    pub const fn with_prewarming_disabled(mut self, v: bool) -> Self {
-        self.prewarming_disabled = v;
-        self
-    }
-
-    /// Set whether to enable txpool prewarming by default
-    pub const fn with_txpool_prewarming_enabled(mut self, v: bool) -> Self {
-        self.txpool_prewarming_enabled = v;
-        self
-    }
-
-    /// Set whether to enable sender recovery caching by default
-    pub const fn with_sender_recovery_cache_enabled(mut self, v: bool) -> Self {
-        self.sender_recovery_cache_enabled = v;
-        self
-    }
-
     /// Set whether to enable state provider metrics by default
     pub const fn with_state_provider_metrics(mut self, v: bool) -> Self {
         self.state_provider_metrics = v;
@@ -136,33 +110,9 @@ impl DefaultEngineValues {
         self
     }
 
-    /// Set whether to compare state root task updates by default
-    pub const fn with_state_root_task_compare_updates(mut self, v: bool) -> Self {
-        self.state_root_task_compare_updates = v;
-        self
-    }
-
-    /// Set whether to accept execution requests hash by default
-    pub const fn with_accept_execution_requests_hash(mut self, v: bool) -> Self {
-        self.accept_execution_requests_hash = v;
-        self
-    }
-
     /// Set the default multiproof chunk size
     pub const fn with_multiproof_chunk_size(mut self, v: usize) -> Self {
         self.multiproof_chunk_size = v;
-        self
-    }
-
-    /// Set the default number of reserved CPU cores
-    pub const fn with_reserved_cpu_cores(mut self, v: usize) -> Self {
-        self.reserved_cpu_cores = v;
-        self
-    }
-
-    /// Set whether to disable precompile cache by default
-    pub const fn with_precompile_cache_disabled(mut self, v: bool) -> Self {
-        self.precompile_cache_disabled = v;
         self
     }
 
@@ -172,42 +122,9 @@ impl DefaultEngineValues {
         self
     }
 
-    /// Set whether to always process payload attributes on canonical head by default
-    pub const fn with_always_process_payload_attributes_on_canonical_head(
-        mut self,
-        v: bool,
-    ) -> Self {
-        self.always_process_payload_attributes_on_canonical_head = v;
-        self
-    }
-
-    /// Set whether to allow unwinding canonical header by default
-    pub const fn with_allow_unwind_canonical_header(mut self, v: bool) -> Self {
-        self.allow_unwind_canonical_header = v;
-        self
-    }
-
-    /// Set the default storage worker count
-    pub const fn with_storage_worker_count(mut self, v: Option<usize>) -> Self {
-        self.storage_worker_count = v;
-        self
-    }
-
-    /// Set the default account worker count
-    pub const fn with_account_worker_count(mut self, v: Option<usize>) -> Self {
-        self.account_worker_count = v;
-        self
-    }
-
     /// Set the default prewarming thread count
     pub const fn with_prewarming_threads(mut self, v: Option<usize>) -> Self {
         self.prewarming_threads = v;
-        self
-    }
-
-    /// Set whether to disable cache metrics by default
-    pub const fn with_cache_metrics_disabled(mut self, v: bool) -> Self {
-        self.cache_metrics_disabled = v;
         self
     }
 
@@ -246,18 +163,6 @@ impl DefaultEngineValues {
         self.suppress_persistence_during_build = v;
         self
     }
-
-    /// Set whether to disable BAL-based parallel execution by default
-    pub const fn with_bal_parallel_execution_disabled(mut self, v: bool) -> Self {
-        self.bal_parallel_execution_disabled = v;
-        self
-    }
-
-    /// Set whether to disable BAL-driven parallel state root by default
-    pub const fn with_bal_parallel_state_root_disabled(mut self, v: bool) -> Self {
-        self.bal_parallel_state_root_disabled = v;
-        self
-    }
 }
 
 impl Default for DefaultEngineValues {
@@ -277,10 +182,8 @@ impl Default for DefaultEngineValues {
             state_root_task_compare_updates: false,
             accept_execution_requests_hash: false,
             multiproof_chunk_size: DEFAULT_MULTIPROOF_TASK_CHUNK_SIZE,
-            reserved_cpu_cores: DEFAULT_RESERVED_CPU_CORES,
             precompile_cache_disabled: false,
             state_root_fallback: false,
-            always_process_payload_attributes_on_canonical_head: false,
             allow_unwind_canonical_header: false,
             storage_worker_count: None,
             account_worker_count: None,
@@ -395,11 +298,6 @@ pub struct EngineArgs {
     /// Multiproof task chunk size for proof targets.
     #[arg(long = "engine.multiproof-chunk-size", default_value_t = DefaultEngineValues::get_global().multiproof_chunk_size, value_parser = RangedU64ValueParser::<usize>::new().range(1..))]
     pub multiproof_chunk_size: usize,
-
-    /// Configure the number of reserved CPU cores for non-reth processes
-    #[arg(long = "engine.reserved-cpu-cores", default_value_t = DefaultEngineValues::get_global().reserved_cpu_cores)]
-    pub reserved_cpu_cores: usize,
-
     /// Disable precompile cache
     #[arg(long = "engine.disable-precompile-cache", default_value_t = DefaultEngineValues::get_global().precompile_cache_disabled)]
     pub precompile_cache_disabled: bool,
@@ -407,17 +305,6 @@ pub struct EngineArgs {
     /// Enable state root fallback, useful for testing
     #[arg(long = "engine.state-root-fallback", default_value_t = DefaultEngineValues::get_global().state_root_fallback)]
     pub state_root_fallback: bool,
-
-    /// Always process payload attributes and begin a payload build process even if
-    /// `forkchoiceState.headBlockHash` is already the canonical head or an ancestor. See
-    /// `TreeConfig::always_process_payload_attributes_on_canonical_head` for more details.
-    ///
-    /// Note: This is a no-op on OP Stack.
-    #[arg(
-        long = "engine.always-process-payload-attributes-on-canonical-head",
-        default_value_t = DefaultEngineValues::get_global().always_process_payload_attributes_on_canonical_head
-    )]
-    pub always_process_payload_attributes_on_canonical_head: bool,
 
     /// Allow unwinding canonical header to ancestor during forkchoice updates.
     /// See `TreeConfig::unwind_canonical_header` for more details.
@@ -561,10 +448,8 @@ impl Default for EngineArgs {
             state_root_task_compare_updates,
             accept_execution_requests_hash,
             multiproof_chunk_size,
-            reserved_cpu_cores,
             precompile_cache_disabled,
             state_root_fallback,
-            always_process_payload_attributes_on_canonical_head,
             allow_unwind_canonical_header,
             storage_worker_count,
             account_worker_count,
@@ -594,10 +479,8 @@ impl Default for EngineArgs {
             cross_block_cache_size,
             accept_execution_requests_hash,
             multiproof_chunk_size,
-            reserved_cpu_cores,
             precompile_cache_disabled,
             state_root_fallback,
-            always_process_payload_attributes_on_canonical_head,
             allow_unwind_canonical_header,
             storage_worker_count,
             account_worker_count,
@@ -689,12 +572,8 @@ impl EngineArgs {
             .with_always_compare_trie_updates(self.state_root_task_compare_updates)
             .with_cross_block_cache_size(self.cross_block_cache_size * 1024 * 1024)
             .with_multiproof_chunk_size(self.multiproof_chunk_size)
-            .with_reserved_cpu_cores(self.reserved_cpu_cores)
             .without_precompile_cache(self.precompile_cache_disabled)
             .with_state_root_fallback(self.state_root_fallback)
-            .with_always_process_payload_attributes_on_canonical_head(
-                self.always_process_payload_attributes_on_canonical_head,
-            )
             .with_unwind_canonical_header(self.allow_unwind_canonical_header)
             .without_cache_metrics(self.cache_metrics_disabled)
             .with_slow_block_threshold(self.slow_block_threshold)
@@ -847,10 +726,8 @@ mod tests {
             state_root_task_compare_updates: true,
             accept_execution_requests_hash: true,
             multiproof_chunk_size: 512,
-            reserved_cpu_cores: 4,
             precompile_cache_disabled: true,
             state_root_fallback: true,
-            always_process_payload_attributes_on_canonical_head: true,
             allow_unwind_canonical_header: true,
             storage_worker_count: Some(16),
             account_worker_count: Some(8),
@@ -889,11 +766,8 @@ mod tests {
             "--engine.accept-execution-requests-hash",
             "--engine.multiproof-chunk-size",
             "512",
-            "--engine.reserved-cpu-cores",
-            "4",
             "--engine.disable-precompile-cache",
             "--engine.state-root-fallback",
-            "--engine.always-process-payload-attributes-on-canonical-head",
             "--engine.allow-unwind-canonical-header",
             "--engine.storage-worker-count",
             "16",

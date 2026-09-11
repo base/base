@@ -8,7 +8,7 @@ use base_common_observability_events::{
 use base_common_types_chain::{BaseTransactionSigned, transaction::Recovered};
 use base_execution_txpool::{
     BasePooledTransaction, PoolRejectionLabel, TransactionOrigin, TransactionPool,
-    TransactionValidity, ValidatedTransaction,
+    ValidatedTransaction,
 };
 use jsonrpsee::{
     core::RpcResult,

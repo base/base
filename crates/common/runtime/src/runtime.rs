@@ -39,9 +39,6 @@ use crate::{
 /// Default thread keep-alive duration for the tokio runtime.
 pub const DEFAULT_THREAD_KEEP_ALIVE: Duration = Duration::from_secs(15);
 
-/// Default reserved CPU cores for OS and other processes.
-pub const DEFAULT_RESERVED_CPU_CORES: usize = 2;
-
 /// Default number of threads for the storage I/O pool.
 pub const DEFAULT_STORAGE_POOL_THREADS: usize = 16;
 
@@ -83,15 +80,6 @@ impl TokioConfig {
     pub const fn existing_handle(handle: Handle) -> Self {
         Self::ExistingHandle(handle)
     }
-
-    /// Create a config for an owned runtime with the specified number of worker threads.
-    pub const fn with_worker_threads(worker_threads: usize) -> Self {
-        Self::Owned {
-            worker_threads: Some(worker_threads),
-            thread_keep_alive: DEFAULT_THREAD_KEEP_ALIVE,
-            thread_name: "tokio-rt",
-        }
-    }
 }
 
 /// Configuration for the rayon thread pools.
@@ -99,10 +87,8 @@ impl TokioConfig {
 #[cfg(feature = "rayon")]
 pub struct RayonConfig {
     /// Number of threads for the general CPU pool.
-    /// If `None`, derived from available parallelism minus reserved cores.
+    /// If `None`, derived from available parallelism.
     pub cpu_threads: Option<usize>,
-    /// Number of CPU cores to reserve for OS and other processes.
-    pub reserved_cpu_cores: usize,
     /// Number of threads for the RPC blocking pool (trace calls, `eth_getProof`, etc.).
     /// If `None`, uses the same as `cpu_threads`.
     pub rpc_threads: Option<usize>,
@@ -133,7 +119,6 @@ impl Default for RayonConfig {
     fn default() -> Self {
         Self {
             cpu_threads: None,
-            reserved_cpu_cores: DEFAULT_RESERVED_CPU_CORES,
             rpc_threads: None,
             storage_threads: None,
             max_blocking_tasks: DEFAULT_MAX_BLOCKING_TASKS,
@@ -148,74 +133,14 @@ impl Default for RayonConfig {
 
 #[cfg(feature = "rayon")]
 impl RayonConfig {
-    /// Set the number of reserved CPU cores.
-    pub const fn with_reserved_cpu_cores(mut self, reserved_cpu_cores: usize) -> Self {
-        self.reserved_cpu_cores = reserved_cpu_cores;
-        self
-    }
-
-    /// Set the maximum number of concurrent blocking tasks.
-    pub const fn with_max_blocking_tasks(mut self, max_blocking_tasks: usize) -> Self {
-        self.max_blocking_tasks = max_blocking_tasks;
-        self
-    }
-
-    /// Set the number of threads for the RPC blocking pool.
-    pub const fn with_rpc_threads(mut self, rpc_threads: usize) -> Self {
-        self.rpc_threads = Some(rpc_threads);
-        self
-    }
-
-    /// Set the number of threads for the storage I/O pool.
-    pub const fn with_storage_threads(mut self, storage_threads: usize) -> Self {
-        self.storage_threads = Some(storage_threads);
-        self
-    }
-
-    /// Set the number of threads for the proof storage worker pool.
-    pub const fn with_proof_storage_worker_threads(
-        mut self,
-        proof_storage_worker_threads: usize,
-    ) -> Self {
-        self.proof_storage_worker_threads = Some(proof_storage_worker_threads);
-        self
-    }
-
-    /// Set the number of threads for the proof account worker pool.
-    pub const fn with_proof_account_worker_threads(
-        mut self,
-        proof_account_worker_threads: usize,
-    ) -> Self {
-        self.proof_account_worker_threads = Some(proof_account_worker_threads);
-        self
-    }
-
     /// Set the number of threads for the prewarming pool.
     pub const fn with_prewarming_threads(mut self, prewarming_threads: usize) -> Self {
         self.prewarming_threads = Some(prewarming_threads);
         self
     }
 
-    /// Set the number of threads for the BAL streaming pool.
-    pub const fn with_bal_streaming_threads(mut self, bal_streaming_threads: usize) -> Self {
-        self.bal_streaming_threads = Some(bal_streaming_threads);
-        self
-    }
-
-    /// Set the number of threads for the state trie overlay worker pool.
-    pub const fn with_state_trie_overlay_worker_threads(
-        mut self,
-        state_trie_overlay_worker_threads: usize,
-    ) -> Self {
-        self.state_trie_overlay_worker_threads = Some(state_trie_overlay_worker_threads);
-        self
-    }
-
     /// Compute the default number of threads based on available parallelism.
     fn default_thread_count(&self) -> usize {
-        // TODO: reserved_cpu_cores is currently ignored because subtracting from thread pool
-        // sizes doesn't actually reserve CPU cores for other processes.
-        let _ = self.reserved_cpu_cores;
         self.cpu_threads.unwrap_or_else(|| available_parallelism().map_or(1, NonZeroUsize::get))
     }
 }
@@ -234,13 +159,6 @@ impl RuntimeConfig {
     /// Set the tokio configuration.
     pub fn with_tokio(mut self, tokio: TokioConfig) -> Self {
         self.tokio = tokio;
-        self
-    }
-
-    /// Set the rayon configuration.
-    #[cfg(feature = "rayon")]
-    pub const fn with_rayon(mut self, rayon: RayonConfig) -> Self {
-        self.rayon = rayon;
         self
     }
 }
@@ -422,7 +340,6 @@ impl Runtime {
             #[cfg(feature = "rayon")]
             rayon: RayonConfig {
                 cpu_threads: Some(2),
-                reserved_cpu_cores: 0,
                 rpc_threads: Some(2),
                 storage_threads: Some(2),
                 max_blocking_tasks: 16,
@@ -447,11 +364,6 @@ enum TaskKind {
 }
 
 impl Runtime {
-    /// Returns the receiver of the shutdown signal.
-    pub fn on_shutdown_signal(&self) -> &Shutdown {
-        &self.0.on_shutdown
-    }
-
     /// Spawns a future on the tokio runtime depending on the [`TaskKind`].
     fn spawn_on_rt<F>(&self, fut: F, task_kind: TaskKind) -> JoinHandle<()>
     where

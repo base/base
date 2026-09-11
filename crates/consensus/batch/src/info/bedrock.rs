@@ -59,14 +59,6 @@ impl L1BlockInfoBedrockOnlyFields for L1BlockInfoBedrock {
     }
 }
 
-/// Accessors trait for all fields on [`L1BlockInfoBedrock`].
-pub trait L1BlockInfoBedrockFields:
-    L1BlockInfoBedrockBaseFields + L1BlockInfoBedrockOnlyFields
-{
-}
-
-impl L1BlockInfoBedrockFields for L1BlockInfoBedrock {}
-
 impl L1BlockInfoBedrock {
     /// The length of an L1 info transaction in Bedrock.
     pub const L1_INFO_TX_LEN: usize = 4 + 32 * 8;

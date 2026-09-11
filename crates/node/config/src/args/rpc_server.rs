@@ -99,189 +99,15 @@ impl DefaultRpcServerArgs {
         self
     }
 
-    /// Set the default HTTP address
-    pub const fn with_http_addr(mut self, v: IpAddr) -> Self {
-        self.http_addr = v;
-        self
-    }
-
-    /// Set the default HTTP port
-    pub const fn with_http_port(mut self, v: u16) -> Self {
-        self.http_port = v;
-        self
-    }
-
     /// Set whether to disable HTTP compression by default
     pub const fn with_http_disable_compression(mut self, v: bool) -> Self {
         self.http_disable_compression = v;
         self
     }
 
-    /// Set the default HTTP CORS domain
-    pub fn with_http_corsdomain(mut self, v: Option<String>) -> Self {
-        self.http_corsdomain = v;
-        self
-    }
-
     /// Set the default WS enabled state
     pub const fn with_ws(mut self, v: bool) -> Self {
         self.ws = v;
-        self
-    }
-
-    /// Set the default WS address
-    pub const fn with_ws_addr(mut self, v: IpAddr) -> Self {
-        self.ws_addr = v;
-        self
-    }
-
-    /// Set the default WS port
-    pub const fn with_ws_port(mut self, v: u16) -> Self {
-        self.ws_port = v;
-        self
-    }
-
-    /// Set the default WS allowed origins
-    pub fn with_ws_allowed_origins(mut self, v: Option<String>) -> Self {
-        self.ws_allowed_origins = v;
-        self
-    }
-
-    /// Set the default RPC JWT secret
-    pub const fn with_rpc_jwtsecret(mut self, v: Option<JwtSecret>) -> Self {
-        self.rpc_jwtsecret = v;
-        self
-    }
-
-    /// Set whether to disable RPC request metrics by default
-    pub const fn with_rpc_disable_metrics(mut self, v: bool) -> Self {
-        self.rpc_disable_metrics = v;
-        self
-    }
-
-    /// Set the default max request size
-    pub const fn with_rpc_max_request_size(mut self, v: MaxU32) -> Self {
-        self.rpc_max_request_size = v;
-        self
-    }
-
-    /// Set the default max response size
-    pub const fn with_rpc_max_response_size(mut self, v: MaxU32) -> Self {
-        self.rpc_max_response_size = v;
-        self
-    }
-
-    /// Set the default max subscriptions per connection
-    pub const fn with_rpc_max_subscriptions_per_connection(mut self, v: MaxU32) -> Self {
-        self.rpc_max_subscriptions_per_connection = v;
-        self
-    }
-
-    /// Set the default max connections
-    pub const fn with_rpc_max_connections(mut self, v: MaxU32) -> Self {
-        self.rpc_max_connections = v;
-        self
-    }
-
-    /// Set the default max tracing requests
-    pub const fn with_rpc_max_tracing_requests(mut self, v: usize) -> Self {
-        self.rpc_max_tracing_requests = v;
-        self
-    }
-
-    /// Set the default max blocking IO requests
-    pub const fn with_rpc_max_blocking_io_requests(mut self, v: usize) -> Self {
-        self.rpc_max_blocking_io_requests = v;
-        self
-    }
-
-    /// Set the default max trace filter blocks
-    pub const fn with_rpc_max_trace_filter_blocks(mut self, v: u64) -> Self {
-        self.rpc_max_trace_filter_blocks = v;
-        self
-    }
-
-    /// Set the default max blocks per filter
-    pub const fn with_rpc_max_blocks_per_filter(mut self, v: ZeroAsNoneU64) -> Self {
-        self.rpc_max_blocks_per_filter = v;
-        self
-    }
-
-    /// Set the default max logs per response
-    pub const fn with_rpc_max_logs_per_response(mut self, v: ZeroAsNoneU64) -> Self {
-        self.rpc_max_logs_per_response = v;
-        self
-    }
-
-    /// Set the default gas cap
-    pub const fn with_rpc_gas_cap(mut self, v: u64) -> Self {
-        self.rpc_gas_cap = v;
-        self
-    }
-
-    /// Set the default EVM memory limit
-    pub const fn with_rpc_evm_memory_limit(mut self, v: u64) -> Self {
-        self.rpc_evm_memory_limit = v;
-        self
-    }
-
-    /// Set the default tx fee cap
-    pub const fn with_rpc_tx_fee_cap(mut self, v: u128) -> Self {
-        self.rpc_tx_fee_cap = v;
-        self
-    }
-
-    /// Set the default max simulate blocks
-    pub const fn with_rpc_max_simulate_blocks(mut self, v: u64) -> Self {
-        self.rpc_max_simulate_blocks = v;
-        self
-    }
-
-    /// Set whether to compute state roots for `eth_simulateV1` responses by default.
-    pub const fn with_rpc_compute_state_root_for_eth_simulate(mut self, v: bool) -> Self {
-        self.rpc_compute_state_root_for_eth_simulate = v;
-        self
-    }
-
-    /// Set the default eth proof window
-    pub const fn with_rpc_eth_proof_window(mut self, v: u64) -> Self {
-        self.rpc_eth_proof_window = v;
-        self
-    }
-
-    /// Set the default proof permits
-    pub const fn with_rpc_proof_permits(mut self, v: usize) -> Self {
-        self.rpc_proof_permits = v;
-        self
-    }
-
-    /// Set the default pending block kind
-    pub const fn with_rpc_pending_block(mut self, v: PendingBlockKind) -> Self {
-        self.rpc_pending_block = v;
-        self
-    }
-
-    /// Set the default RPC forwarder
-    pub fn with_rpc_forwarder(mut self, v: Option<Url>) -> Self {
-        self.rpc_forwarder = v;
-        self
-    }
-
-    /// Set the default RPC state cache args
-    pub const fn with_rpc_state_cache(mut self, v: RpcStateCacheArgs) -> Self {
-        self.rpc_state_cache = v;
-        self
-    }
-
-    /// Set the default gas price oracle args
-    pub const fn with_gas_price_oracle(mut self, v: GasPriceOracleArgs) -> Self {
-        self.gas_price_oracle = v;
-        self
-    }
-
-    /// Set the default send raw transaction sync timeout
-    pub const fn with_rpc_send_raw_transaction_sync_timeout(mut self, v: Duration) -> Self {
-        self.rpc_send_raw_transaction_sync_timeout = v;
         self
     }
 }
@@ -510,14 +336,6 @@ pub struct RpcServerArgs {
         value_parser = parse_duration_from_secs_or_ms,
     )]
     pub rpc_send_raw_transaction_sync_timeout: Duration,
-
-    /// Force upcasting EIP-4844 blob sidecars to EIP-7594 format when Osaka is active.
-    ///
-    /// When enabled, blob transactions submitted via `eth_sendRawTransaction` with EIP-4844
-    /// sidecars will be automatically converted to EIP-7594 format if the next block is Osaka.
-    /// By default this is disabled, meaning transactions are submitted as-is.
-    #[arg(long = "rpc.force-blob-sidecar-upcasting", default_value_t = false)]
-    pub rpc_force_blob_sidecar_upcasting: bool,
 }
 
 impl RpcServerArgs {
@@ -583,18 +401,6 @@ impl RpcServerArgs {
         F: FnOnce(Self) -> Self,
     {
         f(self)
-    }
-
-    /// Configures the timeout for send raw transaction sync.
-    pub const fn with_send_raw_transaction_sync_timeout(mut self, timeout: Duration) -> Self {
-        self.rpc_send_raw_transaction_sync_timeout = timeout;
-        self
-    }
-
-    /// Enables forced blob sidecar upcasting from EIP-4844 to EIP-7594 format.
-    pub const fn with_force_blob_sidecar_upcasting(mut self) -> Self {
-        self.rpc_force_blob_sidecar_upcasting = true;
-        self
     }
 }
 
@@ -669,7 +475,6 @@ impl Default for RpcServerArgs {
             rpc_state_cache,
             gas_price_oracle,
             rpc_send_raw_transaction_sync_timeout,
-            rpc_force_blob_sidecar_upcasting: false,
         }
     }
 }
@@ -787,7 +592,6 @@ mod tests {
                 default_suggested_fee: None,
             },
             rpc_send_raw_transaction_sync_timeout: std::time::Duration::from_secs(30),
-            rpc_force_blob_sidecar_upcasting: false,
         };
 
         let parsed_args = CommandParser::<RpcServerArgs>::parse_from([

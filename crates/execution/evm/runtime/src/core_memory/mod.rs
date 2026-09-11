@@ -27,10 +27,7 @@ mod erased_error;
 pub use erased_error::ErasedError;
 
 mod state_hook;
-pub use state_hook::{NoopHook, OnStateHook};
-
-mod try_commit;
-pub use try_commit::{ArcUpgradeError, TryDatabaseCommit};
+pub use state_hook::OnStateHook;
 
 mod cached;
 pub use cached::{CachedAccount, CachedReads, CachedReadsDbMut};

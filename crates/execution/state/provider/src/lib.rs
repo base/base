@@ -63,8 +63,8 @@ pub use overlay::*;
 
 mod canonical_state;
 pub use base_execution_state_database::{
-    DBProvider, DatabaseProviderFactory, DatabaseProviderROFactory, DbTxProvider, FactoryTx,
-    NoopProvider, StatsReader,
+    DBProvider, DatabaseProviderFactory, DatabaseProviderROFactory, DbTxProvider, NoopProvider,
+    StatsReader,
 };
 pub use canonical_state::{
     BlockState, CanonStateNotificationSender, CanonStateNotificationStream,

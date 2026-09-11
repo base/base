@@ -2,9 +2,7 @@
 
 use std::{
     collections::VecDeque,
-    fmt,
     net::{IpAddr, SocketAddr},
-    ops::Deref,
     sync::{
         Arc,
         atomic::{AtomicU64, AtomicUsize},
@@ -13,55 +11,21 @@ use std::{
 };
 
 use alloy_eip2124::ForkId;
-use alloy_primitives::{
-    B256,
-    map::{FbBuildHasher, HashMap},
-};
-use base_common_types_chain::{BaseBlock, BlockHeader};
+use alloy_primitives::map::{FbBuildHasher, HashMap};
 use base_execution_network_wire::{
-    BlockHashNumber, Capabilities, DisconnectReason, GetReceipts70, NewBlockHashes,
-    NewBlockPayload, PeerAddr, PeerId, PeerKind, ReceiptsResponse, UnifiedStatus,
+    Capabilities, DisconnectReason, GetReceipts70, PeerAddr, PeerId, PeerKind, ReceiptsResponse,
 };
-use rand::seq::SliceRandom;
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
 
 use crate::{
     DiscoveredEvent, DiscoveryEvent, FetchClient, PeerRequest, PeerRequestSender,
-    cache::LruCache,
     discovery::Discovery,
     fetch::{BlockResponseOutcome, FetchAction, NewPeerInfo, StateFetcher},
-    message::{BlockRequest, NewBlockMessage, PeerResponse, PeerResponseResult},
+    message::{BlockRequest, PeerResponse, PeerResponseResult},
     peers::{PeerAction, PeersManager},
     session::BlockRangeInfo,
 };
-
-/// Cache limit of blocks to keep track of for a single peer.
-const PEER_BLOCK_CACHE_LIMIT: u32 = 512;
-
-/// Wrapper type for the [`BlockNumReader`] trait.
-pub(crate) struct BlockNumReader(Box<dyn base_execution_state_types::BlockNumReader>);
-
-impl BlockNumReader {
-    /// Create a new instance with the given reader.
-    pub fn new(reader: impl base_execution_state_types::BlockNumReader + 'static) -> Self {
-        Self(Box::new(reader))
-    }
-}
-
-impl fmt::Debug for BlockNumReader {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BlockNumReader").field("inner", &"<dyn BlockNumReader>").finish()
-    }
-}
-
-impl Deref for BlockNumReader {
-    type Target = Box<dyn base_execution_state_types::BlockNumReader>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 /// The [`NetworkState`] keeps track of the state of all peers in the network.
 ///
@@ -81,11 +45,6 @@ pub struct NetworkState {
     peers_manager: PeersManager,
     /// Buffered messages until polled.
     queued_messages: VecDeque<StateAction>,
-    /// The client type that can interact with the chain.
-    ///
-    /// This type is used to fetch the block number after we established a session and received the
-    /// [`UnifiedStatus`] block hash.
-    client: BlockNumReader,
     /// Network discovery.
     discovery: Discovery,
     /// The type that handles requests.
@@ -99,7 +58,6 @@ pub struct NetworkState {
 impl NetworkState {
     /// Create a new state instance with the given params
     pub(crate) fn new(
-        client: BlockNumReader,
         discovery: Discovery,
         peers_manager: PeersManager,
         num_active_peers: Arc<AtomicUsize>,
@@ -109,7 +67,6 @@ impl NetworkState {
             active_peers: Default::default(),
             peers_manager,
             queued_messages: Default::default(),
-            client,
             discovery,
             state_fetcher,
         }
@@ -148,7 +105,6 @@ impl NetworkState {
         let SessionActivation {
             peer,
             capabilities,
-            status,
             request_tx,
             timeout,
             range_info,
@@ -157,31 +113,16 @@ impl NetworkState {
 
         debug_assert!(!self.active_peers.contains_key(&peer), "Already connected; not possible");
 
-        // Use the block number from the peer's status (eth/69+) if available,
-        // otherwise fall back to a local lookup by hash.
-        let block_number = status.latest_block.unwrap_or_else(|| {
-            self.client.block_number(status.blockhash).ok().flatten().unwrap_or_default()
-        });
         self.state_fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer,
-            best_hash: status.blockhash,
-            best_number: block_number,
             capabilities: Arc::clone(&capabilities),
             timeout,
             range_info,
             supports_snap,
         });
 
-        self.active_peers.insert(
-            peer,
-            ActivePeer {
-                best_hash: status.blockhash,
-                capabilities,
-                request_tx,
-                pending_response: None,
-                blocks: LruCache::new(PEER_BLOCK_CACHE_LIMIT),
-            },
-        );
+        self.active_peers
+            .insert(peer, ActivePeer { capabilities, request_tx, pending_response: None });
     }
 
     /// Event hook for a disconnected session for the given peer.
@@ -192,111 +133,9 @@ impl NetworkState {
         self.state_fetcher.on_session_closed(&peer);
     }
 
-    /// Starts propagating the new block to peers that haven't reported the block yet.
-    ///
-    /// This is supposed to be invoked after the block was validated.
-    ///
-    /// > It then sends the block to a small fraction of connected peers (usually the square root of
-    /// > the total number of peers) using the `NewBlock` message.
-    ///
-    /// See also <https://github.com/ethereum/devp2p/blob/master/caps/eth.md>
-    pub(crate) fn announce_new_block(
-        &mut self,
-        msg: NewBlockMessage<base_execution_network_wire::NewBlock<BaseBlock>>,
-    ) {
-        // send a `NewBlock` message to a fraction of the connected peers (square root of the total
-        // number of peers)
-        let num_propagate = (self.active_peers.len() as f64).sqrt() as u64 + 1;
-
-        let number = msg.block.block().header().number();
-        let mut count = 0;
-
-        // Shuffle to propagate to a random sample of peers on every block announcement
-        let mut peers: Vec<_> = self.active_peers.iter_mut().collect();
-        peers.shuffle(&mut rand::rng());
-
-        for (peer_id, peer) in peers {
-            if peer.blocks.contains(&msg.hash) {
-                // skip peers which already reported the block
-                continue;
-            }
-
-            // Queue a `NewBlock` message for the peer
-            if count < num_propagate {
-                self.queued_messages
-                    .push_back(StateAction::NewBlock { peer_id: *peer_id, block: msg.clone() });
-
-                // update peer block info
-                if self.state_fetcher.update_peer_block(peer_id, msg.hash, number) {
-                    peer.best_hash = msg.hash;
-                }
-
-                // mark the block as seen by the peer
-                peer.blocks.insert(msg.hash);
-
-                count += 1;
-            }
-
-            if count >= num_propagate {
-                break;
-            }
-        }
-    }
-
-    /// Completes the block propagation process started in [`NetworkState::announce_new_block()`]
-    /// but sending `NewBlockHash` broadcast to all peers that haven't seen it yet.
-    pub(crate) fn announce_new_block_hash(
-        &mut self,
-        msg: NewBlockMessage<base_execution_network_wire::NewBlock<BaseBlock>>,
-    ) {
-        let number = msg.block.block().header().number();
-        let hashes = NewBlockHashes(vec![BlockHashNumber { hash: msg.hash, number }]);
-        for (peer_id, peer) in &mut self.active_peers {
-            if peer.blocks.contains(&msg.hash) {
-                // skip peers which already reported the block
-                continue;
-            }
-
-            if self.state_fetcher.update_peer_block(peer_id, msg.hash, number) {
-                peer.best_hash = msg.hash;
-            }
-
-            self.queued_messages.push_back(StateAction::NewBlockHashes {
-                peer_id: *peer_id,
-                hashes: hashes.clone(),
-            });
-        }
-    }
-
-    /// Updates the block information for the peer.
-    pub(crate) fn update_peer_block(&mut self, peer_id: &PeerId, hash: B256, number: u64) {
-        if let Some(peer) = self.active_peers.get_mut(peer_id) {
-            peer.best_hash = hash;
-        }
-        self.state_fetcher.update_peer_block(peer_id, hash, number);
-    }
-
     /// Invoked when a new [`ForkId`] is activated.
     pub(crate) fn update_fork_id(&self, fork_id: ForkId) {
         self.discovery.update_fork_id(fork_id)
-    }
-
-    /// Invoked after a `NewBlock` message was received by the peer.
-    ///
-    /// This will keep track of blocks we know a peer has
-    pub(crate) fn on_new_block(&mut self, peer_id: PeerId, hash: B256) {
-        // Mark the blocks as seen
-        if let Some(peer) = self.active_peers.get_mut(&peer_id) {
-            peer.blocks.insert(hash);
-        }
-    }
-
-    /// Invoked for a `NewBlockHashes` broadcast message.
-    pub(crate) fn on_new_block_hashes(&mut self, peer_id: PeerId, hashes: Vec<BlockHashNumber>) {
-        // Mark the blocks as seen
-        if let Some(peer) = self.active_peers.get_mut(&peer_id) {
-            peer.blocks.extend(hashes.into_iter().map(|b| b.hash));
-        }
     }
 
     /// Bans the [`IpAddr`] in the discovery service.
@@ -608,16 +447,12 @@ impl NetworkState {
 /// For example known blocks,so we can decide what to announce.
 #[derive(Debug)]
 pub(crate) struct ActivePeer {
-    /// Best block of the peer.
-    pub(crate) best_hash: B256,
     /// The capabilities of the remote peer.
     pub(crate) capabilities: Arc<Capabilities>,
     /// A communication channel directly to the session task.
     pub(crate) request_tx: PeerRequestSender<PeerRequest>,
     /// The response receiver for a currently active request to that peer.
     pub(crate) pending_response: Option<PeerResponse>,
-    /// Blocks we know the peer has.
-    pub(crate) blocks: LruCache<B256>,
 }
 
 /// Everything [`NetworkState::on_session_activated`] needs to register a newly established
@@ -627,8 +462,6 @@ pub(crate) struct SessionActivation {
     pub(crate) peer: PeerId,
     /// The capabilities the peer announced.
     pub(crate) capabilities: Arc<Capabilities>,
-    /// The `Status` message the peer sent during the `eth` handshake.
-    pub(crate) status: Arc<UnifiedStatus>,
     /// A communication channel directly to the session task.
     pub(crate) request_tx: PeerRequestSender<PeerRequest>,
     /// The maximum time the session waits for a response from the peer.
@@ -642,19 +475,6 @@ pub(crate) struct SessionActivation {
 /// Message variants triggered by the [`NetworkState`]
 #[derive(Debug)]
 pub(crate) enum StateAction {
-    /// Dispatch a `NewBlock` message to the peer
-    NewBlock {
-        /// Target of the message
-        peer_id: PeerId,
-        /// The `NewBlock` message
-        block: NewBlockMessage<base_execution_network_wire::NewBlock<BaseBlock>>,
-    },
-    NewBlockHashes {
-        /// Target of the message
-        peer_id: PeerId,
-        /// `NewBlockHashes` message to send to the peer.
-        hashes: NewBlockHashes,
-    },
     /// Create a new connection to the given node.
     Connect { remote_addr: SocketAddr, peer_id: PeerId },
     /// Disconnect an existing connection
@@ -691,7 +511,6 @@ mod tests {
     use base_execution_network_wire::{
         BlockBodies, BodiesClient, Capabilities, Capability, EthVersion, PeerId, RequestError,
     };
-    use base_execution_state_database::NoopProvider;
     use tokio::sync::mpsc;
     use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
@@ -700,7 +519,7 @@ mod tests {
         discovery::Discovery,
         fetch::StateFetcher,
         peers::PeersManager,
-        state::{BlockNumReader, NetworkState, SessionActivation},
+        state::{NetworkState, SessionActivation},
     };
 
     /// Returns a testing instance of the [`NetworkState`].
@@ -711,7 +530,6 @@ mod tests {
             active_peers: Default::default(),
             peers_manager: Default::default(),
             queued_messages: Default::default(),
-            client: BlockNumReader(Box::new(NoopProvider::default())),
             discovery: Discovery::noop(),
             state_fetcher: StateFetcher::new(handle, Default::default()),
         }
@@ -735,7 +553,6 @@ mod tests {
         state.on_session_activated(SessionActivation {
             peer: peer_id,
             capabilities: capabilities(),
-            status: Arc::new(crate::test_utils::NetworkTestData::status()),
             request_tx: peer_tx,
             timeout: Arc::new(AtomicU64::new(1)),
             range_info: None,

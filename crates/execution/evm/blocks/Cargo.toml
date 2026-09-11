@@ -79,7 +79,6 @@ std = [
     "thiserror/std",
     "tracing/std",
 ]
-portable = ["base-execution-evm-runtime/portable"]
 test-utils = [
     "dep:base-execution-state-trie",
     "base-common-types-chain/test-utils",
@@ -101,11 +100,3 @@ optional-block-gas-limit = ["base-execution-evm-runtime/optional_block_gas_limit
 optional-eip3541 = ["base-execution-evm-runtime/optional_eip3541"]
 optional-eip3607 = ["base-execution-evm-runtime/optional_eip3607"]
 optional-no-base-fee = ["base-execution-evm-runtime/optional_no_base_fee"]
-optional-checks = [
-    "optional-balance-check",
-    "optional-block-gas-limit",
-    "optional-eip3541",
-    "optional-eip3607",
-    "optional-no-base-fee",
-]
-memory_limit = ["base-execution-evm-runtime/memory_limit"]

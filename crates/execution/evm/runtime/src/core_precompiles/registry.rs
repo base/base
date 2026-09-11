@@ -981,7 +981,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        BlockEnv, CryptoPrecompileOutput as PrecompileOutput, EmptyDB, EthEvmContext, PrecompileId,
+        CryptoPrecompileOutput as PrecompileOutput, EmptyDB, EthEvmContext, PrecompileId,
         hardfork::SpecId,
     };
 

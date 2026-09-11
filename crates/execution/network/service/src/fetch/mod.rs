@@ -89,21 +89,11 @@ impl StateFetcher {
 
     /// Invoked when connected to a new peer.
     pub(crate) fn new_active_peer(&mut self, peer: NewPeerInfo) {
-        let NewPeerInfo {
-            peer_id,
-            best_hash,
-            best_number,
-            capabilities,
-            timeout,
-            range_info,
-            supports_snap,
-        } = peer;
+        let NewPeerInfo { peer_id, capabilities, timeout, range_info, supports_snap } = peer;
         self.peers.insert(
             peer_id,
             Peer {
                 state: PeerState::Idle,
-                best_hash,
-                best_number,
                 capabilities,
                 timeout,
                 last_response_likely_bad: false,
@@ -136,20 +126,6 @@ impl StateFetcher {
         if let Some(req) = self.inflight_snap_requests.remove(peer) {
             let _ = req.response.send(Err(RequestError::ConnectionDropped));
         }
-    }
-
-    /// Updates the block information for the peer.
-    ///
-    /// Returns `true` if this a newer block
-    pub(crate) fn update_peer_block(&mut self, peer_id: &PeerId, hash: B256, number: u64) -> bool {
-        if let Some(peer) = self.peers.get_mut(peer_id)
-            && number > peer.best_number
-        {
-            peer.best_hash = hash;
-            peer.best_number = number;
-            return true;
-        }
-        false
     }
 
     /// Invoked when an active session is about to be disconnected.
@@ -517,10 +493,6 @@ enum PollAction {
 pub(crate) struct NewPeerInfo {
     /// The remote peer's identifier.
     pub(crate) peer_id: PeerId,
-    /// Best known hash that the peer has.
-    pub(crate) best_hash: B256,
-    /// The best block number of the peer.
-    pub(crate) best_number: u64,
     /// Capabilities announced by the peer.
     pub(crate) capabilities: Arc<Capabilities>,
     /// The current timeout value to use for the peer.
@@ -536,10 +508,6 @@ pub(crate) struct NewPeerInfo {
 struct Peer {
     /// The state this peer currently resides in.
     state: PeerState,
-    /// Best known hash that the peer has
-    best_hash: B256,
-    /// Tracks the best number of the peer.
-    best_number: u64,
     /// Capabilities announced by the peer.
     #[allow(dead_code)]
     capabilities: Arc<Capabilities>,
@@ -881,8 +849,6 @@ mod tests {
         let capabilities = Arc::new(Capabilities::from(vec![]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer1,
-            best_hash: B256::random(),
-            best_number: 1,
             capabilities: Arc::clone(&capabilities),
             timeout: Arc::new(AtomicU64::new(1)),
             range_info: None,
@@ -890,8 +856,6 @@ mod tests {
         });
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer2,
-            best_hash: B256::random(),
-            best_number: 2,
             capabilities: Arc::clone(&capabilities),
             timeout: Arc::new(AtomicU64::new(1)),
             range_info: None,
@@ -925,8 +889,6 @@ mod tests {
         let capabilities = Arc::new(Capabilities::from(vec![]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer1,
-            best_hash: B256::random(),
-            best_number: 1,
             capabilities: Arc::clone(&capabilities),
             timeout: Arc::new(AtomicU64::new(30)),
             range_info: None,
@@ -934,8 +896,6 @@ mod tests {
         });
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer2,
-            best_hash: B256::random(),
-            best_number: 2,
             capabilities: Arc::clone(&capabilities),
             timeout: Arc::clone(&peer2_timeout),
             range_info: None,
@@ -943,8 +903,6 @@ mod tests {
         });
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer3,
-            best_hash: B256::random(),
-            best_number: 3,
             capabilities: Arc::clone(&capabilities),
             timeout: Arc::new(AtomicU64::new(50)),
             range_info: None,
@@ -1013,8 +971,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id,
-            best_hash: Default::default(),
-            best_number: Default::default(),
             capabilities: Arc::new(Capabilities::from(vec![])),
             timeout: Default::default(),
             range_info: None,
@@ -1089,8 +1045,6 @@ mod tests {
     fn test_peer_is_better_none_requirement() {
         let peer1 = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1100,8 +1054,6 @@ mod tests {
 
         let peer2 = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 50,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(20)),
             last_response_likely_bad: false,
@@ -1119,8 +1071,6 @@ mod tests {
         // Peer with full history (earliest = 0)
         let peer_full = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1131,8 +1081,6 @@ mod tests {
         // Peer without full history (earliest = 50)
         let peer_partial = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1143,8 +1091,6 @@ mod tests {
         // Peer without range info (treated as full history)
         let peer_no_range = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1172,8 +1118,6 @@ mod tests {
         // Peer that covers the requested range
         let peer_covers = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1184,8 +1128,6 @@ mod tests {
         // Peer that doesn't cover the range (earliest too high)
         let peer_no_cover = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1210,8 +1152,6 @@ mod tests {
         // Peer with full history that covers the range
         let peer_full = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1222,8 +1162,6 @@ mod tests {
         // Peer without full history that also covers the range
         let peer_partial = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1246,8 +1184,6 @@ mod tests {
         // Peer with full history that covers the range
         let peer_full = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1258,8 +1194,6 @@ mod tests {
         // Peer without full history that also covers the range
         let peer_partial = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1282,8 +1216,6 @@ mod tests {
         // Peer with full history that doesn't cover the range (latest too low)
         let peer_full = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 30,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1294,8 +1226,6 @@ mod tests {
         // Peer without full history that also doesn't cover the range
         let peer_partial = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 30,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1318,8 +1248,6 @@ mod tests {
         // Peer with range info
         let peer_with_range = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1330,8 +1258,6 @@ mod tests {
         // Peer without range info
         let peer_no_range = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1358,8 +1284,6 @@ mod tests {
         // Peer with range info that covers the requested range
         let peer_with_range_covers = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1370,8 +1294,6 @@ mod tests {
         // Peer without range info (treated as full history with unknown latest)
         let peer_no_range = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1399,8 +1321,6 @@ mod tests {
         // Peer with range info that does NOT cover the requested range (too high)
         let peer_with_range_no_cover = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1411,8 +1331,6 @@ mod tests {
         // Peer without range info (treated as full history)
         let peer_no_range = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1441,8 +1359,6 @@ mod tests {
         // Peer that exactly covers the range
         let peer_exact = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1453,8 +1369,6 @@ mod tests {
         // Peer that's one block short at the start
         let peer_short_start = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1465,8 +1379,6 @@ mod tests {
         // Peer that's one block short at the end
         let peer_short_end = Peer {
             state: PeerState::Idle,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             last_response_likely_bad: false,
@@ -1502,8 +1414,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id,
-            best_hash: Default::default(),
-            best_number: Default::default(),
             capabilities: Arc::new(Capabilities::from(vec![])),
             timeout: Default::default(),
             range_info: None,
@@ -1647,8 +1557,6 @@ mod tests {
         let caps_71 = Arc::new(Capabilities::from(vec![Capability::new("eth".into(), 71)]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_71,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1687,8 +1595,6 @@ mod tests {
         let caps_71 = Arc::new(Capabilities::from(vec![Capability::new("eth".into(), 71)]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_71,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1773,8 +1679,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1800,8 +1704,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1830,8 +1732,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_no_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_old,
             timeout: Arc::new(AtomicU64::new(5)),
             range_info: None,
@@ -1840,8 +1740,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_with_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_71,
             timeout: Arc::new(AtomicU64::new(50)),
             range_info: None,
@@ -1886,8 +1784,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_old,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_old,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1903,8 +1799,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_71,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1930,8 +1824,6 @@ mod tests {
         let caps_old = Arc::new(Capabilities::new(vec![]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_old,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_old,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -1970,8 +1862,6 @@ mod tests {
         let caps_71 = Arc::new(Capabilities::from(vec![Capability::new("eth".into(), 71)]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_71,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2010,8 +1900,6 @@ mod tests {
         let caps_old = Arc::new(Capabilities::new(vec![]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_old,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_old,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2022,8 +1910,6 @@ mod tests {
         let caps_71 = Arc::new(Capabilities::from(vec![Capability::new("eth".into(), 71)]));
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_71,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: caps_71,
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2063,8 +1949,6 @@ mod tests {
         let peer = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2082,8 +1966,6 @@ mod tests {
         let peer = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2103,8 +1985,6 @@ mod tests {
 
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_no_snap,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(5)),
             range_info: None,
@@ -2112,8 +1992,6 @@ mod tests {
         });
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer_with_snap,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(50)),
             range_info: None,
@@ -2139,8 +2017,6 @@ mod tests {
         // Only an eth-only peer is connected.
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: B512::random(),
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2179,8 +2055,6 @@ mod tests {
         let peer_id = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
             peer_id,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,
@@ -2229,8 +2103,6 @@ mod tests {
         let peer = B512::random();
         fetcher.new_active_peer(NewPeerInfo {
             peer_id: peer,
-            best_hash: B256::random(),
-            best_number: 100,
             capabilities: Arc::new(Capabilities::new(vec![])),
             timeout: Arc::new(AtomicU64::new(10)),
             range_info: None,

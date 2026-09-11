@@ -6,15 +6,14 @@ use std::{
 };
 
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, B256, TxHash, U256};
+use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider, Upgrades};
 use base_common_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
 };
 use base_common_types_chain::{
-    BaseReceipt, BlockHeader, CoinbaseTip, Predeploys, SealedHeader, SignedTransaction,
-    Transaction, Typed2718,
+    BlockHeader, CoinbaseTip, Predeploys, SealedHeader, SignedTransaction, Transaction, Typed2718,
 };
 use base_common_types_payload::{
     BasePayloadAttributes, BuiltPayloadExecutedBlock, PayloadBuilderError, PayloadId,
@@ -24,7 +23,7 @@ use base_execution_evm_blocks::{
     BlockValidationError, CancelOnDrop, Database, ExecutionWitnessRecord,
 };
 use base_execution_evm_runtime::{
-    Block, BlockEnv, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State,
+    Block, CommitChanges, Evm as AlloyEvm, IntrinsicGas, L1BlockInfo, State,
 };
 use base_execution_state_operations::{
     CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, PayloadStateRootHandle,
@@ -472,19 +471,6 @@ impl<Txs> Builder<'_, Txs> {
         )?;
         Ok(witness)
     }
-}
-
-/// Holds the state after execution
-#[derive(Debug)]
-pub struct ExecutedPayload {
-    /// Tracked execution info
-    pub info: ExecutionInfo,
-    /// Withdrawal hash.
-    pub withdrawals_root: Option<B256>,
-    /// The transaction receipts.
-    pub receipts: Vec<BaseReceipt>,
-    /// The block env used during execution.
-    pub block_env: BlockEnv,
 }
 
 /// This acts as the container for executed transactions and its byproducts (receipts, gas used)
@@ -1370,7 +1356,7 @@ mod tests {
         BaseTxEnvelope, Header, Predeploys, SealedHeader, SignableTransaction, SignedTransaction,
         TxEip1559, WithEncoded,
     };
-    use base_common_types_payload::{MeterBundleResponse, OpcodeGas, PayloadId, TransactionResult};
+    use base_common_types_payload::{OpcodeGas, PayloadId, TransactionResult};
     use base_execution_evm_blocks::{
         BaseEvmConfig, CancelOnDrop, Database, Evm, test_utils::StateProviderTest,
     };
@@ -1889,7 +1875,7 @@ mod tests {
         ));
     }
 
-    fn metering_store(values: HashMap<TxHash, MeterBundleResponse>) -> MeteringStore {
+    fn metering_store(values: HashMap<TxHash, TransactionResult>) -> MeteringStore {
         let store = MeteringStore::default();
         store.set_enabled(true);
         for (hash, value) in values {
@@ -1941,22 +1927,19 @@ mod tests {
         }
     }
 
-    fn meter_for(tx_hash: TxHash, gas_used: u64) -> MeterBundleResponse {
-        MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
-                gas_used,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: Vec::new(),
-            }],
-            ..Default::default()
+    fn meter_for(tx_hash: TxHash, gas_used: u64) -> TransactionResult {
+        TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: Vec::new(),
         }
     }
 
@@ -1975,27 +1958,24 @@ mod tests {
         }])
     }
 
-    fn overflowing_meter(tx_hash: TxHash) -> MeterBundleResponse {
-        MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
+    fn overflowing_meter(tx_hash: TxHash) -> TransactionResult {
+        TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used: u64::MAX,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: vec![OpcodeGas {
+                contract_address: Default::default(),
+                opcode: "SSTORE".to_string(),
+                count: 1,
                 gas_used: u64::MAX,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: vec![OpcodeGas {
-                    contract_address: Default::default(),
-                    opcode: "SSTORE".to_string(),
-                    count: 1,
-                    gas_used: u64::MAX,
-                }],
             }],
-            ..Default::default()
         }
     }
 
@@ -2276,27 +2256,24 @@ mod tests {
         WithEncoded::new(encoded, envelope)
     }
 
-    fn meter_with_sstore(tx_hash: TxHash, gas_used: u64, sstore_count: u64) -> MeterBundleResponse {
-        MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
-                gas_used,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: vec![OpcodeGas {
-                    contract_address: Default::default(),
-                    opcode: "SSTORE".to_string(),
-                    count: sstore_count,
-                    gas_used: 0,
-                }],
+    fn meter_with_sstore(tx_hash: TxHash, gas_used: u64, sstore_count: u64) -> TransactionResult {
+        TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: vec![OpcodeGas {
+                contract_address: Default::default(),
+                opcode: "SSTORE".to_string(),
+                count: sstore_count,
+                gas_used: 0,
             }],
-            ..Default::default()
         }
     }
 

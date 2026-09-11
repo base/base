@@ -74,32 +74,30 @@ use std::{
     time::Instant,
 };
 
-use alloy_eips::{Typed2718, eip7594::BlobTransactionSidecarVariant};
+use alloy_eips::Typed2718;
 use alloy_primitives::{
     Address, B256, TxHash,
     map::{AddressSet, HashSet},
 };
-use base_common_types_chain::Recovered;
+use base_common_types_chain::{Recovered, Transaction};
 use base_execution_network_wire::HandleMempoolData;
 use base_execution_state_types::ChangedAccount;
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rustc_hash::FxHashMap;
 pub use state::SubPool;
 use tokio::sync::mpsc;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 pub use txpool::{SenderInfo, TxPool};
 
 use crate::{
     CanonicalStateUpdate, PoolConfig, TransactionValidator,
-    blobstore::{BlobStore, PooledBlobSidecar},
     error::{PoolError, PoolErrorKind, PoolResult},
     identifier::{SenderId, SenderIdentifiers, TransactionId},
-    metrics::BlobStoreMetrics,
     traits::{
         AllPoolTransactions, BestTransactionsAttributes, BlockInfo, GetPooledTransactionLimit,
-        NewBlobSidecar, PoolSize, PropagatedTransactions, TransactionOrigin,
+        PoolSize, PropagatedTransactions, TransactionOrigin,
     },
-    validate::{TransactionValidationOutcome, ValidPoolTransaction, ValidTransaction},
+    validate::{TransactionValidationOutcome, ValidPoolTransaction},
 };
 mod events;
 pub use best::{BestTransactionFilter, BestTransactionsWithPrioritizedSenders};
@@ -134,13 +132,11 @@ pub const NEW_TX_LISTENER_BUFFER_SIZE: usize = 1024;
 const BLOB_SIDECAR_LISTENER_BUFFER_SIZE: usize = 512;
 
 /// Transaction pool internals.
-pub struct PoolInner<S> {
+pub struct PoolInner {
     /// Internal mapping of addresses to plain ints.
     identifiers: RwLock<SenderIdentifiers>,
     /// Transaction validator.
     validator: crate::PoolValidator,
-    /// Storage for blob transactions
-    blob_store: S,
     /// The internal pool that manages all transactions.
     pool: RwLock<TxPool>,
     /// Pool settings.
@@ -153,23 +149,15 @@ pub struct PoolInner<S> {
     pending_transaction_listener: RwLock<Vec<PendingTransactionHashListener>>,
     /// Listeners for new transactions added to the pool.
     transaction_listener: RwLock<Vec<TransactionListener>>,
-    /// Listener for new blob transaction sidecars added to the pool.
-    blob_transaction_sidecar_listener: Mutex<Vec<BlobTransactionSidecarListener>>,
-    /// Metrics for the blob store
-    blob_store_metrics: BlobStoreMetrics,
 }
 
 // === impl PoolInner ===
 
-impl<S> PoolInner<S>
-where
-    S: BlobStore,
-{
+impl PoolInner {
     /// Create a new transaction pool instance.
     pub fn new(
         validator: crate::TransactionValidationTaskExecutor,
         ordering: crate::BaseOrdering,
-        blob_store: S,
         config: PoolConfig,
     ) -> Self {
         #[cfg(any(test, feature = "test-utils"))]
@@ -182,10 +170,7 @@ where
             pool: RwLock::new(TxPool::new(ordering, config.clone())),
             pending_transaction_listener: Default::default(),
             transaction_listener: Default::default(),
-            blob_transaction_sidecar_listener: Default::default(),
             config,
-            blob_store,
-            blob_store_metrics: Default::default(),
         }
     }
 
@@ -194,7 +179,6 @@ where
     pub fn new_test(
         validator: impl Into<crate::PoolValidator>,
         ordering: crate::BaseOrdering,
-        blob_store: S,
         config: PoolConfig,
     ) -> Self {
         Self {
@@ -205,16 +189,8 @@ where
             pool: RwLock::new(TxPool::new(ordering, config.clone())),
             pending_transaction_listener: Default::default(),
             transaction_listener: Default::default(),
-            blob_transaction_sidecar_listener: Default::default(),
             config,
-            blob_store,
-            blob_store_metrics: Default::default(),
         }
-    }
-
-    /// Returns the configured blob store.
-    pub const fn blob_store(&self) -> &S {
-        &self.blob_store
     }
 
     /// Returns stats about the size of the pool.
@@ -318,14 +294,6 @@ where
         listeners.retain(|l| !l.sender.is_closed());
         listeners.push(listener);
 
-        rx
-    }
-    /// Adds a new blob sidecar listener to the pool that gets notified about every new
-    /// eip4844 transaction's blob sidecar.
-    pub fn add_blob_sidecar_listener(&self) -> mpsc::Receiver<NewBlobSidecar> {
-        let (sender, rx) = mpsc::channel(BLOB_SIDECAR_LISTENER_BUFFER_SIZE);
-        let listener = BlobTransactionSidecarListener { sender };
-        self.blob_transaction_sidecar_listener.lock().push(listener);
         rx
     }
 
@@ -540,7 +508,6 @@ where
         );
 
         // This will discard outdated transactions based on the account's nonce
-        self.delete_discarded_blobs(outcome.discarded.iter());
 
         // notify listeners about updates
         self.notify_on_new_state(outcome);
@@ -571,7 +538,7 @@ where
         pool: &mut RwLockWriteGuard<'_, TxPool>,
         origin: TransactionOrigin,
         tx: TransactionValidationOutcome,
-    ) -> (PoolResult<AddedTransactionOutcome>, Option<AddedTransactionMeta>) {
+    ) -> (PoolResult<AddedTransactionOutcome>, Option<AddedTransaction>) {
         match tx {
             TransactionValidationOutcome::Valid {
                 balance,
@@ -583,18 +550,6 @@ where
             } => {
                 let sender_id = self.get_sender_id(transaction.sender());
                 let transaction_id = TransactionId::new(sender_id, transaction.nonce());
-
-                // split the valid transaction and the blob sidecar if it has any
-                let (transaction, blob_sidecar) = match transaction {
-                    ValidTransaction::Valid(tx) => (tx, None),
-                    ValidTransaction::ValidWithSidecar { transaction, sidecar } => {
-                        debug_assert!(
-                            transaction.is_eip4844(),
-                            "validator returned sidecar for non EIP-4844 transaction"
-                        );
-                        (transaction, Some(sidecar))
-                    }
-                };
 
                 let tx = ValidPoolTransaction {
                     transaction,
@@ -612,9 +567,7 @@ where
                 let hash = *added.hash();
                 let state = added.transaction_state();
 
-                let meta = AddedTransactionMeta { added, blob_sidecar };
-
-                (Ok(AddedTransactionOutcome { hash, state }), Some(meta))
+                (Ok(AddedTransactionOutcome { hash, state }), Some(added))
             }
             TransactionValidationOutcome::Invalid(tx, err) => {
                 self.with_event_listener(|listener| listener.invalid(tx.hash()));
@@ -700,8 +653,6 @@ where
         }
 
         if !discarded.is_empty() {
-            // Delete any blobs associated with discarded blob transactions
-            self.delete_discarded_blobs(discarded.iter());
             self.with_event_listener(|listener| listener.discarded_many(&discarded));
 
             // Linear search avoids allocating a hash set for small eviction batches.
@@ -729,37 +680,19 @@ where
 
     /// Process a transaction that was added to the pool.
     ///
-    /// Performs blob storage operations and sends all notifications. This should be called
+    /// Sends all notifications. This should be called
     /// after the pool write lock has been released to avoid blocking pool operations.
-    fn on_added_transaction(&self, meta: AddedTransactionMeta) {
-        // Handle blob sidecar storage and notifications for EIP-4844 transactions
-        if let Some(sidecar) = meta.blob_sidecar {
-            let hash = *meta.added.hash();
-            self.on_new_blob_sidecar(&hash, &sidecar);
-            self.insert_blob(hash, sidecar);
-        }
-
-        // Delete replaced blob sidecar if any
-        if let Some(replaced) = meta.added.replaced_blob_transaction() {
-            debug!(target: "txpool", "[{:?}] delete replaced blob sidecar", replaced);
-            self.delete_blob(replaced);
-        }
-
-        // Delete discarded blob sidecars if any, this doesnt do any IO.
-        if let Some(discarded) = meta.added.discarded_transactions() {
-            self.delete_discarded_blobs(discarded.iter());
-        }
-
+    fn on_added_transaction(&self, added: AddedTransaction) {
         // Notify pending transaction listeners
-        if let Some(pending) = meta.added.as_pending() {
+        if let Some(pending) = added.as_pending() {
             self.on_new_pending_transaction(pending);
         }
 
         // Notify event listeners
-        self.notify_event_listeners(&meta.added);
+        self.notify_event_listeners(&added);
 
         // Notify new transaction listeners
-        self.on_new_transaction(meta.added.into_new_transaction_event());
+        self.on_new_transaction(added.into_new_transaction_event());
     }
 
     /// Notify all listeners about a new pending transaction.
@@ -822,33 +755,6 @@ where
         if needs_cleanup {
             self.transaction_listener.write().retain(|listener| !listener.sender.is_closed());
         }
-    }
-
-    /// Notify all listeners about a blob sidecar for a newly inserted blob (eip4844) transaction.
-    fn on_new_blob_sidecar(&self, tx_hash: &TxHash, sidecar: &BlobTransactionSidecarVariant) {
-        let mut sidecar_listeners = self.blob_transaction_sidecar_listener.lock();
-        if sidecar_listeners.is_empty() {
-            return;
-        }
-        let sidecar = Arc::new(sidecar.clone());
-        sidecar_listeners.retain_mut(|listener| {
-            let new_blob_event = NewBlobSidecar { tx_hash: *tx_hash, sidecar: sidecar.clone() };
-            match listener.sender.try_send(new_blob_event) {
-                Ok(()) => true,
-                Err(err) => {
-                    if matches!(err, mpsc::error::TrySendError::Full(_)) {
-                        debug!(
-                            target: "txpool",
-                            "[{:?}] failed to send blob sidecar; channel full",
-                            sidecar,
-                        );
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-        })
     }
 
     /// Notifies transaction listeners about changes once a block was processed.
@@ -966,9 +872,7 @@ where
         });
 
         if !discarded.is_empty() {
-            // This deletes outdated blob txs from the blob store, based on the account's nonce.
             // This is called during txpool maintenance when the pool drifted.
-            self.delete_discarded_blobs(discarded.iter());
         }
     }
 
@@ -1268,71 +1172,12 @@ where
     pub fn is_exceeded(&self) -> bool {
         self.pool.read().is_exceeded()
     }
-
-    /// Inserts a blob transaction into the blob store
-    fn insert_blob(&self, hash: TxHash, blob: PooledBlobSidecar) {
-        debug!(target: "txpool", "[{:?}] storing blob sidecar", hash);
-        if let Err(err) = self.blob_store.insert(hash, blob) {
-            warn!(target: "txpool", %err, "[{:?}] failed to insert blob", hash);
-            self.blob_store_metrics.blobstore_failed_inserts.increment(1);
-        }
-        self.update_blob_store_metrics();
-    }
-
-    /// Delete a blob from the blob store
-    pub fn delete_blob(&self, blob: TxHash) {
-        let _ = self.blob_store.delete(blob);
-    }
-
-    /// Delete all blobs from the blob store
-    pub fn delete_blobs(&self, txs: Vec<TxHash>) {
-        let _ = self.blob_store.delete_all(txs);
-    }
-
-    /// Cleans up the blob store
-    pub fn cleanup_blobs(&self) {
-        let stat = self.blob_store.cleanup();
-        self.blob_store_metrics.blobstore_failed_deletes.increment(stat.delete_failed as u64);
-        self.update_blob_store_metrics();
-    }
-
-    fn update_blob_store_metrics(&self) {
-        if let Some(data_size) = self.blob_store.data_size_hint() {
-            self.blob_store_metrics.blobstore_byte_size.set(data_size as f64);
-        }
-        self.blob_store_metrics.blobstore_entries.set(self.blob_store.blobs_len() as f64);
-    }
-
-    /// Deletes all blob transactions that were discarded.
-    fn delete_discarded_blobs<'a>(
-        &'a self,
-        transactions: impl IntoIterator<Item = &'a Arc<ValidPoolTransaction>>,
-    ) {
-        let blob_txs = transactions
-            .into_iter()
-            .filter(|tx| tx.transaction.is_eip4844())
-            .map(|tx| *tx.hash())
-            .collect();
-        self.delete_blobs(blob_txs);
-    }
 }
 
-impl<S> fmt::Debug for PoolInner<S> {
+impl fmt::Debug for PoolInner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PoolInner").field("config", &self.config).finish_non_exhaustive()
     }
-}
-
-/// Metadata for a transaction that was added to the pool.
-///
-/// This holds all the data needed to complete post-insertion operations (notifications,
-/// blob storage).
-#[derive(Debug)]
-struct AddedTransactionMeta {
-    /// The transaction that was added to the pool
-    added: AddedTransaction,
-    /// Optional blob sidecar for EIP-4844 transactions
-    blob_sidecar: Option<PooledBlobSidecar>,
 }
 
 /// Tracks an added transaction and all graph changes caused by adding it.
@@ -1455,11 +1300,6 @@ impl AddedTransaction {
             Self::Pending(tx) => Some(&tx.discarded),
             Self::Parked { .. } => None,
         }
-    }
-
-    /// Returns the hash of the replaced transaction if it is a blob transaction.
-    pub fn replaced_blob_transaction(&self) -> Option<B256> {
-        self.replaced().filter(|tx| tx.transaction.is_eip4844()).map(|tx| *tx.transaction.hash())
     }
 
     /// Returns the hash of the transaction
@@ -1642,7 +1482,6 @@ mod tests {
         TransactionOrigin, TransactionValidationOutcome,
         identifier::SenderId,
         test_utils::{MockTransaction, TestPoolBuilder},
-        validate::ValidTransaction,
     };
 
     #[test]
@@ -1659,9 +1498,7 @@ mod tests {
                 balance: U256::from(1_000),
                 state_nonce: 0,
                 bytecode_hash: None,
-                transaction: ValidTransaction::Valid(
-                    tx.try_into().expect("Base transaction fixture"),
-                ),
+                transaction: tx.try_into().expect("Base transaction fixture"),
                 propagate: true,
                 authorities: Some(vec![auth]),
             }],

@@ -35,10 +35,10 @@ base-common-observability-metrics = { workspace = true }
 tokio-util = { workspace = true, features = ["default"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 base-proof-types = { workspace = true, features = ["rpc-client"] }
+base-common-http = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-proof-service-protocol = { workspace = true, features = ["default"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -79,9 +79,6 @@ pub use estimated_da_size::*;
 mod batcher;
 pub use batcher::*;
 
-mod blobstore;
-pub use blobstore::*;
-
 mod config;
 pub use config::*;
 

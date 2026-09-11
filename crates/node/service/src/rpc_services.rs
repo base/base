@@ -1,8 +1,6 @@
 //! Fixed Base RPC handlers and their runtime inputs.
 
-use std::sync::Arc;
-
-use base_execution_payload::{MeteringConfig, SharedMeteringStore};
+use base_execution_payload::SharedMeteringStore;
 use base_execution_rpc::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, BaseApiExtServer, BuilderApiConfig, BuilderApiServer,
     MeteringApiImpl, MeteringApiServer, MeteringStoreExt, SendRawTransactionValidityApiImpl,
@@ -21,8 +19,8 @@ pub struct BaseRpcServices {
     pub builder: Option<BuilderApiConfig>,
     /// Maximum predicates when experimental transaction ingress is enabled.
     pub validity: Option<usize>,
-    /// Bundle execution metering settings.
-    pub metering: Option<MeteringConfig>,
+    /// Block profiling settings.
+    pub metering: bool,
     /// Shared resource metering store, when resource metering is enabled.
     pub metering_store: Option<SharedMeteringStore>,
 }
@@ -49,11 +47,9 @@ impl BaseRpcServices {
                 .into_rpc(),
             )?;
         }
-        if let Some(config) = self.metering.filter(|config| config.enabled) {
-            ctx.modules.merge_configured(
-                MeteringApiImpl::new(ctx.provider().clone(), Arc::new(config.metered_opcodes))
-                    .into_rpc(),
-            )?;
+        if self.metering {
+            ctx.modules
+                .merge_configured(MeteringApiImpl::new(ctx.provider().clone()).into_rpc())?;
         }
         if let Some(store) = self.metering_store {
             ctx.modules.add_or_replace_configured(MeteringStoreExt::new(store).into_rpc())?;

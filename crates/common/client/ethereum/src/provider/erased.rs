@@ -26,8 +26,7 @@ use crate::GetSubscription;
 use crate::{
     EthCall, Ethereum, Network, PendingTransaction, PendingTransactionBuilder,
     PendingTransactionConfig, Provider, ProviderCall, RootProvider, RpcWithBlock, SendableTx,
-    heart::PendingTransactionError,
-    utils::{Eip1559Estimation, Eip1559Estimator},
+    heart::PendingTransactionError, utils::Eip1559Estimation,
 };
 
 /// A wrapper struct around a type erased [`Provider`].
@@ -115,13 +114,6 @@ impl<N: Network> Provider<N> for DynProvider<N> {
 
     fn estimate_gas(&self, tx: N::TransactionRequest) -> EthCall<N, U64, u64> {
         self.0.estimate_gas(tx)
-    }
-
-    async fn estimate_eip1559_fees_with(
-        &self,
-        estimator: Eip1559Estimator,
-    ) -> TransportResult<Eip1559Estimation> {
-        self.0.estimate_eip1559_fees_with(estimator).await
     }
 
     async fn estimate_eip1559_fees(&self) -> TransportResult<Eip1559Estimation> {

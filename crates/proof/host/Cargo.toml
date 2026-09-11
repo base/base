@@ -45,7 +45,6 @@ base-proof-service-protocol = { workspace = true, features = ["default"] }
 base-common-chain-config = { workspace = true, features = ["serde", "std"] }
 base-common-types-payload = { workspace = true, features = ["serde", "std"] }
 tokio = { features = ["default", "macros", "rt", "sync", "time"], workspace = true }
-rocksdb = { workspace = true, features = ["snappy", "bindgen-runtime"], optional = true }
 base-execution-evm-runtime = { features = ["blst", "c-kzg", "portable", "secp256k1", "std"], workspace = true }
 
 [dev-dependencies]
@@ -53,11 +52,9 @@ proptest = { workspace = true, features = ["default"] }
 tokio = { workspace = true, features = ["default", "test-util"] }
 
 [features]
-disk = ["dep:rocksdb"]
 metrics = [
     "base-execution-evm-runtime/metrics",
     "base-consensus-source/metrics",
     "base-common-observability-metrics/metrics",
     "dep:metrics",
 ]
-precompiles = []

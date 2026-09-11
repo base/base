@@ -22,7 +22,7 @@ use base_common_observability_metrics::common::mpsc::MeteredPollSender;
 use base_common_runtime::Runtime;
 use base_common_types_chain::{GotExpected, GotExpectedBoxed};
 use base_execution_network_wire::{
-    BlockRangeUpdate, Capabilities, DisconnectReason, ECIESError, ECIESStream, EthRlpxHandshake,
+    BlockRangeUpdate, Capabilities, DisconnectReason, ECIESError, ECIESStream, EthHandshake,
     EthSnapStream, EthStream, EthStreamError, EthVersion, HANDSHAKE_TIMEOUT,
     HelloMessageWithProtocols, PeerId, SessionsConfig, UnauthedP2PStream, UnifiedStatus,
 };
@@ -113,16 +113,12 @@ pub struct SessionManager {
     disconnections_counter: DisconnectionsCounter,
     /// Metrics for the session manager.
     metrics: SessionManagerMetrics,
-    /// The [`EthRlpxHandshake`] is used to perform the initial handshake with the peer.
-    handshake: Arc<dyn EthRlpxHandshake>,
+
     /// Maximum allowed ETH message size for post-handshake ETH/Snap streams.
     eth_max_message_size: usize,
     /// Shared local range information that gets propagated to active sessions.
     /// This represents the range of blocks that this node can serve to other peers.
     local_range_info: BlockRangeInfo,
-    /// When true, block announcement messages (`NewBlock`, `NewBlockHashes`) are rejected before
-    /// RLP decoding on new sessions to avoid memory amplification.
-    reject_block_announcements: bool,
 }
 
 // === impl SessionManager ===
@@ -137,9 +133,8 @@ impl SessionManager {
         status: UnifiedStatus,
         hello_message: HelloMessageWithProtocols,
         fork_filter: ForkFilter,
-        handshake: Arc<dyn EthRlpxHandshake>,
+
         eth_max_message_size: usize,
-        reject_block_announcements: bool,
     ) -> Self {
         let (pending_sessions_tx, pending_sessions_rx) = mpsc::channel(config.session_event_buffer);
         let (active_session_tx, active_session_rx) = mpsc::channel(config.session_event_buffer);
@@ -172,10 +167,9 @@ impl SessionManager {
             active_session_rx: ReceiverStream::new(active_session_rx),
             disconnections_counter: Default::default(),
             metrics: Default::default(),
-            handshake,
+
             eth_max_message_size,
             local_range_info,
-            reject_block_announcements,
         }
     }
 
@@ -298,7 +292,6 @@ impl SessionManager {
             Direction::Incoming,
             pending_events.clone(),
             start_pending_incoming_session(
-                self.handshake.clone(),
                 self.eth_max_message_size,
                 disconnect_rx,
                 session_id,
@@ -339,7 +332,6 @@ impl SessionManager {
                 Direction::Outgoing(remote_peer_id),
                 pending_events.clone(),
                 start_pending_outbound_session(
-                    self.handshake.clone(),
                     self.eth_max_message_size,
                     disconnect_rx,
                     pending_events,
@@ -574,9 +566,7 @@ impl SessionManager {
                     BlockRangeInfo::new(update.earliest, update.latest, update.latest_hash)
                 });
 
-                if self.reject_block_announcements {
-                    conn.set_reject_block_announcements(true);
-                }
+                conn.set_reject_block_announcements(true);
 
                 let session = ActiveSession {
                     next_id: 0,
@@ -920,7 +910,6 @@ pub(crate) async fn pending_session_with_timeout<F>(
 /// This will wait for the _incoming_ handshake request and answer it.
 #[expect(clippy::too_many_arguments)]
 pub(crate) async fn start_pending_incoming_session(
-    handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     disconnect_rx: oneshot::Receiver<()>,
     session_id: SessionId,
@@ -933,7 +922,6 @@ pub(crate) async fn start_pending_incoming_session(
     fork_filter: ForkFilter,
 ) {
     authenticate(
-        handshake,
         eth_max_message_size,
         disconnect_rx,
         events,
@@ -953,7 +941,6 @@ pub(crate) async fn start_pending_incoming_session(
 #[instrument(level = "trace", target = "net::network", skip_all, fields(%remote_addr, peer_id = ?remote_peer_id))]
 #[expect(clippy::too_many_arguments)]
 async fn start_pending_outbound_session(
-    handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     disconnect_rx: oneshot::Receiver<()>,
     events: mpsc::Sender<PendingSessionEvent>,
@@ -985,7 +972,6 @@ async fn start_pending_outbound_session(
         }
     };
     authenticate(
-        handshake,
         eth_max_message_size,
         disconnect_rx,
         events,
@@ -1004,7 +990,6 @@ async fn start_pending_outbound_session(
 /// Authenticates a session
 #[expect(clippy::too_many_arguments)]
 async fn authenticate(
-    handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     disconnect_rx: oneshot::Receiver<()>,
     events: mpsc::Sender<PendingSessionEvent>,
@@ -1036,7 +1021,6 @@ async fn authenticate(
     let unauthed = UnauthedP2PStream::new(stream);
 
     let auth = authenticate_stream(
-        handshake,
         eth_max_message_size,
         unauthed,
         session_id,
@@ -1087,7 +1071,6 @@ async fn get_ecies_stream<Io: AsyncRead + AsyncWrite + Unpin>(
 ///
 #[expect(clippy::too_many_arguments)]
 async fn authenticate_stream(
-    handshake: Arc<dyn EthRlpxHandshake>,
     eth_max_message_size: usize,
     stream: UnauthedP2PStream<ECIESStream<TcpStream>>,
     session_id: SessionId,
@@ -1158,9 +1141,13 @@ async fn authenticate_stream(
         // if the hello handshake was successful we can try status handshake
 
         // perform the eth protocol handshake
-        match handshake
-            .handshake(&mut p2p_stream, status, fork_filter.clone(), HANDSHAKE_TIMEOUT)
-            .await
+        match EthHandshake::handshake(
+            &mut p2p_stream,
+            status,
+            fork_filter.clone(),
+            HANDSHAKE_TIMEOUT,
+        )
+        .await
         {
             Ok(their_status) => {
                 let eth_stream =
@@ -1177,14 +1164,7 @@ async fn authenticate_stream(
             }
         }
     } else {
-        match EthSnapStream::handshake(
-            p2p_stream,
-            status,
-            fork_filter,
-            handshake,
-            eth_max_message_size,
-        )
-        .await
+        match EthSnapStream::handshake(p2p_stream, status, fork_filter, eth_max_message_size).await
         {
             Ok((stream, their_status)) => (stream.into(), their_status),
             Err(err) => {

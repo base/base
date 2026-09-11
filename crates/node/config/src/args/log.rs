@@ -251,81 +251,15 @@ impl DefaultLogArgs {
         LOG_DEFAULTS.get_or_init(Self::default)
     }
 
-    /// Set the default stdout log format.
-    pub const fn with_log_stdout_format(mut self, v: LogFormat) -> Self {
-        self.log_stdout_format = v;
-        self
-    }
-
-    /// Set the default stdout log filter.
-    pub fn with_log_stdout_filter(mut self, v: String) -> Self {
-        self.log_stdout_filter = v;
-        self
-    }
-
-    /// Set the default file log format.
-    pub const fn with_log_file_format(mut self, v: LogFormat) -> Self {
-        self.log_file_format = v;
-        self
-    }
-
-    /// Set the default file log filter.
-    pub fn with_log_file_filter(mut self, v: String) -> Self {
-        self.log_file_filter = v;
-        self
-    }
-
-    /// Set the default log file name.
-    pub fn with_log_file_name(mut self, v: String) -> Self {
-        self.log_file_name = v;
-        self
-    }
-
-    /// Set the default max log file size in MB.
-    pub const fn with_log_file_max_size(mut self, v: u64) -> Self {
-        self.log_file_max_size = v;
-        self
-    }
-
     /// Set whether journald logging is enabled by default.
     pub const fn with_journald(mut self, v: bool) -> Self {
         self.journald = v;
         self
     }
 
-    /// Set the default journald filter.
-    pub fn with_journald_filter(mut self, v: String) -> Self {
-        self.journald_filter = v;
-        self
-    }
-
     /// Set whether samply tracing is enabled by default.
     pub const fn with_samply(mut self, v: bool) -> Self {
         self.samply = v;
-        self
-    }
-
-    /// Set the default samply filter.
-    pub fn with_samply_filter(mut self, v: String) -> Self {
-        self.samply_filter = v;
-        self
-    }
-
-    /// Set whether Chrome trace JSON tracing is enabled by default.
-    pub const fn with_tracing_chrome(mut self, v: bool) -> Self {
-        self.tracing_chrome = v;
-        self
-    }
-
-    /// Set the default Chrome trace JSON filter.
-    pub fn with_tracing_chrome_filter(mut self, v: String) -> Self {
-        self.tracing_chrome_filter = v;
-        self
-    }
-
-    /// Set the default color mode.
-    pub const fn with_color(mut self, v: ColorMode) -> Self {
-        self.color = v;
         self
     }
 }

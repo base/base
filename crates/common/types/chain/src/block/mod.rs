@@ -3,9 +3,6 @@
 mod header;
 pub use header::{BlockHeader, GasLimitMismatch, Header};
 
-mod traits;
-pub use traits::EthBlock;
-
 mod meta;
 use alloc::vec::Vec;
 

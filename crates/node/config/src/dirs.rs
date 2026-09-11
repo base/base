@@ -340,14 +340,6 @@ impl<D> ChainPath<D> {
         self.data_dir().join("known-peers.json")
     }
 
-    /// Returns the path to the blobstore directory for this chain where blobs of unfinalized
-    /// transactions are stored.
-    ///
-    /// `<DIR>/<CHAIN_ID>/blobstore`
-    pub fn blobstore(&self) -> PathBuf {
-        self.data_dir().join("blobstore")
-    }
-
     /// Returns the path to the local transactions backup file
     ///
     /// `<DIR>/<CHAIN_ID>/txpool-transactions-backup.rlp`

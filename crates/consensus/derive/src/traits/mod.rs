@@ -13,8 +13,5 @@ pub use attributes::{AttributesBuilder, AttributesProvider, NextAttributes};
 mod data_sources;
 pub use data_sources::{BlobProvider, DataAvailabilityProvider};
 
-mod reset;
-pub use reset::ResetProvider;
-
 mod stages;
 pub use stages::{OriginAdvancer, OriginProvider, SignalReceiver, StageReset};

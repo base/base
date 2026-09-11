@@ -109,17 +109,6 @@ pub trait Cfg {
     fn is_amsterdam_eip2780_enabled(&self) -> bool;
 }
 
-/// What bytecode analysis to perform
-#[derive(Clone, Default, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum AnalysisKind {
-    /// Do not perform bytecode analysis
-    Raw,
-    /// Perform bytecode analysis
-    #[default]
-    Analyse,
-}
-
 /// Transaction destination
 pub type TransactTo = TxKind;
 

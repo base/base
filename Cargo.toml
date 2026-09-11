@@ -78,7 +78,6 @@ members = [
   "crates/proof/tee/nitro-host",
   "crates/proof/tee/nitro-verifier",
   "crates/proof/tee/registrar",
-  "crates/common/observability/health",
   "crates/common/observability/metrics",
   "crates/common/client/rollup",
   "crates/common/runtime",
@@ -300,7 +299,6 @@ base-common-runtime = { path = "crates/common/runtime", default-features = false
 base-testing-support = { path = "crates/testing/support", default-features = false }
 base-common-client-rollup = { path = "crates/common/client/rollup", default-features = false }
 base-common-chain-activation = { path = "crates/common/chain/activation", default-features = false }
-base-common-observability-health = { path = "crates/common/observability/health", default-features = false }
 base-common-observability-metrics = { path = "crates/common/observability/metrics", default-features = false }
 
 # revm
@@ -331,10 +329,7 @@ alloy-rpc-client = { version = "=2.4.1", default-features = false }
 alloy-transport-ws = { version = "=2.4.1", default-features = false }
 alloy-transport-http = { version = "=2.4.1", default-features = false }
 alloy-rpc-types-debug = { version = "=2.4.1", default-features = false }
-alloy-sol-macro-input = { version = "=1.6.1", default-features = false }
-alloy-sol-type-parser = { version = "=1.6.1", default-features = false }
 alloy-rpc-types-admin = { version = "=2.4.1", default-features = false }
-alloy-sol-macro-expander = { version = "=1.6.1", default-features = false }
 base-common-client-ethereum = { path = "crates/common/client/ethereum", default-features = false }
 alloy-hardforks-legacy = { version = "=0.2.13", default-features = false, package = "alloy-hardforks" }
 
@@ -381,7 +376,6 @@ ratatui = { version = "0.30.0", default-features = false }
 crossterm = { version = "0.29", default-features = false }
 indicatif = { version = "0.18", default-features = false }
 human_bytes = { version = "0.4.3", default-features = false }
-clap_builder = { version = "4.6.5", default-features = false }
 tracing-indicatif = { version = "0.3", default-features = false }
 
 # tracing
@@ -413,7 +407,6 @@ aws-nitro-enclaves-nsm-api = { version = "0.4", default-features = false }
 aws-sdk-elasticloadbalancingv2 = { version = "1.109.0", default-features = false }
 
 # crypto
-sha3 = { version = "0.10", default-features = false }
 k256 = { version = "0.13", default-features = false }
 p256 = { version = "0.13", default-features = false }
 p384 = { version = "0.13", default-features = false }
@@ -421,7 +414,6 @@ sha2 = { version = "0.10", default-features = false }
 blake3 = { version = "1.8", default-features = false }
 c-kzg = { version = "2.1.5", default-features = false }
 ark-ff = { version = "0.6.0", default-features = false }
-getrandom = { version = "0.4", default-features = false }
 rustls = { version = "0.23.43", default-features = false }
 secp256k1 = { version = "0.30", default-features = false }
 hex-literal = { version = "1.1", default-features = false }
@@ -449,7 +441,6 @@ libp2p-identity = { version = "0.2.12", default-features = false }
 libp2p-stream = { version = "0.4.0-alpha", default-features = false }
 
 # serde
-rkyv = { version = "0.8", default-features = false }
 toml = { version = "1.0", default-features = false }
 bincode = { version = "2", default-features = false }
 ciborium = { version = "0.2", default-features = false }
@@ -472,7 +463,6 @@ rstest = { version = "0.26.1", default-features = false }
 criterion = { version = "0.8", default-features = false }
 serial_test = { version = "3", default-features = false }
 httpmock = { version = "0.8.2", default-features = false }
-wiremock = { version = "0.6.2", default-features = false }
 proptest = { version = "1.10.0", default-features = false }
 similar-asserts = { version = "1", default-features = false }
 testcontainers = { version = "0.25", default-features = false }
@@ -569,37 +559,26 @@ governor = { version = "0.7", default-features = false }
 # Additional vendored crates
 enr = { version = "=0.13.0", default-features = false }
 nybbles = { version = "=0.4.8", default-features = false }
-tree_hash = { version = "=0.12.1", default-features = false }
-ethereum_serde_utils = { version = "=0.8.1", default-features = false }
 
 # Additional shared dependencies
 fnv = { version = "1", default-features = false }
-itoa = { version = "1", default-features = false }
 aes = { version = "0.8", default-features = false }
 ctr = { version = "0.9", default-features = false }
-heck = { version = "0.5", default-features = false }
-phf = { version = "0.14", default-features = false }
 bitvec = { version = "1", default-features = false }
 cc = { version = "1.2.62", default-features = false }
-typenum = { version = "1", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 uint = { version = "0.10", default-features = false }
 paste = { version = "1.0", default-features = false }
-ethabi = { version = "18", default-features = false }
-bimap = { version = "0.6", default-features = false }
 slotmap = { version = "1", default-features = false }
 indexmap = { version = "2", default-features = false }
 smallvec = { version = "1", default-features = false }
-winnow = { version = "1.0", default-features = false }
 insta = { version = "1.47", default-features = false }
-schemars = { version = "1", default-features = false }
 ark-ec = { version = "0.6", default-features = false }
 ripemd = { version = "0.2", default-features = false }
 lz4 = { version = "1.28.1", default-features = false }
 byteorder = { version = "1", default-features = false }
 quanta = { version = "0.12", default-features = false }
 test-fuzz = { version = "7", default-features = false }
-dunce = { version = "1.0.4", default-features = false }
 socket2 = { version = "0.6", default-features = false }
 blst = { version = "0.3.15", default-features = false }
 ark-std = { version = "0.6", default-features = false }
@@ -610,8 +589,6 @@ hmac = { version = "0.12.1", default-features = false }
 bindgen = { version = "0.72", default-features = false }
 bitflags = { version = "2.4", default-features = false }
 arrayvec = { version = "0.7", default-features = false }
-trybuild = { version = "1.0", default-features = false }
-num_enum = { version = "0.7", default-features = false }
 mappings = { version = "0.7", default-features = false }
 sysinfo = { version = "0.38", default-features = false }
 nonmax = { version = "0.5.5", default-features = false }
@@ -629,10 +606,7 @@ procfs = { version = "0.18.0", default-features = false }
 digest = { version = "0.10.5", default-features = false }
 rmp-serde = { version = "1.3", default-features = false }
 once_cell = { version = "1.19", default-features = false }
-const-hex = { version = "1.14", default-features = false }
 itertools = { version = "0.14", default-features = false }
-interprocess = { version = "2", default-features = false }
-tokio-test = { version = "0.4", default-features = false }
 rustc-hash = { version = "2.0", default-features = false }
 memmap2 = { version = "0.9.11", default-features = false }
 aes-gcm = { version = "0.10.3", default-features = false }
@@ -643,10 +617,8 @@ arrayref = { version = "0.3.6", default-features = false }
 roaring = { version = "0.11.3", default-features = false }
 pprof_util = { version = "0.8", default-features = false }
 triehash = { version = "0.8.4", default-features = false }
-hyper-tls = { version = "0.6.0", default-features = false }
 ci_info = { version = "0.14.14", default-features = false }
 wasmtimer = { version = "0.4.0", default-features = false }
-rustversion = { version = "1.0", default-features = false }
 boa_engine = { version = "0.21", default-features = false }
 colorchoice = { version = "1.0", default-features = false }
 page_size = { version = "0.6.0", default-features = false }
@@ -655,7 +627,6 @@ hash-db = { version = "=0.15.2", default-features = false }
 data-encoding = { version = "2", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 visibility = { version = "0.1.1", default-features = false }
-macro-string = { version = "0.2", default-features = false }
 coins-bip32 = { version = "0.12", default-features = false }
 coins-bip39 = { version = "0.12", default-features = false }
 more-asserts = { version = "0.3", default-features = false }
@@ -669,9 +640,7 @@ ringbuffer = { version = "0.16.0", default-features = false }
 rand_xorshift = { version = "0.3", default-features = false }
 num-traits = { version = "0.2.16", default-features = false }
 ark-serialize = { version = "0.6", default-features = false }
-serde_derive = { version = "1.0.0", default-features = false }
 pin-project = { version = "1.1.12", default-features = false }
-syn-solidity = { version = "1.6.1", default-features = false }
 fixed-cache = { version = "0.1.10", default-features = false }
 jemalloc_pprof = { version = "0.8", default-features = false }
 tracing-samply = { version = "0.1", default-features = false }
@@ -683,51 +652,37 @@ crossbeam-utils = { version = "0.8", default-features = false }
 tracing-futures = { version = "0.2", default-features = false }
 linked_hash_set = { version = "0.1", default-features = false }
 assert_matches = { version = "1.5.0", default-features = false }
-ethereum_hashing = { version = "0.8", default-features = false }
-ws_stream_wasm = { version = "0.7.4", default-features = false }
-derive_arbitrary = { version = "1.3", default-features = false }
 tracing-chrome = { version = "0.7.2", default-features = false }
 tracing-journald = { version = "0.3", default-features = false }
 tracing-logfmt = { version = "0.3.7", default-features = false }
 metrics-derive = { version = "0.1.1", default-features = false }
 pretty_assertions = { version = "1.4", default-features = false }
-tree_hash_derive = { version = "0.12", default-features = false }
 async-compression = { version = "0.4", default-features = false }
 tikv-jemalloc-ctl = { version = "0.6", default-features = false }
 tikv-jemalloc-sys = { version = "0.6", default-features = false }
 thread-priority = { version = "3.0.0", default-features = false }
 futures-utils-wasm = { version = "0.1", default-features = false }
-context_deserialize = { version = "0.2", default-features = false }
 jsonrpsee-server = { version = "0.26.0", default-features = false }
 hickory-resolver = { version = "0.26.1", default-features = false }
 parity-scale-codec = { version = "3.2.1", default-features = false }
-wasm-bindgen-futures = { version = "0.4", default-features = false }
 aurora-engine-modexp = { version = "1.2", default-features = false }
 crossbeam-channel = { version = "0.5.13", default-features = false }
 boyer-moore-magiclen = { version = "0.2.16", default-features = false }
-tracing-opentelemetry = { version = "0.32.0", default-features = false }
 jsonrpsee-http-client = { version = "0.26.0", default-features = false }
 codspeed-criterion-compat = { version = "4.3", default-features = false }
 proptest-arbitrary-interop = { version = "0.1", default-features = false }
 rand_0_7 = { version = "0.7", package = "rand", default-features = false }
-proc-macro-error3 = { version = ">=3.0.0, <=3.0.1", default-features = false }
 sha2_0_11_0 = { version = "0.11", package = "sha2", default-features = false }
 rand_0_10_2 = { version = "0.10", package = "rand", default-features = false }
 lru_0_18_2 = { version = "0.18.2", package = "lru", default-features = false }
 bincode_1_3_3 = { version = "1", package = "bincode", default-features = false }
-sha3_0_11_0 = { version = "0.11.0", package = "sha3", default-features = false }
 opentelemetry-semantic-conventions = { version = "0.32", default-features = false }
-criterion_0_7 = { version = "0.7", package = "criterion", default-features = false }
-governor_0_10 = { version = "0.10", package = "governor", default-features = false }
 if-addrs_0_14_0 = { version = "0.14", package = "if-addrs", default-features = false }
 getrandom_0_2_17 = { version = "0.2", package = "getrandom", default-features = false }
 secp256k1_0_31_1 = { version = "0.31", package = "secp256k1", default-features = false }
 ark-bn254_0_6_0 = { version = "0.6.0", package = "ark-bn254", default-features = false }
 toml_0_9_12_spec_1_1_0 = { version = "0.9", package = "toml", default-features = false }
 assert_matches_1_5 = { version = "1.5", package = "assert_matches", default-features = false }
-opentelemetry_0_31_0 = { version = "0.31.0", package = "opentelemetry", default-features = false }
-proptest-derive_0_7_0 = { version = "0.7", package = "proptest-derive", default-features = false }
 tokio-tungstenite_0_29_0 = { version = "0.29", package = "tokio-tungstenite", default-features = false }
-opentelemetry-http_0_31_0 = { version = "0.31.0", package = "opentelemetry-http", default-features = false }
 tracing-opentelemetry_0_33_0 = { version = "0.33", package = "tracing-opentelemetry", default-features = false }
 codspeed-criterion-compat_5_0 = { version = "5.0", package = "codspeed-criterion-compat", default-features = false }

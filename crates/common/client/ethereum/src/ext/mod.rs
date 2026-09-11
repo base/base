@@ -20,18 +20,10 @@ mod net;
 #[cfg(feature = "net-api")]
 pub use net::NetApi;
 
-#[cfg(feature = "trace-api")]
-mod trace;
-#[cfg(feature = "trace-api")]
-pub use trace::{TraceApi, TraceBuilder, TraceCallList, TraceParams};
-
 #[cfg(feature = "txpool-api")]
 mod txpool;
 #[cfg(feature = "txpool-api")]
 pub use txpool::TxPoolApi;
-
-/// Reth related apis.
-pub mod reth;
 
 #[cfg(test)]
 pub(crate) mod test {

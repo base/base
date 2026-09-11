@@ -16,12 +16,3 @@ where
         self(state)
     }
 }
-
-/// An [`OnStateHook`] that does nothing.
-#[derive(Default, Debug, Clone)]
-#[non_exhaustive]
-pub struct NoopHook;
-
-impl OnStateHook for NoopHook {
-    fn on_state(&mut self, _state: EvmState) {}
-}

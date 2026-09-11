@@ -1,6 +1,6 @@
 [package]
 name = "base-common-http"
-description = "Client IP resolution through trusted forwarding proxies"
+description = "HTTP health services and trusted proxy client IP resolution"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,28 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tower = { workspace = true }
+http-body = { workspace = true }
+async-trait = { workspace = true }
 tracing = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
 http = { workspace = true, features = ["default"] }
-thiserror = { workspace = true, features = ["std"] }
 ipnet = { workspace = true, features = ["default"] }
+thiserror = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["default"] }
+futures = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["server", "macros"] }
+eyre = { workspace = true, optional = true, features = ["default"] }
+tokio-util = { workspace = true, optional = true, features = ["default"] }
+axum = { workspace = true, features = ["http1", "tokio"], optional = true }
+tokio = { workspace = true, features = ["default", "net"], optional = true }
+
+[dev-dependencies]
+rstest = { workspace = true, features = ["default"] }
+reqwest = { workspace = true, features = ["default"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
+alloy-transport-http = { workspace = true, features = ["default", "reqwest"] }
+tokio = { workspace = true, features = ["default", "rt-multi-thread", "macros"] }
+
+[features]
+axum-server = ["dep:axum", "dep:eyre", "dep:tokio", "dep:tokio-util"]

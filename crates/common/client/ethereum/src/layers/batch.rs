@@ -12,9 +12,8 @@ use tokio::time::sleep;
 use wasmtimer::tokio::sleep;
 
 use crate::{
-    ARB_SYS_ADDRESS, Caller, Ethereum, MULTICALL3_ADDRESS, Network, Provider, ProviderCall,
-    ProviderLayer, RootProvider, TransactionBuilder,
-    bindings::{ArbSys, IMulticall3},
+    Caller, Ethereum, MULTICALL3_ADDRESS, Network, Provider, ProviderCall, ProviderLayer,
+    RootProvider, TransactionBuilder, bindings::IMulticall3,
 };
 
 /// This is chosen somewhat arbitrarily. It should be short enough to not cause a noticeable
@@ -73,7 +72,6 @@ const DEFAULT_WAIT: Duration = Duration::from_millis(1);
 pub struct CallBatchLayer {
     m3a: Address,
     wait: Duration,
-    arbsys: bool,
 }
 
 impl Default for CallBatchLayer {
@@ -85,7 +83,7 @@ impl Default for CallBatchLayer {
 impl CallBatchLayer {
     /// Create a new `CallBatchLayer` with a default wait of 1ms.
     pub const fn new() -> Self {
-        Self { m3a: MULTICALL3_ADDRESS, wait: DEFAULT_WAIT, arbsys: false }
+        Self { m3a: MULTICALL3_ADDRESS, wait: DEFAULT_WAIT }
     }
 
     /// Set the amount of time to wait before sending the batch.
@@ -106,20 +104,6 @@ impl CallBatchLayer {
     /// The default is [`MULTICALL3_ADDRESS`].
     pub const fn multicall3_address(mut self, m3a: Address) -> Self {
         self.m3a = m3a;
-        self
-    }
-
-    /// Use the Arbitrum `ArbSys` precompile for block number queries.
-    ///
-    /// On Arbitrum, `block.number` returns the parent chain’s block number (L1).
-    /// Without this setting, batched `eth_blockNumber` calls through Multicall3
-    /// will therefore return the wrong value. Enabling this queries the L2 block
-    /// number via `ArbSys` instead.
-    ///
-    /// The default is `false`.
-    /// This should only be enabled when interacting with Arbitrum rollups.
-    pub const fn arbitrum_compat(mut self) -> Self {
-        self.arbsys = true;
         self
     }
 }
@@ -181,7 +165,7 @@ impl<N: Network> CallBatchMsg<N> {
 }
 
 impl<N: Network> CallBatchMsgKind<N> {
-    fn to_call3(&self, m3a: Address, arbsys: bool) -> IMulticall3::Call3 {
+    fn to_call3(&self, m3a: Address) -> IMulticall3::Call3 {
         let m3a_call = |data: Vec<u8>| IMulticall3::Call3 {
             target: m3a,
             allowFailure: true,
@@ -193,16 +177,7 @@ impl<N: Network> CallBatchMsgKind<N> {
                 allowFailure: true,
                 callData: tx.input().cloned().unwrap_or_default(),
             },
-            Self::BlockNumber => {
-                if arbsys {
-                    return IMulticall3::Call3 {
-                        target: ARB_SYS_ADDRESS,
-                        allowFailure: false,
-                        callData: ArbSys::arbBlockNumberCall {}.abi_encode().into(),
-                    };
-                }
-                m3a_call(IMulticall3::getBlockNumberCall {}.abi_encode())
-            }
+            Self::BlockNumber => m3a_call(IMulticall3::getBlockNumberCall {}.abi_encode()),
             Self::ChainId => m3a_call(IMulticall3::getChainIdCall {}.abi_encode()),
             &Self::Balance(addr) => m3a_call(IMulticall3::getEthBalanceCall { addr }.abi_encode()),
         }
@@ -310,7 +285,6 @@ struct CallBatchBackend<P, N: Network = Ethereum> {
     inner: Arc<P>,
     m3a: Address,
     wait: Duration,
-    arbsys: bool,
     rx: mpsc::UnboundedReceiver<CallBatchMsg<N>>,
     pending: Vec<CallBatchMsg<N>>,
     _pd: PhantomData<N>,
@@ -318,9 +292,9 @@ struct CallBatchBackend<P, N: Network = Ethereum> {
 
 impl<P: Provider<N> + 'static, N: Network> CallBatchBackend<P, N> {
     fn spawn(inner: Arc<P>, layer: &CallBatchLayer) -> mpsc::UnboundedSender<CallBatchMsg<N>> {
-        let CallBatchLayer { m3a, wait, arbsys } = *layer;
+        let CallBatchLayer { m3a, wait } = *layer;
         let (tx, rx) = mpsc::unbounded_channel();
-        let this = Self { inner, m3a, wait, arbsys, rx, pending: Vec::new(), _pd: PhantomData };
+        let this = Self { inner, m3a, wait, rx, pending: Vec::new(), _pd: PhantomData };
         this.run().spawn_task();
         tx
     }
@@ -420,8 +394,7 @@ impl<P: Provider<N> + 'static, N: Network> CallBatchBackend<P, N> {
         &self,
         pending: &[CallBatchMsg<N>],
     ) -> TransportResult<Vec<IMulticall3::Result>> {
-        let calls: Vec<_> =
-            pending.iter().map(|msg| msg.kind.to_call3(self.m3a, self.arbsys)).collect();
+        let calls: Vec<_> = pending.iter().map(|msg| msg.kind.to_call3(self.m3a)).collect();
 
         let tx = N::TransactionRequest::default()
             .with_to(self.m3a)
@@ -663,35 +636,5 @@ mod tests {
         assert_eq!(block_number.unwrap(), 1);
         assert_eq!(chain_id.unwrap(), alloy_chains::NamedChain::AnvilHardhat as u64);
         assert_eq!(balance.unwrap(), U256::from(123));
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn arbitrum() {
-        let url = "https://arbitrum.rpc.subquery.network/public";
-
-        let batched = ProviderBuilder::new().with_call_batching().connect(url).await.unwrap();
-
-        let batch_layer = CallBatchLayer::new().arbitrum_compat();
-        let batched_compat = ProviderBuilder::new().layer(batch_layer).connect(url).await.unwrap();
-
-        // single call so won't go through multicall3
-        let block = batched.get_block_number().await.unwrap();
-
-        // force batching
-        let (b, _) = tokio::join!(batched.get_block_number(), batched.get_chain_id());
-        // we expect this to be the L1 block number
-        let block_wrong = b.unwrap();
-
-        // force batch transaction
-        let (b, _) = tokio::join!(batched_compat.get_block_number(), batched.get_chain_id());
-        // compat mode returns correct block
-        let block_compat = b.unwrap();
-
-        dbg!(block, block_wrong, block_compat);
-
-        // arbitrum blocks move fast so we assert with some error margin
-        assert!(block.abs_diff(block_compat) < 10);
-        assert!(block.abs_diff(block_wrong) > 100_000);
     }
 }

@@ -1,7 +1,7 @@
 //! Tests for the session handshake.
 
 use base_execution_network_wire::{
-    Capability, EthHandshake, MAX_MESSAGE_SIZE, Protocol, UnauthedEthStream, pk2id,
+    Capability, MAX_MESSAGE_SIZE, Protocol, UnauthedEthStream, pk2id,
 };
 use futures::StreamExt;
 use secp256k1::SECP256K1;
@@ -63,7 +63,6 @@ async fn incoming_hello_with_spoofed_identity_is_rejected() {
     tokio::spawn(async move {
         let (incoming, remote_addr) = listener.accept().await.unwrap();
         start_pending_incoming_session(
-            Arc::new(EthHandshake::default()),
             MAX_MESSAGE_SIZE,
             disconnect_rx,
             SessionId(0),
@@ -115,7 +114,6 @@ async fn outgoing_hello_with_spoofed_identity_is_rejected() {
 
     tokio::spawn(async move {
         start_pending_outbound_session(
-            Arc::new(EthHandshake::default()),
             MAX_MESSAGE_SIZE,
             disconnect_rx,
             events_tx,
@@ -150,7 +148,6 @@ async fn matching_identity_establishes_session() {
     tokio::spawn(async move {
         let (incoming, remote_addr) = listener.accept().await.unwrap();
         start_pending_incoming_session(
-            Arc::new(EthHandshake::default()),
             MAX_MESSAGE_SIZE,
             disconnect_rx,
             SessionId(0),

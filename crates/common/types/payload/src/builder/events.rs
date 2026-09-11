@@ -46,11 +46,6 @@ impl PayloadEvents {
     pub fn into_built_payload_stream(self) -> BuiltPayloadStream {
         BuiltPayloadStream { st: self.into_stream() }
     }
-
-    /// Returns a new stream that yields received payload attributes
-    pub fn into_attributes_stream(self) -> PayloadAttributeStream {
-        PayloadAttributeStream { st: self.into_stream() }
-    }
 }
 
 /// A stream that yields built payloads.
@@ -71,36 +66,6 @@ impl Stream for BuiltPayloadStream {
                 Some(Ok(Events::BuiltPayload(payload))) => Poll::Ready(Some(payload)),
                 Some(Ok(Events::Attributes(_))) => {
                     // ignoring attributes
-                    continue;
-                }
-                Some(Err(err)) => {
-                    debug!(%err, "payload event stream lagging behind");
-                    continue;
-                }
-                None => Poll::Ready(None),
-            };
-        }
-    }
-}
-
-/// A stream that yields received payload attributes
-#[derive(Debug)]
-#[pin_project::pin_project]
-pub struct PayloadAttributeStream {
-    /// The stream of events.
-    #[pin]
-    st: BroadcastStream<Events>,
-}
-
-impl Stream for PayloadAttributeStream {
-    type Item = BasePayloadBuilderAttributes;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            return match ready!(self.as_mut().project().st.poll_next(cx)) {
-                Some(Ok(Events::Attributes(attr))) => Poll::Ready(Some(attr)),
-                Some(Ok(Events::BuiltPayload(_))) => {
-                    // ignoring payloads
                     continue;
                 }
                 Some(Err(err)) => {

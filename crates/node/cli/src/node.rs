@@ -307,27 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn standard_execution_args_parse_metering_separately() {
-        let args = CommandParser::<ExecutionNodeArgs>::parse_from([
-            "reth",
-            "--enable-metering",
-            "--metering.metered-opcodes",
-            "SSTORE",
-        ])
-        .args;
-
-        assert!(args.metering.enable_metering);
-        assert_eq!(args.metering.metering_metered_opcodes, vec!["SSTORE".to_string()]);
-
-        let launch_config = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
-        assert!(launch_config.standard.metering.enable_metering);
-        assert_eq!(
-            launch_config.standard.metering.metering_metered_opcodes,
-            vec!["SSTORE".to_string()]
-        );
-    }
-
-    #[test]
     fn runtime_config_sets_base_default_el_peer_limits() {
         let args = CommandParser::<ExecutionNodeConfigArgs>::parse_from(["reth"]).args;
 
@@ -352,5 +331,16 @@ mod tests {
 
         assert_eq!(runtime.node_config.network.max_inbound_peers, Some(12));
         assert_eq!(runtime.node_config.network.max_outbound_peers, Some(34));
+    }
+
+    #[test]
+    fn standard_execution_args_parse_metering_separately() {
+        let args =
+            CommandParser::<ExecutionNodeArgs>::parse_from(["reth", "--enable-metering"]).args;
+
+        assert!(args.metering.enable_metering);
+
+        let launch_config = args.into_launch_config(Arc::new(BaseChainSpec::devnet()));
+        assert!(launch_config.standard.metering.enable_metering);
     }
 }

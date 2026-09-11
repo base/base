@@ -20,11 +20,6 @@ pub use boot::BootKeyValueStore;
 mod split;
 pub use split::SplitKeyValueStore;
 
-#[cfg(feature = "disk")]
-mod disk;
-#[cfg(feature = "disk")]
-pub use disk::DiskKeyValueStore;
-
 /// A type alias for a shared key-value store.
 pub type SharedKeyValueStore = Arc<RwLock<dyn KeyValueStore + Send + Sync>>;
 

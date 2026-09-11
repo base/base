@@ -16,8 +16,8 @@ use base_common_types_payload as _;
 #[cfg(feature = "std")]
 use base_common_types_payload::ExecutionData;
 use base_execution_evm_runtime::{
-    Address, B256, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseSpecId,
-    BlockExecutionError, Bytes as RevmBytes, Database, IntoTxEnv, State,
+    Address, B256, BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory,
+    Bytes as RevmBytes, Database, IntoTxEnv, State,
 };
 #[cfg(not(feature = "std"))]
 use base_execution_state_types as _;

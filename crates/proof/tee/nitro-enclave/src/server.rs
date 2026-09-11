@@ -298,7 +298,7 @@ mod tests {
     fn config_hashes_match_chain_configs() {
         for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
-            let rollup = base_common_chain_config::rollup_config!(cfg);
+            let rollup = cfg.rollup_config();
             let Some(mut per_chain) = PerChainConfig::from_rollup_config(&rollup) else {
                 continue;
             };
@@ -318,7 +318,7 @@ mod tests {
     fn print_real_config_hashes() {
         for cfg in ChainConfig::all() {
             let chain_id = cfg.chain_id;
-            let rollup = base_common_chain_config::rollup_config!(cfg);
+            let rollup = cfg.rollup_config();
             let mut per_chain = match PerChainConfig::from_rollup_config(&rollup) {
                 Some(pc) => pc,
                 None => {

@@ -11,8 +11,8 @@ use base_common_types_rpc::{
 };
 use base_execution_network_wire::NodeRecord;
 use base_execution_rpc::{
-    AdminApiClient, DebugApiClient, EthApiClient, EthCallBundleApiClient, EthFilterApiClient,
-    NetApiClient, TraceApiClient, Web3ApiClient,
+    AdminApiClient, DebugApiClient, EthApiClient, EthFilterApiClient, NetApiClient, TraceApiClient,
+    Web3ApiClient,
 };
 use jsonrpsee::{
     core::{
@@ -258,7 +258,11 @@ where
             .err()
             .unwrap()
     ));
-    EthCallBundleApiClient::call_bundle(client, Default::default()).await.unwrap_err();
+    for method in ["eth_callBundle", "mev_simBundle"] {
+        let error = client.request::<Value, _>(method, rpc_params![]).await.unwrap_err();
+        assert!(matches!(error, jsonrpsee::core::client::Error::Call(ref object)
+            if object.code() == ErrorCode::MethodNotFound.code()));
+    }
 }
 
 async fn test_basic_debug_calls<C>(client: &C)

@@ -1,6 +1,6 @@
-use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
+use alloc::{boxed::Box, string::String, vec::Vec};
 
-use alloy_primitives::{B512, U256};
+use alloy_primitives::U256;
 
 /// Syncing info
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -146,25 +146,6 @@ impl serde::Serialize for SyncStatus {
             Self::None => serializer.serialize_bool(false),
         }
     }
-}
-
-/// Propagation statistics for pending transaction.
-#[derive(Clone, Debug, Default, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-#[doc(alias = "TxStats")]
-pub struct TransactionStats {
-    /// Block no this transaction was first seen.
-    pub first_seen: u64,
-    /// Peers this transaction was propagated to with count.
-    pub propagated_to: BTreeMap<B512, usize>,
-}
-
-/// Chain status.
-#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChainStatus {
-    /// Describes the gap in the blockchain, if there is one: (first, last)
-    pub block_gap: Option<(U256, U256)>,
 }
 
 #[cfg(test)]

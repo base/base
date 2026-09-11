@@ -35,11 +35,11 @@ x509-parser = { workspace = true, features = ["default"] }
 k256 = { workspace = true, features = ["default", "ecdsa"] }
 rustls = { workspace = true, features = ["default", "ring"] }
 base-proof-types = { workspace = true, features = ["rpc-client"] }
+base-common-http = { workspace = true, features = ["axum-server"] }
 jsonrpsee = { workspace = true, features = ["http-client", "server"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
 p384 = { workspace = true, features = ["default", "ecdsa", "expose-field"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
 tokio = { workspace = true, features = ["default", "rt", "sync", "net", "time", "macros"] }
 
 [dev-dependencies]

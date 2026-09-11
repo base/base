@@ -80,11 +80,11 @@ where
                     EngineActorRequest::BuildRequest(request) => {
                         let BuildRequest { attributes, result_tx, otel_cx } = *request;
                         let client = Arc::clone(self.processor.client());
-                        let rollup = Arc::clone(self.processor.rollup());
+
                         let result = self
                             .processor
                             .engine_mut()
-                            .build(client, rollup, attributes)
+                            .build(client, attributes)
                             .with_context(otel_cx)
                             .await;
                         let error = result

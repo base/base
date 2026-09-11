@@ -68,30 +68,17 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
         &self.state
     }
 
-    /// Returns a receiver that can be used to listen to engine state updates.
-    pub fn state_subscribe(&self) -> tokio::sync::watch::Receiver<EngineState> {
-        self.state_sender.subscribe()
-    }
-
-    /// Returns a receiver that can be used to listen to engine queue length updates.
-    pub fn queue_length_subscribe(&self) -> tokio::sync::watch::Receiver<usize> {
-        self.task_queue_length.subscribe()
-    }
-
     /// Starts a block build directly against the execution layer.
     pub async fn build(
         &mut self,
         client: Arc<EngineClient_>,
-        config: Arc<RollupConfig>,
         attributes: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
         let _task_timer = base_common_observability_metrics::timed!(Metrics::engine_task_duration(
             Metrics::BUILD_TASK_LABEL
         ));
 
-        match Self::build_with_state(&self.state, client.as_ref(), config.as_ref(), attributes)
-            .await
-        {
+        match Self::build_with_state(&self.state, client.as_ref(), attributes).await {
             Ok(payload_id) => {
                 Metrics::engine_task_count(Metrics::BUILD_TASK_LABEL).increment(1);
                 Ok(payload_id)
@@ -128,7 +115,6 @@ impl<EngineClient_: EngineClient> Engine<EngineClient_> {
     pub async fn build_with_state(
         state: &EngineState,
         engine_client: &EngineClient_,
-        _cfg: &RollupConfig,
         attributes_envelope: AttributesWithParent,
     ) -> Result<PayloadId, BuildTaskError> {
         debug!(
@@ -668,7 +654,6 @@ mod tests {
         let payload_id = PayloadId::new([1u8; 8]);
         let parent_block = test_block_info(0);
         let unsafe_block = test_block_info(1);
-        let cfg = RollupConfig::default();
         let client = test_engine_client_builder()
             .with_forkchoice_response(valid_fcu_with_payload(payload_id))
             .build();
@@ -679,7 +664,7 @@ mod tests {
             .with_finalized_head(parent_block)
             .build();
 
-        let result = Engine::build_with_state(&state, &client, &cfg, attributes)
+        let result = Engine::build_with_state(&state, &client, attributes)
             .await
             .expect("build should return payload id");
 
@@ -818,11 +803,10 @@ mod tests {
 
         let client = Arc::new(
             test_engine_client_builder()
-                .with_config(Arc::new(cfg.clone()))
+                .with_config(Arc::new(cfg))
                 .with_forkchoice_response(invalid_fcu())
                 .build(),
         );
-        let cfg = Arc::new(cfg);
 
         let attributes = TestAttributesBuilder::new()
             .with_parent(parent_block)
@@ -840,7 +824,7 @@ mod tests {
         let mut engine = Engine::new(initial_state, state_tx, queue_tx);
 
         let err = engine
-            .build(Arc::clone(&client), Arc::clone(&cfg), attributes)
+            .build(Arc::clone(&client), attributes)
             .await
             .expect_err("invalid FCU must fail build");
         assert_eq!(err.severity(), EngineTaskErrorSeverity::Flush);

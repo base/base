@@ -4,7 +4,7 @@ Shared RPC schemas for Base execution and Ethereum L1 access.
 
 ## Overview
 
-This crate owns block, transaction, receipt, log, filter, proof, txpool, debug/trace, and bundle
+This crate owns block, transaction, receipt, log, filter, proof, txpool, debug/trace
 simulation schemas. `BaseTransaction`, `BaseTransactionRequest`, and `BaseTransactionReceipt`
 retain Base deposit and EIP-8130 behavior; the generic Ethereum types remain available for L1
 providers. Shared `Header` and `Log` responses carry optional millisecond timestamps.

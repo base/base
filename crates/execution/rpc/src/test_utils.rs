@@ -7,13 +7,13 @@ use base_common_types_chain::{BaseBlock, RecoveredBlock};
 use base_execution_evm_blocks::BaseEvmConfig;
 use base_execution_network_service::NetworkHandle;
 use base_execution_state_provider::{
-    ChainSpecProvider, NewCanonicalChain, StaticFileProviderFactory,
+    ChainSpecProvider, NewCanonicalChain,
     providers::BlockchainProvider,
     test_utils::{MockEthProvider, create_test_provider_factory_with_chain_spec},
 };
 use base_execution_state_types::{BlockExecutionOutput, BlockExecutionResult, ExecutedBlock};
 use base_execution_txpool::{
-    BaseOrdering, BaseTransactionPool, BaseTransactionValidatorBuilder, DiskFileBlobStore, Pool,
+    BaseOrdering, BaseTransactionPool, BaseTransactionValidatorBuilder, Pool,
 };
 
 use crate::{BaseRpcContext, EthApiBuilder};
@@ -74,11 +74,6 @@ impl RpcTestUtils {
     pub fn pool_without_balance_checks(mock: MockEthProvider) -> TestPool {
         let provider = Self::provider(mock);
         let evm_config = BaseEvmConfig::new(provider.chain_spec());
-        let store = DiskFileBlobStore::open(
-            provider.static_file_provider().directory().join("rpc_blobs"),
-            Default::default(),
-        )
-        .unwrap();
         let validator = BaseTransactionValidatorBuilder::new(provider, evm_config)
             .disable_balance_check()
             .build()
@@ -90,7 +85,7 @@ impl RpcTestUtils {
         );
         let ordering = BaseOrdering::default();
         BaseTransactionPool::new(
-            Pool::new(validator, ordering.clone(), store, Default::default()),
+            Pool::new(validator, ordering.clone(), Default::default()),
             ordering,
         )
     }
@@ -99,16 +94,11 @@ impl RpcTestUtils {
     pub fn context(mock: MockEthProvider) -> BaseRpcContext {
         let provider = Self::provider(mock);
         let evm_config = BaseEvmConfig::new(provider.chain_spec());
-        let store = DiskFileBlobStore::open(
-            provider.static_file_provider().directory().join("rpc_blobs"),
-            Default::default(),
-        )
-        .expect("fixture blob store");
         let ordering = BaseOrdering::default();
         let validator = BaseTransactionValidatorBuilder::new(provider.clone(), evm_config.clone())
             .build_with_tasks(Runtime::test());
         let pool = BaseTransactionPool::new(
-            Pool::new(validator, ordering.clone(), store, Default::default()),
+            Pool::new(validator, ordering.clone(), Default::default()),
             ordering,
         );
         let network = NetworkHandle::test(provider.chain_spec().chain_id());

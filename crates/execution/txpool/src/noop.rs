@@ -5,12 +5,8 @@
 
 use std::sync::Arc;
 
-use alloy_eips::{
-    eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M,
-    eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
-};
-use alloy_primitives::{Address, B128, B256, TxHash, U256, map::AddressSet};
+use alloy_eips::eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M;
+use alloy_primitives::{Address, TxHash, U256, map::AddressSet};
 use base_common_types_chain::Recovered;
 use base_execution_network_wire::HandleMempoolData;
 use tokio::sync::{mpsc, mpsc::Receiver};
@@ -20,11 +16,9 @@ use crate::{
     BlockInfo, NewTransactionEvent, PoolResult, PoolSize, PropagatedTransactions,
     TransactionEvents, TransactionOrigin, TransactionPool, TransactionValidationOutcome,
     TransactionValidator, ValidPoolTransaction,
-    blobstore::{BlobStore, BlobStoreError, NoopBlobStore},
     error::{InvalidPoolTransactionError, PoolError},
     pool::TransactionListenerKind,
-    traits::{BestTransactionsAttributes, GetPooledTransactionLimit, NewBlobSidecar},
-    validate::ValidTransaction,
+    traits::{BestTransactionsAttributes, GetPooledTransactionLimit},
 };
 
 /// A [`TransactionPool`] implementation that does nothing.
@@ -137,10 +131,6 @@ impl TransactionPool for NoopTransactionPool {
     }
 
     fn new_transactions_listener(&self) -> Receiver<NewTransactionEvent> {
-        mpsc::channel(1).1
-    }
-
-    fn blob_transaction_sidecars_listener(&self) -> Receiver<NewBlobSidecar> {
         mpsc::channel(1).1
     }
 
@@ -331,70 +321,6 @@ impl TransactionPool for NoopTransactionPool {
     fn unique_senders(&self) -> AddressSet {
         Default::default()
     }
-
-    fn get_blob(
-        &self,
-        _tx_hash: TxHash,
-    ) -> Result<Option<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-        Ok(None)
-    }
-
-    fn get_all_blobs(
-        &self,
-        _tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<(TxHash, Arc<BlobTransactionSidecarVariant>)>, BlobStoreError> {
-        Ok(vec![])
-    }
-
-    fn get_all_blobs_exact(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-        if tx_hashes.is_empty() {
-            return Ok(vec![]);
-        }
-        Err(BlobStoreError::MissingSidecar(tx_hashes[0]))
-    }
-
-    fn get_blobs_for_versioned_hashes_v1(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV1>>, BlobStoreError> {
-        Ok(vec![None; versioned_hashes.len()])
-    }
-
-    fn get_blobs_for_versioned_hashes_v2(
-        &self,
-        _versioned_hashes: &[B256],
-    ) -> Result<Option<Vec<BlobAndProofV2>>, BlobStoreError> {
-        Ok(None)
-    }
-
-    fn get_blobs_for_versioned_hashes_v3(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError> {
-        Ok(vec![None; versioned_hashes.len()])
-    }
-
-    fn get_blobs_for_versioned_hashes_v4(
-        &self,
-        versioned_hashes: &[B256],
-        _indices_bitarray: B128,
-    ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-        Ok(vec![None; versioned_hashes.len()])
-    }
-
-    fn has_blobs_for_versioned_hashes(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<bool>, BlobStoreError> {
-        Ok(vec![false; versioned_hashes.len()])
-    }
-
-    fn blob_store(&self) -> Box<dyn BlobStore> {
-        Box::new(NoopBlobStore)
-    }
 }
 
 /// A [`TransactionValidator`] that does nothing.
@@ -423,7 +349,7 @@ impl TransactionValidator for MockTransactionValidator {
             balance: U256::MAX,
             state_nonce: 0,
             bytecode_hash: None,
-            transaction: ValidTransaction::new(transaction, None),
+            transaction,
             propagate: match origin {
                 TransactionOrigin::External => true,
                 TransactionOrigin::Local => self.propagate_local,

@@ -6,31 +6,22 @@ use alloy_eip2124::{ForkFilter, Head};
 use alloy_eips::BlockNumHash;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime::Runtime;
-use base_common_types_chain::BaseBlock;
 use base_execution_network_discovery::{
     DISCV4_DEFAULT_DISCOVERY_ADDRESS as DEFAULT_DISCOVERY_ADDRESS, Discv4Config,
     Discv4ConfigBuilder, DnsDiscoveryConfig, NatResolver, NetworkStackId,
 };
 use base_execution_network_wire::{
-    EthHandshake, EthRlpxHandshake, HelloMessage, HelloMessageWithProtocols, MAX_MESSAGE_SIZE,
-    PeerId, PeersConfig, SessionsConfig, TrustedPeer, UnifiedStatus, mainnet_nodes, pk2id,
-    sepolia_nodes,
+    HelloMessage, HelloMessageWithProtocols, MAX_MESSAGE_SIZE, PeerId, PeersConfig, SessionsConfig,
+    TrustedPeer, UnifiedStatus, pk2id,
 };
 use base_execution_state_database::NoopProvider;
-use base_execution_state_types::{
-    BalProvider, BlockNumReader, BlockReader, HeaderProvider, StateProviderFactory,
-    StateRangeProviderFactory,
-};
 use secp256k1::SECP256K1;
 pub use secp256k1::SecretKey;
 
 // re-export for convenience
 use crate::transactions::TransactionPropagationMode;
 use crate::{
-    NetworkHandle, NetworkManager,
-    error::NetworkError,
-    import::{BlockImport, ProofOfStakeBlockImport},
-    transactions::TransactionsManagerConfig,
+    NetworkHandle, NetworkManager, error::NetworkError, transactions::TransactionsManagerConfig,
 };
 
 /// Convenience function to create a new random [`SecretKey`]
@@ -68,10 +59,6 @@ pub struct NetworkConfig {
     /// For sync from block `0`, this should be the default chain [`ForkFilter`] beginning at the
     /// first hardfork, `Frontier` for mainnet.
     pub fork_filter: ForkFilter,
-    /// The block importer type.
-    pub block_import: Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>,
-    /// The default mode of the network.
-    pub network_mode: NetworkMode,
     /// The executor to use for spawning tasks.
     pub executor: Runtime,
     /// The `Status` message to send to peers at the beginning.
@@ -84,11 +71,6 @@ pub struct NetworkConfig {
     pub transactions_manager_config: TransactionsManagerConfig,
     /// The NAT resolver for external IP
     pub nat: Option<NatResolver>,
-    /// The Ethereum P2P handshake, see also:
-    /// <https://github.com/ethereum/devp2p/blob/master/rlpx.md#initial-handshake>.
-    /// This can be overridden to support custom handshake logic via the
-    /// [`NetworkConfigBuilder`].
-    pub handshake: Arc<dyn EthRlpxHandshake>,
     /// Maximum allowed ETH message size for post-handshake ETH/Snap streams.
     pub eth_max_message_size: usize,
     /// List of block number-hash pairs to check for required blocks.
@@ -119,18 +101,6 @@ impl NetworkConfig {
         f(self)
     }
 
-    /// Sets the config to use for the discovery v4 protocol.
-    pub fn set_discovery_v4(mut self, discovery_config: Discv4Config) -> Self {
-        self.discovery_v4_config = Some(discovery_config);
-        self
-    }
-
-    /// Sets the address for the incoming `RLPx` connection listener.
-    pub const fn set_listener_addr(mut self, listener_addr: SocketAddr) -> Self {
-        self.listener_addr = listener_addr;
-        self
-    }
-
     /// Returns the address for the incoming `RLPx` connection listener.
     pub const fn listener_addr(&self) -> &SocketAddr {
         &self.listener_addr
@@ -139,11 +109,8 @@ impl NetworkConfig {
 
 impl NetworkConfig {
     /// Convenience method for calling [`NetworkManager::new`].
-    pub async fn manager(
-        self,
-        client: impl BlockNumReader + 'static,
-    ) -> Result<NetworkManager, NetworkError> {
-        NetworkManager::new(self, client).await
+    pub async fn manager(self) -> Result<NetworkManager, NetworkError> {
+        NetworkManager::new(self).await
     }
 }
 
@@ -153,10 +120,8 @@ impl NetworkConfig {
         self,
         client: base_execution_state_provider::BlockchainProvider,
     ) -> Result<NetworkHandle, NetworkError> {
-        let (handle, network, _txpool, eth) = NetworkManager::builder(self, client.clone())
-            .await?
-            .request_handler(client)
-            .split_with_handle();
+        let (handle, network, _txpool, eth) =
+            NetworkManager::builder(self).await?.request_handler(client).split_with_handle();
 
         tokio::task::spawn(network);
         tokio::task::spawn(eth);
@@ -185,8 +150,6 @@ pub struct NetworkConfigBuilder {
     peers_config: Option<PeersConfig>,
     /// How to configure the sessions manager
     sessions_config: Option<SessionsConfig>,
-    /// The default mode of the network.
-    network_mode: NetworkMode,
     /// The executor to use for spawning tasks.
     executor: Runtime,
     /// Sets the hello message for the p2p handshake in `RLPx`
@@ -195,15 +158,10 @@ pub struct NetworkConfigBuilder {
     head: Option<Head>,
     /// Whether tx gossip is disabled
     tx_gossip_disabled: bool,
-    /// The block importer type
-    block_import: Option<Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>>,
     /// How to instantiate transactions manager.
     transactions_manager_config: TransactionsManagerConfig,
     /// The NAT resolver for external IP
     nat: Option<NatResolver>,
-    /// The Ethereum P2P handshake, see also:
-    /// <https://github.com/ethereum/devp2p/blob/master/rlpx.md#initial-handshake>.
-    handshake: Arc<dyn EthRlpxHandshake>,
     /// Maximum allowed ETH message size for post-handshake ETH/Snap streams.
     eth_max_message_size: usize,
     /// List of block hashes to check for required blocks.
@@ -245,15 +203,13 @@ impl NetworkConfigBuilder {
             listener_addr: None,
             peers_config: None,
             sessions_config: None,
-            network_mode: Default::default(),
             executor,
             hello_message: None,
             head: None,
             tx_gossip_disabled: false,
-            block_import: None,
             transactions_manager_config: Default::default(),
             nat: None,
-            handshake: Arc::new(EthHandshake::default()),
+
             eth_max_message_size: MAX_MESSAGE_SIZE,
             required_block_hashes: Vec::new(),
             network_id: None,
@@ -277,23 +233,6 @@ impl NetworkConfigBuilder {
     /// Returns the configured [`SecretKey`], from which the node's identity is derived.
     pub const fn secret_key(&self) -> &SecretKey {
         &self.secret_key
-    }
-
-    /// Sets the [`NetworkMode`].
-    pub const fn network_mode(mut self, network_mode: NetworkMode) -> Self {
-        self.network_mode = network_mode;
-        self
-    }
-
-    /// Configures the network to use proof-of-work.
-    ///
-    /// This effectively allows block propagation in the `eth` sub-protocol, which has been
-    /// soft-deprecated with ethereum `PoS` after the merge. Even if block propagation is
-    /// technically allowed, according to the eth protocol, it is not expected to be used in `PoS`
-    /// networks and peers are supposed to terminate the connection if they receive a `NewBlock`
-    /// message.
-    pub const fn with_pow(self) -> Self {
-        self.network_mode(NetworkMode::Work)
     }
 
     /// Sets the highest synced block.
@@ -327,12 +266,6 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Sets the executor to use for spawning tasks.
-    pub fn with_task_executor(mut self, executor: Runtime) -> Self {
-        self.executor = executor;
-        self
-    }
-
     /// Sets a custom config for how sessions are handled.
     pub const fn sessions_config(mut self, config: SessionsConfig) -> Self {
         self.sessions_config = Some(config);
@@ -349,17 +282,6 @@ impl NetworkConfigBuilder {
     pub const fn transaction_propagation_mode(mut self, mode: TransactionPropagationMode) -> Self {
         self.transactions_manager_config.propagation_mode = mode;
         self
-    }
-
-    /// Sets the discovery and listener address
-    ///
-    /// This is a convenience function for both [`NetworkConfigBuilder::listener_addr`] and
-    /// [`NetworkConfigBuilder::discovery_addr`].
-    ///
-    /// By default, both are on the same port:
-    /// [`DEFAULT_DISCOVERY_PORT`](base_execution_network_discovery::DISCV4_DEFAULT_DISCOVERY_PORT)
-    pub const fn set_addrs(self, addr: SocketAddr) -> Self {
-        self.listener_addr(addr).discovery_addr(addr)
     }
 
     /// Sets the socket address the network will listen on.
@@ -439,22 +361,6 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Sets the dns discovery config to use.
-    pub fn dns_discovery(mut self, config: DnsDiscoveryConfig) -> Self {
-        self.dns_discovery_config = Some(config);
-        self
-    }
-
-    /// Convenience function for setting [`Self::boot_nodes`] to the mainnet boot nodes.
-    pub fn mainnet_boot_nodes(self) -> Self {
-        self.boot_nodes(mainnet_nodes())
-    }
-
-    /// Convenience function for setting [`Self::boot_nodes`] to the sepolia boot nodes.
-    pub fn sepolia_boot_nodes(self) -> Self {
-        self.boot_nodes(sepolia_nodes())
-    }
-
     /// Sets the boot nodes to use to bootstrap the configured discovery services (discv4 + discv5).
     pub fn boot_nodes<T: Into<TrustedPeer>>(mut self, nodes: impl IntoIterator<Item = T>) -> Self {
         self.boot_nodes = nodes.into_iter().map(Into::into).collect();
@@ -483,11 +389,6 @@ impl NetworkConfigBuilder {
         self.disable_discv4_discovery().disable_discv5_discovery().disable_dns_discovery()
     }
 
-    /// Disables all discovery if the given condition is true.
-    pub fn disable_discovery_if(self, disable: bool) -> Self {
-        if disable { self.disable_discovery() } else { self }
-    }
-
     /// Disable the Discv4 discovery.
     pub fn disable_discv4_discovery(mut self) -> Self {
         self.discovery_v4_builder = None;
@@ -498,21 +399,6 @@ impl NetworkConfigBuilder {
     pub fn disable_discv5_discovery(mut self) -> Self {
         self.discovery_v5_builder = None;
         self
-    }
-
-    /// Disable the DNS discovery if the given condition is true.
-    pub fn disable_dns_discovery_if(self, disable: bool) -> Self {
-        if disable { self.disable_dns_discovery() } else { self }
-    }
-
-    /// Disable the Discv4 discovery if the given condition is true.
-    pub fn disable_discv4_discovery_if(self, disable: bool) -> Self {
-        if disable { self.disable_discv4_discovery() } else { self }
-    }
-
-    /// Disable the Discv5 discovery if the given condition is true.
-    pub fn disable_discv5_discovery_if(self, disable: bool) -> Self {
-        if disable { self.disable_discv5_discovery() } else { self }
     }
 
     /// Toggles advertisement of the `snap/2` satellite protocol (EIP-8189).
@@ -535,15 +421,6 @@ impl NetworkConfigBuilder {
         self
     }
 
-    /// Sets the block import type.
-    pub fn block_import(
-        mut self,
-        block_import: Box<dyn BlockImport<base_execution_network_wire::NewBlock<BaseBlock>>>,
-    ) -> Self {
-        self.block_import = Some(block_import);
-        self
-    }
-
     /// Convenience function for creating a [`NetworkConfig`] with a noop provider that does
     /// nothing.
     pub fn build_with_noop_provider(self, chain_spec: Arc<BaseChainSpec>) -> NetworkConfig {
@@ -553,12 +430,6 @@ impl NetworkConfigBuilder {
     /// Sets the NAT resolver for external IP.
     pub fn add_nat(mut self, nat: Option<NatResolver>) -> Self {
         self.nat = nat;
-        self
-    }
-
-    /// Overrides the default Eth `RLPx` handshake.
-    pub fn eth_rlpx_handshake(mut self, handshake: Arc<dyn EthRlpxHandshake>) -> Self {
-        self.handshake = handshake;
         self
     }
 
@@ -603,15 +474,13 @@ impl NetworkConfigBuilder {
             listener_addr,
             peers_config,
             sessions_config,
-            network_mode,
             executor,
             hello_message,
             head,
             tx_gossip_disabled,
-            block_import,
             transactions_manager_config,
             nat,
-            handshake,
+
             eth_max_message_size,
             required_block_hashes,
             network_id,
@@ -681,8 +550,6 @@ impl NetworkConfigBuilder {
             peers_config: peers_config.unwrap_or_default(),
             sessions_config: sessions_config.unwrap_or_default(),
             chain_id,
-            block_import: block_import.unwrap_or_else(|| Box::<ProofOfStakeBlockImport>::default()),
-            network_mode,
             executor,
             status,
             hello_message,
@@ -690,34 +557,10 @@ impl NetworkConfigBuilder {
             tx_gossip_disabled,
             transactions_manager_config,
             nat,
-            handshake,
+
             eth_max_message_size,
             required_block_hashes,
         }
-    }
-}
-
-/// Describes the mode of the network wrt. POS or POW.
-///
-/// This affects block propagation in the `eth` sub-protocol [EIP-3675](https://eips.ethereum.org/EIPS/eip-3675#devp2p)
-///
-/// In POS `NewBlockHashes` and `NewBlock` messages become invalid.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum NetworkMode {
-    /// Network is in proof-of-work mode.
-    Work,
-    /// Network is in proof-of-stake mode
-    #[default]
-    Stake,
-}
-
-// === impl NetworkMode ===
-
-impl NetworkMode {
-    /// Returns true if network has entered proof-of-stake
-    pub const fn is_stake(&self) -> bool {
-        matches!(self, Self::Stake)
     }
 }
 

@@ -1,30 +1,11 @@
 # `base-infra-audit`
 
-Audit library for tracking and archiving bundle events.
+Transaction audit storage and RPC services for Base.
 
-## Overview
+`RejectedTransactionStore` persists rejected transaction records to S3.
+`PgTransactionEventSink` ingests transaction observability events into Postgres and
+provides history queries and retention management. `AuditArchiverRpc` exposes
+rejected transaction ingestion and transaction history queries.
 
-Provides event publishing, storage, and retrieval for bundle lifecycle events. `AuditConnector`
-wires an event receiver to a publisher, `RpcBundleEventPublisher` publishes events over RPC,
-and `S3EventReaderWriter` archives events to S3 for long-term retention. Also exposes
-`LoggingBundleEventPublisher` for local development.
-
-## Usage
-
-Add the dependency to your `Cargo.toml`:
-
-```toml
-[dependencies]
-base-infra-audit = { workspace = true }
-```
-
-```rust,ignore
-use base_infra_audit::{AuditConnector, RpcBundleEventPublisher};
-
-let publisher = RpcBundleEventPublisher::new(rpc_url, timeout)?;
-AuditConnector::connect_batched(event_rx, publisher, batch_size, batch_wait);
-```
-
-## License
-
-Licensed under the [MIT License](https://github.com/base/base/blob/main/LICENSE).
+The audit service no longer accepts or publishes bundle lifecycle events.
+Existing historical Postgres data and migrations remain intact.

@@ -23,10 +23,7 @@ pub use base_execution_state_operations::{
     StateRootHintStream, StateRootMessage, StateRootSink, StateRootTaskCancelGuard,
     StateRootTaskError, StateRootUpdateHook, StateRootUpdateStream, evm_state_to_hashed_post_state,
 };
-use base_execution_state_provider::{
-    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, PruneCheckpointReader,
-    StageCheckpointReader, StorageSettingsCache, TryIntoHistoricalStateProvider,
-};
+use base_execution_state_provider::BlockExecutionOutput;
 use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
 use prewarm::PrewarmMetrics;
 use rayon::prelude::*;

@@ -51,9 +51,6 @@ pub use base_execution_evm_runtime as state_changes;
 pub use base_execution_evm_runtime as system_calls;
 pub use base_execution_evm_runtime::{OnStateHook, *};
 
-mod next_block;
-pub use next_block::NextBlockEnvAttributes;
-
 mod cancelled;
 pub use cancelled::{CancelOnDrop, ManualCancel};
 #[cfg(feature = "witness")]

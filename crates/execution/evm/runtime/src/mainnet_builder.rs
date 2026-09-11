@@ -6,9 +6,6 @@ use base_execution_evm_runtime::{
 /// Type alias for a mainnet EVM instance with standard Ethereum components.
 pub type MainnetEvm<CTX, INSP = ()> = EvmMachine<CTX, INSP, EthPrecompiles>;
 
-/// Type alias for a mainnet context with standard Ethereum environment types.
-pub type MainnetContext<DB> = base_execution_evm_runtime::ReferenceContext<TxEnv, CfgEnv, DB, ()>;
-
 /// Trait for building mainnet EVM instances from contexts.
 pub trait MainBuilder: Sized {
     /// The context type that will be used in the EVM.
@@ -76,7 +73,7 @@ mod test {
     use base_common_client_ethereum::PrivateKeySigner;
     use base_execution_evm_runtime::{
         Authorization, BenchmarkDB, Bytecode, EEADDRESS, ExecuteEvm, FFADDRESS, MainBuilder,
-        MainContext, ReferenceContext, StorageKey, StorageValue, TxEnv, TxKind, U256,
+        MainContext, StorageKey, StorageValue, TxEnv, TxKind, U256,
         hardfork::SpecId,
         opcode::{PUSH1, SSTORE},
     };

@@ -2,33 +2,20 @@ use std::{fmt, sync::Arc};
 
 use metrics_process::Collector;
 
-/// The simple alias for function types that are `'static`, `Send`, and `Sync`.
-pub trait Hook: Fn() + Send + Sync + 'static {}
-impl<T: 'static + Fn() + Send + Sync> Hook for T {}
-
 /// A builder-like type to create a new [`Hooks`] instance.
 pub struct HooksBuilder {
-    hooks: Vec<Box<dyn Hook<Output = ()>>>,
+    hooks: Vec<Box<dyn Fn() + Send + Sync + 'static>>,
 }
 
 impl HooksBuilder {
-    /// Registers a [`Hook`].
-    pub fn with_hook(self, hook: impl Hook) -> Self {
+    /// Registers a metrics callback.
+    pub fn with_hook(self, hook: impl Fn() + Send + Sync + 'static) -> Self {
         self.with_boxed_hook(Box::new(hook))
     }
 
-    /// Registers a [`Hook`] by calling the provided closure.
-    pub fn install_hook<F, H>(self, f: F) -> Self
-    where
-        F: FnOnce() -> H,
-        H: Hook,
-    {
-        self.with_hook(f())
-    }
-
-    /// Registers a [`Hook`].
+    /// Registers a metrics callback.
     #[inline]
-    pub fn with_boxed_hook(mut self, hook: Box<dyn Hook<Output = ()>>) -> Self {
+    pub fn with_boxed_hook(mut self, hook: Box<dyn Fn() + Send + Sync + 'static>) -> Self {
         self.hooks.push(hook);
         self
     }
@@ -54,7 +41,7 @@ impl Default for HooksBuilder {
 impl std::fmt::Debug for HooksBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HooksBuilder")
-            .field("hooks", &format_args!("Vec<Box<dyn Hook>>, len: {}", self.hooks.len()))
+            .field("hooks", &format_args!("Vec<Box<dyn Fn()>>, len: {}", self.hooks.len()))
             .finish()
     }
 }
@@ -62,7 +49,7 @@ impl std::fmt::Debug for HooksBuilder {
 /// Helper type for managing hooks
 #[derive(Clone)]
 pub struct Hooks {
-    inner: Arc<Vec<Box<dyn Hook<Output = ()>>>>,
+    inner: Arc<Vec<Box<dyn Fn() + Send + Sync + 'static>>>,
 }
 
 impl Hooks {
@@ -72,7 +59,7 @@ impl Hooks {
         HooksBuilder::default()
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &Box<dyn Hook<Output = ()>>> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Box<dyn Fn() + Send + Sync + 'static>> {
         self.inner.iter()
     }
 }
@@ -81,7 +68,7 @@ impl fmt::Debug for Hooks {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let hooks_len = self.inner.len();
         f.debug_struct("Hooks")
-            .field("inner", &format_args!("Arc<Vec<Box<dyn Hook>>>, len: {hooks_len}"))
+            .field("inner", &format_args!("Arc<Vec<Box<dyn Fn()>>>, len: {hooks_len}"))
             .finish()
     }
 }

@@ -496,16 +496,6 @@ impl RuntimeUpgradeRegistry {
         Self::write_registry().remove(&chain_id);
     }
 
-    /// Removes one runtime activation override for a chain and contract upgrade ID.
-    pub fn remove_activation_override(chain_id: u64, upgrade_id: BaseUpgrade) -> bool {
-        let mut registry = Self::write_registry();
-        let Some(entry) = registry.get_mut(&chain_id) else {
-            return false;
-        };
-
-        entry.overrides.remove_activation(upgrade_id)
-    }
-
     /// Sets one runtime activation override for a chain and contract upgrade ID.
     pub fn set_activation(chain_id: u64, upgrade_id: BaseUpgrade, activation: UpgradeActivation) {
         let mut registry = Self::write_registry();

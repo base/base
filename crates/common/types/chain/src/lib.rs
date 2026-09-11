@@ -90,9 +90,7 @@ use rand_08 as _;
 pub type Account = TrieAccount;
 
 mod block;
-pub use block::{
-    Block, BlockBody, BlockHeader, EthBlock, GasLimitMismatch, Header, HeaderInfo, HeaderRoots,
-};
+pub use block::{Block, BlockBody, BlockHeader, GasLimitMismatch, Header, HeaderInfo, HeaderRoots};
 
 mod indexed;
 pub use indexed::Indexed;
@@ -140,9 +138,6 @@ pub use signed::Signed;
 
 pub mod crypto;
 pub mod error;
-
-pub mod extended;
-pub use extended::Extended;
 
 #[doc(hidden)]
 pub mod private {

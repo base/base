@@ -101,11 +101,6 @@ mod rpc_api_txpool;
 pub use rpc_api_txpool::TxPoolApiClient;
 pub use rpc_api_txpool::TxPoolApiServer;
 
-mod rpc_api_mev;
-#[cfg(feature = "client")]
-pub use rpc_api_mev::MevSimApiClient;
-pub use rpc_api_mev::MevSimApiServer;
-
 mod rpc_api_reth;
 #[cfg(feature = "client")]
 pub use rpc_api_reth::RethApiClient;

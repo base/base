@@ -3,7 +3,7 @@ use alloy_genesis::Genesis;
 use alloy_hardforks::ForkCondition;
 use alloy_primitives::Address;
 
-use crate::{BaseChainSpec, BaseChainSpecError, BaseUpgrade, ChainUpgrades};
+use crate::{BaseChainSpec, BaseChainSpecError, BaseUpgrade};
 
 /// Chain spec builder for a Base chain.
 #[derive(Debug, Default)]
@@ -41,12 +41,6 @@ impl BaseChainSpecBuilder {
         self
     }
 
-    /// Add the given forks with the given activation condition to the spec.
-    pub fn with_forks(mut self, forks: ChainUpgrades) -> Self {
-        self.config.upgrades = forks;
-        self
-    }
-
     /// Set the activation registry admin address.
     pub const fn activation_admin_address(mut self, address: Address) -> Self {
         self.config.activation_admin_address = Some(address);
@@ -56,12 +50,6 @@ impl BaseChainSpecBuilder {
     /// Set or clear the activation registry admin address.
     pub const fn optional_activation_admin_address(mut self, address: Option<Address>) -> Self {
         self.config.activation_admin_address = address;
-        self
-    }
-
-    /// Remove the given fork from the spec.
-    pub fn without_fork(mut self, fork: BaseUpgrade) -> Self {
-        self.config.upgrades.remove(&fork);
         self
     }
 
@@ -145,13 +133,6 @@ impl BaseChainSpecBuilder {
     pub fn cobalt_activated(mut self) -> Self {
         self = self.beryl_activated();
         self.config.upgrades.insert(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0));
-        self
-    }
-
-    /// Enables the Base Denim upgrade at genesis.
-    pub fn denim_activated(mut self) -> Self {
-        self = self.cobalt_activated();
-        self.config.upgrades.insert(BaseUpgrade::Denim, ForkCondition::Timestamp(0));
         self
     }
 

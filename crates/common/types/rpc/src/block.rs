@@ -133,20 +133,6 @@ impl<T, H> Block<T, H> {
         self.transactions.into_hashes_vec()
     }
 
-    /// Converts this block into a [`BlockBody`].
-    ///
-    /// Returns an error if the transactions are not full or if the block has uncles.
-    pub fn try_into_block_body(self) -> Result<BlockBody<T, H>, ValueError<Self>> {
-        if !self.uncles.is_empty() {
-            return Err(ValueError::new_static(self, "uncles not empty"));
-        }
-        if !self.transactions.is_full() {
-            return Err(ValueError::new_static(self, "transactions not full"));
-        }
-
-        Ok(self.into_block_body_unchecked())
-    }
-
     /// Converts this block into a [`BlockBody`]
     ///
     /// Caution: The body will have empty transactions unless the block's transactions are
@@ -158,25 +144,6 @@ impl<T, H> Block<T, H> {
             ommers: Default::default(),
             withdrawals: self.withdrawals,
         }
-    }
-
-    /// Consumes the block and returns the [`base_common_types_chain::Block`] with the current transaction
-    /// and header type.
-    ///
-    /// Note: Unlike [`Self::into_consensus`], this method returns the Header type `H` as-is without
-    /// converting it to [`base_common_types_chain::Header`], See [`Header::into_consensus`].
-    ///
-    /// This has two caveats:
-    ///  - The returned block will always have empty uncles.
-    ///  - If the block's transaction is not [`BlockTransactions::Full`], the returned block will
-    ///    have an empty transaction vec.
-    pub fn into_consensus_block(self) -> base_common_types_chain::Block<T, H> {
-        base_common_types_chain::BlockBody {
-            transactions: self.transactions.into_transactions_vec(),
-            ommers: vec![],
-            withdrawals: self.withdrawals,
-        }
-        .into_block(self.header)
     }
 
     /// Converts the block's header type by applying a function to it.
@@ -194,14 +161,6 @@ impl<T, H> Block<T, H> {
     /// To obtain the underlying [`base_common_types_chain::Header`] use [`Block::into_consensus_header`].
     pub fn into_header(self) -> H {
         self.header
-    }
-
-    /// Converts the block's header type to the given alternative that is `TryFrom<H>`
-    pub fn try_convert_header<U>(self) -> Result<Block<T, U>, U::Error>
-    where
-        U: TryFrom<H>,
-    {
-        self.try_map_header(U::try_from)
     }
 
     /// Converts the block's header type by applying a fallible function to it.
@@ -271,15 +230,7 @@ impl<T, H> Block<T, H> {
     }
 }
 
-impl<T: TransactionResponse, H> Block<T, H> {
-    /// Converts a block with transaction hashes into a full block.
-    ///
-    /// This replaces the transaction representation without validating the supplied transaction
-    /// hashes, count, or order against the original block or its transactions root.
-    pub fn into_full_block(self, txs: Vec<T>) -> Self {
-        Self { transactions: txs.into(), ..self }
-    }
-}
+impl<T: TransactionResponse, H> Block<T, H> {}
 
 impl<T, H: Sealable + Encodable> Block<T, Header<H>> {
     /// Constructs an "uncle block" from the provided header.
@@ -357,13 +308,6 @@ impl<T> Block<T> {
             withdrawals,
         }
         .into_block(header.into_consensus())
-    }
-
-    /// Same as [`Self::into_consensus`] but returns the block as [`Sealed`] with its stored RPC
-    /// hash, without verification or recomputation.
-    pub fn into_consensus_sealed(self) -> Sealed<base_common_types_chain::Block<T>> {
-        let hash = self.header.hash;
-        Sealed::new_unchecked(self.into_consensus(), hash)
     }
 }
 

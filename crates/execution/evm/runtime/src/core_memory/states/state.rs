@@ -1,4 +1,4 @@
-use std::{borrow::Cow, boxed::Box, sync::Arc};
+use std::{borrow::Cow, boxed::Box};
 
 use super::{
     BundleState, CacheAccount, StateBuilder, TransitionAccount, TransitionState,
@@ -17,11 +17,6 @@ use crate::{
 
 /// Database boxed with a lifetime and Send
 pub type DBBox<'a, E> = Box<dyn Database<Error = E> + Send + 'a>;
-
-/// More constrained version of State that uses Boxed database with a lifetime
-///
-/// This is used to make it easier to use State.
-pub type StateDBBox<'a, E> = State<DBBox<'a, E>>;
 
 /// State of blockchain
 ///
@@ -226,20 +221,6 @@ impl<DB: Database> State<DB> {
     #[inline]
     pub const fn reset_bal_index(&mut self) {
         self.bal_state.reset_bal_index();
-    }
-
-    /// Set BAL.
-    #[inline]
-    pub fn set_bal(&mut self, bal: Option<Arc<Bal>>) {
-        self.bal_state.bal = bal;
-    }
-
-    /// Set whether reads not covered by the BAL fall back to the underlying database.
-    ///
-    /// See [`BalState::allow_db_fallback`](crate::core_memory::BalState).
-    #[inline]
-    pub const fn set_allow_bal_db_fallback(&mut self, allow: bool) {
-        self.bal_state.allow_db_fallback = allow;
     }
 
     /// Sets the hook invoked whenever state changes are committed.
@@ -533,6 +514,8 @@ impl<DB: DatabaseRef> DatabaseRef for State<DB> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::{
         BLOCK_HASH_HISTORY, U256,

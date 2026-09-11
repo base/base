@@ -1708,7 +1708,7 @@ mod tests {
         AccountChangeApplier, AccountInfo, BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade,
         BlockEnv, Builder, Bytecode, CfgEnv, Context, DBErrorMarker, Database, DefaultBase,
         DelegationApplied, Eip8130ExecutionMode, Evm, FromTxWithEncoded, HashMapStorageProvider,
-        INonceManager, InMemoryDB, NoOpInspector, PrecompilesMap, StorageCtx,
+        INonceManager, InMemoryDB, NoOpInspector, StorageCtx,
     };
     use k256::ecdsa::SigningKey;
 
@@ -2932,7 +2932,6 @@ mod tests {
         signer_addr: Address,
         target: Address,
     ) {
-        use base_execution_evm_runtime::Handler as _;
         let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
         {
             let ctx = evm.ctx_mut();

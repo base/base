@@ -110,7 +110,8 @@ impl ExecutorTestFixtureCreator {
     pub async fn create_static_fixture(self) {
         let chain_id = self.provider.get_chain_id().await.expect("Failed to get chain ID");
         let rollup_config =
-            base_common_chain_config::rollup_config!(chain_id).expect("Rollup config not found");
+            base_common_chain_config::ChainConfig::rollup_config_by_chain_id(chain_id)
+                .expect("Rollup config not found");
 
         let executing_block = self
             .provider

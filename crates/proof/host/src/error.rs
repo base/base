@@ -22,12 +22,6 @@ pub enum HostError {
     /// Invalid hint data length.
     #[error("Invalid hint data length")]
     InvalidHintDataLength,
-    /// Precompile not accelerated.
-    #[error("Precompile not accelerated")]
-    PrecompileNotAccelerated,
-    /// Failed precompile execution.
-    #[error("Failed precompile execution: {0}")]
-    PrecompileExecutionFailed(String),
     /// Output root mismatch.
     #[error("Output root does not match L2 head")]
     OutputRootMismatch,

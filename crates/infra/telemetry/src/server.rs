@@ -9,8 +9,7 @@ use std::{
 
 use anyhow::Context;
 use axum::{Router, middleware};
-use base_common_http::TrustedProxyConfig;
-use base_common_observability_health::HealthServer;
+use base_common_http::{HealthServer, TrustedProxyConfig};
 use clap::{Args, builder::RangedU64ValueParser};
 use ipnet::IpNet;
 use tokio::{net::TcpListener, sync::Semaphore};

@@ -4,9 +4,8 @@
 use std::path::PathBuf;
 
 use alloy_eips::BlockHashOrNumber;
-use base_common_types_chain::{BlockHeader, SealedBlock, SealedHeader};
-use base_execution_evm_blocks::BaseBeaconConsensus;
-use base_execution_network_wire::{BodiesClient, HeadersClient, Priority};
+use base_common_types_chain::{BlockHeader, SealedHeader};
+use base_execution_network_wire::{HeadersClient, Priority};
 use eyre::Result;
 
 /// Parses a user-specified path into a [`PathBuf`].
@@ -46,26 +45,4 @@ where
     }
 
     Ok(header)
-}
-
-/// Get a body from the network based on header
-pub async fn get_single_body<Client>(
-    client: Client,
-    header: SealedHeader,
-    consensus: BaseBeaconConsensus,
-) -> Result<SealedBlock>
-where
-    Client: BodiesClient,
-{
-    let (peer_id, response) = client.get_block_body(header.hash()).await?.split();
-
-    let Some(body) = response else {
-        client.report_bad_message(peer_id);
-        eyre::bail!("Invalid number of bodies received. Expected: 1. Received: 0");
-    };
-
-    let block = SealedBlock::from_sealed_parts(header, body);
-    consensus.validate_block_pre_execution(&block)?;
-
-    Ok(block)
 }

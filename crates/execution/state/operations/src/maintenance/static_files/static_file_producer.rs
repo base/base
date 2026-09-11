@@ -23,10 +23,6 @@ use crate::maintenance::static_files::{StaticFileProducerEvent, segments::Receip
 /// Result of [`StaticFileProducerInner::run`] execution.
 pub type StaticFileProducerResult = ProviderResult<StaticFileTargets>;
 
-/// The [`StaticFileProducer`] instance itself with the result of [`StaticFileProducerInner::run`]
-pub type StaticFileProducerWithResult<Provider> =
-    (StaticFileProducer<Provider>, StaticFileProducerResult);
-
 /// Static File producer. It's a wrapper around [`StaticFileProducerInner`] that allows to share it
 /// between threads.
 #[derive(Debug)]

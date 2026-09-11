@@ -42,13 +42,9 @@ pub(in crate::engine::task_queue) async fn build_and_seal<EngineClient_: EngineC
     attributes: AttributesWithParent,
     payload_safety: InsertPayloadSafety,
 ) -> Result<(), BuildAndSealError> {
-    let payload_id = Engine::<EngineClient_>::build_with_state(
-        state,
-        engine.as_ref(),
-        cfg.as_ref(),
-        attributes.clone(),
-    )
-    .await?;
+    let payload_id =
+        Engine::<EngineClient_>::build_with_state(state, engine.as_ref(), attributes.clone())
+            .await?;
 
     // Execute the seal task with the payload ID from the build
     SealTask::new(engine, cfg, payload_id, attributes, payload_safety, None).execute(state).await?;

@@ -1,7 +1,7 @@
 //! ETH/SNAP handshakes, capability negotiation, and protocol streams.
 
 mod handshake;
-pub use handshake::{EthHandshake, EthRlpxHandshake, EthereumEthHandshake, UnauthEth};
+pub use handshake::{EthHandshake, EthereumEthHandshake, UnauthEth};
 
 mod ethstream;
 pub use ethstream::{EthStream, EthStreamInner, UnauthedEthStream};

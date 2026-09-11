@@ -64,23 +64,3 @@ impl SyncState {
         !matches!(self, Self::Idle)
     }
 }
-
-/// A [`NetworkSyncUpdater`] implementation that does nothing.
-#[derive(Clone, Copy, Debug, Default)]
-#[non_exhaustive]
-pub struct NoopSyncStateUpdater;
-
-impl SyncStateProvider for NoopSyncStateUpdater {
-    fn is_syncing(&self) -> bool {
-        false
-    }
-    fn is_initially_syncing(&self) -> bool {
-        false
-    }
-}
-
-impl NetworkSyncUpdater for NoopSyncStateUpdater {
-    fn update_sync_state(&self, _state: SyncState) {}
-    fn update_status(&self, _: Head) {}
-    fn update_block_range(&self, _update: BlockRangeUpdate) {}
-}

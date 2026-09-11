@@ -75,10 +75,8 @@ pub use base_execution_state_operations::{
 };
 use base_execution_state_operations::{ProofResultMessage, ProofTaskCtx, ProofWorkerHandle};
 use base_execution_state_provider::{
-    BlockExecutionOutput, BlockNumReader, DatabaseProviderFactory, DatabaseProviderROFactory,
-    HashedPostStateProvider, OverlayManager, OverlayStateProviderFactory, PreservedSparseTrie,
-    ProviderError, PruneCheckpointReader, StageCheckpointReader, StateRootProvider,
-    StorageSettingsCache, TryIntoHistoricalStateProvider,
+    BlockExecutionOutput, DatabaseProviderROFactory, HashedPostStateProvider, OverlayManager,
+    OverlayStateProviderFactory, PreservedSparseTrie, ProviderError, StateRootProvider,
 };
 #[cfg(feature = "trie-debug")]
 use base_execution_state_trie::TrieDebugRecorder;
@@ -1428,5 +1426,11 @@ mod tests {
         let root_from_task = state_root_handle.state_root().expect("task failed").state_root;
         let root_from_regular = state_root(accumulated_state);
         assert_eq!(root_from_task, root_from_regular);
+
+        drop(state_root_handle);
+        // Keep the runtime alive until proof workers release their runtime clones.
+        for task_name in ["trie-hashing", "storage-workers", "account-workers"] {
+            runtime.spawn_blocking_named(task_name, || {}).get();
+        }
     }
 }

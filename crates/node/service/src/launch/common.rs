@@ -180,17 +180,11 @@ impl LaunchContext {
         Ok(())
     }
 
-    /// Convenience function to [`Self::configure_globals`]
-    pub fn with_configured_globals(self, reserved_cpu_cores: usize) -> Self {
-        self.configure_globals(reserved_cpu_cores);
-        self
-    }
-
     /// Configure global settings this includes:
     ///
     /// - Raising the file descriptor limit
     /// - Configuring the global rayon thread pool for implicit `par_iter` usage
-    pub fn configure_globals(&self, reserved_cpu_cores: usize) {
+    pub fn configure_globals(&self) {
         // Raise the fd limit of the process.
         // Does not do anything on windows.
         match fdlimit::raise_fd_limit() {
@@ -202,9 +196,6 @@ impl LaunchContext {
         }
 
         // Configure the implicit global rayon pool for `par_iter` usage.
-        // TODO: reserved_cpu_cores is currently ignored because subtracting from thread pool
-        // sizes doesn't actually reserve CPU cores for other processes.
-        let _ = reserved_cpu_cores;
         let num_threads = available_parallelism().map_or(1, NonZeroUsize::get);
         if let Err(err) = ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -235,14 +226,6 @@ pub struct LaunchContextWith<T> {
 }
 
 impl<T> LaunchContextWith<T> {
-    /// Configure global settings this includes:
-    ///
-    /// - Raising the file descriptor limit
-    /// - Configuring the global rayon thread pool
-    pub fn configure_globals(&self, reserved_cpu_cores: u64) {
-        self.inner.configure_globals(reserved_cpu_cores.try_into().unwrap());
-    }
-
     /// Returns the data directory.
     pub const fn data_dir(&self) -> &ChainPath<DataDirPath> {
         &self.inner.data_dir

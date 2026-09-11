@@ -66,7 +66,7 @@ let config = NetworkConfig::builder(local_key, Runtime::test())
     .build(client.clone());
 
 // create the network instance
-let network = NetworkManager::new(config, client).await.unwrap();
+let network = NetworkManager::new(config).await.unwrap();
 
 // keep a handle to the network and spawn it
 let handle = network.handle().clone();
@@ -88,7 +88,7 @@ async fn launch(client: BlockchainProvider, pool: BaseTransactionPool) {
         .build(client.clone());
     let transactions_config = config.transactions_manager_config.clone();
     let (handle, network, transactions, request_handler) =
-        NetworkManager::builder(config, client.clone()).await.unwrap()
+        NetworkManager::builder(config).await.unwrap()
             .transactions(pool, transactions_config)
             .request_handler(client)
             .split_with_handle();

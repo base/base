@@ -30,11 +30,10 @@ use tower::layer::util::Identity;
 use tower_http::cors::CorsLayer;
 
 use crate::{
-    AdminApi, AdminApiServer, BaseEthApi, DebugApi, DebugApiServer, EthApiServer, EthBundle,
-    EthCallBundleApiServer, EthConfig, EthFilterApiServer, EthPubSubApiServer, EthSimBundle,
-    EthSubscriptionIdProvider, MevSimApiServer, MinerApi, MinerApiServer, NetApi, NetApiServer,
-    RPCApi, RethApi, RethApiServer, RpcApiServer, TraceApi, TraceApiServer, TxPoolApi,
-    TxPoolApiServer, Web3Api, Web3ApiServer,
+    AdminApi, AdminApiServer, BaseEthApi, DebugApi, DebugApiServer, EthApiServer, EthConfig,
+    EthFilterApiServer, EthPubSubApiServer, EthSubscriptionIdProvider, MinerApi, MinerApiServer,
+    NetApi, NetApiServer, RPCApi, RethApi, RethApiServer, RpcApiServer, TraceApi, TraceApiServer,
+    TxPoolApi, TxPoolApiServer, Web3Api, Web3ApiServer,
     server::{
         AuthLayer, Claims, CompressionLayer, CorsDomainError, EthHandlers, JwtAuthValidator,
         JwtSecret, RpcNamespace, cors,
@@ -199,16 +198,6 @@ impl RpcRegistryInner {
         )
     }
 
-    /// Instantiates [`EthBundle`] Api
-    ///
-    /// # Panics
-    ///
-    /// If called outside of the tokio runtime. See also [`Self::eth_api`]
-    pub fn bundle_api(&self) -> EthBundle {
-        let eth_api = self.eth_api().clone();
-        EthBundle::new(eth_api, self.blocking_pool_guard.clone())
-    }
-
     /// Instantiates `DebugApi`
     ///
     /// # Panics
@@ -313,15 +302,6 @@ impl RpcRegistryInner {
                             let mut module = eth_api.clone().into_rpc();
                             module.merge(eth_filter.clone().into_rpc()).expect("No conflicts");
                             module.merge(eth_pubsub.clone().into_rpc()).expect("No conflicts");
-                            module
-                                .merge(
-                                    EthBundle::new(
-                                        eth_api.clone(),
-                                        self.blocking_pool_guard.clone(),
-                                    )
-                                    .into_rpc(),
-                                )
-                                .expect("No conflicts");
 
                             module.into()
                         }
@@ -359,11 +339,6 @@ impl RpcRegistryInner {
                         .into_rpc()
                         .into(),
                         RpcNamespace::Miner => MinerApi::default().into_rpc().into(),
-                        RpcNamespace::Mev => {
-                            EthSimBundle::new(eth_api.clone(), self.blocking_pool_guard.clone())
-                                .into_rpc()
-                                .into()
-                        }
                     })
                     .clone()
             })

@@ -140,19 +140,6 @@ pub struct EngineState {
     pub el_sync_finished: bool,
 }
 
-impl EngineState {
-    /// Returns if consolidation is needed.
-    ///
-    /// [Consolidation] is only performed by a rollup node when the unsafe head
-    /// is ahead of the safe head. When the two are equal, consolidation isn't
-    /// required and [`crate::engine::Engine::build`] can be used to build the block.
-    ///
-    /// [Consolidation]: https://specs.base.org/protocol/consensus/derivation#l1-consolidation-payload-attributes-matching
-    pub fn needs_consolidation(&self) -> bool {
-        self.sync_state.safe_head() != self.sync_state.unsafe_head()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "metrics")]

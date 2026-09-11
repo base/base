@@ -9,7 +9,7 @@ use base_common_types_chain::{BaseBlock as Block, Header};
 use base_execution_network_service::{
     BlockDownloaderProvider, NetworkEventListenerProvider, NetworkInfo, Peers,
     eth_requests::{MAX_BLOCK_ACCESS_LISTS_SERVE, SOFT_RESPONSE_LIMIT},
-    test_utils::{NetworkEventStream, PeerConfig, TestPool, Testnet, TestnetHandle},
+    test_utils::{NetworkEventStream, PeerConfig, Testnet, TestnetHandle},
 };
 use base_execution_network_wire::{
     BlockAccessLists, BlockAccessListsClient, BodiesClient, EthVersion, GetBlockAccessLists,

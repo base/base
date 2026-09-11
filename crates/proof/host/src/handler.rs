@@ -1049,22 +1049,6 @@ async fn handle_hint_inner(
 
             let input_hash = keccak256(hint.data.as_ref());
 
-            #[cfg(feature = "precompiles")]
-            let result = {
-                let address = Address::from_slice(&hint.data.as_ref()[..20]);
-                let gas = u64::from_be_bytes(hint.data.as_ref()[20..28].try_into()?);
-                let input = hint.data[28..].to_vec();
-                crate::precompiles::execute(address, input, gas).map_or_else(
-                    |_| vec![0u8; 1],
-                    |raw_res: Vec<u8>| {
-                        let mut res = Vec::with_capacity(1 + raw_res.len());
-                        res.push(0x01);
-                        res.extend_from_slice(&raw_res);
-                        res
-                    },
-                )
-            };
-            #[cfg(not(feature = "precompiles"))]
             let result = vec![0u8; 1];
 
             let mut kv_lock = kv.write().await;

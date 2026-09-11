@@ -6,7 +6,6 @@ use base_common_types_rpc::{BaseTransactionRequest, Stage, SyncInfo, SyncStatus}
 use base_execution_network_service::NetworkInfo;
 use base_execution_state_types::{
     BlockNumReader, PruneCheckpointReader, PruneMode, PruneSegment, StageCheckpointReader,
-    TransactionsProvider,
 };
 use futures::Future;
 

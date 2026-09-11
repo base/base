@@ -1,4 +1,3 @@
-use core::fmt;
 use std::{fmt::Debug, str::FromStr};
 
 use alloy_eips::eip2718::IsTyped2718;
@@ -162,20 +161,6 @@ impl Default for TransactionFetcherConfig {
     }
 }
 
-/// A policy defining which peers pending transactions are gossiped to.
-pub trait TransactionPropagationPolicy: Send + Sync + Unpin + fmt::Debug + 'static {
-    /// Filter a given peer based on the policy.
-    ///
-    /// This determines whether transactions can be propagated to this peer.
-    fn can_propagate(&self, peer: &mut PeerMetadata) -> bool;
-
-    /// A callback on the policy when a new peer session is established.
-    fn on_session_established(&mut self, peer: &mut PeerMetadata);
-
-    /// A callback on the policy when a peer session is closed.
-    fn on_session_closed(&mut self, peer: &mut PeerMetadata);
-}
-
 /// Determines which peers pending transactions are propagated to.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Display)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -191,18 +176,15 @@ pub enum TransactionPropagationKind {
     None,
 }
 
-impl TransactionPropagationPolicy for TransactionPropagationKind {
-    fn can_propagate(&self, peer: &mut PeerMetadata) -> bool {
+impl TransactionPropagationKind {
+    /// Returns whether transactions may be sent to this peer.
+    pub fn can_propagate(&self, peer: &PeerMetadata) -> bool {
         match self {
             Self::All => true,
             Self::Trusted => peer.peer_kind.is_trusted(),
             Self::None => false,
         }
     }
-
-    fn on_session_established(&mut self, _peer: &mut PeerMetadata) {}
-
-    fn on_session_closed(&mut self, _peer: &mut PeerMetadata) {}
 }
 
 impl FromStr for TransactionPropagationKind {
@@ -260,39 +242,16 @@ impl FromStr for TransactionIngressPolicy {
     }
 }
 
-/// Defines the outcome of evaluating a transaction against an `AnnouncementFilteringPolicy`.
-///
-/// Dictates how the `TransactionManager` should proceed on an announced transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnouncementAcceptance {
-    /// Accept the transaction announcement.
-    Accept,
-    /// Log the transaction but not fetching the transaction or penalizing the peer.
-    Ignore,
-    /// Reject
-    Reject {
-        /// If true, the peer sending this announcement should be penalized.
-        penalize_peer: bool,
-    },
-}
-
-/// A policy that defines how to handle incoming transaction announcements,
-/// particularly concerning transaction types and other announcement metadata.
-pub trait AnnouncementFilteringPolicy: Send + Sync + Unpin + fmt::Debug + 'static {
-    /// Decides how to handle a transaction announcement based on its type, hash, and size.
-    fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance;
-}
-
-/// A generic `AnnouncementFilteringPolicy` that enforces strict validation
-/// of transaction type based on a generic type `T`.
+/// Strict announcement validation for Base transaction types.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct TypedStrictFilter;
 
-impl AnnouncementFilteringPolicy for TypedStrictFilter {
-    fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance {
+impl TypedStrictFilter {
+    /// Accepts known Base transaction types and rejects unknown types.
+    pub fn accepts(ty: u8, hash: &B256, size: usize) -> bool {
         if base_common_types_chain::BasePooledTransaction::is_type(ty) {
-            AnnouncementAcceptance::Accept
+            true
         } else {
             tracing::trace!(target: "net::tx::policy::strict_typed",
                 %ty,
@@ -300,41 +259,10 @@ impl AnnouncementFilteringPolicy for TypedStrictFilter {
                 %hash,
                 "Invalid or unrecognized transaction type byte. Rejecting entry and recommending peer penalization."
             );
-            AnnouncementAcceptance::Reject { penalize_peer: true }
+            false
         }
     }
 }
-
-/// Type alias for a `TypedStrictFilter`. This is the default strict announcement filter.
-pub type StrictEthAnnouncementFilter = TypedStrictFilter;
-
-/// An [`AnnouncementFilteringPolicy`] that permissively handles unknown type bytes
-/// based on a given type `T` using `T::try_from(u8)`.
-///
-/// If `T::try_from(ty)` succeeds, the announcement is accepted. Otherwise, it's ignored.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct TypedRelaxedFilter;
-
-impl AnnouncementFilteringPolicy for TypedRelaxedFilter {
-    fn decide_on_announcement(&self, ty: u8, hash: &B256, size: usize) -> AnnouncementAcceptance {
-        if base_common_types_chain::BasePooledTransaction::is_type(ty) {
-            AnnouncementAcceptance::Accept
-        } else {
-            tracing::trace!(target: "net::tx::policy::relaxed_typed",
-                %ty,
-                %size,
-                %hash,
-                "Unknown transaction type byte. Ignoring entry."
-            );
-            AnnouncementAcceptance::Ignore
-        }
-    }
-}
-
-/// Type alias for `TypedRelaxedFilter`. This filter accepts known Ethereum transaction types and
-/// ignores unknown ones without penalizing the peer.
-pub type RelaxedEthAnnouncementFilter = TypedRelaxedFilter;
 
 #[cfg(test)]
 mod tests {

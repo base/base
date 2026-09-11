@@ -19,9 +19,7 @@ mod cache_account;
 pub use cache_account::CacheAccount;
 
 mod changes;
-pub use changes::{
-    PlainStateReverts, PlainStorageChangeset, PlainStorageRevert, StateChangeset, StorageRevert,
-};
+pub use changes::{PlainStateReverts, PlainStorageChangeset, PlainStorageRevert, StateChangeset};
 
 mod plain_account;
 pub use plain_account::{PlainAccount, PlainStorage, StorageSlot, StorageWithOriginalValues};
@@ -30,7 +28,7 @@ mod reverts;
 pub use reverts::{AccountInfoRevert, AccountRevert, RevertToSlot, Reverts};
 
 mod state;
-pub use state::{DBBox, State, StateDBBox};
+pub use state::{DBBox, State};
 
 mod state_builder;
 pub use state_builder::StateBuilder;

@@ -23,6 +23,7 @@ alloy-genesis = { workspace = true }
 libp2p-stream = { workspace = true }
 alloy-json-rpc = { workspace = true }
 alloy-transport = { workspace = true }
+base-common-http = { workspace = true }
 base-consensus-derive = { workspace = true }
 base-consensus-source = { workspace = true }
 base-consensus-network = { workspace = true }
@@ -45,7 +46,6 @@ base-execution-state-operations = { workspace = true }
 futures = { workspace = true, features = ["default"] }
 reqwest = { workspace = true, features = ["default"] }
 alloy-chains = { workspace = true, features = ["std"] }
-base-common-observability-health = { workspace = true }
 base-common-observability-metrics = { workspace = true }
 tokio-stream = { workspace = true, features = ["default"] }
 opentelemetry = { workspace = true, features = ["default"] }

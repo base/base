@@ -38,7 +38,7 @@ use crate::{
     PendingTransactionBuilder, PendingTransactionConfig, ProviderBuilder, ProviderCall,
     RootProvider, RpcWithBlock, SendableTx,
     heart::PendingTransactionError,
-    utils::{self, Eip1559Estimation, Eip1559Estimator},
+    utils::{self, Eip1559Estimation},
 };
 
 /// A task that polls the provider with `eth_getFilterChanges`, returning a list of `R`.
@@ -267,14 +267,10 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
 
     /// Estimates the [EIP-1559] `maxFeePerGas` and `maxPriorityFeePerGas` fields.
     ///
-    /// Receives an [`Eip1559Estimator`] that can be used to modify
-    /// how to estimate these fees.
+    /// Uses the builtin [`utils::eip1559_default_estimator`].
     ///
     /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
-    async fn estimate_eip1559_fees_with(
-        &self,
-        estimator: Eip1559Estimator,
-    ) -> TransportResult<Eip1559Estimation> {
+    async fn estimate_eip1559_fees(&self) -> TransportResult<Eip1559Estimation> {
         let fee_history = self
             .get_fee_history(
                 utils::EIP1559_FEE_ESTIMATION_PAST_BLOCKS,
@@ -300,16 +296,10 @@ pub trait Provider<N: Network = Ethereum>: Send + Sync {
             }
         };
 
-        Ok(estimator.estimate(base_fee_per_gas, &fee_history.reward.unwrap_or_default()))
-    }
-
-    /// Estimates the [EIP-1559] `maxFeePerGas` and `maxPriorityFeePerGas` fields.
-    ///
-    /// Uses the builtin estimator [`utils::eip1559_default_estimator`] function.
-    ///
-    /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
-    async fn estimate_eip1559_fees(&self) -> TransportResult<Eip1559Estimation> {
-        self.estimate_eip1559_fees_with(Eip1559Estimator::default()).await
+        Ok(utils::eip1559_default_estimator(
+            base_fee_per_gas,
+            &fee_history.reward.unwrap_or_default(),
+        ))
     }
 
     /// Returns a collection of historical gas information [`FeeHistory`] which
@@ -2641,21 +2631,6 @@ mod tests {
 
         assert!(output.contains("eth_sendTransaction"));
         assert!(output.contains("Block Number: 1"))
-    }
-
-    #[tokio::test]
-    async fn custom_estimator() {
-        let provider = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .with_cached_nonce_management()
-            .connect_anvil();
-
-        let _ = provider
-            .estimate_eip1559_fees_with(Eip1559Estimator::new(|_fee, _rewards| Eip1559Estimation {
-                max_fee_per_gas: 0,
-                max_priority_fee_per_gas: 0,
-            }))
-            .await;
     }
 
     #[tokio::test]

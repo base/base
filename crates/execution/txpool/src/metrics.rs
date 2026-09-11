@@ -64,20 +64,6 @@ pub struct TxPoolMetrics {
     pub queued_transactions_evicted: Counter,
 }
 
-/// Transaction pool blobstore metrics
-#[derive(Metrics)]
-#[metrics(scope = "transaction_pool")]
-pub struct BlobStoreMetrics {
-    /// Number of failed inserts into the blobstore
-    pub blobstore_failed_inserts: Counter,
-    /// Number of failed deletes into the blobstore
-    pub blobstore_failed_deletes: Counter,
-    /// The number of bytes the blobs in the blobstore take up
-    pub blobstore_byte_size: Gauge,
-    /// How many blobs are currently in the blobstore
-    pub blobstore_entries: Gauge,
-}
-
 /// Transaction pool maintenance metrics
 #[derive(Metrics)]
 #[metrics(scope = "transaction_pool")]
@@ -91,8 +77,6 @@ pub struct MaintainPoolMetrics {
     /// Counter for the number of transactions reinserted into the pool following a blockchain
     /// reorganization (reorg).
     pub reinserted_transactions: Counter,
-    /// Counter for the number of finalized blob transactions that have been removed from tracking.
-    pub deleted_tracked_finalized_blobs: Counter,
 }
 
 impl MaintainPoolMetrics {
@@ -106,12 +90,6 @@ impl MaintainPoolMetrics {
     #[inline]
     pub fn inc_reinserted_transactions(&self, count: usize) {
         self.reinserted_transactions.increment(count as u64);
-    }
-
-    /// Increments the count of deleted tracked finalized blobs.
-    #[inline]
-    pub fn inc_deleted_tracked_blobs(&self, count: usize) {
-        self.deleted_tracked_finalized_blobs.increment(count as u64);
     }
 
     /// Increments the drift count by one.

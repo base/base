@@ -59,12 +59,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use alloy_eips::{
-    eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
-};
 use alloy_primitives::{
-    Address, B128, B256, TxHash,
+    Address, B256, TxHash,
     map::{AddressSet, B256Map},
 };
 use base_common_types_chain::{BlockHeader, Recovered, SealedBlock, transaction::TxHashRef};
@@ -76,7 +72,6 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::{
     AddedTransactionOutcome, AllTransactionsEvents, SubPool,
-    blobstore::{BlobStore, BlobStoreError, PooledBlobSidecar},
     error::{InvalidPoolTransactionError, PoolError, PoolResult},
     pool::{
         BestTransactionFilter, NewTransactionEvent, TransactionEvents, TransactionListenerKind,
@@ -245,10 +240,6 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
     fn new_transactions_listener(&self) -> Receiver<NewTransactionEvent> {
         self.new_transactions_listener_for(TransactionListenerKind::PropagateOnly)
     }
-
-    /// Returns a new [Receiver] that yields blob "sidecars" (blobs w/ assoc. kzg
-    /// commitments/proofs) for eip-4844 transactions inserted into the pool
-    fn blob_transaction_sidecars_listener(&self) -> Receiver<NewBlobSidecar>;
 
     /// Returns a new stream that yields new valid transactions added to the pool
     /// depending on the given [`TransactionListenerKind`] argument.
@@ -636,77 +627,6 @@ pub trait TransactionPool: Clone + Debug + Send + Sync {
 
     /// Returns a set of all senders of transactions in the pool
     fn unique_senders(&self) -> AddressSet;
-
-    /// Returns the [`BlobTransactionSidecarVariant`] for the given transaction hash if it exists in
-    /// the blob store.
-    fn get_blob(
-        &self,
-        tx_hash: TxHash,
-    ) -> Result<Option<Arc<BlobTransactionSidecarVariant>>, BlobStoreError>;
-
-    /// Returns all [`BlobTransactionSidecarVariant`] for the given transaction hashes if they
-    /// exists in the blob store.
-    ///
-    /// This only returns the blobs that were found in the store.
-    /// If there's no blob it will not be returned.
-    fn get_all_blobs(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<(TxHash, Arc<BlobTransactionSidecarVariant>)>, BlobStoreError>;
-
-    /// Returns the exact [`BlobTransactionSidecarVariant`] for the given transaction hashes in the
-    /// order they were requested.
-    ///
-    /// Returns an error if any of the blobs are not found in the blob store.
-    fn get_all_blobs_exact(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<Arc<BlobTransactionSidecarVariant>>, BlobStoreError>;
-
-    /// Return the [`BlobAndProofV1`]s for a list of blob versioned hashes.
-    fn get_blobs_for_versioned_hashes_v1(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV1>>, BlobStoreError>;
-
-    /// Return the [`BlobAndProofV2`]s for a list of blob versioned hashes.
-    /// Blobs and proofs are returned only if they are present for _all_ of the requested versioned
-    /// hashes.
-    fn get_blobs_for_versioned_hashes_v2(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Option<Vec<BlobAndProofV2>>, BlobStoreError>;
-
-    /// Return the [`BlobAndProofV2`]s for a list of blob versioned hashes.
-    ///
-    /// The response is always the same length as the request. Missing or older-version blobs are
-    /// returned as `None` elements.
-    fn get_blobs_for_versioned_hashes_v3(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError>;
-
-    /// Return the [`BlobCellsAndProofsV1`]s for a list of blob versioned hashes and requested cell
-    /// indices.
-    ///
-    /// The response is always the same length as the request. Missing or older-version blobs are
-    /// returned as `None` elements.
-    fn get_blobs_for_versioned_hashes_v4(
-        &self,
-        versioned_hashes: &[B256],
-        indices_bitarray: B128,
-    ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError>;
-
-    /// Return whether each requested blob versioned hash is available.
-    ///
-    /// The response is always the same length and order as the request.
-    fn has_blobs_for_versioned_hashes(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<bool>, BlobStoreError>;
-
-    /// Returns the blob store used by the pool.
-    fn blob_store(&self) -> Box<dyn BlobStore>;
 }
 
 /// A Helper type that bundles all transactions in the pool.
@@ -847,17 +767,6 @@ impl From<PropagateKind> for PeerId {
             PropagateKind::Full(peer) | PropagateKind::Hash(peer) => peer,
         }
     }
-}
-
-/// This type represents a new blob sidecar that has been stored in the transaction pool's
-/// blobstore; it includes the `TransactionHash` of the blob transaction along with the assoc.
-/// sidecar (blobs, commitments, proofs)
-#[derive(Debug, Clone)]
-pub struct NewBlobSidecar {
-    /// hash of the EIP-4844 transaction.
-    pub tx_hash: TxHash,
-    /// the blob transaction sidecar.
-    pub sidecar: Arc<BlobTransactionSidecarVariant>,
 }
 
 /// Where the transaction originates from.
@@ -1122,45 +1031,6 @@ impl BestTransactionsAttributes {
     pub const fn with_blob_fee(mut self, blob_fee: u64) -> Self {
         self.blob_fee = Some(blob_fee);
         self
-    }
-}
-
-/// Represents the blob sidecar of the [`BasePooledTransaction`].
-///
-/// EIP-4844 blob transactions require additional data (blobs, commitments, proofs)
-/// for validation that is not included in the consensus format. This enum tracks
-/// the sidecar state throughout the transaction's lifecycle in the pool.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EthBlobTransactionSidecar {
-    /// This transaction does not have a blob sidecar
-    /// (applies to all non-EIP-4844 transaction types)
-    None,
-    /// This transaction has a blob sidecar (EIP-4844) but it is missing.
-    ///
-    /// This can happen when:
-    /// - The sidecar was extracted after the transaction was added to the pool
-    /// - The transaction was re-injected after a reorg without its sidecar
-    /// - The transaction was recovered from the consensus format (e.g., from a block)
-    Missing,
-    /// The EIP-4844 transaction was received from the network with its complete sidecar.
-    ///
-    /// This sidecar contains:
-    /// - The actual blob data (large data per blob)
-    /// - KZG commitments for each blob
-    /// - KZG proofs for validation
-    ///
-    /// The sidecar is required for validating the transaction but is not included
-    /// in blocks (only the blob hashes are included in the consensus format).
-    Present(PooledBlobSidecar),
-}
-
-impl EthBlobTransactionSidecar {
-    /// Returns the blob sidecar if it is present
-    pub const fn maybe_sidecar(&self) -> Option<&BlobTransactionSidecarVariant> {
-        match self {
-            Self::Present(sidecar) => Some(sidecar.sidecar()),
-            _ => None,
-        }
     }
 }
 

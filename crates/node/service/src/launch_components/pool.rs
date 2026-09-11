@@ -1,16 +1,9 @@
 //! Pool component for the node builder.
 
 use base_execution_state_provider::CanonStateSubscriptions;
-use base_execution_txpool::{BaseTransactionPool, DiskFileBlobStore, PoolConfig};
+use base_execution_txpool::{BaseTransactionPool, PoolConfig};
 
 use crate::BuilderContext;
-
-/// Opens the node's configured blob cache.
-pub fn create_blob_store(ctx: &BuilderContext) -> eyre::Result<DiskFileBlobStore> {
-    let config = base_execution_txpool::DiskFileBlobStoreConfig::default()
-        .with_max_cached_entries(ctx.config().txpool.max_cached_entries);
-    Ok(DiskFileBlobStore::open(ctx.config().datadir().blobstore(), config)?)
-}
 
 /// Spawn local transaction backup task if enabled.
 fn spawn_local_backup_task(ctx: &BuilderContext, pool: BaseTransactionPool) -> eyre::Result<()> {

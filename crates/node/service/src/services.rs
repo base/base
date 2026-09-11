@@ -5,8 +5,8 @@ use base_execution_state_indexer::{
 };
 use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_txpool::{
-    TransactionTracingConfig as TxpoolConfig, TransactionValidity, TxForwardingConfig,
-    TxForwardingService, tracex_subscription,
+    TransactionTracingConfig as TxpoolConfig, TxForwardingConfig, TxForwardingService,
+    tracex_subscription,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::BroadcastStream;

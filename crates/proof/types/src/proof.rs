@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256};
-use base_proof_witness_preimage::PreimageKey;
 
 use crate::Proposal;
 
@@ -75,14 +74,4 @@ pub struct ProofRequest {
     /// L2 block used to pin the upgrade schedule; defaults to the claimed block.
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub schedule_l2_block_number: Option<u64>,
-}
-
-/// A proof request bundled with the witness data needed to fulfill it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ProofBundle {
-    /// What to prove.
-    pub request: ProofRequest,
-    /// The preimage key-value pairs.
-    pub preimages: Vec<(PreimageKey, Vec<u8>)>,
 }

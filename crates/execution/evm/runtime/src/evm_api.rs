@@ -2,12 +2,11 @@
 
 use core::{fmt::Debug, hash::Hash};
 
-use alloy_primitives::{Address, B256, Bytes};
-use base_common_types_chain::transaction::TxHashRef;
+use alloy_primitives::{Address, Bytes};
 pub(crate) use base_execution_evm_runtime::Database;
 use base_execution_evm_runtime::{
-    BlockEnv, CfgEnv, ContextTr, DatabaseCommit, EvmError, ExecutionResult, HaltReasonTr,
-    Inspector, IntoTxEnv, ResultAndState,
+    CfgEnv, ContextTr, DatabaseCommit, EvmError, ExecutionResult, HaltReasonTr, Inspector,
+    IntoTxEnv, ResultAndState,
 };
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -191,64 +190,6 @@ pub trait Evm {
     /// Provides mutable references to the database, inspector and precompiles.
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles);
 }
-
-/// An extension trait for [`Evm`] providing additional functionality.
-pub trait EvmExt: Evm {
-    /// Replays all the transactions until the target transaction is found.
-    ///
-    /// This stops before transacting the target hash and commits all previous changes.
-    ///
-    /// Returns the index of the target transaction in the iterator.
-    fn replay_transactions_until<I, T>(
-        &mut self,
-        transactions: I,
-        target_tx_hash: B256,
-    ) -> Result<usize, Self::Error>
-    where
-        Self::DB: DatabaseCommit,
-        I: IntoIterator<Item = T>,
-        T: IntoTxEnv<Self::Tx> + TxHashRef,
-    {
-        let mut index = 0;
-        for tx in transactions {
-            if *tx.tx_hash() == target_tx_hash {
-                // reached the target transaction
-                break;
-            }
-            self.transact_commit(tx)?;
-            index += 1;
-        }
-        Ok(index)
-    }
-
-    /// Replays all the previous transactions and returns the [`ResultAndState`] of the target
-    /// transaction.
-    ///
-    /// Returns `None` if the target transaction was not found.
-    fn replay_transaction<I, T>(
-        &mut self,
-        transactions: I,
-        target_tx_hash: B256,
-    ) -> Result<Option<ResultAndState<Self::HaltReason>>, Self::Error>
-    where
-        Self::DB: DatabaseCommit,
-        I: IntoIterator<Item = T>,
-        T: IntoTxEnv<Self::Tx> + TxHashRef,
-    {
-        for tx in transactions {
-            if *tx.tx_hash() == target_tx_hash {
-                // reached the target transaction
-                return self.transact(tx).map(Some);
-            } else {
-                self.transact_commit(tx)?;
-            }
-        }
-        Ok(None)
-    }
-}
-
-/// Automatic implementation of [`EvmExt`] for all types that implement [`Evm`].
-impl<T: Evm> EvmExt for T {}
 
 /// A type responsible for creating instances of an ethereum virtual machine given a certain input.
 #[cfg(any(test, feature = "test-utils"))]

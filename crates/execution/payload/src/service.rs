@@ -269,12 +269,6 @@ impl PayloadBuilderService {
         PayloadBuilderHandle::new(self.service_tx.clone())
     }
 
-    /// Create clone on `payload_events` sending handle that could be used by builder to produce
-    /// additional events during block building
-    pub fn payload_events_handle(&self) -> broadcast::Sender<Events> {
-        self.payload_events.clone()
-    }
-
     /// Returns true if the given payload is currently being built.
     fn contains_payload(&self, id: PayloadId) -> bool {
         self.payload_jobs.iter().any(|entry| entry.id == id)
@@ -648,7 +642,7 @@ mod tests {
     use base_execution_state_provider::{StaticFileProviderFactory, test_utils::ProviderTestUtils};
     use base_execution_txpool::{
         BaseOrdering, BaseTransactionPool, BaseTransactionValidator,
-        BaseTransactionValidatorBuilder, DiskFileBlobStore, Pool,
+        BaseTransactionValidatorBuilder, Pool,
     };
 
     use super::*;
@@ -682,16 +676,7 @@ mod tests {
                     BaseEvmConfig::new(chain_spec.clone()),
                 )
                 .build_with_tasks(Runtime::test());
-                let pool = Pool::new(
-                    validator,
-                    BaseOrdering::default(),
-                    DiskFileBlobStore::open(
-                        provider.static_file_provider().directory().join("payload_test_blobs"),
-                        Default::default(),
-                    )
-                    .unwrap(),
-                    Default::default(),
-                );
+                let pool = Pool::new(validator, BaseOrdering::default(), Default::default());
                 let pool = BaseTransactionPool::new(pool, BaseOrdering::default());
                 let builder =
                     BasePayloadBuilder::new(pool, provider.clone(), BaseEvmConfig::new(chain_spec));

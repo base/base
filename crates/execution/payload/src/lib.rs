@@ -79,8 +79,4 @@ pub use base_common_types_payload::PayloadId;
 pub use basic::*;
 
 mod metering_rpc;
-pub use metering_rpc::{
-    MeterBlockResponse, MeterBlockTransactions, MeterBundleInput, MeterBundleOutput,
-    MeteredOpcodes, MeteringConfig, PseudoOpcode, TxValidationError, meter_block, meter_bundle,
-    validate_tx,
-};
+pub use metering_rpc::{MeterBlockResponse, MeterBlockTransactions, meter_block};

@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    TransactionPool, TransactionValidity,
+    TransactionPool,
     forwarding::{
         TxForwardingConfig,
         forwarder::{DestinationForwarder, ForwardRequest},

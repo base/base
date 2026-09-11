@@ -4,7 +4,7 @@
 //! are no-ops that return default values without persisting data.
 
 use core::ops::Bound;
-use std::{collections::BTreeMap, ops::RangeBounds, path::PathBuf};
+use std::{collections::BTreeMap, ops::RangeBounds};
 
 use crate::{
     DatabaseError,
@@ -13,59 +13,9 @@ use crate::{
         DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, DupWalker, RangeWalker,
         ReverseWalker, Walker,
     },
-    database::Database,
-    database_metrics::DatabaseMetrics,
     table::{DupSort, Encode, Table, TableImporter},
     transaction::{DbTx, DbTxMut},
 };
-
-/// Mock database implementation for testing and development.
-///
-/// Provides a lightweight implementation of the [`Database`] trait suitable
-/// for testing scenarios where actual database operations are not required.
-#[derive(Clone, Debug, Default)]
-pub struct DatabaseMock {
-    /// Internal data storage using a `BTreeMap`.
-    ///
-    /// TODO: Make the mock database table-aware by properly utilizing
-    /// this data structure to simulate realistic database behavior during testing.
-    pub data: BTreeMap<Vec<u8>, Vec<u8>>,
-}
-
-impl Database for DatabaseMock {
-    type TX = TxMock;
-    type TXMut = TxMock;
-
-    /// Creates a new read-only transaction.
-    ///
-    /// This always succeeds and returns a default [`TxMock`] instance.
-    /// The mock transaction doesn't actually perform any database operations.
-    fn tx(&self) -> Result<Self::TX, DatabaseError> {
-        Ok(TxMock::default())
-    }
-
-    /// Creates a new read-write transaction.
-    ///
-    /// This always succeeds and returns a default [`TxMock`] instance.
-    /// The mock transaction doesn't actually perform any database operations.
-    fn tx_mut(&self) -> Result<Self::TXMut, DatabaseError> {
-        Ok(TxMock::default())
-    }
-
-    fn path(&self) -> PathBuf {
-        PathBuf::default()
-    }
-
-    fn oldest_reader_txnid(&self) -> Option<u64> {
-        None
-    }
-
-    fn last_txnid(&self) -> Option<u64> {
-        None
-    }
-}
-
-impl DatabaseMetrics for DatabaseMock {}
 
 /// Mock transaction implementation for testing and development.
 ///

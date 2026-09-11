@@ -1382,7 +1382,6 @@ mod tests {
             let (pending_sessions_tx, pending_sessions_rx) = mpsc::channel(1);
 
             tokio::task::spawn(start_pending_incoming_session(
-                Arc::new(EthHandshake::default()),
                 MAX_MESSAGE_SIZE,
                 disconnect_rx,
                 session_id,

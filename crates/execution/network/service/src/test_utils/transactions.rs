@@ -12,7 +12,7 @@ use secp256k1::SecretKey;
 use tokio::sync::mpsc;
 use tracing::trace;
 
-use super::{NetworkTestData, TestPool};
+use super::NetworkTestData;
 use crate::{
     NetworkConfigBuilder, NetworkManager, PeerKind, PeerRequest, PeerRequestSender,
     cache::LruCache,
@@ -27,8 +27,7 @@ use crate::{
 };
 
 /// A new tx manager for testing.
-pub async fn new_tx_manager()
--> (TransactionsManager<base_execution_txpool::InMemoryBlobStore>, NetworkManager) {
+pub async fn new_tx_manager() -> (TransactionsManager, NetworkManager) {
     let secret_key = SecretKey::new(&mut rand_08::thread_rng());
     let client = NoopProvider::default();
 
@@ -41,13 +40,12 @@ pub async fn new_tx_manager()
     let pool = NetworkTestData::pool();
 
     let transactions_manager_config = config.transactions_manager_config.clone();
-    let (_network_handle, network, transactions, _) =
-        NetworkManager::new(config, base_execution_state_database::NoopProvider::default())
-            .await
-            .unwrap()
-            .into_builder()
-            .transactions(pool.clone(), transactions_manager_config)
-            .split_with_handle();
+    let (_network_handle, network, transactions, _) = NetworkManager::new(config)
+        .await
+        .unwrap()
+        .into_builder()
+        .transactions(pool.clone(), transactions_manager_config)
+        .split_with_handle();
 
     (transactions, network)
 }

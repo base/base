@@ -16,8 +16,6 @@ mod handler;
 pub use handler::{handle_hint, parse_blob_hint};
 
 mod kv;
-#[cfg(feature = "disk")]
-pub use kv::DiskKeyValueStore;
 pub use kv::{
     BootKeyValueStore, KeyValueStore, MemoryKeyValueStore, SharedKeyValueStore, SplitKeyValueStore,
     store_ordered_trie,
@@ -36,11 +34,6 @@ pub use metrics::{Metrics, NoopProofGuard};
 
 mod service;
 pub use service::{ProverError, ProverService};
-
-#[cfg(feature = "precompiles")]
-mod precompiles;
-#[cfg(feature = "precompiles")]
-pub use precompiles::execute;
 
 mod worker;
 pub use worker::*;

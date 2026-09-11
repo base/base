@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_eip7928::BlockAccessIndex;
 use alloy_primitives::Address;
 use base_common_types_chain::Transaction;
-use base_execution_evm_blocks::{BaseEvmConfig, BaseExecutorFactory, Database, ExecutableTxFor};
+use base_execution_evm_blocks::{BaseEvmConfig, Database, ExecutableTxFor};
 use base_execution_evm_runtime::{BlockExecutionError, Evm, State, bal::Bal as RevmBal};
 use crossbeam_channel::{Receiver, Sender};
 

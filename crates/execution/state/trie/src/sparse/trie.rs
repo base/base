@@ -245,49 +245,6 @@ impl RevealableSparseTrie {
     }
 }
 
-/// Enum representing sparse trie node type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SparseNodeType {
-    /// Empty trie node.
-    Empty,
-    /// A placeholder that stores only the hash for a node that has not been fully revealed.
-    Hash,
-    /// Sparse leaf node.
-    Leaf,
-    /// Sparse extension node.
-    Extension {
-        /// A flag indicating whether the extension node should be stored in the database.
-        store_in_db_trie: Option<bool>,
-    },
-    /// Sparse branch node.
-    Branch {
-        /// A flag indicating whether the branch node should be stored in the database.
-        store_in_db_trie: Option<bool>,
-    },
-}
-
-impl SparseNodeType {
-    /// Returns true if the node is a hash node.
-    pub const fn is_hash(&self) -> bool {
-        matches!(self, Self::Hash)
-    }
-
-    /// Returns true if the node is a branch node.
-    pub const fn is_branch(&self) -> bool {
-        matches!(self, Self::Branch { .. })
-    }
-
-    /// Returns true if the node should be stored in the database.
-    pub const fn store_in_db_trie(&self) -> Option<bool> {
-        match *self {
-            Self::Extension { store_in_db_trie } | Self::Branch { store_in_db_trie } => {
-                store_in_db_trie
-            }
-            _ => None,
-        }
-    }
-}
-
 /// Enum representing trie nodes in sparse trie.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparseNode {
@@ -447,15 +404,4 @@ impl SparseNodeState {
             Self::Dirty => None,
         }
     }
-}
-
-/// RLP node stack item.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct RlpNodeStackItem {
-    /// Path to the node.
-    pub path: Nibbles,
-    /// RLP node.
-    pub rlp_node: RlpNode,
-    /// Type of the node.
-    pub node_type: SparseNodeType,
 }

@@ -1067,7 +1067,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_oracle_rollup_config_with_mismatched_chain_id() {
-        let rollup_config = base_common_chain_config::rollup_config!(BaseChainConfig::SEPOLIA);
+        let rollup_config = BaseChainConfig::SEPOLIA.rollup_config();
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());

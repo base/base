@@ -8,7 +8,7 @@ use base_common_types_payload::ConsensusEngineHandle;
 use base_execution_engine_driver::{
     BaseExecutionHandle, EngineMessageStream,
     chain::{ChainEvent, FromOrchestrator},
-    engine::{EngineApiKind, EngineApiRequest},
+    engine::EngineApiRequest,
     launch::build_engine_orchestrator,
 };
 use base_execution_engine_observers::ExExManagerHandle;
@@ -46,8 +46,8 @@ impl crate::NodeLaunch {
         let disabled_stages = &[];
 
         // setup the launch context
+        ctx.configure_globals();
         let ctx = ctx
-            .with_configured_globals(engine_tree_config.reserved_cpu_cores())
             // load the toml config
             .with_loaded_toml_config(config)?
             // add resolved peers
@@ -161,10 +161,7 @@ impl crate::NodeLaunch {
             node_config.debug.engine_api_store.clone(),
         );
 
-        let engine_kind = EngineApiKind::OpStack;
-
         let mut orchestrator = build_engine_orchestrator(
-            engine_kind,
             consensus.clone(),
             network_client.clone(),
             Box::pin(consensus_engine_stream),

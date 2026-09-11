@@ -272,12 +272,6 @@ impl DownloadDefaults {
         self
     }
 
-    /// Set the default chain-aware base URL.
-    pub fn with_chain_aware_base_url(mut self, url: impl Into<Cow<'static, str>>) -> Self {
-        self.default_chain_aware_base_url = Some(url.into());
-        self
-    }
-
     /// Set the snapshot discovery API URL.
     ///
     /// Generated help uses the API root as the default snapshot source unless a custom

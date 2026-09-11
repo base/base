@@ -41,7 +41,6 @@ pub struct EthApiBuilder {
     raw_tx_forwarder: ForwardConfig,
     send_raw_transaction_sync_timeout: Duration,
     evm_memory_limit: u64,
-    force_blob_sidecar_upcasting: bool,
 }
 
 impl EthApiBuilder {
@@ -78,7 +77,6 @@ impl EthApiBuilder {
             raw_tx_forwarder: ForwardConfig::default(),
             send_raw_transaction_sync_timeout: Duration::from_secs(30),
             evm_memory_limit: (1 << 32) - 1,
-            force_blob_sidecar_upcasting: false,
         }
     }
 }
@@ -335,7 +333,6 @@ impl EthApiBuilder {
             raw_tx_forwarder,
             send_raw_transaction_sync_timeout,
             evm_memory_limit,
-            force_blob_sidecar_upcasting,
         } = self;
 
         let provider = components.provider.clone();
@@ -386,7 +383,6 @@ impl EthApiBuilder {
             raw_tx_forwarder.forwarder_client(),
             send_raw_transaction_sync_timeout,
             evm_memory_limit,
-            force_blob_sidecar_upcasting,
         )
     }
 
@@ -411,12 +407,6 @@ impl EthApiBuilder {
     /// Sets the maximum memory the EVM can allocate per RPC request.
     pub const fn evm_memory_limit(mut self, memory_limit: u64) -> Self {
         self.evm_memory_limit = memory_limit;
-        self
-    }
-
-    /// Sets whether to force upcasting EIP-4844 blob sidecars to EIP-7594 format.
-    pub const fn force_blob_sidecar_upcasting(mut self, force: bool) -> Self {
-        self.force_blob_sidecar_upcasting = force;
         self
     }
 }

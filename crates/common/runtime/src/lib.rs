@@ -70,8 +70,5 @@ pub mod pool;
 #[cfg(feature = "rayon")]
 pub use pool::{Worker, WorkerPool, build_pool_with_panic_handler};
 #[cfg(feature = "rayon")]
-pub mod for_each_ordered;
-#[cfg(feature = "rayon")]
-pub use for_each_ordered::ForEachOrdered;
 #[cfg(feature = "rayon")]
 pub use runtime::RayonConfig;

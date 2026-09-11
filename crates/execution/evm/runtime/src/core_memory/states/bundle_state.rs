@@ -653,16 +653,6 @@ impl BundleState {
         (self.to_plain_state(is_value_known), self.reverts.to_plain_state_reverts())
     }
 
-    /// Consumes the bundle state and split it into a [`StateChangeset`] and a
-    /// [`PlainStateReverts`].
-    #[deprecated = "Use `to_plain_state_and_reverts` instead"]
-    pub fn into_plain_state_and_reverts(
-        self,
-        is_value_known: OriginalValuesKnown,
-    ) -> (StateChangeset, PlainStateReverts) {
-        self.to_plain_state_and_reverts(is_value_known)
-    }
-
     /// Extends the bundle with other state.
     ///
     /// Updates the `other` state only if `other` is not flagged as destroyed.

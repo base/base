@@ -116,19 +116,6 @@ impl BaseChainSpec {
         SealedHeader::new(self.genesis_header().clone(), self.genesis_hash())
     }
 
-    pub fn initial_base_fee(&self) -> Option<u64> {
-        // If the base fee is set in the genesis block, we use that instead of the default.
-        let genesis_base_fee =
-            self.genesis.base_fee_per_gas.map(|fee| fee as u64).unwrap_or(INITIAL_BASE_FEE);
-
-        // If London is activated at genesis, we set the initial base fee as per EIP-1559.
-        self.config
-            .upgrades
-            .fork(EthereumHardfork::London)
-            .active_at_block(0)
-            .then_some(genesis_base_fee)
-    }
-
     pub fn genesis_hash(&self) -> B256 {
         self.genesis_header.hash()
     }
@@ -487,15 +474,6 @@ impl BaseChainSpec {
         timestamp: u64,
     ) -> Result<bool, BaseChainSpecError> {
         self.try_set_hardfork_activation_condition(hardfork_id, ForkCondition::Timestamp(timestamp))
-    }
-
-    /// Sets a hardfork activation condition by contract hardfork ID.
-    pub fn set_hardfork_activation_condition(
-        &mut self,
-        hardfork_id: BaseUpgrade,
-        condition: ForkCondition,
-    ) -> bool {
-        self.try_set_hardfork_activation_condition(hardfork_id, condition).unwrap_or(false)
     }
 
     /// Sets a hardfork activation condition by contract hardfork ID after validating invariants.

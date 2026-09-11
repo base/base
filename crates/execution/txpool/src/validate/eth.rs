@@ -8,10 +8,9 @@ use std::{
     },
 };
 
-use alloy_eips::{BlockId, eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M, eip7840::BlobParams};
+use alloy_eips::{BlockId, eip1559::ETHEREUM_BLOCK_GAS_LIMIT_30M};
 use alloy_hardforks::EthereumHardforks;
-use alloy_primitives::{Address, U256};
-use alloy_rlp::Encodable;
+use alloy_primitives::Address;
 use base_common_chain_config::{BaseChainSpec, ChainSpecProvider};
 use base_common_runtime::Runtime;
 use base_common_types_chain::{
@@ -31,38 +30,17 @@ use base_execution_state_types::{
 use super::constants::DEFAULT_MAX_TX_INPUT_BYTES;
 use crate::{
     BaseTransactionValidator, LocalTransactionConfig, TransactionValidationOutcome,
-    TransactionValidationTaskExecutor, TransactionValidator,
-    error::{
-        Eip4844PoolTransactionError, Eip7702PoolTransactionError, InvalidPoolTransactionError,
-    },
+    TransactionValidationTaskExecutor,
+    error::{Eip7702PoolTransactionError, InvalidPoolTransactionError},
     traits::TransactionOrigin,
-    validate::ValidTransaction,
 };
 
-/// Additional stateless validation function signature.
-///
-/// Receives the transaction origin and a reference to the transaction. Returns `Ok(())` if the
-/// transaction passes or `Err` to reject it.
-pub type StatelessValidationFn<T> =
-    Arc<dyn Fn(TransactionOrigin, &T) -> Result<(), InvalidPoolTransactionError> + Send + Sync>;
-
-/// Additional stateful validation function signature.
-///
-/// Receives the transaction origin, a reference to the transaction, and an account state reader.
-/// Returns `Ok(())` if the transaction passes or `Err` to reject it.
-pub type StatefulValidationFn<T> = Arc<
-    dyn Fn(TransactionOrigin, &T, &dyn AccountInfoReader) -> Result<(), InvalidPoolTransactionError>
-        + Send
-        + Sync,
->;
-
-/// A [`TransactionValidator`] implementation that validates ethereum transaction.
+/// A [`crate::TransactionValidator`] implementation that validates ethereum transaction.
 ///
 /// It supports all known ethereum transaction types:
 /// - Legacy
 /// - EIP-2718
 /// - EIP-1559
-/// - EIP-4844
 /// - EIP-7702
 ///
 /// And enforces additional constraints such as:
@@ -75,24 +53,12 @@ impl fmt::Debug for BaseTransactionValidator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BaseTransactionValidator")
             .field("fork_tracker", &self.fork_tracker)
-            .field("eip2718", &self.eip2718)
-            .field("eip1559", &self.eip1559)
-            .field("eip4844", &self.eip4844)
-            .field("eip7702", &self.eip7702)
             .field("block_gas_limit", &self.block_gas_limit)
             .field("tx_fee_cap", &self.tx_fee_cap)
             .field("minimum_priority_fee", &self.minimum_priority_fee)
             .field("max_tx_input_bytes", &self.max_tx_input_bytes)
             .field("max_tx_gas_limit", &self.max_tx_gas_limit)
             .field("disable_balance_check", &self.disable_balance_check)
-            .field(
-                "additional_stateless_validation",
-                &self.additional_stateless_validation.as_ref().map(|_| "..."),
-            )
-            .field(
-                "additional_stateful_validation",
-                &self.additional_stateful_validation.as_ref().map(|_| "..."),
-            )
             .finish()
     }
 }
@@ -123,26 +89,6 @@ impl BaseTransactionValidator {
         &self.evm_config
     }
 
-    /// Returns if there are EIP-2718 type transactions
-    pub const fn eip2718(&self) -> bool {
-        self.eip2718
-    }
-
-    /// Returns if there are EIP-1559 type transactions
-    pub const fn eip1559(&self) -> bool {
-        self.eip1559
-    }
-
-    /// Returns if there are EIP-4844 blob transactions
-    pub const fn eip4844(&self) -> bool {
-        self.eip4844
-    }
-
-    /// Returns if there are EIP-7702 type transactions
-    pub const fn eip7702(&self) -> bool {
-        self.eip7702
-    }
-
     /// Returns the current tx fee cap limit in wei locally submitted into the pool
     pub const fn tx_fee_cap(&self) -> &Option<u128> {
         &self.tx_fee_cap
@@ -168,129 +114,6 @@ impl BaseTransactionValidator {
     pub const fn disable_balance_check(&self) -> bool {
         self.disable_balance_check
     }
-
-    /// Sets an additional stateless validation check that is applied at the end of
-    /// [`validate_stateless`](Self::validate_stateless).
-    ///
-    /// The check receives the transaction origin and a reference to the transaction, and
-    /// should return `Ok(())` if the transaction is valid or
-    /// `Err(InvalidPoolTransactionError)` to reject it.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use base_execution_txpool::{error::InvalidPoolTransactionError, TransactionOrigin};
-    ///
-    /// let mut validator = builder.build(blob_store);
-    /// // Reject external transactions with input data exceeding 1KB
-    /// validator.set_additional_stateless_validation(|origin, tx| {
-    ///     if origin.is_external() && tx.input().len() > 1024 {
-    ///         return Err(InvalidPoolTransactionError::OversizedData {
-    ///             size: tx.input().len(),
-    ///             limit: 1024,
-    ///         });
-    ///     }
-    ///     Ok(())
-    /// });
-    /// ```
-    pub fn set_additional_stateless_validation<F>(&mut self, f: F)
-    where
-        F: Fn(
-                TransactionOrigin,
-                &crate::BasePooledTransaction,
-            ) -> Result<(), InvalidPoolTransactionError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.additional_stateless_validation = Some(Arc::new(f));
-    }
-
-    /// Sets the additional stateless validation check from an already shared
-    /// [`StatelessValidationFn`].
-    ///
-    /// This is useful when the same hook is shared across multiple validators, avoiding an extra
-    /// allocation compared to
-    /// [`set_additional_stateless_validation`](Self::set_additional_stateless_validation).
-    pub fn set_additional_stateless_validation_fn(
-        &mut self,
-        f: StatelessValidationFn<crate::BasePooledTransaction>,
-    ) {
-        self.additional_stateless_validation = Some(f);
-    }
-
-    /// Sets or clears the additional stateless validation check from an optional
-    /// [`StatelessValidationFn`].
-    ///
-    /// Passing `None` removes any previously configured check.
-    pub fn set_additional_stateless_validation_fn_opt(
-        &mut self,
-        f: Option<StatelessValidationFn<crate::BasePooledTransaction>>,
-    ) {
-        self.additional_stateless_validation = f;
-    }
-
-    /// Sets an additional stateful validation check that is applied at the end of
-    /// [`validate_stateful`](Self::validate_stateful).
-    ///
-    /// The check receives the transaction origin, a reference to the transaction, and the
-    /// account state reader, and should return `Ok(())` if the transaction is valid or
-    /// `Err(InvalidPoolTransactionError)` to reject it.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use base_execution_txpool::{error::InvalidPoolTransactionError, TransactionOrigin};
-    ///
-    /// let mut validator = builder.build(blob_store);
-    /// // Reject transactions from accounts with zero balance
-    /// validator.set_additional_stateful_validation(|origin, tx, state| {
-    ///     let account = state.basic_account(tx.sender_ref())?.unwrap_or_default();
-    ///     if account.balance.is_zero() {
-    ///         return Err(InvalidPoolTransactionError::Other(Box::new(
-    ///             std::io::Error::new(std::io::ErrorKind::Other, "zero balance"),
-    ///         )));
-    ///     }
-    ///     Ok(())
-    /// });
-    /// ```
-    pub fn set_additional_stateful_validation<F>(&mut self, f: F)
-    where
-        F: Fn(
-                TransactionOrigin,
-                &crate::BasePooledTransaction,
-                &dyn AccountInfoReader,
-            ) -> Result<(), InvalidPoolTransactionError>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.additional_stateful_validation = Some(Arc::new(f));
-    }
-
-    /// Sets the additional stateful validation check from an already shared
-    /// [`StatefulValidationFn`].
-    ///
-    /// This is useful when the same hook is shared across multiple validators, avoiding an extra
-    /// allocation compared to
-    /// [`set_additional_stateful_validation`](Self::set_additional_stateful_validation).
-    pub fn set_additional_stateful_validation_fn(
-        &mut self,
-        f: StatefulValidationFn<crate::BasePooledTransaction>,
-    ) {
-        self.additional_stateful_validation = Some(f);
-    }
-
-    /// Sets or clears the additional stateful validation check from an optional
-    /// [`StatefulValidationFn`].
-    ///
-    /// Passing `None` removes any previously configured check.
-    pub fn set_additional_stateful_validation_fn_opt(
-        &mut self,
-        f: Option<StatefulValidationFn<crate::BasePooledTransaction>>,
-    ) {
-        self.additional_stateful_validation = f;
-    }
 }
 
 impl BaseTransactionValidator {
@@ -301,7 +124,7 @@ impl BaseTransactionValidator {
 
     /// Validates a single transaction.
     ///
-    /// See also [`TransactionValidator::validate_transaction`]
+    /// See also [`crate::TransactionValidator::validate_transaction`]
     pub fn validate_protocol_one(
         &self,
         origin: TransactionOrigin,
@@ -395,31 +218,14 @@ impl BaseTransactionValidator {
     ) -> Result<(), InvalidPoolTransactionError> {
         // Checks for tx_type
         match transaction.ty() {
-            // Accept only legacy transactions until EIP-2718/2930 activates
-            EIP2930_TX_TYPE_ID if !self.eip2718 => {
-                return Err(InvalidTransactionError::Eip2930Disabled.into());
-            }
-            // Reject dynamic fee transactions until EIP-1559 activates.
-            EIP1559_TX_TYPE_ID if !self.eip1559 => {
-                return Err(InvalidTransactionError::Eip1559Disabled.into());
-            }
             // Reject blob transactions.
-            EIP4844_TX_TYPE_ID if !self.eip4844 => {
+            EIP4844_TX_TYPE_ID => {
                 return Err(InvalidTransactionError::Eip4844Disabled.into());
             }
-            // Reject EIP-7702 transactions.
-            EIP7702_TX_TYPE_ID if !self.eip7702 => {
-                return Err(InvalidTransactionError::Eip7702Disabled.into());
-            }
-            // Accept known transaction types when their respective fork is active
-            LEGACY_TX_TYPE_ID | EIP2930_TX_TYPE_ID | EIP1559_TX_TYPE_ID | EIP4844_TX_TYPE_ID
-            | EIP7702_TX_TYPE_ID => {}
+            // Recognize supported formats; fork-specific checks follow below.
+            LEGACY_TX_TYPE_ID | EIP2930_TX_TYPE_ID | EIP1559_TX_TYPE_ID | EIP7702_TX_TYPE_ID => {}
 
-            ty if !self.other_tx_types.bit(ty as usize) => {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-
-            _ => {}
+            _ => return Err(InvalidTransactionError::TxTypeNotSupported.into()),
         };
 
         // Reject transactions with a nonce equal to U64::max according to EIP-2681
@@ -429,32 +235,12 @@ impl BaseTransactionValidator {
         }
 
         // Reject transactions over defined size to prevent DOS attacks
-        if transaction.is_eip4844() {
-            // Since blob transactions are pulled instead of pushed, and only the consensus data is
-            // kept in memory while the sidecar is cached on disk, there is no critical limit that
-            // should be enforced. Still, enforcing some cap on the dynamic transaction data. blob
-            // txs also must be executable right away when they enter the pool.
-            let tx_size = transaction.input().len().saturating_add(
-                transaction
-                    .access_list()
-                    .map(|access_list| access_list.length())
-                    .unwrap_or_default(),
-            );
-            if tx_size > self.max_tx_input_bytes {
-                return Err(InvalidPoolTransactionError::OversizedData {
-                    size: tx_size,
-                    limit: self.max_tx_input_bytes,
-                });
-            }
-        } else {
-            // ensure the size of the non-blob transaction
-            let tx_size = transaction.encoded_length();
-            if tx_size > self.max_tx_input_bytes {
-                return Err(InvalidPoolTransactionError::OversizedData {
-                    size: tx_size,
-                    limit: self.max_tx_input_bytes,
-                });
-            }
+        let tx_size = transaction.encoded_length();
+        if tx_size > self.max_tx_input_bytes {
+            return Err(InvalidPoolTransactionError::OversizedData {
+                size: tx_size,
+                limit: self.max_tx_input_bytes,
+            });
         }
 
         // Check whether the init code size has been exceeded.
@@ -542,32 +328,6 @@ impl BaseTransactionValidator {
 
         ensure_intrinsic_gas(transaction, &self.fork_tracker)?;
 
-        // light blob tx pre-checks
-        if transaction.is_eip4844() {
-            // Cancun fork is required for blob txs
-            if !self.fork_tracker.is_cancun_activated() {
-                return Err(InvalidTransactionError::TxTypeNotSupported.into());
-            }
-
-            let blob_count = transaction.blob_count().unwrap_or(0);
-            if blob_count == 0 {
-                // no blobs
-                return Err(InvalidPoolTransactionError::Eip4844(
-                    Eip4844PoolTransactionError::NoEip4844Blobs,
-                ));
-            }
-
-            let max_blob_count = self.fork_tracker.max_blob_count();
-            if blob_count > max_blob_count {
-                return Err(InvalidPoolTransactionError::Eip4844(
-                    Eip4844PoolTransactionError::TooManyEip4844Blobs {
-                        have: blob_count,
-                        permitted: max_blob_count,
-                    },
-                ));
-            }
-        }
-
         // Transaction gas limit validation (EIP-7825 for Osaka+)
         let tx_gas_limit_cap =
             self.fork_tracker.tx_gas_limit_cap.load(std::sync::atomic::Ordering::Relaxed);
@@ -575,17 +335,12 @@ impl BaseTransactionValidator {
             return Err(InvalidTransactionError::GasLimitTooHigh.into());
         }
 
-        // Run additional stateless validation if configured
-        if let Some(check) = &self.additional_stateless_validation {
-            check(origin, transaction)?;
-        }
-
         Ok(())
     }
 
     /// Validates a single transaction against the given state (stateful checks only).
     ///
-    /// Checks sender account balance, nonce, bytecode, and validates blob sidecars. The
+    /// Checks sender account balance, nonce, and bytecode. The
     /// transaction must have already passed [`validate_stateless`](Self::validate_stateless).
     pub fn validate_stateful<P>(
         &self,
@@ -623,20 +378,13 @@ impl BaseTransactionValidator {
             return TransactionValidationOutcome::Invalid(transaction, err);
         }
 
-        // Run additional stateful validation if configured
-        if let Some(check) = &self.additional_stateful_validation
-            && let Err(err) = check(origin, &transaction, &state)
-        {
-            return TransactionValidationOutcome::Invalid(transaction, err);
-        }
-
         let authorities = self.recover_authorities(&transaction);
         // Return the valid transaction
         TransactionValidationOutcome::Valid {
             balance: account.balance,
             state_nonce: account.nonce,
             bytecode_hash: account.bytecode_hash,
-            transaction: ValidTransaction::new(transaction, None),
+            transaction,
             // by this point assume all external transactions should be propagated
             propagate: match origin {
                 TransactionOrigin::External => true,
@@ -791,14 +539,6 @@ impl BaseTransactionValidator {
             .tip_timestamp
             .store(new_tip_block.timestamp(), std::sync::atomic::Ordering::Relaxed);
 
-        if let Some(blob_params) =
-            self.chain_spec().blob_params_at_timestamp(new_tip_block.timestamp())
-        {
-            self.fork_tracker
-                .max_blob_count
-                .store(blob_params.max_blobs_per_tx, std::sync::atomic::Ordering::Relaxed);
-        }
-
         self.block_gas_limit.store(new_tip_block.gas_limit(), std::sync::atomic::Ordering::Relaxed);
 
         // Get EVM limits from evm_config.evm_env()
@@ -848,16 +588,6 @@ pub struct BaseTransactionValidatorBuilder {
     amsterdam: bool,
     /// Timestamp of the tip block.
     tip_timestamp: u64,
-    /// Max blob count at the block's timestamp.
-    max_blob_count: u64,
-    /// Whether using EIP-2718 type transactions is allowed
-    eip2718: bool,
-    /// Whether using EIP-1559 type transactions is allowed
-    eip1559: bool,
-    /// Whether using EIP-4844 type transactions is allowed
-    eip4844: bool,
-    /// Whether using EIP-7702 type transactions is allowed
-    eip7702: bool,
     /// The current max gas limit
     block_gas_limit: AtomicU64,
     /// The current tx fee cap limit in wei locally submitted into the pool.
@@ -877,8 +607,6 @@ pub struct BaseTransactionValidatorBuilder {
     max_tx_gas_limit: Option<u64>,
     /// Disable balance checks during transaction validation
     disable_balance_check: bool,
-    /// Bitmap of custom transaction types that are allowed.
-    other_tx_types: U256,
     /// Cached max initcode size from EVM config
     max_initcode_size: usize,
     /// Cached transaction gas limit cap from EVM config (0 = no cap)
@@ -919,12 +647,6 @@ impl BaseTransactionValidatorBuilder {
             max_tx_input_bytes: DEFAULT_MAX_TX_INPUT_BYTES,
             tx_fee_cap: Some(1e18 as u128),
             max_tx_gas_limit: None,
-            // by default all transaction types are allowed
-            eip2718: true,
-            eip1559: true,
-            eip4844: true,
-            eip7702: true,
-
             shanghai: chain_spec.is_shanghai_active_at_timestamp(tip.timestamp()),
             cancun: chain_spec.is_cancun_active_at_timestamp(tip.timestamp()),
             prague: chain_spec.is_prague_active_at_timestamp(tip.timestamp()),
@@ -933,16 +655,8 @@ impl BaseTransactionValidatorBuilder {
 
             tip_timestamp: tip.timestamp(),
 
-            max_blob_count: chain_spec
-                .blob_params_at_timestamp(tip.timestamp())
-                .unwrap_or_else(BlobParams::prague)
-                .max_blobs_per_tx,
-
             // balance checks are enabled by default
             disable_balance_check: false,
-
-            // no custom transaction types by default
-            other_tx_types: U256::ZERO,
 
             // EIP-8037: When state gas is enabled, tx.gas can exceed the per-tx cap
             tx_gas_limit_cap: if evm_env.cfg_env.is_amsterdam_eip8037_enabled() {
@@ -951,7 +665,6 @@ impl BaseTransactionValidatorBuilder {
                 evm_env.cfg_env.tx_gas_limit_cap()
             },
             max_initcode_size: evm_env.cfg_env.max_initcode_size(),
-            // EIP-7594 sidecars are accepted by default (standard Ethereum behavior)
         }
     }
 
@@ -1019,50 +732,6 @@ impl BaseTransactionValidatorBuilder {
         self
     }
 
-    /// Disables the support for EIP-2718 transactions.
-    pub const fn no_eip2718(self) -> Self {
-        self.set_eip2718(false)
-    }
-
-    /// Set the support for EIP-2718 transactions.
-    pub const fn set_eip2718(mut self, eip2718: bool) -> Self {
-        self.eip2718 = eip2718;
-        self
-    }
-
-    /// Disables the support for EIP-1559 transactions.
-    pub const fn no_eip1559(self) -> Self {
-        self.set_eip1559(false)
-    }
-
-    /// Set the support for EIP-1559 transactions.
-    pub const fn set_eip1559(mut self, eip1559: bool) -> Self {
-        self.eip1559 = eip1559;
-        self
-    }
-
-    /// Disables the support for EIP-4844 transactions.
-    pub const fn no_eip4844(self) -> Self {
-        self.set_eip4844(false)
-    }
-
-    /// Set the support for EIP-4844 transactions.
-    pub const fn set_eip4844(mut self, eip4844: bool) -> Self {
-        self.eip4844 = eip4844;
-        self
-    }
-
-    /// Disables the support for EIP-7702 transactions.
-    pub const fn no_eip7702(self) -> Self {
-        self.set_eip7702(false)
-    }
-
-    /// Set the support for EIP-7702 transactions.
-    pub const fn set_eip7702(mut self, eip7702: bool) -> Self {
-        self.eip7702 = eip7702;
-        self
-    }
-
     /// Sets a minimum priority fee that's enforced for acceptance into the pool.
     pub const fn with_minimum_priority_fee(mut self, minimum_priority_fee: Option<u128>) -> Self {
         self.minimum_priority_fee = minimum_priority_fee;
@@ -1109,12 +778,6 @@ impl BaseTransactionValidatorBuilder {
         self
     }
 
-    /// Adds a custom transaction type to the validator.
-    pub const fn with_custom_tx_type(mut self, tx_type: u8) -> Self {
-        self.other_tx_types.set_bit(tx_type as usize, true);
-        self
-    }
-
     /// Builds a the [`BaseTransactionValidator`] without spawning validator tasks.
     pub fn build(self) -> BaseTransactionValidator {
         let Self {
@@ -1127,10 +790,6 @@ impl BaseTransactionValidatorBuilder {
             osaka,
             amsterdam,
             tip_timestamp,
-            eip2718,
-            eip1559,
-            eip4844,
-            eip7702,
             block_gas_limit,
             tx_fee_cap,
             minimum_priority_fee,
@@ -1139,9 +798,7 @@ impl BaseTransactionValidatorBuilder {
             max_tx_input_bytes,
             max_tx_gas_limit,
             disable_balance_check,
-            max_blob_count,
             additional_tasks: _,
-            other_tx_types,
             max_initcode_size,
             tx_gas_limit_cap,
         } = self;
@@ -1153,7 +810,6 @@ impl BaseTransactionValidatorBuilder {
             osaka: AtomicBool::new(osaka),
             amsterdam: AtomicBool::new(amsterdam),
             tip_timestamp: AtomicU64::new(tip_timestamp),
-            max_blob_count: AtomicU64::new(max_blob_count),
             max_initcode_size: AtomicUsize::new(max_initcode_size),
             tx_gas_limit_cap: AtomicU64::new(tx_gas_limit_cap),
         };
@@ -1161,11 +817,7 @@ impl BaseTransactionValidatorBuilder {
         BaseTransactionValidator {
             client,
             chain_id,
-            eip2718,
-            eip1559,
             fork_tracker: Arc::new(fork_tracker),
-            eip4844,
-            eip7702,
             block_gas_limit: Arc::new(block_gas_limit),
             tx_fee_cap,
             minimum_priority_fee,
@@ -1175,11 +827,6 @@ impl BaseTransactionValidatorBuilder {
             max_tx_gas_limit,
             disable_balance_check,
             evm_config,
-
-            other_tx_types,
-
-            additional_stateless_validation: None,
-            additional_stateful_validation: None,
             block_info: Arc::default(),
             require_l1_data_gas_fee: true,
             trusted_proxy_code_hashes: Arc::new(
@@ -1222,8 +869,6 @@ pub struct ForkTracker {
     pub osaka: AtomicBool,
     /// Tracks if amsterdam is activated at the block's timestamp.
     pub amsterdam: AtomicBool,
-    /// Tracks max blob count per transaction at the block's timestamp.
-    pub max_blob_count: AtomicU64,
     /// Tracks the timestamp of the tip block.
     pub tip_timestamp: AtomicU64,
     /// Cached max initcode size from EVM config
@@ -1261,11 +906,6 @@ impl ForkTracker {
     /// Returns the timestamp of the tip block.
     pub fn tip_timestamp(&self) -> u64 {
         self.tip_timestamp.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Returns the max allowed blob count per transaction.
-    pub fn max_blob_count(&self) -> u64 {
-        self.max_blob_count.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -1331,8 +971,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseOrdering, BasePooledTransaction, Pool, TransactionPool, blobstore::InMemoryBlobStore,
-        error::PoolErrorKind, test_utils::TransactionBuilder,
+        BaseOrdering, BasePooledTransaction, Pool, TransactionPool, error::PoolErrorKind,
+        test_utils::TransactionBuilder,
     };
 
     fn test_evm_config() -> BaseEvmConfig {
@@ -1392,7 +1032,6 @@ mod tests {
             osaka: true.into(),
             amsterdam: true.into(),
             tip_timestamp: 0.into(),
-            max_blob_count: 0.into(),
             max_initcode_size: AtomicUsize::new(MAX_INITCODE_SIZE),
             tx_gas_limit_cap: AtomicU64::new(0),
         };
@@ -1430,7 +1069,6 @@ mod tests {
             osaka: false.into(),
             amsterdam: false.into(),
             tip_timestamp: 0.into(),
-            max_blob_count: 0.into(),
             max_initcode_size: AtomicUsize::new(MAX_INITCODE_SIZE),
             tx_gas_limit_cap: AtomicU64::new(0),
         };
@@ -1449,7 +1087,6 @@ mod tests {
             transaction.sender(),
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
-        let blob_store = InMemoryBlobStore::default();
         let validator = BaseTransactionValidatorBuilder::new(
             base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
             test_evm_config(),
@@ -1461,8 +1098,7 @@ mod tests {
 
         assert!(outcome.is_valid());
 
-        let pool =
-            Pool::new_test(validator, BaseOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new_test(validator, BaseOrdering::default(), Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_ok());
@@ -1541,7 +1177,6 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let blob_store = InMemoryBlobStore::default();
         let validator = BaseTransactionValidatorBuilder::new(
             base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
             test_evm_config(),
@@ -1554,8 +1189,7 @@ mod tests {
 
         assert!(outcome.is_invalid());
 
-        let pool =
-            Pool::new_test(validator, BaseOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new_test(validator, BaseOrdering::default(), Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_err());
@@ -1580,7 +1214,6 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let blob_store = InMemoryBlobStore::default();
         let validator = BaseTransactionValidatorBuilder::new(
             base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
             test_evm_config(),
@@ -1600,8 +1233,7 @@ mod tests {
             ));
         }
 
-        let pool =
-            Pool::new_test(validator, BaseOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new_test(validator, BaseOrdering::default(), Default::default());
         let res = pool.add_transaction(TransactionOrigin::Local, transaction.clone()).await;
         assert!(res.is_err());
         assert!(matches!(
@@ -1667,7 +1299,6 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), U256::MAX),
         );
 
-        let blob_store = InMemoryBlobStore::default();
         let validator = BaseTransactionValidatorBuilder::new(
             base_execution_state_provider::test_utils::ProviderTestUtils::from_mock(&provider),
             BaseEvmConfig::default(),
@@ -1679,8 +1310,7 @@ mod tests {
             validator.validate_protocol_one(TransactionOrigin::External, transaction.clone());
         assert!(outcome.is_invalid());
 
-        let pool =
-            Pool::new_test(validator, BaseOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new_test(validator, BaseOrdering::default(), Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_err());
@@ -1797,10 +1427,7 @@ mod tests {
             ));
         }
 
-        // Test pool integration
-        let blob_store = InMemoryBlobStore::default();
-        let pool =
-            Pool::new_test(validator, BaseOrdering::default(), blob_store, Default::default());
+        let pool = Pool::new_test(validator, BaseOrdering::default(), Default::default());
 
         let res = pool.add_external_transaction(transaction.clone()).await;
         assert!(res.is_err());

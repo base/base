@@ -1,13 +1,13 @@
 //! Rejected transaction types shared between builder and audit-archiver.
 
 use alloy_primitives::TxHash;
-use serde::{Deserialize, Serialize};
 
-use crate::builder::MeterBundleResponse;
+use crate::builder::TransactionResult;
 
 /// Reason why a transaction was rejected during block building.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum RejectionReason {
     /// Transaction's predicted execution time exceeded its per-tx limit.
     ExecutionTimeExceeded {
@@ -19,8 +19,9 @@ pub enum RejectionReason {
 }
 
 /// A transaction that was rejected during block building.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct RejectedTransaction {
     /// The block number the transaction was intended for.
     pub block_number: u64,
@@ -31,5 +32,5 @@ pub struct RejectedTransaction {
     /// Unix timestamp when the rejection occurred.
     pub timestamp: u64,
     /// The metering simulation response that informed the rejection decision.
-    pub metering: MeterBundleResponse,
+    pub metering: TransactionResult,
 }

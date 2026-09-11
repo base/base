@@ -8,7 +8,7 @@ use std::{
 
 use alloy_eips::{BlockNumberOrTag, Decodable2718, Encodable2718};
 use alloy_primitives::{
-    Address, BlockHash, BlockNumber, Bytes,
+    Address, BlockHash, Bytes,
     map::{AddressSet, HashSet},
 };
 use base_common_chain_config::ChainSpecProvider;
@@ -19,8 +19,7 @@ use base_common_types_chain::{
 };
 use base_execution_state_provider::{BlockchainProvider, CanonStateNotificationStream};
 use base_execution_state_types::{
-    BlockIdReader, BlockReaderIdExt, CanonStateNotification, ChangedAccount, ProviderError,
-    StateProviderFactory,
+    BlockReaderIdExt, CanonStateNotification, ChangedAccount, ProviderError, StateProviderFactory,
 };
 use futures_util::{
     FutureExt, StreamExt,
@@ -34,8 +33,7 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::{
-    BaseTransactionPool, BlobStore, BlockInfo, PoolUpdateKind, TransactionOrigin,
-    blobstore::{BlobStoreCanonTracker, BlobStoreUpdates},
+    BaseTransactionPool, BlockInfo, PoolUpdateKind, TransactionOrigin,
     error::PoolError,
     metrics::MaintainPoolMetrics,
     traits::{CanonicalStateUpdate, TransactionPool},
@@ -97,15 +95,13 @@ impl LocalTransactionBackupConfig {
 /// Maintains the state of the transaction pool by handling new blocks and reorgs.
 ///
 /// This listens for any new blocks and reorgs and updates the transaction pool's state accordingly
-pub async fn maintain_transaction_pool<S>(
+pub async fn maintain_transaction_pool(
     client: BlockchainProvider,
-    pool: BaseTransactionPool<S>,
+    pool: BaseTransactionPool,
     mut events: CanonStateNotificationStream,
     task_spawner: Runtime,
     config: MaintainPoolConfig,
-) where
-    S: BlobStore + Clone + 'static,
-{
+) {
     let metrics = MaintainPoolMetrics::default();
     let MaintainPoolConfig { max_update_depth, max_reload_accounts, .. } = config;
     // ensure the pool points to latest state
@@ -124,13 +120,6 @@ pub async fn maintain_transaction_pool<S>(
         };
         pool.set_block_info(info);
     }
-
-    // keeps track of mined blob transaction so we can clean finalized transactions
-    let mut blob_store_tracker = BlobStoreCanonTracker::default();
-
-    // keeps track of the latest finalized block
-    let mut last_finalized_block =
-        FinalizedBlockTracker::new(client.finalized_block_number().ok().flatten());
 
     // keeps track of any dirty accounts that we know of are out of sync with the pool
     let mut dirty_addresses = HashSet::default();
@@ -195,23 +184,6 @@ pub async fn maintain_transaction_pool<S>(
             };
             reload_accounts_fut = rx.fuse();
             task_spawner.spawn_blocking_task(fut);
-        }
-
-        // check if we have a new finalized block
-        if let Some(finalized) =
-            last_finalized_block.update(client.finalized_block_number().ok().flatten())
-            && let BlobStoreUpdates::Finalized(blobs) =
-                blob_store_tracker.on_finalized_block(finalized)
-        {
-            metrics.inc_deleted_tracked_blobs(blobs.len());
-            // remove all finalized blobs from the blob store
-            pool.delete_blobs(blobs);
-            // and also do periodic cleanup
-            let pool = pool.clone();
-            task_spawner.spawn_blocking_task(async move {
-                debug!(target: "txpool", finalized_block = %finalized, "cleaning up blob store");
-                pool.cleanup_blobs();
-            });
         }
 
         // outcomes of the futures we are waiting on
@@ -371,13 +343,8 @@ pub async fn maintain_transaction_pool<S>(
                 // to be re-injected
                 //
                 // Note: we no longer know if the tx was local or external
-                // Because the transactions are not finalized, the corresponding blobs are still in
-                // blob store (if we previously received them from the network)
                 metrics.inc_reinserted_transactions(pruned_old_transactions.len());
                 let _ = pool.add_external_transactions(pruned_old_transactions).await;
-
-                // keep track of new mined blob transactions
-                blob_store_tracker.add_new_chain_blocks(new_blocks.iter().map(|(_, block)| block));
             }
             CanonStateNotification::Commit { new } => {
                 let (blocks, state) = new.inner();
@@ -416,9 +383,6 @@ pub async fn maintain_transaction_pool<S>(
                     };
                     pool.set_block_info(info);
 
-                    // keep track of mined blob transactions
-                    blob_store_tracker.add_new_chain_blocks(blocks.iter().map(|(_, block)| block));
-
                     continue;
                 }
 
@@ -449,30 +413,8 @@ pub async fn maintain_transaction_pool<S>(
                     update_kind: PoolUpdateKind::Commit,
                 };
                 pool.on_canonical_state_change(update);
-
-                // keep track of mined blob transactions
-                blob_store_tracker.add_new_chain_blocks(blocks.iter().map(|(_, block)| block));
             }
         }
-    }
-}
-
-struct FinalizedBlockTracker {
-    last_finalized_block: Option<BlockNumber>,
-}
-
-impl FinalizedBlockTracker {
-    const fn new(last_finalized_block: Option<BlockNumber>) -> Self {
-        Self { last_finalized_block }
-    }
-
-    /// Updates the tracked finalized block and returns the new finalized block if it changed
-    fn update(&mut self, finalized_block: Option<BlockNumber>) -> Option<BlockNumber> {
-        let finalized = finalized_block?;
-        self.last_finalized_block.is_none_or(|last| last < finalized).then(|| {
-            self.last_finalized_block = Some(finalized);
-            finalized
-        })
     }
 }
 
@@ -727,7 +669,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        BaseOrdering, BasePooledTransaction, Pool, TransactionOrigin, blobstore::InMemoryBlobStore,
+        BaseOrdering, BasePooledTransaction, Pool, TransactionOrigin,
         validate::BaseTransactionValidatorBuilder,
     };
 
@@ -757,7 +699,6 @@ mod tests {
         let tx_to_cmp = transaction.clone();
         let sender = hex!("1f9090aaE28b8a3dCeaDf281B0F12828e676c326").into();
         provider.add_account(sender, ExtendedAccount::new(42, U256::MAX));
-        let blob_store = InMemoryBlobStore::default();
         let mut chain_spec = (**BaseEvmConfig::default().chain_spec()).clone();
         chain_spec.config.chain_id = 1;
         let validator = BaseTransactionValidatorBuilder::new(
@@ -768,12 +709,7 @@ mod tests {
         )
         .build();
 
-        let txpool = Pool::new_test(
-            validator,
-            BaseOrdering::default(),
-            blob_store.clone(),
-            Default::default(),
-        );
+        let txpool = Pool::new_test(validator, BaseOrdering::default(), Default::default());
 
         txpool.add_transaction(TransactionOrigin::Local, transaction.clone()).await.unwrap();
 
@@ -796,48 +732,5 @@ mod tests {
         assert_eq!(txs.len(), 1);
 
         temp_dir.close().unwrap();
-    }
-
-    #[test]
-    fn test_update_with_higher_finalized_block() {
-        let mut tracker = FinalizedBlockTracker::new(Some(10));
-        assert_eq!(tracker.update(Some(15)), Some(15));
-        assert_eq!(tracker.last_finalized_block, Some(15));
-    }
-
-    #[test]
-    fn test_update_with_lower_finalized_block() {
-        let mut tracker = FinalizedBlockTracker::new(Some(20));
-        assert_eq!(tracker.update(Some(15)), None);
-        // finalized block should NOT go backwards
-        assert_eq!(tracker.last_finalized_block, Some(20));
-    }
-
-    #[test]
-    fn test_update_with_equal_finalized_block() {
-        let mut tracker = FinalizedBlockTracker::new(Some(20));
-        assert_eq!(tracker.update(Some(20)), None);
-        assert_eq!(tracker.last_finalized_block, Some(20));
-    }
-
-    #[test]
-    fn test_update_with_no_last_finalized_block() {
-        let mut tracker = FinalizedBlockTracker::new(None);
-        assert_eq!(tracker.update(Some(10)), Some(10));
-        assert_eq!(tracker.last_finalized_block, Some(10));
-    }
-
-    #[test]
-    fn test_update_with_no_new_finalized_block() {
-        let mut tracker = FinalizedBlockTracker::new(Some(10));
-        assert_eq!(tracker.update(None), None);
-        assert_eq!(tracker.last_finalized_block, Some(10));
-    }
-
-    #[test]
-    fn test_update_with_no_finalized_blocks() {
-        let mut tracker = FinalizedBlockTracker::new(None);
-        assert_eq!(tracker.update(None), None);
-        assert_eq!(tracker.last_finalized_block, None);
     }
 }

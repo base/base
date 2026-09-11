@@ -153,9 +153,6 @@ pub trait DatabaseProviderFactory:
     fn database_provider_rw(&self) -> ProviderResult<Self::ProviderRW>;
 }
 
-/// Helper type alias to get the associated transaction type from a [`DatabaseProviderFactory`].
-pub type FactoryTx<F> = <<F as DatabaseProviderROFactory>::Provider as DbTxProvider>::Tx;
-
 /// A trait which can be used to describe any factory-like type which returns a read-only provider.
 #[auto_impl::auto_impl(&, Arc)]
 pub trait DatabaseProviderROFactory {

@@ -76,14 +76,6 @@ impl L1BlockInfoEcotoneOnlyFields for L1BlockInfoEcotone {
     }
 }
 
-/// Accessors for all Ecotone fields.
-pub trait L1BlockInfoEcotoneFields:
-    L1BlockInfoBedrockBaseFields + L1BlockInfoEcotoneOnlyFields
-{
-}
-
-impl L1BlockInfoEcotoneFields for L1BlockInfoEcotone {}
-
 impl L1BlockInfoEcotone {
     /// The type byte identifier for the L1 scalar format in Ecotone.
     pub const L1_SCALAR: u8 = 1;

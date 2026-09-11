@@ -39,10 +39,10 @@ tokio-util = { workspace = true, features = ["default"] }
 base-common-types-rpc = { workspace = true, optional = true }
 rustls = { workspace = true, features = ["default", "ring"] }
 base-common-runtime = { workspace = true, features = ["tokio"] }
+base-common-http = { workspace = true, features = ["axum-server"] }
 clap = { workspace = true, features = ["default", "derive", "env"] }
 base-common-client-ethereum = { workspace = true, features = ["default"] }
 base-proof-service-protocol = { workspace = true, features = ["default"] }
-base-common-observability-health = { workspace = true, features = ["axum-server"] }
 
 [dev-dependencies]
 rstest = { workspace = true, features = ["default"] }

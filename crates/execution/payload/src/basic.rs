@@ -37,9 +37,6 @@ use crate::{
 
 const PAYLOAD_BUILDER_THREAD_NAME: &str = "payload-builder";
 
-/// Header used by payload builders.
-pub type HeaderForPayload = base_common_types_chain::Header;
-
 /// Creates and schedules Base payload construction jobs.
 #[derive(Debug)]
 pub struct BasicPayloadJobGenerator {

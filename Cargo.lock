@@ -2108,7 +2108,6 @@ dependencies = [
  "clap",
  "dotenvy",
  "jsonrpsee",
- "moka",
  "serde",
  "tokio",
  "tower",
@@ -2413,9 +2412,23 @@ dependencies = [
 name = "base-common-http"
 version = "0.0.0"
 dependencies = [
+ "alloy-transport-http",
+ "async-trait",
+ "axum",
+ "bytes",
+ "eyre",
+ "futures",
  "http 1.4.2",
+ "http-body 1.1.0",
  "ipnet",
+ "jsonrpsee",
+ "reqwest",
+ "rstest",
+ "serde",
  "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tower",
  "tracing",
 ]
 
@@ -2482,28 +2495,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-common-observability-health"
-version = "0.0.0"
-dependencies = [
- "alloy-transport-http",
- "async-trait",
- "axum",
- "bytes",
- "eyre",
- "futures",
- "http 1.4.2",
- "http-body 1.1.0",
- "jsonrpsee",
- "reqwest",
- "rstest",
- "serde",
- "tokio",
- "tokio-util",
- "tower",
- "tracing",
-]
-
-[[package]]
 name = "base-common-observability-metrics"
 version = "0.0.0"
 dependencies = [
@@ -2552,7 +2543,6 @@ dependencies = [
  "dashmap",
  "futures",
  "futures-util",
- "libc",
  "metrics",
  "parking_lot",
  "pin-project",
@@ -2624,9 +2614,7 @@ dependencies = [
  "arbtest",
  "assert_matches",
  "base-common-chain-config",
- "base-common-client-ethereum",
  "base-common-types-chain",
- "base-common-types-rpc",
  "base-execution-evm-runtime",
  "base-execution-state-types",
  "base64 0.22.1",
@@ -2650,7 +2638,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -2758,7 +2745,7 @@ dependencies = [
  "base-common-chain-config",
  "base-common-client-ethereum",
  "base-common-client-rollup",
- "base-common-observability-health",
+ "base-common-http",
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-payload",
@@ -3803,7 +3790,6 @@ dependencies = [
  "proptest-arbitrary-interop",
  "rand 0.9.5",
  "rustc-hash",
- "schnellru",
  "serde",
  "serde_json",
  "smallvec",
@@ -3823,12 +3809,10 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "async-trait",
- "aws-config",
  "aws-sdk-s3",
  "axum",
  "base-common-observability-events",
  "base-common-observability-metrics",
- "base-common-types-chain",
  "base-common-types-payload",
  "bytes",
  "chrono",
@@ -3836,7 +3820,6 @@ dependencies = [
  "jsonrpsee",
  "jsonrpsee-types",
  "metrics",
- "moka",
  "serde",
  "serde_json",
  "sqlx",
@@ -3846,7 +3829,6 @@ dependencies = [
  "tokio",
  "tower-http",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -3957,7 +3939,6 @@ dependencies = [
  "async-trait",
  "axum",
  "base-common-http",
- "base-common-observability-health",
  "base-execution-network-wire",
  "clap",
  "discv5",
@@ -4341,7 +4322,6 @@ dependencies = [
  "futures",
  "metrics",
  "proptest",
- "rocksdb",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -4382,8 +4362,8 @@ dependencies = [
  "async-trait",
  "base-common-cli",
  "base-common-client-ethereum",
+ "base-common-http",
  "base-common-l1",
- "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-runtime",
  "base-common-types-chain",
@@ -4422,8 +4402,8 @@ dependencies = [
  "base-common-cli",
  "base-common-client-ethereum",
  "base-common-client-rollup",
+ "base-common-http",
  "base-common-l1",
- "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-runtime",
  "base-common-types-chain",
@@ -4525,7 +4505,7 @@ dependencies = [
  "alloy-signer",
  "async-trait",
  "base-common-chain-config",
- "base-common-observability-health",
+ "base-common-http",
  "base-proof-client",
  "base-proof-host",
  "base-proof-l1",
@@ -4577,8 +4557,8 @@ dependencies = [
  "aws-sdk-elasticloadbalancingv2",
  "base-common-cli",
  "base-common-client-ethereum",
+ "base-common-http",
  "base-common-l1",
- "base-common-observability-health",
  "base-common-observability-metrics",
  "base-common-types-chain",
  "base-common-types-rpc",
@@ -4668,7 +4648,6 @@ dependencies = [
  "alloy-primitives",
  "async-channel",
  "async-trait",
- "rkyv",
  "serde",
  "thiserror 2.0.19",
  "tokio",
@@ -5597,29 +5576,6 @@ name = "byte-slice-cast"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
-
-[[package]]
-name = "bytecheck"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0caa33a2c0edca0419d15ac723dff03f1956f7978329b1e3b5fdaaaed9d3ca8b"
-dependencies = [
- "bytecheck_derive",
- "ptr_meta",
- "rancor",
- "simdutf8",
-]
-
-[[package]]
-name = "bytecheck_derive"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89385e82b5d1821d2219e0b095efa2cc1f246cbf99080f3be46a1a85c0d392d9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
 
 [[package]]
 name = "bytemuck"
@@ -10804,26 +10760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "munge"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e17401f259eba956ca16491461b6e8f72913a0a114e39736ce404410f915a0c"
-dependencies = [
- "munge_macro",
-]
-
-[[package]]
-name = "munge_macro"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4568f25ccbd45ab5d5603dc34318c1ec56b117531781260002151b8530a9f931"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "nanoid"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12477,26 +12413,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ptr_meta"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b9a0cf95a1196af61d4f1cbdab967179516d9a4a4312af1f31948f8f6224a79"
-dependencies = [
- "ptr_meta_derive",
-]
-
-[[package]]
-name = "ptr_meta_derive"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7347867d0a7e1208d93b46767be83e2b8f978c3dad35f775ac8d8847551d6fe1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12648,15 +12564,6 @@ name = "radium"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
-
-[[package]]
-name = "rancor"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daff8b7b3ccf5f7ba270b3e7a0a4d4c701c5797e38dec27c7e2c3dbb830fed1c"
-dependencies = [
- "ptr_meta",
-]
 
 [[package]]
 name = "rand"
@@ -13088,15 +12995,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
-name = "rend"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "663ba70707f96e871406fe10d68128412e619b06d1d47cb91c3a4c6501176240"
-dependencies = [
- "bytecheck",
-]
-
-[[package]]
 name = "reqwest"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13193,36 +13091,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159"
 dependencies = [
  "digest 0.11.3",
-]
-
-[[package]]
-name = "rkyv"
-version = "0.8.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "815cc8a37159a463064825246cadb07961e25cd9885908606f6d08a98d8f8874"
-dependencies = [
- "bytecheck",
- "bytes",
- "hashbrown 0.17.1",
- "indexmap 2.14.0",
- "munge",
- "ptr_meta",
- "rancor",
- "rend",
- "rkyv_derive",
- "tinyvec",
- "uuid",
-]
-
-[[package]]
-name = "rkyv_derive"
-version = "0.8.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0ed1a78a1b19d184b0daa629dd9a024573173ec7d485b287cb369fb3607cc1c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

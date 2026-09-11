@@ -2,20 +2,13 @@
 
 use std::sync::Arc;
 
-use alloy_eips::{
-    eip4844::{BlobAndProofV1, BlobAndProofV2, BlobCellsAndProofsV1},
-    eip7594::BlobTransactionSidecarVariant,
-};
-use alloy_primitives::{Address, B128, B256, TxHash, map::AddressSet};
-use base_common_chain_config::ChainSpecProvider;
+use alloy_primitives::{Address, TxHash, map::AddressSet};
 use base_common_types_chain::Recovered;
 use base_execution_network_wire::HandleMempoolData;
-use base_execution_state_types::{BlockReaderIdExt, StateProviderFactory};
 use tokio::sync::mpsc::Receiver;
 
 use crate::{
-    BaseOrdering, BaseTransactionValidator,
-    blobstore::{BlobStore, BlobStoreError},
+    BaseOrdering,
     config::PoolConfig,
     error::PoolResult,
     identifier::TransactionId,
@@ -32,25 +25,21 @@ use crate::{
 
 /// Shared protocol transaction pool used by the Base admission layer.
 #[derive(Debug)]
-pub struct Pool<S> {
+pub struct Pool {
     /// Arc'ed instance of the pool internals
-    pub pool: Arc<PoolInner<S>>,
+    pub pool: Arc<PoolInner>,
 }
 
 // === impl Pool ===
 
-impl<S> Pool<S>
-where
-    S: BlobStore,
-{
+impl Pool {
     /// Create a new transaction pool instance.
     pub fn new(
         validator: TransactionValidationTaskExecutor,
         ordering: crate::BaseOrdering,
-        blob_store: S,
         config: PoolConfig,
     ) -> Self {
-        Self { pool: Arc::new(PoolInner::new(validator, ordering, blob_store, config)) }
+        Self { pool: Arc::new(PoolInner::new(validator, ordering, config)) }
     }
 
     /// Constructs a pool with a validator reserved for test fixtures.
@@ -58,14 +47,13 @@ where
     pub fn new_test(
         validator: impl Into<crate::PoolValidator>,
         ordering: crate::BaseOrdering,
-        blob_store: S,
         config: PoolConfig,
     ) -> Self {
-        Self { pool: Arc::new(PoolInner::new_test(validator, ordering, blob_store, config)) }
+        Self { pool: Arc::new(PoolInner::new_test(validator, ordering, config)) }
     }
 
     /// Returns the wrapped pool internals.
-    pub fn inner(&self) -> &PoolInner<S> {
+    pub fn inner(&self) -> &PoolInner {
         &self.pool
     }
 
@@ -102,17 +90,9 @@ where
     pub fn is_exceeded(&self) -> bool {
         self.pool.is_exceeded()
     }
-
-    /// Returns the configured blob store.
-    pub fn blob_store(&self) -> &S {
-        self.pool.blob_store()
-    }
 }
 
-impl<S> Pool<S>
-where
-    S: BlobStore,
-{
+impl Pool {
     /// Returns a new [`Pool`] that uses the default [`TransactionValidationTaskExecutor`] when
     /// validating [`BasePooledTransaction`]s and orders via [`BaseOrdering`]
     ///
@@ -123,36 +103,27 @@ where
     /// use base_execution_state_provider::BlockchainProvider;
     /// use base_common_runtime::Runtime;
     /// use base_execution_txpool::{
-    ///     InMemoryBlobStore, Pool, TransactionValidationTaskExecutor,
+    ///     Pool, TransactionValidationTaskExecutor,
     /// };
     /// use base_execution_evm_blocks::BaseEvmConfig;
     /// # fn t(client: BlockchainProvider, evm_config: BaseEvmConfig, runtime: Runtime) {
-    /// let blob_store = InMemoryBlobStore::default();
     /// let pool = Pool::eth_pool(
     ///     TransactionValidationTaskExecutor::eth(
     ///         client,
     ///         evm_config,
     ///         runtime,
     ///     ),
-    ///     blob_store,
     ///     Default::default(),
     /// );
     /// # }
     /// ```
-    pub fn eth_pool(
-        validator: TransactionValidationTaskExecutor,
-        blob_store: S,
-        config: PoolConfig,
-    ) -> Self {
-        Self::new(validator, BaseOrdering::default(), blob_store, config)
+    pub fn eth_pool(validator: TransactionValidationTaskExecutor, config: PoolConfig) -> Self {
+        Self::new(validator, BaseOrdering::default(), config)
     }
 }
 
 /// implements the `TransactionPool` interface for various transaction pool API consumers.
-impl<S> TransactionPool for Pool<S>
-where
-    S: BlobStore + Clone,
-{
+impl TransactionPool for Pool {
     fn pool_size(&self) -> PoolSize {
         self.pool.size()
     }
@@ -215,10 +186,6 @@ where
 
     fn pending_transactions_listener_for(&self, kind: TransactionListenerKind) -> Receiver<TxHash> {
         self.pool.add_pending_listener(kind)
-    }
-
-    fn blob_transaction_sidecars_listener(&self) -> Receiver<NewBlobSidecar> {
-        self.pool.add_blob_sidecar_listener()
     }
 
     fn new_transactions_listener_for(
@@ -425,70 +392,9 @@ where
     fn unique_senders(&self) -> AddressSet {
         self.pool.unique_senders()
     }
-
-    fn get_blob(
-        &self,
-        tx_hash: TxHash,
-    ) -> Result<Option<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-        self.pool.blob_store().get(tx_hash)
-    }
-
-    fn get_all_blobs(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<(TxHash, Arc<BlobTransactionSidecarVariant>)>, BlobStoreError> {
-        self.pool.blob_store().get_all(tx_hashes)
-    }
-
-    fn get_all_blobs_exact(
-        &self,
-        tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<Arc<BlobTransactionSidecarVariant>>, BlobStoreError> {
-        self.pool.blob_store().get_exact(tx_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v1(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV1>>, BlobStoreError> {
-        self.pool.blob_store().get_by_versioned_hashes_v1(versioned_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v2(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Option<Vec<BlobAndProofV2>>, BlobStoreError> {
-        self.pool.blob_store().get_by_versioned_hashes_v2(versioned_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v3(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<Option<BlobAndProofV2>>, BlobStoreError> {
-        self.pool.blob_store().get_by_versioned_hashes_v3(versioned_hashes)
-    }
-
-    fn get_blobs_for_versioned_hashes_v4(
-        &self,
-        versioned_hashes: &[B256],
-        indices_bitarray: B128,
-    ) -> Result<Vec<Option<BlobCellsAndProofsV1>>, BlobStoreError> {
-        self.pool.blob_store().get_by_versioned_hashes_v4(versioned_hashes, indices_bitarray)
-    }
-
-    fn has_blobs_for_versioned_hashes(
-        &self,
-        versioned_hashes: &[B256],
-    ) -> Result<Vec<bool>, BlobStoreError> {
-        self.pool.blob_store().has_versioned_hashes(versioned_hashes)
-    }
-
-    fn blob_store(&self) -> Box<dyn BlobStore> {
-        Box::new(self.pool.blob_store().clone())
-    }
 }
 
-impl<S> Clone for Pool<S> {
+impl Clone for Pool {
     fn clone(&self) -> Self {
         Self { pool: Arc::clone(&self.pool) }
     }

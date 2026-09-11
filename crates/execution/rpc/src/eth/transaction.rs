@@ -11,7 +11,7 @@ use base_common_types_chain::{
     BlockHeader, EIP8130_TX_TYPE_ID, SignerRecoverable, Typed2718, WithEncoded,
 };
 use base_common_types_rpc::BaseTransactionReceipt;
-use base_execution_state_provider::{CanonStateSubscriptions, providers::BlockchainProvider};
+use base_execution_state_provider::CanonStateSubscriptions;
 use base_execution_state_types::{BlockReaderIdExt, TransactionsProvider};
 use base_execution_txpool::{AddedTransactionOutcome, TransactionOrigin, TransactionPool};
 use futures::StreamExt;

@@ -9,7 +9,6 @@ wire format for proof requests and results that flow between the proposer, encla
 on-chain verifiers:
 
 - **`Proposal`** — An output root proposal with its ECDSA signature and L1/L2 context.
-- **`ProofBundle`** — Request plus preimage key-value pairs sent to a prover.
 - **`ProofResult`** — The output of a proof computation, with one variant per backend:
   - `Tee` — aggregated and per-block `Proposal`s.
   - `Zk` — opaque proof bytes.
@@ -24,7 +23,7 @@ base-proof-types = { workspace = true }
 ```
 
 ```rust,ignore
-use base_proof_types::{Proposal, ProofBundle, ProofResult};
+use base_proof_types::{Proposal, ProofResult};
 ```
 
 ## License

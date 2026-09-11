@@ -34,9 +34,6 @@ tokio = { workspace = true, features = ["default", "rt", "rt-multi-thread", "syn
 [dev-dependencies]
 tokio = { workspace = true, features = ["default", "full", "macros", "rt", "rt-multi-thread", "sync", "time"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = { workspace = true, features = ["default"] }
-
 [features]
 default = ["tokio"]
 tokio = ["dep:tokio-util", "tokio/macros", "tokio/rt", "tokio/sync", "tokio/time"]

@@ -1,8 +1,8 @@
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
 use base_common_types_chain::{
-    Extended, InMemorySize, Sealable, Sealed, SignableTransaction, Signed, TransactionEnvelope,
-    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
+    InMemorySize, Sealable, Sealed, SignableTransaction, Signed, TransactionEnvelope, TxEip1559,
+    TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
     error::ValueError,
     transaction::{TransactionInfo, TxHashRef},
 };
@@ -74,33 +74,6 @@ impl BaseTransaction for BaseTxEnvelope {
 
     fn as_eip8130(&self) -> Option<&Eip8130Signed> {
         self.as_eip8130()
-    }
-}
-
-impl<B, T> BaseTransaction for Extended<B, T>
-where
-    B: BaseTransaction,
-    T: BaseTransaction,
-{
-    fn is_deposit(&self) -> bool {
-        match self {
-            Self::BuiltIn(b) => b.is_deposit(),
-            Self::Other(t) => t.is_deposit(),
-        }
-    }
-
-    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
-        match self {
-            Self::BuiltIn(b) => b.as_deposit(),
-            Self::Other(t) => t.as_deposit(),
-        }
-    }
-
-    fn as_eip8130(&self) -> Option<&Eip8130Signed> {
-        match self {
-            Self::BuiltIn(b) => b.as_eip8130(),
-            Self::Other(t) => t.as_eip8130(),
-        }
     }
 }
 
@@ -185,12 +158,6 @@ impl From<(BaseTypedTransaction, Signature)> for BaseTxEnvelope {
 impl From<Sealed<TxDeposit>> for BaseTxEnvelope {
     fn from(v: Sealed<TxDeposit>) -> Self {
         Self::Deposit(v)
-    }
-}
-
-impl<Tx> From<BaseTxEnvelope> for Extended<BaseTxEnvelope, Tx> {
-    fn from(value: BaseTxEnvelope) -> Self {
-        Self::BuiltIn(value)
     }
 }
 

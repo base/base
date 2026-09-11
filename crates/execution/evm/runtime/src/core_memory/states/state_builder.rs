@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::{BundleState, State, TransitionState, cache::CacheState, state::DBBox};
+use super::{BundleState, State, TransitionState, cache::CacheState};
 use crate::core_memory::{
-    BalState, DBErrorMarker, Database, DatabaseRef, EmptyDB, WrapDatabaseRef, bal::Bal,
+    BalState, Database, DatabaseRef, EmptyDB, WrapDatabaseRef, bal::Bal,
     states::block_hash_cache::BlockHashCache,
 };
 
@@ -14,8 +14,6 @@ pub struct StateBuilder<DB> {
     /// If there is prestate that we want to use,
     /// this would mean that we have additional state layer between evm and disk/database.
     with_bundle_prestate: Option<BundleState>,
-    /// This will initialize cache to this state.
-    with_cache_prestate: Option<CacheState>,
     /// Do we want to create reverts and update bundle state?
     ///
     /// Default is false.
@@ -47,7 +45,6 @@ impl<DB: Database> StateBuilder<DB> {
     pub fn new_with_database(database: DB) -> Self {
         Self {
             database,
-            with_cache_prestate: None,
             with_bundle_prestate: None,
             with_bundle_update: false,
             with_block_hashes: BlockHashCache::new(),
@@ -61,7 +58,6 @@ impl<DB: Database> StateBuilder<DB> {
         // Note that we return different type depending on the database NewDBError.
         StateBuilder {
             database,
-            with_cache_prestate: self.with_cache_prestate,
             with_bundle_prestate: self.with_bundle_prestate,
             with_bundle_update: self.with_bundle_update,
             with_block_hashes: self.with_block_hashes,
@@ -75,14 +71,6 @@ impl<DB: Database> StateBuilder<DB> {
         database: ODB,
     ) -> StateBuilder<WrapDatabaseRef<ODB>> {
         self.with_database(WrapDatabaseRef(database))
-    }
-
-    /// With boxed version of database.
-    pub fn with_database_boxed<Error: DBErrorMarker>(
-        self,
-        database: DBBox<'_, Error>,
-    ) -> StateBuilder<DBBox<'_, Error>> {
-        self.with_database(database)
     }
 
     /// Allows setting prestate that is going to be used for execution.
@@ -103,20 +91,6 @@ impl<DB: Database> StateBuilder<DB> {
     /// and getting output of changed states.
     pub fn with_bundle_update(self) -> Self {
         Self { with_bundle_update: true, ..self }
-    }
-
-    /// Conditionally makes transitions and updates bundle state.
-    pub fn with_bundle_update_if(self, enable: bool) -> Self {
-        Self { with_bundle_update: enable, ..self }
-    }
-
-    /// It will use different cache for the state.
-    ///
-    /// **Note**: If set, it will ignore bundle prestate.
-    ///
-    /// This is useful for testing.
-    pub fn with_cached_prestate(self, cache: CacheState) -> Self {
-        Self { with_cache_prestate: Some(cache), ..self }
     }
 
     /// Sets the block hashes for the state.
@@ -145,15 +119,10 @@ impl<DB: Database> StateBuilder<DB> {
     }
 
     /// Builds the State with the configured settings.
-    pub fn build(mut self) -> State<DB> {
-        let use_preloaded_bundle = if self.with_cache_prestate.is_some() {
-            self.with_bundle_prestate = None;
-            false
-        } else {
-            self.with_bundle_prestate.is_some()
-        };
+    pub fn build(self) -> State<DB> {
+        let use_preloaded_bundle = self.with_bundle_prestate.is_some();
         State {
-            cache: self.with_cache_prestate.unwrap_or_default(),
+            cache: CacheState::default(),
             database: self.database,
             transition_state: self.with_bundle_update.then(TransitionState::default),
             bundle_state: self.with_bundle_prestate.unwrap_or_default(),

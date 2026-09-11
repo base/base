@@ -7,13 +7,13 @@ use alloy_primitives::{Address, B256, U256};
 use base_common_types_chain::SealedBlock;
 use base_execution_state_types::ChangedAccount;
 use base_execution_txpool::{
-    CanonicalStateUpdate, InMemoryBlobStore, MockTransactionValidator, PoolConfig, PoolInner,
-    PoolUpdateKind, TransactionOrigin, TransactionValidationOutcome, ValidTransaction,
+    CanonicalStateUpdate, MockTransactionValidator, PoolConfig, PoolInner, PoolUpdateKind,
+    TransactionOrigin, TransactionValidationOutcome,
     test_utils::{MockOrdering, MockTransaction},
 };
 use codspeed_criterion_compat::{BatchSize, Criterion, criterion_group, criterion_main};
 
-type BenchPool = PoolInner<InMemoryBlobStore>;
+type BenchPool = PoolInner;
 
 /// Base fee the pool is initialized with.
 const BASE_FEE: u64 = 100;
@@ -48,7 +48,7 @@ fn outcome(tx: MockTransaction, state_nonce: u64) -> TransactionValidationOutcom
         balance: U256::MAX,
         state_nonce,
         bytecode_hash: None,
-        transaction: ValidTransaction::Valid(tx.try_into().expect("Base transaction fixture")),
+        transaction: tx.try_into().expect("Base transaction fixture"),
         propagate: false,
         authorities: None,
     }
@@ -89,7 +89,6 @@ fn build_saturated_pool() -> (BenchPool, u64) {
     let pool = PoolInner::new_test(
         MockTransactionValidator::default(),
         MockOrdering::default(),
-        InMemoryBlobStore::default(),
         PoolConfig::default(),
     );
 

@@ -198,24 +198,6 @@ impl ReadOnlyConfig {
         }
     }
 
-    /// Configures the db arguments used when opening the database.
-    pub fn with_db_args(mut self, db_args: impl Into<DatabaseArguments>) -> Self {
-        self.db_args = db_args.into();
-        self
-    }
-
-    /// Configures the db directory.
-    pub fn with_db_dir(mut self, db_dir: impl Into<PathBuf>) -> Self {
-        self.db_dir = db_dir.into();
-        self
-    }
-
-    /// Configures the static file directory.
-    pub fn with_static_file_dir(mut self, static_file_dir: impl Into<PathBuf>) -> Self {
-        self.static_files_dir = static_file_dir.into();
-        self
-    }
-
     /// Don't watch the static files directory for changes.
     ///
     /// This is only recommended if this is used without a running node instance that modifies

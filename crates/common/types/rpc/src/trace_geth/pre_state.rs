@@ -133,27 +133,6 @@ impl DiffMode {
     }
 }
 
-/// Helper type for [DiffMode] to represent a specific set
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiffStateKind {
-    /// Corresponds to the pre state of the [DiffMode]
-    Pre,
-    /// Corresponds to the post state of the [DiffMode]
-    Post,
-}
-
-impl DiffStateKind {
-    /// Returns true if this is the pre state of the [DiffMode]
-    pub const fn is_pre(&self) -> bool {
-        matches!(self, Self::Pre)
-    }
-
-    /// Returns true if this is the post state of the [DiffMode]
-    pub const fn is_post(&self) -> bool {
-        matches!(self, Self::Post)
-    }
-}
-
 /// Represents the state of an account.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountState {

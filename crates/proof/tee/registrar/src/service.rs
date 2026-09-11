@@ -13,10 +13,10 @@ use std::{
 use alloy_primitives::Address;
 use base_common_cli::RuntimeManager;
 use base_common_client_ethereum::{Provider, ProviderBuilder};
+use base_common_http::HealthServer;
 use base_common_l1::{
     BalanceMonitorLayer, BaseTxMetrics, SignerConfig, SimpleTxManager, TxManagerConfig,
 };
-use base_common_observability_health::HealthServer;
 use base_proof_l1::{
     CertManagerContractClient, NitroValidatorClient, NitroValidatorContractClient,
     TEEProverRegistryClient, TEEProverRegistryContractClient,

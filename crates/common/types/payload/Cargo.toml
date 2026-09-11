@@ -25,7 +25,6 @@ alloy-serde = { workspace = true, optional = true }
 pin-project = { workspace = true, optional = true }
 ethereum_ssz = { workspace = true, optional = true }
 alloy-eips = { workspace = true, features = ["serde"] }
-uuid = { workspace = true, features = ["v4", "serde"] }
 derive_more = { workspace = true, features = ["display"] }
 ethereum_ssz_derive = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
@@ -45,7 +44,6 @@ arbtest = { workspace = true }
 bincode_1_3_3 = { workspace = true }
 assert_matches = { workspace = true }
 base-common-chain-config = { workspace = true }
-base-common-client-ethereum = { workspace = true }
 base64 = { workspace = true, features = ["default"] }
 rand_08 = { workspace = true, features = ["default"] }
 arbitrary = { workspace = true, features = ["derive"] }
@@ -53,7 +51,6 @@ tempfile = { workspace = true, features = ["default"] }
 serde_json = { workspace = true, features = ["alloc", "std"] }
 similar-asserts = { workspace = true, features = ["default"] }
 jsonwebtoken = { workspace = true, features = ["default", "aws_lc_rs"] }
-base-common-types-rpc = { workspace = true, features = ["default", "std"] }
 base-common-types-chain = { workspace = true, features = ["arbitrary", "serde"] }
 alloy-primitives = { workspace = true, features = ["arbitrary", "getrandom", "rand", "rlp", "serde", "map-foldhash"] }
 
@@ -82,7 +79,6 @@ std = [
     "dep:tokio-stream",
     "futures/std",
     "tokio",
-    "uuid/std",
 ]
 serde = [
     "base-common-types-chain/serde",

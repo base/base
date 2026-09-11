@@ -99,7 +99,7 @@ pub struct ResourceMeteringConfig {
     pub enabled: bool,
     /// Startup schedule held by the builder.
     pub schedule: Arc<ResourceMeteringSchedule>,
-    /// `meterBundle` results used to evaluate the schedule.
+    /// `transaction metering` results used to evaluate the schedule.
     pub provider: SharedMeteringStore,
 }
 
@@ -168,7 +168,7 @@ impl ResourceMeteringConfig {
         self.provider.get(tx_hash).and_then(|meter| ResourceSample::from_meter(&meter, tx_hash))
     }
 
-    /// Checks simulated `meterBundle` usage against the schedule.
+    /// Checks simulated `transaction metering` usage against the schedule.
     ///
     /// Payload builders call this before EVM execution and skip the transaction
     /// when [`ResourceThrottlingDecision::should_exclude`] is true. The returned
@@ -413,7 +413,7 @@ mod tests {
     use std::{collections::HashMap, path::Path};
 
     use alloy_primitives::TxHash;
-    use base_common_types_payload::{MeterBundleResponse, OpcodeGas, TransactionResult};
+    use base_common_types_payload::{OpcodeGas, TransactionResult};
     use base_execution_evm_runtime::EvmState;
 
     use super::*;
@@ -521,7 +521,7 @@ mod tests {
         assert!(!decision.should_exclude());
     }
 
-    fn metering_store(values: HashMap<TxHash, MeterBundleResponse>) -> MeteringStore {
+    fn metering_store(values: HashMap<TxHash, TransactionResult>) -> MeteringStore {
         let store = MeteringStore::default();
         store.set_enabled(true);
         for (hash, value) in values {
@@ -533,26 +533,23 @@ mod tests {
     #[test]
     fn unthrottled_usage_overlays_simulated_opcodes() {
         let tx_hash = TxHash::repeat_byte(0x42);
-        let meter = MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
-                gas_used: 21_000,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: vec![OpcodeGas {
-                    contract_address: Default::default(),
-                    opcode: "SSTORE".to_string(),
-                    count: 3,
-                    gas_used: 0,
-                }],
+        let meter = TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used: 21_000,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: vec![OpcodeGas {
+                contract_address: Default::default(),
+                opcode: "SSTORE".to_string(),
+                count: 3,
+                gas_used: 0,
             }],
-            ..Default::default()
         };
         let config = ResourceMeteringConfig {
             enabled: true,
@@ -568,21 +565,18 @@ mod tests {
     #[test]
     fn check_simulated_usage_excludes_in_enforce_but_not_dry_run() {
         let tx_hash = TxHash::repeat_byte(0x42);
-        let meter = MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
-                gas_used: 21_000,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: Vec::new(),
-            }],
-            ..Default::default()
+        let meter = TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used: 21_000,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: Vec::new(),
         };
         let provider: SharedMeteringStore =
             Arc::new(metering_store(HashMap::from([(tx_hash, meter)])));
@@ -634,26 +628,23 @@ mod tests {
     #[test]
     fn unthrottled_usage_fails_open_on_evaluate_overflow() {
         let tx_hash = TxHash::repeat_byte(0x42);
-        let meter = MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
+        let meter = TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used: u64::MAX,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: vec![OpcodeGas {
+                contract_address: Default::default(),
+                opcode: "SSTORE".to_string(),
+                count: 1,
                 gas_used: u64::MAX,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: vec![OpcodeGas {
-                    contract_address: Default::default(),
-                    opcode: "SSTORE".to_string(),
-                    count: 1,
-                    gas_used: u64::MAX,
-                }],
             }],
-            ..Default::default()
         };
         let config = ResourceMeteringConfig {
             enabled: true,
@@ -678,26 +669,23 @@ mod tests {
     #[test]
     fn check_simulated_usage_fails_open_on_calculation_failure() {
         let tx_hash = TxHash::repeat_byte(0x42);
-        let meter = MeterBundleResponse {
-            results: vec![TransactionResult {
-                coinbase_diff: Default::default(),
-                eth_sent_to_coinbase: Default::default(),
-                from_address: Default::default(),
-                gas_fees: Default::default(),
-                gas_price: Default::default(),
+        let meter = TransactionResult {
+            coinbase_diff: Default::default(),
+            eth_sent_to_coinbase: Default::default(),
+            from_address: Default::default(),
+            gas_fees: Default::default(),
+            gas_price: Default::default(),
+            gas_used: u64::MAX,
+            to_address: None,
+            tx_hash,
+            value: Default::default(),
+            execution_time_us: 0,
+            opcode_gas: vec![OpcodeGas {
+                contract_address: Default::default(),
+                opcode: "SSTORE".to_string(),
+                count: 1,
                 gas_used: u64::MAX,
-                to_address: None,
-                tx_hash,
-                value: Default::default(),
-                execution_time_us: 0,
-                opcode_gas: vec![OpcodeGas {
-                    contract_address: Default::default(),
-                    opcode: "SSTORE".to_string(),
-                    count: 1,
-                    gas_used: u64::MAX,
-                }],
             }],
-            ..Default::default()
         };
         let config = ResourceMeteringConfig {
             enabled: true,

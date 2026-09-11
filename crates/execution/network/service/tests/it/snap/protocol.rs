@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use base_execution_network_service::{
     BlockDownloaderProvider,
     eth_requests::SOFT_RESPONSE_LIMIT,
-    test_utils::{PeerConfig, TestPool, Testnet},
+    test_utils::{PeerConfig, Testnet},
 };
 use base_execution_network_wire::{
     Capability, EthVersion, GetAccountRangeMessage, Protocol, SnapClient, SnapResponse,

@@ -19,9 +19,6 @@ pub use upgrades::Upgrades;
 
 mod schedule_impl;
 
-mod macros;
-pub use macros::RollupConfigSource;
-
 mod ethereum;
 pub use ethereum::{Devnet, Holesky, Hoodi, L1_CONFIGS, Mainnet, Sepolia};
 
@@ -35,7 +32,7 @@ mod updates;
 pub use updates::{
     BatcherUpdate, DaFootprintGasScalarUpdate, Eip1559Update, GasConfigUpdate, GasLimitUpdate,
     MinBaseFeeUpdate, OperatorFeeUpdate, UnsafeBlockSignerUpdate, UpdateDataValidator,
-    ValidatedUpdateData, ValidationError, Validator,
+    ValidatedUpdateData, ValidationError,
 };
 
 mod system;

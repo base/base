@@ -8,7 +8,6 @@
 use std::{
     io,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll, ready},
 };
 
@@ -17,7 +16,7 @@ use alloy_primitives::bytes::{Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 
 use crate::{
-    Capability, EthBroadcastMessage, EthMessage, EthRlpxHandshake, EthStreamError, EthStreamInner,
+    Capability, EthBroadcastMessage, EthHandshake, EthMessage, EthStreamError, EthStreamInner,
     EthVersion, HANDSHAKE_TIMEOUT, P2PStream, P2PStreamError, RawCapabilityMessage,
     SharedCapabilities, SnapProtocolMessage, SnapVersion, UnifiedStatus,
 };
@@ -54,14 +53,14 @@ where
         mut conn: P2PStream<St>,
         status: UnifiedStatus,
         fork_filter: ForkFilter,
-        handshake: Arc<dyn EthRlpxHandshake>,
+
         eth_max_message_size: usize,
     ) -> Result<(Self, UnifiedStatus), EthStreamError> {
         let eth_version = conn.shared_capabilities().eth_version()?;
         let snap_offset = eth_snap_layout(conn.shared_capabilities())?;
 
         let their_status =
-            handshake.handshake(&mut conn, status, fork_filter, HANDSHAKE_TIMEOUT).await?;
+            EthHandshake::handshake(&mut conn, status, fork_filter, HANDSHAKE_TIMEOUT).await?;
 
         let eth = EthStreamInner::with_max_message_size(eth_version, eth_max_message_size);
         Ok((Self { conn, eth, snap_offset }, their_status))
@@ -234,8 +233,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BlockAccessListsMessage, EthHandshake, EthVersion, GetBlockAccessListsMessage,
-        MAX_MESSAGE_SIZE, Protocol, UnauthedP2PStream,
+        BlockAccessListsMessage, EthVersion, GetBlockAccessListsMessage, MAX_MESSAGE_SIZE,
+        Protocol, UnauthedP2PStream,
         test_utils::{connect_passthrough, eth_handshake, eth_hello},
     };
 
@@ -332,7 +331,6 @@ mod tests {
                 conn,
                 server_status,
                 server_fork_filter,
-                Arc::new(EthHandshake::default()),
                 MAX_MESSAGE_SIZE,
             )
             .await
@@ -351,15 +349,10 @@ mod tests {
 
         // Client: connect, negotiate, send the request, and await the correlated response.
         let conn = connect_passthrough(local_addr, eth_snap_hello()).await;
-        let (mut stream, _) = EthSnapStream::<_>::handshake(
-            conn,
-            status,
-            fork_filter,
-            Arc::new(EthHandshake::default()),
-            MAX_MESSAGE_SIZE,
-        )
-        .await
-        .unwrap();
+        let (mut stream, _) =
+            EthSnapStream::<_>::handshake(conn, status, fork_filter, MAX_MESSAGE_SIZE)
+                .await
+                .unwrap();
 
         stream
             .send(EthSnapMessage::Snap(SnapProtocolMessage::GetBlockAccessLists(
@@ -406,7 +399,6 @@ mod tests {
                     conn,
                     server_status,
                     server_fork_filter,
-                    Arc::new(EthHandshake::default()),
                     MAX_MESSAGE_SIZE,
                 )
                 .await
@@ -416,15 +408,10 @@ mod tests {
             });
 
             let conn = connect_passthrough(local_addr, eth_snap_hello()).await;
-            let (mut stream, _) = EthSnapStream::<_>::handshake(
-                conn,
-                status,
-                fork_filter,
-                Arc::new(EthHandshake::default()),
-                MAX_MESSAGE_SIZE,
-            )
-            .await
-            .unwrap();
+            let (mut stream, _) =
+                EthSnapStream::<_>::handshake(conn, status, fork_filter, MAX_MESSAGE_SIZE)
+                    .await
+                    .unwrap();
 
             let combined_id = stream.snap_offset as usize + removed_snap_id;
             stream

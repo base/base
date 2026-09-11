@@ -41,7 +41,7 @@ use base_execution_state_provider::{
 use base_execution_state_types::{ExecutionOutcome, HashedStorage};
 use base_execution_txpool::{
     BaseOrdering, BaseTransactionPool, BaseTransactionValidator, BaseTransactionValidatorBuilder,
-    DiskFileBlobStore, Pool, TransactionValidationTaskExecutor,
+    Pool, TransactionValidationTaskExecutor,
 };
 use base_testing_support::build_test_genesis;
 
@@ -399,16 +399,12 @@ impl ActionEngineClient {
             inner.blockchain_provider.clone(),
             inner.evm_config.clone(),
         )
-        .no_eip4844()
         .build()
         .require_l1_data_gas_fee(false);
         let (validator, _validation_task) = TransactionValidationTaskExecutor::new(validator);
-        let blob_dir = tempfile::tempdir().expect("temporary blob directory");
-        let blob_store =
-            DiskFileBlobStore::open(blob_dir.path(), Default::default()).expect("empty blob store");
         let ordering = BaseOrdering::default();
         let pool = BaseTransactionPool::new(
-            Pool::new(validator, ordering.clone(), blob_store, Default::default()),
+            Pool::new(validator, ordering.clone(), Default::default()),
             ordering,
         );
         let payload_builder = BasePayloadBuilder::new(

@@ -57,77 +57,9 @@ where
         Self::Ready(Some(output))
     }
 
-    /// True if this is an RPC call.
-    pub const fn is_rpc_call(&self) -> bool {
-        matches!(self, Self::RpcCall(_))
-    }
-
-    /// Fallible cast to [`RpcCall`]
-    pub const fn as_rpc_call(&self) -> Option<&RpcCall<Params, Resp, Output, Map>> {
-        match self {
-            Self::RpcCall(call) => Some(call),
-            _ => None,
-        }
-    }
-
-    /// Fallible cast to mutable [`RpcCall`]
-    pub const fn as_mut_rpc_call(&mut self) -> Option<&mut RpcCall<Params, Resp, Output, Map>> {
-        match self {
-            Self::RpcCall(call) => Some(call),
-            _ => None,
-        }
-    }
-
-    /// True if this is a waiter.
-    pub const fn is_waiter(&self) -> bool {
-        matches!(self, Self::Waiter(_))
-    }
-
-    /// Fallible cast to [`Waiter`]
-    pub const fn as_waiter(&self) -> Option<&Waiter<Resp, Output, Map>> {
-        match self {
-            Self::Waiter(waiter) => Some(waiter),
-            _ => None,
-        }
-    }
-
-    /// Fallible cast to mutable [`Waiter`]
-    pub const fn as_mut_waiter(&mut self) -> Option<&mut Waiter<Resp, Output, Map>> {
-        match self {
-            Self::Waiter(waiter) => Some(waiter),
-            _ => None,
-        }
-    }
-
-    /// True if this is a boxed future.
-    pub const fn is_boxed_future(&self) -> bool {
-        matches!(self, Self::BoxedFuture(_))
-    }
-
-    /// Fallible cast to a boxed future.
-    pub const fn as_boxed_future(&self) -> Option<&BoxedFut<Output>> {
-        match self {
-            Self::BoxedFuture(fut) => Some(fut),
-            _ => None,
-        }
-    }
-
     /// True if this is a ready value.
     pub const fn is_ready(&self) -> bool {
         matches!(self, Self::Ready(_))
-    }
-
-    /// Fallible cast to a ready value.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the future is already complete
-    pub const fn as_ready(&self) -> Option<&TransportResult<Output>> {
-        match self {
-            Self::Ready(Some(output)) => Some(output),
-            Self::Ready(None) => panic!("tried to access ready value after taking"),
-            _ => None,
-        }
     }
 
     /// Set a function to map the response into a different type. This is

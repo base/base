@@ -46,8 +46,7 @@ impl RpcConfig {
             .proof_permits(args.rpc_proof_permits)
             .pending_block_kind(args.rpc_pending_block)
             .raw_tx_forwarder(args.rpc_forwarder.clone())
-            .rpc_evm_memory_limit(args.rpc_evm_memory_limit)
-            .force_blob_sidecar_upcasting(args.rpc_force_blob_sidecar_upcasting);
+            .rpc_evm_memory_limit(args.rpc_evm_memory_limit);
         let server_builder = ServerConfigBuilder::new()
             .max_connections(args.rpc_max_connections.get())
             .max_request_body_size(max_request)

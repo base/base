@@ -575,29 +575,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_rpc_metering_args() {
-        let cli = BaseCli::parse_from(rpc_args(&[
-            "base",
-            "rpc",
-            "--enable-metering",
-            "--metering.metered-opcodes",
-            "SSTORE",
-        ]));
-
-        let BaseCommand::Rpc(rpc) = cli.command else {
-            panic!("expected rpc command");
-        };
-
-        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
-
-        assert!(launch_config.standard.metering.enable_metering);
-        assert_eq!(
-            launch_config.standard.metering.metering_metered_opcodes,
-            vec!["SSTORE".to_string()]
-        );
-    }
-
-    #[test]
     fn parses_rpc_validity_forwarding_args() {
         let cli = BaseCli::parse_from(rpc_args(&[
             "base",
@@ -643,5 +620,18 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("--p2p.sequencer.key"));
+    }
+
+    #[test]
+    fn parses_rpc_metering_args() {
+        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc", "--enable-metering"]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert!(launch_config.standard.metering.enable_metering);
     }
 }

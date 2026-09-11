@@ -96,4 +96,3 @@ test-utils = [
     "std",
     "base-common-chain-config/serde",
 ]
-evm-std = ["base-execution-evm-runtime/std"]

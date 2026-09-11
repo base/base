@@ -1,17 +1,6 @@
-//! Contains the [`Validator`] trait which registers a validator for any bytes that
-//! can be transformed into a [`crate::ValidatedUpdateData`] type.
+//! Validation of SystemConfig update data.
 
 use alloy_sol_types::{SolType, sol};
-
-/// The Validator trait.
-pub trait Validator<'a> {
-    /// The input type accepted by this validator.
-    type DataInput;
-
-    /// Transforms the given bytes into an [`UpdateDataValidator`] type which can
-    /// then be used to validate the update data for a specific update type.
-    fn validate(&self, data: Self::DataInput) -> Result<ValidatedUpdateData<'a>, ValidationError>;
-}
 
 /// Validated `SystemConfig` update data.
 ///
@@ -97,16 +86,5 @@ impl UpdateDataValidator {
         }
 
         Ok(ValidatedUpdateData { data })
-    }
-}
-
-impl<'a, T> Validator<'a> for T
-where
-    T: AsRef<alloy_primitives::Bytes>,
-{
-    type DataInput = &'a alloy_primitives::Bytes;
-
-    fn validate(&self, data: Self::DataInput) -> Result<ValidatedUpdateData<'a>, ValidationError> {
-        UpdateDataValidator::validate(data)
     }
 }

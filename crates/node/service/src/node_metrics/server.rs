@@ -11,12 +11,8 @@ use metrics_process::Collector;
 use reqwest::Client;
 
 use crate::node_metrics::{
-    chain::ChainSpecInfo,
-    hooks::{Hook, Hooks},
-    process::register_process_metrics,
-    recorder::install_prometheus_recorder,
-    storage::StorageSettingsInfo,
-    version::VersionInfo,
+    chain::ChainSpecInfo, hooks::Hooks, process::register_process_metrics,
+    recorder::install_prometheus_recorder, storage::StorageSettingsInfo, version::VersionInfo,
 };
 
 /// Configuration for the [`MetricServer`]
@@ -134,7 +130,7 @@ impl MetricServer {
         Ok(())
     }
 
-    async fn start_endpoint<F: Hook + 'static>(
+    async fn start_endpoint<F: Fn() + Send + Sync + 'static>(
         &self,
         listen_addr: SocketAddr,
         hook: Arc<F>,
@@ -354,7 +350,7 @@ fn describe_io_stats() {
 #[cfg(not(target_os = "linux"))]
 const fn describe_io_stats() {}
 
-async fn handle_request<F: Hook>(
+async fn handle_request<F: Fn() + Send + Sync + 'static>(
     path: &str,
     hook: Arc<F>,
     executor: TaskExecutor,

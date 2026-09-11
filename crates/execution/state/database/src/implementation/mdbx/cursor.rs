@@ -9,14 +9,9 @@ use crate::{
     Compress, DatabaseError, DbCursorRO, DbCursorRW, DbDupCursorRO, DbDupCursorRW, Decode,
     Decompress, DupSort, DupWalker, Encode, IntoVec, PairResult, RangeWalker, ReverseWalker, Table,
     ValueOnlyResult, Walker,
-    mdbx::{Error as MDBXError, RO, RW, TransactionKind, WriteFlags},
+    mdbx::{Error as MDBXError, RW, TransactionKind, WriteFlags},
     metrics::{Operation, TableOperationMetrics},
 };
-
-/// Read only Cursor.
-pub type CursorRO<T> = Cursor<RO, T>;
-/// Read write cursor.
-pub type CursorRW<T> = Cursor<RW, T>;
 
 /// Cursor wrapper to access KV items.
 #[derive(Debug)]

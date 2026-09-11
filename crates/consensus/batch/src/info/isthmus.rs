@@ -71,14 +71,6 @@ impl L1BlockInfoIsthmusBaseFields for L1BlockInfoIsthmus {
     }
 }
 
-/// Accessors for all Isthmus fields.
-pub trait L1BlockInfoIsthmusFields:
-    L1BlockInfoEcotoneBaseFields + L1BlockInfoIsthmusBaseFields
-{
-}
-
-impl L1BlockInfoIsthmusFields for L1BlockInfoIsthmus {}
-
 impl L1BlockInfoIsthmus {
     /// The type byte identifier for the L1 scalar format in Isthmus.
     pub const L1_SCALAR: u8 = 2;

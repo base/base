@@ -92,6 +92,15 @@ impl PersistenceState {
         self.rx = None;
         self.last_persisted_block = last_persisted_block;
         self.last_state_trie_persisted_block = last_state_trie_persisted_block;
+        self.record_metrics();
+    }
+
+    /// Publishes both independent persistence frontiers, including decreases on unwind.
+    pub fn record_metrics(&self) {
+        metrics::gauge!("consensus.engine.beacon.persisted_block_height")
+            .set(self.last_persisted_block.number as f64);
+        metrics::gauge!("consensus.engine.beacon.persisted_state_trie_height")
+            .set(self.last_state_trie_persisted_block.number as f64);
     }
 }
 

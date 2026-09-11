@@ -1,8 +1,4 @@
-use std::{
-    fmt::{self, Formatter},
-    future::IntoFuture,
-    sync::Arc,
-};
+use std::future::IntoFuture;
 
 use alloy_eips::eip4844::BLOB_TX_MIN_BLOB_GASPRICE;
 use alloy_json_rpc::RpcError;
@@ -14,7 +10,7 @@ use crate::{
     Network, Provider, TransactionBuilder, TransactionBuilder4844,
     fillers::{FillerControlFlow, TxFiller},
     provider::SendableTx,
-    utils::{Eip1559Estimation, Eip1559Estimator},
+    utils::Eip1559Estimation,
 };
 
 /// An enum over the different types of gas fillable.
@@ -70,12 +66,8 @@ pub enum GasFillable {
 /// # Ok(())
 /// # }
 /// ```
-#[non_exhaustive]
 #[derive(Clone, Debug, Default)]
-pub struct GasFiller {
-    /// The eip1559 gas estimator to use.
-    pub estimator: Eip1559Estimator,
-}
+pub struct GasFiller;
 
 impl GasFiller {
     async fn prepare_legacy<P, N>(
@@ -122,7 +114,7 @@ impl GasFiller {
             async move { Ok(Eip1559Estimation { max_fee_per_gas, max_priority_fee_per_gas }) }
                 .left_future()
         } else {
-            provider.estimate_eip1559_fees_with(self.estimator.clone()).right_future()
+            provider.estimate_eip1559_fees().right_future()
         };
 
         let (gas_limit, estimate) = futures::try_join!(gas_limit_fut, eip1559_fees_fut)?;
@@ -195,92 +187,9 @@ impl<N: Network> TxFiller<N> for GasFiller {
     }
 }
 
-/// An estimator function for blob gas fees.
-pub type BlobGasEstimatorFunction = fn(u128, &[f64]) -> u128;
-
-/// A trait responsible for estimating blob gas values
-pub trait BlobGasEstimatorFn: Send + Sync + Unpin {
-    /// Estimates the blob gas fee given the base fee per blob gas
-    /// and the blob gas usage ratio.
-    fn estimate(&self, base_fee_per_blob_gas: u128, blob_gas_used_ratio: &[f64]) -> u128;
-}
-
-/// Blob Gas estimator variants
-#[derive(Default, Clone)]
-pub enum BlobGasEstimator {
-    /// Uses the builtin estimator
-    #[default]
-    Default,
-    /// Uses a custom estimator
-    Custom(Arc<dyn BlobGasEstimatorFn>),
-}
-
-impl BlobGasEstimator {
-    /// Creates a new estimator from a closure
-    pub fn new<F>(f: F) -> Self
-    where
-        F: Fn(u128, &[f64]) -> u128 + Send + Sync + Unpin + 'static,
-    {
-        Self::new_estimator(f)
-    }
-
-    /// Creates a new estimate fn
-    pub fn new_estimator<F: BlobGasEstimatorFn + 'static>(f: F) -> Self {
-        Self::Custom(Arc::new(f))
-    }
-
-    /// Create a custom estimator
-    pub fn custom<F>(f: F) -> Self
-    where
-        F: Fn(u128, &[f64]) -> u128 + Send + Sync + Unpin + 'static,
-    {
-        Self::Custom(Arc::new(f))
-    }
-
-    /// Create a scaled estimator
-    pub fn scaled(scale: u128) -> Self {
-        Self::custom(move |base_fee, _| base_fee.saturating_mul(scale))
-    }
-
-    /// Estimates the blob gas fee given the base fee per blob gas
-    /// and the blob gas usage ratio.
-    pub fn estimate(&self, base_fee_per_blob_gas: u128, blob_gas_used_ratio: &[f64]) -> u128 {
-        match self {
-            Self::Default => base_fee_per_blob_gas,
-            Self::Custom(val) => val.estimate(base_fee_per_blob_gas, blob_gas_used_ratio),
-        }
-    }
-}
-
-impl<F> BlobGasEstimatorFn for F
-where
-    F: Fn(u128, &[f64]) -> u128 + Send + Sync + Unpin,
-{
-    fn estimate(&self, base_fee_per_blob_gas: u128, blob_gas_used_ratio: &[f64]) -> u128 {
-        (self)(base_fee_per_blob_gas, blob_gas_used_ratio)
-    }
-}
-
-impl fmt::Debug for BlobGasEstimator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("BlobGasEstimator")
-            .field(
-                "estimator",
-                &match self {
-                    Self::Default => "default",
-                    Self::Custom(_) => "custom",
-                },
-            )
-            .finish()
-    }
-}
-
 /// Filler for the `max_fee_per_blob_gas` field in blob transactions.
 #[derive(Clone, Debug, Default)]
-pub struct BlobGasFiller {
-    /// The blob gas estimator to use.
-    pub estimator: BlobGasEstimator,
-}
+pub struct BlobGasFiller;
 
 impl<N: Network> TxFiller<N> for BlobGasFiller
 where
@@ -322,9 +231,7 @@ where
         let base_fee_per_blob_gas =
             fee_history.base_fee_per_blob_gas.last().ok_or(RpcError::NullResp).copied()?;
 
-        let blob_gas_used_ratio = fee_history.blob_gas_used_ratio;
-
-        Ok(self.estimator.estimate(base_fee_per_blob_gas, &blob_gas_used_ratio))
+        Ok(base_fee_per_blob_gas)
     }
 
     async fn fill(
@@ -344,8 +251,9 @@ where
 mod tests {
     use alloy_eips::eip4844::DATA_GAS_PER_BLOB;
     use alloy_primitives::{U256, address};
+    use alloy_transport::mock::Asserter;
     use base_common_types_chain::{SidecarBuilder, SimpleCoder, Transaction};
-    use base_common_types_rpc::TransactionRequest;
+    use base_common_types_rpc::{FeeHistory, TransactionRequest};
 
     use super::*;
     use crate::{Ethereum, ProviderBuilder};
@@ -451,8 +359,104 @@ mod tests {
         let tx = TransactionRequest { sidecar: Some(sidecar.into()), ..Default::default() };
 
         assert_eq!(
-            <BlobGasFiller as TxFiller<Ethereum>>::status(&BlobGasFiller::default(), &tx),
+            <BlobGasFiller as TxFiller<Ethereum>>::status(&BlobGasFiller, &tx),
             FillerControlFlow::Ready
+        );
+    }
+
+    #[tokio::test]
+    async fn blob_fee_uses_latest_fee_history_value() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter.push_success(&FeeHistory {
+            base_fee_per_blob_gas: vec![100, 200],
+            ..Default::default()
+        });
+        let fee = <BlobGasFiller as TxFiller<Ethereum>>::prepare(
+            &BlobGasFiller,
+            &provider,
+            &TransactionRequest::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(fee, 200);
+    }
+
+    #[tokio::test]
+    async fn blob_fee_preserves_explicit_fee_without_rpc() {
+        let provider = ProviderBuilder::new().connect_mocked_client(Asserter::new());
+        let tx = TransactionRequest { max_fee_per_blob_gas: Some(300), ..Default::default() };
+        let fee = <BlobGasFiller as TxFiller<Ethereum>>::prepare(&BlobGasFiller, &provider, &tx)
+            .await
+            .unwrap();
+        assert_eq!(fee, 300);
+    }
+
+    #[tokio::test]
+    async fn blob_fee_rejects_missing_fee_history() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter.push_success(&FeeHistory::default());
+        let result = <BlobGasFiller as TxFiller<Ethereum>>::prepare(
+            &BlobGasFiller,
+            &provider,
+            &TransactionRequest::default(),
+        )
+        .await;
+        assert!(matches!(result, Err(RpcError::NullResp)));
+    }
+    #[tokio::test]
+    async fn eip1559_fee_uses_default_estimator() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter.push_success(&FeeHistory {
+            base_fee_per_gas: vec![100, 200],
+            reward: Some(vec![vec![2], vec![6], vec![4]]),
+            ..Default::default()
+        });
+        let tx = TransactionRequest { gas: Some(21_000), ..Default::default() };
+        let fee =
+            <GasFiller as TxFiller<Ethereum>>::prepare(&GasFiller, &provider, &tx).await.unwrap();
+        assert_eq!(
+            fee,
+            GasFillable::Eip1559 {
+                gas_limit: 21_000,
+                estimate: Eip1559Estimation { max_fee_per_gas: 204, max_priority_fee_per_gas: 4 },
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn eip1559_fee_preserves_explicit_fees_without_rpc() {
+        let provider = ProviderBuilder::new().connect_mocked_client(Asserter::new());
+        let tx = TransactionRequest {
+            gas: Some(21_000),
+            max_fee_per_gas: Some(300),
+            max_priority_fee_per_gas: Some(5),
+            ..Default::default()
+        };
+        let fee =
+            <GasFiller as TxFiller<Ethereum>>::prepare(&GasFiller, &provider, &tx).await.unwrap();
+        assert_eq!(
+            fee,
+            GasFillable::Eip1559 {
+                gas_limit: 21_000,
+                estimate: Eip1559Estimation { max_fee_per_gas: 300, max_priority_fee_per_gas: 5 },
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn eip1559_fee_uses_latest_block_when_history_is_empty() {
+        let asserter = Asserter::new();
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+        asserter.push_success(&FeeHistory::default());
+        let mut block: base_common_types_rpc::Block = Default::default();
+        block.header.inner.base_fee_per_gas = Some(150);
+        asserter.push_success(&block);
+        assert_eq!(
+            provider.estimate_eip1559_fees().await.unwrap(),
+            Eip1559Estimation { max_fee_per_gas: 301, max_priority_fee_per_gas: 1 }
         );
     }
 }

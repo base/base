@@ -2,7 +2,7 @@ use std::{cmp::Ordering, path::PathBuf};
 
 use alloy_primitives::Address;
 use anyhow::{Context, Result};
-use base_common_chain_config::{ChainConfig, RollupConfig, UpgradeConfig, rollup_config};
+use base_common_chain_config::{ChainConfig, RollupConfig, UpgradeConfig};
 use base_common_client_ethereum::{Provider, ProviderBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -559,7 +559,7 @@ impl MonitoringConfig {
 
     /// Returns the default Base mainnet configuration.
     pub fn mainnet() -> Self {
-        let rollup = rollup_config!(ChainConfig::MAINNET);
+        let rollup = ChainConfig::MAINNET.rollup_config();
         Self {
             name: "mainnet".to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),
@@ -587,7 +587,7 @@ impl MonitoringConfig {
 
     /// Returns the default Base Sepolia configuration.
     pub fn sepolia() -> Self {
-        let rollup = rollup_config!(ChainConfig::SEPOLIA);
+        let rollup = ChainConfig::SEPOLIA.rollup_config();
         Self {
             name: "sepolia".to_string(),
             rpc: Url::parse("http://127.0.0.1:8545").unwrap(),

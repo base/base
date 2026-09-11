@@ -106,7 +106,7 @@ impl L2ConfigFile {
             }
             None => {
                 debug!("loading l2 config from built-in chain config");
-                base_common_chain_config::rollup_config!(l2_chain)
+                base_common_chain_config::ChainConfig::rollup_config_by_chain(l2_chain)
                     .ok_or_else(|| ConfigError::NotFound(l2_chain.id()))
             }
         }

@@ -6,8 +6,7 @@ use core::hash::Hash;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Signature, TxHash, bytes};
 use base_common_types_chain::{
-    Extended, InMemorySize, SignableTransaction, Signed, TransactionEnvelope, TxEip7702,
-    TxEnvelope,
+    InMemorySize, SignableTransaction, Signed, TransactionEnvelope, TxEip7702, TxEnvelope,
     error::ValueError,
     transaction::{TxEip1559, TxEip2930, TxHashRef, TxLegacy},
 };
@@ -294,23 +293,6 @@ impl TryFrom<BaseTxEnvelope> for BasePooledTransaction {
 
     fn try_from(value: BaseTxEnvelope) -> Result<Self, Self::Error> {
         value.try_into_pooled()
-    }
-}
-
-impl<Tx> From<BasePooledTransaction> for Extended<BaseTxEnvelope, Tx> {
-    fn from(tx: BasePooledTransaction) -> Self {
-        Self::BuiltIn(tx.into())
-    }
-}
-
-impl<Tx> TryFrom<Extended<BaseTxEnvelope, Tx>> for BasePooledTransaction {
-    type Error = ();
-
-    fn try_from(_tx: Extended<BaseTxEnvelope, Tx>) -> Result<Self, Self::Error> {
-        match _tx {
-            Extended::BuiltIn(inner) => inner.try_into().map_err(|_| ()),
-            Extended::Other(_tx) => Err(()),
-        }
     }
 }
 

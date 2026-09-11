@@ -22,13 +22,10 @@ use base_execution_payload::{
     BasePayloadBuilderAttributes, RejectionCache,
     config::{BaseDAConfig, GasLimitConfig, ResourceMeteringConfig},
 };
-use base_execution_state_provider::{
-    CanonStateSubscriptions,
-    providers::{BlockchainProvider, ProviderFactoryBuilder},
-};
+use base_execution_state_provider::{CanonStateSubscriptions, providers::ProviderFactoryBuilder};
 use base_execution_txpool::{
-    BaseOrdering, BaseTransactionPool, BaseTransactionValidator, DiskFileBlobStore, GuardLimits,
-    TransactionValidationTaskExecutor, maintain_state_diff_invalidation,
+    BaseOrdering, BaseTransactionPool, GuardLimits, TransactionValidationTaskExecutor,
+    maintain_state_diff_invalidation,
 };
 use base_node_config::{DiscoveryArgs, NetworkArgs as RethNetworkArgs};
 use tokio_stream::wrappers::BroadcastStream;
@@ -181,12 +178,6 @@ impl BaseNode {
         self
     }
 
-    /// Configure the shared rejection cache for permanently rejected transactions.
-    pub fn with_rejection_cache(mut self, rejection_cache: RejectionCache) -> Self {
-        self.rejection_cache = rejection_cache;
-        self
-    }
-
     /// Builds the fixed Base execution components.
     pub async fn build_components(
         &self,
@@ -268,7 +259,7 @@ impl BaseNode {
         &self,
         ctx: &BuilderContext,
         evm_config: BaseEvmConfig,
-    ) -> eyre::Result<BaseTransactionPool<DiskFileBlobStore>> {
+    ) -> eyre::Result<BaseTransactionPool> {
         let ordering = match self.args.txpool_ordering {
             TxpoolOrdering::CoinbaseTip => BaseOrdering::coinbase_tip(),
             TxpoolOrdering::Timestamp => BaseOrdering::timestamp(),
@@ -278,10 +269,8 @@ impl BaseNode {
             signature_limit: self.args.mempool_sender_limit,
             payment_limit: self.args.mempool_payer_limit,
         };
-        let blob_store = crate::create_blob_store(ctx)?;
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
-                .no_eip4844()
                 .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
                 .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
                 .with_max_tx_gas_limit(ctx.config().txpool.max_tx_gas_limit)
@@ -304,7 +293,6 @@ impl BaseNode {
         let transaction_pool = base_execution_txpool::Pool::new(
             validator,
             ordering.clone(),
-            blob_store,
             final_pool_config.clone(),
         );
         let transaction_pool =
@@ -526,7 +514,7 @@ impl BaseNode {
         pool: base_execution_txpool::BaseTransactionPool,
     ) -> eyre::Result<NetworkHandle> {
         let network_config = self.network_config(ctx)?;
-        let network = NetworkManager::builder(network_config, ctx.provider().clone()).await?;
+        let network = NetworkManager::builder(network_config).await?;
         let handle = ctx.start_network(network, pool);
         info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
 

@@ -22,13 +22,10 @@ serde_json = { workspace = true, features = ["std"] }
 futures = { workspace = true, features = ["default"] }
 base-common-observability-events = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
-moka = { workspace = true, features = ["default", "sync"] }
 anyhow = { workspace = true, features = ["default", "std"] }
 tokio = { workspace = true, features = ["default", "full"] }
 chrono = { workspace = true, features = ["default", "serde"] }
 axum = { workspace = true, features = ["tokio", "http1", "json"] }
-base-common-types-chain = { workspace = true, features = ["std"] }
-uuid = { workspace = true, features = ["default", "v5", "serde"] }
 alloy-primitives = { workspace = true, features = ["map-foldhash", "serde"] }
 tower-http = { workspace = true, features = ["default", "limit", "timeout"] }
 base-common-observability-metrics = { workspace = true, features = ["metrics"] }
@@ -39,8 +36,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 [dev-dependencies]
 testcontainers = { workspace = true, features = ["blocking"] }
 base-common-types-payload = { workspace = true, features = ["test-utils"] }
-testcontainers-modules = { workspace = true, features = ["postgres", "minio"] }
-aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [features]
 default = ["metrics"]

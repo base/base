@@ -329,60 +329,6 @@ impl RollupNode {
         let l1_head_number: base_consensus_source::L1HeadNumber = Arc::new(AtomicU64::new(0));
         let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
         let engine_client = Arc::new(self.engine_config.client.clone());
-        self.start_inner(engine_client, pipeline, l1_head_number, cancellation).await
-    }
-
-    /// Starts the rollup node service with a pre-built derivation pipeline.
-    ///
-    /// This is the underlying implementation of [`Self::start`]. It accepts any pipeline
-    /// implementing [`Pipeline`] and [`SignalReceiver`], enabling callers to substitute
-    /// in-memory or test pipelines without modifying `RollupNode` itself.
-    ///
-    /// Production callers should use [`Self::start`], which constructs the standard
-    /// [`OnlinePipeline`] automatically.
-    ///
-    /// **Note:** `verifier_l1_confs` has no effect when using this method. The
-    /// [`ConfDepthProvider`](base_consensus_source::ConfDepthProvider) is only wired into
-    /// pipelines constructed by [`Self::start`]. If the caller's pipeline needs confirmation
-    /// depth gating, it must enforce that in its own chain provider.
-    pub async fn start_with<P>(&self, pipeline: P) -> Result<(), String>
-    where
-        P: Pipeline + SignalReceiver + Send + Sync + 'static,
-        DerivationActor<QueuedDerivationEngineClient, P>:
-            NodeActor<StartData = (), Error = DerivationError>,
-    {
-        let l1_head_number: base_consensus_source::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let engine_client = Arc::new(self.engine_config.client.clone());
-        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
-    }
-
-    /// Starts the rollup node with a pre-built engine client.
-    ///
-    /// This method enables dependency injection of the engine client, useful for testing
-    /// scenarios where a mock or in-memory engine client should be used instead of
-    /// connecting to a live L2 Engine API.
-    pub async fn start_with_engine_client<E: EngineClient + 'static>(
-        &self,
-        engine_client: Arc<E>,
-    ) -> Result<(), String> {
-        let l1_head_number: base_consensus_source::L1HeadNumber = Arc::new(AtomicU64::new(0));
-        let pipeline = self.create_pipeline(Arc::clone(&l1_head_number)).await;
-        self.start_inner(engine_client, pipeline, l1_head_number, CancellationToken::new()).await
-    }
-
-    async fn start_inner<E, P>(
-        &self,
-        engine_client: Arc<E>,
-        pipeline: P,
-        l1_head_number: base_consensus_source::L1HeadNumber,
-        cancellation: CancellationToken,
-    ) -> Result<(), String>
-    where
-        E: EngineClient + 'static,
-        P: Pipeline + SignalReceiver + Send + Sync + 'static,
-        DerivationActor<QueuedDerivationEngineClient, P>:
-            NodeActor<StartData = (), Error = DerivationError>,
-    {
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
         //
         // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`
@@ -457,7 +403,7 @@ impl RollupNode {
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
-        let derivation: ConfiguredDerivationActor<P> =
+        let derivation: ConfiguredDerivationActor<OnlinePipeline> =
             if let Some(provider) = self.derivation_delegate_provider.clone() {
                 // L1 Provider for sanity checking Derivation Delegation
                 let l1_provider = AlloyChainProvider::new(
@@ -475,7 +421,7 @@ impl RollupNode {
                     derivation_origin_tx,
                 )))
             } else {
-                ConfiguredDerivationActor::Normal(Box::new(DerivationActor::<_, P>::new(
+                ConfiguredDerivationActor::Normal(Box::new(DerivationActor::new(
                     QueuedDerivationEngineClient {
                         engine_actor_request_tx: engine_actor_request_tx.clone(),
                     },
