@@ -14,6 +14,9 @@ pub const DEFAULT_TIP_THRESHOLD_SECS: u64 = 10;
 /// This preserves parallel packaging of the state, RocksDB-index, and proofs databases while leaving capacity for another archive.
 pub const DEFAULT_MAX_STREAMING_ARCHIVES: usize = 4;
 
+/// Default global number of streamed S3 multipart parts allowed to upload concurrently.
+pub const DEFAULT_MAX_STREAMING_PART_UPLOADS: usize = 64;
+
 /// How the S3/R2 client is configured.
 #[derive(Debug, Clone, ValueEnum)]
 pub enum S3ConfigType {
@@ -97,6 +100,13 @@ pub struct SnapshotterConfig {
     /// while an S3 multipart part is uploaded and retried; lower this on memory-constrained nodes.
     #[arg(long, env = "SNAPSHOTTER_MAX_STREAMING_ARCHIVES", default_value = "4")]
     pub max_streaming_archives: NonZeroUsize,
+
+    /// Maximum number of concurrently uploading S3 parts across all streamed archives.
+    ///
+    /// This is intentionally environment-only (`SNAPSHOTTER_MAX_STREAMING_PART_UPLOADS`). With
+    /// 128 MiB parts, the default of 64 bounds queued/in-flight compressed parts to roughly 8 GiB.
+    #[arg(env = "SNAPSHOTTER_MAX_STREAMING_PART_UPLOADS", default_value = "64")]
+    pub max_streaming_part_uploads: NonZeroUsize,
 
     /// Number of completed timestamped snapshot run directories to retain remotely.
     ///

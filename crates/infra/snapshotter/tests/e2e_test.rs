@@ -161,6 +161,10 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
             base_snapshotter::DEFAULT_MAX_STREAMING_ARCHIVES,
         )
         .expect("default streaming archive count should be non-zero"),
+        max_streaming_part_uploads: std::num::NonZeroUsize::new(
+            base_snapshotter::DEFAULT_MAX_STREAMING_PART_UPLOADS,
+        )
+        .expect("default streaming part upload count should be non-zero"),
         retain_runs: NonZeroUsize::new(3).expect("retain runs should be non-zero"),
         docker_socket: "/var/run/docker.sock".to_string(),
         s3_config_type: base_snapshotter::S3ConfigType::Aws,
