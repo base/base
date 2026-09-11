@@ -97,17 +97,22 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         }
     }
 
-    /// Sets the state predicates required for this transaction's inclusion.
+    /// Sets the validity predicates required for this transaction's inclusion.
+    ///
+    /// Predicates are stored in canonical evaluation order (timing before
+    /// state) via [`crate::ValidityPredicate::sort_batch`], so every ingress
+    /// path yields transactions whose cheap timing predicates gate state reads.
     #[must_use]
     pub fn with_validity_predicates(
         mut self,
-        validity_predicates: Vec<crate::ValidityPredicate>,
+        mut validity_predicates: Vec<crate::ValidityPredicate>,
     ) -> Self {
+        crate::ValidityPredicate::sort_batch(&mut validity_predicates);
         self.validity_predicates = validity_predicates;
         self
     }
 
-    /// Returns the state predicates required for this transaction's inclusion.
+    /// Returns the validity predicates required for this transaction's inclusion.
     #[must_use]
     pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
