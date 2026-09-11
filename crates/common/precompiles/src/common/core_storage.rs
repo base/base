@@ -1,10 +1,10 @@
 //! Core B-20 EVM storage layout shared by all token variants.
 
-use alloc::string::String;
+use alloc::{string::String, vec, vec::Vec};
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
 use base_precompile_macros::Storable;
-use base_precompile_storage::{Mapping, Result, StorageOps, Word};
+use base_precompile_storage::{Mapping, Result, StorableType, StorageKey, StorageOps, Word};
 
 use crate::TransferPolicyIds;
 
@@ -95,6 +95,32 @@ pub struct B20CoreStorage {
     pub seize_receiver_policy_id: u64, // slot 14, offset 8
     /// Reserved padding to close slot 14.
     pub seize_reserved: FixedBytes<16>, // slot 14, offset 16
+}
+
+impl B20CoreStorage {
+    /// Storage slots a `transfer` (`spender == None`) or `transferFrom` reads, derivable from
+    /// calldata alone: the paused bitmask, the packed transfer-policy-id word, both balances,
+    /// and the `allowances[from][spender]` entry for the `transferFrom` path.
+    ///
+    /// Used to issue a [`base_precompile_storage::PrefetchHint`] before dispatching the
+    /// operation, so the slots can be paged in concurrently instead of faulting one at a time
+    /// during execution. Slot arithmetic mirrors the generated handlers: namespace root plus the
+    /// generated per-field offset, with mapping keys folded in via [`StorageKey::mapping_slot`].
+    pub fn transfer_hint_slots(from: Address, to: Address, spender: Option<Address>) -> Vec<U256> {
+        let root = <Self as StorableType>::STORAGE_NAMESPACE_ROOT;
+        let balances = root.saturating_add(__packing_b20_core_storage::BALANCES);
+        let mut slots = vec![
+            root.saturating_add(__packing_b20_core_storage::PAUSED),
+            root.saturating_add(__packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID),
+            from.mapping_slot(balances),
+        ];
+        slots.push(to.mapping_slot(balances));
+        if let Some(spender) = spender {
+            let allowances = root.saturating_add(__packing_b20_core_storage::ALLOWANCES);
+            slots.push(spender.mapping_slot(from.mapping_slot(allowances)));
+        }
+        slots
+    }
 }
 
 impl B20CoreStorageHandler<'_> {

@@ -11,6 +11,7 @@ use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
+use base_execution_state_prefetch::{StatePrefetchConfig, StatePrefetchExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
@@ -41,6 +42,19 @@ use url::Url;
 use crate::upgrade_signal::{
     ExecutionUpgradeSignal, ExecutionUpgradeSignalConfig, ExecutionUpgradeSignalRuntimeExtension,
 };
+
+/// CLI arguments for the state prefetcher.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
+pub struct StatePrefetchArgs {
+    /// Number of worker threads prefetching hinted state ahead of execution (hints are
+    /// currently produced by the B20 precompiles). 0 disables prefetching entirely.
+    #[arg(
+        long = "state.prefetch-workers",
+        value_name = "STATE_PREFETCH_WORKERS",
+        default_value_t = 0
+    )]
+    pub state_prefetch_workers: usize,
+}
 
 /// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
@@ -266,6 +280,10 @@ pub struct StandardNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// State prefetcher arguments.
+    #[command(flatten)]
+    pub state_prefetch: StatePrefetchArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -407,6 +425,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            state_prefetch: StatePrefetchArgs::default(),
         }
     }
 }
@@ -421,6 +440,12 @@ impl StandardNodeArgs {
     /// Sets the shadow indexer arguments on this standard node configuration.
     pub fn with_shadow_indexer(mut self, shadow_indexer: ShadowIndexerArgs) -> Self {
         self.shadow_indexer = shadow_indexer;
+        self
+    }
+
+    /// Sets the state prefetcher arguments on this standard node configuration.
+    pub const fn with_state_prefetch(mut self, state_prefetch: StatePrefetchArgs) -> Self {
+        self.state_prefetch = state_prefetch;
         self
     }
 }
@@ -710,6 +735,9 @@ impl StandardBaseRethNode {
             MeteringConfig::disabled()
         };
         runner.install_ext::<MeteringExtension>(metering_config);
+        runner.install_ext::<StatePrefetchExtension>(StatePrefetchConfig {
+            workers: args.state_prefetch.state_prefetch_workers,
+        });
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {

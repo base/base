@@ -11,15 +11,15 @@ use alloc::string::ToString;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, PrecompileResult, PrefetchHint, StorageCtx};
 
 use crate::{
-    B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant,
+    B20CoreStorage, B20PolicyType, B20StablecoinToken, B20TokenRole, B20Variant,
     IB20::{self, IB20Calls as C},
     IB20Stablecoin::{self, IB20StablecoinCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileCallObserver,
     PrecompileCallRecorder, PrecompileMetricLabels, PrecompileSelector, StablecoinAccounting,
-    StablecoinVersion, StablecoinVersions,
+    StablecoinVersion, StablecoinVersions, Token,
 };
 
 impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
@@ -197,11 +197,19 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 // --- Mutating operations: routed to the active version's logic ---
                 C::transfer(c) => {
                     let caller = ctx.caller();
+                    PrefetchHint::send_slots(
+                        self.token_address(),
+                        &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
+                    );
                     logic.transfer(self, caller, c.to, c.amount, privileged)?;
                     true.abi_encode().into()
                 }
                 C::transferFrom(c) => {
                     let caller = ctx.caller();
+                    PrefetchHint::send_slots(
+                        self.token_address(),
+                        &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
+                    );
                     logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                     true.abi_encode().into()
                 }
@@ -212,12 +220,20 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 }
                 C::transferWithMemo(c) => {
                     let caller = ctx.caller();
+                    PrefetchHint::send_slots(
+                        self.token_address(),
+                        &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
+                    );
                     logic.transfer(self, caller, c.to, c.amount, privileged)?;
                     logic.emit_memo(self, caller, c.memo)?;
                     true.abi_encode().into()
                 }
                 C::transferFromWithMemo(c) => {
                     let caller = ctx.caller();
+                    PrefetchHint::send_slots(
+                        self.token_address(),
+                        &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
+                    );
                     logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                     logic.emit_memo(self, caller, c.memo)?;
                     true.abi_encode().into()

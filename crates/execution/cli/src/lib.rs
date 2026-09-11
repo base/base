@@ -43,7 +43,7 @@ use reth_node_metrics as _;
 use reth_rpc_server_types::{LenientRpcModuleValidator, RpcModuleValidator};
 pub use standard_node::{
     MeteringArgs, ResourceMeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs,
-    StandardBaseRethNode, StandardNodeArgs,
+    StandardBaseRethNode, StandardNodeArgs, StatePrefetchArgs,
 };
 mod upgrade_signal;
 pub use upgrade_signal::{
