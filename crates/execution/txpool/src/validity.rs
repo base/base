@@ -348,6 +348,26 @@ impl ValidityPredicate {
         }
         upper.and_then(|bound| u64::try_from(bound).ok())
     }
+
+    /// Stable-sorts a predicate batch into canonical evaluation order: timing
+    /// predicates ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) before state
+    /// predicates ([`Self::Balance`], [`Self::Storage`]). The batch is a pure
+    /// conjunction, so reordering only affects cost: a timing mismatch
+    /// short-circuits before any state read and parks under a context key that
+    /// per-transaction state changes never wake.
+    pub fn sort_batch(predicates: &mut [Self]) {
+        predicates.sort_by_key(Self::evaluation_rank);
+    }
+
+    /// Returns the canonical evaluation rank: block number, then flashblock
+    /// index, then state predicates.
+    const fn evaluation_rank(&self) -> u8 {
+        match self {
+            Self::BlockNumber { .. } => 0,
+            Self::FlashblockIndex { .. } => 1,
+            Self::Balance { .. } | Self::Storage { .. } => 2,
+        }
+    }
 }
 
 /// Deserializes a sequence of [`ValidityPredicate`] while rejecting the batch as
@@ -731,6 +751,81 @@ mod tests {
         let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(transaction.validity_predicates(), expected);
+    }
+
+    #[test]
+    fn sort_batch_orders_timing_predicates_before_state_predicates() {
+        let balance = |value: u64| ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::from(value),
+        };
+        let flashblock_index = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::LessThan,
+            value: U256::from(5),
+        };
+        let block_number = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(100),
+        };
+        let storage = ValidityPredicate::Storage {
+            address: Address::ZERO,
+            slot: U256::ZERO,
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        // Scrambled submission order.
+        let mut predicates = vec![
+            balance(1),
+            storage.clone(),
+            flashblock_index.clone(),
+            balance(2),
+            block_number.clone(),
+        ];
+
+        ValidityPredicate::sort_batch(&mut predicates);
+
+        // Timing predicates (block number, then flashblock index) lead; state
+        // predicates follow in stable submission order.
+        assert_eq!(predicates, [block_number, flashblock_index, balance(1), storage, balance(2)]);
+    }
+
+    #[test]
+    fn apply_stores_predicates_in_canonical_evaluation_order() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            input: Default::default(),
+            is_system_transaction: false,
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let state_predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let timing_predicate = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(100),
+        };
+        // Submitted state-first; stored timing-first.
+        let extension = TransactionValidity {
+            validity: vec![state_predicate.clone(), timing_predicate.clone()],
+        };
+
+        let transaction = extension.apply(transaction).unwrap();
+
+        assert_eq!(transaction.validity_predicates(), [timing_predicate, state_predicate]);
     }
 
     #[test]
