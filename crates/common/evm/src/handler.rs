@@ -1152,11 +1152,9 @@ mod tests {
                     ..Default::default()
                 });
             let mut evm = ctx.build_base();
-            let mut handler = BaseHandler::<
-                _,
-                EVMError<_, BaseTransactionError>,
-                EthFrame<EthInterpreter>,
-            >::new();
+            let mut handler =
+                BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new(
+                );
             let result = handler.run(&mut evm).unwrap();
             let output = result.output().cloned().unwrap_or_default();
             let child = Address::from_word(B256::from_slice(&output));
