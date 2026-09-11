@@ -2,8 +2,6 @@
 
 #[path = "common/balance.rs"]
 mod balance;
-#[path = "common/beryl.rs"]
-mod beryl;
 #[path = "common/cobalt.rs"]
 mod cobalt;
 mod common;
@@ -74,10 +72,10 @@ async fn send_b20_transfer(provider: &RootProvider<Base>) -> Result<BaseTransact
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse system test private key")?;
     let recipient = ANVIL_ACCOUNT_6.address;
-    beryl::wait_for_balance(provider, admin.address()).await?;
+    balance::wait_for_balance(provider, admin.address()).await?;
 
     let b20 = B20PrecompileClient::new(provider, &admin, common::L2_CHAIN_ID)
-        .with_receipt_timeout(beryl::TX_RECEIPT_TIMEOUT);
+        .with_receipt_timeout(balance::TX_RECEIPT_TIMEOUT);
     b20.activate_feature(ActivationFeature::B20Asset.id()).await?;
 
     let params = B20PrecompileClient::token_params(
@@ -88,7 +86,8 @@ async fn send_b20_transfer(provider: &RootProvider<Base>) -> Result<BaseTransact
         admin.address(),
     );
     let token = b20.create_token(B20Variant::Asset, params, B256::repeat_byte(0x21)).await?;
-    b20.wait_for_token_code(token, beryl::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL).await?;
+    b20.wait_for_token_code(token, balance::TX_RECEIPT_TIMEOUT, common::BLOCK_POLL_INTERVAL)
+        .await?;
 
     let receipt = b20
         .send_call_receipt(
