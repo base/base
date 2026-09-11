@@ -40,6 +40,7 @@ pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 
 const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
 const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
+const REVOCATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const DEREG_REASON_REVOKED: &str = "revoked_certificate";
 const DEREG_REASON_ORPHAN: &str = "orphan";
 const DEBUG_MODE_PCR0_HASH: B256 =
@@ -694,16 +695,25 @@ where
     /// This intentionally runs after its registration task is cancelled: a confirmed revocation
     /// must remove an existing signer even when its source becomes non-registerable.
     async fn deregister_revoked_signer(&self, signer: Address) {
-        let registered = self.registry.is_registered_signer(signer).await;
+        let registered = tokio::time::timeout(
+            REVOCATION_CLEANUP_TIMEOUT,
+            self.registry.is_registered_signer(signer),
+        )
+        .await;
         match registered {
-            Ok(false) => return,
-            Ok(true) => {}
+            Ok(Ok(false)) => return,
+            Ok(Ok(true)) => {}
             // Submit anyway. `deregisterSigner` is idempotent, and skipping it whenever the
             // registry read is the thing failing would leave a revoked signer valid onchain.
-            Err(error) => warn!(
+            Ok(Err(error)) => warn!(
                 error = %error,
                 signer = %signer,
                 "failed to read registration state for a revoked signer"
+            ),
+            Err(_) => warn!(
+                signer = %signer,
+                timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                "timed out reading registration state for a revoked signer"
             ),
         }
         self.submit_deregistration(signer, DEREG_REASON_REVOKED).await;
@@ -716,8 +726,10 @@ where
             to: Some(self.registry_address),
             ..Default::default()
         };
-        match self.tx_manager.send(candidate).await {
-            Ok(receipt) if receipt.inner.status() => {
+        match tokio::time::timeout(REVOCATION_CLEANUP_TIMEOUT, self.tx_manager.send(candidate))
+            .await
+        {
+            Ok(Ok(receipt)) if receipt.inner.status() => {
                 info!(
                     signer = %signer,
                     tx_hash = %receipt.transaction_hash,
@@ -726,7 +738,7 @@ where
                 );
                 RegistrarMetrics::deregistrations_total().increment(1);
             }
-            Ok(receipt) => {
+            Ok(Ok(receipt)) => {
                 warn!(
                     signer = %signer,
                     tx_hash = %receipt.transaction_hash,
@@ -735,8 +747,17 @@ where
                 );
                 RegistrarMetrics::processing_errors_total().increment(1);
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 warn!(error = %e, signer = %signer, reason, "failed to deregister signer");
+                RegistrarMetrics::processing_errors_total().increment(1);
+            }
+            Err(_) => {
+                warn!(
+                    signer = %signer,
+                    reason,
+                    timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                    "timed out deregistering signer"
+                );
                 RegistrarMetrics::processing_errors_total().increment(1);
             }
         }
@@ -1444,7 +1465,6 @@ mod tests {
         stall_get_registered: Arc<AtomicBool>,
         stall_is_registered: Arc<AtomicBool>,
         is_registered_started: Arc<Notify>,
-        resume_is_registered: Arc<Notify>,
     }
 
     #[async_trait]
@@ -1470,7 +1490,7 @@ mod tests {
         ) -> std::result::Result<bool, ContractError> {
             if self.stall_is_registered.load(Ordering::SeqCst) {
                 self.is_registered_started.notify_one();
-                self.resume_is_registered.notified().await;
+                std::future::pending::<()>().await;
             }
             Ok(self.chain.0.lock().unwrap().registered.contains(&signer))
         }
@@ -1586,6 +1606,8 @@ mod tests {
     #[derive(Clone, Debug)]
     struct MockTxManager {
         chain: MockChain,
+        stall_send: Arc<AtomicBool>,
+        send_started: Arc<Notify>,
     }
 
     impl TxManager for MockTxManager {
@@ -1595,6 +1617,10 @@ mod tests {
                 state.sent.push((candidate.to, candidate.tx_data.clone()));
                 state.outcomes.pop_front().unwrap_or(MockTxOutcome::Success)
             };
+            if self.stall_send.load(Ordering::SeqCst) {
+                self.send_started.notify_one();
+                std::future::pending::<()>().await;
+            }
             match outcome {
                 MockTxOutcome::Success => {
                     self.chain.apply(&candidate);
@@ -1721,10 +1747,13 @@ mod tests {
                 stall_get_registered: Arc::new(AtomicBool::new(false)),
                 stall_is_registered: Arc::new(AtomicBool::new(false)),
                 is_registered_started: Arc::new(Notify::new()),
-                resume_is_registered: Arc::new(Notify::new()),
             },
             MockCertManager { chain: chain.clone() },
-            MockTxManager { chain: chain.clone() },
+            MockTxManager {
+                chain: chain.clone(),
+                stall_send: Arc::new(AtomicBool::new(false)),
+                send_started: Arc::new(Notify::new()),
+            },
             crl_source,
             SignerManagerConfig {
                 registry_address: TEST_REGISTRY_ADDRESS,
@@ -1943,8 +1972,8 @@ mod tests {
         assert_eq!(call.signer, SIGNER_A);
     }
 
-    #[tokio::test]
-    async fn revoked_signer_is_deregistered_after_registration_task_cancellation() {
+    #[tokio::test(start_paused = true)]
+    async fn revoked_signer_cleanup_times_out_stalled_registry_read_after_cancellation() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -1964,11 +1993,43 @@ mod tests {
 
         manager.registry.is_registered_started.notified().await;
         cancel.cancel();
-        manager.registry.resume_is_registered.notify_one();
+        tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
+        tokio::task::yield_now().await;
 
+        assert!(task.is_finished(), "registration task should finish after cleanup timeout");
         let result = task.await.unwrap();
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn revoked_signer_cleanup_times_out_stalled_deregistration() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+        }
+        manager.tx_manager.stall_send.store(true, Ordering::SeqCst);
+        let cancel = CancellationToken::new();
+        let task_manager = Arc::clone(&manager);
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            task_manager
+                .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &task_cancel)
+                .await
+        });
+
+        manager.tx_manager.send_started.notified().await;
+        cancel.cancel();
+        tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
+        tokio::task::yield_now().await;
+
+        assert!(task.is_finished(), "registration task should finish after cleanup timeout");
+        let result = task.await.unwrap();
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
