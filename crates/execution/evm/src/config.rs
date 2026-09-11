@@ -12,6 +12,7 @@ use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
     BaseSpecId, BaseTransaction, BaseTxEnv,
 };
+use base_common_genesis::RuntimeUpgradeRegistry;
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
@@ -174,6 +175,10 @@ where
     }
 
     fn evm_env(&self, header: &Header) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+            self.chain_spec().chain().id(),
+            header.timestamp(),
+        );
         Ok(BaseEvmEnvBuilder::evm_env(header, self.chain_spec()))
     }
 
@@ -182,6 +187,10 @@ where
         parent: &Header,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+            self.chain_spec().chain().id(),
+            attributes.timestamp,
+        );
         let base_fee =
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
 
@@ -228,6 +237,10 @@ where
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+            self.chain_spec().chain().id(),
+            payload.payload.timestamp(),
+        );
         Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
     }
 
