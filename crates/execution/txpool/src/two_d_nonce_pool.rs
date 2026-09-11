@@ -254,7 +254,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             transaction.transaction_id = TransactionId::new(sender_id, transaction.nonce());
             let transaction = Arc::new(transaction);
             let replaced = if let Some(existing) = self.nonce_free.get(&replay_id) {
-                if existing.is_underpriced(&transaction, &self.price_bump_config) {
+                if existing.is_replacement_underpriced(&transaction, &self.price_bump_config) {
                     return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
                 }
                 Some(Arc::clone(existing))
@@ -310,7 +310,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
 
         let replaced: Option<Arc<ValidPoolTransaction<T>>> =
             if let Some(existing) = lane.transactions.get(&nonce) {
-                if existing.is_underpriced(&transaction, &self.price_bump_config) {
+                if existing.is_replacement_underpriced(&transaction, &self.price_bump_config) {
                     return Err(PoolError::new(hash, PoolErrorKind::ReplacementUnderpriced));
                 }
                 Some(Arc::clone(existing))
@@ -678,7 +678,7 @@ mod tests {
     use reth_transaction_pool::{PoolTransaction, PriceBumpConfig, Priority, TransactionOrigin};
 
     use super::*;
-    use crate::{BaseOrdering, BasePooledTransaction};
+    use crate::{BaseOrdering, BasePooledTransaction, ValidityOperator, ValidityPredicate};
 
     #[derive(Clone, Debug, Default)]
     struct CountingOrdering {
@@ -912,6 +912,30 @@ mod tests {
         let replacement = valid_pool_transaction(signed_nonce_free_tx(&signer, 1, 0, 1_250));
         assert!(pool.insert_validated(replacement, 0).unwrap().replaced.is_some());
         assert_eq!(pool.pending_and_queued_txn_count(), (2, 0));
+    }
+
+    #[test]
+    fn validity_transaction_replaces_with_only_a_higher_max_fee() {
+        let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
+        let signer = signer();
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let original = signed_nonce_free_tx(&signer, 1, 10, 100)
+            .with_validity_predicates(vec![predicate.clone()]);
+        let original = valid_pool_transaction(original);
+        let replacement =
+            signed_nonce_free_tx(&signer, 1, 0, 101).with_validity_predicates(vec![predicate]);
+
+        pool.insert_validated(original, 0).unwrap();
+        assert!(
+            pool.insert_validated(valid_pool_transaction(replacement), 0)
+                .unwrap()
+                .replaced
+                .is_some()
+        );
     }
 
     #[test]
