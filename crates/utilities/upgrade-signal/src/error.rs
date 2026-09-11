@@ -44,6 +44,27 @@ pub enum UpgradeSignalError {
         /// Node protocol version supported by this binary.
         node_protocol_version: String,
     },
+    /// A schedule change would alter the fork rules of L2 blocks the node has already processed.
+    ///
+    /// Applying it would silently reinterpret canonical history, so it is refused: the runtime
+    /// registry is consulted live for every fork check, including historical timestamps, so moving
+    /// or clearing an activation that has already elapsed changes the fork membership of blocks the
+    /// node has already built or validated.
+    #[error(
+        "upgrade signal for {upgrade_id} would retroactively change fork rules: activation moves from {current_activation} to {incoming_activation}, and the earliest affected timestamp {earliest_affected_timestamp} is not after the current time {now_secs}"
+    )]
+    RetroactiveScheduleChange {
+        /// Upgrade ID whose activation change reaches already-processed blocks.
+        upgrade_id: String,
+        /// Activation the node currently applies.
+        current_activation: String,
+        /// Activation the L1 schedule now announces.
+        incoming_activation: String,
+        /// Earliest L2 timestamp whose fork membership the change would flip.
+        earliest_affected_timestamp: u64,
+        /// Time the change was evaluated against.
+        now_secs: u64,
+    },
     /// The node halted (fail closed) because a scheduled upgrade it is too old to support is
     /// activating imminently; continuing would fork the node off the network.
     #[error(
@@ -87,6 +108,23 @@ impl UpgradeSignalError {
             upgrade_id,
             minimum_protocol_version: minimum_protocol_version.to_string(),
             node_protocol_version: node_protocol_version.to_string(),
+        }
+    }
+
+    /// Creates a retroactive schedule change error.
+    pub fn retroactive_schedule_change(
+        upgrade_id: String,
+        current_activation: impl ToString,
+        incoming_activation: impl ToString,
+        earliest_affected_timestamp: u64,
+        now_secs: u64,
+    ) -> Self {
+        Self::RetroactiveScheduleChange {
+            upgrade_id,
+            current_activation: current_activation.to_string(),
+            incoming_activation: incoming_activation.to_string(),
+            earliest_affected_timestamp,
+            now_secs,
         }
     }
 }
