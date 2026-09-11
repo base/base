@@ -127,7 +127,7 @@ impl NodeActor for UpgradeSignalMetricsActor {
         let cancellation = self.cancellation.clone();
         let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        self.record_processed_head_timestamp();
+        let mut waiting_for_head = self.record_processed_head_timestamp().is_none();
 
         loop {
             tokio::select! {
@@ -136,8 +136,11 @@ impl NodeActor for UpgradeSignalMetricsActor {
                     if result.is_err() {
                         return Ok(());
                     }
-                    self.record_processed_head_timestamp();
-                    continue;
+                    let head_available = self.record_processed_head_timestamp().is_some();
+                    if !waiting_for_head || !head_available {
+                        continue;
+                    }
+                    waiting_for_head = false;
                 }
                 _ = interval.tick() => {}
             }
@@ -168,5 +171,120 @@ impl NodeActor for UpgradeSignalMetricsActor {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{Address, B256, Bytes};
+    use alloy_rpc_types_eth::Block;
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
+    use base_consensus_engine::EngineSyncStateUpdate;
+    use base_protocol::{BlockInfo, L2BlockInfo};
+    use httpmock::prelude::*;
+
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    struct JsonRpcResponse<T> {
+        jsonrpc: &'static str,
+        id: u64,
+        result: T,
+    }
+
+    #[tokio::test]
+    async fn first_engine_head_retries_a_deferred_poll_immediately() {
+        let server = MockServer::start_async().await;
+        let mut block: Block = Block::default();
+        block.header.hash = B256::repeat_byte(1);
+        block.header.inner.number = 42;
+        server
+            .mock_async(move |when, then| {
+                when.method(POST).path("/").body_includes("eth_getBlockByNumber");
+                then.json_body_obj(&JsonRpcResponse { jsonrpc: "2.0", id: 0, result: block });
+            })
+            .await;
+
+        let mut schedule = vec![0_u8; 96];
+        schedule[31] = 32;
+        schedule[63] = 1;
+        let schedule_mock = server
+            .mock_async(move |when, then| {
+                when.method(POST).path("/").body_includes("26fadbe2");
+                then.json_body_obj(&JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id: 0,
+                    result: Bytes::from(schedule),
+                });
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/").body_includes("5c4d37d2");
+                then.json_body_obj(&JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id: 0,
+                    result: Bytes::from(vec![0_u8; 32]),
+                });
+            })
+            .await;
+
+        let chain_id = 9_100_100;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let config = UpgradeSignalConfig::new(Address::ZERO);
+        let reader = config.reader(server.url("/").parse().unwrap()).unwrap();
+        let refresher = UpgradeSignalRefresher::new(
+            config,
+            reader.clone(),
+            chain_id,
+            UpgradeSignalMetricLayer::Consensus,
+        );
+        let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
+        let cancellation = CancellationToken::new();
+        let actor = UpgradeSignalMetricsActor::new(
+            reader,
+            Duration::from_secs(60 * 60),
+            Some(refresher),
+            engine_state_rx,
+            cancellation.clone(),
+        );
+        let actor = tokio::spawn(actor.start(()));
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while schedule_mock.calls_async().await == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Regolith), None);
+
+        let mut engine_state = EngineState::default();
+        engine_state.sync_state = engine_state.sync_state.updated(EngineSyncStateUpdate {
+            unsafe_head: Some(L2BlockInfo {
+                block_info: BlockInfo {
+                    hash: B256::repeat_byte(2),
+                    timestamp: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        engine_state_tx.send(engine_state).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Regolith)
+                != Some(UpgradeActivation::Never)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        cancellation.cancel();
+        actor.await.unwrap().unwrap();
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 }

@@ -230,18 +230,16 @@ impl UpgradeSignalMonitor {
             return UpgradeSignalPollOutcome::Continue;
         }
 
-        let Some(l2_head_timestamp) = l2_head_timestamp() else {
-            return UpgradeSignalPollOutcome::Continue;
-        };
         self.apply_and_evaluate(
             refresher,
             &schedule,
             UpgradeSignalDefaults::now_secs(),
-            l2_head_timestamp,
+            l2_head_timestamp(),
         )
     }
 
-    /// Applies a schedule to the runtime registry, or decides the node must fail closed.
+    /// Validates a schedule, applies it when the L2 head is available, or decides the node must fail
+    /// closed.
     ///
     /// An apply performs no I/O and cannot flake: the L1 read is a separate, earlier step (whose
     /// failures return before this point), so every failure is a deterministic local validation
@@ -280,22 +278,35 @@ impl UpgradeSignalMonitor {
         refresher: &UpgradeSignalRefresher,
         schedule: &UpgradeSignalSchedule,
         now_secs: u64,
-        l2_head_timestamp: u64,
+        l2_head_timestamp: Option<u64>,
     ) -> UpgradeSignalPollOutcome {
-        let apply_error = match refresher.apply(schedule, l2_head_timestamp) {
-            Ok(summary) => {
-                // The registry rejects a schedule read from an older L1 block than the one it has
-                // already committed (a lower-block reorg on a non-finalized tag), returning `Ok`
-                // with `committed == false` and leaving the registry untouched. Only record success
-                // when the registry actually committed the schedule; a non-committed apply changed
-                // nothing, so the schedule stays offered for a newer-block re-read.
-                if summary.committed {
-                    self.last_apply_failure = None;
-                    self.validated_protocol_versions = Self::active_protocol_versions(schedule);
-                }
-                return UpgradeSignalPollOutcome::Continue;
+        let apply_error = match refresher.config.validate_schedule_protocol_versions(schedule) {
+            Err(apply_error) => {
+                UpgradeSignalMetrics::record_apply_failure(refresher.metrics_layer, schedule);
+                apply_error
             }
-            Err(apply_error) => apply_error,
+            Ok(()) => {
+                let Some(l2_head_timestamp) = l2_head_timestamp else {
+                    return UpgradeSignalPollOutcome::Continue;
+                };
+                match refresher.apply(schedule, l2_head_timestamp) {
+                    Ok(summary) => {
+                        // The registry rejects a schedule read from an older L1 block than the one
+                        // it has already committed (a lower-block reorg on a non-finalized tag),
+                        // returning `Ok` with `committed == false` and leaving the registry
+                        // untouched. Only record success when the registry actually committed the
+                        // schedule; a non-committed apply changed nothing, so the schedule stays
+                        // offered for a newer-block re-read.
+                        if summary.committed {
+                            self.last_apply_failure = None;
+                            self.validated_protocol_versions =
+                                Self::active_protocol_versions(schedule);
+                        }
+                        return UpgradeSignalPollOutcome::Continue;
+                    }
+                    Err(apply_error) => apply_error,
+                }
+            }
         };
 
         let first_occurrence =
@@ -631,7 +642,7 @@ mod tests {
         // A subsequent successful apply lands the schedule in the registry and stops the retries.
         let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &schedule, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &schedule, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert!(!monitor.schedule_needs_apply(chain_id, &schedule));
@@ -664,7 +675,7 @@ mod tests {
         let refresher = refresher(chain_id, UpgradeSignalDefaults::node_protocol_version());
         monitor.update_schedule(schedule.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &schedule, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &schedule, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
 
@@ -713,7 +724,7 @@ mod tests {
 
         let mut monitor = monitor();
         monitor.update_schedule(schedule.clone());
-        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, 0, 0);
+        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, 0, Some(0));
 
         assert_eq!(outcome, UpgradeSignalPollOutcome::Continue);
         assert!(!monitor.schedule_needs_apply(chain_id, &schedule));
@@ -746,7 +757,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(full.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &full, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &full, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert_eq!(
@@ -765,7 +776,7 @@ mod tests {
 
         // Applying the shrunk schedule trims the removed upgrade out of the registry.
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &shrunk, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &shrunk, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert_eq!(
@@ -801,7 +812,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(committed.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &committed, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &committed, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
 
@@ -810,7 +821,7 @@ mod tests {
         let stale = UpgradeSignalSchedule::new(99, vec![azul(50)]);
         monitor.update_schedule(stale.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &stale, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &stale, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert_eq!(
@@ -862,7 +873,7 @@ mod tests {
 
         // Applying the shrunk schedule trims Beryl out of the registry.
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &shrunk, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &shrunk, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert_eq!(RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Beryl), None);
@@ -891,7 +902,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(full.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &full, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &full, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
 
@@ -918,7 +929,7 @@ mod tests {
 
         // Applying restores the registry to exactly the schedule.
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &returned, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &returned, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert_eq!(
@@ -950,7 +961,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(first.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &first, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &first, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert!(!monitor.schedule_needs_apply(chain_id, &first));
@@ -979,7 +990,7 @@ mod tests {
         // Re-applying validates and commits the new minimum, advancing the baseline so the gate
         // settles once the registry and the validated version both reflect the bump.
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &bumped, 0, 0),
+            monitor.apply_and_evaluate(&refresher, &bumped, 0, Some(0)),
             UpgradeSignalPollOutcome::Continue
         );
         assert!(!monitor.schedule_needs_apply(chain_id, &bumped));
@@ -1004,7 +1015,7 @@ mod tests {
         monitor.update_schedule(supported.clone());
         let now = activation - refresher.config.halt_lead_time().as_secs() + 1;
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &supported, now, now),
+            monitor.apply_and_evaluate(&refresher, &supported, now, Some(now)),
             UpgradeSignalPollOutcome::Continue
         );
 
@@ -1028,7 +1039,7 @@ mod tests {
         // With the activation inside the halt lead time and this node too old, the re-validation the
         // gate forces fails the node closed rather than letting it fork off at activation.
         assert!(matches!(
-            monitor.apply_and_evaluate(&refresher, &unsupportable, now, now),
+            monitor.apply_and_evaluate(&refresher, &unsupportable, now, Some(now)),
             UpgradeSignalPollOutcome::HaltNode { upgrade_id: BaseUpgrade::Azul, .. }
         ));
 
@@ -1048,7 +1059,7 @@ mod tests {
 
         let mut monitor = monitor();
         monitor.update_schedule(schedule.clone());
-        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, 0, 0);
+        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, 0, Some(0));
 
         // Not yet fatal: the node keeps running, nothing is committed, and the schedule stays
         // offered (registry unchanged) so a later poll re-evaluates it.
@@ -1060,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_and_evaluate_halts_when_unsupportable_upgrade_is_within_lead_time() {
+    fn apply_and_evaluate_halts_without_a_head_when_upgrade_is_within_lead_time() {
         let chain_id = 9_100_012;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
 
@@ -1074,7 +1085,7 @@ mod tests {
         monitor.update_schedule(schedule.clone());
         // "Now" is inside the halt lead time before activation.
         let now = activation - refresher.config.halt_lead_time().as_secs() + 1;
-        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, now, now);
+        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, now, None);
 
         assert!(matches!(
             outcome,
@@ -1097,7 +1108,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(schedule.clone());
         // Even with "now" well past the activation, a malformed signal never fails the node closed.
-        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, u64::MAX, u64::MAX);
+        let outcome = monitor.apply_and_evaluate(&refresher, &schedule, u64::MAX, Some(u64::MAX));
 
         assert_eq!(outcome, UpgradeSignalPollOutcome::Continue);
 
@@ -1116,7 +1127,7 @@ mod tests {
         let mut monitor = monitor();
         monitor.update_schedule(committed.clone());
         assert_eq!(
-            monitor.apply_and_evaluate(&refresher, &committed, 500, 500),
+            monitor.apply_and_evaluate(&refresher, &committed, 500, Some(500)),
             UpgradeSignalPollOutcome::Continue
         );
 
@@ -1125,7 +1136,7 @@ mod tests {
         // it would reinterpret every block since 1_000, so the node keeps Azul@1_000 and alarms.
         let cleared = versioned_schedule(0, version);
         monitor.update_schedule(cleared.clone());
-        let outcome = monitor.apply_and_evaluate(&refresher, &cleared, 5_000, 5_000);
+        let outcome = monitor.apply_and_evaluate(&refresher, &cleared, 5_000, Some(5_000));
 
         assert_eq!(outcome, UpgradeSignalPollOutcome::Continue);
         assert_eq!(
