@@ -104,7 +104,7 @@ pub struct SnapshotterConfig {
     /// Maximum number of concurrently uploading S3 parts across all streamed archives.
     ///
     /// This is intentionally environment-only (`SNAPSHOTTER_MAX_STREAMING_PART_UPLOADS`). With
-    /// 128 MiB parts, the default of 64 bounds queued/in-flight compressed parts to roughly 8 GiB.
+    /// 128 `MiB` parts, the default of 64 bounds queued/in-flight compressed parts to roughly 8 `GiB`.
     #[arg(env = "SNAPSHOTTER_MAX_STREAMING_PART_UPLOADS", default_value = "64")]
     pub max_streaming_part_uploads: NonZeroUsize,
 

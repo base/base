@@ -248,9 +248,9 @@ impl StreamingMultipartUpload {
     fn send_part(&self, bytes: Vec<u8>) -> io::Result<()> {
         debug_assert!(!bytes.is_empty());
         let permit =
-            self.runtime.block_on(self.part_permits.clone().acquire_owned()).map_err(|_| {
-                io::Error::new(io::ErrorKind::BrokenPipe, "streaming part limiter closed")
-            })?;
+            self.runtime.block_on(Arc::clone(&self.part_permits).acquire_owned()).map_err(
+                |_| io::Error::new(io::ErrorKind::BrokenPipe, "streaming part limiter closed"),
+            )?;
         self.sender
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "streaming upload is closed"))?
