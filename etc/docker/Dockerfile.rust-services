@@ -72,8 +72,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 FROM rust-deps AS source
 COPY --from=workspace-source /app/ /app/
 
-# Cargo uses mtimes for freshness, but Docker may restore older source timestamps.
-# Compare content against the target cache so changed and reverted files rebuild.
 FROM source AS base-image-builder
 ARG PROFILE=release
 ARG CARGO_FEATURES=""
@@ -81,19 +79,13 @@ ARG SCCACHE_CACHE_ID=rust-services-sccache
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=${SCCACHE_CACHE_ID},target=/sccache,sharing=locked \
-    --mount=type=cache,id=${SCCACHE_CACHE_ID}-${PROFILE}-target,target=/app/target,from=rust-deps,source=/app/target,sharing=locked \
     set -eux; \
     if [ "$PROFILE" = "dev" ]; then export CARGO_PROFILE_DEV_DEBUG=0; fi; \
-    find . -path ./target -prune -o -type f -exec sha256sum --zero {} + | LC_ALL=C sort -z > /tmp/source-checksums; \
-    touch /app/target/.source-checksums-v1; \
-    LC_ALL=C comm -z -13 /app/target/.source-checksums-v1 /tmp/source-checksums | \
-      cut -z -c67- | xargs -0 -r touch --; \
     cargo build --profile "$PROFILE" ${CARGO_FEATURES} \
       --package base --bin base \
       --package base-reth-node --bin base-reth-node \
       --package base-consensus --bin base-consensus \
       --package base-snapshotter-bin --bin snapshotter; \
-    mv /tmp/source-checksums /app/target/.source-checksums-v1; \
     profile_dir="$([ "$PROFILE" = "dev" ] && echo debug || echo "$PROFILE")"; \
     cp "/app/target/${profile_dir}/base" /app/base; \
     cp "/app/target/${profile_dir}/base-reth-node" /app/base-reth-node; \
