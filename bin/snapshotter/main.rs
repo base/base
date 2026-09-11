@@ -4,19 +4,39 @@ use anyhow::Result;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
+use base_cli_utils::LogConfig;
 use base_snapshotter::{
     DockerContainerManager, RpcTipChecker, S3ConfigType, SnapshotUploader, Snapshotter,
     SnapshotterConfig,
 };
 use clap::Parser;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
+
+base_cli_utils::define_log_args!("SNAPSHOTTER");
+
+/// Snapshotter command-line arguments.
+#[derive(Debug, Parser)]
+#[command(
+    name = "base-snapshotter",
+    about = "Snapshot and upload reth node data to S3-compatible storage"
+)]
+struct Cli {
+    /// Logging configuration.
+    #[command(flatten)]
+    logging: LogArgs,
+
+    /// Snapshot configuration.
+    #[command(flatten)]
+    snapshotter: SnapshotterConfig,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
-
-    let config = SnapshotterConfig::parse();
+    let cli = Cli::parse();
+    LogConfig::from(cli.logging)
+        .init_tracing_subscriber()
+        .map_err(|error| anyhow::anyhow!("failed to initialize tracing: {error}"))?;
+    let config = cli.snapshotter;
 
     if let Some(threads) = config.snapshot_threads
         && let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global()
@@ -71,5 +91,39 @@ async fn create_s3_client(config: &SnapshotterConfig) -> Result<S3Client> {
             let sdk_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
             Ok(S3Client::new(&sdk_config))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+
+    use base_cli_utils::LogFormat;
+    use clap::{CommandFactory, Parser};
+
+    use super::Cli;
+
+    #[test]
+    fn supports_shared_log_format_configuration() {
+        let cli = Cli::try_parse_from([
+            "base-snapshotter",
+            "--logs.stdout.format=json",
+            "--container-name=execution",
+            "--consensus-container-name=consensus",
+            "--el-rpc-url=http://execution:8545",
+            "--source-datadir=/data",
+            "--output-dir=/snapshots",
+            "--bucket=snapshots",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.logging.stdout_format, LogFormat::Json);
+
+        let command = Cli::command();
+        let format = command
+            .get_arguments()
+            .find(|arg| arg.get_long() == Some("logs.stdout.format"))
+            .unwrap();
+        assert_eq!(format.get_env(), Some(OsStr::new("SNAPSHOTTER_LOG_FORMAT")));
     }
 }
