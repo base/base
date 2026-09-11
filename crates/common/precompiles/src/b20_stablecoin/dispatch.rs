@@ -197,19 +197,17 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 // --- Mutating operations: routed to the active version's logic ---
                 C::transfer(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send_slots(
-                        self.token_address(),
-                        &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
-                    );
+                    PrefetchHint::send_slots_with(self.token_address(), || {
+                        B20CoreStorage::transfer_hint_slots(caller, c.to, None)
+                    });
                     logic.transfer(self, caller, c.to, c.amount, privileged)?;
                     true.abi_encode().into()
                 }
                 C::transferFrom(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send_slots(
-                        self.token_address(),
-                        &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
-                    );
+                    PrefetchHint::send_slots_with(self.token_address(), || {
+                        B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller))
+                    });
                     logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                     true.abi_encode().into()
                 }
@@ -220,20 +218,18 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> B20StablecoinToken<S, A> {
                 }
                 C::transferWithMemo(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send_slots(
-                        self.token_address(),
-                        &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
-                    );
+                    PrefetchHint::send_slots_with(self.token_address(), || {
+                        B20CoreStorage::transfer_hint_slots(caller, c.to, None)
+                    });
                     logic.transfer(self, caller, c.to, c.amount, privileged)?;
                     logic.emit_memo(self, caller, c.memo)?;
                     true.abi_encode().into()
                 }
                 C::transferFromWithMemo(c) => {
                     let caller = ctx.caller();
-                    PrefetchHint::send_slots(
-                        self.token_address(),
-                        &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
-                    );
+                    PrefetchHint::send_slots_with(self.token_address(), || {
+                        B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller))
+                    });
                     logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                     logic.emit_memo(self, caller, c.memo)?;
                     true.abi_encode().into()
