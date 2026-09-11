@@ -11,6 +11,7 @@ use testcontainers::{
 
 use super::config::L1ContainerConfig;
 use crate::{
+    config::DEPLOYER,
     containers::{L1_BEACON_HTTP_PORT, L1_BEACON_NAME, L1_VALIDATOR_NAME},
     network::{ensure_network_exists, ensure_network_exists_with_name, network_name},
     unique_name,
@@ -127,7 +128,8 @@ impl LighthouseValidatorContainer {
         }
 
         let command = validator_command(beacon_endpoint.as_ref());
-        let image = lighthouse_image();
+        let image = lighthouse_image()
+            .with_wait_for(WaitFor::message_on_stdout("Block production service started"));
 
         let name = if config.use_stable_names {
             L1_VALIDATOR_NAME.to_string()
@@ -190,6 +192,7 @@ fn validator_command(beacon_endpoint: &str) -> Vec<String> {
         format!("--testnet-dir={LIGHTHOUSE_TESTNET_DIR}"),
         format!("--datadir={LIGHTHOUSE_VALIDATOR_DATA_DIR}"),
         format!("--beacon-nodes={beacon_endpoint}"),
+        format!("--suggested-fee-recipient={:#x}", DEPLOYER.address),
         "--init-slashing-protection".to_string(),
     ]
 }

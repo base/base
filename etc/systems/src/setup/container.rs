@@ -150,6 +150,10 @@ pub struct L1GenesisOutput {
 }
 
 impl L1GenesisOutput {
+    /// Reuses generated L1 files rooted at `output_dir`.
+    pub fn from_output_dir(output_dir: impl Into<PathBuf>) -> Self {
+        Self { output_dir: output_dir.into() }
+    }
     /// Returns the path to the EL genesis JSON file.
     pub fn el_genesis_path(&self) -> PathBuf {
         self.output_dir.join("el/genesis.json")
@@ -198,6 +202,10 @@ pub struct L2DeploymentOutput {
 }
 
 impl L2DeploymentOutput {
+    /// Reuses generated L2 deployment files rooted at `output_dir`.
+    pub fn from_output_dir(output_dir: impl Into<PathBuf>) -> Self {
+        Self { output_dir: output_dir.into() }
+    }
     /// Returns the path to the L2 genesis JSON file.
     pub fn genesis_path(&self) -> PathBuf {
         self.output_dir.join("l2/genesis.json")

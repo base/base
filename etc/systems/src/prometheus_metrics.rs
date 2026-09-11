@@ -348,17 +348,19 @@ mod tests {
     #[test]
     fn computes_labeled_histogram_averages() {
         let previous = PrometheusSnapshot::parse(
-            "# TYPE build_duration histogram\n\\
-             build_duration_sum{stage=\"execution\"} 4\n\\
-             build_duration_count{stage=\"execution\"} 2\n",
+            r#"# TYPE build_duration histogram
+build_duration_sum{stage="execution"} 4
+build_duration_count{stage="execution"} 2
+"#,
         );
         let current = PrometheusSnapshot::parse(
-            "# TYPE build_duration histogram\n\\
-             build_duration_sum{stage=\"execution\"} 10\n\\
-             build_duration_count{stage=\"execution\"} 4\n",
+            r#"# TYPE build_duration histogram
+build_duration_sum{stage="execution"} 10
+build_duration_count{stage="execution"} 4
+"#,
         );
         let delta = current.delta(&previous);
-        assert_eq!(delta["build_duration_avg_stage_execution"], 3.0);
+        assert_eq!(delta["build_duration_stage_execution_avg"], 3.0);
     }
 
     #[test]

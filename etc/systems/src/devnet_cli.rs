@@ -8,7 +8,7 @@ use eyre::{Result, WrapErr};
 use serde::Serialize;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
+    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead, SharedL1,
     SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
@@ -26,6 +26,19 @@ pub struct DevnetCli {
 pub enum DevnetCommand {
     /// Continue Base snapshot datadirs without an L1.
     Snapshot(SnapshotArgs),
+    /// Start a CI-scoped shared L1 and write its runtime manifest.
+    SharedL1(SharedL1Args),
+}
+
+/// Arguments for a CI-scoped shared L1 fixture.
+#[derive(Debug, Args)]
+pub struct SharedL1Args {
+    /// File written after the shared L1 is ready for consumers.
+    #[arg(long)]
+    pub runtime_file: PathBuf,
+    /// Docker network shared with live L2 deployments.
+    #[arg(long)]
+    pub network_name: String,
 }
 
 /// Arguments for an L1-free Base snapshot network.
@@ -95,7 +108,19 @@ impl DevnetCli {
     pub async fn run(self) -> Result<()> {
         match self.command {
             DevnetCommand::Snapshot(args) => args.run().await,
+            DevnetCommand::SharedL1(args) => args.run().await,
         }
+    }
+}
+
+impl SharedL1Args {
+    /// Starts the fixture, publishes its manifest, and waits for shutdown.
+    pub async fn run(self) -> Result<()> {
+        let stack = SharedL1::start(self.network_name).await?;
+        stack.runtime().write(&self.runtime_file)?;
+        println!("shared L1 ready: {}", self.runtime_file.display());
+        tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
+        stack.shutdown().await
     }
 }
 
@@ -190,7 +215,9 @@ mod tests {
         ])
         .unwrap();
 
-        let DevnetCommand::Snapshot(args) = cli.command;
+        let DevnetCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot command")
+        };
         assert_eq!(args.chain, "sepolia");
         assert_eq!(args.builder_datadir.to_str(), Some("/tmp/builder"));
         assert!(args.prefund_address.is_some());

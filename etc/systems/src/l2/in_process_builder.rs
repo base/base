@@ -29,11 +29,12 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
+use super::TestNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
@@ -136,7 +137,7 @@ impl InProcessBuilder {
             .wrap_err("Failed to write JWT secret")?;
 
         let runtime = RuntimeBuilder::new(
-            RuntimeConfig::default()
+            TestNodeRuntime::config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;

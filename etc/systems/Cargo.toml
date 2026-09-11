@@ -52,7 +52,7 @@ base-common-chains.workspace = true
 
 # reth
 reth-db.workspace = true
-reth-tasks.workspace = true
+reth-tasks = { workspace = true, features = ["rayon"] }
 reth-provider.workspace = true
 reth-node-core.workspace = true
 base-node-core.workspace = true

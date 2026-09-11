@@ -33,6 +33,7 @@ base-builder-metering.workspace = true
 base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
+base-shadow-indexer.workspace = true
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }

@@ -13,7 +13,9 @@
 use std::{
     collections::HashMap,
     future::Future,
+    io,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -24,8 +26,13 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use base_reth_cli::{ChunkFilename, ComponentManifest, SnapshotManifest, SnapshotManifestExt};
+use bytes::Bytes;
 use futures::stream::{self, StreamExt, TryStreamExt};
-use tokio::{sync::Semaphore, time::sleep};
+use tokio::{
+    sync::{Semaphore, mpsc},
+    task::JoinHandle,
+    time::sleep,
+};
 use tracing::{debug, error, info, warn};
 
 use crate::progress::{UploadProgress, UploadStage};
@@ -33,10 +40,7 @@ use crate::progress::{UploadProgress, UploadStage};
 /// Maximum number of concurrent file uploads.
 const MAX_CONCURRENT_FILE_UPLOADS: usize = 10;
 
-/// Maximum number of multipart upload parts in flight across all files.
-///
-/// This matches the previous worst case of ten files with ten parts each, while allowing a
-/// smaller number of remaining files to use the available request capacity.
+/// Maximum number of multipart upload parts in flight across all uploads.
 const MAX_CONCURRENT_MULTIPART_PARTS: usize = 100;
 
 /// Files larger than this threshold use multipart upload.
@@ -45,6 +49,22 @@ const MULTIPART_THRESHOLD: u64 = 100 * 1024 * 1024;
 
 /// Part size for multipart uploads (100 `MiB`).
 const MULTIPART_PART_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Part size used for unknown-length streamed archives.
+///
+/// S3 limits a multipart object to 10,000 parts and 5 `TiB`. 640 `MiB` permits an archive as large
+/// as the S3 object limit while leaving headroom below the part-count limit. This is deliberately
+/// separate from the smaller file-backed upload part size: a file's total size is known before
+/// upload, while a zstd stream's final compressed size is not.
+const STREAMING_MULTIPART_PART_SIZE: usize = 640 * 1024 * 1024;
+
+/// Number of complete multipart parts allowed to wait for upload per archive stream.
+///
+/// A stream producer also holds its current part while it is being filled. With the part size
+/// above, a value of one bounds a single archive stream to roughly 1.25 `GiB` of compressed output
+/// in memory (plus SDK request overhead), while still allowing the producer and uploader to run
+/// concurrently.
+const STREAMING_MULTIPART_CHANNEL_CAPACITY: usize = 1;
 
 /// Base delay between upload retries. Backoff is linear to keep behavior simple and predictable.
 const UPLOAD_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -119,18 +139,168 @@ impl UploadStrategy {
 }
 
 /// Uploads snapshot artifacts to an S3-compatible store (R2, `MinIO`, etc.).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SnapshotUploader {
     client: S3Client,
     bucket: String,
     prefix: String,
     public_base_url: Option<String>,
-    multipart_part_permits: Semaphore,
+    multipart_part_permits: Arc<Semaphore>,
+}
+
+/// A synchronous [`io::Write`] sink backed by an asynchronous S3 multipart upload.
+///
+/// Snapshot archive generation is synchronous (tar and zstd write through `io::Write`), whereas
+/// the AWS SDK is asynchronous. This type bridges those models with a bounded channel: complete
+/// 640 `MiB` parts are handed to an async task, and the synchronous producer blocks when that task
+/// has not consumed the previous part. Consequently, archive bytes are never staged in a local
+/// file and memory remains bounded per active archive.
+///
+/// Call [`Self::finish`] only after the archive writer has been finalized (for zstd, after
+/// `Encoder::finish`). Then call [`Self::complete`] to wait for S3 to complete the multipart
+/// upload. Dropping this value without finishing closes the input channel, causing the background
+/// task to best-effort abort the multipart upload rather than publishing a truncated archive.
+#[derive(Debug)]
+pub struct StreamingMultipartUpload {
+    key: String,
+    sender: Option<mpsc::Sender<StreamingUploadMessage>>,
+    buffered: Vec<u8>,
+    bytes_written: u64,
+    finished: bool,
+    task: Option<JoinHandle<Result<u64>>>,
+}
+
+#[derive(Debug)]
+enum StreamingUploadMessage {
+    Part(Vec<u8>),
+    Finish,
+}
+
+impl StreamingMultipartUpload {
+    /// Returns the destination object key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the number of compressed bytes accepted from the archive writer so far.
+    pub const fn bytes_written(&self) -> u64 {
+        self.bytes_written
+    }
+
+    /// Flushes the final (possibly smaller than 5 `MiB`) multipart part and marks the archive input
+    /// complete. The final part is legal because all preceding parts are exactly 640 `MiB`.
+    ///
+    /// This does not wait for the remote object to become visible; use [`Self::complete`] for
+    /// that. It is idempotent so cleanup paths can safely call it after a successful finish.
+    pub fn finish(&mut self) -> io::Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+
+        if !self.buffered.is_empty() {
+            let final_part = std::mem::take(&mut self.buffered);
+            self.send_part(final_part)?;
+        }
+
+        self.sender
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "streaming upload is closed"))?
+            .blocking_send(StreamingUploadMessage::Finish)
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "streaming multipart uploader stopped before archive finalization",
+                )
+            })?;
+        self.sender.take();
+        self.finished = true;
+        Ok(())
+    }
+
+    /// Waits for all buffered parts to upload and for S3 to commit the multipart object.
+    ///
+    /// The archive must have been finalized first with [`Self::finish`]. If generation fails,
+    /// drop the value instead; its background task aborts the incomplete multipart upload.
+    pub async fn complete(mut self) -> Result<u64> {
+        if !self.finished {
+            bail!(
+                "streaming multipart upload for {} was not finalized; call finish after the zstd encoder finishes",
+                self.key
+            );
+        }
+        self.task
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("streaming multipart upload task is unavailable"))?
+            .await
+            .context("streaming multipart upload task panicked")?
+    }
+
+    fn send_part(&self, part: Vec<u8>) -> io::Result<()> {
+        debug_assert!(!part.is_empty());
+        self.sender
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "streaming upload is closed"))?
+            .blocking_send(StreamingUploadMessage::Part(part))
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "streaming multipart uploader stopped while writing archive",
+                )
+            })
+    }
+}
+
+impl Drop for StreamingMultipartUpload {
+    fn drop(&mut self) {
+        if !self.finished {
+            warn!(
+                key = %self.key,
+                bytes_written = self.bytes_written,
+                "dropping unfinished streaming multipart upload; background task will abort it"
+            );
+        }
+    }
+}
+
+impl io::Write for StreamingMultipartUpload {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        if self.finished {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "cannot write after streaming multipart upload has finished",
+            ));
+        }
+
+        let mut remaining = input;
+        while !remaining.is_empty() {
+            let available = STREAMING_MULTIPART_PART_SIZE - self.buffered.len();
+            let take = available.min(remaining.len());
+            self.buffered.extend_from_slice(&remaining[..take]);
+            remaining = &remaining[take..];
+
+            if self.buffered.len() == STREAMING_MULTIPART_PART_SIZE {
+                let full_part = std::mem::replace(
+                    &mut self.buffered,
+                    Vec::with_capacity(STREAMING_MULTIPART_PART_SIZE),
+                );
+                self.send_part(full_part)?;
+            }
+        }
+
+        self.bytes_written = self.bytes_written.saturating_add(input.len() as u64);
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // zstd may call flush while it is still writing its frame. A multipart part smaller than
+        // 5 MiB is only valid as the final part, so only `finish` may flush `buffered`.
+        Ok(())
+    }
 }
 
 impl SnapshotUploader {
     /// Creates a new uploader.
-    pub const fn new(
+    pub fn new(
         client: S3Client,
         bucket: String,
         prefix: String,
@@ -141,7 +311,276 @@ impl SnapshotUploader {
             bucket,
             prefix,
             public_base_url,
-            multipart_part_permits: Semaphore::const_new(MAX_CONCURRENT_MULTIPART_PARTS),
+            multipart_part_permits: Arc::new(Semaphore::new(MAX_CONCURRENT_MULTIPART_PARTS)),
+        }
+    }
+
+    /// Starts a multipart upload that accepts archive bytes through a synchronous
+    /// [`io::Write`] implementation.
+    ///
+    /// This is intended for archive generators such as Reth's snapshot-manifest command, which
+    /// synchronously write a tar/zstd stream. The caller must invoke
+    /// [`StreamingMultipartUpload::finish`] *after* the zstd encoder has emitted its frame
+    /// trailer, then await [`StreamingMultipartUpload::complete`] before publishing a manifest.
+    ///
+    /// The key is deliberately a complete object key rather than a filename. The caller owns the
+    /// upload-plan decision (timestamped run directory versus immutable `static_files/` object)
+    /// before archive generation begins.
+    pub async fn start_streaming_multipart_upload(
+        &self,
+        key: impl Into<String>,
+    ) -> Result<StreamingMultipartUpload> {
+        let key = key.into();
+        let upload_id = self.create_streaming_multipart_upload(&key).await?;
+        let (sender, receiver) = mpsc::channel(STREAMING_MULTIPART_CHANNEL_CAPACITY);
+        let task_uploader = self.clone();
+        let task_key = key.clone();
+        let task = tokio::spawn(async move {
+            task_uploader.consume_streaming_multipart_upload(task_key, upload_id, receiver).await
+        });
+
+        debug!(key = %key, "started streaming multipart upload");
+        Ok(StreamingMultipartUpload {
+            key,
+            sender: Some(sender),
+            buffered: Vec::with_capacity(STREAMING_MULTIPART_PART_SIZE),
+            bytes_written: 0,
+            finished: false,
+            task: Some(task),
+        })
+    }
+
+    async fn create_streaming_multipart_upload(&self, key: &str) -> Result<String> {
+        let response = retry_upload(
+            || async {
+                self.client
+                    .create_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .send()
+                    .await
+                    .map_err(|error| UploadAttemptError::retry(error.into()))
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "streaming multipart upload creation failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, attempt, "streaming multipart upload creation succeeded after retrying");
+            },
+        )
+        .await?;
+
+        response
+            .upload_id()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("no upload_id returned for streaming upload {key}"))
+    }
+
+    /// Receives fully-owned multipart buffers and publishes the object only after receiving the
+    /// explicit `Finish` signal. A closed channel is an aborted archive generation, not a valid
+    /// end-of-file: that distinction prevents a tar/zstd stream that failed before `finish` from
+    /// being exposed as a completed S3 object.
+    async fn consume_streaming_multipart_upload(
+        &self,
+        key: String,
+        upload_id: String,
+        mut receiver: mpsc::Receiver<StreamingUploadMessage>,
+    ) -> Result<u64> {
+        let result = async {
+            let mut completed_parts = Vec::new();
+            let mut bytes_uploaded = 0u64;
+            let mut part_number = 1i32;
+            let mut received_finish = false;
+
+            while let Some(message) = receiver.recv().await {
+                match message {
+                    StreamingUploadMessage::Part(part) => {
+                        if part_number > 10_000 {
+                            bail!("streaming multipart upload for {key} exceeds S3's 10,000-part limit");
+                        }
+                        let part_len = u64::try_from(part.len())?;
+                        let completed = self
+                            .upload_streaming_part(&key, &upload_id, part_number, part)
+                            .await?;
+                        completed_parts.push(completed);
+                        bytes_uploaded = bytes_uploaded.saturating_add(part_len);
+                        part_number += 1;
+                    }
+                    StreamingUploadMessage::Finish => {
+                        received_finish = true;
+                        break;
+                    }
+                }
+            }
+
+            if !received_finish {
+                bail!("streaming archive writer for {key} was dropped before it finalized the zstd stream");
+            }
+            if completed_parts.is_empty() {
+                bail!("streaming multipart upload for {key} contained no archive bytes");
+            }
+
+            self.complete_streaming_multipart_upload(
+                &key,
+                &upload_id,
+                bytes_uploaded,
+                completed_parts,
+            )
+            .await?;
+            Ok(bytes_uploaded)
+        }
+        .await;
+
+        match result {
+            Ok(bytes_uploaded) => Ok(bytes_uploaded),
+            Err(error) => {
+                self.abort_streaming_multipart_upload(&key, &upload_id).await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn upload_streaming_part(
+        &self,
+        key: &str,
+        upload_id: &str,
+        part_number: i32,
+        bytes: Vec<u8>,
+    ) -> Result<CompletedPart> {
+        let bytes = Bytes::from(bytes);
+        let length = bytes.len();
+        retry_upload(
+            || async {
+                let _permit = self
+                    .multipart_part_permits
+                    .acquire()
+                    .await
+                    .map_err(|error| UploadAttemptError::fatal(error.into()))?;
+                let upload_resp = self
+                    .client
+                    .upload_part()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .part_number(part_number)
+                    .body(ByteStream::from(bytes.clone()))
+                    .send()
+                    .await
+                    .map_err(|error| UploadAttemptError::retry(error.into()))?;
+
+                let e_tag = upload_resp
+                    .e_tag()
+                    .ok_or_else(|| anyhow::anyhow!("no ETag for streamed part {part_number} of {key}"))
+                    .map_err(UploadAttemptError::fatal)?
+                    .to_owned();
+                Ok(CompletedPart::builder().part_number(part_number).e_tag(e_tag).build())
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    upload_id,
+                    part_number,
+                    length,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "streaming multipart upload part failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, upload_id, part_number, attempt, "streaming multipart upload part succeeded after retrying");
+            },
+        )
+        .await
+    }
+
+    async fn complete_streaming_multipart_upload(
+        &self,
+        key: &str,
+        upload_id: &str,
+        size: u64,
+        parts: Vec<CompletedPart>,
+    ) -> Result<()> {
+        retry_upload(
+            || async {
+                let completed = CompletedMultipartUpload::builder().set_parts(Some(parts.clone())).build();
+                match self
+                    .client
+                    .complete_multipart_upload()
+                    .bucket(&self.bucket)
+                    .key(key)
+                    .upload_id(upload_id)
+                    .multipart_upload(completed)
+                    .send()
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(error) => {
+                        let error = anyhow::Error::from(error);
+                        if self.remote_object_size(key).await.map_err(UploadAttemptError::fatal)?
+                            == Some(size)
+                        {
+                            warn!(
+                                key = %key,
+                                upload_id,
+                                error = %error,
+                                error_debug = ?error,
+                                size,
+                                "streaming multipart completion response failed after object appeared; treating upload as successful"
+                            );
+                            Ok(())
+                        } else {
+                            Err(UploadAttemptError::retry(error))
+                        }
+                    }
+                }
+            },
+            |attempt, error| {
+                warn!(
+                    key = %key,
+                    upload_id,
+                    attempt,
+                    error = %error,
+                    error_debug = ?error,
+                    next_retry_delay_secs = retry_delay_secs(attempt),
+                    "streaming multipart upload completion failed, retrying"
+                );
+            },
+            |attempt| {
+                info!(key = %key, upload_id, attempt, "streaming multipart upload completion succeeded after retrying");
+            },
+        )
+        .await
+    }
+
+    async fn abort_streaming_multipart_upload(&self, key: &str, upload_id: &str) {
+        match self
+            .client
+            .abort_multipart_upload()
+            .bucket(&self.bucket)
+            .key(key)
+            .upload_id(upload_id)
+            .send()
+            .await
+        {
+            Ok(_) => {
+                warn!(key = %key, upload_id, "aborted streaming multipart upload after failure")
+            }
+            Err(error) => error!(
+                key = %key,
+                upload_id,
+                error = %error,
+                error_debug = ?error,
+                "failed to abort streaming multipart upload after failure"
+            ),
         }
     }
 

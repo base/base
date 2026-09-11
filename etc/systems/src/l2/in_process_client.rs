@@ -28,10 +28,12 @@ use reth_node_core::{
     exit::NodeExitFuture,
 };
 use reth_provider::providers::BlockchainProvider;
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
+
+use super::TestNodeRuntime;
 
 type BuiltExtensions = (Vec<Box<dyn BaseNodeExtension>>, Option<FlashblocksConfig>);
 
@@ -130,7 +132,7 @@ impl InProcessClient {
 
         let (data_dir, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
         let runtime = RuntimeBuilder::new(
-            RuntimeConfig::default()
+            TestNodeRuntime::config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;
