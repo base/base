@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
+use alloy_consensus::{
+    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
+};
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -17,6 +19,7 @@ use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
+    PriceBumpConfig,
 };
 
 use crate::estimated_da_size::DataAvailabilitySized;
@@ -150,6 +153,18 @@ where
     type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
     type Consensus = BaseTransactionSigned;
     type Pooled = Pooled;
+
+    fn is_replacement_underpriced(
+        &self,
+        replacement: &Self,
+        price_bumps: &PriceBumpConfig,
+    ) -> bool {
+        if self.validity_predicates().is_empty() || replacement.validity_predicates().is_empty() {
+            return price_bumps.is_replacement_underpriced(self, replacement);
+        }
+
+        replacement.max_fee_per_gas() <= self.max_fee_per_gas()
+    }
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
         self.inner.transaction().clone()
@@ -506,7 +521,7 @@ mod tests {
     use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
+        PoolTransaction, PriceBumpConfig, TransactionOrigin, TransactionValidationOutcome,
         blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
@@ -520,6 +535,14 @@ mod tests {
     }
 
     fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
+        eip8130_pooled_with_fees(nonce_key, 0, 1)
+    }
+
+    fn eip8130_pooled_with_fees(
+        nonce_key: U256,
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let signer = signer();
         let tx = TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
@@ -528,8 +551,8 @@ mod tests {
             nonce_sequence: 0,
             valid_after: 0,
             valid_before: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 1,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),
@@ -586,6 +609,62 @@ mod tests {
         assert!(eip8130_pooled(U256::ZERO).requires_nonce_check());
         assert!(!eip8130_pooled(U256::from(1)).requires_nonce_check());
         assert!(!eip8130_pooled(Eip8130Constants::NONCE_KEY_MAX).requires_nonce_check());
+    }
+
+    #[test]
+    fn validity_replacement_only_requires_a_higher_max_fee() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
+            .with_validity_predicates(vec![predicate.clone()]);
+        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
+            .with_validity_predicates(vec![predicate.clone()]);
+
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+
+        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
+            .with_validity_predicates(vec![predicate]);
+        assert!(
+            existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
+        );
+    }
+
+    #[test]
+    fn validity_replacement_of_non_validity_transaction_uses_configured_price_bumps() {
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100);
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let underpriced = eip8130_pooled_with_fees(U256::ZERO, 0, 109)
+            .with_validity_predicates(vec![predicate.clone()]);
+
+        assert!(existing.is_replacement_underpriced(&underpriced, &PriceBumpConfig::default()));
+
+        let replacement =
+            eip8130_pooled_with_fees(U256::ZERO, 0, 110).with_validity_predicates(vec![predicate]);
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+    }
+
+    #[test]
+    fn non_validity_replacement_uses_configured_price_bumps() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let existing =
+            eip8130_pooled_with_fees(U256::ZERO, 10, 100).with_validity_predicates(vec![predicate]);
+        let underpriced = eip8130_pooled_with_fees(U256::ZERO, 10, 110);
+
+        assert!(existing.is_replacement_underpriced(&underpriced, &PriceBumpConfig::default()));
+
+        let replacement = eip8130_pooled_with_fees(U256::ZERO, 11, 110);
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
     }
 
     #[test]
