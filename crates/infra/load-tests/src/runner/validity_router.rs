@@ -90,18 +90,22 @@ impl ValidityRouter {
     ///
     /// `current_block` is the latest chain height at prepare time, used to
     /// resolve any [`BlockNumberBound::Offset`] into an absolute block number
-    /// (`current_block + offset`). Absolute bounds ignore it.
+    /// (`current_block + offset`). `nonce` makes [`SlotTemplate::SenderNonce`]
+    /// storage locations unique to the transaction being prepared.
     pub fn predicates_for(
         &self,
         cohort: SubmitCohort,
         current_block: u64,
+        nonce: u64,
         from: Address,
         to: Option<Address>,
     ) -> Vec<ValidityPredicate> {
         match cohort {
-            SubmitCohort::ValidityPass | SubmitCohort::ValidityPassPriorityLead => {
-                self.predicates.iter().map(|t| Self::resolve(t, current_block, from, to)).collect()
-            }
+            SubmitCohort::ValidityPass | SubmitCohort::ValidityPassPriorityLead => self
+                .predicates
+                .iter()
+                .map(|template| Self::resolve(template, current_block, nonce, from, to))
+                .collect(),
             SubmitCohort::Plain => Vec::new(),
         }
     }
@@ -110,6 +114,7 @@ impl ValidityRouter {
     fn resolve(
         template: &ValidityPredicateTemplate,
         current_block: u64,
+        nonce: u64,
         from: Address,
         to: Option<Address>,
     ) -> ValidityPredicate {
@@ -124,7 +129,7 @@ impl ValidityRouter {
             ValidityPredicateTemplate::Storage { address, slot, mask, op, value } => {
                 ValidityPredicate::Storage {
                     address: resolve_address(address, from, to),
-                    slot: resolve_slot(slot, from, to),
+                    slot: resolve_slot(slot, nonce, from, to),
                     mask: mask.unwrap_or_else(ValidityPredicate::default_mask),
                     op: *op,
                     value: value.resolve(from),
@@ -160,13 +165,19 @@ fn resolve_address(source: &PredicateAddress, from: Address, to: Option<Address>
     }
 }
 
-/// Resolves a storage slot source, computing the Solidity mapping slot when
-/// required.
-fn resolve_slot(slot: &SlotTemplate, from: Address, to: Option<Address>) -> U256 {
+/// Resolves a storage slot source against the transaction being prepared.
+fn resolve_slot(slot: &SlotTemplate, nonce: u64, from: Address, to: Option<Address>) -> U256 {
     match slot {
         SlotTemplate::Fixed(value) => *value,
         SlotTemplate::Mapping { mapping_slot, key } => {
             mapping_slot_for(resolve_address(key, from, to), *mapping_slot)
+        }
+        SlotTemplate::SenderNonce { salt } => {
+            let mut preimage = [0u8; 96];
+            preimage[12..32].copy_from_slice(from.as_slice());
+            preimage[56..64].copy_from_slice(&nonce.to_be_bytes());
+            preimage[64..96].copy_from_slice(&salt.to_be_bytes::<32>());
+            U256::from_be_bytes::<32>(keccak256(preimage).0)
         }
     }
 }
@@ -293,7 +304,7 @@ mod tests {
         let r = router(1.0, templates);
         let from = Address::repeat_byte(0xaa);
         let to = Address::repeat_byte(0xbb);
-        let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, from, Some(to));
+        let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, 0, from, Some(to));
         assert_eq!(predicates.len(), 2);
         match &predicates[0] {
             ValidityPredicate::Balance { address, .. } => assert_eq!(*address, from),
@@ -321,6 +332,7 @@ mod tests {
         let predicates = r.predicates_for(
             SubmitCohort::ValidityPass,
             0,
+            0,
             Address::repeat_byte(0xaa),
             Some(Address::repeat_byte(0xbb)),
         );
@@ -346,8 +358,13 @@ mod tests {
             bound: BlockNumberBound::Absolute(U256::from(12345)),
         }];
         let r = router(1.0, templates);
-        let predicates =
-            r.predicates_for(SubmitCohort::ValidityPass, 9_000, Address::repeat_byte(0xaa), None);
+        let predicates = r.predicates_for(
+            SubmitCohort::ValidityPass,
+            9_000,
+            0,
+            Address::repeat_byte(0xaa),
+            None,
+        );
         assert_eq!(
             predicates,
             vec![ValidityPredicate::BlockNumber {
@@ -364,8 +381,13 @@ mod tests {
             bound: BlockNumberBound::Offset(U256::from(10)),
         }];
         let r = router(1.0, templates);
-        let predicates =
-            r.predicates_for(SubmitCohort::ValidityPass, 1_000, Address::repeat_byte(0xaa), None);
+        let predicates = r.predicates_for(
+            SubmitCohort::ValidityPass,
+            1_000,
+            0,
+            Address::repeat_byte(0xaa),
+            None,
+        );
         assert_eq!(
             predicates,
             vec![ValidityPredicate::BlockNumber {
@@ -382,8 +404,13 @@ mod tests {
             bound: BlockNumberBound::Offset(U256::MAX),
         }];
         let r = router(1.0, templates);
-        let predicates =
-            r.predicates_for(SubmitCohort::ValidityPass, 1_000, Address::repeat_byte(0xaa), None);
+        let predicates = r.predicates_for(
+            SubmitCohort::ValidityPass,
+            1_000,
+            0,
+            Address::repeat_byte(0xaa),
+            None,
+        );
         assert_eq!(
             predicates,
             vec![ValidityPredicate::BlockNumber {
@@ -446,9 +473,15 @@ mod tests {
             value: U256::from(2),
         }];
         let r = router(1.0, templates);
-        let low = r.predicates_for(SubmitCohort::ValidityPass, 0, Address::repeat_byte(0xaa), None);
-        let high =
-            r.predicates_for(SubmitCohort::ValidityPass, 9_999, Address::repeat_byte(0xaa), None);
+        let low =
+            r.predicates_for(SubmitCohort::ValidityPass, 0, 0, Address::repeat_byte(0xaa), None);
+        let high = r.predicates_for(
+            SubmitCohort::ValidityPass,
+            9_999,
+            0,
+            Address::repeat_byte(0xaa),
+            None,
+        );
         assert_eq!(low, high);
         assert_eq!(
             low,
@@ -468,7 +501,7 @@ mod tests {
         }];
         let r = router(1.0, templates);
         let from = Address::repeat_byte(0xaa);
-        assert!(r.predicates_for(SubmitCohort::Plain, 0, from, None).is_empty());
+        assert!(r.predicates_for(SubmitCohort::Plain, 0, 0, from, None).is_empty());
     }
 
     #[test]
@@ -480,7 +513,7 @@ mod tests {
         }];
         let r = router(1.0, templates);
         let from = Address::repeat_byte(0xaa);
-        let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, from, None);
+        let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, 0, from, None);
         match &predicates[0] {
             ValidityPredicate::Balance { address, .. } => assert_eq!(*address, from),
             other => panic!("expected balance, got {other:?}"),
@@ -502,7 +535,7 @@ mod tests {
             value: PredicateValue::Fixed(U256::ZERO),
         }];
         let r = router(1.0, templates);
-        let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, Address::ZERO, None);
+        let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, 0, Address::ZERO, None);
         let expected = {
             let mut preimage = [0u8; 64];
             preimage[12..32].copy_from_slice(key.as_slice());
@@ -519,6 +552,53 @@ mod tests {
     }
 
     #[test]
+    fn sender_nonce_slot_matches_known_vector_and_changes_with_each_input() {
+        let sender = Address::repeat_byte(0x11);
+        let salt = U256::from(7);
+        let templates = vec![ValidityPredicateTemplate::Storage {
+            address: PredicateAddress::Fixed(Address::repeat_byte(0x99)),
+            slot: SlotTemplate::SenderNonce { salt },
+            mask: None,
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: PredicateValue::Fixed(U256::ZERO),
+        }];
+        let r = router(1.0, templates);
+
+        let concrete_slot = |router: &ValidityRouter, sender, nonce| match &router.predicates_for(
+            SubmitCohort::ValidityPass,
+            0,
+            nonce,
+            sender,
+            None,
+        )[0]
+        {
+            ValidityPredicate::Storage { slot, .. } => *slot,
+            other => panic!("expected storage predicate, got {other:?}"),
+        };
+        let slot = concrete_slot(&r, sender, 42);
+        let expected = U256::from_str_radix(
+            "da52651d545e6d5ecd593d763e061ef7a0521fafaac8f10fe44c58a420947341",
+            16,
+        )
+        .unwrap();
+        let different_salt = router(
+            1.0,
+            vec![ValidityPredicateTemplate::Storage {
+                address: PredicateAddress::Fixed(Address::repeat_byte(0x99)),
+                slot: SlotTemplate::SenderNonce { salt: salt + U256::from(1) },
+                mask: None,
+                op: ValidityOperator::GreaterThanOrEqual,
+                value: PredicateValue::Fixed(U256::ZERO),
+            }],
+        );
+
+        assert_eq!(slot, expected);
+        assert_ne!(slot, concrete_slot(&r, Address::repeat_byte(0x12), 42));
+        assert_ne!(slot, concrete_slot(&r, sender, 43));
+        assert_ne!(slot, concrete_slot(&different_salt, sender, 42));
+    }
+
+    #[test]
     fn sender_parity_value_splits_storage_predicates_by_sender() {
         let templates = vec![ValidityPredicateTemplate::Storage {
             address: PredicateAddress::Fixed(Address::repeat_byte(0x99)),
@@ -532,7 +612,7 @@ mod tests {
         for (sender, expected) in
             [(Address::repeat_byte(0x10), U256::ZERO), (Address::repeat_byte(0x11), U256::from(1))]
         {
-            let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, sender, None);
+            let predicates = r.predicates_for(SubmitCohort::ValidityPass, 0, 0, sender, None);
             match &predicates[0] {
                 ValidityPredicate::Storage { value, .. } => assert_eq!(*value, expected),
                 other => panic!("expected storage, got {other:?}"),

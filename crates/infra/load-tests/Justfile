@@ -7,7 +7,8 @@
 #   just load-test continuous sepolia                    - Load test sepolia indefinitely
 #   just load-test real-token                            - Real-token swap load test on devnet
 #   just load-test real-token sepolia                    - Real-token swap load test on sepolia
-#   just load-test validity-stress                       - 64-predicate local devnet stress test
+#   just load-test validity-stress                       - Cold 64-predicate local devnet stress test
+#   just load-test validity-stress-warm                  - Fixed-slot warm comparison
 #   just load-test recover                               - Recover funds from devnet test accounts
 #   just load-test recover sepolia                       - Recover funds from sepolia test accounts
 #   just load-test real-token-recover sepolia            - Recover real-token funds from sepolia test accounts
@@ -84,13 +85,33 @@ real-token network='devnet' *args:
     echo "Running real-token devnet load test with rendered config: $rendered_config"
     cargo run -p base-load-tester-bin --bin base-load-tester -- "$rendered_config" {{args}}
 
+# Run the original fixed-slot profile as an apples-to-apples warm-read comparison.
+validity-stress-warm *args:
+    VALIDITY_STRESS_PREDICATE_PROFILE=warm just --justfile {{source_file()}} validity-stress {{args}}
+
 # Deploy DoubleCounter and run the local 64-predicate validity stress profile.
 validity-stress *args:
     #!/usr/bin/env bash
     set -euo pipefail
 
+    if ! command -v flock >/dev/null 2>&1; then
+        echo "validity-stress requires the flock command" >&2
+        exit 1
+    fi
+    lock_file="${XDG_RUNTIME_DIR:-/tmp}/base-validity-stress.lock"
+    exec 9>"$lock_file"
+    if ! flock -n 9; then
+        echo "another validity-stress recipe is already running (lock: $lock_file)" >&2
+        exit 1
+    fi
+
     if [ -z "${FUNDER_KEY:-}" ]; then
         export FUNDER_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+    fi
+    predicate_profile="${VALIDITY_STRESS_PREDICATE_PROFILE:-cold}"
+    if [ "$predicate_profile" != "cold" ] && [ "$predicate_profile" != "warm" ]; then
+        echo "VALIDITY_STRESS_PREDICATE_PROFILE must be 'cold' or 'warm'" >&2
+        exit 1
     fi
 
     contracts_dir="crates/utilities/test-utils/contracts"
@@ -125,7 +146,7 @@ validity-stress *args:
     fi
 
     cargo run --quiet -p base-load-tests --example render_validity_stress -- \
-        "$template" "$counter" "$rendered_config"
+        "$template" "$counter" "$predicate_profile" "$rendered_config"
 
     mutator_key="${VALIDITY_STRESS_MUTATOR_KEY:-0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a}"
     mutator_interval="${VALIDITY_STRESS_MUTATOR_INTERVAL_SECONDS:-30}"
@@ -151,7 +172,7 @@ validity-stress *args:
     mutate_counter &
     mutator_pid=$!
 
-    echo "Running validity stress test with rendered config: $rendered_config"
+    echo "Running $predicate_profile-read validity stress test with rendered config: $rendered_config"
     cargo run -p base-load-tester-bin --bin base-load-tester -- "$rendered_config" {{args}}
 
 # Run load test against a network indefinitely (Ctrl-C to stop)

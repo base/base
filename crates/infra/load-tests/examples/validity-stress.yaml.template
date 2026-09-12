@@ -14,7 +14,8 @@ sender_count: 800
 target_gps: 600000000
 block_time: "200ms"
 in_flight_per_sender: 12
-max_total_in_flight: 9600
+# Bound each native-builder scan while keeping hundreds of cold validity candidates in contention.
+max_total_in_flight: 400
 max_concurrent_submit_requests: 64
 batch_size: 1
 duration: "90s"
