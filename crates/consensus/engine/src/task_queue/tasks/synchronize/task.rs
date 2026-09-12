@@ -177,12 +177,13 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         // Send the forkchoice update through the input.
         let forkchoice = new_sync_state.create_forkchoice_state();
         let proposed_state = EngineState { sync_state: new_sync_state, ..*state };
-        if let Some(timestamp) = proposed_state.processed_head_timestamp() {
-            RuntimeUpgradeRegistry::record_processed_head_timestamp(
-                self.rollup.l2_chain_id.id(),
-                timestamp,
-            );
-        }
+        let processed_head_reservation =
+            proposed_state.processed_head_timestamp().map(|timestamp| {
+                RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
+                    self.rollup.l2_chain_id.id(),
+                    timestamp,
+                )
+            });
 
         // Handle the forkchoice update result.
         // NOTE: it doesn't matter which version we use here, because we're not sending any
@@ -207,6 +208,9 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
         let confirmed =
             self.check_forkchoice_updated_status(state, &valid_response.payload_status.status)?;
+        if confirmed && let Some(reservation) = processed_head_reservation {
+            reservation.commit();
+        }
 
         // On `Valid`, commit the full sync-state update. On `Syncing`, commit only
         // the filtered safe-side update that is actually allowed to survive.

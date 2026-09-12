@@ -254,7 +254,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             return Ok(state.sync_state.unsafe_head());
         }
 
-        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+        let processed_head_reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
             self.rollup_config.l2_chain_id.id(),
             block.header.timestamp,
         );
@@ -305,6 +305,7 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
         if !self.check_new_payload_status(&response.status) {
             return Err(InsertTaskError::UnexpectedPayloadStatus(response.status));
         }
+        processed_head_reservation.commit();
         let insert_duration = insert_time_start.elapsed();
 
         let advances_safe_head = self.payload_safety.advances_safe_head();
@@ -386,7 +387,7 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::sync::Arc;
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
@@ -553,33 +554,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reserves_payload_timestamp_before_engine_validation() {
+    async fn accepted_payload_promotes_processed_head_timestamp() {
         let chain_id = 9_200_003;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
-        let client = test_client();
-        let storage = client.storage();
-        let storage_guard = storage.write().await;
-        let task = InsertTask::unsafe_payload(
-            client,
+        let mut state = TestEngineStateBuilder::new().build();
+
+        InsertTask::unsafe_payload(
+            test_client(),
             Arc::new(RollupConfig { l2_chain_id: chain_id.into(), ..RollupConfig::default() }),
             BaseExecutionPayloadEnvelope {
                 parent_beacon_block_root: None,
                 execution_payload: bedrock_payload(1),
             },
+        )
+        .execute(&mut state)
+        .await
+        .expect("payload should be accepted");
+
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(1));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[tokio::test]
+    async fn rejected_payload_does_not_promote_processed_head_timestamp() {
+        let chain_id = 9_200_004;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(chain_id, 1);
+        let client = Arc::new(
+            test_engine_client_builder()
+                .with_new_payload_v2_response(PayloadStatus {
+                    status: PayloadStatusEnum::Invalid { validation_error: "invalid".into() },
+                    latest_valid_hash: None,
+                })
+                .build(),
         );
+        let BaseExecutionPayload::V1(mut payload) = bedrock_payload(2) else { unreachable!() };
+        payload.timestamp = u64::MAX;
         let mut state = TestEngineStateBuilder::new().build();
 
-        let handle = tokio::spawn(async move { task.execute(&mut state).await });
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while RuntimeUpgradeRegistry::processed_head_timestamp(chain_id) != Some(1) {
-                tokio::task::yield_now().await;
-            }
-        })
+        InsertTask::unsafe_payload(
+            client,
+            Arc::new(RollupConfig { l2_chain_id: chain_id.into(), ..RollupConfig::default() }),
+            BaseExecutionPayloadEnvelope {
+                parent_beacon_block_root: None,
+                execution_payload: BaseExecutionPayload::V1(payload),
+            },
+        )
+        .execute(&mut state)
         .await
-        .expect("payload timestamp was not reserved before engine validation");
+        .unwrap_err();
 
-        drop(storage_guard);
-        handle.await.unwrap().unwrap();
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(1));
         RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
@@ -690,6 +715,11 @@ mod tests {
 
     #[tokio::test]
     async fn denim_schedule_mismatch_is_rejected_before_new_payload() {
+        let chain_id = 9_200_005;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(chain_id, 1);
+        let mut config = denim_config();
+        Arc::make_mut(&mut config).l2_chain_id = chain_id.into();
         let client = test_client();
         let mut state = TestEngineStateBuilder::new().build();
 
@@ -705,7 +735,7 @@ mod tests {
         ] {
             let error = InsertTask::unsafe_payload(
                 Arc::clone(&client),
-                denim_config(),
+                Arc::clone(&config),
                 BaseExecutionPayloadEnvelope {
                     parent_beacon_block_root: None,
                     execution_payload: payload,
@@ -723,6 +753,8 @@ mod tests {
         }
 
         assert!(client.last_new_payload_v2().await.is_none());
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(1));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[tokio::test]

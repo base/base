@@ -1,6 +1,6 @@
 //! Tests for [`SynchronizeTask::execute`].
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
 use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry};
@@ -60,16 +60,14 @@ async fn valid_response_advances_sync_state() {
 }
 
 #[tokio::test]
-async fn reserves_processed_head_before_forkchoice_acceptance() {
+async fn rejected_forkchoice_does_not_promote_processed_head() {
     let chain_id = 9_200_002;
     let head = test_block_info(100);
     let cfg = Arc::new(RollupConfig { l2_chain_id: chain_id.into(), ..RollupConfig::default() });
     RuntimeUpgradeRegistry::clear_chain(chain_id);
     let client = Arc::new(
-        test_engine_client_builder().with_fork_choice_updated_v3_response(valid_fcu()).build(),
+        test_engine_client_builder().with_fork_choice_updated_v3_response(syncing_fcu()).build(),
     );
-    let storage = client.storage();
-    let storage_guard = storage.write().await;
     let task = SynchronizeTask::new(
         client,
         cfg,
@@ -77,17 +75,9 @@ async fn reserves_processed_head_before_forkchoice_acceptance() {
     );
     let mut state = TestEngineStateBuilder::new().build();
 
-    let handle = tokio::spawn(async move { task.execute(&mut state).await });
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while RuntimeUpgradeRegistry::processed_head_timestamp(chain_id) != Some(200) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("processed head was not reserved before forkchoice acceptance");
+    task.execute(&mut state).await.unwrap();
 
-    drop(storage_guard);
-    handle.await.unwrap().unwrap();
+    assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), None);
     RuntimeUpgradeRegistry::clear_chain(chain_id);
 }
 

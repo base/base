@@ -426,6 +426,36 @@ pub struct RuntimeUpgradeRegistryEntry {
     pub last_updated_block_number: Option<u64>,
     /// Highest L2 block timestamp observed by this process.
     pub processed_head_timestamp: Option<u64>,
+    /// L2 block timestamps whose fork rules are currently in use but not yet accepted.
+    in_flight_head_timestamps: BTreeMap<u64, usize>,
+}
+
+/// Releasable reservation for fork rules selected for an unaccepted L2 block.
+#[derive(Debug)]
+#[must_use = "the reservation must be held until the block is accepted or rejected"]
+pub struct ProcessedHeadReservation {
+    chain_id: u64,
+    timestamp: u64,
+    active: bool,
+}
+
+impl ProcessedHeadReservation {
+    /// Promotes the reserved timestamp to the permanent processed-head watermark.
+    pub fn commit(mut self) {
+        RuntimeUpgradeRegistry::commit_processed_head_reservation(self.chain_id, self.timestamp);
+        self.active = false;
+    }
+}
+
+impl Drop for ProcessedHeadReservation {
+    fn drop(&mut self) {
+        if self.active {
+            RuntimeUpgradeRegistry::release_processed_head_reservation(
+                self.chain_id,
+                self.timestamp,
+            );
+        }
+    }
 }
 
 /// Process-local runtime upgrade activation registry.
@@ -478,12 +508,50 @@ impl RuntimeUpgradeRegistry {
         Self::read_registry().get(&chain_id).and_then(|entry| entry.processed_head_timestamp)
     }
 
+    /// Reserves fork rules for an L2 block until the returned guard is committed or dropped.
+    pub fn reserve_processed_head_timestamp(
+        chain_id: u64,
+        timestamp: u64,
+    ) -> ProcessedHeadReservation {
+        let mut registry = Self::write_registry();
+        let entry = registry.entry(chain_id).or_default();
+        *entry.in_flight_head_timestamps.entry(timestamp).or_default() += 1;
+        ProcessedHeadReservation { chain_id, timestamp, active: true }
+    }
+
     /// Advances the process-wide processed-head watermark for a chain without allowing regressions.
-    /// Call before selecting runtime fork rules for a block that may be accepted; simulations must
-    /// not advance this watermark.
+    /// Call only for accepted blocks; use [`Self::reserve_processed_head_timestamp`] while fork
+    /// rules are selected for a block that may still be rejected.
     pub fn record_processed_head_timestamp(chain_id: u64, timestamp: u64) {
         let mut registry = Self::write_registry();
         let entry = registry.entry(chain_id).or_default();
+        entry.processed_head_timestamp = Some(
+            entry.processed_head_timestamp.map_or(timestamp, |processed| processed.max(timestamp)),
+        );
+    }
+
+    fn release_processed_head_reservation(chain_id: u64, timestamp: u64) {
+        let mut registry = Self::write_registry();
+        let Some(entry) = registry.get_mut(&chain_id) else { return };
+        let Some(count) = entry.in_flight_head_timestamps.get_mut(&timestamp) else { return };
+        *count -= 1;
+        if *count == 0 {
+            entry.in_flight_head_timestamps.remove(&timestamp);
+        }
+        if *entry == RuntimeUpgradeRegistryEntry::default() {
+            registry.remove(&chain_id);
+        }
+    }
+
+    fn commit_processed_head_reservation(chain_id: u64, timestamp: u64) {
+        let mut registry = Self::write_registry();
+        let entry = registry.entry(chain_id).or_default();
+        if let Some(count) = entry.in_flight_head_timestamps.get_mut(&timestamp) {
+            *count -= 1;
+            if *count == 0 {
+                entry.in_flight_head_timestamps.remove(&timestamp);
+            }
+        }
         entry.processed_head_timestamp = Some(
             entry.processed_head_timestamp.map_or(timestamp, |processed| processed.max(timestamp)),
         );
@@ -539,6 +607,12 @@ impl RuntimeUpgradeRegistry {
             .processed_head_timestamp
             .map_or(processed_head_timestamp, |processed| processed.max(processed_head_timestamp));
         entry.processed_head_timestamp = Some(processed_head_timestamp);
+        let validation_head_timestamp = entry
+            .in_flight_head_timestamps
+            .last_key_value()
+            .map_or(processed_head_timestamp, |(&reserved, _)| {
+                reserved.max(processed_head_timestamp)
+            });
 
         if entry
             .last_updated_block_number
@@ -547,7 +621,7 @@ impl RuntimeUpgradeRegistry {
             return Ok(false);
         }
 
-        validate(had_entry.then_some(&entry.overrides), &overrides, processed_head_timestamp)?;
+        validate(had_entry.then_some(&entry.overrides), &overrides, validation_head_timestamp)?;
         entry.overrides = overrides;
         entry.last_updated_block_number = Some(l1_block_number);
         Ok(true)
@@ -1061,6 +1135,47 @@ mod runtime_tests {
     use super::*;
 
     static RUNTIME_REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn processed_head_reservations_release_or_commit() {
+        let chain_id = 9_100_002;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+
+        let reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(chain_id, 100);
+        let mut validation_head = 0;
+        let result = RuntimeUpgradeRegistry::replace_overrides_checked(
+            chain_id,
+            1,
+            10,
+            UpgradeActivationOverrides::default(),
+            |_, _, head| {
+                validation_head = head;
+                Err(())
+            },
+        );
+        assert_eq!(result, Err(()));
+        assert_eq!(validation_head, 100);
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(10));
+
+        drop(reservation);
+        let mut validation_head = 0;
+        RuntimeUpgradeRegistry::replace_overrides_checked(
+            chain_id,
+            1,
+            10,
+            UpgradeActivationOverrides::default(),
+            |_, _, head| {
+                validation_head = head;
+                Ok::<_, ()>(())
+            },
+        )
+        .unwrap();
+        assert_eq!(validation_head, 10);
+
+        RuntimeUpgradeRegistry::reserve_processed_head_timestamp(chain_id, 200).commit();
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(200));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
 
     #[test]
     fn runtime_registry_tracks_timestamp_and_never_overrides() {

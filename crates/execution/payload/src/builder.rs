@@ -405,7 +405,7 @@ impl<Txs> Builder<'_, Txs> {
     {
         let Self { best, evict_permanently_rejected } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
-        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+        let processed_head_reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
             ctx.chain_spec.chain().id(),
             ctx.attributes().timestamp(),
         );
@@ -524,6 +524,7 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
         BuilderMetrics::record_inclusion(&info.inclusion);
+        processed_head_reservation.commit();
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -1671,9 +1672,9 @@ mod tests {
 
     #[test]
     fn payload_build_reserves_payload_timestamp() {
-        let chain_id = 8_453;
+        let chain_id = 9_300_001;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
-        let ctx = pool_payload_context(42);
+        let ctx = pool_payload_context_for_chain(42, chain_id);
 
         build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
 
@@ -1684,8 +1685,16 @@ mod tests {
     const DENIM_TIMESTAMP: u64 = 1;
 
     fn pool_payload_context(timestamp: u64) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
+        pool_payload_context_for_chain(timestamp, 8_453)
+    }
+
+    fn pool_payload_context_for_chain(
+        timestamp: u64,
+        chain_id: u64,
+    ) -> BasePayloadBuilderCtx<BaseEvmConfig, BaseChainSpec> {
         let chain_spec = Arc::new(
             BaseChainSpecBuilder::base_mainnet()
+                .chain(reth_chainspec::Chain::from_id(chain_id))
                 .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         );
@@ -2101,7 +2110,10 @@ mod tests {
 
     #[test]
     fn cancellation_takes_precedence_over_finalization() {
-        let ctx = pool_payload_context(DENIM_TIMESTAMP);
+        let chain_id = 9_300_002;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(chain_id, 1);
+        let ctx = pool_payload_context_for_chain(DENIM_TIMESTAMP + 1, chain_id);
         ctx.cancel.request_finalization();
         drop(ctx.cancel.clone());
 
@@ -2109,6 +2121,8 @@ mod tests {
             build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default()),
             BuildOutcomeKind::Cancelled
         ));
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(1));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[derive(Debug)]

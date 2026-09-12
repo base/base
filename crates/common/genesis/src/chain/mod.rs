@@ -5,8 +5,9 @@ pub use addresses::AddressList;
 
 mod upgrade;
 pub use upgrade::{
-    BaseUpgrade, BaseUpgradeConfig, RuntimeUpgradeRegistry, RuntimeUpgradeRegistryEntry,
-    UpgradeActivation, UpgradeActivationOverrides, UpgradeActivationSink, UpgradeConfig,
+    BaseUpgrade, BaseUpgradeConfig, ProcessedHeadReservation, RuntimeUpgradeRegistry,
+    RuntimeUpgradeRegistryEntry, UpgradeActivation, UpgradeActivationOverrides,
+    UpgradeActivationSink, UpgradeConfig,
 };
 
 mod roles;

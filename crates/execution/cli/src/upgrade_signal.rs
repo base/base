@@ -400,6 +400,7 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                         // installs — closing the race where an admin refresh mutates the schedule
                         // (the RPC comes up before this task) before the baseline would be taken.
                         let mut installed_schedule = None;
+                        let mut waiting_for_head = false;
 
                         // Force an initial install so the advertised filter reflects the live
                         // registry at startup, independent of the first L1 poll.
@@ -422,6 +423,10 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                                                 refresher.record_processed_head_timestamp(
                                                     tip.timestamp(),
                                                 );
+                                                if waiting_for_head {
+                                                    waiting_for_head = false;
+                                                    interval.reset_immediately();
+                                                }
                                             }
                                         }
                                         None => canonical_stream_open = false,
@@ -445,8 +450,12 @@ impl BaseNodeExtension for ExecutionUpgradeSignalRuntimeExtension {
                                                 &reader,
                                                 auto_refresher.as_ref(),
                                                 || match ExecutionUpgradeSignal::current_head(&provider) {
-                                                    Ok(head) => Some(head.timestamp),
+                                                    Ok(head) => {
+                                                        waiting_for_head = false;
+                                                        Some(head.timestamp)
+                                                    }
                                                     Err(error) => {
+                                                        waiting_for_head = true;
                                                         warn!(
                                                             target: "upgrade_signal",
                                                             error = %error,
