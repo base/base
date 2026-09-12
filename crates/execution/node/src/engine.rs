@@ -6,6 +6,7 @@ use alloy_rpc_types_engine::{ExecutionPayloadEnvelopeV2, ExecutionPayloadV1};
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTransaction, Predeploys};
 use base_common_evm::BaseTime;
+use base_common_genesis::RuntimeUpgradeRegistry;
 use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
@@ -15,8 +16,13 @@ use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
 };
 use base_protocol::{BaseTimeMetadataError, BaseTimeUpdateTx};
+use reth_chain_state::ExecutedBlock;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::ConsensusError;
+use reth_engine_tree::tree::{
+    CacheWaitDurations, EngineApiTreeState, EngineValidator, ValidationOutcome, WaitForCaches,
+    payload_validator::TreeCtx,
+};
 use reth_node_api::{
     BuiltPayload, EngineApiValidator, EngineTypes, InsertBlockErrorKind, NodePrimitives,
     PayloadValidator,
@@ -27,7 +33,10 @@ use reth_node_api::{
     },
     validate_version_specific_fields,
 };
-use reth_payload_primitives::{InvalidPayloadAttributesError, PayloadAttributes};
+use reth_payload_builder::PayloadBuilderResources;
+use reth_payload_primitives::{
+    BuiltPayloadExecutedBlock, InvalidPayloadAttributesError, PayloadAttributes,
+};
 use reth_primitives_traits::{Block, RecoveredBlock, SealedBlock, SealedHeader, SignedTransaction};
 use reth_provider::StateProvider;
 use reth_storage_api::{StateProviderBox, errors::ProviderResult};
@@ -86,6 +95,101 @@ pub struct BaseEngineValidator<Tx, ChainSpec> {
     inner: BaseExecutionPayloadValidator<ChainSpec>,
     hashed_addr_l2tol1_msg_passer: B256,
     phantom: PhantomData<Tx>,
+}
+
+/// Engine validator that reserves runtime fork rules until payload validation completes.
+#[derive(Debug)]
+pub struct RuntimeUpgradeEngineValidator<V> {
+    inner: V,
+    chain_id: u64,
+}
+
+impl<V> RuntimeUpgradeEngineValidator<V> {
+    /// Creates a runtime-upgrade-aware engine validator.
+    pub const fn new(inner: V, chain_id: u64) -> Self {
+        Self { inner, chain_id }
+    }
+}
+
+impl<Types, N, V> EngineValidator<Types, N> for RuntimeUpgradeEngineValidator<V>
+where
+    Types: PayloadTypes<ExecutionData = ExecutionData, BuiltPayload: BuiltPayload<Primitives = N>>,
+    N: NodePrimitives,
+    V: EngineValidator<Types, N>,
+{
+    fn validate_payload_attributes_against_header(
+        &self,
+        attributes: &Types::PayloadAttributes,
+        header: &N::BlockHeader,
+    ) -> Result<(), InvalidPayloadAttributesError> {
+        self.inner.validate_payload_attributes_against_header(attributes, header)
+    }
+
+    fn convert_payload_to_block(
+        &self,
+        payload: Types::ExecutionData,
+    ) -> Result<SealedBlock<N::Block>, NewPayloadError> {
+        self.inner.convert_payload_to_block(payload)
+    }
+
+    fn validate_payload(
+        &mut self,
+        payload: Types::ExecutionData,
+        ctx: TreeCtx<'_, N>,
+    ) -> ValidationOutcome<N> {
+        let reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
+            self.chain_id,
+            payload.payload.timestamp(),
+        );
+        let result = self.inner.validate_payload(payload, ctx);
+        if result.is_ok() {
+            reservation.commit();
+        }
+        result
+    }
+
+    fn validate_block(
+        &mut self,
+        block: SealedBlock<N::Block>,
+        ctx: TreeCtx<'_, N>,
+    ) -> ValidationOutcome<N> {
+        let reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
+            self.chain_id,
+            block.timestamp(),
+        );
+        let result = self.inner.validate_block(block, ctx);
+        if result.is_ok() {
+            reservation.commit();
+        }
+        result
+    }
+
+    fn on_inserted_executed_block(
+        &self,
+        block: BuiltPayloadExecutedBlock<N>,
+    ) -> ProviderResult<ExecutedBlock<N>> {
+        self.inner.on_inserted_executed_block(block)
+    }
+
+    fn on_canonical_head_changed(&self, hash: B256, state: &EngineApiTreeState<N>) {
+        self.inner.on_canonical_head_changed(hash, state);
+    }
+
+    fn payload_builder_resources(
+        &self,
+        parent_hash: B256,
+        parent_header: &N::BlockHeader,
+        timestamp: u64,
+        state: &mut EngineApiTreeState<N>,
+    ) -> PayloadBuilderResources {
+        self.inner.payload_builder_resources(parent_hash, parent_header, timestamp, state)
+    }
+}
+
+impl<V: WaitForCaches> WaitForCaches for RuntimeUpgradeEngineValidator<V> {
+    fn wait_for_caches(&self) -> CacheWaitDurations {
+        self.inner.wait_for_caches()
+    }
 }
 
 impl<Tx, ChainSpec> BaseEngineValidator<Tx, ChainSpec> {

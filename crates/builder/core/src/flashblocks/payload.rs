@@ -23,6 +23,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
+use base_common_genesis::RuntimeUpgradeRegistry;
 use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
@@ -277,6 +278,10 @@ where
         span.record("payload_id", config.attributes.payload_attributes.id.to_string());
 
         let timestamp = config.attributes.timestamp();
+        let processed_head_reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
+            self.client.chain_spec().chain().id(),
+            timestamp,
+        );
         let mut ctx = self
             .get_base_payload_builder_ctx(
                 config,
@@ -322,6 +327,7 @@ where
             prev_flashblock_id,
             skip_flashblocks_building, // need to calculate state root for CL sync or if not building flashblocks
         )?;
+        processed_head_reservation.commit();
 
         self.outputs.payload_tx.send(payload.clone()).await.map_err(PayloadBuilderError::other)?;
 

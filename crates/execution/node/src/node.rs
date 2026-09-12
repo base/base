@@ -35,6 +35,7 @@ use base_execution_txpool::{
 use reth_chain_state::CanonStateSubscriptions;
 use reth_chainspec::{BaseFeeParams, ChainSpecProvider, EthChainSpec, Hardforks};
 use reth_discv5::discv5::enr::{IP_ENR_KEY, IP6_ENR_KEY};
+use reth_engine_tree::tree::TreeConfig;
 use reth_evm::ConfigureEvm;
 use reth_network::{
     NetworkConfig, NetworkConfigBuilder, NetworkHandle, NetworkManager, NetworkPrimitives,
@@ -64,6 +65,7 @@ use reth_primitives_traits::{SealedHeader, header::HeaderMut};
 use reth_provider::providers::ProviderFactoryBuilder;
 use reth_rpc_api::{DebugApiServer, eth::RpcTypes};
 use reth_rpc_server_types::RethRpcModule;
+use reth_storage_overlay::OverlayManager;
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
     EthPoolTransaction, PoolPooledTx, PoolTransaction, TransactionPool,
@@ -76,7 +78,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::{
     BaseEngineApiBuilder, BaseEngineTypes, BaseStorage,
     args::{RollupArgs, TxpoolOrdering},
-    engine::BaseEngineValidator,
+    engine::{BaseEngineValidator, RuntimeUpgradeEngineValidator},
 };
 
 /// Discovery v5 protocol version for Base.
@@ -355,7 +357,7 @@ where
         BaseEthApiBuilder,
         BasePayloadValidatorBuilder,
         BaseEngineApiBuilder<BasePayloadValidatorBuilder>,
-        BasicEngineValidatorBuilder<BasePayloadValidatorBuilder>,
+        RuntimeUpgradeEngineValidatorBuilder<BasePayloadValidatorBuilder>,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -401,7 +403,7 @@ pub struct BaseAddOns<
     EthB: EthApiBuilder<N>,
     PVB,
     EB = BaseEngineApiBuilder<PVB>,
-    EVB = BasicEngineValidatorBuilder<PVB>,
+    EVB = RuntimeUpgradeEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers
@@ -1449,6 +1451,40 @@ where
 
     async fn build(self, ctx: &AddOnsContext<'_, Node>) -> eyre::Result<Self::Validator> {
         Ok(BaseEngineValidator::new::<KeccakKeyHasher>(Arc::clone(&ctx.config.chain)))
+    }
+}
+
+/// Builder that adds runtime fork-rule reservations to the standard engine validator.
+#[derive(Debug, Clone)]
+pub struct RuntimeUpgradeEngineValidatorBuilder<PVB> {
+    inner: BasicEngineValidatorBuilder<PVB>,
+}
+
+impl<PVB: Default> Default for RuntimeUpgradeEngineValidatorBuilder<PVB> {
+    fn default() -> Self {
+        Self { inner: BasicEngineValidatorBuilder::default() }
+    }
+}
+
+impl<Node, PVB> EngineValidatorBuilder<Node> for RuntimeUpgradeEngineValidatorBuilder<PVB>
+where
+    Node: FullNodeComponents<Types: BaseNodeTypes>,
+    PVB: Clone,
+    BasicEngineValidatorBuilder<PVB>: EngineValidatorBuilder<Node>,
+{
+    type EngineValidator = RuntimeUpgradeEngineValidator<
+        <BasicEngineValidatorBuilder<PVB> as EngineValidatorBuilder<Node>>::EngineValidator,
+    >;
+
+    async fn build_tree_validator(
+        self,
+        ctx: &AddOnsContext<'_, Node>,
+        tree_config: TreeConfig,
+        overlay_manager: OverlayManager<PrimitivesTy<Node::Types>>,
+    ) -> eyre::Result<Self::EngineValidator> {
+        let chain_id = ctx.config.chain.chain().id();
+        let inner = self.inner.build_tree_validator(ctx, tree_config, overlay_manager).await?;
+        Ok(RuntimeUpgradeEngineValidator::new(inner, chain_id))
     }
 }
 

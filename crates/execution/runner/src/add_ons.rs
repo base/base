@@ -11,15 +11,18 @@ use base_execution_rpc::{
     witness::{BaseDebugWitnessApi, DebugExecutionWitnessApiServer},
 };
 use base_execution_txpool::BasePooledTx;
-use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
+use base_node_core::{
+    BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder,
+    RuntimeUpgradeEngineValidatorBuilder,
+};
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
     node::NodeTypes,
     rpc::{
-        BasicEngineValidatorBuilder, EngineApiBuilder, EngineValidatorAddOn,
-        EngineValidatorBuilder, EthApiBuilder, Identity, PayloadValidatorBuilder, RethRpcAddOns,
-        RethRpcMiddleware, RethRpcServerHandles, RpcAddOns, RpcContext, RpcHandle,
+        EngineApiBuilder, EngineValidatorAddOn, EngineValidatorBuilder, EthApiBuilder, Identity,
+        PayloadValidatorBuilder, RethRpcAddOns, RethRpcMiddleware, RethRpcServerHandles, RpcAddOns,
+        RpcContext, RpcHandle,
     },
 };
 use reth_primitives_traits::header::HeaderMut;
@@ -39,7 +42,7 @@ pub struct BaseAddOns<
     EthB: EthApiBuilder<N>,
     PVB,
     EB = BaseEngineApiBuilder<PVB>,
-    EVB = BasicEngineValidatorBuilder<PVB>,
+    EVB = RuntimeUpgradeEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
 > {
     /// Rpc add-ons responsible for launching the RPC servers and instantiating the RPC handlers

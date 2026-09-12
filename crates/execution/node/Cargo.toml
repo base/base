@@ -27,11 +27,13 @@ reth-consensus.workspace = true
 reth-node-core.workspace = true
 reth-chainspec.workspace = true
 reth-chain-state.workspace = true
+reth-engine-tree.workspace = true
 reth-storage-api = { workspace = true, features = ["db-api"] }
 reth-trie-common.workspace = true
 reth-node-builder.workspace = true
 reth-network-peers.workspace = true
 reth-rpc-engine-api.workspace = true
+reth-storage-overlay.workspace = true
 reth-payload-builder.workspace = true
 reth-transaction-pool.workspace = true
 reth-rpc-server-types.workspace = true
@@ -66,6 +68,7 @@ alloy-primitives.workspace = true
 base-common-chains.workspace = true
 base-upgrade-signal.workspace = true
 alloy-rpc-types-eth.workspace = true
+base-common-genesis.workspace = true
 alloy-rpc-types-engine.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 base-common-rpc-types-engine = { workspace = true, features = ["reth"] }

@@ -20,7 +20,7 @@ pub use args::{
 /// Exports Base-specific implementations of the [`EngineTypes`](reth_node_api::EngineTypes)
 /// trait.
 pub mod engine;
-pub use engine::BaseEngineTypes;
+pub use engine::{BaseEngineTypes, RuntimeUpgradeEngineValidator};
 
 pub mod node;
 pub use node::*;

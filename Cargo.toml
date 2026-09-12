@@ -376,6 +376,7 @@ reth-network-p2p = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3"
 reth-storage-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-rpc-eth-api = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-chain-state = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
+reth-engine-tree = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-trie-common = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-payload-util = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-node-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
@@ -393,6 +394,7 @@ reth-eth-wire-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2
 reth-payload-builder = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-execution-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-execution-cache = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
+reth-storage-overlay = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-exex-test-utils = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-rpc-server-types = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
 reth-transaction-pool = { git = "https://github.com/base/reth", tag = "base-v2.5.2.3" }
