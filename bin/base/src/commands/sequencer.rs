@@ -15,6 +15,7 @@ use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
 use base_node_runner::BaseNodeRunner;
+use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
@@ -73,6 +74,16 @@ impl SequencerCommand {
         let sequencer_rpc = rollup_args.sequencer.clone();
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
+        // Mirrors `bin/builder`: `BuilderArgs` carries the transaction-event journal
+        // settings, but the writer is a process-global that only emits once initialized.
+        // Without this the integrated sequencer parses
+        // `--builder.transaction-events.*` / `BUILDER_TRANSACTION_EVENTS_*` and then
+        // silently discards every event. Runs before the extensions install below so
+        // node-started hooks that emit events see a ready writer.
+        let transaction_events_enabled = builder.transaction_events.enabled;
+        GlobalTransactionEventWriter::init(
+            transaction_events_enabled.then(|| builder.transaction_events.writer_config()),
+        )?;
         let builder_api_config = builder.builder_api_config()?;
         // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
