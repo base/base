@@ -8,7 +8,7 @@ use alloy_rpc_types_engine::{
 };
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BaseExecutionPayloadSidecar,
 };
@@ -254,6 +254,10 @@ impl<EngineClient_: EngineClient> InsertTask<EngineClient_> {
             return Ok(state.sync_state.unsafe_head());
         }
 
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+            self.rollup_config.l2_chain_id.id(),
+            block.header.timestamp,
+        );
         BaseTimeUpdateTx::validate_block_timestamp(
             &self.rollup_config,
             &block.body.transactions,
@@ -382,13 +386,15 @@ impl<EngineClient_: EngineClient> EngineTaskExt for InsertTask<EngineClient_> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, B256, Bloom, FixedBytes, U256};
     use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus, PayloadStatusEnum};
     use base_common_consensus::{BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{BaseUpgradeConfig, RollupConfig, UpgradeConfig};
+    use base_common_genesis::{
+        BaseUpgradeConfig, RollupConfig, RuntimeUpgradeRegistry, UpgradeConfig,
+    };
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{
         BaseTimeScheduleError, BaseTimeUpdateTx, BlockInfo, L1BlockInfoBedrock, L2BlockInfo,
@@ -544,6 +550,37 @@ mod tests {
             payload_input.withdrawals.is_none(),
             "bedrock payload must keep withdrawals unset when sent via engine_newPayloadV2"
         );
+    }
+
+    #[tokio::test]
+    async fn reserves_payload_timestamp_before_engine_validation() {
+        let chain_id = 9_200_003;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let client = test_client();
+        let storage = client.storage();
+        let storage_guard = storage.write().await;
+        let task = InsertTask::unsafe_payload(
+            client,
+            Arc::new(RollupConfig { l2_chain_id: chain_id.into(), ..RollupConfig::default() }),
+            BaseExecutionPayloadEnvelope {
+                parent_beacon_block_root: None,
+                execution_payload: bedrock_payload(1),
+            },
+        );
+        let mut state = TestEngineStateBuilder::new().build();
+
+        let handle = tokio::spawn(async move { task.execute(&mut state).await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while RuntimeUpgradeRegistry::processed_head_timestamp(chain_id) != Some(1) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("payload timestamp was not reserved before engine validation");
+
+        drop(storage_guard);
+        handle.await.unwrap().unwrap();
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[tokio::test]

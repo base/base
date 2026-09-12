@@ -16,6 +16,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
+use base_common_genesis::RuntimeUpgradeRegistry;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
@@ -404,6 +405,10 @@ impl<Txs> Builder<'_, Txs> {
     {
         let Self { best, evict_permanently_rejected } = self;
         debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number(), "building new payload");
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(
+            ctx.chain_spec.chain().id(),
+            ctx.attributes().timestamp(),
+        );
 
         let mut db = State::builder().with_database(db).with_bundle_update().build();
 
@@ -1544,6 +1549,7 @@ mod tests {
     use base_common_chains::BaseUpgrade;
     use base_common_consensus::{BasePrimitives, BaseTxEnvelope, Predeploys};
     use base_common_evm::BaseTime;
+    use base_common_genesis::RuntimeUpgradeRegistry;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_evm::BaseEvmConfig;
     use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
@@ -1661,6 +1667,18 @@ mod tests {
     #[test]
     fn parallel_state_root_is_used() {
         assert_eq!(build_empty_payload(state_root_handle()), B256::repeat_byte(0x42));
+    }
+
+    #[test]
+    fn payload_build_reserves_payload_timestamp() {
+        let chain_id = 8_453;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let ctx = pool_payload_context(42);
+
+        build_pool_payload(ctx, NoopPayloadTransactions::<BasePooledTransaction>::default());
+
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(42));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     const DENIM_TIMESTAMP: u64 = 1;
