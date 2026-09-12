@@ -12,7 +12,6 @@ use base_common_evm::{
     BaseBlockExecutionCtx, BaseBlockExecutorFactory, BaseEvmFactory, BaseReceiptBuilder,
     BaseSpecId, BaseTransaction, BaseTxEnv,
 };
-use base_common_genesis::RuntimeUpgradeRegistry;
 #[cfg(not(feature = "std"))]
 use base_common_rpc_types_engine as _;
 #[cfg(feature = "std")]
@@ -175,10 +174,6 @@ where
     }
 
     fn evm_env(&self, header: &Header) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
-        RuntimeUpgradeRegistry::record_processed_head_timestamp(
-            self.chain_spec().chain().id(),
-            header.timestamp(),
-        );
         Ok(BaseEvmEnvBuilder::evm_env(header, self.chain_spec()))
     }
 
@@ -187,10 +182,6 @@ where
         parent: &Header,
         attributes: &Self::NextBlockEnvCtx,
     ) -> Result<EvmEnv<BaseSpecId>, Self::Error> {
-        RuntimeUpgradeRegistry::record_processed_head_timestamp(
-            self.chain_spec().chain().id(),
-            attributes.timestamp,
-        );
         let base_fee =
             self.chain_spec().next_block_base_fee(parent, attributes.timestamp).unwrap_or_default();
 
@@ -237,10 +228,6 @@ where
     Self: Send + Sync + Unpin + Clone + 'static,
 {
     fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
-        RuntimeUpgradeRegistry::record_processed_head_timestamp(
-            self.chain_spec().chain().id(),
-            payload.payload.timestamp(),
-        );
         Ok(BaseEvmEnvBuilder::payload_evm_env(payload, self.chain_spec()))
     }
 
@@ -287,9 +274,9 @@ mod tests {
     };
     use base_common_consensus::{BaseBlock, BasePrimitives, BaseReceipt};
     use base_common_evm::BaseSpecId;
-    use base_common_genesis::BaseUpgrade;
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
-    use reth_chainspec::ChainSpec;
+    use reth_chainspec::{Chain as ChainId, ChainSpec};
     use reth_evm::{ConfigureEvm, EvmEnv, execute::ProviderError};
     use reth_execution_types::{
         AccountRevertInit, BundleStateInit, Chain, ExecutionOutcome, RevertsInit,
@@ -304,7 +291,7 @@ mod tests {
         state::AccountInfo,
     };
 
-    use super::BaseEvmConfig;
+    use super::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 
     fn test_evm_config() -> BaseEvmConfig {
         BaseEvmConfig::base(Arc::new(BaseChainSpec::mainnet()))
@@ -324,6 +311,32 @@ mod tests {
         let EvmEnv { cfg_env, .. } = evm_config.evm_env(&header).unwrap();
         assert_eq!(cfg_env.spec, BaseSpecId::new(BaseUpgrade::Azul));
         assert_eq!(cfg_env.tx_gas_limit_cap, Some(MAX_TX_GAS_LIMIT_OSAKA));
+    }
+
+    #[test]
+    fn hypothetical_evm_env_does_not_advance_processed_head() {
+        let chain_id = 9_100_105;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        RuntimeUpgradeRegistry::record_processed_head_timestamp(chain_id, 100);
+        let evm_config = BaseEvmConfig::base(Arc::new(
+            BaseChainSpecBuilder::default()
+                .chain(ChainId::from_id(chain_id))
+                .genesis(Genesis::default())
+                .build(),
+        ));
+        let attributes = BaseNextBlockEnvAttributes {
+            timestamp: u64::MAX,
+            suggested_fee_recipient: Address::ZERO,
+            prev_randao: B256::ZERO,
+            gas_limit: 30_000_000,
+            parent_beacon_block_root: None,
+            extra_data: Default::default(),
+        };
+
+        evm_config.next_evm_env(&Header::default(), &attributes).unwrap();
+
+        assert_eq!(RuntimeUpgradeRegistry::processed_head_timestamp(chain_id), Some(100));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
     }
 
     #[test]

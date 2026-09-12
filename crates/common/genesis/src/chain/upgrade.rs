@@ -479,10 +479,7 @@ impl RuntimeUpgradeRegistry {
     }
 
     /// Advances the process-wide processed-head watermark for a chain without allowing regressions.
-    ///
-    /// Block execution calls this before resolving runtime fork rules. Since schedule application
-    /// takes the same write lock, either the new schedule commits first and execution observes it,
-    /// or this watermark advances first and rejects any schedule that would change that block.
+    /// Call only after a block has been accepted; simulations must not advance this watermark.
     pub fn record_processed_head_timestamp(chain_id: u64, timestamp: u64) {
         let mut registry = Self::write_registry();
         let entry = registry.entry(chain_id).or_default();
