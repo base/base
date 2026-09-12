@@ -176,6 +176,13 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
 
         // Send the forkchoice update through the input.
         let forkchoice = new_sync_state.create_forkchoice_state();
+        let proposed_state = EngineState { sync_state: new_sync_state, ..*state };
+        if let Some(timestamp) = proposed_state.processed_head_timestamp() {
+            RuntimeUpgradeRegistry::record_processed_head_timestamp(
+                self.rollup.l2_chain_id.id(),
+                timestamp,
+            );
+        }
 
         // Handle the forkchoice update result.
         // NOTE: it doesn't matter which version we use here, because we're not sending any
@@ -206,12 +213,6 @@ impl<EngineClient_: EngineClient> EngineTaskExt for SynchronizeTask<EngineClient
         let applied_update =
             if confirmed { self.state_update } else { self.safe_only_sync_update(state) };
         state.sync_state = state.sync_state.apply_update(applied_update);
-        if let Some(timestamp) = state.processed_head_timestamp() {
-            RuntimeUpgradeRegistry::record_processed_head_timestamp(
-                self.rollup.l2_chain_id.id(),
-                timestamp,
-            );
-        }
 
         let fcu_duration = fcu_time_start.elapsed();
         debug!(
