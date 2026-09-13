@@ -11,7 +11,7 @@ pub trait ChainUpgradesExt {
     ///
     /// Pre-Bedrock Ethereum upgrades are set to block 0. Paired Ethereum upgrades
     /// use their Base counterpart's timestamp:
-    /// Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus, Osaka=Azul.
+    /// Shanghai=Canyon, Cancun=Ecotone, Prague=Isthmus, Osaka=Azul, Amsterdam=Denim.
     fn to_chain_upgrades(&self) -> ChainHardforks;
 }
 
@@ -83,6 +83,12 @@ impl ChainUpgradesExt for ChainUpgrades {
             forks.push((BaseUpgrade::Cobalt.boxed(), cobalt));
         }
 
+        let denim = self[BaseUpgrade::Denim];
+        if !matches!(denim, ForkCondition::Never) {
+            forks.push((EthereumHardfork::Amsterdam.boxed(), denim));
+            forks.push((BaseUpgrade::Denim.boxed(), denim));
+        }
+
         ChainHardforks::new(forks)
     }
 }
@@ -105,5 +111,19 @@ mod tests {
         .to_chain_upgrades();
         assert_eq!(upgrades.get(BaseUpgrade::Azul), Some(ForkCondition::Timestamp(1_000_000)));
         assert_eq!(upgrades.get(EthereumHardfork::Osaka), upgrades.get(BaseUpgrade::Azul));
+    }
+
+    #[test]
+    fn denim_expands_to_amsterdam() {
+        let upgrades = ChainUpgrades::new(BaseUpgrade::devnet().into_iter().map(|(fork, cond)| {
+            if fork == BaseUpgrade::Denim {
+                (fork, ForkCondition::Timestamp(1_000_000))
+            } else {
+                (fork, cond)
+            }
+        }))
+        .to_chain_upgrades();
+        assert_eq!(upgrades.get(BaseUpgrade::Denim), Some(ForkCondition::Timestamp(1_000_000)));
+        assert_eq!(upgrades.get(EthereumHardfork::Amsterdam), upgrades.get(BaseUpgrade::Denim));
     }
 }

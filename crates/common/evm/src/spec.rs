@@ -244,6 +244,30 @@ mod tests {
                     (BaseUpgrade::Beryl, true),
                 ],
             ),
+            (
+                BaseUpgrade::Denim,
+                vec![
+                    (SpecId::AMSTERDAM, true),
+                    (SpecId::OSAKA, true),
+                    (SpecId::PRAGUE, true),
+                    (SpecId::SHANGHAI, true),
+                    (SpecId::CANCUN, true),
+                    (SpecId::MERGE, true),
+                ],
+                vec![
+                    (BaseUpgrade::Bedrock, true),
+                    (BaseUpgrade::Regolith, true),
+                    (BaseUpgrade::Canyon, true),
+                    (BaseUpgrade::Ecotone, true),
+                    (BaseUpgrade::Fjord, true),
+                    (BaseUpgrade::Holocene, true),
+                    (BaseUpgrade::Isthmus, true),
+                    (BaseUpgrade::Jovian, true),
+                    (BaseUpgrade::Azul, true),
+                    (BaseUpgrade::Beryl, true),
+                    (BaseUpgrade::Cobalt, true),
+                ],
+            ),
         ];
 
         for (base_upgrade, eth_tests, base_tests) in test_cases {
