@@ -1031,6 +1031,154 @@ mod tests {
         );
     }
 
+    /// Runs runtime `code` deployed at a contract, called with empty calldata at `spec`.
+    fn run_glamsterdam_code(
+        spec: BaseSpecId,
+        code: Bytes,
+    ) -> revm::context_interface::result::ExecutionResult<BaseHaltReason> {
+        run_glamsterdam_gas_tx(spec, Some(code), Bytes::new(), U256::ZERO, None)
+    }
+
+    /// EIP-8024 adds the backward-compatible stack opcodes DUPN (0xE6), SWAPN (0xE7) and
+    /// EXCHANGE (0xE8), each gated on `SpecId::AMSTERDAM`. Unlike DUP1-16/SWAP1-16 they reach
+    /// deep stack items: revm decodes the 1-byte immediate `0x80` to depth 17, so these
+    /// bytecodes build a >=17-deep stack. They must execute at Denim and be rejected pre-Denim
+    /// (Cobalt / OSAKA).
+    #[test]
+    fn test_eip8024_dupn_swapn_exchange_opcodes_at_denim() {
+        let denim = BaseSpecId::new(BaseUpgrade::Denim);
+        let cobalt = BaseSpecId::new(BaseUpgrade::Cobalt);
+
+        let push1 = |code: &mut alloc::vec::Vec<u8>, v: u8| code.extend_from_slice(&[0x60, v]);
+        // RETURN(0, 32) of whatever is on top of the stack.
+        let mstore_return = [0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3];
+
+        // DUPN 0x80 duplicates the 17th item (the first pushed, 0xAB) to the top.
+        let mut dupn = alloc::vec::Vec::new();
+        push1(&mut dupn, 0xAB);
+        for _ in 0..16 {
+            push1(&mut dupn, 0x00);
+        }
+        dupn.extend_from_slice(&[0xE6, 0x80]);
+        dupn.extend_from_slice(&mstore_return);
+        let dupn = Bytes::from(dupn);
+
+        // SWAPN 0x80 swaps the top item with the item at depth 17 (the first pushed, 0xCD).
+        let mut swapn = alloc::vec::Vec::new();
+        push1(&mut swapn, 0xCD);
+        for _ in 0..17 {
+            push1(&mut swapn, 0x00);
+        }
+        swapn.extend_from_slice(&[0xE7, 0x80]);
+        swapn.extend_from_slice(&mstore_return);
+        let swapn = Bytes::from(swapn);
+
+        // EXCHANGE 0x00 swaps items at depths 9 and 16, so it needs a 17-deep stack; STOP after.
+        let mut exchange = alloc::vec::Vec::new();
+        for _ in 0..17 {
+            push1(&mut exchange, 0x00);
+        }
+        exchange.extend_from_slice(&[0xE8, 0x00, 0x00]);
+        let exchange = Bytes::from(exchange);
+
+        let dupn_res = run_glamsterdam_code(denim, dupn.clone());
+        assert!(dupn_res.is_success(), "DUPN should execute at Denim");
+        assert_eq!(
+            U256::from_be_slice(dupn_res.output().unwrap()),
+            U256::from(0xAB),
+            "DUPN should duplicate the deep stack item to the top",
+        );
+
+        let swapn_res = run_glamsterdam_code(denim, swapn.clone());
+        assert!(swapn_res.is_success(), "SWAPN should execute at Denim");
+        assert_eq!(
+            U256::from_be_slice(swapn_res.output().unwrap()),
+            U256::from(0xCD),
+            "SWAPN should swap the deep stack item to the top",
+        );
+
+        assert!(
+            run_glamsterdam_code(denim, exchange.clone()).is_success(),
+            "EXCHANGE should execute at Denim",
+        );
+
+        // Pre-Denim these opcodes are undefined and must halt (invalid opcode).
+        assert!(!run_glamsterdam_code(cobalt, dupn).is_success(), "DUPN is invalid pre-Denim");
+        assert!(!run_glamsterdam_code(cobalt, swapn).is_success(), "SWAPN is invalid pre-Denim");
+        assert!(
+            !run_glamsterdam_code(cobalt, exchange).is_success(),
+            "EXCHANGE is invalid pre-Denim",
+        );
+    }
+
+    /// EIP-8246: a contract created in the same transaction that self-destructs with itself as
+    /// the beneficiary must retain its balance at Denim. Pre-8246 (EIP-6780 semantics) this ETH
+    /// was burned.
+    #[test]
+    fn test_eip8246_selfdestruct_to_self_preserves_balance_at_denim() {
+        // Factory runtime: store initcode `30 FF` (ADDRESS; SELFDESTRUCT) at mem[30..32], CREATE
+        // a child endowed with 100 wei, then RETURN the created child address.
+        let factory_code = bytes!("6130FF6000526002601e6064f060005260206000f3");
+        let factory = Address::from([0x42; 20]);
+
+        let run = |spec: BaseSpecId| -> (bool, U256) {
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                factory,
+                AccountInfo {
+                    balance: U256::from(1_000u64),
+                    code: Some(Bytecode::new_legacy(factory_code.clone())),
+                    ..Default::default()
+                },
+            );
+            db.insert_account_info(
+                Address::ZERO,
+                AccountInfo { balance: U256::from(1_000_000u64), ..Default::default() },
+            );
+
+            let ctx = Context::base()
+                .with_db(db)
+                .with_tx(
+                    BaseTransaction::builder()
+                        .base(TxEnv::builder().gas_limit(1_000_000).kind(TxKind::Call(factory)))
+                        .enveloped_tx(Some(bytes!("FACADE")))
+                        .build_fill(),
+                )
+                .with_cfg(CfgEnv::new_with_spec(spec))
+                .with_chain(L1BlockInfo {
+                    l2_block: Some(U256::ZERO),
+                    operator_fee_scalar: Some(U256::ZERO),
+                    operator_fee_constant: Some(U256::ZERO),
+                    ..Default::default()
+                });
+            let mut evm = ctx.build_base();
+            let mut handler =
+                BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new(
+                );
+            let result = handler.run(&mut evm).unwrap();
+            let output = result.output().cloned().unwrap_or_default();
+            let child = Address::from_word(B256::from_slice(&output));
+            let balance = evm.ctx_mut().journal_mut().load_account(child).unwrap().info.balance;
+            (result.is_success(), balance)
+        };
+
+        let (denim_ok, denim_balance) = run(BaseSpecId::new(BaseUpgrade::Denim));
+        assert!(denim_ok, "same-tx create + selfdestruct should succeed at Denim");
+        assert_eq!(
+            denim_balance,
+            U256::from(100u64),
+            "EIP-8246: self-beneficiary balance must be preserved at Denim",
+        );
+
+        let (cobalt_ok, cobalt_balance) = run(BaseSpecId::new(BaseUpgrade::Cobalt));
+        assert!(cobalt_ok, "same-tx create + selfdestruct should succeed at Cobalt");
+        assert_eq!(
+            cobalt_balance,
+            U256::ZERO,
+            "pre-EIP-8246 the self-beneficiary balance is burned at Cobalt",
+        );
+    }
+
     fn tx_error_cleanup_db_with_warmed_account(
         warmed: Address,
         warmed_account_info: AccountInfo,
