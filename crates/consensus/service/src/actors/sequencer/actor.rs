@@ -123,7 +123,7 @@ where
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
     pub(super) async fn seal_payload(
         &self,
-        handle: &UnsealedPayloadHandle,
+        handle: UnsealedPayloadHandle,
     ) -> Result<PayloadSealer, SequencerActorError> {
         let seal_request_start = Instant::now();
 
@@ -137,9 +137,9 @@ where
             .increment(handle.attributes_with_parent.count_transactions());
 
         if self.is_shadow_sequencer() {
-            Ok(PayloadSealer::new_private(envelope))
+            Ok(PayloadSealer::new_private(envelope, handle.processed_head_reservation))
         } else {
-            Ok(PayloadSealer::new(envelope))
+            Ok(PayloadSealer::new(envelope, handle.processed_head_reservation))
         }
     }
 
@@ -188,7 +188,7 @@ where
         // get_unsafe_head() call and seal_payload() below, the EL's own validation is
         // the final safety gate.
         let seal_start = Instant::now();
-        match self.seal_payload(&handle).await {
+        match self.seal_payload(handle).await {
             Ok(sealer) => Ok(Some((sealer, seal_start.elapsed()))),
             Err(SequencerActorError::EngineError(EngineClientError::SealError(err))) => {
                 if err.is_fatal() {
@@ -781,7 +781,7 @@ where
 mod tests {
     use alloy_primitives::{B256, Sealed};
     use base_common_consensus::{BaseBlock, BaseTxEnvelope, TxDeposit};
-    use base_common_genesis::{RollupConfig, SystemConfig};
+    use base_common_genesis::{RollupConfig, RuntimeUpgradeRegistry, SystemConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
     use base_protocol::{BlockInfo, L1BlockInfoBedrock};
 
@@ -813,7 +813,14 @@ mod tests {
             execution_payload: payload,
             parent_beacon_block_root: None,
         };
-        (PayloadSealer::new(envelope), head, config)
+        (
+            PayloadSealer::new(
+                envelope,
+                RuntimeUpgradeRegistry::reserve_processed_head_timestamp(9_100_107, 0),
+            ),
+            head,
+            config,
+        )
     }
 
     #[tokio::test]

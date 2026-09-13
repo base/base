@@ -11,7 +11,10 @@ use alloy_primitives::{Address, B256, utils::parse_ether};
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use alloy_transport::TransportErrorKind;
 use base_common_consensus::BaseTxEnvelope;
-use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, RollupConfig, UpgradeConfig};
+use base_common_genesis::{
+    BaseUpgradeConfig, ChainGenesis, ProcessedHeadReservation, RollupConfig,
+    RuntimeUpgradeRegistry, UpgradeConfig,
+};
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadEnvelope, BasePayloadAttributes,
 };
@@ -64,6 +67,10 @@ fn dummy_attributes_with_parent() -> AttributesWithParent {
     AttributesWithParent::new(BasePayloadAttributes::default(), L2BlockInfo::default(), None, false)
 }
 
+fn payload_rule_reservation() -> ProcessedHeadReservation {
+    RuntimeUpgradeRegistry::reserve_processed_head_timestamp(9_100_108, 0)
+}
+
 fn handle_with_parent_number(number: u64) -> UnsealedPayloadHandle {
     handle_with_parent(number, B256::ZERO)
 }
@@ -81,6 +88,7 @@ fn handle_with_parent(number: u64, hash: B256) -> UnsealedPayloadHandle {
             None,
             false,
         ),
+        processed_head_reservation: payload_rule_reservation(),
     }
 }
 
@@ -492,7 +500,7 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.rollup_config = rollup_config;
     actor.shadow_blocks_per_cycle = NonZeroU64::new(1);
-    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope()));
+    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope(), payload_rule_reservation()));
 
     actor.start(()).await.unwrap();
 }
@@ -777,6 +785,78 @@ async fn test_orphaned_l1_origin_propagates_engine_reset_failure() {
     ));
 }
 
+#[tokio::test]
+async fn build_reserves_fork_rules_before_origin_selection_until_handle_is_dropped() {
+    let chain_id = 9_100_109;
+    RuntimeUpgradeRegistry::clear_chain(chain_id);
+    let rollup_config = Arc::new(RollupConfig {
+        l2_chain_id: chain_id.into(),
+        block_time: 2,
+        ..Default::default()
+    });
+    let target_timestamp = rollup_config.l2_block_timestamp(1);
+
+    let mut client = MockSequencerEngineClient::new();
+    client.expect_start_build_block().times(1).return_once(|_| Ok(Default::default()));
+
+    let mut origin_selector = MockOriginSelector::new();
+    origin_selector.expect_next_l1_origin().times(1).return_once(move |_| {
+        RuntimeUpgradeRegistry::replace_overrides_checked(
+            chain_id,
+            1,
+            0,
+            Default::default(),
+            |_, _, validation_head| {
+                assert_eq!(validation_head, target_timestamp);
+                Ok::<(), ()>(())
+            },
+        )
+        .unwrap();
+        Ok(BlockInfo::default())
+    });
+
+    let mut actor = test_actor();
+    actor.builder.attributes_builder = TestAttributesBuilder {
+        attributes: vec![Ok(attributes_at(target_timestamp))],
+        ..Default::default()
+    };
+    actor.builder.engine_client = Arc::new(client);
+    actor.builder.origin_selector = origin_selector;
+    actor.builder.rollup_config = rollup_config;
+
+    let crate::BuildOutcome::Ready(handle) =
+        actor.builder.build_on(L2BlockInfo::default(), None).await.unwrap()
+    else {
+        panic!("expected a ready payload")
+    };
+
+    RuntimeUpgradeRegistry::replace_overrides_checked(
+        chain_id,
+        2,
+        0,
+        Default::default(),
+        |_, _, validation_head| {
+            assert_eq!(validation_head, target_timestamp);
+            Ok::<(), ()>(())
+        },
+    )
+    .unwrap();
+
+    drop(handle);
+    RuntimeUpgradeRegistry::replace_overrides_checked(
+        chain_id,
+        3,
+        0,
+        Default::default(),
+        |_, _, validation_head| {
+            assert_eq!(validation_head, 0);
+            Ok::<(), ()>(())
+        },
+    )
+    .unwrap();
+    RuntimeUpgradeRegistry::clear_chain(chain_id);
+}
+
 #[rstest]
 #[case::temp(PipelineErrorKind::Temporary(BuilderError::Custom(String::new()).into()), false)]
 #[case::reset(PipelineErrorKind::Reset(BuilderError::Custom(String::new()).into()), false)]
@@ -834,8 +914,9 @@ async fn test_seal_payload_success_returns_sealer() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        processed_head_reservation: payload_rule_reservation(),
     };
-    let sealer = actor.seal_payload(&handle).await;
+    let sealer = actor.seal_payload(handle).await;
 
     assert!(sealer.is_ok());
     assert_eq!(sealer.unwrap().state, SealState::Sealed);
@@ -855,8 +936,9 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        processed_head_reservation: payload_rule_reservation(),
     };
-    let sealer = actor.seal_payload(&handle).await.unwrap();
+    let sealer = actor.seal_payload(handle).await.unwrap();
 
     assert_eq!(sealer.state, SealState::Private);
 }
@@ -875,8 +957,9 @@ async fn test_seal_payload_failure_propagates() {
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
+        processed_head_reservation: payload_rule_reservation(),
     };
-    let result = actor.seal_payload(&handle).await;
+    let result = actor.seal_payload(handle).await;
 
     assert!(result.is_err());
 }
@@ -896,7 +979,7 @@ async fn test_private_sealer_only_inserts() {
     let mut engine = MockSequencerEngineClient::new();
     engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
-    let mut sealer = PayloadSealer::new_private(envelope);
+    let mut sealer = PayloadSealer::new_private(envelope, payload_rule_reservation());
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
 
     assert_eq!(result.unwrap(), SealStepOutcome::Inserted(L2BlockInfo::default()));
@@ -919,7 +1002,7 @@ async fn test_private_sealer_insert_failure_stays_private() {
         .times(1)
         .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
 
-    let mut sealer = PayloadSealer::new_private(envelope);
+    let mut sealer = PayloadSealer::new_private(envelope, payload_rule_reservation());
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
 
     assert!(matches!(result.unwrap_err(), SealStepError::Insert(_)));
@@ -937,7 +1020,7 @@ async fn test_sealer_full_pipeline_no_conductor() {
     engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let conductor: Option<MockConductor> = None;
-    let mut sealer = PayloadSealer::new(envelope);
+    let mut sealer = PayloadSealer::new(envelope, payload_rule_reservation());
 
     assert_eq!(sealer.state, SealState::Sealed);
 
@@ -967,7 +1050,7 @@ async fn test_sealer_full_pipeline_with_conductor() {
     engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
     let conductor = Some(conductor);
-    let mut sealer = PayloadSealer::new(envelope);
+    let mut sealer = PayloadSealer::new(envelope, payload_rule_reservation());
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
     assert_eq!(result.unwrap(), SealStepOutcome::Pending);
@@ -992,7 +1075,7 @@ async fn test_sealer_conductor_failure_stays_sealed() {
     let engine = MockSequencerEngineClient::new();
 
     let conductor = Some(conductor);
-    let mut sealer = PayloadSealer::new(envelope);
+    let mut sealer = PayloadSealer::new(envelope, payload_rule_reservation());
 
     let result = sealer.step(&conductor, &gossip, &engine).await;
     assert!(result.is_err());
@@ -1011,7 +1094,7 @@ async fn test_sealer_gossip_failure_stays_committed() {
 
     let engine = MockSequencerEngineClient::new();
     let conductor: Option<MockConductor> = None;
-    let mut sealer = PayloadSealer::new(envelope);
+    let mut sealer = PayloadSealer::new(envelope, payload_rule_reservation());
 
     let _ = sealer.step(&conductor, &gossip, &engine).await.unwrap();
     assert_eq!(sealer.state, SealState::Committed);
@@ -1036,7 +1119,7 @@ async fn test_sealer_insert_failure_stays_gossiped() {
         .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
 
     let conductor: Option<MockConductor> = None;
-    let mut sealer = PayloadSealer::new(envelope);
+    let mut sealer = PayloadSealer::new(envelope, payload_rule_reservation());
 
     let _ = sealer.step(&conductor, &gossip, &engine).await.unwrap();
     let _ = sealer.step(&conductor, &gossip, &engine).await.unwrap();

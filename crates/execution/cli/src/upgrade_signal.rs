@@ -518,14 +518,11 @@ impl FromExtensionConfig for ExecutionUpgradeSignalRuntimeExtension {
 
 #[cfg(test)]
 mod tests {
-    use alloy_consensus::Header;
     use alloy_primitives::Address;
     use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry, UpgradeActivation};
     use base_execution_chainspec::BaseChainSpecBuilder;
-    use base_execution_evm::BaseEvmConfig;
     use base_upgrade_signal::UpgradeSignalDefaults;
     use reth_chainspec::{Chain, EthereumHardfork, ForkCondition};
-    use reth_node_builder::ConfigureEvm;
 
     use super::*;
 
@@ -652,41 +649,6 @@ mod tests {
         assert_eq!(
             RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
             Some(UpgradeActivation::Timestamp(42))
-        );
-
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-    }
-
-    #[test]
-    fn block_fork_selection_closes_the_sampled_head_race() {
-        let chain_id = 9_100_104;
-        RuntimeUpgradeRegistry::clear_chain(chain_id);
-        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Azul, 100);
-        let chain_spec = BaseChainSpecBuilder::default()
-            .chain(Chain::from_id(chain_id))
-            .genesis(Default::default())
-            .with_fork(EthereumHardfork::Osaka, ForkCondition::Never)
-            .with_fork(BaseUpgrade::Azul, ForkCondition::Never)
-            .build();
-
-        BaseEvmConfig::base(Arc::new(chain_spec))
-            .evm_env(&Header { timestamp: 150, ..Default::default() })
-            .unwrap();
-
-        let error = runtime_refresher(chain_id)
-            .apply(&versioned_schedule(BaseUpgrade::Azul, 200), 50)
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            base_upgrade_signal::UpgradeSignalError::RetroactiveScheduleChange {
-                l2_head_timestamp: 150,
-                ..
-            }
-        ));
-        assert_eq!(
-            RuntimeUpgradeRegistry::activation(chain_id, BaseUpgrade::Azul),
-            Some(UpgradeActivation::Timestamp(100))
         );
 
         RuntimeUpgradeRegistry::clear_chain(chain_id);

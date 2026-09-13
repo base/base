@@ -8,7 +8,7 @@
 use std::{sync::Arc, time::Instant};
 
 use alloy_rpc_types_engine::PayloadId;
-use base_common_genesis::RollupConfig;
+use base_common_genesis::{ProcessedHeadReservation, RollupConfig, RuntimeUpgradeRegistry};
 use base_consensus_derive::{AttributesBuilder, PipelineErrorKind};
 use base_protocol::{AttributesWithParent, BlockInfo, L2BlockInfo};
 use tracing::instrument;
@@ -44,6 +44,8 @@ pub struct UnsealedPayloadHandle {
     pub payload_id: PayloadId,
     /// The [`AttributesWithParent`] used to start block building.
     pub attributes_with_parent: AttributesWithParent,
+    /// Reservation that keeps the payload's runtime fork rules stable through insertion.
+    pub processed_head_reservation: ProcessedHeadReservation,
 }
 
 impl UnsealedPayloadHandle {
@@ -96,6 +98,19 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         parent: L2BlockInfo,
         shadow_funding: Option<ShadowFunding>,
     ) -> Result<BuildOutcome<UnsealedPayloadHandle>, SequencerActorError> {
+        let target_block_number = parent.block_info.number.saturating_add(1);
+        // Retry if a Denim schedule update changed the target while the reservation was acquired.
+        let processed_head_reservation = loop {
+            let target_timestamp = self.rollup_config.l2_block_timestamp(target_block_number);
+            let reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
+                self.rollup_config.l2_chain_id.id(),
+                target_timestamp,
+            );
+            if target_timestamp == self.rollup_config.l2_block_timestamp(target_block_number) {
+                break reservation;
+            }
+        };
+
         let l1_origin = match self.get_next_payload_l1_origin(parent).await? {
             BuildOutcome::Ready(l1_origin) => l1_origin,
             BuildOutcome::Deferred => return Ok(BuildOutcome::Deferred),
@@ -128,7 +143,11 @@ impl<A: AttributesBuilder, O: OriginSelector, E: SequencerEngineClient> PayloadB
         Metrics::sequencer_block_building_start_task_duration()
             .record(build_request_start.elapsed());
 
-        Ok(BuildOutcome::Ready(UnsealedPayloadHandle { payload_id, attributes_with_parent }))
+        Ok(BuildOutcome::Ready(UnsealedPayloadHandle {
+            payload_id,
+            attributes_with_parent,
+            processed_head_reservation,
+        }))
     }
 
     /// Determines and validates the L1 origin block for the provided L2 unsafe head.

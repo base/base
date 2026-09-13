@@ -129,7 +129,15 @@ where
         &self,
         payload: Types::ExecutionData,
     ) -> Result<SealedBlock<N::Block>, NewPayloadError> {
-        self.inner.convert_payload_to_block(payload)
+        let reservation = RuntimeUpgradeRegistry::reserve_processed_head_timestamp(
+            self.chain_id,
+            payload.payload.timestamp(),
+        );
+        let result = self.inner.convert_payload_to_block(payload);
+        if result.is_ok() {
+            reservation.commit();
+        }
+        result
     }
 
     fn validate_payload(

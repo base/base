@@ -5,6 +5,7 @@
 
 use std::time::Instant;
 
+use base_common_genesis::ProcessedHeadReservation;
 use base_common_rpc_types_engine::BaseExecutionPayloadEnvelope;
 use base_protocol::L2BlockInfo;
 use tracing::Instrument;
@@ -59,6 +60,8 @@ impl SealState {
 pub struct PayloadSealer {
     /// The sealed execution payload being driven through the pipeline.
     pub envelope: BaseExecutionPayloadEnvelope,
+    /// Reservation that keeps the payload's runtime fork rules stable through insertion.
+    pub processed_head_reservation: ProcessedHeadReservation,
     /// Current pipeline stage.
     pub state: SealState,
     /// Span for the end-to-end seal pipeline lifecycle.
@@ -71,7 +74,10 @@ pub struct PayloadSealer {
 
 impl PayloadSealer {
     /// Creates a new sealer starting at the [`SealState::Sealed`] stage.
-    pub fn new(envelope: BaseExecutionPayloadEnvelope) -> Self {
+    pub fn new(
+        envelope: BaseExecutionPayloadEnvelope,
+        processed_head_reservation: ProcessedHeadReservation,
+    ) -> Self {
         let block_hash = envelope.execution_payload.block_hash();
         let block_num = envelope.execution_payload.block_number();
         let seal_span = tracing::info_span!(
@@ -80,11 +86,20 @@ impl PayloadSealer {
             block_number = block_num,
         );
 
-        Self { envelope, state: SealState::Sealed, seal_span, started_at: Instant::now() }
+        Self {
+            envelope,
+            processed_head_reservation,
+            state: SealState::Sealed,
+            seal_span,
+            started_at: Instant::now(),
+        }
     }
 
     /// Creates a private sealer that skips conductor commit and gossip.
-    pub fn new_private(envelope: BaseExecutionPayloadEnvelope) -> Self {
+    pub fn new_private(
+        envelope: BaseExecutionPayloadEnvelope,
+        processed_head_reservation: ProcessedHeadReservation,
+    ) -> Self {
         let block_hash = envelope.execution_payload.block_hash();
         let block_num = envelope.execution_payload.block_number();
         let seal_span = tracing::info_span!(
@@ -94,7 +109,13 @@ impl PayloadSealer {
             mode = "shadow",
         );
 
-        Self { envelope, state: SealState::Private, seal_span, started_at: Instant::now() }
+        Self {
+            envelope,
+            processed_head_reservation,
+            state: SealState::Private,
+            seal_span,
+            started_at: Instant::now(),
+        }
     }
 
     /// Returns whether the engine acknowledged insertion of this sealer's exact payload.
