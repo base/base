@@ -47,6 +47,7 @@ base-node-core.workspace = true
 reth-db-common.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 
+mockall.workspace = true
 alloy-chains.workspace = true
 
 [features]
