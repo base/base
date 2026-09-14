@@ -439,9 +439,10 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
     /// `now` (Unix **milliseconds**, i.e. `block.timestamp * 1000`).
     ///
     /// A nonce-free transaction is invalid when `valid_before <= now`, matching
-    /// its structural validation rule. Finite channels are unaffected; their
-    /// optional window is handled by normal transaction validation until the
-    /// state-keyed expiry index is introduced.
+    /// its structural validation rule. The bound is normalized to milliseconds
+    /// (seconds are scaled by 1000) so it lines up with the millisecond `now`.
+    /// Finite channels are unaffected; their optional window is handled by normal
+    /// transaction validation until the state-keyed expiry index is introduced.
     pub(crate) fn remove_expired_nonce_free(
         &mut self,
         now: u64,
@@ -451,7 +452,7 @@ impl<T: BasePooledTx> TwoDNoncePool<T> {
             .values()
             .filter_map(|transaction| {
                 let signed = transaction.transaction.as_eip8130()?;
-                (signed.tx().valid_before <= now).then_some(*transaction.hash())
+                (signed.tx().valid_before_ms() <= now).then_some(*transaction.hash())
             })
             .collect();
         self.remove_transactions(&expired)
@@ -962,16 +963,20 @@ mod tests {
 
     #[test]
     fn nonce_free_expiry_removes_due_transactions_and_keeps_future_entries() {
+        // Millisecond-scale bounds (>= TIMESTAMP_MS_THRESHOLD) so normalization
+        // is a no-op and `valid_before` is compared directly against the
+        // millisecond `now`.
+        const NOW_MS: u64 = 1_700_000_000_000;
         let mut pool = TwoDNoncePool::new(PriceBumpConfig::default());
         let signer = signer();
-        let due = valid_pool_transaction(signed_nonce_free_tx(&signer, 10, 20, 1_000));
-        let future = valid_pool_transaction(signed_nonce_free_tx(&signer, 11, 10, 1_000));
+        let due = valid_pool_transaction(signed_nonce_free_tx(&signer, NOW_MS, 20, 1_000));
+        let future = valid_pool_transaction(signed_nonce_free_tx(&signer, NOW_MS + 1, 10, 1_000));
         let due_hash = *due.hash();
         let future_hash = *future.hash();
         pool.insert_validated(due, 0).unwrap();
         pool.insert_validated(future, 0).unwrap();
 
-        let removed = pool.remove_expired_nonce_free(10);
+        let removed = pool.remove_expired_nonce_free(NOW_MS);
 
         assert_eq!(removed.iter().map(|tx| *tx.hash()).collect::<Vec<_>>(), vec![due_hash]);
         assert!(pool.get(&due_hash).is_none());
