@@ -11,7 +11,7 @@ use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
-use base_execution_profiling::ProfilingConfig;
+use base_execution_profiling::{ProfilingConfig, ProfilingExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
@@ -268,6 +268,10 @@ pub struct StandardNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Opt-in CPU profiling HTTP server arguments.
+    #[command(flatten)]
+    pub profiling: ProfilingArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -423,6 +427,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            profiling: ProfilingArgs::default(),
         }
     }
 }
@@ -437,6 +442,12 @@ impl StandardNodeArgs {
     /// Sets the shadow indexer arguments on this standard node configuration.
     pub fn with_shadow_indexer(mut self, shadow_indexer: ShadowIndexerArgs) -> Self {
         self.shadow_indexer = shadow_indexer;
+        self
+    }
+
+    /// Sets the profiling arguments on this standard node configuration.
+    pub fn with_profiling(mut self, profiling: ProfilingArgs) -> Self {
+        self.profiling = profiling;
         self
     }
 }
@@ -792,6 +803,7 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
+        runner.install_ext::<ProfilingExtension>(ProfilingConfig::from(&args.profiling));
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
@@ -1294,6 +1306,40 @@ mod tests {
             args.shadow_indexer.shadow_indexer_retention_interval,
             Duration::from_secs(15 * 60)
         );
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_profiling_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.port",
+            "7070",
+            "--profiling.max-seconds",
+            "120",
+            "--profiling.default-frequency",
+            "250",
+        ])
+        .args;
+
+        assert!(args.profiling.enable_profiling);
+        assert_eq!(args.profiling.port, 7070);
+        assert_eq!(args.profiling.max_seconds, 120);
+        assert_eq!(args.profiling.default_frequency, 250);
+
+        let config = ProfilingConfig::from(&args.profiling);
+        assert!(config.enabled);
+        assert_eq!(config.port, 7070);
+        assert_eq!(config.max_seconds, 120);
+        assert_eq!(config.default_frequency, 250);
+    }
+
+    #[test]
+    fn test_standard_node_args_profiling_disabled_by_default() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
+
+        assert!(!args.profiling.enable_profiling);
+        assert!(!ProfilingConfig::from(&args.profiling).enabled);
     }
 
     #[test]

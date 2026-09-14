@@ -36,6 +36,7 @@ impl From<ProfilerError> for ProfilingServerError {
         match error {
             ProfilerError::Busy => Self::Busy,
             error @ (ProfilerError::DurationTooLong { .. }
+            | ProfilerError::DurationTooShort { .. }
             | ProfilerError::InvalidFrequency { .. }) => Self::InvalidParameter(error),
             error @ (ProfilerError::Pprof(_)
             | ProfilerError::ProtobufEncode { .. }
@@ -136,9 +137,15 @@ impl ProfileCapture for CpuProfiler {
 }
 
 fn profile_router<P: ProfileCapture>(profiler: P) -> Router {
+    // Register HEAD explicitly so a HEAD probe returns immediately instead of running a full
+    // capture, which axum would otherwise do by routing HEAD through the GET handler.
     Router::new()
-        .route("/debug/pprof/profile", get(capture_profile::<P>))
+        .route("/debug/pprof/profile", get(capture_profile::<P>).head(reject_head))
         .with_state(ProfileState { profiler })
+}
+
+async fn reject_head() -> Response {
+    (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "GET")]).into_response()
 }
 
 async fn capture_profile<P: ProfileCapture>(
@@ -322,6 +329,23 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    fn head_request(uri: &str) -> Request<Body> {
+        Request::builder().method("HEAD").uri(uri).body(Body::empty()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn profile_route_rejects_head_without_capturing() {
+        let profiler = FakeProfiler::immediate();
+        let app = profile_router(profiler.clone());
+        let request = head_request("/debug/pprof/profile?seconds=1");
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(response.headers()[header::ALLOW], "GET");
+        assert!(profiler.captures.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
