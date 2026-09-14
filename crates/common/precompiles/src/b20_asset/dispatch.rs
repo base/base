@@ -108,16 +108,23 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
     where
         O: PrecompileCallObserver,
     {
-        // Fast-path `announce` before the generic decode. `announce` is the sole B-20 selector an
-        // aliased payload can amplify. `DecodedAnnounce::try_from_calldata` validates the payload
-        // via alloy's `decode_sequence + type_check` and holds the `bytes[]` entries as slices into
-        // `calldata` rather than owned copies. Anything else falls through to the generic decode
-        // below with the same error bytes.
-        if let Some(announce) = DecodedAnnounce::try_from_calldata(calldata, version) {
-            return observer.observe("precompile-b20-asset-announce", || {
-                self.run_announce(ctx, version, privileged, &observer, announce)?;
-                Ok(Bytes::new())
-            });
+        // Fast-path `announce` before the generic decode; `announce` is the only B-20 selector an
+        // aliased payload can amplify. `DecodedAnnounce::decode_if_announce` runs
+        // `decode_sequence` and `valid_token` and keeps the `bytes[]` entries as slices into
+        // `calldata`, never owned copies. A call this version doesn't recognize as `announce`
+        // falls through to the generic decode below, unchanged. A recognized but malformed
+        // `announce` returns `Some(Err(..))` when the rejection can be cheap without changing
+        // frozen revert bytes (Cantina #16 follow-up). V1/Beryl can't take that path, so it falls
+        // through too, with today's error bytes.
+        match DecodedAnnounce::decode_if_announce(calldata, version) {
+            Some(Ok(announce)) => {
+                return observer.observe("precompile-b20-asset-announce", || {
+                    self.run_announce(ctx, version, privileged, &observer, announce)?;
+                    Ok(Bytes::new())
+                });
+            }
+            Some(Err(error)) => return Err(error),
+            None => {}
         }
 
         let call = version.abi().decode(calldata)?;
@@ -528,15 +535,28 @@ struct DecodedAnnounce<'a> {
 impl<'a> DecodedAnnounce<'a> {
     /// Tries to interpret `calldata` as an `announce` dialable at `version`.
     ///
-    /// Returns `Some` when the leading 4 bytes are the `announce` selector, the surface active at
-    /// `version` still declares it dialable, and the rest borrowed-decodes cleanly against alloy's
-    /// `decode_sequence + type_check`. That combination is exactly what alloy's owned
-    /// `abi_decode_validate` runs, minus the infallible `detokenize` (the step that copies), so the
-    /// accept-set matches the owned path. `type_check` is required, not optional: `string`
-    /// validation rejects non-UTF-8, and skipping it would accept an `id`/`description`/`uri` the
-    /// owned path rejects — a divergence the caller's fall-through to the owned decoder could not
-    /// catch. `valid_selector` future-proofs a fork that drops `announce`.
-    fn try_from_calldata(calldata: &'a [u8], version: AssetVersion) -> Option<Self> {
+    /// `None` skips the fast path entirely; `Some` decides the call, successfully or not.
+    /// - `None`: the leading 4 bytes aren't the `announce` selector, `version` doesn't dial it, or
+    ///   `decode_sequence` fails. All three are cheap; no token exists yet to re-encode. The
+    ///   caller falls through to the generic decode, unchanged.
+    /// - `Some(Ok(_))`: `decode_sequence` and `valid_token` both pass. This is exactly what
+    ///   alloy's owned `abi_decode_validate` checks, minus the copying `detokenize` step, so the
+    ///   accept-set matches the owned path. `valid_token` catches non-UTF-8 strings; skipping it
+    ///   would accept an `id`/`description`/`uri` the owned path rejects, a divergence the
+    ///   fallback couldn't catch. Checking `valid_token` directly, instead of `type_check`, also
+    ///   skips building an `Err` that would re-ABI-encode the whole token, aliases included, and
+    ///   then get discarded.
+    /// - `Some(Err(_))`: `valid_token` rejects the payload. V1 (Beryl) returns `None` here
+    ///   instead: a cheap rejection would change consensus-frozen revert bytes, so it falls
+    ///   through to the same expensive owned diagnostic it always has. V2 (Cobalt, not live on
+    ///   any network) returns the bounded rejection directly, skipping that diagnostic's
+    ///   O(aliases · `tail_bytes`) cost (Cantina #16 follow-up).
+    ///
+    /// `valid_selector` future-proofs a fork that drops `announce`.
+    fn decode_if_announce(
+        calldata: &'a [u8],
+        version: AssetVersion,
+    ) -> Option<Result<Self, BasePrecompileError>> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Asset::announceCall::SELECTOR {
             return None;
@@ -547,16 +567,27 @@ impl<'a> DecodedAnnounce<'a> {
         let rest = &calldata[4..];
         let token =
             abi::decode_sequence::<<IB20Asset::announceCall as SolCall>::Token<'a>>(rest).ok()?;
-        <<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::type_check(&token)
-            .ok()?;
+        if !<<IB20Asset::announceCall as SolCall>::Parameters<'a> as SolType>::valid_token(&token) {
+            return match version {
+                // V1/Beryl: revert bytes are already consensus-frozen — keep falling through to
+                // the owned decoder's diagnostic, however expensive, unchanged.
+                AssetVersion::V1 => None,
+                // V2/Cobalt: not scheduled on any network yet, so this can short-circuit cheaply
+                // without touching any live consensus bytes.
+                AssetVersion::V2 => Some(Err(BasePrecompileError::AbiDecodeFailed {
+                    selector,
+                    error: String::from("announce: malformed bytes[] payload"),
+                })),
+            };
+        }
         // Field `.0` of `PackedSeqToken<'a>` is `&'a [u8]`, so each iter yields a slice with the
         // full calldata lifetime. `as_slice()` would tie borrows to `token` (a local) instead.
-        Some(Self {
+        Some(Ok(Self {
             id: Self::string_from_utf8(token.1.0),
             description: Self::string_from_utf8(token.2.0),
             uri: Self::string_from_utf8(token.3.0),
             internal_calls: token.0.0.iter().map(|call| call.0).collect(),
-        })
+        }))
     }
 
     /// Builds a `DecodedAnnounce` from an already owned-decoded call. `internal_calls` borrow from
@@ -1096,29 +1127,40 @@ mod tests {
         let at = poison_at(&non_utf8_uri, b"uri-value");
         non_utf8_uri[at..at + 9].fill(0xff);
 
+        // Cantina #16 follow-up: a `type_check` rejection on an aliased payload must reject exactly
+        // like a non-aliased one, not fall through with different error bytes.
+        let mut non_utf8_aliased_id = aliased_announce_calldata(128, &inner);
+        let at = poison_at(&non_utf8_aliased_id, b"aliased-id");
+        non_utf8_aliased_id[at..at + 10].fill(0xff);
+
         let mut trailing_garbage = one_element.clone();
         trailing_garbage.extend_from_slice(&[0u8; 16]);
 
         let truncated_head = IB20Asset::announceCall::SELECTOR.to_vec();
         let no_calldata: Vec<u8> = Vec::new();
 
-        // Each row: (name, payload, must_accept).
-        let rows: alloc::vec::Vec<(&'static str, Vec<u8>, bool)> = alloc::vec![
-            ("honest single-element valid", one_element, true),
-            ("honest multi-element valid", multi_element, true),
-            ("aliased offsets valid", aliased, true),
-            ("length word overruns buffer", past_end_length, false),
-            ("non-UTF-8 in id", non_utf8_id, false),
-            ("non-UTF-8 in description", non_utf8_desc, false),
-            ("non-UTF-8 in uri", non_utf8_uri, false),
+        // Each row: (name, payload, must_accept, rejects_via_valid_token). `rejects_via_valid_token`
+        // marks the one input class where V2 legitimately diverges from the owned-decode oracle by
+        // design: `valid_token` rejecting a structurally-valid-but-malformed token (non-UTF-8
+        // strings), where V2/Cobalt short-circuits cheaply instead of falling through (Cantina #16
+        // follow-up). Every other row must still match the oracle identically at both versions.
+        let rows: alloc::vec::Vec<(&'static str, Vec<u8>, bool, bool)> = alloc::vec![
+            ("honest single-element valid", one_element, true, false),
+            ("honest multi-element valid", multi_element, true, false),
+            ("aliased offsets valid", aliased, true, false),
+            ("length word overruns buffer", past_end_length, false, false),
+            ("non-UTF-8 in id", non_utf8_id, false, true),
+            ("non-UTF-8 in description", non_utf8_desc, false, true),
+            ("non-UTF-8 in uri", non_utf8_uri, false, true),
+            ("aliased offsets with non-UTF-8 id", non_utf8_aliased_id, false, true),
             // alloy follows absolute offsets, so bytes past the last tail get ignored. The oracle
             // accepts, and the fast path must match. This row pins that parity.
-            ("trailing garbage after valid payload", trailing_garbage, true),
-            ("truncated head (only selector)", truncated_head, false),
-            ("no calldata at all", no_calldata, false),
+            ("trailing garbage after valid payload", trailing_garbage, true, false),
+            ("truncated head (only selector)", truncated_head, false, false),
+            ("no calldata at all", no_calldata, false, false),
         ];
 
-        for (name, calldata, must_accept) in rows {
+        for (name, calldata, must_accept, rejects_via_valid_token) in rows {
             // Oracle: alloy's owned validator is the ABI spec, independent of the fix. It reads
             // full calldata (selector included) since `abi_decode_validate` peels the selector.
             let oracle_accepts = IB20Asset::announceCall::abi_decode_validate(&calldata).is_ok();
@@ -1143,10 +1185,27 @@ mod tests {
 
                 if let Err(err) = outcome {
                     let control = version.abi().decode(&calldata).unwrap_err();
-                    assert_eq!(
-                        err, control,
-                        "row `{name}` at {version:?}: error bytes must match owned decode",
-                    );
+                    if rejects_via_valid_token && version == AssetVersion::V2 {
+                        assert_ne!(
+                            err, control,
+                            "row `{name}` at {version:?}: expected the bounded V2 short-circuit \
+                             to fire, but the error still matches the owned-decode oracle",
+                        );
+                        assert_eq!(
+                            err,
+                            base_precompile_storage::BasePrecompileError::AbiDecodeFailed {
+                                selector: IB20Asset::announceCall::SELECTOR,
+                                error: String::from("announce: malformed bytes[] payload"),
+                            },
+                            "row `{name}` at {version:?}: V2 must reject with the bounded, \
+                             calldata-size-independent error",
+                        );
+                    } else {
+                        assert_eq!(
+                            err, control,
+                            "row `{name}` at {version:?}: error bytes must match owned decode",
+                        );
+                    }
                     // Decode-time rejections target the announce selector. Payloads too short to
                     // carry a selector hit the shared unknown-selector path instead.
                     match err {

@@ -89,7 +89,12 @@ impl AttributesWithParent {
 
     /// Returns the number of transactions in the attributes.
     pub fn count_transactions(&self) -> u64 {
-        self.attributes().decoded_transactions().count().try_into().unwrap()
+        self.attributes
+            .transactions
+            .as_ref()
+            .map_or(0, |transactions| transactions.len())
+            .try_into()
+            .unwrap()
     }
 }
 
@@ -111,6 +116,17 @@ mod tests {
         assert_eq!(attributes_with_parent.parent(), &parent);
         assert_eq!(attributes_with_parent.is_last_in_span(), is_last_in_span);
         assert_eq!(attributes_with_parent.derived_from(), None);
+    }
+
+    #[test]
+    fn count_transactions_counts_undecodable_entries() {
+        let attributes = BasePayloadAttributes {
+            transactions: Some(vec![vec![OpTxType::Deposit as u8, 0xaa].into(), vec![0xff].into()]),
+            ..Default::default()
+        };
+        let attributes = AttributesWithParent::new(attributes, L2BlockInfo::default(), None, true);
+
+        assert_eq!(attributes.count_transactions(), 2);
     }
 
     /// Test that the [`AttributesWithParent::as_deposits_only`] method strips out all

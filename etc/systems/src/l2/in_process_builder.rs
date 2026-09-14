@@ -17,7 +17,7 @@ use base_execution_txpool::{
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool_rpc::SendRawTransactionValidityExtension;
+use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -29,11 +29,12 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
+use super::TestNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
@@ -71,6 +72,8 @@ pub struct InProcessBuilderConfig {
     pub block_time: Duration,
     /// Optional canonical block persistence threshold.
     pub persistence_threshold: Option<u64>,
+    /// Optional number of unpersisted blocks allowed before Engine API intake is stalled.
+    pub persistence_backpressure_threshold: Option<u64>,
     /// Optional pending/basefee/queued transaction count limit for benchmark workloads.
     pub txpool_max_transactions: Option<usize>,
     /// Optional pending/basefee/queued transaction size limit in megabytes.
@@ -134,7 +137,7 @@ impl InProcessBuilder {
             .wrap_err("Failed to write JWT secret")?;
 
         let runtime = RuntimeBuilder::new(
-            RuntimeConfig::default()
+            TestNodeRuntime::config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;
@@ -189,10 +192,24 @@ impl InProcessBuilder {
         let mut hooks = NodeHooks::new();
         if accept_validity_transactions {
             hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                DEFAULT_MAX_VALIDITY_PREDICATES,
+                SendRawTransactionValidityConfig::default(),
             ))
             .apply(hooks);
         }
+        // Reth's `extend_rpc_modules` is a single-slot hook that silently replaces whatever was
+        // registered before it, and `NodeHooks::apply_to` claims that slot for every extension
+        // RPC module. Registering the builder API here instead keeps both in one closure.
+        let hooks = hooks.add_rpc_module(move |ctx| {
+            let api =
+                BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
+                    ctx.pool().clone(),
+                    accept_validity_transactions,
+                    DEFAULT_MAX_VALIDITY_PREDICATES,
+                );
+            ctx.modules.merge_configured(api.into_rpc())?;
+            Ok(())
+        });
+
         let node_builder = NodeBuilder::new(node_config.clone())
             .with_database(db)
             .with_launch_context(runtime.clone())
@@ -210,16 +227,7 @@ impl InProcessBuilder {
                         ),
                     )
                     .with_add_ons(addons)
-                    .on_component_initialized(move |_ctx| Ok(()))
-                    .extend_rpc_modules(move |ctx| {
-                        let api = BuilderApiImpl::<_, base_execution_txpool::TransactionValidity>::with_extensions(
-                            ctx.pool().clone(),
-                            accept_validity_transactions,
-                            DEFAULT_MAX_VALIDITY_PREDICATES,
-                        );
-                        ctx.modules.merge_configured(api.into_rpc())?;
-                        Ok(())
-                    }),
+                    .on_component_initialized(move |_ctx| Ok(())),
             )
             .launch()
             .await;
@@ -434,9 +442,16 @@ fn create_node_config(
         .with_datadir_args(datadir)
         .with_rpc(rpc)
         .with_network(network);
+    if config.datadir.is_some() {
+        node_config.debug.startup_sync_state_idle = true;
+    }
 
     if let Some(persistence_threshold) = config.persistence_threshold {
         node_config.engine.persistence_threshold = persistence_threshold;
+    }
+    if let Some(persistence_backpressure_threshold) = config.persistence_backpressure_threshold {
+        node_config.engine.persistence_backpressure_threshold =
+            Some(persistence_backpressure_threshold);
     }
     if let Some(max_transactions) = config.txpool_max_transactions {
         node_config.txpool.pending_max_count = max_transactions;

@@ -2,7 +2,15 @@
 
 use std::{env, path::PathBuf, sync::Arc, time::Duration};
 
+use base_builder_metering::{
+    DEFAULT_METERING_STORE_MAX_CAPACITY, DEFAULT_METERING_STORE_TTL_SECS, MeteringStore,
+    MeteringStoreExtension,
+};
 use base_execution_eip8130_rpc_node::{Eip8130RpcExtension, Eip8130RpcMode};
+use base_execution_payload_builder::{
+    NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
+    ResourceMeteringConfig, SharedMeteringProvider,
+};
 use base_execution_profiling::ProfilingConfig;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
@@ -23,7 +31,8 @@ use base_tx_forwarding::{
     TxForwardingExtension,
 };
 use base_txpool_rpc::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
@@ -38,8 +47,13 @@ use crate::upgrade_signal::{
 /// CLI arguments for metering RPC.
 #[derive(Debug, Clone, PartialEq, Eq, Default, clap::Args)]
 pub struct MeteringArgs {
-    /// Enable metering RPC for transaction bundle simulation
-    #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
+    /// Enable metering RPC for transaction bundle simulation.
+    ///
+    /// Turns on `base_meterBundle`. The native payload builder throttles
+    /// transactions against resource-unit budgets only when this is set and
+    /// `--payload.resource-metering-schedule` is a non-empty file. The
+    /// Flashblocks builder uses `--builder.enable-resource-metering` instead.
+    #[arg(long = "enable-metering", env = "ENABLE_METERING", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
 
     /// Comma-separated list of EVM opcodes to track for gas metering
@@ -70,6 +84,48 @@ pub struct MeteringArgs {
         hide = true
     )]
     pub metering_target_flashblocks_per_block: Option<usize>,
+
+    /// Resource-unit schedule used to throttle transactions in the native
+    /// payload builder.
+    #[command(flatten)]
+    pub resource_metering: ResourceMeteringArgs,
+}
+
+/// CLI arguments for payload resource metering.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ResourceMeteringArgs {
+    /// JSON file containing the startup resource-metering schedule.
+    ///
+    /// The native payload builder throttles transactions against this schedule
+    /// when `--enable-metering` is set and the file is non-empty. Per-dimension
+    /// `dryRun` observes a budget without excluding transactions.
+    #[arg(long = "payload.resource-metering-schedule", env = "PAYLOAD_RESOURCE_METERING_SCHEDULE")]
+    pub resource_metering_schedule: Option<PathBuf>,
+
+    /// Maximum number of permanently rejected transaction hashes retained by the
+    /// native payload builder.
+    #[arg(
+        long = "payload.rejection-cache-max-capacity",
+        default_value_t = REJECTION_CACHE_MAX_CAPACITY
+    )]
+    pub rejection_cache_max_capacity: u64,
+
+    /// TTL in seconds for native payload rejection-cache entries.
+    #[arg(
+        long = "payload.rejection-cache-ttl-secs",
+        default_value_t = REJECTION_CACHE_TTL.as_secs()
+    )]
+    pub rejection_cache_ttl_secs: u64,
+}
+
+impl Default for ResourceMeteringArgs {
+    fn default() -> Self {
+        Self {
+            resource_metering_schedule: None,
+            rejection_cache_max_capacity: REJECTION_CACHE_MAX_CAPACITY,
+            rejection_cache_ttl_secs: REJECTION_CACHE_TTL.as_secs(),
+        }
+    }
 }
 
 /// Default maximum number of open shadow indexer database connections.
@@ -299,12 +355,26 @@ pub struct RpcStandardNodeArgs {
     pub enable_experimental_validity_transactions: bool,
 
     /// Maximum validity predicates accepted per experimental transaction.
+    ///
+    /// Capped at [`DEFAULT_MAX_VALIDITY_PREDICATES`], the fixed wire ceiling the
+    /// request deserializer enforces. Values above it can never be honored and
+    /// are rejected at startup rather than silently truncated.
     #[arg(
         long = "experimental-validity-max-predicates",
         default_value_t = DEFAULT_MAX_VALIDITY_PREDICATES,
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new()
+            .range(1..=DEFAULT_MAX_VALIDITY_PREDICATES as u64),
         requires = "enable_experimental_validity_transactions"
     )]
     pub experimental_validity_max_predicates: usize,
+
+    /// Maximum lifetime, in seconds, for an experimental validity transaction.
+    #[arg(
+        long = "experimental-validity-max-expiry-secs",
+        default_value_t = DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+        requires = "enable_experimental_validity_transactions"
+    )]
+    pub experimental_validity_max_expiry_secs: u64,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -627,6 +697,34 @@ impl StandardBaseRethNode {
         // Fail fast on an incomplete upgrade-signal configuration before installing extensions.
         Self::validate_upgrade_signal_args(&rollup_args)?;
         let mut runner = BaseNodeRunner::new(rollup_args.clone());
+        let resource_metering_enabled = args.metering.enable_metering;
+        let provider: SharedMeteringProvider = if resource_metering_enabled
+            && args.metering.resource_metering.resource_metering_schedule.is_some()
+        {
+            // Shared defaults with the Flashblocks builder CLI.
+            let store: SharedMeteringProvider = Arc::new(MeteringStore::new(
+                true,
+                DEFAULT_METERING_STORE_MAX_CAPACITY as usize,
+                Duration::from_secs(DEFAULT_METERING_STORE_TTL_SECS),
+            ));
+            runner.install_ext::<MeteringStoreExtension>(Arc::clone(&store));
+            store
+        } else {
+            Arc::new(NoopMeteringProvider)
+        };
+        let resource_metering = ResourceMeteringConfig::from_parts(
+            resource_metering_enabled,
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
+            provider,
+        )?;
+        let schedule_operation_names: Vec<String> =
+            resource_metering.schedule.priced_operation_names().map(str::to_string).collect();
+        let rejection_cache = RejectionCache::new(
+            args.metering.resource_metering.rejection_cache_max_capacity,
+            Duration::from_secs(args.metering.resource_metering.rejection_cache_ttl_secs),
+        );
+        runner =
+            runner.with_resource_metering(resource_metering).with_rejection_cache(rejection_cache);
 
         // Create flashblocks config first so we can share its state with metering.
         let flashblocks_config: Option<FlashblocksConfig> = (&args).into();
@@ -674,10 +772,14 @@ impl StandardBaseRethNode {
         }
 
         let metering_config = if args.metering.enable_metering {
-            let metered_opcodes = if args.metering.metering_metered_opcodes.is_empty() {
+            let opcode_names = inspector_opcode_names(
+                args.metering.metering_metered_opcodes.clone(),
+                schedule_operation_names,
+            );
+            let metered_opcodes = if opcode_names.is_empty() {
                 MeteredOpcodes::default()
             } else {
-                MeteredOpcodes::parse(&args.metering.metering_metered_opcodes)?
+                MeteredOpcodes::parse(&opcode_names)?
             }
             .with_all_precompiles();
 
@@ -693,7 +795,10 @@ impl StandardBaseRethNode {
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
-                args.rpc.experimental_validity_max_predicates,
+                SendRawTransactionValidityConfig {
+                    max_validity_predicates: args.rpc.experimental_validity_max_predicates,
+                    max_validity_expiry_secs: args.rpc.experimental_validity_max_expiry_secs,
+                },
             );
         }
         runner.install_ext::<TxForwardingExtension>(tx_forwarding_config);
@@ -840,6 +945,32 @@ fn parse_otel_resource_attribute(key: &str) -> Option<String> {
     })
 }
 
+/// Opcode and precompile names the metering inspector can parse.
+///
+/// Schedule `STATE_*` post-state effects are not EVM opcodes; unknown names are
+/// skipped so a loaded schedule cannot fail node startup.
+fn inspector_opcode_names(
+    cli_names: impl IntoIterator<Item = String>,
+    schedule_names: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Vec<String> {
+    let mut names: Vec<String> = cli_names.into_iter().collect();
+    for name in schedule_names {
+        let name = name.as_ref();
+        if !is_inspector_opcode_name(name) {
+            continue;
+        }
+        if !names.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+fn is_inspector_opcode_name(name: &str) -> bool {
+    !name.to_ascii_uppercase().starts_with("STATE_")
+        && MeteredOpcodes::parse(&[name.to_string()]).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_primitives::address;
@@ -867,6 +998,7 @@ mod tests {
             enable_tx_forwarding: false,
             enable_experimental_validity_transactions: false,
             experimental_validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
+            experimental_validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
@@ -993,6 +1125,10 @@ mod tests {
             standard_args.rpc.experimental_validity_max_predicates,
             DEFAULT_MAX_VALIDITY_PREDICATES
         );
+        assert_eq!(
+            standard_args.rpc.experimental_validity_max_expiry_secs,
+            DEFAULT_MAX_VALIDITY_EXPIRY_SECS
+        );
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
     }
@@ -1019,13 +1155,58 @@ mod tests {
             "--enable-experimental-validity-transactions",
             "--experimental-validity-max-predicates",
             "8",
+            "--experimental-validity-max-expiry-secs",
+            "45",
         ])
         .args;
 
         assert!(args.rpc.enable_tx_forwarding);
         assert!(args.rpc.enable_experimental_validity_transactions);
         assert_eq!(args.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(args.rpc.experimental_validity_max_expiry_secs, 45);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
+    }
+
+    #[test]
+    fn experimental_validity_max_predicates_rejects_values_above_the_wire_ceiling() {
+        // The request deserializer bounds batches at DEFAULT_MAX_VALIDITY_PREDICATES,
+        // so a larger configured maximum could never be honored. Reject it at
+        // startup instead of silently accepting an unenforceable limit.
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            &(DEFAULT_MAX_VALIDITY_PREDICATES + 1).to_string(),
+        ])
+        .expect_err("a maximum above the wire ceiling should be rejected");
+
+        assert!(error.to_string().contains("--experimental-validity-max-predicates"));
+    }
+
+    #[test]
+    fn experimental_validity_max_predicates_rejects_zero() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            "0",
+        ])
+        .expect_err("a maximum of zero should be rejected");
+
+        assert!(error.to_string().contains("--experimental-validity-max-predicates"));
+    }
+
+    #[test]
+    fn experimental_validity_max_predicates_accepts_the_wire_ceiling() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-experimental-validity-transactions",
+            "--experimental-validity-max-predicates",
+            &DEFAULT_MAX_VALIDITY_PREDICATES.to_string(),
+        ])
+        .args;
+
+        assert_eq!(args.rpc.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
     }
 
     #[test]
@@ -1231,6 +1412,23 @@ mod tests {
     }
 
     #[test]
+    fn test_standard_node_args_parses_resource_metering_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--payload.resource-metering-schedule",
+            "/tmp/resource-metering.json",
+        ])
+        .args;
+
+        assert!(args.metering.enable_metering);
+        assert_eq!(
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
+            Some(std::path::Path::new("/tmp/resource-metering.json"))
+        );
+    }
+
+    #[test]
     fn transaction_event_journal_requires_path_when_no_env_path_exists() {
         let args = CommandParser::<RpcStandardNodeArgs>::parse_from([
             "base-reth",
@@ -1291,6 +1489,87 @@ mod tests {
         assert_eq!(args.metering.metering_gas_limit, Some(30_000_000));
         assert_eq!(args.metering.metering_da_bytes, Some(1_572_860));
         assert_eq!(args.metering.metering_target_flashblocks_per_block, Some(4));
+        assert!(args.metering.resource_metering.resource_metering_schedule.is_none());
+
+        let config = ResourceMeteringConfig::from_parts(
+            args.metering.enable_metering,
+            args.metering.resource_metering.resource_metering_schedule.as_deref(),
+            Arc::new(NoopMeteringProvider),
+        )
+        .expect("enable-metering without a schedule must still boot");
+        assert!(config.enabled);
+        assert!(!config.is_active());
+    }
+
+    #[test]
+    fn test_standard_node_args_parses_rejection_cache_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--payload.rejection-cache-max-capacity",
+            "50",
+            "--payload.rejection-cache-ttl-secs",
+            "60",
+        ])
+        .args;
+
+        assert_eq!(args.metering.resource_metering.rejection_cache_max_capacity, 50);
+        assert_eq!(args.metering.resource_metering.rejection_cache_ttl_secs, 60);
+    }
+
+    #[test]
+    fn test_standard_node_args_rejection_cache_defaults() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
+
+        assert_eq!(
+            args.metering.resource_metering.rejection_cache_max_capacity,
+            REJECTION_CACHE_MAX_CAPACITY
+        );
+        assert_eq!(
+            args.metering.resource_metering.rejection_cache_ttl_secs,
+            REJECTION_CACHE_TTL.as_secs()
+        );
+    }
+
+    #[test]
+    fn inspector_opcode_names_skips_state_prefix_and_unparseable() {
+        let names = inspector_opcode_names(
+            ["SLOAD".to_string()],
+            ["SSTORE", "STATE_NEW_STORAGE_SLOT", "NOT_AN_OPCODE", "sstore"],
+        );
+        assert_eq!(names, vec!["SLOAD".to_string(), "SSTORE".to_string()]);
+    }
+
+    #[test]
+    fn runner_accepts_schedule_state_effect_operation_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("schedule.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "version": 1,
+                "dimensions": [{
+                    "name": "cpu",
+                    "blockLimit": 1000000,
+                    "operations": [
+                        {"name": "SSTORE", "countCost": 1},
+                        {"name": "STATE_NEW_STORAGE_SLOT", "countCost": 1},
+                        {"name": "NOT_AN_OPCODE", "countCost": 1}
+                    ]
+                }]
+            }"#,
+        )
+        .expect("write schedule");
+
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-metering",
+            "--payload.resource-metering-schedule",
+            path.to_str().expect("utf-8 path"),
+        ])
+        .args;
+
+        StandardBaseRethNode::runner(args)
+            .expect("STATE_ and unknown schedule names must not fail opcode parse");
     }
 
     #[test]

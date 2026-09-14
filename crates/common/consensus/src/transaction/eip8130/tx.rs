@@ -142,18 +142,19 @@ impl TxEip8130 {
         if !header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
         }
-        let started = buf.len();
+        if buf.len() < header.payload_length {
+            return Err(alloy_rlp::Error::InputTooShort);
+        }
+
+        let (mut payload, rest) = buf.split_at(header.payload_length);
         let mut phases = Vec::new();
-        while started - buf.len() < header.payload_length {
-            phases.push(Vec::<Call>::decode(buf)?);
+        while !payload.is_empty() {
+            if phases.len() >= Eip8130Constants::MAX_CALL_PHASES_PER_TX {
+                return Err(alloy_rlp::Error::Custom("too many EIP-8130 call phases"));
+            }
+            phases.push(Vec::<Call>::decode(&mut payload)?);
         }
-        let consumed = started - buf.len();
-        if consumed != header.payload_length {
-            return Err(alloy_rlp::Error::ListLengthMismatch {
-                expected: header.payload_length,
-                got: consumed,
-            });
-        }
+        *buf = rest;
         Ok(phases)
     }
 
@@ -632,6 +633,35 @@ mod tests {
             metadata: bytes!("c0ffee"),
             payer: None,
         }
+    }
+
+    fn empty_call_phases(count: usize) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(length_of_length(count) + count);
+        Header { list: true, payload_length: count }.encode(&mut encoded);
+        encoded.resize(encoded.len() + count, 0xc0);
+        encoded
+    }
+
+    #[test]
+    fn decode_calls_accepts_maximum_phase_count() {
+        let encoded = empty_call_phases(Eip8130Constants::MAX_CALL_PHASES_PER_TX);
+        let mut input = encoded.as_slice();
+
+        let phases = TxEip8130::decode_calls(&mut input).unwrap();
+
+        assert_eq!(phases.len(), Eip8130Constants::MAX_CALL_PHASES_PER_TX);
+        assert!(phases.iter().all(Vec::is_empty));
+        assert!(input.is_empty());
+    }
+
+    #[test]
+    fn decode_calls_rejects_excessive_phase_count() {
+        let encoded = empty_call_phases(Eip8130Constants::MAX_CALL_PHASES_PER_TX + 1);
+        let mut input = encoded.as_slice();
+
+        let error = TxEip8130::decode_calls(&mut input).unwrap_err();
+
+        assert_eq!(error, alloy_rlp::Error::Custom("too many EIP-8130 call phases"));
     }
 
     #[test]

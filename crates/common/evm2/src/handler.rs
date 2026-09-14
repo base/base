@@ -53,14 +53,6 @@ impl BaseTxHandlerHooks {
         host.block_env().ext.operator_fee_charge(enveloped, U256::from(gas), upgrade)
     }
 
-    /// Returns the transaction's gas limit.
-    fn gas_limit(envelope: &BaseTxEnvelope) -> u64 {
-        match envelope {
-            BaseTxEnvelope::Standard { tx, .. } => tx.gas_limit(),
-            BaseTxEnvelope::Deposit(tx) => tx.gas_limit,
-        }
-    }
-
     /// Rejects the transaction when `caller` cannot cover the full upfront charge — the maximum
     /// gas cost, the transferred value, and the OP-stack L1 data and operator fees.
     ///
@@ -124,7 +116,7 @@ impl TxHandlerHooks<BaseEvmTypes> for BaseTxHandlerHooks {
         // from the caller. Both fees are stashed for settlement so it charges/refunds against the
         // exact amounts collected here, without recomputing them.
         let l1_fee = Self::l1_fee(host, envelope);
-        let operator_fee = Self::operator_fee(host, envelope, Self::gas_limit(envelope));
+        let operator_fee = Self::operator_fee(host, envelope, envelope.gas_limit());
         let ext = host.ext_mut();
         ext.l1_fee = l1_fee;
         ext.operator_fee = operator_fee;

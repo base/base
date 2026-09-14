@@ -23,7 +23,7 @@ use tokio::{
     task::{self, JoinError, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     AttestationPlanner, CertKind, CertPlan, DiscoveryResolution, P384Hints, PINNED_ROOT_CERT_HASH,
@@ -383,6 +383,12 @@ where
     T: TxManager,
 {
     /// Attempts to register a signer onchain if it is not already registered.
+    #[instrument(
+        name = "registrar.register_signer",
+        skip_all,
+        fields(instance_id = %instance_id, signer = %signer_address),
+        err(Display)
+    )]
     pub async fn register_signer(
         &self,
         instance_id: &str,
@@ -930,6 +936,11 @@ where
         }
     }
 
+    #[instrument(
+        name = "registrar.submit_registration",
+        skip_all,
+        fields(instance_id = %instance_id, signer = %signer)
+    )]
     async fn submit_registration(
         &self,
         instance_id: &str,

@@ -227,6 +227,7 @@ impl L2Stack {
             extra_extensions: config.extra_builder_extensions,
             block_time: Duration::from_secs(rollup_config.block_time),
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,
@@ -309,6 +310,7 @@ impl L2Stack {
             p2p_port: container_config.and_then(|c| c.client_p2p_port),
             metrics_port: None,
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             tx_forwarding_config,
             enable_experimental_validity_transactions: config
                 .enable_experimental_validity_transactions,

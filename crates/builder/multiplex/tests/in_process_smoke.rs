@@ -81,6 +81,8 @@ impl RunningNode {
         std::fs::create_dir_all(&data_path)?;
         std::fs::create_dir_all(&rocksdb_path)?;
         std::fs::create_dir_all(&pprof_path)?;
+        node_config.rpc.ipcpath = data_path.join("rpc.ipc").to_string_lossy().into_owned();
+        node_config.rpc.auth_ipc_path = data_path.join("engine.ipc").to_string_lossy().into_owned();
         node_config = node_config.with_datadir_args(reth_node_core::args::DatadirArgs {
             datadir: data_path.to_string_lossy().parse()?,
             static_files_path: None,

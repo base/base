@@ -1,5 +1,5 @@
 # Public operator node. `docker compose up` pulls ghcr.io/base/node.
-# Pass --build to compile this tree (PROFILE=maxperf, same as base/node). Pin with NODE_TAG=vX.Y.Z.
+# Pass --build to compile this tree (PROFILE=release, same as base/node). Pin with NODE_TAG=vX.Y.Z.
 services:
   execution:
     image: ghcr.io/base/node:${NODE_TAG:-latest}
@@ -8,7 +8,7 @@ services:
       dockerfile: etc/docker/Dockerfile.rust-services
       target: base
       args:
-        PROFILE: ${PROFILE:-maxperf}
+        PROFILE: ${PROFILE:-release}
     restart: unless-stopped
     ports:
       - "8545:8545" # RPC
@@ -28,7 +28,7 @@ services:
       dockerfile: etc/docker/Dockerfile.rust-services
       target: base
       args:
-        PROFILE: ${PROFILE:-maxperf}
+        PROFILE: ${PROFILE:-release}
     restart: unless-stopped
     depends_on:
       - execution

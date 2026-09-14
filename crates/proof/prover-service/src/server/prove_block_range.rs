@@ -6,7 +6,7 @@ use base_prover_service_protocol::{
     ProofRequestIdCollisionMessage, ProveBlockRangeRequest, ProveBlockRangeResponse,
 };
 use jsonrpsee::core::RpcResult;
-use tracing::{info, warn};
+use tracing::{Instrument, info, info_span, warn};
 
 use crate::server::{
     ProverServiceServer, failed_precondition, internal, invalid_argument, record_rpc_result,
@@ -53,35 +53,57 @@ impl ProverServiceServer {
             db_request.intermediate_root_interval,
         )?;
 
-        let outcome = self
+        let span = info_span!(
+            "prover.prove_block_range",
+            session_id = %session_id,
+            start_block = db_request.start_block_number,
+            block_count = db_request.number_of_blocks_to_prove,
+            proof_type = %crate::metrics::api_proof_type_label(db_request.api_proof_type),
+            outcome = tracing::field::Empty,
+        );
+
+        let result = self
             .repo
-            .create_for_worker_queue(
-                db_request,
-                self.config.max_proof_retries,
-                retry_failed,
-            )
-            .await
-            .map_err(|e| match e {
-                CreateProofRequestError::IdCollision { id, field } => {
-                    warn!(
-                        proof_request_id = %id,
-                        mismatched_field = field,
-                        "rejected ProveBlockRange: session_id already bound to a different request"
-                    );
-                    failed_precondition(ProofRequestIdCollisionMessage::for_field(id, field))
-                }
-                CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
-                    warn!(
-                        proof_request_id = %id,
-                        "rejected ProveBlockRange: session_id row missing after insert conflict"
-                    );
-                    unavailable(format!(
-                        "session_id {id} is temporarily unavailable after conflict; retry prove_block_range"
-                    ))
-                }
-                CreateProofRequestError::Validation(e) => invalid_argument(format!("{e}")),
-                CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
-            })?;
+            .create_for_worker_queue(db_request, self.config.max_proof_retries, retry_failed)
+            .instrument(span.clone())
+            .await;
+
+        let outcome_label = match &result {
+            Ok(CreateProofRequestOutcome::RetryNotAllowed(_)) => "retry_not_allowed",
+            Ok(CreateProofRequestOutcome::RetryExhausted(_)) => "retry_exhausted",
+            Ok(CreateProofRequestOutcome::Created(_)) => "created",
+            Ok(CreateProofRequestOutcome::Requeued(_)) => "requeued",
+            Ok(CreateProofRequestOutcome::Replayed(_)) => "replayed",
+            Err(CreateProofRequestError::IdCollision { .. }) => "id_collision",
+            Err(CreateProofRequestError::SessionRowMissingAfterConflict { .. }) => {
+                "session_missing"
+            }
+            Err(CreateProofRequestError::Validation(_)) => "validation",
+            Err(CreateProofRequestError::Sqlx(_)) => "database",
+        };
+        span.record("outcome", outcome_label);
+
+        let outcome = result.map_err(|e| match e {
+            CreateProofRequestError::IdCollision { id, field } => {
+                warn!(
+                    proof_request_id = %id,
+                    mismatched_field = field,
+                    "rejected ProveBlockRange: session_id already bound to a different request"
+                );
+                failed_precondition(ProofRequestIdCollisionMessage::for_field(id, field))
+            }
+            CreateProofRequestError::SessionRowMissingAfterConflict { id } => {
+                warn!(
+                    proof_request_id = %id,
+                    "rejected ProveBlockRange: session_id row missing after insert conflict"
+                );
+                unavailable(format!(
+                    "session_id {id} is temporarily unavailable after conflict; retry prove_block_range"
+                ))
+            }
+            CreateProofRequestError::Validation(e) => invalid_argument(format!("{e}")),
+            CreateProofRequestError::Sqlx(e) => internal(format!("Database error: {e}")),
+        })?;
 
         match outcome {
             CreateProofRequestOutcome::RetryNotAllowed(id) => {
@@ -106,22 +128,13 @@ impl ProverServiceServer {
                 )));
             }
             CreateProofRequestOutcome::Created(id) => {
-                info!(
-                    proof_request_id = %id,
-                    "Created proof request for worker queue"
-                );
+                info!(proof_request_id = %id, "Created proof request for worker queue");
             }
             CreateProofRequestOutcome::Requeued(id) => {
-                info!(
-                    proof_request_id = %id,
-                    "Requeued previously failed proof request"
-                );
+                info!(proof_request_id = %id, "Requeued previously failed proof request");
             }
             CreateProofRequestOutcome::Replayed(id) => {
-                info!(
-                    proof_request_id = %id,
-                    "Idempotent replay of non-failed proof request"
-                );
+                info!(proof_request_id = %id, "Idempotent replay of non-failed proof request");
             }
         }
 

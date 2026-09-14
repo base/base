@@ -16,7 +16,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  issues: write
 
 jobs:
   start:
@@ -47,13 +46,6 @@ jobs:
           BRANCH=$(cat "${{ runner.temp }}/release_branch")
           git checkout "$BRANCH"
           ./etc/scripts/release/version-sync.sh "$BRANCH"
-
-      - name: Create release tracking issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          BRANCH=$(cat "${{ runner.temp }}/release_branch")
-          ./etc/scripts/release/create-issue.sh "$BRANCH"
 
       - name: Summary
         run: |

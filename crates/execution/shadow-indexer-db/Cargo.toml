@@ -18,6 +18,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 # primitives
 reth-primitives-traits = { workspace = true, features = ["serde"] }
 base-common-consensus = { workspace = true, features = ["reth"] }
+alloy-primitives.workspace = true
 
 # serialization
 serde.workspace = true
@@ -34,5 +35,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 alloy-consensus.workspace = true
-alloy-primitives.workspace = true
 serde_json.workspace = true

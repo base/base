@@ -277,6 +277,12 @@ pub enum TxTypeConfig {
         slots_per_tx: u32,
     },
 
+    /// Deterministic `DoubleCounter` `increment()` call.
+    DoubleCounter {
+        /// `DoubleCounter` contract address.
+        contract: Address,
+    },
+
     /// Precompile call.
     Precompile {
         /// Target precompile configuration.
@@ -612,6 +618,9 @@ impl TestConfig {
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicate_count: self.validity.predicates.len(),
+            validity_priority_lead_ratio: self.validity.priority_lead_ratio,
+            validity_priority_lead_multiplier: self.validity.priority_lead_multiplier,
+            validity_priority_fee_divisor: self.validity.priority_fee_divisor,
             looper_contract: self.looper_contract.map(|addr| addr.to_string()),
             swap_token_amount: self.swap_token_amount.clone(),
             b20_mint_amount: self.b20_mint_amount.clone(),
@@ -681,6 +690,9 @@ impl TestConfig {
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicates: self.validity.to_templates()?,
+            validity_priority_lead_ratio: self.validity.priority_lead_ratio,
+            validity_priority_lead_multiplier: self.validity.priority_lead_multiplier,
+            validity_priority_fee_divisor: self.validity.priority_fee_divisor,
         })
     }
 
@@ -698,6 +710,9 @@ impl TestConfig {
                     )));
                 }
                 TxType::Storage { contract: *contract, slots_per_tx: *slots_per_tx }
+            }
+            TxTypeConfig::DoubleCounter { contract } => {
+                TxType::DoubleCounter { contract: *contract }
             }
             TxTypeConfig::Precompile { target, iterations } => {
                 let looper_contract = if *iterations > 1 {
@@ -827,6 +842,24 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn denim_profile_preserves_gas_per_second() {
+        let baseline = TestConfig::from_yaml(include_str!("../../examples/devnet.yaml")).unwrap();
+        let config =
+            TestConfig::from_yaml(include_str!("../../examples/denim-devnet.yaml")).unwrap();
+        let load = config.to_load_config(Some(1337)).unwrap();
+
+        assert_eq!(load.block_time, Duration::from_millis(200));
+        assert_eq!(load.target_gps, baseline.target_gps);
+        assert_eq!(
+            serde_json::to_value(&config.transactions).unwrap(),
+            serde_json::to_value(&baseline.transactions).unwrap()
+        );
+        assert_eq!(load.target_gps.unwrap() as f64 * load.block_time.as_secs_f64(), 4_000_000.0);
+        assert!(load.flashblocks_ws.is_none());
+        assert!(load.txpool_nodes.is_empty());
+    }
 
     #[test]
     fn parse_minimal_config() {
@@ -1372,6 +1405,20 @@ validity:
     }
 
     #[test]
+    fn validity_devnet_example_parses_and_validates() {
+        // Guards the committed example against schema drift: it must parse,
+        // validate, and lower to a runnable LoadConfig with the validity cohort.
+        let yaml = include_str!("../../examples/validity-devnet.yaml");
+        let config = TestConfig::from_yaml(yaml).expect("validity-devnet.yaml must parse");
+        assert_eq!(config.validity.ratio, 0.5);
+        assert_eq!(config.validity.predicates.len(), 1);
+
+        let load_config = config.to_load_config(Some(1337)).expect("must lower to LoadConfig");
+        assert_eq!(load_config.validity_ratio, 0.5);
+        assert_eq!(load_config.validity_predicates.len(), 1);
+    }
+
+    #[test]
     fn validity_rejects_ratio_above_one() {
         let yaml = r#"
 transaction_submission_rpcs: http://localhost:8545
@@ -1397,6 +1444,64 @@ validity:
 "#;
         let err = TestConfig::from_yaml(yaml).unwrap_err();
         assert!(err.to_string().contains("validity.predicates must be non-empty"));
+    }
+
+    #[test]
+    fn double_counter_and_validity_priority_round_trip_to_runtime_and_summary() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+transactions:
+  - weight: 100
+    type: double_counter
+    contract: "0x1111111111111111111111111111111111111111"
+validity:
+  priority_lead_ratio: 0.2
+  priority_lead_multiplier: 4
+  priority_fee_divisor: 3
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        assert_eq!(config.validity.priority_lead_ratio, 0.2);
+        assert_eq!(config.validity.priority_lead_multiplier, 4);
+        assert_eq!(config.validity.priority_fee_divisor, 3);
+        assert!(matches!(config.transactions[0].tx_type, TxTypeConfig::DoubleCounter { .. }));
+
+        let load = config.to_load_config(Some(1337)).unwrap();
+        assert_eq!(load.validity_priority_lead_ratio, 0.2);
+        assert_eq!(load.validity_priority_lead_multiplier, 4);
+        assert_eq!(load.validity_priority_fee_divisor, 3);
+        assert!(matches!(load.transactions[0].tx_type, TxType::DoubleCounter { .. }));
+        assert_eq!(config.to_summary().validity_priority_fee_divisor, 3);
+        assert_eq!(config.to_summary().validity_priority_lead_ratio, 0.2);
+        assert_eq!(config.to_summary().validity_priority_lead_multiplier, 4);
+    }
+
+    #[test]
+    fn validity_priority_divisor_defaults_to_one_and_rejects_zero() {
+        let config =
+            TestConfig::from_yaml("transaction_submission_rpcs: http://localhost:8545").unwrap();
+        assert_eq!(config.validity.priority_fee_divisor, 1);
+        assert_eq!(config.to_load_config(Some(1337)).unwrap().validity_priority_fee_divisor, 1);
+
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nvalidity:\n  priority_fee_divisor: 0",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("priority_fee_divisor must be >= 1"));
+    }
+
+    #[test]
+    fn validity_priority_lead_settings_reject_out_of_range_values() {
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nvalidity:\n  priority_lead_ratio: 1.1",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("priority_lead_ratio must be between 0.0 and 1.0"));
+
+        let error = TestConfig::from_yaml(
+            "transaction_submission_rpcs: http://localhost:8545\nvalidity:\n  priority_lead_multiplier: 0",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("priority_lead_multiplier must be >= 1"));
     }
 
     #[test]

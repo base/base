@@ -22,7 +22,7 @@ use reth_storage_api::BlockReaderIdExt;
 use revm::context::{BlockEnv, TxEnv};
 use tracing::debug;
 
-use crate::{ChannelNonceReader, Eip8130CobaltGate, Eip8130GasEstimator};
+use crate::{ChannelNonceReader, Eip8130GasEstimator, Eip8130ZenithGate};
 
 /// Eth API override trait that adds EIP-8130 `nonce_key` support to
 /// `eth_getTransactionCount`.
@@ -56,7 +56,7 @@ pub trait Eip8130EthApiOverride {
     /// A request carrying EIP-8130 fields (account changes, calls, `nonce_key`,
     /// `valid_after`/`valid_before`, or metadata) is estimated via a single
     /// read-only EIP-8130
-    /// simulation against the block state (gated on the Cobalt fork). The
+    /// simulation against the block state (gated on the Zenith fork). The
     /// EIP-8130 pipeline charges deterministic, signature-independent gas, so no
     /// gas-limit binary search is needed. A plain request falls through to the
     /// standard reth estimator unchanged.
@@ -110,14 +110,14 @@ where
 
         // EIP-8130 channel read. Only `nonce_key != 0` uses the precompile
         // path; `Some(0)` is the protocol nonce by EIP-8130's reservation
-        // and falls through to the standard resolution. The Cobalt gate
+        // and falls through to the standard resolution. The Zenith gate
         // lives here (not above) so the default hot path — absent
         // `nonce_key` and `Some(0)` — is not slowed down by a sync header
         // resolution.
         if let Some(key) = nonce_key
             && key != U256::ZERO
         {
-            Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+            Eip8130ZenithGate::check(&self.eth_api, block_id)?;
             return ChannelNonceReader::read(&self.eth_api, address, key, block_id, None).await;
         }
 
@@ -152,7 +152,7 @@ where
 
         debug!(message = "rpc::eip8130::estimate_gas", block_id = ?block_id);
 
-        Eip8130CobaltGate::check(&self.eth_api, block_id)?;
+        Eip8130ZenithGate::check(&self.eth_api, block_id)?;
         // This standalone override only receives state overrides (the
         // `eth_estimateGas` RPC signature carries no block overrides); the
         // estimator still accepts the full `EvmOverrides` so the flashblocks

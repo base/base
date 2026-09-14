@@ -14,12 +14,19 @@ use base_execution_profiling::{ProfilingConfig, ProfilingExtension};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};
 
 type BuilderCli = Cli<Args>;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
+
+#[cfg(all(feature = "jemalloc-prof", unix))]
+#[unsafe(export_name = "malloc_conf")]
+static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 fn main() {
     base_cli_utils::init_common!();
@@ -66,7 +73,10 @@ fn main() {
         runner.install_ext::<BuilderApiExtension>(builder_api_config);
         if builder_api_config.accept_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
-                builder_api_config.max_validity_predicates,
+                SendRawTransactionValidityConfig {
+                    max_validity_predicates: builder_api_config.max_validity_predicates,
+                    ..Default::default()
+                },
             );
         }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);

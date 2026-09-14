@@ -22,7 +22,12 @@ struct Args {
     node_url: String,
 
     /// Poll interval in milliseconds
-    #[arg(long, env = "BBHC_SIDECAR_POLL_INTERVAL_MS", default_value_t = 1000u64)]
+    #[arg(
+        long,
+        env = "BBHC_SIDECAR_POLL_INTERVAL_MS",
+        default_value_t = 1000u64,
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     poll_interval_ms: u64,
 
     /// Grace period in milliseconds before considering delayed

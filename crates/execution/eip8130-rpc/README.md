@@ -48,5 +48,5 @@ authentication), one simulation yields the exact estimate; no gas-limit binary
 search is needed. Plain (non-8130) requests fall through to the standard reth
 estimator unchanged.
 
-Both helpers are fork-agnostic: callers gate on the Cobalt hard fork via
-[`Eip8130CobaltGate`] before invoking them.
+Both helpers are fork-agnostic: callers gate on the Zenith hard fork via
+[`Eip8130ZenithGate`] before invoking them.

@@ -23,6 +23,10 @@ scrape_configs:
     static_configs:
       - targets: ['base-rpc:8190']
 
+  - job_name: 'l2_shadow_validator'
+    static_configs:
+      - targets: ['base-shadow-validator:8890']
+
   - job_name: 'conductor'
     static_configs:
       - targets: ['op-conductor-0:6090', 'op-conductor-1:6091', 'op-conductor-2:6092']
@@ -32,6 +36,7 @@ scrape_configs:
     static_configs:
       - targets: ['ingress-rpc:9002']
 
+  # Canonical Go op-batcher and the shadow Rust base-batcher both run by default.
   - job_name: 'batcher'
     static_configs:
-      - targets: ['base-batcher:6060']
+      - targets: ['op-batcher:6060', 'base-batcher:6061']

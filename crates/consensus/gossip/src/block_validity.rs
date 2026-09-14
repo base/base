@@ -9,6 +9,7 @@ use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::{
     BaseExecutionPayload, BaseExecutionPayloadV4, BasePayloadError, NetworkPayloadEnvelope,
 };
+use base_protocol::{BaseTimeScheduleError, BaseTimeUpdateTx};
 use libp2p::gossipsub::MessageAcceptance;
 
 use super::BlockHandler;
@@ -50,6 +51,9 @@ pub enum BlockInvalidError {
     /// Invalid block.
     #[error(transparent)]
     InvalidBlock(#[from] BasePayloadError),
+    /// The block timestamp does not match the absolute Denim schedule.
+    #[error(transparent)]
+    InvalidBaseTimeSchedule(#[from] BaseTimeScheduleError),
     /// The block has an invalid parent beacon block root.
     #[error("Payload is on v3+ topic, but has empty parent beacon root")]
     ParentBeaconRoot,
@@ -147,6 +151,7 @@ impl BlockHandler {
                     BlockInvalidError::BlockSeen { .. } => "block_seen",
                     BlockInvalidError::InvalidBlock(_)
                     | BlockInvalidError::BaseFeePerGasOverflow(_) => "invalid_block",
+                    BlockInvalidError::InvalidBaseTimeSchedule(_) => "invalid_base_time_schedule",
                     BlockInvalidError::ParentBeaconRoot => "parent_beacon_root",
                     BlockInvalidError::BlobGasUsed => "blob_gas_used",
                     BlockInvalidError::ExcessBlobGas => "excess_blob_gas",
@@ -209,6 +214,14 @@ impl BlockHandler {
 
         // CHECK: The payload is valid for the specific version of this block.
         self.validate_version_specific_payload(envelope)?;
+
+        // Reject invalid schedules before gossip acceptance, forwarding, or recording as seen.
+        BaseTimeUpdateTx::validate_block_timestamp(
+            &self.rollup_config,
+            &block.body.transactions,
+            block.header.number,
+            block.header.timestamp,
+        )?;
 
         if let Some(seen_hashes_at_height) =
             self.seen_hashes.get_mut(&envelope.payload.block_number())

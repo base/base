@@ -4,6 +4,13 @@ x-rust-service-build: &rust-service-build
   args:
     PROFILE: "${CARGO_PROFILE:-dev}"
 
+x-ingress-healthcheck: &ingress-healthcheck
+  interval: 5s
+  timeout: 5s
+  retries: 30
+  start_period: 10s
+  start_interval: 250ms
+
 services:
   minio:
     image: minio/minio:latest
@@ -17,9 +24,7 @@ services:
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
+      <<: *ingress-healthcheck
       start_period: 5s
     restart: unless-stopped
 
@@ -70,10 +75,7 @@ services:
       - TIPS_INGRESS_TRANSACTION_EVENTS_NETWORK=base-devnet
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${L2_INGRESS_HEALTH_PORT}/health"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 10s
+      <<: *ingress-healthcheck
     restart: unless-stopped
 
   proxyd:
@@ -103,10 +105,7 @@ services:
     command: ["/config/proxyd.toml"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-H", "X-Forwarded-For: 127.0.0.1", "--data", "{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}", "http://localhost:8080"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 10s
+      <<: *ingress-healthcheck
     restart: unless-stopped
 
   audit-archiver:
@@ -172,6 +171,7 @@ services:
       timeout: 1s
       retries: 240
       start_period: 250ms
+      start_interval: 250ms
     networks:
       default:
         ipv4_address: ${TRANSACTION_EVENTS_POSTGRES_ADVERTISE_IP}

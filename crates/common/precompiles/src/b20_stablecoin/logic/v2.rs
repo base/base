@@ -6,7 +6,7 @@ use alloc::{
     vec::Vec,
 };
 
-use alloy_primitives::{Address, B256, FixedBytes, U256, b256, keccak256};
+use alloy_primitives::{Address, B256, FixedBytes, U256, b256};
 use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
@@ -672,8 +672,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         }
         let domain_sep = self.domain_separator(token, chain_id)?;
         let nonce = token.accounting().nonce(args.owner)?;
-        let signing_hash = args.signing_hash(domain_sep, nonce);
-        let recovered = args.recover_signer(signing_hash)?;
+        let signing_hash = args.metered_signing_hash(token.accounting(), domain_sep, nonce)?;
+        let recovered = args.metered_recover_signer(token.accounting(), signing_hash)?;
         PermitArgs::validate_recovered_address(recovered, args.owner)?;
         token.accounting_mut().increment_nonce(args.owner)?;
         self.approve(token, args.owner, args.spender, args.value)
@@ -714,12 +714,12 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
 
     fn domain_separator(&self, token: &B20StablecoinToken<S, A>, chain_id: u64) -> Result<B256> {
         let name = token.accounting().name()?;
-        let name_hash = keccak256(name.as_bytes());
-        let version_hash = keccak256(VERSION);
+        let name_hash = token.accounting().metered_keccak256(name.as_bytes())?;
+        let version_hash = token.accounting().metered_keccak256(VERSION)?;
         let encoded =
             (DOMAIN_TYPEHASH, name_hash, version_hash, U256::from(chain_id), token.token_address())
                 .abi_encode();
-        Ok(keccak256(&encoded))
+        token.accounting().metered_keccak256(&encoded)
     }
 
     fn eip712_domain(
@@ -799,6 +799,10 @@ mod tests {
         role_admins: BTreeMap<B256, B256>,
         policy_ids: BTreeMap<B256, u64>,
         events: Vec<LogData>,
+        /// Number of `metered_keccak256` calls (interior-mutable so `&self` metering can record).
+        keccak_charges: core::cell::Cell<u64>,
+        /// Cumulative gas passed to `deduct_gas`.
+        gas_deducted: core::cell::Cell<u64>,
     }
 
     impl FakeAccounting {
@@ -820,6 +824,8 @@ mod tests {
                 role_admins: BTreeMap::new(),
                 policy_ids: BTreeMap::new(),
                 events: Vec::new(),
+                keccak_charges: core::cell::Cell::new(0),
+                gas_deducted: core::cell::Cell::new(0),
             }
         }
     }
@@ -932,6 +938,14 @@ mod tests {
         }
         fn emit_event(&mut self, log: LogData) -> Result<()> {
             self.events.push(log);
+            Ok(())
+        }
+        fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+            self.keccak_charges.set(self.keccak_charges.get() + 1);
+            Ok(keccak256(data))
+        }
+        fn deduct_gas(&self, gas: u64) -> Result<()> {
+            self.gas_deducted.set(self.gas_deducted.get() + gas);
             Ok(())
         }
     }
@@ -1728,6 +1742,50 @@ mod tests {
         LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).unwrap();
         // Same (v, r, s): the nonce has advanced, so recovery no longer matches `owner`.
         assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).is_err());
+    }
+
+    #[test]
+    fn permit_charges_metered_hashing_and_fixed_recovery() {
+        let mut tok = token();
+        let owner = anvil_owner();
+        let args = signed_permit(&tok, owner, BOB, U256::from(500u64), U256::MAX);
+
+        // `signed_permit` computes the domain separator during setup, so measure deltas.
+        let keccak_before = tok.accounting().keccak_charges.get();
+        let gas_before = tok.accounting().gas_deducted.get();
+
+        LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args).unwrap();
+
+        // domain separator (name, version, encoded) + signing digest (struct hash, digest) = 5.
+        assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5);
+        // Fixed ECRECOVER-comparable recovery charge, applied exactly once.
+        assert_eq!(tok.accounting().gas_deducted.get() - gas_before, PermitArgs::RECOVER_GAS);
+    }
+
+    #[test]
+    fn caught_revert_permit_loop_charges_each_iteration() {
+        let mut tok = token();
+        let owner = anvil_owner();
+        // Realistic DoS shape: a valid, recoverable signature but an unrelated `owner`, so every
+        // call performs the full EIP-712 hashing and secp256k1 recovery and then reverts
+        // `InvalidSigner` (before the nonce is bumped, so the same args replays each iteration).
+        let mut args = signed_permit(&tok, owner, BOB, U256::from(1u64), U256::MAX);
+        args.owner = Address::repeat_byte(0xcc);
+
+        const ITERATIONS: u64 = 8;
+        let keccak_before = tok.accounting().keccak_charges.get();
+        let gas_before = tok.accounting().gas_deducted.get();
+        for _ in 0..ITERATIONS {
+            assert!(LOGIC.permit(&mut tok, CHAIN_ID, U256::ZERO, args.clone()).is_err());
+        }
+
+        // A caught-revert loop no longer runs for free: hashing and recovery metering scale
+        // linearly with the number of calls.
+        assert_eq!(tok.accounting().keccak_charges.get() - keccak_before, 5 * ITERATIONS);
+        assert_eq!(
+            tok.accounting().gas_deducted.get() - gas_before,
+            PermitArgs::RECOVER_GAS * ITERATIONS
+        );
     }
 
     // --- reads ---

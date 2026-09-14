@@ -64,9 +64,9 @@ impl ProofProposeRequest {
     /// Validates that the game can still accept a ZK proposal proof and takes
     /// the block range, L1 head, and checkpoint stride from the game so the
     /// proof journal matches what the contract reconstructs.
-    /// `intermediate_root_interval` supplies the stride when the game does
-    /// not expose `INTERMEDIATE_BLOCK_INTERVAL`; otherwise it must match the
-    /// game's committed value.
+    /// `intermediate_root_interval` supplies the stride when the game does not
+    /// expose its interval configuration; otherwise it must match the game's
+    /// committed value.
     pub fn for_game(
         details: &GameDetails,
         prover_address: Address,
@@ -147,14 +147,14 @@ impl ProofProposeRequest {
         {
             return Err(not_provable(&format!(
                 "intermediate root interval {explicit} does not match the game \
-                 implementation's INTERMEDIATE_BLOCK_INTERVAL {canonical}; a proof with a \
+                 implementation's canonical interval {canonical}; a proof with a \
                  different stride would not verify on chain"
             )));
         }
         let intermediate_root_interval =
             intermediate_root_interval.or(details.intermediate_root_interval).ok_or_else(|| {
                 not_provable(
-                    "the game does not expose INTERMEDIATE_BLOCK_INTERVAL; \
+                    "the game does not expose its intermediate root interval; \
                      pass --intermediate-root-interval",
                 )
             })?;

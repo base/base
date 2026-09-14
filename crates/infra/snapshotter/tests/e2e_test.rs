@@ -2,6 +2,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
+    io::{Read, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
@@ -15,7 +16,7 @@ use async_trait::async_trait;
 use base_snapshotter::{
     ChunkedArchive, ComponentManifest, ContainerManager, DockerContainerManager,
     ManifestGenerationParams, OutputFileChecksum, SnapshotGenerator, SnapshotManifest,
-    SnapshotUploadParams, SnapshotUploader, TipChecker, TipStatus,
+    SnapshotUploadParams, SnapshotUploader, StreamingS3ArchiveSink, TipChecker, TipStatus,
 };
 use bollard::{
     Docker,
@@ -27,6 +28,7 @@ use bollard::{
 };
 use futures::StreamExt;
 use serial_test::serial;
+use tokio::time::{Duration, sleep, timeout};
 
 mod common;
 use common::TestHarness;
@@ -149,14 +151,20 @@ fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig 
         el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
         tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
         source_datadir: tmp.join("nonexistent-datadir"),
-        output_dir: tmp.join("output"),
-        upload_existing_run_timestamp: None,
         bucket: bucket.to_string(),
         prefix: "test".to_string(),
         chain_id: 8453,
         block: None,
         blocks_per_file: Some(500_000),
         snapshot_threads: None,
+        max_streaming_archives: std::num::NonZeroUsize::new(
+            base_snapshotter::DEFAULT_MAX_STREAMING_ARCHIVES,
+        )
+        .expect("default streaming archive count should be non-zero"),
+        max_streaming_part_uploads: std::num::NonZeroUsize::new(
+            base_snapshotter::DEFAULT_MAX_STREAMING_PART_UPLOADS,
+        )
+        .expect("default streaming part upload count should be non-zero"),
         retain_runs: NonZeroUsize::new(3).expect("retain runs should be non-zero"),
         docker_socket: "/var/run/docker.sock".to_string(),
         s3_config_type: base_snapshotter::S3ConfigType::Aws,
@@ -575,6 +583,181 @@ const DIFF_TEST_COMPONENTS: &[&str] = &[
     "transaction_senders",
 ];
 
+/// Verifies the synchronous tar/zstd producer can send an archive straight to a multipart S3
+/// object. The test intentionally has no local archive path: the only copy of the compressed
+/// bytes is the bounded in-memory multipart buffer before `MinIO` acknowledges each part.
+#[tokio::test]
+#[serial]
+async fn streams_tar_zstd_archive_to_minio_multipart_upload() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "streaming".to_string(),
+        None,
+    );
+    let key = "streaming/state.tar.zst";
+    let stream = uploader.start_streaming_multipart_upload(key).await?;
+
+    let (stream, expected_contents) = tokio::task::spawn_blocking(move || -> Result<_> {
+        let mut stream = stream;
+        let expected_contents = b"snapshot archive content written directly to S3".to_vec();
+
+        {
+            let mut encoder = zstd::Encoder::new(&mut stream, 0)?;
+            encoder.include_checksum(true)?;
+            let mut archive = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(expected_contents.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            archive.append_data(&mut header, "db/mdbx.dat", expected_contents.as_slice())?;
+            let encoder = archive.into_inner()?;
+            encoder.finish()?;
+        }
+
+        // This must be after `encoder.finish()`: zstd writes the frame trailer and checksum
+        // during finalization, and the multipart consumer only completes after this signal.
+        stream.finish()?;
+        Ok((stream, expected_contents))
+    })
+    .await??;
+
+    let compressed_size = stream.bytes_written();
+    assert!(compressed_size > 0, "the zstd stream should contain bytes");
+    assert_eq!(stream.complete().await?, compressed_size);
+
+    let uploaded = get_object_bytes(&harness.storage_client, &harness.bucket_name, key).await?;
+    assert_eq!(uploaded.len() as u64, compressed_size);
+
+    let decoder = zstd::Decoder::new(uploaded.as_slice())?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries()?;
+    let mut entry = entries.next().expect("archive should contain its input file")?;
+    assert_eq!(entry.path()?.as_ref(), Path::new("db/mdbx.dat"));
+    let mut actual_contents = Vec::new();
+    entry.read_to_end(&mut actual_contents)?;
+    assert_eq!(actual_contents, expected_contents);
+    assert!(entries.next().is_none(), "archive should contain exactly one input file");
+
+    Ok(())
+}
+
+/// An unfinished archive must never be published. Dropping the writer closes the producer
+/// channel, which makes the async consumer abort its S3 multipart upload.
+#[tokio::test]
+#[serial]
+async fn unfinished_stream_aborts_multipart_upload() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "streaming-abort".to_string(),
+        None,
+    );
+    let key = "streaming-abort/unpublished.tar.zst";
+    let mut stream = uploader.start_streaming_multipart_upload(key).await?;
+    stream.write_all(b"incomplete zstd frame")?;
+
+    let error = stream.complete().await.expect_err("unfinalized stream must fail");
+    assert!(error.to_string().contains("was not finalized"));
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let response = harness
+                .storage_client
+                .list_multipart_uploads()
+                .bucket(&harness.bucket_name)
+                .prefix(key)
+                .send()
+                .await
+                .expect("list multipart uploads should succeed");
+            if response.uploads().is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("unfinalized multipart upload should be aborted");
+
+    assert!(
+        harness
+            .storage_client
+            .head_object()
+            .bucket(&harness.bucket_name)
+            .key(key)
+            .send()
+            .await
+            .is_err(),
+        "unfinalized stream must not publish an object"
+    );
+
+    Ok(())
+}
+
+/// Exercises Base's selective snapshot generator through the streaming sink. This verifies the
+/// generator finalizes tar/zstd before the sink publishes the object and does not require a local
+/// archive output directory.
+#[tokio::test]
+#[serial]
+async fn snapshot_generator_streams_archives_to_minio() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "generator-streaming".to_string(),
+        None,
+    );
+    let sink = StreamingS3ArchiveSink::new(
+        uploader,
+        tokio::runtime::Handle::current(),
+        1,
+        |archive_name| Ok(format!("generator-streaming/{archive_name}")),
+    )?;
+
+    let source = tempfile::tempdir()?;
+    std::fs::create_dir_all(source.path().join("db"))?;
+    std::fs::write(source.path().join("db/mdbx.dat"), b"generated-state")?;
+    let source_path = source.path().to_owned();
+    let remote_static_files = HashMap::new();
+    let manifest = tokio::task::spawn_blocking(move || {
+        SnapshotGenerator::generate_manifest_with_sink(
+            &ManifestGenerationParams {
+                source_datadir: &source_path,
+                output_dir: None,
+                chain_id: 8453,
+                base_url: None,
+                block: Some(0),
+                blocks_per_file: Some(500_000),
+                remote_static_files: &remote_static_files,
+                previous_manifest: None,
+                upload_proofs: false,
+            },
+            &sink,
+        )
+    })
+    .await??;
+    assert!(manifest.components.contains_key("state"));
+
+    let bytes = get_object_bytes(
+        &harness.storage_client,
+        &harness.bucket_name,
+        "generator-streaming/state.tar.zst",
+    )
+    .await?;
+    let decoder = zstd::Decoder::new(bytes.as_slice())?;
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = archive.entries()?;
+    let mut entry = entries.next().expect("state archive should contain mdbx.dat")?;
+    assert_eq!(entry.path()?.as_ref(), Path::new("db/mdbx.dat"));
+    let mut contents = Vec::new();
+    entry.read_to_end(&mut contents)?;
+    assert_eq!(contents, b"generated-state");
+
+    Ok(())
+}
+
 #[tokio::test]
 #[serial]
 async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
@@ -599,12 +782,13 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         .send()
         .await?;
 
+    let old_bytes = vec![b'o'; 100];
     for &component in DIFF_TEST_COMPONENTS {
         let key = format!("diff-match/static_files/{component}-0-499999.tar.zst");
         s3.put_object()
             .bucket(bucket)
             .key(&key)
-            .body(aws_sdk_s3::primitives::ByteStream::from(b"old-bytes".to_vec()))
+            .body(aws_sdk_s3::primitives::ByteStream::from(old_bytes.clone()))
             .send()
             .await?;
     }
@@ -639,7 +823,7 @@ async fn diff_upload_skips_chunks_when_blake3_matches() -> Result<()> {
         let finalized_body = get_object_bytes(s3, bucket, &finalized_key).await?;
         assert_eq!(
             finalized_body.as_slice(),
-            b"old-bytes",
+            old_bytes.as_slice(),
             "{component} finalized chunk should be skipped when blake3 matches"
         );
 
@@ -902,7 +1086,7 @@ async fn diff_upload_uploads_everything_on_first_run() -> Result<()> {
 #[serial]
 async fn selective_compression_skips_finalized_chunks() -> Result<()> {
     // Create a real datadir with mdbx + 4 header chunk ranges.
-    // block=2M, bpf=500k → 4 chunks; only chunk 3 remains mutable.
+    // block=1,999,999, bpf=500k → 4 chunks; only chunk 3 remains mutable.
     let source = tempfile::tempdir()?;
     let db_dir = source.path().join("db");
     std::fs::create_dir_all(&db_dir)?;
@@ -925,7 +1109,6 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         }
     }
 
-    // Simulate all chunked components existing remotely for every finalized range.
     let chunk_components = [
         "headers",
         "transactions",
@@ -934,24 +1117,44 @@ async fn selective_compression_skips_finalized_chunks() -> Result<()> {
         "account_changesets",
         "storage_changesets",
     ];
+    let baseline = tempfile::tempdir()?;
+    SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
+        source_datadir: source.path(),
+        output_dir: Some(baseline.path()),
+        chain_id: 8453,
+        base_url: None,
+        block: Some(1_999_999),
+        blocks_per_file: Some(500_000),
+        remote_static_files: &HashMap::new(),
+        previous_manifest: None,
+        upload_proofs: false,
+    })?;
+    let previous_manifest = parse_local_manifest(baseline.path())?;
+
+    // Simulate the first three chunks of every component existing remotely.
     let mut remote: HashMap<String, u64> = HashMap::new();
     for component in chunk_components {
+        let ComponentManifest::Chunked(metadata) = &previous_manifest.components[component] else {
+            unreachable!("test components are chunked")
+        };
         for chunk_idx in 0..3u64 {
             let start = chunk_idx * 500_000;
             let end = start + 499_999;
-            remote.insert(format!("{component}-{start}-{end}.tar.zst"), 0);
+            let archive = format!("{component}-{start}-{end}.tar.zst");
+            remote.insert(archive, metadata.chunk_sizes[chunk_idx as usize]);
         }
     }
 
     let output = tempfile::tempdir()?;
     let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
         source_datadir: source.path(),
-        output_dir: output.path(),
+        output_dir: Some(output.path()),
         chain_id: 8453,
-        block: Some(2_000_000),
+        base_url: None,
+        block: Some(1_999_999),
         blocks_per_file: Some(500_000),
         remote_static_files: &remote,
-        previous_chunk_output_files: &HashMap::new(),
+        previous_manifest: Some(&previous_manifest),
         upload_proofs: false,
     })?;
 
@@ -1021,12 +1224,13 @@ async fn generate_and_upload_proofs_to_minio() -> Result<()> {
     let empty_remote = HashMap::new();
     let files = SnapshotGenerator::generate_manifest(&ManifestGenerationParams {
         source_datadir: source.path(),
-        output_dir: output.path(),
+        output_dir: Some(output.path()),
         chain_id: 8453,
+        base_url: None,
         block: Some(0),
         blocks_per_file: Some(500_000),
         remote_static_files: &empty_remote,
-        previous_chunk_output_files: &HashMap::new(),
+        previous_manifest: None,
         upload_proofs: true,
     })?;
 
@@ -1254,42 +1458,6 @@ async fn orchestrator_skips_when_not_at_tip() -> Result<()> {
     assert!(result.is_ok(), "run should return Ok when skipping a not-at-tip node");
     assert!(!manager.was_stopped(), "container must not be stopped when EL is not at tip");
     assert!(!manager.was_started(), "container must not be started when EL is not at tip");
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
-async fn upload_existing_run_skips_container_lifecycle() -> Result<()> {
-    let harness = TestHarness::new().await?;
-    let manager = std::sync::Arc::new(MockContainerManager::new());
-    let uploader = SnapshotUploader::new(
-        harness.storage_client.clone(),
-        harness.bucket_name.clone(),
-        "test".to_string(),
-        None,
-    );
-
-    let tmp = tempfile::tempdir()?;
-    let output_dir = tmp.path().join("output");
-    let run_timestamp = 1_700_000_123u64;
-    let run_dir = output_dir.join(format!("run-{run_timestamp}"));
-    create_fake_snapshot(&run_dir, 1_000_000)?;
-
-    let mut config = test_config(&harness.bucket_name, tmp.path());
-    config.output_dir = output_dir;
-    config.upload_existing_run_timestamp = Some(run_timestamp);
-
-    let snapshotter = base_snapshotter::Snapshotter::new(
-        std::sync::Arc::clone(&manager),
-        MockTipChecker::new(true),
-        uploader,
-        config,
-    );
-
-    snapshotter.run().await?;
-    assert!(!manager.was_stopped(), "upload-only mode should not stop the container");
-    assert!(!manager.was_started(), "upload-only mode should not restart the container");
 
     Ok(())
 }

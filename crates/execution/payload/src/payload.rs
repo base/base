@@ -4,7 +4,10 @@ use std::{fmt::Debug, sync::Arc};
 
 use alloy_consensus::{Block, BlockHeader};
 use alloy_eips::{
-    eip1559::BaseFeeParams, eip2718::Decodable2718, eip4895::Withdrawals, eip7685::Requests,
+    eip1559::BaseFeeParams,
+    eip2718::{Decodable2718, Encodable2718},
+    eip4895::Withdrawals,
+    eip7685::Requests,
 };
 use alloy_primitives::{Address, B64, B256, Bytes, U256};
 use alloy_rpc_types_engine::{
@@ -13,7 +16,7 @@ use alloy_rpc_types_engine::{
 };
 use base_common_chains::Upgrades;
 use base_common_consensus::{
-    BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData,
+    BasePrimitives, EIP1559ParamError, HoloceneExtraData, JovianExtraData, decode_2718_canonical,
 };
 /// Re-export for use in downstream arguments.
 pub use base_common_rpc_types_engine::BasePayloadAttributes;
@@ -139,7 +142,9 @@ impl<T> BasePayloadBuilderAttributes<T> {
     }
 }
 
-impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilderAttributes<T> {
+impl<T: Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static>
+    BasePayloadBuilderAttributes<T>
+{
     /// Creates payload builder attributes for the given parent block and RPC payload attributes.
     pub fn try_new(
         parent: B256,
@@ -158,9 +163,7 @@ impl<T: Decodable2718 + Send + Sync + Debug + Unpin + 'static> BasePayloadBuilde
             .transactions
             .unwrap_or_default()
             .into_iter()
-            .map(|data| {
-                Decodable2718::decode_2718_exact(data.as_ref()).map(|tx| WithEncoded::new(data, tx))
-            })
+            .map(|data| decode_2718_canonical(data.as_ref()).map(|tx| WithEncoded::new(data, tx)))
             .collect::<Result<_, _>>()?;
 
         let payload_attributes = EthPayloadBuilderAttributes {
@@ -226,7 +229,7 @@ impl<T> serde::Serialize for BasePayloadBuilderAttributes<T> {
 
 impl<'de, T> serde::Deserialize<'de> for BasePayloadBuilderAttributes<T>
 where
-    T: Decodable2718 + Send + Sync + Debug + Unpin + 'static,
+    T: Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -239,7 +242,7 @@ where
 
 impl<T> reth_payload_primitives::PayloadAttributes for BasePayloadBuilderAttributes<T>
 where
-    T: Clone + Decodable2718 + Send + Sync + Debug + Unpin + 'static,
+    T: Clone + Decodable2718 + Encodable2718 + Send + Sync + Debug + Unpin + 'static,
 {
     fn payload_id(&self, parent_hash: &B256) -> PayloadId {
         self.as_rpc_payload_attributes().payload_id(parent_hash, 3)

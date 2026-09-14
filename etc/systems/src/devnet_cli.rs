@@ -8,8 +8,8 @@ use eyre::{Result, WrapErr};
 use serde::Serialize;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
-    SnapshotL2Stack, SystemTestStackBuilder,
+    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead, SharedL1,
+    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
 /// Local Base development network launcher.
@@ -24,17 +24,36 @@ pub struct DevnetCli {
 /// Supported development network modes.
 #[derive(Debug, Subcommand)]
 pub enum DevnetCommand {
-    /// Continue Base mainnet snapshot datadirs without an L1.
+    /// Continue Base snapshot datadirs without an L1.
     Snapshot(SnapshotArgs),
+    /// Start a CI-scoped shared L1 and write its runtime manifest.
+    SharedL1(SharedL1Args),
 }
 
-/// Arguments for an L1-free Base mainnet snapshot network.
+/// Arguments for a CI-scoped shared L1 fixture.
+#[derive(Debug, Args)]
+pub struct SharedL1Args {
+    /// File written after the shared L1 is ready for consumers.
+    #[arg(long)]
+    pub runtime_file: PathBuf,
+    /// Docker network shared with live L2 deployments.
+    #[arg(long)]
+    pub network_name: String,
+}
+
+/// Arguments for an L1-free Base snapshot network.
 #[derive(Debug, Args)]
 pub struct SnapshotArgs {
-    /// Writable builder clone of a Base mainnet datadir.
+    /// Built-in Base chain name or path to a Base genesis JSON file.
+    #[arg(long, default_value = "mainnet")]
+    pub chain: String,
+    /// Rollup config JSON for a custom chain JSON whose chain ID is not built in.
+    #[arg(long)]
+    pub rollup_config: Option<PathBuf>,
+    /// Writable builder snapshot datadir.
     #[arg(long, env = "BASE_SNAPSHOT_BUILDER_DATADIR")]
     pub builder_datadir: PathBuf,
-    /// Writable client clone of the same Base mainnet datadir.
+    /// Writable client snapshot datadir for the same chain.
     #[arg(long, env = "BASE_SNAPSHOT_CLIENT_DATADIR")]
     pub client_datadir: PathBuf,
     /// Bind the stable developer ports instead of allocating free ports.
@@ -89,7 +108,19 @@ impl DevnetCli {
     pub async fn run(self) -> Result<()> {
         match self.command {
             DevnetCommand::Snapshot(args) => args.run().await,
+            DevnetCommand::SharedL1(args) => args.run().await,
         }
+    }
+}
+
+impl SharedL1Args {
+    /// Starts the fixture, publishes its manifest, and waits for shutdown.
+    pub async fn run(self) -> Result<()> {
+        let stack = SharedL1::start(self.network_name).await?;
+        stack.runtime().write(&self.runtime_file)?;
+        println!("shared L1 ready: {}", self.runtime_file.display());
+        tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
+        stack.shutdown().await
     }
 }
 
@@ -107,8 +138,11 @@ impl SnapshotArgs {
             (None, None, None) => None,
             _ => unreachable!("clap requires all expected-head fields together"),
         };
-        let mut config =
-            DevnetConfig::base_mainnet_snapshot(self.builder_datadir, self.client_datadir);
+        let mut config = DevnetConfig::snapshot(
+            self.builder_datadir,
+            self.client_datadir,
+            SnapshotChainConfig { chain: self.chain, rollup_config: self.rollup_config },
+        )?;
         config.use_stable_ports = self.stable_ports;
         let DevnetL2State::Snapshot(snapshot) = &mut config.l2_state else {
             unreachable!("snapshot constructor must create snapshot state")
@@ -145,7 +179,7 @@ impl SnapshotRuntime {
         let boundary = stack.boundary();
         Ok(Self {
             status: "ready",
-            chain_id: 8453,
+            chain_id: stack.chain_id(),
             boundary_number: boundary.head.number,
             boundary_hash: boundary.head.hash,
             block_interval_ms: stack.block_interval().duration().as_millis() as u64,
@@ -168,6 +202,8 @@ mod tests {
         let cli = DevnetCli::try_parse_from([
             "base-devnet",
             "snapshot",
+            "--chain",
+            "sepolia",
             "--builder-datadir",
             "/tmp/builder",
             "--client-datadir",
@@ -179,7 +215,10 @@ mod tests {
         ])
         .unwrap();
 
-        let DevnetCommand::Snapshot(args) = cli.command;
+        let DevnetCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot command")
+        };
+        assert_eq!(args.chain, "sepolia");
         assert_eq!(args.builder_datadir.to_str(), Some("/tmp/builder"));
         assert!(args.prefund_address.is_some());
         assert_eq!(args.block_interval, DevnetBlockInterval::TwoHundredMilliseconds);

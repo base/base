@@ -43,6 +43,8 @@ pub struct L1FeeParams {
     pub operator_fee_constant: Option<U256>,
     /// True if Ecotone is activated but the L1 fee scalars have not yet been set.
     pub empty_ecotone_scalars: bool,
+    /// The Jovian DA-footprint gas scalar. `None` before Jovian (or when unset).
+    pub da_footprint_gas_scalar: Option<U256>,
 }
 
 impl L1FeeParams {
@@ -77,6 +79,22 @@ impl L1FeeParams {
             tokens += PRE_REGOLITH_SIGNATURE_BYTES * NON_ZERO_BYTE_MULTIPLIER_ISTANBUL;
         }
         U256::from(tokens.saturating_mul(STANDARD_TOKEN_COST))
+    }
+
+    /// Calculates the Jovian DA-footprint gas for posting the enveloped transaction bytes `input`.
+    ///
+    /// The footprint is the FastLZ-estimated compressed size (scaled by `1e6`, as
+    /// [`tx_estimated_size_fjord`] returns) divided back down by `1e6` and multiplied by the
+    /// DA-footprint gas scalar. Returns zero when no scalar is set (pre-Jovian or unconfigured).
+    /// Mirrors the reference `jovian_da_footprint_estimation`.
+    pub fn jovian_da_footprint(&self, input: &[u8]) -> u64 {
+        let Some(scalar) = self.da_footprint_gas_scalar else {
+            return 0;
+        };
+        U256::from(tx_estimated_size_fjord(input))
+            .wrapping_div(U256::from(1_000_000u64))
+            .saturating_mul(scalar)
+            .saturating_to::<u64>()
     }
 
     /// Calculates the L1 data-posting cost for `input` at `upgrade`.
@@ -206,6 +224,20 @@ mod tests {
     fn data_gas_zero_bytes_matches_reference() {
         let input = alloy_primitives::bytes!("FA00CA00DE");
         assert_eq!(L1FeeParams::data_gas(&input, BaseUpgrade::Bedrock), U256::from(1144));
+    }
+
+    #[test]
+    fn jovian_da_footprint_zero_without_scalar() {
+        // No DA scalar (pre-Jovian / unconfigured) yields no footprint.
+        assert_eq!(params().jovian_da_footprint(&[0x02, 0xAB, 0xCD]), 0);
+    }
+
+    #[test]
+    fn jovian_da_footprint_uses_min_size_and_scalar() {
+        // A small input floors at the minimum FastLZ size (100 * 1e6); divided by 1e6 that is 100
+        // compressed bytes, times the scalar.
+        let p = L1FeeParams { da_footprint_gas_scalar: Some(U256::from(7)), ..Default::default() };
+        assert_eq!(p.jovian_da_footprint(&[0x02, 0xAB, 0xCD]), 100 * 7);
     }
 
     #[test]

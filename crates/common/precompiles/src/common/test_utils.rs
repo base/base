@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use alloy_primitives::{Address, B256, LogData, U256};
+use alloy_primitives::{Address, B256, LogData, U256, keccak256};
 use base_precompile_storage::Result;
 
 use crate::{
@@ -244,6 +244,18 @@ impl TokenAccounting for InMemoryTokenAccounting {
 
     fn emit_event(&mut self, log: LogData) -> Result<()> {
         self.events.push(log);
+        Ok(())
+    }
+
+    /// In-memory double has no gas meter: hashes without charging. Real gas enforcement is
+    /// exercised against the EVM harness in the dispatch tests.
+    fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+        Ok(keccak256(data))
+    }
+
+    /// In-memory double has no gas meter: charging is a no-op. Real `OutOfGas` enforcement is
+    /// exercised against the EVM harness in the dispatch tests.
+    fn deduct_gas(&self, _gas: u64) -> Result<()> {
         Ok(())
     }
 }

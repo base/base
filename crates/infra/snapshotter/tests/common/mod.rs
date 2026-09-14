@@ -1,7 +1,7 @@
 //! Common test harness for snapshotter integration tests with `MinIO`.
 
 use anyhow::Result;
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::minio::MinIO;
 
 pub(crate) struct TestHarness {
@@ -12,7 +12,9 @@ pub(crate) struct TestHarness {
 
 impl TestHarness {
     pub(crate) async fn new() -> Result<Self> {
-        let minio_container = MinIO::default().start().await?;
+        // MinIO removed the `minio/minio` image from Docker Hub, so pull the
+        // same tag from quay.io (their current official registry) instead.
+        let minio_container = MinIO::default().with_name("quay.io/minio/minio").start().await?;
         let storage_port = minio_container.get_host_port_ipv4(9000).await?;
         let storage_endpoint = format!("http://127.0.0.1:{storage_port}");
 

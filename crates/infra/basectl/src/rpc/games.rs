@@ -79,8 +79,8 @@ pub struct GameDetails {
     pub target_block: u64,
     /// Number of L2 blocks the game covers.
     pub block_interval: u64,
-    /// Canonical `INTERMEDIATE_BLOCK_INTERVAL` read from the game proxy's
-    /// fixed implementation; `None` when the game does not expose it.
+    /// Canonical intermediate checkpoint interval resolved by the game proxy;
+    /// `None` when the game does not expose its interval configuration.
     pub intermediate_root_interval: Option<u64>,
     /// Number of intermediate output roots committed with the game.
     pub intermediate_root_count: usize,
@@ -296,7 +296,7 @@ impl GamesClient {
         let is_aggregate = if implementation == Address::ZERO {
             false
         } else {
-            match self.verifier.read_intermediate_block_interval(implementation).await {
+            match self.verifier.read_intervals_for_starting_block(implementation, 0).await {
                 Ok(_) => true,
                 Err(error) if error.is_missing_method() => {
                     // Empty reverts are indistinguishable from missing selectors; log for diagnosis.
@@ -390,13 +390,13 @@ impl GamesClient {
             });
         }
 
-        // The game proxy delegate-calls the implementation it was cloned from
-        // at creation, so this reads the stride the game was committed with.
+        // The game proxy delegate-calls the implementation it was cloned from,
+        // so resolve the start-aware stride through that proxy.
         // The factory's current `gameImpls` entry can be swapped by an
         // implementation upgrade and must not be trusted for a live game.
         let intermediate_root_interval =
-            match self.verifier.read_intermediate_block_interval(address).await {
-                Ok(interval) => Some(interval),
+            match self.verifier.read_intervals_for_starting_block(address, starting_block).await {
+                Ok((_, interval)) => Some(interval),
                 Err(error) if error.is_missing_method() => None,
                 Err(error) => return Err(self.contract_error(error)),
             };
@@ -583,8 +583,9 @@ mod tests {
         push_abi(&asserter, &(1_u32, 1_u64, unsupported_game));
         push_abi(&asserter, &unsupported_impl);
         asserter.push_success(&Bytes::new());
+        asserter.push_success(&Bytes::new());
         push_abi(&asserter, &aggregate_impl);
-        push_abi(&asserter, &U256::from(100));
+        push_abi(&asserter, &(U256::from(100), U256::from(10)));
 
         let skipped = client
             .scan_index(0, GameListFilter { limit: 1, game_type: None, missing_zk: false })
@@ -656,7 +657,7 @@ mod tests {
 
         push_game_details_reads(&asserter);
         push_abi(&asserter, &(game, 0_u64));
-        push_abi(&asserter, &U256::from(100));
+        push_abi(&asserter, &(U256::from(1000), U256::from(100)));
 
         let details = client.game_details(game).await.unwrap();
 
@@ -677,6 +678,7 @@ mod tests {
 
         push_game_details_reads(&asserter);
         push_abi(&asserter, &(game, 0_u64));
+        asserter.push_success(&Bytes::new());
         asserter.push_success(&Bytes::new());
 
         let details = client.game_details(game).await.unwrap();

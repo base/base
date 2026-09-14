@@ -13,7 +13,9 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolEvent};
 use base_common_precompiles::{ActivationFeature, ActivationRegistryStorage, IActivationRegistry};
 use base_common_rpc_types::BaseTransactionReceipt;
-use base_system_tests::{ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient};
+use base_system_tests::{
+    ANVIL_ACCOUNT_5, ANVIL_ACCOUNT_6, B20PrecompileClient, SystemTestStackBuilder,
+};
 use eyre::{Result, WrapErr};
 
 /// `isActivated` returns `false` for every feature id by default.
@@ -90,7 +92,7 @@ async fn test_activation_registry_set_admin_reverts_before_cobalt() -> Result<()
 /// At Cobalt, `setAdmin` updates the stored admin and future activation authority.
 #[tokio::test]
 async fn test_activation_registry_cobalt_admin_rotation() -> Result<()> {
-    let (_system, provider) = cobalt::start_cobalt_system().await?;
+    let (_system, provider) = cobalt::start_cobalt_stack(SystemTestStackBuilder::new()).await?;
     let admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
         .wrap_err("Failed to parse system test admin private key")?;
     let new_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_6.private_key)

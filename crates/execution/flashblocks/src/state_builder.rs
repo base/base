@@ -194,7 +194,7 @@ where
         ensure_create2_deployer(spec, self.pending_block.timestamp, self.evm.db_mut())
             .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
 
-        // At the Cobalt (EIP-8130) transition, plant a code stub on the code-less
+        // At the Zenith (EIP-8130) transition, plant a code stub on the code-less
         // enshrined system accounts (the 2D nonce manager) so the persistent state
         // the enshrined path writes to them is not reaped by EIP-161 end-of-block
         // state clearing.

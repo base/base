@@ -1,9 +1,11 @@
 //! `base snapshot` subcommand group: snapshot manifest generation and download.
 
-use base_execution_cli::{chainspec::BaseChainSpecParser, commands::download};
+use base_execution_cli::{
+    chainspec::BaseChainSpecParser,
+    commands::{SnapshotManifestCommand, download},
+};
 use base_node_core::BaseNode;
 use clap::{Parser, Subcommand};
-use reth_cli_commands::download::manifest_cmd::SnapshotManifestCommand;
 use reth_cli_runner::CliRunner;
 
 /// Snapshot manifest generation and download utilities.

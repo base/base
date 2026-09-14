@@ -1,5 +1,12 @@
 #![doc = include_str!("../README.md")]
 
+// The intrinsic-gas schedule and computation now live in the engine-neutral
+// `base-common-eip8130` crate (shared with the EVM2 path); re-exported here so
+// this crate's executor and its consumers keep a single import surface.
+pub use base_common_eip8130::{
+    AuthWireForm, Eip8130GasSchedule, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput,
+};
+
 mod error;
 pub use error::AuthError;
 
@@ -57,12 +64,6 @@ pub use apply::{
 
 mod transaction;
 pub use transaction::{AppliedTransaction, TransactionAuthorizer};
-
-mod schedule;
-pub use schedule::Eip8130GasSchedule;
-
-mod intrinsic;
-pub use intrinsic::{AuthWireForm, IntrinsicGas, IntrinsicGasError, IntrinsicGasInput};
 
 mod fee;
 pub use fee::{FeeCheck, FeeError};

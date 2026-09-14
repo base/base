@@ -409,8 +409,13 @@ def prepare_release(
         raise ReleaseError("pass at least one --pr")
     line = line or infer_line(root)
     prs: list[PatchPr] = []
+    seen_prs: set[tuple[str, int]] = set()
     for spec in (parse_pr_spec(item) for item in pr_specs):
         repo = resolve_pr_repo(spec, upstream_url=upstream_url, fork_url=fork_url)
+        identity = (repo.lower(), spec.number)
+        if identity in seen_prs:
+            raise ReleaseError(f"duplicate --pr: {repo}#{spec.number}")
+        seen_prs.add(identity)
         prs.append(fetch_pr(repo, spec.number))
     clone = ensure_fork_clone(root, fork_url, upstream_url)
     git(

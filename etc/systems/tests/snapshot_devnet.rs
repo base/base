@@ -14,24 +14,29 @@ use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
 use base_system_tests::{
     ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
-    SnapshotL2Stack, SystemTestStackBuilder,
+    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
 };
 use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
 const TX_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Starts real EL and CL components from caller-owned writable Base mainnet snapshots.
+/// Starts real EL and CL components from caller-owned writable Base snapshots.
 #[tokio::test]
-#[ignore = "requires two writable Base mainnet execution snapshot datadirs"]
+#[ignore = "requires two writable Base execution snapshot datadirs"]
 async fn snapshot_devnet_mines_follows_and_includes_rpc_transaction() -> Result<()> {
     base_node_runner::test_utils::init_silenced_tracing();
     let builder_datadir = std::env::var_os("BASE_SNAPSHOT_BUILDER_DATADIR")
         .expect("BASE_SNAPSHOT_BUILDER_DATADIR must be set");
     let client_datadir = std::env::var_os("BASE_SNAPSHOT_CLIENT_DATADIR")
         .expect("BASE_SNAPSHOT_CLIENT_DATADIR must be set");
-    let mut config =
-        DevnetConfig::base_mainnet_snapshot(builder_datadir.into(), client_datadir.into());
+    let chain = std::env::var("BASE_SNAPSHOT_CHAIN").unwrap_or_else(|_| "mainnet".to_string());
+    let rollup_config = std::env::var_os("BASE_SNAPSHOT_ROLLUP_CONFIG").map(Into::into);
+    let mut config = DevnetConfig::snapshot(
+        builder_datadir.into(),
+        client_datadir.into(),
+        SnapshotChainConfig { chain, rollup_config },
+    )?;
     let signer: PrivateKeySigner =
         format!("0x{}", hex::encode(ANVIL_ACCOUNT_1.private_key.as_slice())).parse()?;
     let DevnetL2State::Snapshot(snapshot) = &mut config.l2_state else {
@@ -114,7 +119,7 @@ async fn send_transaction_and_wait_for_both(
         .with_gas_limit(21_000)
         .with_max_fee_per_gas(10_000_000_000)
         .with_max_priority_fee_per_gas(1_000_000)
-        .with_chain_id(8453)
+        .with_chain_id(stack.chain_id())
         .with_nonce(builder.get_transaction_count(sender).await?)
         .build_typed_tx()
         .map_err(|_| eyre::eyre!("invalid snapshot test transaction"))?;

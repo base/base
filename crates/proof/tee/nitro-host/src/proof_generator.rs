@@ -21,7 +21,7 @@ use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::{
     NitroEnclavePool, NitroEnclavePoolError, ProofSubmitterRequest, ProofSubmitterRequestError,
@@ -88,9 +88,18 @@ where
     Client: Clone + ProverWorkerProvider + 'static,
 {
     /// Generate a proof for a claimed worker job and spawn proof submission.
+    #[tracing::instrument(
+        name = "nitro.generate_and_submit",
+        skip_all,
+        fields(session_id, worker_id, l2_block)
+    )]
     pub async fn generate_and_submit(&self, job: ProofJob) -> Result<(), ProofGeneratorError> {
         let request = ProofGeneratorRequest::try_from(job)?;
         let l2_block = request.proof.claimed_l2_block_number;
+        tracing::Span::current()
+            .record("session_id", tracing::field::display(&request.claim.session_id))
+            .record("worker_id", tracing::field::display(&request.claim.worker_id))
+            .record("l2_block", l2_block);
 
         info!(
             session_id = %request.claim.session_id,
@@ -102,7 +111,15 @@ where
 
         let (proof, permit) = self
             .with_heartbeat_while_generating(&request, async {
-                let proof = self.pool.prove(request.proof.clone()).await?;
+                let proof = self
+                    .pool
+                    .prove(request.proof.clone())
+                    .instrument(info_span!(
+                        "nitro.prove",
+                        session_id = %request.claim.session_id,
+                        l2_block,
+                    ))
+                    .await?;
                 let permit = self.tasks.acquire_submission_permit().await;
                 Ok((proof, permit))
             })
@@ -236,6 +253,7 @@ where
         let submitter = self.submitter.clone();
         let heartbeat_config = self.heartbeat;
 
+        let span = tracing::Span::current();
         tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -250,7 +268,8 @@ where
                         &request.claim,
                         heartbeat_config,
                         request.lock_expires_at,
-                    ) => Some(source),
+                    )
+                    .instrument(span) => Some(source),
                     () = cancel.cancelled() => None,
                 }
             })

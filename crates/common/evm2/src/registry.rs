@@ -361,4 +361,51 @@ mod tests {
         assert_eq!(balance(&mut evm, TARGET), U256::ZERO);
         assert_eq!(balance(&mut evm, SENDER), U256::from(1_000));
     }
+
+    #[test]
+    fn deposit_warms_the_coinbase_once_eip3651_is_active() {
+        // The deposit handler pre-warms its base set (sender, destination, coinbase, precompiles)
+        // via `warm_base_accounts`, which — like the standard handlers — warms the coinbase only
+        // once EIP-3651 is active. The deposit path bypasses the framework's normal tx-setup
+        // warming, so nothing else warms the coinbase here: a contract that EXTCODESIZE's the
+        // coinbase pays cold gas (2600) before EIP-3651 and warm gas (100) after. The 2500-gas
+        // drop across the EIP-3651 boundary proves the deposit handler warms the base set.
+        const COINBASE: Address = Address::repeat_byte(0x33);
+
+        // PUSH20 COINBASE, EXTCODESIZE, POP, STOP — its only cost that varies across the two forks
+        // is the warm/cold account access for the coinbase.
+        let mut probe = vec![0x73];
+        probe.extend_from_slice(COINBASE.as_slice());
+        probe.extend_from_slice(&[0x3b, 0x50, 0x00]);
+        let probe = Bytes::from(probe);
+
+        let gas_at = |upgrade: BaseUpgrade| {
+            let spec = BaseSpecId::new(upgrade);
+            let mut db = InMemoryDB::default();
+            db.insert_account_info(
+                &TARGET,
+                evm2::AccountInfo {
+                    code: Some(evm2::bytecode::Bytecode::new_legacy(probe.clone())),
+                    ..Default::default()
+                },
+            );
+            let block = BlockEnv::<BaseEvmTypes> { beneficiary: COINBASE, ..Default::default() };
+            let mut evm = Evm::new(
+                spec,
+                block,
+                BaseEvmTypes::tx_registry(),
+                db,
+                Precompiles::base(spec.into()),
+            );
+            run(&mut evm, deposit(TxKind::Call(TARGET), 1_000, U256::ZERO, Bytes::new(), false))
+                .total_gas_spent
+        };
+
+        // Regolith is pre-EIP-3651 (coinbase cold); Canyon activates EIP-3651 (coinbase warm).
+        assert_eq!(
+            gas_at(BaseUpgrade::Regolith) - gas_at(BaseUpgrade::Canyon),
+            2500,
+            "the deposit handler warms the coinbase once EIP-3651 is active",
+        );
+    }
 }

@@ -121,16 +121,6 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
-# `release` and `maxperf` both set `strip = "symbols"` (see above), which makes
-# every CPU profiler produce address-only output. This profile keeps production
-# codegen identical (opt-level=3, lto="fat", codegen-units=1, panic="unwind")
-# while restoring symbols. Debug info is not loaded at runtime, so it costs
-# nothing but binary size.
-[profile.maxperf-symbols]
-inherits = "maxperf"
-debug = "line-tables-only"
-strip = "none"
-
 # `release` sets `strip = "symbols"` (see above). This profile keeps `release` codegen identical
 # (opt-level=3, lto="thin", codegen-units=16, panic="unwind") while restoring
 # symbols. Debug info is not loaded at runtime, so it costs nothing but binary
@@ -150,8 +140,8 @@ inherits = "release"
 debug = true
 strip = false
 
-# TODO: add `rustflags = ["-Cforce-frame-pointers=yes"]` here once
-# `profile-rustflags` is stabilized (tracking: rust-lang/cargo#10271)
+# Docker profiling builds add `-Cforce-frame-pointers=yes` in docker-bake.hcl.
+# Move it here once profile-rustflags is stabilized (tracking: rust-lang/cargo#10271).
 [profile.profiling]
 inherits = "release"
 lto = false
@@ -178,6 +168,7 @@ base-common-evm2 = { path = "crates/common/evm2", default-features = false }
 base-common-flz = { path = "crates/common/flz", default-features = false }
 base-common-l1-fees = { path = "crates/common/l1-fees", default-features = false }
 base-common-genesis = { path = "crates/common/genesis", default-features = false }
+base-common-eip8130 = { path = "crates/common/eip8130", default-features = false }
 base-common-consensus = { path = "crates/common/consensus", default-features = false }
 base-common-precompiles = { path = "crates/common/precompiles", default-features = false }
 base-precompile-storage = { path = "crates/common/precompile-storage", default-features = false }
@@ -281,6 +272,7 @@ base-proof-succinct-elfs = { path = "crates/proof/zk/backend/elfs" }
 
 # Batcher
 base-blobs = { path = "crates/batcher/blobs" }
+base-batcher-cli = { path = "crates/batcher/cli" }
 base-batcher-core = { path = "crates/batcher/core" }
 base-batcher-admin = { path = "crates/batcher/admin" }
 base-batcher-source = { path = "crates/batcher/source" }

@@ -8,5 +8,8 @@ use serde as _;
 mod cli;
 
 fn main() {
+    let _ = reth_node_core::args::DefaultTraceValues::default()
+        .with_service_name("base-prover-service")
+        .try_init();
     base_cli_utils::run_cli_main!(cli::Cli);
 }

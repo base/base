@@ -3,7 +3,6 @@ use core::{fmt::Debug, marker::PhantomData};
 
 use alloy_consensus::{BlockHeader, Header};
 #[cfg(feature = "std")]
-use alloy_eips::Decodable2718;
 use alloy_evm::{EvmFactory, FromRecoveredTx, FromTxWithEncoded};
 #[cfg(feature = "std")]
 use alloy_primitives::Bytes;
@@ -249,8 +248,10 @@ where
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
         let transactions = payload.payload.transactions().clone();
         let convert = |encoded: Bytes| {
-            let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
-                .map_err(AnyError::new)?;
+            let tx = base_common_consensus::decode_2718_canonical::<TxTy<Self::Primitives>>(
+                encoded.as_ref(),
+            )
+            .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
         };

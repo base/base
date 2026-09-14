@@ -1,13 +1,19 @@
 //! State predicates carried by pooled transactions.
 
+use std::fmt;
+
 use alloy_primitives::{Address, U256};
 use reth_transaction_pool::ValidPoolTransaction;
 use revm::Database;
+use serde::{Deserializer, de};
 
 use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
 
 /// Default maximum number of experimental validity predicates carried by one transaction.
 pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
+
+/// Default maximum lifetime, in seconds, for experimental validity transactions.
+pub const DEFAULT_MAX_VALIDITY_EXPIRY_SECS: u64 = 60;
 
 /// The first flashblock index at which pooled transactions are evaluated.
 ///
@@ -59,6 +65,40 @@ pub enum ValidityPredicateError {
     UnsatisfiableFlashblockIndex {
         /// Position of the offending predicate within the batch.
         index: usize,
+    },
+    /// A block-number predicate's upper bound is already in the past.
+    ///
+    /// `current_block` is the block currently being built (one past the latest
+    /// committed block); a predicate whose greatest satisfiable block is below
+    /// it can never hold again, so the transaction would park in the pool until
+    /// block-expiry eviction and is rejected at ingress instead. `index` is the
+    /// position of the offending predicate within the batch, `bound` the
+    /// greatest block number at which the predicate can still hold.
+    #[error(
+        "block-number predicate at index {index} already expired: last satisfiable block {bound} is before the block currently being built ({current_block})"
+    )]
+    ExpiredBlockBound {
+        /// Position of the offending predicate within the batch.
+        index: usize,
+        /// Greatest block number at which the predicate can still hold.
+        bound: U256,
+        /// Number of the block currently being built.
+        current_block: u64,
+    },
+    /// The submission has no block-number upper bound, so it does not have a bounded lifetime.
+    #[error("validity transactions require a block-number predicate with an upper bound")]
+    MissingBlockExpiry,
+    /// A block-number predicate's tightest upper bound exceeds the configured lifetime window.
+    #[error(
+        "block-number predicate at index {index} expires too far in the future: last satisfiable block {bound} exceeds the maximum permitted block {maximum_block}"
+    )]
+    BlockExpiryWindowExceeded {
+        /// Position of the predicate that establishes the tightest upper bound.
+        index: usize,
+        /// Greatest block number at which the predicate can still hold.
+        bound: U256,
+        /// Greatest permitted block number for this submission.
+        maximum_block: u64,
     },
 }
 
@@ -227,6 +267,90 @@ impl ValidityPredicate {
         Ok(())
     }
 
+    /// Validates that a batch contains a `block_number` upper-bound predicate.
+    ///
+    /// Upper-bound operators (`<`, `<=`, and `=`) establish a finite last
+    /// satisfiable block. Lower bounds and `!=` leave future blocks
+    /// satisfiable and therefore do not provide the required expiry.
+    pub fn validate_has_block_expiry(predicates: &[Self]) -> Result<(), ValidityPredicateError> {
+        if predicates.iter().any(|predicate| {
+            matches!(
+                predicate,
+                Self::BlockNumber {
+                    op: ValidityOperator::LessThan
+                        | ValidityOperator::LessThanOrEqual
+                        | ValidityOperator::Equal,
+                    ..
+                }
+            )
+        }) {
+            Ok(())
+        } else {
+            Err(ValidityPredicateError::MissingBlockExpiry)
+        }
+    }
+
+    /// Validates that a batch has a `block_number` upper bound and that its
+    /// lifetime falls within the configured maximum.
+    ///
+    /// This is a pure validation step: no expiry bound is injected into or
+    /// rewritten on the submission. `current_block` is the in-progress build
+    /// target — one past the latest committed block. A batch must contain at
+    /// least one [`Self::BlockNumber`] predicate with an upper bound (`<`,
+    /// `<=`, or `=`). The tightest such bound determines the batch's last
+    /// satisfiable block.
+    ///
+    /// The bound must not precede `current_block`, because every block it
+    /// permits has already been sealed. It must also be no later than
+    /// `current_block + max_expiry_blocks`, so the transaction has a bounded
+    /// lifetime. Lower bounds (`>`, `>=`) and `!=` do not establish expiry.
+    /// State predicates ([`Self::Balance`], [`Self::Storage`]) are recoverable
+    /// and flashblock indices reset each block, so neither establishes expiry.
+    ///
+    /// A bound equal to `current_block` is deliberately accepted: the
+    /// transaction can still land in a later flashblock of the block being
+    /// built. Callers convert their configured wall-clock window to
+    /// `max_expiry_blocks` using the active full-block cadence; flashblock
+    /// cadence must not be used for that conversion.
+    pub fn validate_block_expiry_bounds(
+        predicates: &[Self],
+        current_block: u64,
+        max_expiry_blocks: u64,
+    ) -> Result<(), ValidityPredicateError> {
+        let current = U256::from(current_block);
+        let mut upper = None;
+        for (index, predicate) in predicates.iter().enumerate() {
+            let Self::BlockNumber { op, value } = predicate else { continue };
+            // `< 0` can never hold because block numbers are non-negative, so it
+            // has an effective upper bound of zero.
+            let bound = match op {
+                ValidityOperator::LessThan => value.checked_sub(U256::from(1)).unwrap_or_default(),
+                ValidityOperator::LessThanOrEqual | ValidityOperator::Equal => *value,
+                ValidityOperator::NotEqual
+                | ValidityOperator::GreaterThan
+                | ValidityOperator::GreaterThanOrEqual => continue,
+            };
+            if upper.as_ref().is_none_or(|(_, upper_bound)| bound < *upper_bound) {
+                upper = Some((index, bound));
+            }
+        }
+        let Some((index, bound)) = upper else {
+            return Err(ValidityPredicateError::MissingBlockExpiry);
+        };
+        if bound < current {
+            return Err(ValidityPredicateError::ExpiredBlockBound { index, bound, current_block });
+        }
+        let maximum_block = current_block.saturating_add(max_expiry_blocks);
+        if bound > U256::from(maximum_block) {
+            return Err(ValidityPredicateError::BlockExpiryWindowExceeded {
+                index,
+                bound,
+                maximum_block,
+            });
+        }
+        Ok(())
+    }
+
     /// Returns whether this predicate holds against the current build.
     ///
     /// State-reading variants ([`Self::Balance`], [`Self::Storage`]) query
@@ -345,6 +469,84 @@ impl ValidityPredicate {
         }
         upper.and_then(|bound| u64::try_from(bound).ok())
     }
+
+    /// Stable-sorts a predicate batch into canonical evaluation order: timing
+    /// predicates ([`Self::BlockNumber`], [`Self::FlashblockIndex`]) before state
+    /// predicates ([`Self::Balance`], [`Self::Storage`]). The batch is a pure
+    /// conjunction, so reordering only affects cost: a timing mismatch
+    /// short-circuits before any state read and parks under a context key that
+    /// per-transaction state changes never wake.
+    pub fn sort_batch(predicates: &mut [Self]) {
+        predicates.sort_by_key(Self::evaluation_rank);
+    }
+
+    /// Returns the canonical evaluation rank: block number, then flashblock
+    /// index, then state predicates.
+    const fn evaluation_rank(&self) -> u8 {
+        match self {
+            Self::BlockNumber { .. } => 0,
+            Self::FlashblockIndex { .. } => 1,
+            Self::Balance { .. } | Self::Storage { .. } => 2,
+        }
+    }
+}
+
+/// Deserializes a sequence of [`ValidityPredicate`] while rejecting the batch as
+/// soon as it exceeds [`DEFAULT_MAX_VALIDITY_PREDICATES`].
+///
+/// The count limit is otherwise enforced only after the whole vector has been
+/// deserialized (see [`ValidityPredicate::validate_batch`] and
+/// [`TransactionValidity::validate`]). That late check still allocates one
+/// object per submitted item, so an unauthenticated caller can force the node to
+/// parse and allocate tens of thousands of predicates that are ultimately
+/// rejected. Aborting mid-stream at item 65 bounds the allocation to at most
+/// `DEFAULT_MAX_VALIDITY_PREDICATES + 1` predicates regardless of the request
+/// body size.
+///
+/// The bound is the fixed wire ceiling ([`DEFAULT_MAX_VALIDITY_PREDICATES`]), not
+/// a node's configured maximum: deserialization has no access to runtime
+/// configuration, and a node's configured maximum can never exceed this ceiling.
+/// The configured maximum is still enforced afterward by the count check.
+pub fn deserialize_bounded_predicates<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ValidityPredicate>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BoundedPredicatesVisitor;
+
+    impl<'de> de::Visitor<'de> for BoundedPredicatesVisitor {
+        type Value = Vec<ValidityPredicate>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "a sequence of at most {DEFAULT_MAX_VALIDITY_PREDICATES} validity predicates"
+            )
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            // Cap the preallocation independently of the caller-reported length
+            // hint so a large hint cannot itself drive a large allocation.
+            let mut predicates = Vec::with_capacity(
+                seq.size_hint().unwrap_or(0).min(DEFAULT_MAX_VALIDITY_PREDICATES),
+            );
+            while let Some(predicate) = seq.next_element::<ValidityPredicate>()? {
+                if predicates.len() == DEFAULT_MAX_VALIDITY_PREDICATES {
+                    return Err(de::Error::custom(format!(
+                        "too many validity predicates: maximum {DEFAULT_MAX_VALIDITY_PREDICATES}"
+                    )));
+                }
+                predicates.push(predicate);
+            }
+            Ok(predicates)
+        }
+    }
+
+    deserializer.deserialize_seq(BoundedPredicatesVisitor)
 }
 
 /// Experimental validity predicates carried with a validated transaction.
@@ -352,7 +554,11 @@ impl ValidityPredicate {
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TransactionValidity {
     /// Predicates intended to control when the transaction is valid for inclusion.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_bounded_predicates"
+    )]
     pub validity: Vec<ValidityPredicate>,
 }
 
@@ -572,6 +778,70 @@ mod tests {
         assert_eq!(serde_json::to_value(payload).unwrap(), value);
     }
 
+    /// A single storage predicate encoded as JSON, used to assemble oversized
+    /// `validity` arrays for the bounded-deserialization tests.
+    fn storage_predicate_json() -> &'static str {
+        r#"{"type":"storage","params":{"address":"0xabababababababababababababababababababab","slot":"0x1","op":"=","value":"0x789"}}"#
+    }
+
+    /// Builds a JSON `TransactionValidity` body carrying `count` predicates.
+    fn transaction_validity_json(count: usize) -> String {
+        let predicates = vec![storage_predicate_json(); count].join(",");
+        format!(r#"{{"validity":[{predicates}]}}"#)
+    }
+
+    #[test]
+    fn deserialize_accepts_exactly_the_maximum_predicates() {
+        let json = transaction_validity_json(DEFAULT_MAX_VALIDITY_PREDICATES);
+        let payload: TransactionValidity =
+            serde_json::from_str(&json).expect("a full batch at the limit must decode");
+        assert_eq!(payload.validity.len(), DEFAULT_MAX_VALIDITY_PREDICATES);
+    }
+
+    #[test]
+    fn deserialize_rejects_predicate_past_the_maximum() {
+        let json = transaction_validity_json(DEFAULT_MAX_VALIDITY_PREDICATES + 1);
+        let error = serde_json::from_str::<TransactionValidity>(&json)
+            .expect_err("a batch past the limit must fail to decode");
+        assert!(
+            error.to_string().contains("too many validity predicates"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn deserialize_stops_before_allocating_an_oversized_batch() {
+        // The DoS shape: a body far larger than the limit must be rejected
+        // without materializing every predicate. The bounded visitor aborts at
+        // item 65 regardless of how many follow.
+        let json = transaction_validity_json(100_000);
+        let error = serde_json::from_str::<TransactionValidity>(&json)
+            .expect_err("a massively oversized batch must fail to decode");
+        assert!(
+            error.to_string().contains("too many validity predicates"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn deserialize_bounded_predicates_directly_bounds_a_bare_sequence() {
+        // The helper is exercised directly on a bare predicate array to prove
+        // the bound is a property of the sequence visitor, independent of the
+        // wrapping struct.
+        let mut deserializer = serde_json::Deserializer::from_str("[]");
+        let empty =
+            deserialize_bounded_predicates(&mut deserializer).expect("an empty sequence decodes");
+        assert!(empty.is_empty());
+
+        let predicates =
+            vec![storage_predicate_json(); DEFAULT_MAX_VALIDITY_PREDICATES + 1].join(",");
+        let oversized = format!("[{predicates}]");
+        let mut deserializer = serde_json::Deserializer::from_str(&oversized);
+        let error = deserialize_bounded_predicates(&mut deserializer)
+            .expect_err("an oversized sequence is rejected");
+        assert!(error.to_string().contains("too many validity predicates"));
+    }
+
     #[test]
     fn apply_attaches_validity_predicates_to_pooled_transaction() {
         let signed: BaseTransactionSigned = TxDeposit {
@@ -602,6 +872,81 @@ mod tests {
         let transaction = extension.apply(transaction).unwrap();
 
         assert_eq!(transaction.validity_predicates(), expected);
+    }
+
+    #[test]
+    fn sort_batch_orders_timing_predicates_before_state_predicates() {
+        let balance = |value: u64| ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::from(value),
+        };
+        let flashblock_index = ValidityPredicate::FlashblockIndex {
+            op: ValidityOperator::LessThan,
+            value: U256::from(5),
+        };
+        let block_number = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(100),
+        };
+        let storage = ValidityPredicate::Storage {
+            address: Address::ZERO,
+            slot: U256::ZERO,
+            mask: U256::MAX,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        // Scrambled submission order.
+        let mut predicates = vec![
+            balance(1),
+            storage.clone(),
+            flashblock_index.clone(),
+            balance(2),
+            block_number.clone(),
+        ];
+
+        ValidityPredicate::sort_batch(&mut predicates);
+
+        // Timing predicates (block number, then flashblock index) lead; state
+        // predicates follow in stable submission order.
+        assert_eq!(predicates, [block_number, flashblock_index, balance(1), storage, balance(2)]);
+    }
+
+    #[test]
+    fn apply_stores_predicates_in_canonical_evaluation_order() {
+        let signed: BaseTransactionSigned = TxDeposit {
+            source_hash: Default::default(),
+            from: Address::ZERO,
+            to: TxKind::Create,
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit: 21_000,
+            input: Default::default(),
+            is_system_transaction: false,
+        }
+        .into();
+        let encoded_length = signed.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(signed, Address::ZERO),
+            encoded_length,
+        );
+        let state_predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let timing_predicate = ValidityPredicate::BlockNumber {
+            op: ValidityOperator::GreaterThanOrEqual,
+            value: U256::from(100),
+        };
+        // Submitted state-first; stored timing-first.
+        let extension = TransactionValidity {
+            validity: vec![state_predicate.clone(), timing_predicate.clone()],
+        };
+
+        let transaction = extension.apply(transaction).unwrap();
+
+        assert_eq!(transaction.validity_predicates(), [timing_predicate, state_predicate]);
     }
 
     #[test]
@@ -986,6 +1331,98 @@ mod tests {
         assert_eq!(
             ValidityPredicate::validate_batch(&predicates, DEFAULT_MAX_VALIDITY_PREDICATES),
             Err(ValidityPredicateError::StorageValueOutsideMask { index: 1 })
+        );
+    }
+
+    #[test]
+    fn validate_block_expiry_bounds_rejects_bounds_before_the_current_block() {
+        // The block currently being built is 100; a predicate whose last
+        // satisfiable block is below 100 can never hold again.
+        let expired = [
+            (ValidityOperator::LessThan, 100), // last satisfiable block 99
+            (ValidityOperator::LessThanOrEqual, 99),
+            (ValidityOperator::Equal, 99),
+            (ValidityOperator::LessThan, 0), // never satisfiable, reported as bound 0
+        ];
+        for (op, value) in expired {
+            let predicates = vec![block_number(op, value)];
+            assert!(
+                matches!(
+                    ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+                    Err(ValidityPredicateError::ExpiredBlockBound {
+                        index: 0,
+                        current_block: 100,
+                        ..
+                    })
+                ),
+                "expected {op:?} {value} to be rejected",
+            );
+        }
+    }
+
+    #[test]
+    fn validate_block_expiry_bounds_accepts_bounds_within_the_window() {
+        // A bound equal to the block currently being built may still land in a
+        // later flashblock. Bounds through 130 are within the 30-block window.
+        let within_window = [
+            (ValidityOperator::Equal, 100),
+            (ValidityOperator::LessThanOrEqual, 100),
+            (ValidityOperator::LessThan, 101),
+            (ValidityOperator::LessThanOrEqual, 130),
+        ];
+        for (op, value) in within_window {
+            let predicates = vec![block_number(op, value)];
+            assert_eq!(
+                ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+                Ok(()),
+                "expected {op:?} {value} to be accepted",
+            );
+        }
+    }
+
+    #[test]
+    fn validate_block_expiry_bounds_requires_an_upper_bound() {
+        let predicates = vec![
+            block_number(ValidityOperator::NotEqual, 0),
+            block_number(ValidityOperator::GreaterThan, 0),
+            block_number(ValidityOperator::GreaterThanOrEqual, 0),
+            ValidityPredicate::Balance {
+                address: Address::repeat_byte(0x11),
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            },
+        ];
+
+        assert_eq!(
+            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+            Err(ValidityPredicateError::MissingBlockExpiry)
+        );
+    }
+
+    #[test]
+    fn validate_block_expiry_bounds_uses_the_tightest_upper_bound() {
+        let predicates = vec![
+            block_number(ValidityOperator::LessThanOrEqual, 150),
+            block_number(ValidityOperator::LessThanOrEqual, 130),
+        ];
+
+        assert_eq!(ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30), Ok(()));
+    }
+
+    #[test]
+    fn validate_block_expiry_bounds_reports_the_tightest_bound_outside_the_window() {
+        let predicates = vec![
+            block_number(ValidityOperator::LessThanOrEqual, 150),
+            block_number(ValidityOperator::LessThanOrEqual, 140),
+        ];
+
+        assert_eq!(
+            ValidityPredicate::validate_block_expiry_bounds(&predicates, 100, 30),
+            Err(ValidityPredicateError::BlockExpiryWindowExceeded {
+                index: 1,
+                bound: U256::from(140),
+                maximum_block: 130,
+            })
         );
     }
 

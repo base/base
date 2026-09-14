@@ -22,8 +22,8 @@ const AUTHENTICATOR_SELECTOR_LEN: usize = 20;
 /// Maximum caller-supplied authentication payload length.
 pub(crate) const MAX_AUTH_SIZE: u32 = 8_192;
 
-/// Canonical invalid-params message for EIP-8130 RPC reads before Cobalt.
-pub const EIP8130_PRE_COBALT_RPC_ERROR: &str = "EIP-8130 RPC features are not active before the Cobalt hard fork; the `nonce_key` parameter is not supported at this block";
+/// Canonical invalid-params message for EIP-8130 RPC reads before Zenith.
+pub const EIP8130_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 RPC features are not active before the Zenith hard fork; the `nonce_key` parameter is not supported at this block";
 
 /// Reth-free EIP-8130 channel-nonce helpers.
 #[derive(Clone, Copy, Debug, Default)]

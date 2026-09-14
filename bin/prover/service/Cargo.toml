@@ -23,9 +23,10 @@ base-prover-service-protocol = { workspace = true, features = ["rpc-server"] }
 
 # CLI
 eyre.workspace = true
-base-cli-utils.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 serde = { workspace = true, features = ["derive", "std"] }
+reth-node-core = { workspace = true, features = ["otlp"] }
+base-cli-utils = { workspace = true, features = ["otlp"] }
 
 # RPC
 jsonrpsee = { workspace = true, features = ["server"] }

@@ -47,15 +47,15 @@ deny:
 
 # Checks no_std crates compile without std
 no-std:
-    {{justfile_directory()}}/etc/scripts/ci/check-no-std.sh
+    @{{justfile_directory()}}/etc/scripts/ci/check-no-std.sh
 
 # Checks proof crates compile for bare-metal FPVM
 no-std-proof:
-    {{justfile_directory()}}/etc/scripts/ci/check-no-std-proof.sh
+    @{{justfile_directory()}}/etc/scripts/ci/check-no-std-proof.sh
 
 # Checks crate dependency boundary rules
 crate-deps:
-    {{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
+    @{{justfile_directory()}}/etc/scripts/ci/check-crate-deps.sh
 
 # Verifies git-based reth-* workspace deps match etc/upstream-pins/reth.toml
 reth-pin:

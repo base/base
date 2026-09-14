@@ -1,5 +1,7 @@
 //! Top-level command dispatch for the unified Base binary.
 
+use base_batcher_cli::BatcherArgs;
+use base_cli_utils::RuntimeManager;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use base_node_core::BaseNode;
 use clap::Subcommand;
@@ -7,8 +9,8 @@ use reth_cli_runner::CliRunner;
 
 use crate::{
     commands::{
-        bootnode::BootnodeCommand, reth::RethCommand, rpc::RpcCommand, sequencer::SequencerCommand,
-        snapshot::SnapshotCommand, update::UpdateCommand,
+        bootnode::BootnodeCommand, follow::FollowCommand, reth::RethCommand, rpc::RpcCommand,
+        sequencer::SequencerCommand, snapshot::SnapshotCommand, update::UpdateCommand,
     },
     config::ChainResolver,
 };
@@ -17,12 +19,18 @@ use crate::{
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
+    /// Submit L2 batch data to L1.
+    #[command(name = "batcher", hide = true)]
+    Batcher(Box<BatcherArgs>),
     /// Run consensus and execution discovery-only bootnodes.
     #[command(name = "bootnode")]
     Bootnode(Box<BootnodeCommand>),
     /// Run the integrated node in RPC mode.
     #[command(name = "rpc")]
     Rpc(Box<RpcCommand>),
+    /// Run the integrated node in follow mode (execution + consensus follow node).
+    #[command(name = "follow")]
+    Follow(Box<FollowCommand>),
     /// Run integrated execution, builder, and consensus services in sequencer mode.
     #[command(name = "sequencer")]
     Sequencer(Box<SequencerCommand>),
@@ -47,8 +55,13 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            Self::Batcher(batcher) => {
+                chain_resolver.reject_for_reth_command("base batcher")?;
+                RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
+            }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
+            Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?, metrics_enabled),
             Self::Sequencer(sequencer) => {
                 (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)
             }

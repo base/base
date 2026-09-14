@@ -97,6 +97,7 @@ impl ShadowSequencer {
             extra_extensions: Vec::new(),
             block_time: Duration::from_secs(config.rollup_config.block_time),
             persistence_threshold: None,
+            persistence_backpressure_threshold: None,
             txpool_max_transactions: None,
             txpool_max_size_mb: None,
             txpool_max_account_slots: None,

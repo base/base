@@ -8,9 +8,10 @@ Runs alongside a Base execution layer node (base-node-reth) and orchestrates per
 creation. `Snapshotter` coordinates the full lifecycle: fetching the EL's latest block and verifying
 it is at chain tip (within a configurable freshness window, default 10s), stopping the CL and EL
 containers via the Docker socket, generating a snapshot manifest and chunk archives for the
-captured block height using reth's `SnapshotManifestCommand`, uploading all artifacts to an
+captured block height using Base's shared snapshot generator, uploading all artifacts to an
 S3-compatible store (e.g. Cloudflare R2), then restarting the EL followed by the CL so it reconnects
-to the EL.
+to the EL. Existing static-file archives are reused only after their compressed size and the BLAKE3
+hashes of every uncompressed source file match the previous manifest.
 
 If the EL is not at tip when a run begins, the snapshot is skipped and both containers are left
 running untouched.

@@ -2554,7 +2554,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Blocks and frames waiting in the batcher. A sawtooth is normal as channels close and submit; sustained growth without submissions indicates backpressure.",
+      "description": "Blocks waiting in either batcher implementation, op-batcher channels held in memory, and base-batcher frames ready for submission. Channels and frames are implementation-specific and are shown separately. A sawtooth is normal as channels close and submit; sustained growth without submissions indicates backpressure.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2609,7 +2609,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Pending frames"
+              "options": "op-batcher channels"
             },
             "properties": [
               {
@@ -2653,7 +2653,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(batcher_pending_blocks{job=\"batcher\"})",
+          "expr": "max(op_batcher_default_pending_blocks_count{job=\"batcher\",stage=\"added\"}) or max(batcher_pending_blocks{job=\"batcher\"})",
           "legendFormat": "Pending blocks",
           "range": true,
           "refId": "A"
@@ -2664,10 +2664,21 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(batcher_pending_frames{job=\"batcher\"})",
-          "legendFormat": "Pending frames",
+          "expr": "max(op_batcher_default_channel_queue_length{job=\"batcher\"})",
+          "legendFormat": "op-batcher channels",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "max(batcher_pending_frames{job=\"batcher\"})",
+          "legendFormat": "base-batcher pending frames",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Batcher Backlog",
@@ -2678,7 +2689,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "L1 submission outcomes per second. Submitted and confirmed should track; failed or requeued outcomes identify publication instability.",
+      "description": "L1 submission outcomes per second, shown separately for op-batcher stages and base-batcher outcomes. Submitted and successful or confirmed transactions should track; failed or requeued outcomes identify publication instability.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2762,10 +2773,21 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum by(outcome) (rate(batcher_submission_total{job=\"batcher\"}[$__rate_interval]))",
-          "legendFormat": "{{outcome}}",
+          "expr": "sum by(stage) (rate(op_batcher_default_batcher_tx_total{job=\"batcher\"}[$__rate_interval]))",
+          "legendFormat": "op-batcher {{stage}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "sum by(outcome) (rate(batcher_submission_total{job=\"batcher\"}[$__rate_interval]))",
+          "legendFormat": "base-batcher {{outcome}}",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "L1 Submission Outcomes",
@@ -2776,7 +2798,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Raw channel input, compressed output, and L1 DA bytes submitted per second. The relative lines make compression and publication flow visible.",
+      "description": "Raw channel input and compressed output bytes per second from either batcher implementation, plus base-batcher L1 DA bytes submitted. The relative lines make compression and publication flow visible.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2844,7 +2866,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(rate(batcher_input_bytes_total{job=\"batcher\"}[$__rate_interval]))",
+          "expr": "sum(rate(op_batcher_default_input_bytes_total{job=\"batcher\"}[$__rate_interval])) or sum(rate(batcher_input_bytes_total{job=\"batcher\"}[$__rate_interval]))",
           "legendFormat": "Raw input",
           "range": true,
           "refId": "A"
@@ -2855,7 +2877,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(rate(batcher_output_bytes_total{job=\"batcher\"}[$__rate_interval]))",
+          "expr": "sum(rate(op_batcher_default_output_bytes_total{job=\"batcher\"}[$__rate_interval])) or sum(rate(batcher_output_bytes_total{job=\"batcher\"}[$__rate_interval]))",
           "legendFormat": "Compressed output",
           "range": true,
           "refId": "B"
@@ -2867,7 +2889,7 @@
           },
           "editorMode": "code",
           "expr": "sum(rate(batcher_da_bytes_submitted_total{job=\"batcher\"}[$__rate_interval]))",
-          "legendFormat": "Submitted to L1",
+          "legendFormat": "base-batcher submitted to L1",
           "range": true,
           "refId": "C"
         }
@@ -2963,7 +2985,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Channel compression ratio from the batcher summary. Lower output/input ratios mean stronger compression; quantiles are displayed without cross-instance aggregation.",
+      "description": "Channel compression ratio from op-batcher histograms or base-batcher summary quantiles. Lower output/input ratios mean stronger compression; the fallback keeps the incompatible metric representations separate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3033,7 +3055,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(batcher_channel_compression_ratio{job=\"batcher\",quantile=\"0.5\"})",
+          "expr": "histogram_quantile(0.5, sum by(le) (rate(op_batcher_default_channel_compr_ratio_bucket{job=\"batcher\"}[$__rate_interval]))) or max(batcher_channel_compression_ratio{job=\"batcher\",quantile=\"0.5\"})",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -3044,7 +3066,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(batcher_channel_compression_ratio{job=\"batcher\",quantile=\"0.99\"})",
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(op_batcher_default_channel_compr_ratio_bucket{job=\"batcher\"}[$__rate_interval]))) or max(batcher_channel_compression_ratio{job=\"batcher\",quantile=\"0.99\"})",
           "legendFormat": "p99",
           "range": true,
           "refId": "B"
@@ -3111,7 +3133,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "min(batcher_balance{job=\"batcher\"})",
+          "expr": "min(op_batcher_default_balance{job=\"batcher\"}) or min(batcher_balance{job=\"batcher\"})",
           "legendFormat": "Batcher",
           "range": true,
           "refId": "A"
@@ -3125,7 +3147,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Shadow parity status encoded from enabled + aligned: 0 Disabled, 1 Mismatch, 2 Aligned. This avoids reporting a disabled validator as misaligned.",
+      "description": "Implementation-specific batcher status. For op-batcher, STARTING/READY reports startup completion. For base-batcher, DISABLED/MISMATCH/ALIGNED reports shadow parity validation; it does not report service readiness.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3145,6 +3167,14 @@
                 "2": {
                   "color": "#73BF69",
                   "text": "ALIGNED"
+                },
+                "3": {
+                  "color": "#8E8E8E",
+                  "text": "STARTING"
+                },
+                "4": {
+                  "color": "#73BF69",
+                  "text": "READY"
                 }
               },
               "type": "value"
@@ -3164,6 +3194,14 @@
               {
                 "color": "#73BF69",
                 "value": 2
+              },
+              {
+                "color": "#8E8E8E",
+                "value": 3
+              },
+              {
+                "color": "#73BF69",
+                "value": 4
               }
             ]
           }
@@ -3201,13 +3239,13 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "max(batcher_l2_block_parity_enabled{job=\"batcher\"}) + max(batcher_l2_block_parity_aligned{job=\"batcher\"})",
-          "legendFormat": "Shadow parity",
+          "expr": "(min(op_batcher_default_up{job=\"batcher\"}) + 3) or (max(batcher_l2_block_parity_enabled{job=\"batcher\"}) + max(batcher_l2_block_parity_aligned{job=\"batcher\"}))",
+          "legendFormat": "Batcher status",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Parity Validator",
+      "title": "Batcher Status",
       "type": "stat"
     },
     {

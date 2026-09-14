@@ -1,7 +1,18 @@
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 250ms
+  timeout: 1s
+  retries: 240
+  start_period: 250ms
+  start_interval: 250ms
+
 services:
-  # Reuse the l1-el service name so setup-l2 keeps its existing dependency and
-  # all execution RPC callers share one endpoint. This Anvil also serves the
-  # Beacon REST API used for blob derivation.
+  # The Nitro bootstrap supplies its own ProtocolVersions contract.
+  setup-devnet:
+    environment:
+      - UPGRADE_SIGNAL_PREINSTALL=false
+
+  # Reuse l1-el for execution RPC. Anvil also serves the Beacon REST API
+  # used for blob derivation.
   l1-el:
     image: ${BASE_ANVIL_IMAGE:-base-anvil:prover-single-l1}
     entrypoint: ["/usr/local/bin/anvil"]
@@ -18,6 +29,14 @@ services:
     volumes: !override
       - ../../.devnet/l1/configs:/genesis:ro
 
+  # Anvil serves the beacon API itself; Lighthouse is disabled in this variant.
+  base-bootnode:
+    depends_on: !override
+      setup-devnet:
+        condition: service_completed_successfully
+      l1-el:
+        condition: service_healthy
+
   # These services remain available in the normal devnet but are omitted from
   # the single-Anvil variant unless explicitly enabled.
   l1-cl:
@@ -26,12 +45,6 @@ services:
   l1-vc:
     profiles: ["lighthouse-l1"]
 
-  # Compose starts completed dependencies again when the remaining services
-  # come up. Keep the genesis used by the pre-L2 development contract deployment.
-  setup-l2:
-    environment:
-      - SETUP_L2_SKIP_IF_CONFIGURED=true
-
   # The proof host needs historical trie data and debug_executePayload. Keep that
   # workload on the same proofs-history + follow-mode pair used in production.
   base-proofs:
@@ -39,7 +52,7 @@ services:
     container_name: base-proofs
     profiles: ["nitro-local"]
     depends_on:
-      setup-l2:
+      setup-devnet:
         condition: service_completed_successfully
       base-builder:
         condition: service_healthy
@@ -80,10 +93,7 @@ services:
           -vvv
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"method\":\"debug_proofsSyncStatus\",\"params\":[],\"id\":1}' http://localhost:${L2_PROOFS_HTTP_PORT}/ | grep -q '\"result\"'"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-proofs-consensus:
@@ -117,10 +127,7 @@ services:
       - -vvv
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:${L2_PROOFS_CL_RPC_PORT}/healthz >/dev/null"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   prover-service-postgres:
@@ -136,10 +143,7 @@ services:
       - ../../crates/proof/prover-service/db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prover -d prover"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   base-prover-service:
@@ -163,10 +167,7 @@ services:
       - OTEL_SERVICE_NAME=base-prover-service
     healthcheck:
       test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/9000"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped
 
   nitro-prover-1:
@@ -247,8 +248,5 @@ services:
       - OTEL_SERVICE_NAME=base-proposer
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/readyz >/dev/null"]
-      interval: 250ms
-      timeout: 1s
-      retries: 240
-      start_period: 250ms
+      <<: *healthcheck-defaults
     restart: unless-stopped

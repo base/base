@@ -15,6 +15,18 @@ pub use utils::unique_name;
 mod b20;
 pub use b20::{B20CreateConfig, B20PrecompileClient};
 
+mod benchmark_cli;
+pub use benchmark_cli::{
+    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs,
+};
+
+mod benchmark_report;
+pub use benchmark_report::{
+    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
+    VisualizerBlockMetrics, VisualizerMetadata, VisualizerRun, VisualizerRunResult,
+    VisualizerSequencerMetrics, VisualizerValidatorMetrics,
+};
+
 mod config;
 pub use config::{
     ANVIL_ACCOUNT_0, ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4,
@@ -36,7 +48,7 @@ pub use docker::{
 };
 
 mod devnet_cli;
-pub use devnet_cli::{DevnetCli, DevnetCommand, SnapshotArgs, SnapshotRuntime};
+pub use devnet_cli::{DevnetCli, DevnetCommand, SharedL1Args, SnapshotArgs, SnapshotRuntime};
 
 mod host;
 pub use host::{host_address, with_host_port_if_needed};
@@ -58,7 +70,7 @@ pub use l2::{
     InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ClientConsensus,
     L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
     ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack,
-    SnapshotL2StackConfig,
+    SnapshotL2StackConfig, TestNodeRuntime,
 };
 
 mod network;
@@ -66,6 +78,9 @@ pub use network::{ensure_network_exists, ensure_network_exists_with_name, networ
 
 mod prover_service;
 pub use prover_service::InProcessProverService;
+
+mod prometheus_metrics;
+pub use prometheus_metrics::{PrometheusBlockCollector, PrometheusSnapshot};
 
 mod rpc;
 pub use rpc::{SystemTestProviderExt, SystemTestRpcClient};
@@ -77,6 +92,9 @@ pub use setup::{
     SetupImage,
 };
 
+mod shared_l1;
+pub use shared_l1::{SHARED_L1_RUNTIME_ENV, SharedL1, SharedL1Runtime};
+
 mod smoke;
 #[cfg(feature = "upgrade-signal")]
 pub use smoke::RuntimeUpgradeSignalGuard;
@@ -85,7 +103,8 @@ pub use smoke::{SystemTestStack, SystemTestStackBuilder};
 mod system_config;
 pub use system_config::{
     DevnetBlockInterval, DevnetConfig, DevnetL1Mode, DevnetL2State, DevnetPrefund,
-    DevnetSnapshotConfig, DevnetSnapshotHead, StableSystemTestConfig, SystemTestPorts,
+    DevnetSnapshotConfig, DevnetSnapshotHead, ResolvedSnapshotChain, SnapshotChainConfig,
+    StableSystemTestConfig, SystemTestPorts,
 };
 
 #[cfg(feature = "upgrade-signal")]

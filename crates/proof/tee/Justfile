@@ -70,7 +70,7 @@ build-enclave *args="":
 
 # Build the nitro host binary inline. Outputs the binary and runtime entrypoint
 # to OUT_DIR.
-build-host-inline OUT_DIR PROFILE='maxperf':
+build-host-inline OUT_DIR PROFILE='release':
     #!/usr/bin/env bash
     set -euxo pipefail
     cd ../../..

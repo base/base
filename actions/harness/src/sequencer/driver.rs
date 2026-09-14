@@ -301,7 +301,12 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
         // large L2 block times do not wait for wall-clock production slots.
         if self.rollup_config.block_time != 1 {
             let mut config = (*self.rollup_config).clone();
+            let denim_activation_block = config.denim_activation_block_number();
             config.block_time = 1;
+            if let Some(denim_activation_block) = denim_activation_block {
+                config.upgrades.base.denim =
+                    Some(config.genesis.l2_time.saturating_add(denim_activation_block));
+            }
             Arc::new(config)
         } else {
             Arc::clone(&self.rollup_config)
@@ -438,6 +443,47 @@ impl<E: SequencerEngineBackend> Drop for L2Sequencer<E> {
         }
         if let Some(actor_task) = &self.actor_task {
             actor_task.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ActionTestHarness, BatcherConfig, L1MinerConfig, TestRollupConfigBuilder};
+
+    #[test]
+    fn scheduler_preserves_denim_activation_height() {
+        for block_time in [1, 2, 12] {
+            for denim in [None, Some(0), Some(100), Some(105), Some(124)] {
+                let mut config = TestRollupConfigBuilder::base_mainnet(&BatcherConfig::default())
+                    .all_forks_active()
+                    .with_cobalt_at(0)
+                    .with_block_time(block_time)
+                    .build();
+                config.genesis.l2_time = 100;
+                config.genesis.l2.number = 50;
+                config.upgrades.base.denim = denim;
+                let harness = ActionTestHarness::new(L1MinerConfig::default(), config.clone());
+                let sequencer = harness
+                    .create_l2_sequencer(SharedL1Chain::from_blocks(harness.l1.chain().to_vec()));
+                let scheduler = sequencer.actor_rollup_config();
+
+                assert_eq!(scheduler.block_time, 1);
+                assert_eq!(
+                    scheduler.denim_activation_block_number(),
+                    config.denim_activation_block_number(),
+                    "block_time={block_time}, denim={denim:?}"
+                );
+                for number in 50..=80 {
+                    assert_eq!(
+                        scheduler.is_denim_active(scheduler.l2_block_timestamp(number)),
+                        config.is_denim_active(config.l2_block_timestamp(number)),
+                        "scheduler and attributes disagree at block {number}"
+                    );
+                }
+                assert_eq!(*sequencer.rollup_config, harness.rollup_config);
+            }
         }
     }
 }

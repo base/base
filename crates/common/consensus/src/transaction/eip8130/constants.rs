@@ -274,6 +274,14 @@ impl Eip8130Constants {
     /// the interleaved admission flow is proven out.
     pub const MAX_ACTOR_CHANGES_PER_CONFIG: usize = 5;
 
+    /// Maximum number of call phases accepted in one transaction.
+    ///
+    /// Each phase occupies an in-memory [`alloc::vec::Vec`] even when its RLP
+    /// payload is empty. Bounding the count while decoding prevents a sequence
+    /// of single-byte empty RLP lists from amplifying into unbounded allocations
+    /// before transaction-pool admission limits run.
+    pub const MAX_CALL_PHASES_PER_TX: usize = 1_024;
+
     /// Maximum runtime bytecode size for a create entry, matching EIP-170's
     /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the
     /// mempool rejects oversized code before execution.

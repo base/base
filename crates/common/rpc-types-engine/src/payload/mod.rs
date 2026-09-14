@@ -24,6 +24,7 @@ use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
 };
+use base_common_consensus::decode_2718_canonical;
 pub use v5::BaseExecutionPayloadEnvelopeV5;
 
 use crate::BaseExecutionPayloadSidecar;
@@ -593,11 +594,11 @@ impl BaseExecutionPayload {
     /// - `parent_beacon_block_root`
     ///
     /// See also: [`BaseExecutionPayload::try_into_block_with_sidecar`]
-    pub fn try_into_block<T: Decodable2718 + Typed2718>(
+    pub fn try_into_block<T: Decodable2718 + Encodable2718 + Typed2718>(
         self,
     ) -> Result<Block<T>, BasePayloadError> {
         self.try_into_block_with(|tx| {
-            T::decode_2718_exact(tx.as_ref())
+            decode_2718_canonical(tx.as_ref())
                 .map_err(alloy_rlp::Error::from)
                 .map_err(PayloadError::from)
         })
@@ -648,12 +649,12 @@ impl BaseExecutionPayload {
     ///
     /// See also docs for
     /// [`ExecutionPayload::try_into_block_with_sidecar`](alloy_rpc_types_engine::ExecutionPayload::try_into_block_with_sidecar).
-    pub fn try_into_block_with_sidecar<T: Decodable2718 + Typed2718>(
+    pub fn try_into_block_with_sidecar<T: Decodable2718 + Encodable2718 + Typed2718>(
         self,
         sidecar: &BaseExecutionPayloadSidecar,
     ) -> Result<Block<T>, BasePayloadError> {
         self.try_into_block_with_sidecar_with(sidecar, |tx| {
-            T::decode_2718_exact(tx.as_ref())
+            decode_2718_canonical(tx.as_ref())
                 .map_err(alloy_rlp::Error::from)
                 .map_err(PayloadError::from)
         })
@@ -699,23 +700,24 @@ impl BaseExecutionPayload {
     /// Returns an iterator over the decoded transactions in this payload.
     ///
     /// This iterator will decode transactions on the fly.
-    pub fn decoded_transactions<T: Decodable2718>(
+    pub fn decoded_transactions<T: Decodable2718 + Encodable2718>(
         &self,
     ) -> impl Iterator<Item = alloy_eips::eip2718::Eip2718Result<T>> + '_ {
-        self.transactions().iter().map(|tx_bytes| T::decode_2718_exact(tx_bytes.as_ref()))
+        self.transactions().iter().map(|tx_bytes| decode_2718_canonical::<T>(tx_bytes.as_ref()))
     }
 
     /// Returns iterator over decoded transactions with their original encoded bytes.
     ///
     /// This iterator will decode transactions on the fly and return them with their bytes.
-    pub fn decoded_transactions_with_encoded<T: Decodable2718>(
+    pub fn decoded_transactions_with_encoded<T: Decodable2718 + Encodable2718>(
         &self,
     ) -> impl Iterator<Item = alloy_eips::eip2718::Eip2718Result<alloy_eips::eip2718::WithEncoded<T>>> + '_
     {
-        self.transactions().iter().map(|tx_bytes| {
-            T::decode_2718_exact(tx_bytes.as_ref())
-                .map(|tx| alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), tx))
-        })
+        self.transactions().iter().cloned().zip(self.decoded_transactions()).map(
+            |(tx_bytes, result)| {
+                result.map(|tx| alloy_eips::eip2718::WithEncoded::new(tx_bytes, tx))
+            },
+        )
     }
 
     /// Returns an iterator over the recovered transactions in this payload.
@@ -730,7 +732,7 @@ impl BaseExecutionPayload {
         >,
     > + '_
     where
-        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + Encodable2718 + alloy_consensus::transaction::SignerRecoverable,
     {
         self.decoded_transactions::<T>().map(|res| {
             res.map_err(alloy_consensus::crypto::RecoveryError::from_source)
@@ -752,17 +754,14 @@ impl BaseExecutionPayload {
         >,
     > + '_
     where
-        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+        T: Decodable2718 + Encodable2718 + alloy_consensus::transaction::SignerRecoverable,
     {
-        self.transactions().iter().map(|tx_bytes| {
-            T::decode_2718_exact(tx_bytes.as_ref())
-                .map_err(alloy_consensus::crypto::RecoveryError::from_source)
-                .and_then(|tx| {
-                    tx.try_into_recovered().map(|recovered| {
-                        alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), recovered)
-                    })
-                })
-        })
+        self.transactions().iter().cloned().zip(self.recovered_transactions()).map(
+            |(tx_bytes, result)| {
+                result
+                    .map(|transaction| alloy_eips::eip2718::WithEncoded::new(tx_bytes, transaction))
+            },
+        )
     }
 }
 

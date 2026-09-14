@@ -21,7 +21,7 @@ mod proof_adapter;
 pub use proof_adapter::ProposerProofAdapter;
 
 mod proposal_intervals;
-pub use proposal_intervals::ProposalIntervals;
+pub use proposal_intervals::{IntervalResolver, Intervals};
 
 mod proof_target;
 pub use proof_target::ProofTarget;
@@ -33,7 +33,7 @@ mod proof_collector;
 pub use proof_collector::ProofCollector;
 
 mod proof_dispatcher;
-pub use proof_dispatcher::{ProofDispatcher, ProofDispatcherConfig};
+pub use proof_dispatcher::ProofDispatcher;
 
 mod proof_submitter;
 pub use proof_submitter::{ProofSubmitter, SubmitAction};

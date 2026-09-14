@@ -3,6 +3,7 @@
 mod bootnode;
 mod command;
 pub(crate) use command::BaseCommand;
+mod follow;
 mod reth;
 mod rpc;
 mod sequencer;

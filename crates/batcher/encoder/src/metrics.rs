@@ -5,30 +5,43 @@ base_metrics::define_metrics! {
     struct = BatcherMetrics,
     #[describe("Total number of encoding channels opened")]
     channel_opened_total: counter,
-    #[describe("Total number of encoding channels closed")]
-    #[label(reason)]
+    #[describe("Total number of encoding channels closed, by reason")]
+    #[label(
+        name = "reason",
+        default = ["soft_target", "protocol_limit", "timeout", "flush", "discard"]
+    )]
     channel_closed_total: counter,
     #[describe("Total number of channels for which every frame was confirmed on L1")]
     channel_fully_submitted_total: counter,
+    #[describe(
+        "Total channel replay operations caused by an expired derivation confirmation window"
+    )]
+    channel_replay_total: counter,
+    #[describe("Total number of batcher pipeline resets, by reason")]
+    #[label(
+        name = "reason",
+        default = [
+            "source_reorg",
+            "ingest_reorg",
+            "safe_head_reorg",
+            "safe_head_mismatch",
+            "stalled_channel",
+            "admin_pause",
+        ]
+    )]
+    pipeline_reset_total: counter,
     #[describe("Total number of L1 batch submissions")]
-    #[label(outcome)]
+    #[label(name = "outcome", default = ["submitted", "confirmed", "failed", "requeued"])]
     submission_total: counter,
     #[describe("Total bytes of frame payload submitted to the DA layer")]
-    #[label(da_type)]
+    #[label(name = "da_type", default = ["blob", "calldata"])]
     da_bytes_submitted_total: counter,
     #[describe("Total bytes of frame payload packed into EIP-4844 blobs")]
     blob_used_bytes_total: counter,
-    #[describe("Number of input bytes to a channel")]
-    #[label(name = "stage", default = ["added", "closed"])]
-    input_bytes: gauge,
-    #[describe("Number of compressed output bytes from a channel")]
-    output_bytes: gauge,
     #[describe("Total number of input bytes to channels")]
     input_bytes_total: counter,
     #[describe("Total number of compressed output bytes from channels")]
     output_bytes_total: counter,
-    #[describe("Total number of frames assigned when channel framing completes")]
-    channel_num_frames: gauge,
     #[describe("Batcher signer account balance in ether")]
     #[no_zero]
     balance: gauge,
@@ -44,6 +57,12 @@ base_metrics::define_metrics! {
     channel_duration_blocks: histogram,
     #[describe("Number of L2 blocks included in each closed channel")]
     l2_blocks_per_channel: histogram,
+    #[describe("Number of EIP-4844 blobs per blob transaction submission attempt")]
+    blobs_per_tx: histogram,
+    #[describe(
+        "Fraction of one blob's frame capacity used, sampled per blob submission attempt"
+    )]
+    blob_fill_ratio: histogram,
 }
 
 impl BatcherMetrics {
@@ -53,7 +72,7 @@ impl BatcherMetrics {
     /// Channel closed before a batch that would exceed a hard protocol limit.
     pub const REASON_PROTOCOL_LIMIT: &'static str = "protocol_limit";
 
-    /// Channel closed because it reached `max_channel_duration` L1 blocks.
+    /// Channel closed because it reached its configured L1 deadline.
     pub const REASON_TIMEOUT: &'static str = "timeout";
 
     /// Channel closed by an explicit flush signal.
@@ -62,11 +81,23 @@ impl BatcherMetrics {
     /// Channel discarded because its first block exceeded channel limits.
     pub const REASON_DISCARD: &'static str = "discard";
 
-    /// Channel input bytes after blocks have been added.
-    pub const STAGE_ADDED: &'static str = "added";
+    /// The block source signalled an L2 reorg.
+    pub const RESET_SOURCE_REORG: &'static str = "source_reorg";
 
-    /// Channel input bytes after the channel has been closed.
-    pub const STAGE_CLOSED: &'static str = "closed";
+    /// A parent-hash mismatch surfaced while adding a block to the pipeline.
+    pub const RESET_INGEST_REORG: &'static str = "ingest_reorg";
+
+    /// The derivation status reported a safe head that moved back or changed hash.
+    pub const RESET_SAFE_HEAD_REORG: &'static str = "safe_head_reorg";
+
+    /// The derived safe head does not match the buffered chain.
+    pub const RESET_SAFE_HEAD_MISMATCH: &'static str = "safe_head_mismatch";
+
+    /// The rollup node passed a fully confirmed channel without deriving it.
+    pub const RESET_STALLED_CHANNEL: &'static str = "stalled_channel";
+
+    /// The batcher was paused through the admin API.
+    pub const RESET_ADMIN_PAUSE: &'static str = "admin_pause";
 
     /// Submission accepted and handed to the tx manager.
     pub const OUTCOME_SUBMITTED: &'static str = "submitted";

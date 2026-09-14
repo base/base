@@ -27,7 +27,7 @@ pub use receipt::{
 #[cfg(feature = "eip8130")]
 mod eip8130;
 #[cfg(feature = "eip8130")]
-pub use eip8130::{EIP8130_PRE_COBALT_RPC_ERROR, Eip8130Nonce};
+pub use eip8130::{EIP8130_PRE_ZENITH_RPC_ERROR, Eip8130Nonce};
 
 mod transaction;
 pub use transaction::{

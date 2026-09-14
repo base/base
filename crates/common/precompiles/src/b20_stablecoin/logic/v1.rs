@@ -856,6 +856,12 @@ mod tests {
             self.events.push(log);
             Ok(())
         }
+        fn metered_keccak256(&self, data: &[u8]) -> Result<B256> {
+            Ok(keccak256(data))
+        }
+        fn deduct_gas(&self, _gas: u64) -> Result<()> {
+            Ok(())
+        }
     }
 
     impl StablecoinAccounting for FakeAccounting {

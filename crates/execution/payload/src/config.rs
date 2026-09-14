@@ -11,9 +11,9 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    MeteringProvider, NoopMeteringProvider, ResourceMeteringError, ResourceMeteringMetrics,
-    ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision,
-    SharedMeteringProvider,
+    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
+    ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
+    ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -28,6 +28,16 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
+    /// Resource-unit metering used to throttle transactions in the native
+    /// payload builder.
+    pub resource_metering: ResourceMeteringConfig,
+    /// Shared, cross-job cache of permanently rejected transaction hashes.
+    ///
+    /// Native payload jobs skip hashes already in this cache even if the
+    /// transaction is re-gossiped into the pool. Nonce-lane descendants are
+    /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
+    /// skipping those descendants across later jobs is Flashblocks-only.
+    pub rejection_cache: RejectionCache,
 }
 
 impl Default for BaseBuilderConfig {
@@ -37,13 +47,15 @@ impl Default for BaseBuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
     }
 }
 
 impl BaseBuilderConfig {
     /// Creates a new Base payload builder configuration.
-    pub const fn new(
+    pub fn new(
         da_config: BaseDAConfig,
         gas_limit_config: GasLimitConfig,
         manifest_precheck_enabled: bool,
@@ -53,7 +65,16 @@ impl BaseBuilderConfig {
             gas_limit_config,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            resource_metering: ResourceMeteringConfig::default(),
+            rejection_cache: RejectionCache::default(),
         }
+    }
+
+    /// Sets resource-unit metering used to throttle transactions in the native
+    /// payload builder.
+    pub fn with_resource_metering(mut self, resource_metering: ResourceMeteringConfig) -> Self {
+        self.resource_metering = resource_metering;
+        self
     }
 
     /// Returns the data availability configuration for the Base payload builder, if it has
@@ -98,6 +119,14 @@ impl Default for ResourceMeteringConfig {
 
 impl ResourceMeteringConfig {
     /// Builds a shared config from startup flags.
+    ///
+    /// `--enable-metering` turns on `base_meterBundle`. The native payload
+    /// builder throttles transactions against resource-unit budgets only when
+    /// that flag is set and a non-empty schedule file is loaded. A missing
+    /// schedule leaves those budgets inactive so mempool clients can serve
+    /// meterBundle without a builder schedule. An empty schedule file fails
+    /// closed because the operator asked to load a schedule and it has no
+    /// dimensions.
     pub fn from_parts(
         enabled: bool,
         schedule_path: Option<&Path>,
@@ -105,7 +134,13 @@ impl ResourceMeteringConfig {
     ) -> Result<Self, ResourceMeteringError> {
         let schedule = if enabled {
             match schedule_path {
-                Some(path) => ResourceMeteringSchedule::from_file(path)?,
+                Some(path) => {
+                    let schedule = ResourceMeteringSchedule::from_file(path)?;
+                    if schedule.is_empty() {
+                        return Err(ResourceMeteringError::EmptySchedule);
+                    }
+                    schedule
+                }
                 None => ResourceMeteringSchedule::default(),
             }
         } else {
@@ -433,6 +468,30 @@ mod tests {
         assert!(!config.enabled);
         assert!(config.schedule.is_empty());
         assert!(!config.is_active());
+    }
+
+    #[test]
+    fn enabled_metering_without_schedule_leaves_resource_throttling_inactive() {
+        let config = ResourceMeteringConfig::from_parts(true, None, Arc::new(NoopMeteringProvider))
+            .expect("enable-metering without a schedule must still boot");
+        assert!(config.enabled);
+        assert!(config.schedule.is_empty());
+        assert!(!config.is_active());
+    }
+
+    #[test]
+    fn enabled_metering_with_empty_schedule_fails_closed() {
+        let path = std::env::temp_dir()
+            .join(format!("resource-metering-empty-schedule-{}.json", std::process::id()));
+        std::fs::write(&path, r#"{"version":1,"dimensions":[]}"#)
+            .expect("write empty schedule fixture");
+        let err = ResourceMeteringConfig::from_parts(
+            true,
+            Some(path.as_path()),
+            Arc::new(NoopMeteringProvider),
+        );
+        let _ = std::fs::remove_file(&path);
+        assert!(matches!(err, Err(ResourceMeteringError::EmptySchedule)));
     }
 
     fn compiled_cpu_schedule() -> ResourceMeteringSchedule {

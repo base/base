@@ -3,21 +3,9 @@ FROM public.ecr.aws/docker/library/golang:1.26-alpine AS builder
 # Install build dependencies for CGO (required for BLS library)
 RUN apk add --no-cache git make gcc g++ musl-dev linux-headers curl ca-certificates
 
-# Download op-deployer binary
-# URL format: op-deployer-{version_no_v}-linux-{arch}.tar.gz
-# Tarball contains: op-deployer-{version}-linux-{arch}/op-deployer
-ARG OP_DEPLOYER_VERSION=0.6.0-rc.3
 ARG ETH_BEACON_GENESIS_COMMIT=f57c0fb4606f9a28e5eecb61546efa9b658183b2
 ARG ETH2_VAL_TOOLS_TAG=v0.2.0
 ARG ETH2_VAL_TOOLS_COMMIT=db4f5fa6b8a6096a5f22c0a60f6494bf489c407b
-RUN ARCH=$(uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g') && \
-    curl -L -o /tmp/op-deployer.tar.gz \
-    "https://github.com/ethereum-optimism/optimism/releases/download/op-deployer/v${OP_DEPLOYER_VERSION}/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}.tar.gz" && \
-    tar -xzf /tmp/op-deployer.tar.gz -C /tmp/ && \
-    mv /tmp/op-deployer-${OP_DEPLOYER_VERSION}-linux-${ARCH}/op-deployer /go/bin/ && \
-    chmod +x /go/bin/op-deployer && \
-    rm -rf /tmp/op-deployer*
-
 # Build eth-beacon-genesis from source (has replace directives, can't use go install)
 WORKDIR /build
 RUN git clone https://github.com/ethpandaops/eth-beacon-genesis.git . && \
@@ -33,20 +21,35 @@ RUN git clone https://github.com/protolambda/eth2-val-tools.git --branch "${ETH2
     test "$(git rev-parse HEAD)" = "${ETH2_VAL_TOOLS_COMMIT}"
 RUN go build -o /go/bin/eth2-val-tools .
 
+# Build the integrated offline setup from the Base-specific Optimism branch.
+# Pin the source revision so setup image builds are reproducible.
+FROM public.ecr.aws/docker/library/golang:1.26-alpine AS base-devnet-builder
+RUN apk add --no-cache git ca-certificates
+ADD https://github.com/base/optimism.git#0066b17c3fe0cbb5ea935de6d5b18d4fc86dc439 /op-deployer
+WORKDIR /op-deployer
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -o /out/op-deployer ./op-deployer/cmd/op-deployer && \
+    CGO_ENABLED=0 go build -o /out/extract-artifacts ./op-deployer/cmd/extract-artifacts
+# Avoid unpacking contract artifacts on every fresh devnet startup.
+RUN /out/extract-artifacts /contract-artifacts && \
+    mv /contract-artifacts/bundle-*/forge-artifacts /artifacts
+
 FROM public.ecr.aws/docker/library/alpine:3.21.3
 
-RUN apk add --no-cache bash jq openssl curl gettext
+RUN apk add --no-cache bash jq curl
+
+# Compose devnets and system tests share the integrated offline generator.
+COPY --from=base-devnet-builder /out/op-deployer /usr/local/bin/
+COPY --from=base-devnet-builder /artifacts /opt/base-devnet-artifacts
+ENV BASE_DEVNET_ARTIFACTS=/opt/base-devnet-artifacts
 
 # Copy the built binaries
 COPY --from=builder /go/bin/eth-genesis-state-generator /usr/local/bin/
 COPY --from=builder /go/bin/eth2-val-tools /usr/local/bin/
-COPY --from=builder /go/bin/op-deployer /usr/local/bin/
 
 # Create working directories
-RUN mkdir -p /config /output /shared /templates
-
-# Copy templates
-COPY etc/scripts/devnet/templates/ /templates/
+RUN mkdir -p /config /output /shared
 
 # Copy setup scripts
 COPY etc/scripts/devnet/ /usr/local/bin/

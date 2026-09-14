@@ -355,7 +355,7 @@ impl BatchRpcClient {
                         "jsonrpc": "2.0",
                         "id": i,
                         "method": BASE_SEND_RAW_TRANSACTION_VALIDITY,
-                        "params": [{ "tx": item.raw, "validity": item.validity }]
+                        "params": [item.raw, { "validity": item.validity }]
                     })
                 } else {
                     serde_json::json!({
@@ -522,12 +522,13 @@ mod tests {
         assert_eq!(body[0]["method"], ETH_SEND_RAW_TRANSACTION);
         assert_eq!(body[0]["params"][0], "0xaa");
 
-        // Validity element: base_sendRawTransactionValidity with { tx, validity }.
+        // Validity element: base_sendRawTransactionValidity with positional
+        // params leading with the raw tx hex string, followed by { validity }.
         assert_eq!(body[1]["id"], 1);
         assert_eq!(body[1]["method"], BASE_SEND_RAW_TRANSACTION_VALIDITY);
-        assert_eq!(body[1]["params"][0]["tx"], "0xbb");
-        assert_eq!(body[1]["params"][0]["validity"][0]["type"], "balance");
-        assert_eq!(body[1]["params"][0]["validity"][0]["params"]["op"], ">=");
+        assert_eq!(body[1]["params"][0], "0xbb");
+        assert_eq!(body[1]["params"][1]["validity"][0]["type"], "balance");
+        assert_eq!(body[1]["params"][1]["validity"][0]["params"]["op"], ">=");
     }
 
     #[test]

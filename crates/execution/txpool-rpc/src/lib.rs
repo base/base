@@ -10,13 +10,14 @@
 mod rpc;
 pub use rpc::{
     AdminTxPoolApiImpl, AdminTxPoolApiServer, SendRawTransactionValidityApiImpl,
-    SendRawTransactionValidityApiServer, SendRawTransactionValidityRequest, Status,
+    SendRawTransactionValidityApiServer, SendRawTransactionValidityOptions, Status,
     TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusResponse,
-    VALIDITY_TX_PRE_COBALT_RPC_ERROR,
+    VALIDITY_TX_PRE_ZENITH_RPC_ERROR,
 };
 
 mod extension;
 pub use extension::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };

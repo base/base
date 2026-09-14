@@ -1816,7 +1816,7 @@ dependencies = [
  "asn1-rs-derive",
  "asn1-rs-impl",
  "displaydoc",
- "nom",
+ "nom 7.1.3",
  "num-traits",
  "rusticata-macros",
  "thiserror 2.0.19",
@@ -2904,6 +2904,7 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "base-batcher-cli",
  "base-builder-cli",
  "base-builder-core",
  "base-builder-metering",
@@ -2918,6 +2919,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-shadow-indexer",
  "base-txpool-rpc",
  "base-upgrade-signal",
  "clap",
@@ -2925,6 +2927,7 @@ dependencies = [
  "figment",
  "reth-cli-commands",
  "reth-cli-runner",
+ "reth-cli-util",
  "serde",
  "tokio",
  "tokio-util",
@@ -3024,7 +3027,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-batcher-bin"
+name = "base-batcher-cli"
 version = "0.0.0"
 dependencies = [
  "alloy-primitives",
@@ -3033,13 +3036,11 @@ dependencies = [
  "base-batcher-encoder",
  "base-batcher-service",
  "base-cli-utils",
- "base-protocol",
  "base-runtime",
  "base-tx-manager",
  "clap",
  "eyre",
  "humantime",
- "serde",
  "tracing",
  "url",
 ]
@@ -3467,6 +3468,7 @@ dependencies = [
  "base-cli-utils",
  "clap",
  "eyre",
+ "reth-node-core",
 ]
 
 [[package]]
@@ -3478,6 +3480,11 @@ dependencies = [
  "alloy-provider",
  "alloy-signer-local 2.4.1",
  "base-proof-contracts",
+ "base-proof-rpc",
+ "base-proof-submission",
+ "base-prover-service-protocol",
+ "base-tx-manager",
+ "base-zk-fork-dispute",
  "clap",
  "eyre",
  "humantime",
@@ -3572,6 +3579,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-eip8130"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-common-consensus",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "base-common-evm"
 version = "0.0.0"
 dependencies = [
@@ -3608,11 +3625,15 @@ version = "0.0.0"
 dependencies = [
  "alloy-consensus 2.4.1",
  "alloy-eips 2.4.1",
+ "alloy-hardforks 0.4.7",
  "alloy-primitives",
+ "base-common-chains",
  "base-common-consensus",
+ "base-common-eip8130",
  "base-common-evm",
  "base-common-genesis",
  "base-common-l1-fees",
+ "base-common-precompiles",
  "evm2",
  "revm",
 ]
@@ -3701,6 +3722,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-chains",
+ "base-common-eip8130",
  "base-common-genesis",
  "base-precompile-macros",
  "base-precompile-storage",
@@ -3967,6 +3989,7 @@ dependencies = [
  "base-consensus-disc",
  "base-consensus-peers",
  "base-metrics",
+ "base-protocol",
  "derive_more 2.1.1",
  "discv5 0.10.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures",
@@ -4240,6 +4263,7 @@ dependencies = [
  "alloy-primitives",
  "axum 0.8.9",
  "backon",
+ "base-builder-metering",
  "base-cli-utils",
  "base-common-chains",
  "base-common-consensus",
@@ -4248,6 +4272,7 @@ dependencies = [
  "base-execution-consensus",
  "base-execution-eip8130-rpc-node",
  "base-execution-evm",
+ "base-execution-payload-builder",
  "base-execution-profiling",
  "base-execution-trie",
  "base-flashblocks",
@@ -4257,6 +4282,7 @@ dependencies = [
  "base-node-runner",
  "base-observability-events",
  "base-proofs-extension",
+ "base-reth-cli",
  "base-shadow-indexer",
  "base-shadow-indexer-db",
  "base-tx-forwarding",
@@ -4276,6 +4302,7 @@ dependencies = [
  "reth-cli-runner",
  "reth-cli-util",
  "reth-db",
+ "reth-db-api",
  "reth-discv4",
  "reth-discv5",
  "reth-ethereum-forks",
@@ -4288,6 +4315,7 @@ dependencies = [
  "reth-node-metrics",
  "reth-provider",
  "reth-rpc-server-types",
+ "reth-stages-types",
  "reth-tasks",
  "reth-tracing",
  "rstest",
@@ -4341,6 +4369,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base-common-consensus",
+ "base-common-eip8130",
  "base-common-precompiles",
  "base-precompile-macros",
  "base-precompile-storage",
@@ -4394,6 +4423,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-execution-eip8130-rpc",
  "base-node-runner",
+ "base-protocol",
  "base-test-utils",
  "eyre",
  "serde_json",
@@ -5598,6 +5628,7 @@ dependencies = [
  "clap",
  "eyre",
  "humantime",
+ "reth-node-core",
  "serde",
  "tokio",
  "url",
@@ -5812,6 +5843,7 @@ dependencies = [
  "base-proposer",
  "clap",
  "eyre",
+ "reth-node-core",
  "tokio",
 ]
 
@@ -5876,6 +5908,7 @@ dependencies = [
  "base-prover-service-client",
  "clap",
  "eyre",
+ "reth-node-core",
  "serde",
  "tokio",
  "tokio-util",
@@ -5912,6 +5945,7 @@ dependencies = [
  "clap",
  "eyre",
  "jsonrpsee",
+ "reth-node-core",
  "serde",
  "tokio",
  "tracing",
@@ -5977,6 +6011,7 @@ dependencies = [
  "base-prover-service-client",
  "clap",
  "eyre",
+ "reth-node-core",
  "serde",
  "tokio",
  "tokio-util",
@@ -5989,9 +6024,18 @@ dependencies = [
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
+ "blake3",
+ "humantime",
+ "rayon",
  "reth-cli-commands",
  "reth-node-core",
  "reth-prune-types",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tracing",
+ "zstd",
 ]
 
 [[package]]
@@ -6175,14 +6219,11 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
- "blake3",
+ "base-reth-cli",
  "bollard",
+ "bytes",
  "clap",
  "futures",
- "human_bytes",
- "humantime",
- "rayon",
- "reth-cli-commands",
  "serde_json",
  "serial_test",
  "tar",
@@ -6203,12 +6244,13 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
+ "base-cli-utils",
  "base-snapshotter",
  "clap",
  "rayon",
+ "serde",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -6319,6 +6361,7 @@ dependencies = [
  "k256 0.13.4",
  "libp2p",
  "nanoid",
+ "prometheus-scraper",
  "rand 0.9.5",
  "reqwest 0.13.4",
  "reth-db",
@@ -6498,10 +6541,12 @@ dependencies = [
  "alloy-signer-local 2.4.1",
  "base-common-chains",
  "base-common-consensus",
+ "base-common-genesis",
  "base-execution-chainspec",
  "base-execution-txpool",
  "base-node-runner",
  "base-observability-events",
+ "base-test-utils",
  "eyre",
  "httpmock",
  "jsonrpsee",
@@ -7381,6 +7426,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffa"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf9e6224bc4ee1f189ad257120c156fb05f95b826f5369d620b24984476c200a"
+dependencies = [
+ "bytes",
+ "foldhash 0.1.5",
+ "hashbrown 0.15.5",
+ "once_cell",
+ "rustversion",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "buffa-types"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c7d518783cc611d9f144a71cf7dbc7b5588c5d16ff96ca43e74ac105ea3cb05"
+dependencies = [
+ "buffa",
+ "bytes",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7587,7 +7657,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
 dependencies = [
- "nom",
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -8644,7 +8714,7 @@ checksum = "07da5016415d5a3c4dd39b11ed26f915f52fc4e0dc197d87908bc916e51bc1a6"
 dependencies = [
  "asn1-rs",
  "displaydoc",
- "nom",
+ "nom 7.1.3",
  "num-bigint 0.4.8",
  "num-traits",
  "rusticata-macros",
@@ -9421,7 +9491,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
 dependencies = [
  "futures-core",
- "nom",
+ "nom 7.1.3",
  "pin-project-lite",
 ]
 
@@ -11403,13 +11473,13 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 2.4.1",
+ "alloy-signer 2.4.1",
  "alloy-signer-local 2.4.1",
  "anyhow",
  "async-trait",
  "audit-archiver-lib",
  "axum 0.8.9",
  "base-bundles",
- "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-network",
@@ -13286,6 +13356,15 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "nom"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -15202,6 +15281,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "prometheus-scraper"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27acfa23538fbabf5ad429f1044c213c92dc5cbfd0ee7d8b149ebfb1ae51a3de"
+dependencies = [
+ "buffa",
+ "buffa-types",
+ "bytes",
+ "nom 8.0.0",
 ]
 
 [[package]]
@@ -19483,7 +19574,7 @@ version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632"
 dependencies = [
- "nom",
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -22271,7 +22362,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4ea810f0692f9f51b382fff5893887bb4580f5fa246fde546e0b13e7fcee662"
 dependencies = [
  "fnv",
- "nom",
+ "nom 7.1.3",
  "phf 0.11.3",
  "phf_codegen",
 ]
@@ -24922,7 +25013,7 @@ dependencies = [
  "data-encoding",
  "der-parser",
  "lazy_static",
- "nom",
+ "nom 7.1.3",
  "oid-registry",
  "rusticata-macros",
  "thiserror 2.0.19",

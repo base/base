@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use base_builder_core::{BuilderConfig, FlashblocksServiceBuilder, NodeBounds, PoolBounds};
 use base_execution_evm::BaseEvmConfig;
-use base_execution_payload_builder::config::BaseBuilderConfig;
+use base_execution_payload_builder::{ResourceMeteringConfig, config::BaseBuilderConfig};
 use base_node_core::{
     BaseConsensusBuilder, BaseEngineTypes, BaseExecutorBuilder, BaseNetworkBuilder,
     node::BasePoolBuilder,
@@ -55,6 +57,26 @@ impl MultiplexingServiceBuilder {
         self.basic_only = basic_only;
         self
     }
+
+    /// Native payload settings copied from the shared builder config.
+    ///
+    /// Cutover and basic-only modes spawn `BasePayloadBuilder`. The rejection
+    /// cache and metering provider must be the same objects Flashblocks uses,
+    /// otherwise permanently rejected hashes and `meterBundle` data diverge
+    /// after cutover.
+    fn native_payload_config(&self) -> BaseBuilderConfig {
+        BaseBuilderConfig {
+            da_config: self.builder_config.da_config.clone(),
+            gas_limit_config: self.builder_config.gas_limit_config.clone(),
+            manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
+            predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
+            resource_metering: ResourceMeteringConfig {
+                provider: Arc::clone(&self.builder_config.metering_provider),
+                ..ResourceMeteringConfig::default()
+            },
+            rejection_cache: self.builder_config.rejection_cache.clone(),
+        }
+    }
 }
 
 impl<Node, Pool> PayloadServiceBuilder<Node, Pool, BaseEvmConfig> for MultiplexingServiceBuilder
@@ -84,12 +106,7 @@ where
                 pool.clone(),
                 ctx.provider().clone(),
                 evm_config.clone(),
-                BaseBuilderConfig {
-                    da_config: self.builder_config.da_config.clone(),
-                    gas_limit_config: self.builder_config.gas_limit_config.clone(),
-                    manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
-                    predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
-                },
+                self.native_payload_config(),
             );
 
         let payload_config = ctx.config().builder.clone();
@@ -176,5 +193,24 @@ impl BasePayloadServiceBuilder for MultiplexingServiceBuilder {
 
     fn build_components(self, base_node: &BaseNode) -> Self::ComponentsBuilder {
         base_node.components::<BaseNodeTypes>().payload(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::TxHash;
+
+    use super::*;
+
+    #[test]
+    fn native_payload_config_preserves_metering_provider_and_rejection_cache() {
+        let builder_config = BuilderConfig::default();
+        let hash = TxHash::repeat_byte(0x11);
+        builder_config.rejection_cache.insert(hash);
+        let provider = Arc::clone(&builder_config.metering_provider);
+
+        let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config();
+        assert!(native.rejection_cache.contains_key(&hash));
+        assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
     }
 }
