@@ -20,7 +20,7 @@ use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_optimism_rpc::DebugProviderExt;
 use base_proof_host::HostConfig;
-use base_proof_zk_utils::boot::BootInfoStruct;
+use base_proof_zk_utils::{INTERMEDIATE_ROOT_INTERVAL, boot::BootInfoStruct};
 use base_protocol::L2BlockInfo;
 use futures::{StreamExt, stream};
 use reqwest::Url;
@@ -754,7 +754,6 @@ impl OPSuccinctDataFetcher {
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: B256,
-        intermediate_block_interval: u64,
         schedule_l2_block_number: Option<u64>,
     ) -> Result<HostConfig> {
         let Some(rollup_config) = &self.rollup_config else {
@@ -853,7 +852,7 @@ impl OPSuccinctDataFetcher {
             agreed_l2_head_hash,
             claimed_l2_output_root,
             claimed_l2_block_number: l2_end_block,
-            intermediate_block_interval,
+            intermediate_block_interval: INTERMEDIATE_ROOT_INTERVAL,
             l1_head_number,
             // We don't need to set the proposer for the range proof zk program
             proposer: Address::ZERO,

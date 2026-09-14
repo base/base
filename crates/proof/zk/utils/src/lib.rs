@@ -15,6 +15,7 @@ extern crate alloc;
 
 /// High-level client helpers for derivation and execution.
 pub mod client;
+pub use client::INTERMEDIATE_ROOT_INTERVAL;
 
 /// Witness data, preimage storage, and block execution.
 pub mod witness;
