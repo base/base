@@ -119,7 +119,7 @@ pub struct RocksDbStaticManifest {
 }
 
 impl RocksDbStaticManifest {
-    /// Current version of the static RocksDB extension schema.
+    /// Current version of the static `RocksDB` extension schema.
     pub const VERSION: u8 = 1;
 
     /// Parses the optional proofs extension from a manifest JSON document.
@@ -156,7 +156,7 @@ pub struct SnapshotGenerationResult {
     pub manifest: SnapshotManifest,
     /// Immutable proofs SST table archives, when proofs snapshots are enabled.
     pub proofs_static: Option<ProofsStaticManifest>,
-    /// Immutable main index RocksDB SST table archives, when an index database is present.
+    /// Immutable main index `RocksDB` SST table archives, when an index database is present.
     pub rocksdb_static: Option<RocksdbStaticManifest>,
 }
 
@@ -275,7 +275,7 @@ pub struct ManifestGenerationParams<'a> {
     pub remote_static_files: &'a HashMap<String, u64>,
     /// Previously published manifest used to verify reusable archives.
     pub previous_manifest: Option<&'a SnapshotManifest>,
-    /// Whether to package `{source_datadir}/proofs` as a RocksDB snapshot.
+    /// Whether to package `{source_datadir}/proofs` as a `RocksDB` snapshot.
     pub upload_proofs: bool,
 }
 

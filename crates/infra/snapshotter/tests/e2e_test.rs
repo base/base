@@ -422,8 +422,8 @@ async fn upload_artifacts_to_minio() -> Result<()> {
         "manifest should point state at the timestamped run dir"
     );
     assert_eq!(
-        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-        "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        manifest["components"]["proofs"]["file"], "1700000000/proofs.tar.zst",
+        "proofs metadata should be rewritten under the timestamp directory"
     );
 
     let components = manifest["components"].as_object().expect("components should be an object");
@@ -519,8 +519,8 @@ async fn upload_with_empty_prefix() -> Result<()> {
         "manifest should point state at the timestamped run dir"
     );
     assert_eq!(
-        manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-        "proofs must remain a sibling of manifest.json for ProofsDownloader"
+        manifest["components"]["proofs"]["file"], "1700000000/proofs.tar.zst",
+        "proofs metadata should be rewritten under the timestamp directory"
     );
 
     assert_eq!(

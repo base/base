@@ -1755,7 +1755,7 @@ fn retry_delay_secs(attempt: usize) -> u64 {
 ///
 /// `base_url` points at the snapshot root (`{public_base}/{prefix}`). Finalized static-file
 /// chunks use `static_files/{archive}` in [`ChunkedArchive::chunk_files`]; tip chunks and
-/// state, RocksDB metadata, and proofs metadata use `{timestamp}/{archive}`. Immutable RocksDB
+/// state, `RocksDB` metadata, and proofs metadata use `{timestamp}/{archive}`. Immutable `RocksDB`
 /// SST tables remain under `static_files/{rocksdb|proofs}/` through Base-specific extensions.
 fn build_published_manifest(
     local_manifest: &SnapshotManifest,
@@ -1883,7 +1883,7 @@ mod tests {
     }
 
     #[test]
-    fn build_published_manifest_sets_chunk_files_and_leaves_proofs_as_sibling() {
+    fn build_published_manifest_sets_chunk_files_and_rewrites_run_components() {
         use std::collections::BTreeMap;
 
         use base_reth_cli::{ChunkedArchive, SingleArchive};
@@ -1950,8 +1950,8 @@ mod tests {
             "state should be rewritten under the timestamp directory"
         );
         assert_eq!(
-            manifest["components"]["proofs"]["file"], "proofs.tar.zst",
-            "proofs must remain a sibling of manifest.json for ProofsDownloader"
+            manifest["components"]["proofs"]["file"], "1700000000/proofs.tar.zst",
+            "proofs metadata should be rewritten under the timestamp directory"
         );
         assert_eq!(
             manifest["components"]["headers"]["chunk_files"],
