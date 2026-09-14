@@ -75,6 +75,7 @@ tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros"] }
 default = [ "metrics" ]
 metrics = [
 	"base-common-evm/metrics",
+	"base-common-precompiles/metrics",
 	"base-metrics/metrics",
 	"base-observability-events/metrics",
 	"dep:metrics",

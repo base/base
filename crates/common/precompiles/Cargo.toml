@@ -70,6 +70,7 @@ std = [
 	"alloy-primitives/std",
 	"alloy-sol-types/std",
 	"base-common-chains/std",
+	"base-common-eip8130/std",
 	"base-common-genesis/std",
 	"base-precompile-storage/std",
 	"revm/std",
@@ -91,3 +92,5 @@ test-utils = [
 	"base-common-genesis/test-utils",
 	"base-precompile-storage/test-utils",
 ]
+# Node-only wall-clock call timing. Leave off in zkVM guests.
+metrics = [ "std" ]
