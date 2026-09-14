@@ -661,6 +661,16 @@ impl BaseL1BlockInfo {
     pub fn timestamp(&self) -> u64 {
         self.timestamp.load(Ordering::Relaxed)
     }
+
+    /// Seeds the tracked block timestamp (Unix seconds).
+    ///
+    /// Normally set from the canonical head via `update_l1_block_info`; this
+    /// seam lets a harness start the validator at a realistic wall clock so
+    /// millisecond-scale `valid_after`/`valid_before` bounds evaluate the same
+    /// way they would against a live head.
+    pub fn set_timestamp(&self, timestamp: u64) {
+        self.timestamp.store(timestamp, Ordering::Relaxed);
+    }
 }
 
 /// Validator for Base transactions.
@@ -1127,7 +1137,8 @@ where
             .saturating_mul(U256::from(signed.tx().max_fee_per_gas));
 
         let nonce_free = signed.tx().nonce_key == Eip8130Constants::NONCE_KEY_MAX;
-        let transaction_expiry = Self::tx_valid_before_secs(signed.tx().valid_before, nonce_free);
+        let transaction_expiry =
+            Self::tx_valid_before_secs(signed.tx().valid_before_ms(), nonce_free);
         let sender_expiry = Self::expiry_or_unbounded(sender_actor.expiry);
         let payer_expiry = Self::expiry_or_unbounded(payer_actor.map_or(0, |actor| actor.expiry));
         let effective_expiry =
@@ -2661,17 +2672,18 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_free_already_expired() {
-        // Advance the validator's tracked block timestamp to 100s (now_ms =
-        // 100_000) so that valid_before=50_000 is strictly in the past; the
-        // default fixture sits at timestamp 0 where there is no way to express
-        // "already expired".
+        // Advance the validator's tracked block timestamp to a realistic clock
+        // (now_ms = 1_700_000_100_000) so `valid_before` (a millisecond value one
+        // second in the past) is strictly elapsed. Both values are >=
+        // TIMESTAMP_MS_THRESHOLD, so normalization is a no-op and this exercises
+        // the raw expiry comparison.
         let validator = build_test_validator();
-        let header = alloy_consensus::Header { timestamp: 100, ..Default::default() };
+        let header = alloy_consensus::Header { timestamp: 1_700_000_100, ..Default::default() };
         validator.update_l1_block_info::<_, TxEip1559>(&header, None);
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: 50_000,
+            valid_before: 1_700_000_099_000,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -2734,11 +2746,18 @@ mod tests {
 
     #[test]
     fn accepts_eip8130_nonce_free_at_expiry_window_edge() {
+        // Seed a realistic millisecond clock and place `valid_before` exactly at
+        // the admission-window edge (`now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW`).
+        // Both bounds are >= TIMESTAMP_MS_THRESHOLD so normalization is a no-op;
+        // this checks the inclusive edge in true milliseconds.
         let validator = build_test_validator();
+        let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            valid_before: now_ms + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -3632,7 +3651,9 @@ mod tests {
     fn nonce_free_manifest_uses_transaction_validity_window() {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
-        let now = 100;
+        // Realistic seconds clock; `now * 1000` stays >= TIMESTAMP_MS_THRESHOLD so
+        // the millisecond `valid_before` below is not re-scaled by normalization.
+        let now = 1_700_000_000;
         // `valid_before` is in milliseconds; at the admission-window edge it is
         // `now * 1000 + NONCE_FREE_MAX_EXPIRY_WINDOW`. The on-chain bound is
         // exclusive, so the manifest boundary folds it onto the seconds axis as

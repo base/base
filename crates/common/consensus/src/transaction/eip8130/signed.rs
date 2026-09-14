@@ -237,20 +237,29 @@ impl Eip8130Signed {
     /// Validates the validity-window admission rules for nonce-bearing and
     /// nonce-free transactions against a single caller-supplied `now` value.
     ///
-    /// `now`, `valid_after`, and `valid_before` are all Unix timestamps in
-    /// **milliseconds**; callers pass `block.timestamp * 1000` (or an equivalent
-    /// millisecond wall clock) so the comparison matches the EIP's on-chain
-    /// `block.timestamp * 1000` evaluation. Txpool passes in one head-block
-    /// snapshot so both branches see the same value even if the tip updates
-    /// concurrently.
+    /// `now` is a Unix timestamp in **milliseconds**; callers pass
+    /// `block.timestamp * 1000` (or an equivalent millisecond wall clock) so the
+    /// comparison matches the EIP's on-chain `block.timestamp * 1000` evaluation.
+    /// Txpool passes in one head-block snapshot so both branches see the same
+    /// value even if the tip updates concurrently.
+    ///
+    /// The transaction's `valid_after`/`valid_before` may be supplied in seconds
+    /// or milliseconds; both are normalized to milliseconds here (via
+    /// [`TxEip8130::valid_after_ms`]/[`TxEip8130::valid_before_ms`]) before being
+    /// compared against `now`, matching the consensus inclusion window.
     pub fn validate_timestamp(&self, now: u64) -> Result<(), Eip8130TimestampError> {
         let tx = self.tx();
+        // Normalized to milliseconds (seconds bounds are scaled by 1000); `0`
+        // stays `0` (disabled), so the "is this bound set?" checks below are
+        // unaffected by normalization.
+        let valid_after = tx.valid_after_ms();
+        let valid_before = tx.valid_before_ms();
         if tx.nonce_key == Eip8130Constants::NONCE_KEY_MAX {
             // Structural precondition first (independent of `now`).
-            if tx.nonce_sequence != 0 || tx.valid_before == 0 {
+            if tx.nonce_sequence != 0 || valid_before == 0 {
                 return Err(Eip8130TimestampError::NonceFreeMalformed);
             }
-            if tx.valid_after != 0 && now < tx.valid_after {
+            if valid_after != 0 && now < valid_after {
                 return Err(Eip8130TimestampError::NotYetValid);
             }
             // Exclusive on purpose: nonce-free replay protection is the
@@ -261,21 +270,20 @@ impl Eip8130Signed {
             // boundary would only fail later in the ring. This is stricter than
             // the inclusive validity-window upper bound applied to nonce-bearing
             // transactions below.
-            if tx.valid_before <= now {
+            if valid_before <= now {
                 return Err(Eip8130TimestampError::NonceFreeExpired);
             }
-            if tx.valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW)
-            {
+            if valid_before > now.saturating_add(Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW) {
                 return Err(Eip8130TimestampError::NonceFreeExpiryTooFar);
             }
         } else {
-            if tx.valid_after != 0 && now < tx.valid_after {
+            if valid_after != 0 && now < valid_after {
                 return Err(Eip8130TimestampError::NotYetValid);
             }
             // Inclusive upper bound (matches the execution-path check and the EIP):
             // a transaction at exactly `valid_before` is still valid, so reject
             // only once `now` is strictly past it.
-            if tx.valid_before != 0 && now > tx.valid_before {
+            if valid_before != 0 && now > valid_before {
                 return Err(Eip8130TimestampError::Expired);
             }
         }
@@ -960,7 +968,12 @@ mod tests {
 
     #[test]
     fn timestamp_validation_covers_channel_and_nonce_free_rules() {
-        let now = 1_000;
+        // Millisecond-scale reference clock: all bounds here are already
+        // milliseconds (>= TIMESTAMP_MS_THRESHOLD), so normalization is a no-op
+        // and these assertions exercise the raw window comparisons. Seconds
+        // normalization is covered separately by
+        // `seconds_denominated_bounds_are_normalized_to_milliseconds`.
+        let now = 1_700_000_000_000;
         let mut tx = sample_signed(false).into_tx();
         // Nonce-bearing upper bound is inclusive: valid at `now == valid_before`,
         // expired only once `now` is strictly past it.
@@ -1001,6 +1014,55 @@ mod tests {
         assert_eq!(
             Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn seconds_denominated_bounds_are_normalized_to_milliseconds() {
+        // `now` is milliseconds (block.timestamp * 1000). The transaction bounds
+        // are supplied in *seconds* and must be interpreted identically to their
+        // millisecond equivalents (EIP-8130 Timestamp Normalization).
+        let now_secs = 1_700_000_000u64;
+        let now_ms = now_secs * 1_000;
+        let mut tx = sample_signed(false).into_tx();
+
+        // Nonce-bearing: a seconds `valid_before` one second in the future is
+        // still valid; one second in the past is expired.
+        tx.valid_after = 0;
+        tx.valid_before = now_secs + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Ok(())
+        );
+        tx.valid_before = now_secs - 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Err(Eip8130TimestampError::Expired)
+        );
+
+        // A seconds `valid_after` in the future gates activation (not treated as
+        // already-active, which was the pre-normalization footgun).
+        tx.valid_before = 0;
+        tx.valid_after = now_secs + 1;
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Err(Eip8130TimestampError::NotYetValid)
+        );
+
+        // Nonce-free: a seconds `valid_before` inside the expiry window (20 s)
+        // is admitted; the normalized ms value is compared against the ms window.
+        tx.valid_after = 0;
+        tx.nonce_key = Eip8130Constants::NONCE_KEY_MAX;
+        tx.nonce_sequence = 0;
+        tx.valid_before = now_secs + 10; // +10 s == +10_000 ms, within the 20_000 ms window
+        assert_eq!(
+            Eip8130Signed::new(tx.clone(), Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Ok(())
+        );
+        tx.valid_before = now_secs - 1; // already elapsed
+        assert_eq!(
+            Eip8130Signed::new(tx, Bytes::new(), Bytes::new()).validate_timestamp(now_ms),
+            Err(Eip8130TimestampError::NonceFreeExpired)
         );
     }
 
