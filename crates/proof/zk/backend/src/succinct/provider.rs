@@ -22,8 +22,6 @@ pub struct WitnessParams<'a> {
     pub end_block: u64,
     /// Source for the L1 head hash used by the Succinct host.
     pub l1_head: L1HeadSource<'a>,
-    /// Number of L2 blocks between sampled intermediate output roots.
-    pub intermediate_root_interval: u64,
     /// L2 block number whose timestamp determines the activated upgrade schedule.
     pub schedule_l2_block_number: Option<u64>,
 }
@@ -212,13 +210,7 @@ impl OpSuccinctWitnessProvider {
         &self,
         params: WitnessParams<'_>,
     ) -> Result<SP1Stdin, WitnessError> {
-        let WitnessParams {
-            start_block,
-            end_block,
-            l1_head,
-            intermediate_root_interval,
-            schedule_l2_block_number,
-        } = params;
+        let WitnessParams { start_block, end_block, l1_head, schedule_l2_block_number } = params;
 
         info!(
             start_block = start_block,
@@ -231,14 +223,7 @@ impl OpSuccinctWitnessProvider {
             L1HeadSource::Pinned(hash) => {
                 info!(hash = %hash, "using caller-provided l1_head");
                 self.host
-                    .fetch(
-                        start_block,
-                        end_block,
-                        Some(hash),
-                        intermediate_root_interval,
-                        false,
-                        schedule_l2_block_number,
-                    )
+                    .fetch(start_block, end_block, Some(hash), false, schedule_l2_block_number)
                     .await
                     .map_err(|source| WitnessError::PinnedHostFetch {
                         source: source.into_boxed_dyn_error(),
@@ -264,7 +249,6 @@ impl OpSuccinctWitnessProvider {
                         start_block,
                         end_block,
                         Some(l1_head_hash),
-                        intermediate_root_interval,
                         false,
                         schedule_l2_block_number,
                     )

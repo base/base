@@ -66,16 +66,16 @@ impl SuccinctHost {
     /// - `l2_start_block`: The starting L2 block number.
     /// - `l2_end_block`: The ending L2 block number.
     /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
-    /// - `intermediate_block_interval`: L2 blocks between intermediate output roots, must match
-    ///   on-chain `INTERMEDIATE_BLOCK_INTERVAL` (same field committed into [`BootInfo`]).
     /// - `safe_db_fallback`: Flag to indicate whether to fallback to timestamp-based L1 head
     ///   estimation when `SafeDB` is not available.
+    ///
+    /// Intermediate roots are sampled every [`base_proof_zk_utils::INTERMEDIATE_ROOT_INTERVAL`]
+    /// blocks.
     pub async fn fetch(
         &self,
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
-        intermediate_block_interval: u64,
         safe_db_fallback: bool,
         schedule_l2_block_number: Option<u64>,
     ) -> Result<HostConfig> {
@@ -85,13 +85,7 @@ impl SuccinctHost {
         };
 
         self.fetcher
-            .get_host_args(
-                l2_start_block,
-                l2_end_block,
-                l1_head_hash,
-                intermediate_block_interval,
-                schedule_l2_block_number,
-            )
+            .get_host_args(l2_start_block, l2_end_block, l1_head_hash, schedule_l2_block_number)
             .await
     }
 

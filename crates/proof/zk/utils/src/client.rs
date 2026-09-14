@@ -15,8 +15,8 @@ use base_proof_preimage::{CommsClient, PreimageKey};
 use base_protocol::L2BlockInfo;
 use tracing::{error, info, warn};
 
-/// The default interval (in blocks) at which intermediate output roots are recorded.
-pub const DEFAULT_INTERMEDIATE_ROOT_INTERVAL: u64 = 10;
+/// Fixed interval (in blocks) at which the ZK range program records intermediate output roots.
+pub const INTERMEDIATE_ROOT_INTERVAL: u64 = 30;
 
 /// Fetches the safe head hash of the L2 chain based on the agreed upon L2 output root in the
 /// [`BootInfo`].
@@ -49,28 +49,25 @@ where
 /// ## Takes
 /// - `cfg`: The rollup configuration.
 /// - `target`: The target block number.
-/// - `intermediate_root_interval`: The interval (in blocks) at which to record intermediate output
-///   roots. A value of 1 records every block (default behavior). A value of N > 1 records every
-///   N-th block.
+///
+/// Intermediate output roots are recorded every [`INTERMEDIATE_ROOT_INTERVAL`] blocks.
 ///
 /// ## Returns
 /// - `Ok((l2_safe_head, output_root, intermediate_roots))` - A tuple containing the [`L2BlockInfo`]
-///   of the produced block, the output root, and the intermediate output roots at the specified
-///   interval.
+///   of the produced block, the output root, and the intermediate output roots at
+///   [`INTERMEDIATE_ROOT_INTERVAL`].
 /// - `Err(e)` - An error if the block could not be produced.
 #[allow(clippy::result_large_err)]
 pub async fn advance_to_target<E, DP, P>(
     driver: &mut Driver<E, DP, P>,
     cfg: &RollupConfig,
     mut target: Option<u64>,
-    intermediate_root_interval: u64,
 ) -> DriverResult<(L2BlockInfo, B256, Vec<B256>), E::Error>
 where
     E: Executor + Send + Sync + Debug,
     DP: DriverPipeline<P> + Send + Sync + Debug,
     P: Pipeline + SignalReceiver + Send + Sync + Debug,
 {
-    let interval = intermediate_root_interval.max(1);
     let mut blocks_processed: u64 = 0;
     let mut intermediate_roots: Vec<B256> = Vec::new();
     loop {
@@ -192,7 +189,7 @@ where
             L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)?;
         let output_root = driver.executor.compute_output_root().map_err(DriverError::Executor)?;
         blocks_processed += 1;
-        if blocks_processed.is_multiple_of(interval) {
+        if blocks_processed.is_multiple_of(INTERMEDIATE_ROOT_INTERVAL) {
             intermediate_roots.push(output_root);
         }
         let tip_cursor = TipCursor::new(l2_info, outcome.header, output_root);
