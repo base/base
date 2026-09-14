@@ -11,6 +11,7 @@ use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
+use base_execution_profiling::ProfilingConfig;
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
@@ -534,6 +535,71 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
                 interval: args.shadow_indexer_retention_interval,
             },
         })
+    }
+}
+
+const DEFAULT_PROFILING_PORT: u16 = 6061;
+
+/// CLI arguments for a node's opt-in CPU profiling HTTP server.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ProfilingArgs {
+    /// Enable the CPU profiling HTTP server.
+    #[arg(long = "enable-profiling", env = "ENABLE_PROFILING")]
+    pub enable_profiling: bool,
+
+    /// TCP port used by the CPU profiling HTTP server.
+    ///
+    /// Port 6061 avoids the builder's WS (8546), RPC (8545), auth RPC (8551), metrics (6060),
+    /// discovery and P2P (30303), and discovery v5 (9200) listeners.
+    #[arg(
+        id = "profiling_port",
+        long = "profiling.port",
+        env = "PROFILING_PORT",
+        default_value_t = DEFAULT_PROFILING_PORT,
+        requires = "enable_profiling"
+    )]
+    pub port: u16,
+
+    /// Maximum requested profile duration in seconds.
+    #[arg(
+        long = "profiling.max-seconds",
+        env = "PROFILING_MAX_SECONDS",
+        default_value_t = 60,
+        value_parser = clap::value_parser!(u64).range(1..),
+        requires = "enable_profiling"
+    )]
+    pub max_seconds: u64,
+
+    /// Sampling frequency used when a profiling request omits one.
+    #[arg(
+        long = "profiling.default-frequency",
+        env = "PROFILING_DEFAULT_FREQUENCY",
+        default_value_t = 101,
+        value_parser = clap::value_parser!(u32).range(1..=1000),
+        requires = "enable_profiling"
+    )]
+    pub default_frequency: u32,
+}
+
+impl Default for ProfilingArgs {
+    fn default() -> Self {
+        Self {
+            enable_profiling: false,
+            port: DEFAULT_PROFILING_PORT,
+            max_seconds: 60,
+            default_frequency: 101,
+        }
+    }
+}
+
+impl From<&ProfilingArgs> for ProfilingConfig {
+    fn from(args: &ProfilingArgs) -> Self {
+        Self {
+            enabled: args.enable_profiling,
+            port: args.port,
+            max_seconds: args.max_seconds,
+            default_frequency: args.default_frequency,
+        }
     }
 }
 
@@ -1622,5 +1688,64 @@ mod tests {
 
         StandardBaseRethNode::runner(args)
             .expect("STATE_ and unknown schedule names must not fail opcode parse");
+    }
+
+    #[test]
+    fn profiling_args_map_to_config() {
+        let args = CommandParser::<ProfilingArgs>::parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.port",
+            "6062",
+            "--profiling.max-seconds",
+            "45",
+            "--profiling.default-frequency",
+            "99",
+        ])
+        .args;
+
+        assert_eq!(
+            ProfilingConfig::from(&args),
+            ProfilingConfig { enabled: true, port: 6062, max_seconds: 45, default_frequency: 99 }
+        );
+    }
+
+    #[test]
+    fn profiling_rejects_zero_max_seconds() {
+        let error = CommandParser::<ProfilingArgs>::try_parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.max-seconds",
+            "0",
+        ])
+        .expect_err("zero max-seconds should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn profiling_rejects_out_of_range_default_frequency() {
+        let error = CommandParser::<ProfilingArgs>::try_parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.default-frequency",
+            "1001",
+        ])
+        .expect_err("default-frequency above 1000 should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn profiling_rejects_zero_default_frequency() {
+        let error = CommandParser::<ProfilingArgs>::try_parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.default-frequency",
+            "0",
+        ])
+        .expect_err("zero default-frequency should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }

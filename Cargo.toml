@@ -181,7 +181,6 @@ base-builder-core = { path = "crates/builder/core" }
 base-builder-multiplex = { path = "crates/builder/multiplex" }
 base-builder-publish = { path = "crates/builder/publish" }
 base-builder-metering = { path = "crates/builder/metering" }
-base-builder-profiling = { path = "crates/builder/profiling" }
 
 # Consensus
 base-consensus-cli = { path = "crates/consensus/cli" }
@@ -214,6 +213,7 @@ base-flashblocks = { path = "crates/execution/flashblocks" }
 base-execution-txpool = { path = "crates/execution/txpool" }
 base-proofs-extension = { path = "crates/execution/proofs" }
 base-tx-forwarding = { path = "crates/execution/tx-forwarding" }
+base-execution-profiling = { path = "crates/execution/profiling" }
 base-execution-chainspec = { path = "crates/execution/chainspec" }
 base-execution-consensus = { path = "crates/execution/consensus" }
 base-txpool-tracing = { path = "crates/execution/txpool-tracing" }

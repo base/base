@@ -114,8 +114,8 @@ impl CpuProfiler {
         if !(MIN_FREQUENCY_HZ..=MAX_FREQUENCY_HZ).contains(&hz) {
             return Err(ProfilerError::InvalidFrequency { frequency: hz });
         }
-        let pprof_frequency =
-            i32::try_from(hz).map_err(|_| ProfilerError::InvalidFrequency { frequency: hz })?;
+        // The range check above bounds hz to 1..=1000, which always fits in i32.
+        let pprof_frequency = hz as i32;
 
         let capture_permit =
             Arc::clone(&self.capture_lock).try_lock_owned().map_err(|_| ProfilerError::Busy)?;

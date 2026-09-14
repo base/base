@@ -1,5 +1,5 @@
 //! Node extension that owns the profiler's lifetime and binds the profiling HTTP server
-//! alongside the builder's other observability endpoints.
+//! alongside the node's other observability endpoints.
 
 use base_node_runner::{BaseNodeExtension, FromExtensionConfig, NodeHooks};
 use tokio_util::sync::CancellationToken;
@@ -38,6 +38,16 @@ impl FromExtensionConfig for ProfilingExtension {
     type Config = ProfilingConfig;
 
     fn from_config(config: Self::Config) -> Self {
+        assert!(
+            config.max_seconds >= 1,
+            "profiling max_seconds must be >= 1, got {}",
+            config.max_seconds
+        );
+        assert!(
+            (1..=1000).contains(&config.default_frequency),
+            "profiling default_frequency must be in 1..=1000, got {}",
+            config.default_frequency
+        );
         let profiler = CpuProfiler::new(config.max_seconds, config.default_frequency);
         Self { cfg: config, profiler }
     }
@@ -59,11 +69,11 @@ impl BaseNodeExtension for ProfilingExtension {
             let executor = node.task_executor;
             warn!(
                 port = %port,
-                "CPU profiling endpoint ENABLED - do not run this configuration on the main builder"
+                "CPU profiling endpoint ENABLED - do not enable this on a block-producing node"
             );
 
             // Unlike shadow-indexer's fail-fast writer, profiling is optional observability. A
-            // server failure is logged but must not take the builder down.
+            // server failure is logged but must not take the node down.
             executor.spawn_with_graceful_shutdown_signal(move |shutdown| async move {
                 let cancel = CancellationToken::new();
                 let server = ProfilingServer::new(port, profiler, cancel.clone());
