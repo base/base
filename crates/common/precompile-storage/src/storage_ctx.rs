@@ -14,7 +14,7 @@ use alloy_sol_types::SolInterface;
 use revm::{context::journaled_state::JournalCheckpoint, state::Bytecode};
 
 use crate::{
-    error::{BasePrecompileError, IntoPrecompileResult, Result},
+    error::{BasePrecompileError, Result},
     neutral::{AccountInfo, PrecompileOutput, PrecompileResult},
     provider::{PrecompileStorageProvider, StorageFeatures},
 };
@@ -262,7 +262,11 @@ impl<'a> StorageCtx<'a> {
 
     /// Returns a [`PrecompileResult`] constructed from the given error.
     pub fn error_result(&self, error: impl Into<BasePrecompileError>) -> PrecompileResult {
-        error.into().into_precompile_result(self.gas_used(), self.state_gas_used())
+        error.into().into_precompile_result_with_features(
+            self.gas_used(),
+            self.state_gas_used(),
+            self.storage_features(),
+        )
     }
 
     /// Converts a `Result<T>` into a [`PrecompileResult`], reading all gas accounting fields
@@ -280,12 +284,10 @@ impl<'a> StorageCtx<'a> {
         result: Result<T>,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
-        result.into_precompile_result(
-            self.gas_used(),
-            self.state_gas_used(),
-            self.gas_refunded(),
-            encode_ok,
-        )
+        match result {
+            Ok(output) => Ok(self.success_output(encode_ok(output))),
+            Err(error) => self.error_result(error),
+        }
     }
 }
 
@@ -553,6 +555,33 @@ mod tests {
 
         assert!(output.is_revert());
         assert_eq!(output.gas_refunded, 0, "error path must not propagate gas_refunded");
+    }
+
+    #[test]
+    fn result_output_gates_abi_decode_error_encoding_at_cobalt() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let error =
+            || BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() };
+
+        let mut legacy = crate::hashmap::HashMapStorageProvider::new(1);
+        let legacy_output = StorageCtx::enter(&mut legacy, |ctx| {
+            ctx.result_output::<Bytes>(Err(error()), |output| output)
+        })
+        .unwrap();
+        assert_eq!(
+            legacy_output.bytes,
+            Bytes::from([selector.as_slice(), b"decoder error"].concat())
+        );
+
+        let mut cobalt = crate::hashmap::HashMapStorageProvider::new_with_storage_features(
+            1,
+            StorageFeatures::Cobalt,
+        );
+        let cobalt_output = StorageCtx::enter(&mut cobalt, |ctx| {
+            ctx.result_output::<Bytes>(Err(error()), |output| output)
+        })
+        .unwrap();
+        assert_eq!(cobalt_output.bytes, Bytes::from(selector.to_vec()));
     }
 
     #[test]
