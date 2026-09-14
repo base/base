@@ -9,6 +9,14 @@ use url::Url;
 /// EL to be considered "at tip".
 pub const DEFAULT_TIP_THRESHOLD_SECS: u64 = 10;
 
+/// Default number of archive streams compressed and uploaded concurrently.
+///
+/// This preserves parallel packaging of the state, RocksDB-index, and proofs databases while leaving capacity for another archive.
+pub const DEFAULT_MAX_STREAMING_ARCHIVES: usize = 4;
+
+/// Default global number of streamed S3 multipart parts allowed to upload concurrently.
+pub const DEFAULT_MAX_STREAMING_PART_UPLOADS: usize = 64;
+
 /// How the S3/R2 client is configured.
 #[derive(Debug, Clone, ValueEnum)]
 pub enum S3ConfigType {
@@ -49,17 +57,6 @@ pub struct SnapshotterConfig {
     #[arg(long, short = 'd')]
     pub source_datadir: PathBuf,
 
-    /// Output directory for snapshot archives and manifest.
-    ///
-    /// A unique subdirectory is created per run.
-    #[arg(long, short = 'o')]
-    pub output_dir: PathBuf,
-
-    /// Upload an already-generated `run-<timestamp>` directory from `output_dir`
-    /// instead of stopping the EL and regenerating snapshot artifacts.
-    #[arg(long)]
-    pub upload_existing_run_timestamp: Option<u64>,
-
     /// S3-compatible bucket name.
     #[arg(long)]
     pub bucket: String,
@@ -95,6 +92,21 @@ pub struct SnapshotterConfig {
     /// Defaults to Rayon's global thread count, normally the available CPU count.
     #[arg(long)]
     pub snapshot_threads: Option<usize>,
+
+    /// Maximum number of archive streams compressed and uploaded concurrently.
+    ///
+    /// The default of four preserves parallel compression of the state, RocksDB-index, and
+    /// proofs databases while leaving capacity for another archive. Each active stream can retain roughly 1.25 `GiB` of compressed data
+    /// while an S3 multipart part is uploaded and retried; lower this on memory-constrained nodes.
+    #[arg(long, env = "SNAPSHOTTER_MAX_STREAMING_ARCHIVES", default_value = "4")]
+    pub max_streaming_archives: NonZeroUsize,
+
+    /// Maximum number of concurrently uploading S3 parts across all streamed archives.
+    ///
+    /// This is intentionally environment-only (`SNAPSHOTTER_MAX_STREAMING_PART_UPLOADS`). With
+    /// 128 `MiB` parts, the default of 64 bounds queued/in-flight compressed parts to roughly 8 `GiB`.
+    #[arg(env = "SNAPSHOTTER_MAX_STREAMING_PART_UPLOADS", default_value = "64")]
+    pub max_streaming_part_uploads: NonZeroUsize,
 
     /// Number of completed timestamped snapshot run directories to retain remotely.
     ///
