@@ -194,6 +194,7 @@ impl BaseChainSpec {
             (BaseUpgrade::Azul.boxed(), azul_time),
             (BaseUpgrade::Beryl.boxed(), beryl_time),
             (BaseUpgrade::Cobalt.boxed(), cobalt_time),
+            (EthereumHardfork::Amsterdam.boxed(), denim_time),
             (BaseUpgrade::Denim.boxed(), denim_time),
             (BaseUpgrade::Zenith.boxed(), zenith_time),
         ];
@@ -940,6 +941,33 @@ mod tests {
     }
 
     #[test]
+    fn runtime_registry_pairs_denim_with_amsterdam() {
+        let chain_id = 9_100_008;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let spec = BaseChainSpecBuilder::default()
+            .chain(Chain::from_id(chain_id))
+            .genesis(Genesis::default())
+            .build();
+
+        assert_eq!(spec.fork(EthereumHardfork::Amsterdam), ForkCondition::Never);
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Denim, 42);
+
+        assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(42));
+        assert_eq!(spec.fork(EthereumHardfork::Amsterdam), ForkCondition::Timestamp(42));
+        assert!(!spec.is_amsterdam_active_at_timestamp(41));
+        assert!(spec.is_amsterdam_active_at_timestamp(42));
+        let runtime_spec = spec.runtime_chain_spec();
+        assert!(!runtime_spec.is_amsterdam_active_at_timestamp(41));
+        assert!(runtime_spec.is_amsterdam_active_at_timestamp(42));
+
+        RuntimeUpgradeRegistry::clear_activation_timestamp(chain_id, BaseUpgrade::Denim);
+        assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
+        assert_eq!(spec.fork(EthereumHardfork::Amsterdam), ForkCondition::Never);
+        assert!(!spec.runtime_chain_spec().is_amsterdam_active_at_timestamp(u64::MAX));
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[test]
     fn forks_iter_surfaces_runtime_scheduled_absent_fork() {
         let chain_id = 9_100_007;
         RuntimeUpgradeRegistry::clear_chain(chain_id);
@@ -1054,6 +1082,8 @@ mod tests {
     fn builtin_chain_specs_never_activate_denim_or_zenith() {
         // Built-in production schedules do not configure Denim or genesis-only Zenith.
         for spec in [BaseChainSpec::mainnet(), BaseChainSpec::sepolia(), BaseChainSpec::devnet()] {
+            assert_eq!(spec.fork(EthereumHardfork::Amsterdam), ForkCondition::Never);
+            assert!(!spec.is_amsterdam_active_at_timestamp(u64::MAX));
             assert_eq!(spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 0));
             assert!(!spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, u64::MAX));
@@ -1400,6 +1430,8 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Cobalt, 65));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 899_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Denim, 900_000));
+        assert!(!chain_spec.is_amsterdam_active_at_timestamp(899_999));
+        assert!(chain_spec.is_amsterdam_active_at_timestamp(900_000));
         assert!(!chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 999_999));
         assert!(chain_spec.is_fork_active_at_timestamp(BaseUpgrade::Zenith, 1_000_000));
     }
@@ -1413,16 +1445,22 @@ mod tests {
         chain_spec.set_fork(BaseUpgrade::Cobalt, ForkCondition::Never);
         assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Azul, 42));
         assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Cobalt, 84));
+        assert!(chain_spec.set_hardfork_activation_timestamp(BaseUpgrade::Denim, 126));
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Timestamp(42));
         assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Timestamp(84));
+        assert!(!chain_spec.is_amsterdam_active_at_timestamp(125));
+        assert!(chain_spec.is_amsterdam_active_at_timestamp(126));
+        assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(126));
 
         chain_spec.clear_hardfork_activation_timestamps();
 
         assert_eq!(chain_spec.fork(EthereumHardfork::Osaka), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Azul), ForkCondition::Never);
         assert_eq!(chain_spec.fork(BaseUpgrade::Cobalt), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Never);
+        assert_eq!(chain_spec.fork(EthereumHardfork::Amsterdam), ForkCondition::Never);
     }
 
     #[test]
