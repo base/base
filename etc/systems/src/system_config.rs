@@ -174,6 +174,12 @@ pub struct DevnetSnapshotConfig {
     /// Block interval for locally produced descendants.
     #[serde(default)]
     pub block_interval: DevnetBlockInterval,
+    /// Optional elasticity override for locally sequenced snapshot descendants.
+    ///
+    /// This changes only the synthetic standalone sequencer's payload attributes; it does not
+    /// modify the captured snapshot's system configuration.
+    #[serde(default)]
+    pub eip1559_elasticity_override: Option<u32>,
 }
 
 /// Initial execution state used by a devnet stack.
@@ -349,6 +355,7 @@ impl DevnetConfig {
                 expected_head: None,
                 prefund: None,
                 block_interval: DevnetBlockInterval::default(),
+                eip1559_elasticity_override: None,
             })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,
@@ -376,6 +383,10 @@ impl DevnetConfig {
         );
         ensure!(snapshot.builder_datadir.is_dir(), "builder snapshot datadir does not exist");
         ensure!(snapshot.client_datadir.is_dir(), "client snapshot datadir does not exist");
+        ensure!(
+            snapshot.eip1559_elasticity_override != Some(0),
+            "snapshot EIP-1559 elasticity override must be greater than zero"
+        );
 
         let builder_datadir = std::fs::canonicalize(&snapshot.builder_datadir)
             .wrap_err("Failed to resolve builder snapshot datadir")?;
@@ -455,6 +466,10 @@ mod tests {
         assert_eq!(config.l1_chain_id, 1);
         assert_eq!(config.l2_chain_id, 8453);
         assert_eq!(config.l1_mode, DevnetL1Mode::None);
+        let DevnetL2State::Snapshot(snapshot) = &config.l2_state else {
+            panic!("snapshot constructor must create snapshot state")
+        };
+        assert_eq!(snapshot.eip1559_elasticity_override, None);
         config.validate().expect("Base mainnet snapshot config should be valid");
     }
 

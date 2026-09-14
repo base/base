@@ -106,6 +106,9 @@ pub struct SnapshotBenchmarkArgs {
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
 const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
+/// Use the full block gas limit as the EIP-1559 target in snapshot benchmarks, so synthetic
+/// benchmark load cannot raise the base fee and strand already-submitted transaction nonce lanes.
+const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
 
 impl BenchmarkCli {
@@ -265,6 +268,7 @@ impl SnapshotBenchmarkArgs {
             unreachable!("snapshot constructor must create snapshot state")
         };
         snapshot.block_interval = block_interval;
+        snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 

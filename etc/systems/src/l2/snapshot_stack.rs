@@ -8,7 +8,7 @@ use std::{
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_rpc_types_eth::SyncStatus as EthSyncStatus;
-use base_common_genesis::{BaseUpgrade, RollupConfig};
+use base_common_genesis::{BaseUpgrade, RollupConfig, SystemConfig};
 use base_common_network::Base;
 use base_consensus_node::StandalonePrefund;
 use base_execution_chainspec::BaseChainSpec;
@@ -124,6 +124,10 @@ impl SnapshotL2Stack {
             first_block_timestamp > boundary.head.timestamp,
             "snapshot boundary timestamp must be earlier than the local schedule anchor"
         );
+        let system_config = Self::with_eip1559_elasticity_override(
+            boundary.system_config,
+            config.snapshot.eip1559_elasticity_override,
+        );
         let rollup_config = Arc::new(Self::anchored_rollup_config(
             (*canonical_rollup_config).clone(),
             boundary.head.number,
@@ -182,7 +186,7 @@ impl SnapshotL2Stack {
                 jwt_secret,
                 l2_engine_url: builder.engine_url()?,
                 l1_info: boundary.l1_info,
-                system_config: boundary.system_config,
+                system_config,
                 prefund,
             })
             .await
@@ -290,6 +294,17 @@ impl SnapshotL2Stack {
                 .set_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(first_block_timestamp));
         }
         chain_spec
+    }
+
+    /// Applies the benchmark-only EIP-1559 elasticity override to locally sequenced payloads.
+    fn with_eip1559_elasticity_override(
+        mut system_config: SystemConfig,
+        elasticity_override: Option<u32>,
+    ) -> SystemConfig {
+        if let Some(elasticity) = elasticity_override {
+            system_config.eip1559_elasticity = Some(elasticity);
+        }
+        system_config
     }
 
     fn schedule_anchor(now: SystemTime) -> Result<u64> {
@@ -419,7 +434,7 @@ impl SnapshotL2Stack {
 #[cfg(test)]
 mod tests {
     use base_common_chains::{ChainConfig, Upgrades};
-    use base_common_genesis::BaseUpgrade;
+    use base_common_genesis::{BaseUpgrade, SystemConfig};
     use base_execution_chainspec::BaseChainSpec;
     use reth_ethereum_forks::ForkCondition;
 
@@ -493,6 +508,24 @@ mod tests {
         assert!(!chain_spec.is_denim_active_at_timestamp(activation - 1));
         assert!(chain_spec.is_denim_active_at_timestamp(activation));
         assert_eq!(chain_spec.fork(BaseUpgrade::Denim), ForkCondition::Timestamp(activation));
+    }
+
+    #[test]
+    fn snapshot_elasticity_override_preserves_other_system_config_fields() {
+        let original = SystemConfig {
+            gas_limit: 1_200_000_000,
+            eip1559_denominator: Some(50),
+            eip1559_elasticity: Some(6),
+            min_base_fee: Some(5_000_000),
+            ..Default::default()
+        };
+
+        let overridden = SnapshotL2Stack::with_eip1559_elasticity_override(original, Some(1));
+
+        assert_eq!(overridden.eip1559_elasticity, Some(1));
+        assert_eq!(overridden.eip1559_denominator, original.eip1559_denominator);
+        assert_eq!(overridden.gas_limit, original.gas_limit);
+        assert_eq!(overridden.min_base_fee, original.min_base_fee);
     }
 
     #[test]
