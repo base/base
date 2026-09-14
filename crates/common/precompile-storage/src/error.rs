@@ -10,7 +10,10 @@ sol! {
 }
 use revm::context::journaled_state::JournalLoadError;
 
-use crate::neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult};
+use crate::{
+    neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult},
+    provider::StorageFeatures,
+};
 
 /// Top-level error type for all Base native precompile operations.
 #[derive(
@@ -109,9 +112,18 @@ impl BasePrecompileError {
 
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
     ///
-    /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
-    /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
+    /// Internal dispatch diagnostics use their legacy encoding before Cobalt activation.
     pub fn into_precompile_result(self, gas: u64, state_gas: u64) -> PrecompileResult {
+        self.into_precompile_result_with_features(gas, state_gas, StorageFeatures::Legacy)
+    }
+
+    /// Converts this error using the supplied fork-dependent features.
+    pub fn into_precompile_result_with_features(
+        self,
+        gas: u64,
+        state_gas: u64,
+        features: StorageFeatures,
+    ) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
@@ -128,7 +140,9 @@ impl BasePrecompileError {
             Self::UnknownFunctionSelector(sel) => sel.to_vec().into(),
             Self::AbiDecodeFailed { selector, error } => {
                 let mut bytes = selector.to_vec();
-                bytes.extend_from_slice(error.as_bytes());
+                if !features.selector_only_abi_decode_errors_enabled() {
+                    bytes.extend_from_slice(error.as_bytes());
+                }
                 bytes.into()
             }
         };
@@ -192,6 +206,30 @@ mod tests {
         let output = result.unwrap();
         assert!(output.is_revert());
         assert_eq!(output.bytes, expected);
+    }
+
+    #[test]
+    fn abi_decode_failure_preserves_legacy_message_before_cobalt() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let output =
+            BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() }
+                .into_precompile_result(0, 0)
+                .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from([selector.as_slice(), b"decoder error"].concat()));
+    }
+
+    #[test]
+    fn abi_decode_failure_encodes_as_selector_only_at_cobalt() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let output =
+            BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() }
+                .into_precompile_result_with_features(0, 0, StorageFeatures::Cobalt)
+                .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(selector.to_vec()));
     }
 
     #[test]

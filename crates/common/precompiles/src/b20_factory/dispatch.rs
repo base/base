@@ -269,6 +269,32 @@ mod tests {
         StorageCtx::enter(&mut storage, |ctx| {
             let output = dispatch_factory_revert(ctx, call);
             assert!(output.starts_with(&IB20Factory::createB20Call::SELECTOR));
+            assert!(output.len() > IB20Factory::createB20Call::SELECTOR.len());
+        });
+    }
+
+    #[test]
+    fn invalid_params_encoding_returns_selector_only_at_cobalt() {
+        let mut storage = HashMapStorageProvider::new_with_storage_features(
+            1,
+            base_precompile_storage::StorageFeatures::Cobalt,
+        );
+        activate_precompiles(&mut storage);
+        let call = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt: B256::repeat_byte(0x04),
+            params: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            initCalls: Vec::new(),
+        };
+
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let output = factory
+                .dispatch(ctx, &call.abi_encode(), BaseUpgrade::Cobalt)
+                .expect("dispatch must not fail fatally");
+
+            assert!(output.is_revert());
+            assert_eq!(output.bytes, Bytes::from(IB20Factory::createB20Call::SELECTOR));
         });
     }
 
