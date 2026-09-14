@@ -9,6 +9,7 @@ use tracing::info;
 
 const MIN_FREQUENCY_HZ: u32 = 1;
 const MAX_FREQUENCY_HZ: u32 = 1_000;
+const MIN_CAPTURE: Duration = Duration::from_secs(1);
 
 /// Errors returned while capturing a CPU profile.
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +24,14 @@ pub enum ProfilerError {
         requested: Duration,
         /// Maximum supported capture duration.
         maximum: Duration,
+    },
+    /// Requested duration is below the minimum that yields a usable profile.
+    #[error("cpu profile duration {requested:?} is below minimum {minimum:?}")]
+    DurationTooShort {
+        /// Requested capture duration.
+        requested: Duration,
+        /// Minimum supported capture duration.
+        minimum: Duration,
     },
     /// Requested sampling frequency is outside the supported range.
     #[error("cpu profile frequency {frequency} Hz must be between 1 and 1000 Hz")]
@@ -103,11 +112,16 @@ impl CpuProfiler {
         duration: Duration,
         frequency: Option<u32>,
     ) -> Result<Vec<u8>, ProfilerError> {
-        // The preallocated pprof collector costs 200 MB+ of RSS while its guard is live. Reject
-        // longer captures so an unbounded request cannot retain that allocation on a mainnet node.
+        // pprof keeps its sample collector resident for the lifetime of the guard, so bound the
+        // capture window to stop an unbounded request from holding that allocation on a mainnet node.
         let maximum = Duration::from_secs(self.max_capture_seconds);
         if duration > maximum {
             return Err(ProfilerError::DurationTooLong { requested: duration, maximum });
+        }
+        // A sub-second window samples too few stacks to be useful and a zero duration would run
+        // pprof for no reason, so reject anything below the minimum.
+        if duration < MIN_CAPTURE {
+            return Err(ProfilerError::DurationTooShort { requested: duration, minimum: MIN_CAPTURE });
         }
 
         let hz = frequency.unwrap_or(self.default_frequency_hz);
@@ -188,11 +202,39 @@ mod tests {
     }
 
     #[test]
+    fn capture_rejects_zero_duration() {
+        let profiler = CpuProfiler::new(60, 101);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+
+        let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
+
+        assert!(matches!(
+            result,
+            Err(ProfilerError::DurationTooShort { requested, minimum })
+                if requested == Duration::ZERO && minimum == Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn capture_rejects_sub_second_duration() {
+        let profiler = CpuProfiler::new(60, 101);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+
+        let result = runtime.block_on(profiler.capture(Duration::from_millis(999), None));
+
+        assert!(matches!(
+            result,
+            Err(ProfilerError::DurationTooShort { requested, minimum })
+                if requested == Duration::from_millis(999) && minimum == Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
     fn capture_uses_configured_default_frequency_when_omitted() {
         let profiler = CpuProfiler::new(60, 0);
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
-        let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
+        let result = runtime.block_on(profiler.capture(Duration::from_secs(1), None));
 
         assert!(matches!(result, Err(ProfilerError::InvalidFrequency { frequency: 0 })));
     }
@@ -202,7 +244,7 @@ mod tests {
         let profiler = CpuProfiler::new(60, u32::MAX);
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
-        let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
+        let result = runtime.block_on(profiler.capture(Duration::from_secs(1), None));
 
         assert!(matches!(
             result,
@@ -233,7 +275,7 @@ mod tests {
         let first_capture = profiler.capture_lock.try_lock().unwrap();
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
 
-        let result = runtime.block_on(profiler.capture(Duration::ZERO, None));
+        let result = runtime.block_on(profiler.capture(Duration::from_secs(1), None));
 
         assert!(matches!(result, Err(ProfilerError::Busy)));
         drop(first_capture);
