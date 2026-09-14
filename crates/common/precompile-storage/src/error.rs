@@ -10,7 +10,10 @@ sol! {
 }
 use revm::context::journaled_state::JournalLoadError;
 
-use crate::neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult};
+use crate::{
+    neutral::{PrecompileError, PrecompileHalt, PrecompileOutput, PrecompileResult},
+    provider::StorageFeatures,
+};
 
 /// Top-level error type for all Base native precompile operations.
 #[derive(
@@ -109,9 +112,18 @@ impl BasePrecompileError {
 
     /// ABI-encodes this error and wraps it as a [`PrecompileResult`] (revert or fatal error).
     ///
-    /// Internal dispatch diagnostics use compact, non-ABI revert data: unknown selectors return the
-    /// raw selector bytes, and decode failures return `selector || utf8_error_string`.
+    /// Internal dispatch diagnostics use their legacy encoding before Cobalt activation.
     pub fn into_precompile_result(self, gas: u64, state_gas: u64) -> PrecompileResult {
+        self.into_precompile_result_with_features(gas, state_gas, StorageFeatures::Legacy)
+    }
+
+    /// Converts this error using the supplied fork-dependent features.
+    pub fn into_precompile_result_with_features(
+        self,
+        gas: u64,
+        state_gas: u64,
+        features: StorageFeatures,
+    ) -> PrecompileResult {
         let bytes: Bytes = match self {
             Self::Revert(bytes) => bytes,
             Self::Panic(kind) => Panic { code: U256::from(kind as u32) }.abi_encode().into(),
@@ -128,7 +140,9 @@ impl BasePrecompileError {
             Self::UnknownFunctionSelector(sel) => sel.to_vec().into(),
             Self::AbiDecodeFailed { selector, error } => {
                 let mut bytes = selector.to_vec();
-                bytes.extend_from_slice(error.as_bytes());
+                if !features.selector_only_abi_decode_errors_enabled() {
+                    bytes.extend_from_slice(error.as_bytes());
+                }
                 bytes.into()
             }
         };
@@ -149,12 +163,15 @@ pub trait IntoPrecompileResult<T> {
     /// accounting under the EIP-3529 cap (`gas_used / 5`).
     ///
     /// On error, `gas_refunded` is not propagated: refunds are only meaningful on successful
-    /// execution and the error arm delegates to [`BasePrecompileError::into_precompile_result`].
+    /// execution and the error arm delegates to
+    /// [`BasePrecompileError::into_precompile_result_with_features`].
+    /// `features` selects the fork-dependent error encoding.
     fn into_precompile_result(
         self,
         gas: u64,
         state_gas: u64,
         gas_refunded: i64,
+        features: StorageFeatures,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult;
 }
@@ -165,6 +182,7 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
         gas: u64,
         state_gas: u64,
         gas_refunded: i64,
+        features: StorageFeatures,
         encode_ok: impl FnOnce(T) -> Bytes,
     ) -> PrecompileResult {
         match self {
@@ -173,7 +191,7 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
                 out.gas_refunded = gas_refunded;
                 Ok(out)
             }
-            Err(err) => err.into_precompile_result(gas, state_gas),
+            Err(err) => err.into_precompile_result_with_features(gas, state_gas, features),
         }
     }
 }
@@ -195,9 +213,33 @@ mod tests {
     }
 
     #[test]
+    fn abi_decode_failure_preserves_legacy_message_before_cobalt() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let output =
+            BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() }
+                .into_precompile_result(0, 0)
+                .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from([selector.as_slice(), b"decoder error"].concat()));
+    }
+
+    #[test]
+    fn abi_decode_failure_encodes_as_selector_only_at_cobalt() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let output =
+            BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() }
+                .into_precompile_result_with_features(0, 0, StorageFeatures::Cobalt)
+                .unwrap();
+
+        assert!(output.is_revert());
+        assert_eq!(output.bytes, Bytes::from(selector.to_vec()));
+    }
+
+    #[test]
     fn into_precompile_result_propagates_gas_refunded_on_success() {
         let ok: Result<Bytes> = Ok(Bytes::from("out"));
-        let out = ok.into_precompile_result(500, 0, 200, |b| b).unwrap();
+        let out = ok.into_precompile_result(500, 0, 200, StorageFeatures::Legacy, |b| b).unwrap();
 
         assert!(out.is_success());
         assert_eq!(out.gas_used, 500);
@@ -207,20 +249,21 @@ mod tests {
     #[test]
     fn into_precompile_result_zero_refund_on_success() {
         let ok: Result<Bytes> = Ok(Bytes::new());
-        let out = ok.into_precompile_result(0, 0, 0, |b| b).unwrap();
+        let out = ok.into_precompile_result(0, 0, 0, StorageFeatures::Legacy, |b| b).unwrap();
 
         assert!(out.is_success());
         assert_eq!(out.gas_refunded, 0);
     }
 
     #[test]
-    fn into_precompile_result_error_path_does_not_expose_refund_field() {
-        // The error path goes through BasePrecompileError::into_precompile_result which
-        // does not set gas_refunded (refunds are only meaningful on success).
-        let err: Result<Bytes> = Err(BasePrecompileError::Revert(Bytes::new()));
-        let out = err.into_precompile_result(100, 0, 999, |b| b).unwrap();
+    fn into_precompile_result_error_path_uses_features_without_refund() {
+        let selector = [0xde, 0xad, 0xbe, 0xef];
+        let err: Result<Bytes> =
+            Err(BasePrecompileError::AbiDecodeFailed { selector, error: "decoder error".into() });
+        let out = err.into_precompile_result(100, 0, 999, StorageFeatures::Cobalt, |b| b).unwrap();
 
         assert!(out.is_revert());
+        assert_eq!(out.bytes, Bytes::from(selector.to_vec()));
         assert_eq!(out.gas_refunded, 0, "error path must not propagate gas_refunded");
     }
 }
