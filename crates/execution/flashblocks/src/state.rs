@@ -96,8 +96,8 @@ impl FlashblocksState {
         let published = self.pending_blocks.load();
         let Some(stale) = published.as_ref() else { return };
 
-        // Measured from the snapshot tip. Width from the inherited earliest header is bounded
-        // by the reconciler's rebuild, not by this wipe.
+        // Measured from the snapshot tip. Width from the inherited earliest header is handled
+        // by the reconciler's rebuild, not this wipe.
         let latest_pending_block = stale.latest_block_number();
         if canonical_block_number.saturating_sub(latest_pending_block)
             <= self.max_pending_blocks_depth
@@ -106,7 +106,7 @@ impl FlashblocksState {
         }
 
         // Clear only the snapshot that was judged. The processor publishes concurrently, and
-        // anything it published after the load above is anchored on a later tip than this one.
+        // anything it published after the load above is tracking a later tip than this one.
         // Losing this race costs nothing, because an absent snapshot is always safe to serve.
         let current = self.pending_blocks.compare_and_swap(&published, None);
         if !current.as_ref().is_some_and(|current| Arc::ptr_eq(current, stale)) {

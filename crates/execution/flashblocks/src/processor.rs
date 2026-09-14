@@ -121,16 +121,11 @@ where
         self.canonical_tip().map_or(notified, |best| notified.max(best))
     }
 
-    /// Returns `true` when `pending_blocks` still tracks within `max_depth` blocks of canonical
-    /// height `best`.
+    /// Returns `true` when `pending_blocks`' tip is within `max_depth` of canonical height `best`.
     ///
-    /// Staleness is measured from the snapshot tip. [`PendingBlocksBuilder::from_previous`]
-    /// keeps the inherited earliest header so a healthy snapshot can grow wider than
-    /// `max_depth` while `latest` stays on the child of `best`. That width is bounded by
-    /// [`CanonicalBlockReconciler`]'s `DepthLimitExceeded` rebuild, which retains
-    /// post-canonical flashblocks. Measuring from earliest here would wipe a live snapshot
-    /// every few blocks and drop the rest of the current block.
-    fn is_anchored_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
+    /// Measured from latest, not earliest. [`PendingBlocksBuilder::from_previous`] freezes the
+    /// earliest header, so `best - earliest` is snapshot width; the reconciler rebuilds that.
+    fn is_tip_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
         best.saturating_sub(pending_blocks.latest_block_number()) <= self.max_depth
     }
 
@@ -147,7 +142,7 @@ where
     fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
         let Some(best) = self.canonical_tip() else { return true };
 
-        if !self.is_anchored_near(pending_blocks, best) {
+        if !self.is_tip_near(pending_blocks, best) {
             debug!(
                 message = "pending snapshot tip too far behind canonical tip, dropping",
                 canonical_tip = best,
@@ -183,7 +178,7 @@ where
         let pending_blocks = self.pending_blocks.load_full()?;
 
         let Some(best) = self.canonical_tip() else { return Some(pending_blocks) };
-        if self.is_anchored_near(&pending_blocks, best) {
+        if self.is_tip_near(&pending_blocks, best) {
             return Some(pending_blocks);
         }
 

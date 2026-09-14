@@ -24,21 +24,18 @@ node's real tip whenever applying updates is slower than receiving them.
 
 ### The invariant
 
-A published snapshot either still tracks flashblocks on the node's current canonical tip, or
+A published snapshot either tracks flashblocks near the node's current canonical tip, or
 there is no snapshot at all.
 
 This matters because consumers execute against `PendingBlocks::canonical_block_number`, the
-canonical block the overlay is layered on. A snapshot whose tip has stopped advancing leaves
-that base stranded. Width from an inherited earliest header is a thicker overlay on an older
-base, not a stalled tip; `CanonicalBlockReconciler` rebuilds when that width exceeds
-`max_pending_blocks_depth`.
+canonical block the overlay is layered on. While the snapshot tip stays close to the chain, that
+base stays useful. A snapshot whose tip has stopped advancing leaves the base stranded.
 
 `max_pending_blocks_depth` (CLI `--max-pending-blocks-depth`, default 3) sets the bound. Staleness
-is measured from the snapshot tip. `PendingBlocksBuilder::from_previous` keeps the inherited
-earliest header, so a healthy snapshot can grow wider than this bound while `latest` stays on
-the child of the tip. That width is bounded by `CanonicalBlockReconciler`'s `DepthLimitExceeded`
-rebuild, which retains post-canonical flashblocks instead of wiping. Measuring staleness from
-earliest would drop a live snapshot every few blocks and lose the rest of the current block.
+is measured from the snapshot tip. `from_previous` keeps the inherited earliest header, so a
+healthy snapshot can grow wider than this bound while still tracking the tip. That width is
+bounded by `CanonicalBlockReconciler`'s `DepthLimitExceeded` rebuild, which retains
+post-canonical flashblocks instead of wiping.
 
 Bounding the distance rather than requiring the anchor to equal the tip is deliberate. When
 flashblocks for the next block arrive before the processor has applied the current canonical
