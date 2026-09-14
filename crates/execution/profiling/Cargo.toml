@@ -1,6 +1,6 @@
 [package]
-name = "base-builder-profiling"
-description = "Continuous CPU profiling endpoint for the shadow builder"
+name = "base-execution-profiling"
+description = "Opt-in CPU profiling HTTP endpoint installable on any Base node"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
