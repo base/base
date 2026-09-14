@@ -275,7 +275,7 @@ impl<'a> StorageCtx<'a> {
     /// On success, `encode_ok` encodes the value and the output carries `gas_used`,
     /// `state_gas_used`, and `gas_refunded` from the context — the same fields that
     /// [`success_output`](Self::success_output) sets. On error, delegates to
-    /// [`BasePrecompileError::into_precompile_result`].
+    /// [`BasePrecompileError::into_precompile_result_with_features`].
     ///
     /// Use this instead of calling [`IntoPrecompileResult::into_precompile_result`] directly,
     /// so callers do not have to manually thread gas values through.
