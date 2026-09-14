@@ -267,6 +267,12 @@ impl BaseChainSpec {
     pub fn make_genesis_header(genesis: &Genesis, upgrades: &ChainHardforks) -> Header {
         let mut header = reth_chainspec::make_genesis_header(genesis, upgrades);
 
+        // Denim's EVM spec does not change Base's header format. Until Base introduces
+        // BAL commitments and slot numbers, genesis must match the headers produced
+        // by BaseBlockAssembler and reconstructed by the consensus payload types.
+        header.block_access_list_hash = None;
+        header.slot_number = None;
+
         if upgrades.fork(BaseUpgrade::Isthmus).active_at_timestamp(header.timestamp)
             && let Some(storage_root) = Self::l2_to_l1_message_passer_storage_root(genesis)
         {
@@ -1119,6 +1125,26 @@ mod tests {
             BaseChainSpec::zeronet().activation_admin_address(),
             Some(base_common_chains::ZERONET_BERYL_ACTIVATION_ADMIN_ADDRESS)
         );
+    }
+
+    #[test]
+    fn denim_at_genesis_preserves_base_header_format() {
+        let mut genesis = BaseChainSpec::devnet().genesis().clone();
+        let before = BaseChainSpec::from_genesis(genesis.clone());
+        let mut base = genesis
+            .config
+            .extra_fields
+            .get("base")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        base["denim"] = serde_json::json!(0);
+        genesis.config.extra_fields.insert("base".to_string(), base);
+        let denim = BaseChainSpec::from_genesis(genesis);
+
+        assert!(denim.is_amsterdam_active_at_timestamp(denim.genesis_header().timestamp));
+        assert_eq!(denim.genesis_header().block_access_list_hash, None);
+        assert_eq!(denim.genesis_header().slot_number, None);
+        assert_eq!(denim.genesis_hash(), before.genesis_hash());
     }
 
     #[test]
