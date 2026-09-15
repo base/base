@@ -528,6 +528,19 @@ impl EngineClient for MockEngineClient {
         )
     }
 
+    async fn l2_block_info_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<L2BlockInfo>, EngineClientError> {
+        let Some(block) = self.get_l2_block(hash.into()).full().await? else {
+            return Ok(None);
+        };
+        Ok(Some(L2BlockInfo::from_block_and_genesis(
+            &block.map_header(|header| header.into_inner()).into_consensus(),
+            &self.cfg.genesis,
+        )?))
+    }
+
     fn get_proof(
         &self,
         address: Address,
