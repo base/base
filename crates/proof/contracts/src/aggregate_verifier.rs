@@ -21,15 +21,19 @@ use crate::{
 /// The first `AggregateVerifier` version that exposes `intervalsForStartingBlock`.
 ///
 /// Compared as `(major, minor)`; the patch level is not part of the ABI contract.
-const FORK_AWARE_INTERVALS_VERSION: (u64, u64) = (0, 3);
+const FORK_AWARE_INTERVALS_VERSION: (u64, u64) = (0, 2);
 
 /// Returns whether an `AggregateVerifier` reporting `version` speaks the fork-aware
 /// interval ABI.
 ///
-/// The two ABIs are disjoint, not additive: 0.3.0 added `intervalsForStartingBlock` and
+/// The two ABIs are disjoint, not additive: 0.2.0 added `intervalsForStartingBlock` and
 /// *removed* `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`, which it split into
 /// `SLOW_*` and `FAST_*` pairs. Exactly one of the two call shapes is valid for any given
-/// address, and the version is what decides which.
+/// address, and the version is what decides which. 0.3.0 changed no ABI — it was a release
+/// semver bump — so the boundary is 0.2.0, and 0.1.x is the only legacy shape.
+///
+/// Nothing else in this interface differs between 0.1.0 and 0.3.0: every other method is
+/// present in both with an identical signature, so these three names are the whole split.
 ///
 /// A version string that does not parse is treated as fork-aware. Every deployed verifier
 /// reports `MAJOR.MINOR.PATCH`, so an unreadable one means these bindings are behind the
@@ -60,7 +64,7 @@ fn supports_fork_aware_intervals(version: &str) -> bool {
 /// (the anchor's successor, the proposer's next proposal). For an existing game, call
 /// `read_intervals_for_starting_block` on its proxy instead so the pair it was created
 /// with is used even after an implementation upgrade; proxies older than
-/// `AggregateVerifier` 0.3.0 fall back to their fixed interval getters, selected by
+/// `AggregateVerifier` 0.2.0 fall back to their fixed interval getters, selected by
 /// [`supports_fork_aware_intervals`] rather than by sniffing the revert.
 pub async fn resolve_intervals(
     factory_client: &dyn DisputeGameFactoryClient,
@@ -115,11 +119,12 @@ sol! {
         /// Returns the parent game's address.
         function parentAddress() external pure returns (address);
 
-        /// Returns the contract's semantic version, e.g. `"0.3.0"`.
+        /// Returns the contract's semantic version, e.g. `"0.3.0"`. Present in every
+        /// version, including 0.1.x.
         function version() external view returns (string memory);
 
         /// Returns the block interval between proposals (immutable on the implementation).
-        /// Removed in `AggregateVerifier` 0.3.0 in favour of `intervalsForStartingBlock`.
+        /// Removed in `AggregateVerifier` 0.2.0 in favour of `intervalsForStartingBlock`.
         function BLOCK_INTERVAL() external view returns (uint256);
 
         /// Returns the intermediate block interval for intermediate output root checkpoints.
@@ -323,7 +328,7 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// clone, not an upgradeable proxy: it delegates to the implementation baked into
     /// its bytecode at creation, so reading through it returns the pair the game was
     /// created with regardless of any later `setImplementation`. Verifiers older than
-    /// 0.3.0 fall back to `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`; the two
+    /// 0.2.0 fall back to `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`; the two
     /// ABIs are disjoint, so which one applies is decided by reading `version()`, not by
     /// treating an empty revert as a missing selector.
     async fn read_intervals_for_starting_block(
@@ -580,9 +585,9 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
             Ok(result) => result,
             Err(error) if error.is_missing_method() => {
                 // A missing selector and a node returning empty data are indistinguishable at
-                // this layer, so confirm against `version()` before dropping to the pre-0.3.0
+                // this layer, so confirm against `version()` before dropping to the pre-0.2.0
                 // getters. Guessing wrong is not self-correcting in either direction: on a
-                // 0.3.0 verifier the legacy getters were removed, so a spurious fallback
+                // 0.2.0 verifier the legacy getters were removed, so a spurious fallback
                 // reports a missing `BLOCK_INTERVAL()` and buries the real failure.
                 if self.is_fork_aware(verifier_address).await? {
                     return Err(ContractError::validation(format!(
@@ -870,21 +875,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_supports_fork_aware_intervals_gates_on_0_3_0() {
-        // Pre-0.3.0: only BLOCK_INTERVAL() / INTERMEDIATE_BLOCK_INTERVAL() exist.
+    fn test_supports_fork_aware_intervals_gates_on_0_2_0() {
+        // 0.1.x: only BLOCK_INTERVAL() / INTERMEDIATE_BLOCK_INTERVAL() exist. This is what
+        // is deployed today.
         assert!(!supports_fork_aware_intervals("0.1.0"));
-        assert!(!supports_fork_aware_intervals("0.2.0"));
-        assert!(!supports_fork_aware_intervals("0.2.99"));
+        assert!(!supports_fork_aware_intervals("0.1.99"));
 
-        // 0.3.0 and later: only intervalsForStartingBlock exists.
+        // 0.2.0 is the ABI break (contracts#431): only intervalsForStartingBlock exists.
+        // 0.3.0 (contracts#438) was a release semver bump with no ABI change.
+        assert!(supports_fork_aware_intervals("0.2.0"));
+        assert!(supports_fork_aware_intervals("0.2.99"));
         assert!(supports_fork_aware_intervals("0.3.0"));
-        assert!(supports_fork_aware_intervals("0.3.1"));
         assert!(supports_fork_aware_intervals("0.10.0"));
         assert!(supports_fork_aware_intervals("1.0.0"));
 
         // Pre-release and build suffixes compare on the core version.
-        assert!(supports_fork_aware_intervals("0.3.0-beta.1"));
-        assert!(!supports_fork_aware_intervals("0.2.0-rc.1"));
+        assert!(supports_fork_aware_intervals("0.2.0-beta.1"));
+        assert!(!supports_fork_aware_intervals("0.1.0-rc.1"));
         assert!(supports_fork_aware_intervals("0.3.0+deadbeef"));
 
         // Unreadable versions fail on the new path rather than calling removed getters.
