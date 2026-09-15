@@ -121,6 +121,7 @@ pub struct SignerManager<R, C, T> {
     hint_semaphore: Arc<Semaphore>,
     cert_locks: Mutex<HashMap<B256, Weak<AsyncMutex<()>>>>,
     pending_deregistrations: Arc<Mutex<HashSet<Address>>>,
+    completed_revocation_cleanups: Arc<Mutex<HashSet<Address>>>,
     detached_revocations: Mutex<Vec<(B256, JoinHandle<()>)>>,
     detached_deregistrations: Mutex<Vec<(Address, JoinHandle<()>)>>,
     crl_source: Option<Box<dyn CrlSource>>,
@@ -149,6 +150,7 @@ impl<R, C, T> SignerManager<R, C, T> {
             hint_semaphore: Arc::new(Semaphore::new(config.max_concurrency.max(1))),
             cert_locks: Mutex::new(HashMap::new()),
             pending_deregistrations: Arc::new(Mutex::new(HashSet::new())),
+            completed_revocation_cleanups: Arc::new(Mutex::new(HashSet::new())),
             detached_revocations: Mutex::new(Vec::new()),
             detached_deregistrations: Mutex::new(Vec::new()),
             crl_source,
@@ -576,13 +578,27 @@ where
         let checks = std::iter::once(("pinned root certificate", plan.root_cert_hash))
             .chain(plan.certs.iter().map(|cert| (cert.label.as_str(), cert.revocation_id)));
         for (label, cert_id) in checks {
-            RegistrarMetrics::onchain_revocation_checks_total().increment(1);
-            let Some(revoked) = signer_cancel
-                .run_until_cancelled(self.cert_manager.is_revoked(cert_id))
-                .await
-                .transpose()?
-            else {
+            if signer_cancel.is_cancelled() {
                 return Ok(false);
+            }
+            RegistrarMetrics::onchain_revocation_checks_total().increment(1);
+            let mut check = Box::pin(self.cert_manager.is_revoked(cert_id));
+            let revoked = tokio::select! {
+                result = &mut check => result?,
+                () = signer_cancel.cancelled() => {
+                    match tokio::time::timeout(REVOCATION_CLEANUP_TIMEOUT, &mut check).await {
+                        Ok(result) => result?,
+                        Err(_) => {
+                            warn!(
+                                signer = %plan.signer,
+                                cert_id = %cert_id,
+                                timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                                "timed out waiting for in-flight onchain revocation check during cancellation"
+                            );
+                            return Ok(false);
+                        }
+                    }
+                }
             };
             if revoked {
                 RegistrarMetrics::onchain_revocations_detected().increment(1);
@@ -741,6 +757,16 @@ where
         reason: &'static str,
         detach_after: Option<Duration>,
     ) {
+        if reason == DEREG_REASON_REVOKED
+            && self
+                .completed_revocation_cleanups
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains(&signer)
+        {
+            debug!(signer = %signer, reason, "revoked signer cleanup is already complete");
+            return;
+        }
         let candidate = TxCandidate {
             tx_data: Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode()),
             to: Some(self.registry_address),
@@ -758,6 +784,7 @@ where
         let tx_manager = Arc::clone(&self.tx_manager);
         let registry = Arc::clone(&self.registry);
         let pending_deregistrations = Arc::clone(&self.pending_deregistrations);
+        let completed_revocation_cleanups = Arc::clone(&self.completed_revocation_cleanups);
         let retry_delay = Self::retry_delay(self.tx_retry_delay, 1);
         let max_tx_retries = self.max_tx_retries;
         let mut task = task::spawn(async move {
@@ -771,6 +798,14 @@ where
                             Ok(receipt) => receipt.inner.status(),
                             Err(error) => error.is_retryable(),
                         };
+                        if reason == DEREG_REASON_REVOKED
+                            && result.as_ref().is_ok_and(|receipt| receipt.inner.status())
+                        {
+                            completed_revocation_cleanups
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .insert(signer);
+                        }
                         submit = result.as_ref().is_err();
                         Self::record_deregistration_result(signer, reason, result);
                         if reason != DEREG_REASON_REVOKED || !retryable {
@@ -783,7 +818,13 @@ where
                     )
                     .await
                     {
-                        Ok(Ok(false)) => break,
+                        Ok(Ok(false)) => {
+                            completed_revocation_cleanups
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .insert(signer);
+                            break;
+                        }
                         Ok(Ok(true)) => {
                             submit = true;
                             warn!(
@@ -1512,7 +1553,8 @@ where
 #[cfg(test)]
 mod tests {
     //! These hand-rolled mocks share one ordered state across contract reads and transaction
-    //! writes or pause a CRL response while it is in flight, which `mockall` cannot express.
+    //! writes or pause asynchronous responses while they are in flight, which `mockall` cannot
+    //! express.
 
     use std::{
         collections::VecDeque,
@@ -1585,6 +1627,8 @@ mod tests {
         register_before_revocation: Option<Address>,
         cert_reads: usize,
         stall_is_revoked_after_revocation: bool,
+        revocation_read_started: Arc<Notify>,
+        resume_revocation_read: Arc<Notify>,
     }
 
     #[derive(Clone, Debug, Default)]
@@ -1796,14 +1840,20 @@ mod tests {
         }
 
         async fn is_revoked(&self, cert_id: B256) -> std::result::Result<bool, ContractError> {
-            let (revoked, stall) = {
+            let (revoked, stall, started, resume) = {
                 let mut state = self.chain.0.lock().unwrap();
                 state.cert_reads += 1;
                 let revoked = state.revoked.contains(&cert_id);
-                (revoked, revoked && state.stall_is_revoked_after_revocation)
+                (
+                    revoked,
+                    revoked && state.stall_is_revoked_after_revocation,
+                    Arc::clone(&state.revocation_read_started),
+                    Arc::clone(&state.resume_revocation_read),
+                )
             };
             if stall {
-                std::future::pending::<()>().await;
+                started.notify_one();
+                resume.notified().await;
             }
             Ok(revoked)
         }
@@ -2239,7 +2289,7 @@ mod tests {
     /// `isValidSigner` never consults certificate revocation, so a signer registered before its
     /// chain was revoked has to be deregistered rather than left to age out of discovery.
     #[tokio::test]
-    async fn already_registered_signer_is_deregistered_when_its_certificate_is_revoked() {
+    async fn already_registered_signer_is_deregistered_once_when_its_certificate_is_revoked() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -2248,7 +2298,7 @@ mod tests {
             state.revoked.insert(plan.certs[0].revocation_id);
         }
 
-        let result = register_prepared(&manager, plan).await;
+        let result = register_prepared(&manager, plan.clone()).await;
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
@@ -2256,6 +2306,43 @@ mod tests {
         assert_eq!(sent.len(), 1);
         let call = ITEEProverRegistry::deregisterSignerCall::abi_decode(&sent[0].1).unwrap();
         assert_eq!(call.signer, SIGNER_A);
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    #[tokio::test]
+    async fn cancellation_waits_for_an_in_flight_onchain_revocation_result() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        let (started, resume) = {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+            state.stall_is_revoked_after_revocation = true;
+            (Arc::clone(&state.revocation_read_started), Arc::clone(&state.resume_revocation_read))
+        };
+        let cancel = CancellationToken::new();
+        let task_manager = Arc::clone(&manager);
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            task_manager
+                .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &task_cancel)
+                .await
+        });
+
+        started.notified().await;
+        cancel.cancel();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished(), "the in-flight onchain result must not be discarded");
+        resume.notify_one();
+
+        let result = task.await.unwrap();
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
     #[tokio::test(start_paused = true)]
