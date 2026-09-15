@@ -93,8 +93,17 @@ base-metrics.workspace = true
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
+alloy-signer.workspace = true
+reth-network-api.workspace = true
+alloy-signer-local.workspace = true
 base-execution-chainspec.workspace = true
+base-execution-evm = { workspace = true, features = ["rpc"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
+
+[[bench]]
+name = "insertion"
+harness = false
 
 [features]
 default = [ "metrics" ]
