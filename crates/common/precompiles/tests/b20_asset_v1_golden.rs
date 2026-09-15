@@ -23,16 +23,25 @@
 //! `BLESS_GOLDEN=1 cargo test -p base-common-precompiles --features test-utils \
 //!    --test b20_asset_v1_golden -- --nocapture` and copy the printed `GOLDEN_ROOT` values.
 
-use alloy_primitives::{Address, B256, Bytes, U256, b256, keccak256};
+use std::collections::BTreeSet;
+
+use alloy_primitives::{Address, B256, Bytes, LogData, U256, b256, keccak256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV1, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, FakePolicyAccounting, IB20,
-    IB20Asset, NoopPrecompileCallObserver, PolicyVersion, TokenAccounting,
-    UpgradeGatedStorageFeatures,
+    B20AssetStorage, B20AssetToken, B20CoreStorage, B20PolicyType, B20TokenRole,
+    FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver, PolicyVersion,
+    TokenAccounting, UpgradeGatedStorageFeatures,
 };
-use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
+use base_precompile_storage::{
+    BasePrecompileError, Handler, HashMapStorageProvider, PrecompileStorageProvider, StorageCtx,
+    StorageFeatures,
+};
+use revm::{
+    context::journaled_state::JournalCheckpoint,
+    state::{AccountInfo, Bytecode},
+};
 
 mod common;
 use common::{
@@ -2775,6 +2784,221 @@ fn golden_gas_footprints() {
     ];
 
     bless_or_assert_gas(&actual, expected);
+}
+
+/// Records every `sload` key while delegating all behavior to the wrapped
+/// [`HashMapStorageProvider`]. Hand-rolled rather than mocked: this is a pass-through decorator
+/// over a real provider, which `automock` cannot express, and it exists only in this test so
+/// the recording `Vec` never costs anything on other tests or benches.
+#[derive(Debug)]
+struct SloadRecordingProvider {
+    inner: HashMapStorageProvider,
+    sloaded_keys: Vec<(Address, U256)>,
+}
+
+impl PrecompileStorageProvider for SloadRecordingProvider {
+    fn chain_id(&self) -> u64 {
+        self.inner.chain_id()
+    }
+
+    fn timestamp(&self) -> U256 {
+        self.inner.timestamp()
+    }
+
+    fn beneficiary(&self) -> Address {
+        self.inner.beneficiary()
+    }
+
+    fn block_number(&self) -> u64 {
+        self.inner.block_number()
+    }
+
+    fn origin(&self) -> Address {
+        self.inner.origin()
+    }
+
+    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), BasePrecompileError> {
+        self.inner.set_code(address, code)
+    }
+
+    fn with_account_info(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&AccountInfo),
+    ) -> Result<(), BasePrecompileError> {
+        self.inner.with_account_info(address, f)
+    }
+
+    fn with_account_code(
+        &mut self,
+        address: Address,
+        f: &mut dyn FnMut(&Bytecode),
+    ) -> Result<(), BasePrecompileError> {
+        self.inner.with_account_code(address, f)
+    }
+
+    fn sload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
+        self.sloaded_keys.push((address, key));
+        self.inner.sload(address, key)
+    }
+
+    fn tload(&mut self, address: Address, key: U256) -> Result<U256, BasePrecompileError> {
+        self.inner.tload(address, key)
+    }
+
+    fn tload_unmetered(
+        &mut self,
+        address: Address,
+        key: U256,
+    ) -> Result<U256, BasePrecompileError> {
+        self.inner.tload_unmetered(address, key)
+    }
+
+    fn sstore(
+        &mut self,
+        address: Address,
+        key: U256,
+        value: U256,
+    ) -> Result<(), BasePrecompileError> {
+        self.inner.sstore(address, key, value)
+    }
+
+    fn tstore(
+        &mut self,
+        address: Address,
+        key: U256,
+        value: U256,
+    ) -> Result<(), BasePrecompileError> {
+        self.inner.tstore(address, key, value)
+    }
+
+    fn emit_event(&mut self, address: Address, event: LogData) -> Result<(), BasePrecompileError> {
+        self.inner.emit_event(address, event)
+    }
+
+    fn deduct_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
+        self.inner.deduct_gas(gas)
+    }
+
+    fn deduct_state_gas(&mut self, gas: u64) -> Result<(), BasePrecompileError> {
+        self.inner.deduct_state_gas(gas)
+    }
+
+    fn refund_gas(&mut self, gas: i64) {
+        self.inner.refund_gas(gas);
+    }
+
+    fn gas_limit(&self) -> u64 {
+        self.inner.gas_limit()
+    }
+
+    fn gas_used(&self) -> u64 {
+        self.inner.gas_used()
+    }
+
+    fn state_gas_used(&self) -> u64 {
+        self.inner.state_gas_used()
+    }
+
+    fn gas_refunded(&self) -> i64 {
+        self.inner.gas_refunded()
+    }
+
+    fn reservoir(&self) -> u64 {
+        self.inner.reservoir()
+    }
+
+    fn storage_features(&self) -> StorageFeatures {
+        self.inner.storage_features()
+    }
+
+    fn is_static(&self) -> bool {
+        self.inner.is_static()
+    }
+
+    fn call_value(&self) -> U256 {
+        self.inner.call_value()
+    }
+
+    fn caller(&self) -> Address {
+        self.inner.caller()
+    }
+
+    fn replace_caller(&mut self, caller: Address) -> Address {
+        self.inner.replace_caller(caller)
+    }
+
+    fn checkpoint(&mut self) -> JournalCheckpoint {
+        self.inner.checkpoint()
+    }
+
+    fn commit_latest_checkpoint(&mut self) {
+        self.inner.commit_latest_checkpoint();
+    }
+
+    fn assert_latest_checkpoint(&self, checkpoint: JournalCheckpoint) {
+        self.inner.assert_latest_checkpoint(checkpoint);
+    }
+
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
+        self.inner.checkpoint_revert(checkpoint);
+    }
+
+    fn metered_keccak256(&mut self, data: &[u8]) -> Result<B256, BasePrecompileError> {
+        self.inner.metered_keccak256(data)
+    }
+}
+
+/// Pins `B20CoreStorage::transfer_hint_slots` to the exact set of distinct slots an
+/// unprivileged transfer/transferFrom SLOADs, so the prefetch hint can neither point at unused
+/// slots nor miss a read added to the op later. Runs unprivileged (unset policy ids are
+/// `ALWAYS_ALLOW`) so the packed policy-id word read is included.
+#[test]
+fn golden_transfer_hint_slots_match_sload_footprint() {
+    let cases: [(Option<Address>, Address, Address, Vec<u8>); 4] = [
+        (None, ALICE, BOB, IB20::transferCall { to: BOB, amount: u(30) }.abi_encode()),
+        (None, ALICE, ALICE, IB20::transferCall { to: ALICE, amount: u(30) }.abi_encode()),
+        (
+            Some(BOB),
+            BOB,
+            BOB,
+            IB20::transferFromCall { from: ALICE, to: BOB, amount: u(30) }.abi_encode(),
+        ),
+        (
+            Some(BOB),
+            BOB,
+            ALICE,
+            IB20::transferFromCall { from: ALICE, to: ALICE, amount: u(30) }.abi_encode(),
+        ),
+    ];
+    for (spender, caller, to, calldata) in cases {
+        let mut s = fresh();
+        seed(&mut s, |t| {
+            fund(t, ALICE, u(100));
+            t.set_allowance(ALICE, BOB, u(40)).unwrap();
+        });
+        s.set_caller(caller);
+        let mut recorder = SloadRecordingProvider { inner: s, sloaded_keys: Vec::new() };
+        StorageCtx::enter(&mut recorder, |ctx| {
+            B20AssetToken::with_storage_and_policy(
+                B20AssetStorage::from_address(TOKEN, ctx),
+                FakePolicyAccounting::new(),
+                PolicyVersion::V1,
+            )
+            .route(ctx, &calldata, AssetVersion::V1, false, NoopPrecompileCallObserver)
+        })
+        .expect("transfer op must succeed");
+
+        let (hint_slots, hint_count) = B20CoreStorage::transfer_hint_slots(ALICE, to, spender);
+        let hints: BTreeSet<U256> = hint_slots[..hint_count].iter().copied().collect();
+        let sloaded: BTreeSet<U256> = recorder
+            .sloaded_keys
+            .iter()
+            .filter(|(address, _)| *address == TOKEN)
+            .map(|(_, slot)| *slot)
+            .collect();
+        assert_eq!(hints, sloaded, "hint slots must equal the op's distinct SLOAD set");
+    }
 }
 
 // ============================================================================
