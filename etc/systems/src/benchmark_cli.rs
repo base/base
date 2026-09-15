@@ -100,9 +100,9 @@ pub struct SnapshotBenchmarkArgs {
     /// Stable build identifier for visualizer comparisons.
     #[arg(long, env = "BASE_BENCH_CLIENT_VERSION")]
     pub client_version: Option<String>,
-    /// Maximum time to wait for graceful in-process stack shutdown after result artifacts have
-    /// been written. Expiry terminates the process because snapshot datadirs are disposable.
-    #[arg(long, default_value_t = 10)]
+    /// Maximum time to wait for graceful shutdown after writing results. Zero terminates the
+    /// process immediately because snapshot datadirs are disposable.
+    #[arg(long, default_value_t = 0)]
     pub shutdown_timeout_seconds: u64,
 }
 
@@ -348,10 +348,6 @@ impl SnapshotBenchmarkArgs {
             client_version,
         );
 
-        eyre::ensure!(
-            self.shutdown_timeout_seconds > 0,
-            "shutdown timeout must be greater than zero"
-        );
         let mut stack = SystemTestStackBuilder::new()
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
@@ -402,6 +398,14 @@ impl SnapshotBenchmarkArgs {
             eprintln!("benchmark result processing failed before shutdown: {error:?}");
             let _ = std::io::stderr().flush();
         }
+
+        if self.shutdown_timeout_seconds == 0 {
+            // The benchmark artifacts or error diagnostics are complete and flushed. Exit from
+            // inside the async entrypoint so neither the stack nor the outer Tokio runtime runs
+            // destructors that can wait for non-cancellable Reth work or database cleanup.
+            std::process::exit(if output_result.is_ok() { 0 } else { 1 });
+        }
+
         let shutdown_result =
             Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds).await;
         output_result?;
@@ -655,7 +659,7 @@ mod tests {
         assert_eq!(args.benchmark_run, "snapshot-throughput");
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
-        assert_eq!(args.shutdown_timeout_seconds, 10);
+        assert_eq!(args.shutdown_timeout_seconds, 0);
     }
 
     #[test]
