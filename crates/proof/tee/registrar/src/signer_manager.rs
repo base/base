@@ -633,7 +633,23 @@ where
             return Ok(false);
         }
         RegistrarMetrics::crl_checks_total().increment(1);
-        let status = crl_source.check_chain(&plan.root_cert, &plan.certs).await;
+        let mut check = Box::pin(crl_source.check_chain(&plan.root_cert, &plan.certs));
+        let status = tokio::select! {
+            status = &mut check => status,
+            () = signer_cancel.cancelled() => {
+                match tokio::time::timeout(REVOCATION_CLEANUP_TIMEOUT, &mut check).await {
+                    Ok(status) => status,
+                    Err(_) => {
+                        warn!(
+                            signer = %plan.signer,
+                            timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                            "timed out waiting for in-flight CRL check during cancellation"
+                        );
+                        return Ok(false);
+                    }
+                }
+            }
+        };
         let status = match status {
             Ok(status) => status,
             Err(error) => {
@@ -2535,6 +2551,36 @@ mod tests {
         let state = chain.0.lock().unwrap();
         assert!(state.revoked.contains(&cert_id));
         assert!(!state.registered.contains(&SIGNER_A));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancellation_stops_waiting_for_a_stalled_crl_after_timeout() {
+        let plan = synthetic_plan(SIGNER_A);
+        let started = Arc::new(Notify::new());
+        let source = PausedCrlSource {
+            started: Arc::clone(&started),
+            resume: Arc::new(Notify::new()),
+            revocation_id: plan.certs[0].revocation_id,
+        };
+        let (manager, chain) = manager_with_crl(&plan, Box::new(source));
+        chain.0.lock().unwrap().registered.insert(SIGNER_A);
+        let cancel = CancellationToken::new();
+        let task_manager = Arc::clone(&manager);
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            task_manager
+                .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &task_cancel)
+                .await
+        });
+
+        started.notified().await;
+        cancel.cancel();
+        tokio::task::yield_now().await;
+        tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
+
+        assert!(task.await.unwrap().is_ok());
+        assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert!(chain.sent().is_empty());
     }
 
     #[tokio::test(start_paused = true)]
