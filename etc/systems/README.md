@@ -126,7 +126,7 @@ local devnet, runs the default 60-second plain-transfer profile, prints its
 load-test summary, and shuts everything down:
 
 ```bash
-cargo run --release -p base-system-tests --bin base-bench
+just devnet bench
 ```
 
 It needs Docker, but it needs neither a snapshot nor a funded key. The generated
@@ -150,7 +150,7 @@ CPU-bound far below the 400M block gas limit.
 mkdir -p results
 export BASE_BENCH_CLIENT_VERSION="base/v0.0.0-$(git rev-parse --short HEAD)"
 
-cargo run --release -p base-system-tests --bin base-bench -- snapshot \
+just devnet bench snapshot \
   --chain mainnet \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \
