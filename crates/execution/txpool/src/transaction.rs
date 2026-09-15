@@ -72,7 +72,7 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
-    /// In-process meter_bundle result, attached after sim and before pool insert.
+    /// In-process `meter_bundle` result, attached after sim and before pool insert.
     ///
     /// `None` on sequencer/builder inserts and on mempool txs while inline
     /// simulation is off. The later consumer only forwards `Some`.
@@ -107,14 +107,14 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
         }
     }
 
-    /// Attaches an in-process meter_bundle result to this transaction.
+    /// Attaches an in-process `meter_bundle` result to this transaction.
     #[must_use]
     pub fn with_metering(mut self, metering: MeterBundleResponse) -> Self {
         self.metering = Some(metering);
         self
     }
 
-    /// Returns the attached meter_bundle result, if any.
+    /// Returns the attached `meter_bundle` result, if any.
     pub const fn metering(&self) -> Option<&MeterBundleResponse> {
         self.metering.as_ref()
     }
@@ -247,8 +247,7 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
-        let metering_heap_size =
-            self.metering.as_ref().map_or(0, MeterBundleResponse::heap_size);
+        let metering_heap_size = self.metering.as_ref().map_or(0, MeterBundleResponse::heap_size);
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
