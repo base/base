@@ -12,13 +12,13 @@ permissions:
   id-token: write
   attestations: write
 
-concurrency:
-  group: release-${{ github.ref_name }}
-  cancel-in-progress: false
-
 jobs:
   create-tag:
     runs-on: ubuntu-latest
+    # Serialize RC number allocation, not the long-running builds.
+    concurrency:
+      group: release-${{ github.ref_name }}
+      cancel-in-progress: false
     outputs:
       tag: ${{ steps.read-tag.outputs.tag }}
       skip: ${{ steps.version-check.outputs.skip }}
@@ -32,7 +32,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ github.ref_name }}
+          # Tag the triggering commit even if the branch advances while queued.
+          ref: ${{ github.sha }}
           fetch-depth: 0
           fetch-tags: true
 
