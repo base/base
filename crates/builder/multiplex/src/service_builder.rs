@@ -76,6 +76,7 @@ impl MultiplexingServiceBuilder {
             },
             rejection_cache: self.builder_config.rejection_cache.clone(),
             state_provider_metrics,
+            prewarm: self.builder_config.prewarm,
         }
     }
 }
@@ -210,7 +211,10 @@ mod tests {
 
     #[test]
     fn native_payload_config_preserves_metering_provider_and_rejection_cache() {
-        let builder_config = BuilderConfig::default();
+        let mut builder_config = BuilderConfig::default();
+        builder_config.prewarm.enabled = true;
+        builder_config.prewarm.worker_count = 3;
+        let prewarm = builder_config.prewarm;
         let hash = TxHash::repeat_byte(0x11);
         builder_config.rejection_cache.insert(hash);
         let provider = Arc::clone(&builder_config.metering_provider);
@@ -218,5 +222,6 @@ mod tests {
         let native = MultiplexingServiceBuilder::new(builder_config).native_payload_config(false);
         assert!(native.rejection_cache.contains_key(&hash));
         assert!(Arc::ptr_eq(&native.resource_metering.provider, &provider));
+        assert_eq!(native.prewarm, prewarm);
     }
 }

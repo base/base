@@ -3185,6 +3185,7 @@ dependencies = [
  "base-builder-metering",
  "base-bundles",
  "base-execution-cli",
+ "base-execution-payload-builder",
  "base-node-core",
  "base-observability-events",
  "clap",
