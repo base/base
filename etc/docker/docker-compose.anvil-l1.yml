@@ -27,7 +27,7 @@ services:
       - "${L1_WS_PORT}:${L1_HTTP_PORT}"
       - "${L1_CL_HTTP_PORT}:${L1_HTTP_PORT}"
     volumes: !override
-      - ../../.devnet/l1/configs:/genesis:ro
+      - ../../.devnet/genesis:/genesis:ro
 
   # Anvil serves the beacon API itself; Lighthouse is disabled in this variant.
   base-bootnode:
@@ -44,6 +44,21 @@ services:
 
   l1-vc:
     profiles: ["lighthouse-l1"]
+
+  # Anvil's canonical header differs from the offline EL header. Bootstrap writes
+  # this runtime copy without modifying the checksummed genesis outputs.
+  base-builder:
+    volumes:
+      - ../../.devnet/anvil-no-nitro/rollup.json:/genesis/l2/rollup.json:ro
+  base-client:
+    volumes:
+      - ../../.devnet/anvil-no-nitro/rollup.json:/genesis/l2/rollup.json:ro
+  base-rpc:
+    volumes:
+      - ../../.devnet/anvil-no-nitro/rollup.json:/genesis/l2/rollup.json:ro
+  base-shadow-validator:
+    volumes:
+      - ../../.devnet/anvil-no-nitro/rollup.json:/genesis/l2/rollup.json:ro
 
   # The proof host needs historical trie data and debug_executePayload. Keep that
   # workload on the same proofs-history + follow-mode pair used in production.
@@ -62,8 +77,7 @@ services:
       - "${L2_PROOFS_METRICS_PORT}:${L2_PROOFS_METRICS_PORT}"
     volumes:
       - ../../.devnet/l2/proofs:/data
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/genesis:/genesis:ro
     entrypoint: ["/bin/bash", "-ec"]
     command:
       - |
@@ -106,8 +120,8 @@ services:
     ports:
       - "${L2_PROOFS_CL_RPC_PORT}:${L2_PROOFS_CL_RPC_PORT}"
     volumes:
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/anvil-no-nitro/rollup.json:/genesis/l2/rollup.json:ro
+      - ../../.devnet/genesis:/genesis:ro
     entrypoint: ["/app/base-consensus"]
     command:
       - --chain

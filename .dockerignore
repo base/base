@@ -33,3 +33,6 @@ etc/scripts/devnet/status.sh
 etc/scripts/devnet/accounts.sh
 etc/scripts/devnet/common.sh
 etc/scripts/devnet/smoke.sh
+
+# Rebuild the pinned genesis bundle inside the setup image.
+/build/genesis/

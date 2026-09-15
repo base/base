@@ -22,8 +22,8 @@ if [[ -n "${UPGRADE_SIGNAL_ENV_FILES:-}" ]]; then
 fi
 
 CONTRACT_ROOT="${CONTRACT_ROOT:-$REPO_ROOT/crates/utilities/test-utils/contracts}"
-ENV_OUT="${UPGRADE_SIGNAL_ENV_OUT:-$REPO_ROOT/.devnet/l2/configs/upgrade-signal.env}"
-ROLLUP_JSON="${UPGRADE_SIGNAL_ROLLUP_JSON:-$REPO_ROOT/.devnet/l2/configs/rollup.json}"
+ENV_OUT="${UPGRADE_SIGNAL_ENV_OUT:-$REPO_ROOT/.devnet/genesis/l2/upgrade-signal.env}"
+ROLLUP_JSON="${UPGRADE_SIGNAL_ROLLUP_JSON:-$REPO_ROOT/.devnet/genesis/l2/rollup.json}"
 L1_RPC="${UPGRADE_SIGNAL_L1_RPC_URL:-${L1_RPC_URL:-http://localhost:4545}}"
 L2_RPC="${UPGRADE_SIGNAL_L2_RPC_URL:-${L2_CLIENT_RPC_URL:-http://localhost:8545}}"
 CONTAINER_L1_RPC="${UPGRADE_SIGNAL_CONTAINER_L1_RPC:-http://l1-el:${L1_HTTP_PORT:-4545}}"
@@ -49,11 +49,12 @@ Usage:
 
 Commands:
   setup        Deploys MockProtocolVersions if needed, builds the schedule from
-               .devnet/l2/configs/rollup.json, applies --set overrides, writes
+               .devnet/genesis/l2/rollup.json, applies --set overrides, writes
                upgrade-signal.env, and updates the L1 contract.
   set          Updates one or more upgrade activation timestamps on the contract.
                Use timestamp 0 to clear an upgrade.
-  move-future  Sets one upgrade to latest L2 timestamp + --offset seconds.
+  move-future  Schedules after the latest L2 timestamp and the contract notice
+               period, plus --offset seconds.
   status       Prints the configured contract, schedule, and minimum protocol version.
 EOF
 }
@@ -273,13 +274,12 @@ load_schedule_from_rollup() {
 }
 
 load_schedule_from_contract() {
+  local schedule_json
+  schedule_json="$(cast call --json --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "getSchedule()(uint64[])")"
   SCHEDULE=()
   while IFS= read -r value; do
     SCHEDULE+=("$value")
-  done < <(
-    cast call --json --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "getSchedule()(uint64[])" |
-      jq -r '.[0][]'
-  )
+  done < <(jq -r '.[0][]' <<<"$schedule_json")
 
   while [[ "${#SCHEDULE[@]}" -lt "${#UPGRADE_IDS[@]}" ]]; do
     SCHEDULE+=("0")
@@ -333,17 +333,70 @@ update_minimum_protocol_version() {
     --json >/dev/null
 }
 
+# Older explicitly deployed mocks expose setSchedule instead of the production API.
+protocol_notice() {
+  cast call --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "MIN_NOTICE()(uint64)" 2>/dev/null |
+    awk '{print $1}'
+}
+
+latest_l1_timestamp() {
+  local block_json
+  block_json="$(cast rpc --rpc-url "$L1_RPC" eth_getBlockByNumber latest false)"
+  printf '%d\n' "$(jq -er '.timestamp' <<<"$block_json")"
+}
+
 update_contract_schedule() {
   require_deployer_key
-
-  echo "Updating upgrade signal schedule..."
-  cast send \
-    --rpc-url "$L1_RPC" \
-    --private-key "$DEPLOYER_KEY" \
-    "$CONTRACT_ADDRESS" \
-    "setSchedule(uint64[])" \
-    "$(schedule_arg)" \
-    --json >/dev/null
+  local notice
+  if ! notice="$(protocol_notice)"; then
+    cast send --rpc-url "$L1_RPC" --private-key "$DEPLOYER_KEY" "$CONTRACT_ADDRESS" \
+      "setSchedule(uint64[])" "$(schedule_arg)" --json >/dev/null
+    return
+  fi
+  local current_json freeze now i j previous=0
+  local current=()
+  current_json="$(cast call --json --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" "getSchedule()(uint64[])")"
+  while IFS= read -r value; do current+=("$value"); done < <(jq -r '.[0][]' <<<"$current_json")
+  freeze="$(cast call --rpc-url "$L1_RPC" "$CONTRACT_ADDRESS" 'FREEZE_WINDOW()(uint64)' | awk '{print $1}')"
+  now="$(latest_l1_timestamp)"
+  [[ "${#current[@]}" -eq "${#SCHEDULE[@]}" ]] || { echo 'Contract upgrade count differs from the requested schedule' >&2; exit 1; }
+  # Validate the entire change before submitting any transaction. Historical entries
+  # are left untouched; production contracts cannot move frozen activations.
+  for i in "${!SCHEDULE[@]}"; do
+    if (( SCHEDULE[i] != 0 )); then
+      (( SCHEDULE[i] >= previous )) || { echo 'Activations must follow upgrade ID order' >&2; exit 1; }
+      previous="${SCHEDULE[$i]}"
+    fi
+    [[ "${current[$i]}" == "${SCHEDULE[$i]}" ]] && continue
+    if (( current[i] != 0 && current[i] <= now + freeze )); then
+      echo "${UPGRADE_IDS[$i]} is activated or frozen; start a fresh devnet to change it" >&2; exit 1
+    fi
+    if (( SCHEDULE[i] != 0 && SCHEDULE[i] < now + notice )); then
+      echo "${UPGRADE_IDS[$i]} requires at least $notice seconds of L1 notice; use move-future" >&2; exit 1
+    fi
+    if (( current[i] == 0 || SCHEDULE[i] == 0 )); then
+      for ((j = i + 1; j < ${#current[@]}; j++)); do
+        if (( current[j] != 0 && SCHEDULE[j] != 0 )); then
+          echo "Clear ${UPGRADE_IDS[$j]} before adding or removing ${UPGRADE_IDS[$i]}" >&2; exit 1
+        fi
+      done
+    fi
+  done
+  # Clear successors and move later activations out first, then add predecessors
+  # and move earlier activations in. This preserves the contract's ordering checks.
+  for ((i = ${#SCHEDULE[@]} - 1; i >= 0; i--)); do
+    if (( current[i] != 0 && (SCHEDULE[i] == 0 || SCHEDULE[i] > current[i]) )); then
+      cast send --rpc-url "$L1_RPC" --private-key "$DEPLOYER_KEY" "$CONTRACT_ADDRESS" \
+        'setTimestamp(uint256,uint64)' "$i" "${SCHEDULE[$i]}" --json >/dev/null
+      current[i]="${SCHEDULE[$i]}"
+    fi
+  done
+  for i in "${!SCHEDULE[@]}"; do
+    if [[ "${current[$i]}" != "${SCHEDULE[$i]}" ]]; then
+      cast send --rpc-url "$L1_RPC" --private-key "$DEPLOYER_KEY" "$CONTRACT_ADDRESS" \
+        'setTimestamp(uint256,uint64)' "$i" "${SCHEDULE[$i]}" --json >/dev/null
+    fi
+  done
 }
 
 latest_l2_timestamp() {
@@ -461,6 +514,10 @@ case "$COMMAND" in
     fi
     load_schedule_from_contract
     latest_timestamp="$(latest_l2_timestamp)"
+    if notice="$(protocol_notice)"; then
+      earliest="$(( $(latest_l1_timestamp) + notice ))"
+      (( latest_timestamp >= earliest )) || latest_timestamp="$earliest"
+    fi
     SET_OVERRIDES+=("${POSITIONAL[0]}=$((latest_timestamp + FUTURE_OFFSET))")
     apply_set_overrides
     update_contract_schedule

@@ -2,9 +2,10 @@
 
 use base_batcher_cli::BatcherArgs;
 use base_cli_utils::RuntimeManager;
+use base_common_chains::BaseUpgrade;
 use base_execution_cli::{chainspec::BaseChainSpecParser, commands::base_proofs};
 use base_node_core::BaseNode;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use reth_cli_runner::CliRunner;
 
 use crate::{
@@ -15,10 +16,61 @@ use crate::{
     config::ChainResolver,
 };
 
+/// CLI inputs for the offline genesis workflow.
+#[cfg(feature = "genesis")]
+#[derive(Debug, Args)]
+pub(crate) struct GenesisCommand {
+    /// Genesis workflow inputs and generated network configuration.
+    #[command(flatten)]
+    pub command: base_genesis::GenesisCommand,
+    /// Optional Isthmus activation block.
+    #[arg(long = "isthmus-block", env = "L2_ISTHMUS_BLOCK")]
+    pub isthmus: Option<u64>,
+    /// Optional Azul activation block.
+    #[arg(long = "azul-block", env = "L2_BASE_AZUL_BLOCK")]
+    pub azul: Option<u64>,
+    /// Optional Beryl activation block.
+    #[arg(long = "beryl-block", env = "L2_BASE_BERYL_BLOCK")]
+    pub beryl: Option<u64>,
+    /// Optional Cobalt activation block.
+    #[arg(long = "cobalt-block", env = "L2_BASE_COBALT_BLOCK")]
+    pub cobalt: Option<u64>,
+    /// Optional Denim activation block.
+    #[arg(long = "denim-block", env = "L2_BASE_DENIM_BLOCK")]
+    pub denim: Option<u64>,
+    /// Optional Zenith activation block.
+    #[arg(long = "zenith-block", env = "L2_BASE_ZENITH_BLOCK")]
+    pub zenith: Option<u64>,
+}
+
+#[cfg(feature = "genesis")]
+impl GenesisCommand {
+    /// Run the genesis workflow with command-line upgrade overrides.
+    pub(crate) fn run(self) -> eyre::Result<()> {
+        base_genesis::GenesisBuilder::generate_with_upgrade_blocks(
+            self.command,
+            &[
+                (BaseUpgrade::Isthmus, self.isthmus),
+                (BaseUpgrade::Azul, self.azul),
+                (BaseUpgrade::Beryl, self.beryl),
+                (BaseUpgrade::Cobalt, self.cobalt),
+                (BaseUpgrade::Denim, self.denim),
+                (BaseUpgrade::Zenith, self.zenith),
+            ]
+            .into_iter()
+            .filter_map(|(upgrade, block)| block.map(|block| (upgrade, block)))
+            .collect::<Vec<_>>(),
+        )
+    }
+}
+
 /// Top-level commands for `base`.
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
+    /// Assemble Base genesis inputs and state (full workflow: `just genesis`).
+    #[cfg(feature = "genesis")]
+    Genesis(Box<GenesisCommand>),
     /// Submit L2 batch data to L1.
     #[command(name = "batcher", hide = true)]
     Batcher(Box<BatcherArgs>),
@@ -55,6 +107,11 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            #[cfg(feature = "genesis")]
+            Self::Genesis(command) => {
+                chain_resolver.reject_for_reth_command("base genesis")?;
+                (*command).run()
+            }
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
                 RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
@@ -88,7 +145,29 @@ mod tests {
 
     use clap::Parser;
 
+    use super::BaseCommand;
     use crate::{cli::BaseCli, config::ChainResolver};
+
+    #[cfg(feature = "genesis")]
+    #[test]
+    fn accepts_genesis_upgrade_blocks() {
+        let cli = BaseCli::try_parse_from([
+            "base",
+            "genesis",
+            "--isthmus-block",
+            "20",
+            "--denim-block",
+            "100",
+            "--zenith-block",
+            "105",
+        ])
+        .unwrap();
+        let BaseCommand::Genesis(command) = cli.command else { panic!("expected genesis command") };
+
+        assert_eq!(command.isthmus, Some(20));
+        assert_eq!(command.denim, Some(100));
+        assert_eq!(command.zenith, Some(105));
+    }
 
     #[test]
     fn rejects_legacy_node_rpc_path() {

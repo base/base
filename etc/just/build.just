@@ -44,3 +44,7 @@ base-bench:
 # Builds the test contracts
 contracts:
     cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build
+
+# Prepare pinned base/contracts and genesis adapters; optionally use a local checkout.
+genesis-contracts source="":
+    bash {{justfile_directory()}}/etc/genesis/build.sh "{{source}}"

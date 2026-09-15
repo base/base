@@ -82,8 +82,7 @@ services:
     volumes:
       - ../../.devnet/l2/sequencer-1:/data
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/genesis:/genesis:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -193,8 +192,7 @@ services:
     volumes:
       - ../../.devnet/l2/sequencer-2:/data
       - ../../.devnet/l2/cl-bootnode-enr:/bootnodes:ro
-      - ../../.devnet/l1/configs:/genesis:ro
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/genesis:/genesis:ro
     environment:
       - BASE_CHAIN_NAME=dev
       - BASE_CHAIN_L1_CHAIN_ID=${L1_CHAIN_ID}
@@ -299,7 +297,7 @@ services:
       - "${CONDUCTOR0_METRICS_PORT}:${CONDUCTOR0_METRICS_PORT}"   # Metrics
     volumes:
       - ../../.devnet/conductor-0:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/genesis:/genesis:ro
     command:
       - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-0
@@ -335,7 +333,7 @@ services:
       - "${CONDUCTOR1_METRICS_PORT}:${CONDUCTOR1_METRICS_PORT}"   # Metrics
     volumes:
       - ../../.devnet/conductor-1:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/genesis:/genesis:ro
     command:
       - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-1
@@ -371,7 +369,7 @@ services:
       - "${CONDUCTOR2_METRICS_PORT}:${CONDUCTOR2_METRICS_PORT}"   # Metrics
     volumes:
       - ../../.devnet/conductor-2:/data
-      - ../../.devnet/l2/configs:/genesis/l2:ro
+      - ../../.devnet/genesis:/genesis:ro
     command:
       - --rollup.config=/genesis/l2/rollup-conductor.json
       - --raft.server.id=sequencer-2
@@ -396,7 +394,7 @@ services:
       <<: *conductor-healthcheck
 
   setup-conductor:
-    image: devnet-setup:local-v2
+    image: devnet-setup:local-v4
     container_name: setup-conductor
     depends_on:
       op-conductor-0:
