@@ -24,6 +24,18 @@
     {
       "asDropdown": false,
       "icon": "dashboard",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Dynamic Upgrades",
+      "tooltip": "Inspect live L1 upgrade schedules and EL/CL propagation",
+      "type": "link",
+      "url": "/d/dynamic-upgrades"
+    },
+    {
+      "asDropdown": false,
+      "icon": "dashboard",
       "includeVars": false,
       "keepTime": true,
       "tags": [],

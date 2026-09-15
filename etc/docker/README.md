@@ -207,6 +207,40 @@ To observe the L1 schedule without dynamically applying it, start devnet in metr
 UPGRADE_SIGNAL_MODE=metrics-only just devnet up
 ```
 
+### Dynamic upgrades dashboard
+
+Open the [Base Devnet Control Room](http://localhost:3000/d/devnet-overview) and
+select **Dynamic Upgrades**, or open the
+[dashboard directly](http://localhost:3000/d/dynamic-upgrades). Grafana provisions
+it automatically from `etc/scripts/devnet/grafana/dashboards/dynamic-upgrades.json`;
+no manual import or additional service is required. The control-room link retains
+the time range and node filters. Leave both layers selected to compare execution
+(`el`) and consensus (`cl`), then filter by upgrade or instance to investigate.
+
+Use the schedule and propagation panels while running the upgrade-signal commands
+above. Activation timestamps and minimum protocol versions describe the schedule
+**observed from L1**, not proof of successful application or node readiness.
+Timestamp zero means unscheduled; protocol versions are encoded as
+`major * 1_000_000 + minor * 1_000 + patch`. Divergence compares only the selected,
+reporting nodes and layers, so check scrape availability and reporter coverage too.
+
+**No data is not a healthy zero.** Upgrade counters are created lazily, and an
+apply-status gauge may not exist until a live apply is attempted. Counter increases
+can miss the first event; fail-closed counters are best-effort because the process
+may exit before Prometheus scrapes them. Check node logs and scrape availability
+when investigating a halt. Empty-schedule reads are per layer and deliberately
+ignore the upgrade filter. In `metrics-only` mode, observing a schedule does not
+apply it.
+
+Validate the dashboard queries and edge cases without starting a devnet (requires
+Python 3 and Docker):
+
+```bash
+python3 etc/scripts/devnet/grafana/test-dynamic-upgrades.py
+```
+
+### Building individual images
+
 To build a specific Rust service image directly:
 
 ```bash
