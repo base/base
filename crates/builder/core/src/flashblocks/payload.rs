@@ -23,7 +23,7 @@ use base_common_flashblocks::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockId, FlashblocksPayloadV1,
     Metadata,
 };
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{WithdrawalsRoot, calculate_receipt_root_no_memo};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
@@ -1204,8 +1204,13 @@ where
             // withdrawals root field in block header is used for storage root of L2 predeploy
             // `l2tol1-message-passer`
             Some(
-                isthmus::withdrawals_root(&state.bundle_state, state.database.as_ref())
-                    .map_err(PayloadBuilderError::other)?,
+                WithdrawalsRoot::compute(
+                    &state.bundle_state,
+                    state.database.as_ref(),
+                    ctx.parent().header(),
+                    &*ctx.chain_spec,
+                )
+                .map_err(PayloadBuilderError::other)?,
             )
         } else if ctx.chain_spec.is_canyon_active_at_timestamp(ctx.attributes().timestamp()) {
             Some(EMPTY_WITHDRAWALS)
@@ -1381,17 +1386,81 @@ mod tests {
 
     use alloy_consensus::{Header, Receipt};
     use alloy_primitives::{Address, B256, Log, U256, map::foldhash::HashMap};
-    use base_common_consensus::BaseReceipt;
+    use base_common_chains::BaseUpgrade;
+    use base_common_consensus::{BaseReceipt, Predeploys};
     use base_common_flashblocks::{FlashblockId, Metadata};
     use base_execution_chainspec::BaseChainSpec;
-    use reth_chainspec::ChainSpec;
+    use reth_chainspec::{ChainSpec, ForkCondition};
     use reth_execution_cache::{CachedStateProvider, CachedStatus, ExecutionCache, SavedCache};
     use reth_primitives_traits::SealedHeader;
     use reth_provider::{StateProviderBox, noop::NoopProvider};
     use reth_revm::{State, database::StateProviderDatabase};
+    use revm::{
+        database::{AccountStatus, TransitionAccount, TransitionState, states::StorageSlot},
+        state::AccountInfo,
+    };
 
     use super::{FlashblocksMetadata, build_block};
     use crate::{ExecutionInfo, flashblocks::context::BasePayloadBuilderCtx};
+
+    #[test]
+    fn flashblocks_preserve_cumulative_withdrawals_root() {
+        let mut chain_spec = (*minimal_chain_spec()).clone();
+        chain_spec.set_fork(BaseUpgrade::Isthmus, ForkCondition::Timestamp(0));
+        let parent_root = B256::repeat_byte(1);
+        let parent = Arc::new(SealedHeader::seal_slow(Header {
+            withdrawals_root: Some(parent_root),
+            gas_limit: 30_000_000,
+            ..Default::default()
+        }));
+        let ctx = BasePayloadBuilderCtx::for_test(Arc::new(chain_spec), parent);
+        let db = StateProviderDatabase::new(NoopProvider::default());
+        let mut state = State::builder().with_database(db).with_bundle_update().build();
+        let mut info = ExecutionInfo::default();
+
+        let (payload, flashblock, _) = build_block::<_, NoopProvider>(
+            &mut state,
+            &ctx,
+            &mut info,
+            FlashblockId::default(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(payload.block().withdrawals_root, Some(parent_root));
+        assert_eq!(flashblock.diff.withdrawals_root, parent_root);
+        assert_eq!(flashblock.diff.state_root, B256::ZERO);
+
+        // Model a MessagePasser write in the next flashblock. The provider returns zero,
+        // distinguishable from the parent root, whenever computation is needed.
+        state.transition_state = Some(TransitionState::single(
+            Predeploys::L2_TO_L1_MESSAGE_PASSER,
+            TransitionAccount {
+                info: Some(AccountInfo::default()),
+                previous_info: Some(AccountInfo::default()),
+                status: AccountStatus::Changed,
+                previous_status: AccountStatus::Loaded,
+                storage: [(U256::from(1), StorageSlot::new_changed(U256::from(1), U256::from(2)))]
+                    .into_iter()
+                    .collect(),
+                storage_was_destroyed: false,
+            },
+        ));
+
+        // Subsequent flashblocks and final assembly must not revert to the parent root,
+        // even without new writes after the first flashblock containing the change.
+        for calculate_state_root in [false, false, true] {
+            let (payload, flashblock, _) = build_block::<_, NoopProvider>(
+                &mut state,
+                &ctx,
+                &mut info,
+                FlashblockId::default(),
+                calculate_state_root,
+            )
+            .unwrap();
+            assert_eq!(payload.block().withdrawals_root, Some(B256::ZERO));
+            assert_eq!(flashblock.diff.withdrawals_root, B256::ZERO);
+        }
+    }
 
     /// Creates a minimal [`BaseChainSpec`] with all L1 upgrades through Cancun
     /// active at genesis but **no** inherited rollup upgrades (Bedrock, Canyon,

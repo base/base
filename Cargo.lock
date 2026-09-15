@@ -4343,6 +4343,7 @@ dependencies = [
  "base-execution-chainspec",
  "base-node-core",
  "base-protocol",
+ "mockall",
  "reth-chainspec",
  "reth-consensus",
  "reth-consensus-common",
