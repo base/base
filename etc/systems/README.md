@@ -119,6 +119,21 @@ the captured boundary differs.
 
 ## Run a snapshot benchmark
 
+## Run a quick local transfer benchmark
+
+For a no-configuration smoke benchmark, `base-bench` starts a fresh temporary
+local devnet, runs the default 60-second plain-transfer profile, prints its
+load-test summary, and shuts everything down:
+
+```bash
+cargo run --release -p base-system-tests --bin base-bench
+```
+
+It needs Docker, but it needs neither a snapshot nor a funded key. The generated
+datadirs are temporary and are removed during shutdown. Use the explicit
+`base-bench snapshot` arguments below for reproducible snapshot benchmarks and
+report artifacts.
+
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
