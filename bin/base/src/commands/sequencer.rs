@@ -14,6 +14,7 @@ use base_execution_chainspec::BaseChainSpec;
 use base_execution_cli::{
     ExecutionNodeConfigArgs, StandardBaseRethNode, chainspec::chain_value_parser,
 };
+use base_execution_profiling::{ProfilingConfig, ProfilingExtension};
 use base_node_runner::BaseNodeRunner;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
@@ -74,6 +75,9 @@ impl SequencerCommand {
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder.shadow_indexer)?;
+        // Build the profiling config before `into_builder_config` consumes `builder`, so the unified
+        // `base sequencer` exposes the same opt-in CPU profiling endpoint the standalone builder does.
+        let profiling_config = ProfilingConfig::from(&builder.profiling);
         let payload_builder_cutover = builder.payload_builder_cutover;
         let basic_payload_builder = builder.basic_payload_builder;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
@@ -122,6 +126,7 @@ impl SequencerCommand {
                 );
             }
             runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
+            runner.install_ext::<ProfilingExtension>(profiling_config);
             StandardBaseRethNode::install_upgrade_signal_runtime_extension(
                 &mut runner,
                 &rollup_args,
@@ -267,6 +272,49 @@ mod tests {
         let config = ShadowIndexerConfig::try_from(&sequencer.builder.shadow_indexer)
             .expect("shadow indexer config should build from valid args");
         assert!(config.enabled);
+    }
+
+    #[test]
+    fn parses_profiling_args_and_builds_config() {
+        use base_execution_profiling::ProfilingConfig;
+
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--enable-profiling",
+            "--profiling.port",
+            "7070",
+            "--profiling.max-seconds",
+            "120",
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(sequencer.builder.profiling.enable_profiling);
+        let config = ProfilingConfig::from(&sequencer.builder.profiling);
+        assert!(config.enabled);
+        assert_eq!(config.port, 7070);
+        assert_eq!(config.max_seconds, 120);
+    }
+
+    #[test]
+    fn profiling_defaults_to_disabled() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(!sequencer.builder.profiling.enable_profiling);
     }
 
     #[test]
