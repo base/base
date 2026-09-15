@@ -17,7 +17,9 @@ use base_proof_contracts::{
     encode_register_signer_calldata, encode_revoke_cert_calldata,
     encode_verify_ca_cert_with_hints_calldata, encode_verify_client_cert_with_hints_calldata,
 };
+use base_proof_tee_nitro_verifier::{AttestationVerifier, VerifierInput};
 use base_tx_manager::{SendResponse, TxCandidate, TxManager, TxManagerError};
+use futures::future::Either;
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
     task::{self, JoinError, JoinSet},
@@ -394,6 +396,11 @@ where
         signer_cancel: &CancellationToken,
     ) -> Result<()> {
         let plan = AttestationPlanner::prepare_registration_plan(attestation_bytes)?;
+        AttestationVerifier::verify(&VerifierInput {
+            trustedCertsPrefixLen: 1,
+            attestationReport: Bytes::copy_from_slice(attestation_bytes),
+        })
+        .map_err(crate::PlannerError::from)?;
         self.register_plan(instance_id, signer_address, plan, None, signer_cancel).await
     }
 
@@ -437,9 +444,31 @@ where
             return Ok(());
         }
 
-        // Generating the hints verifies every certificate signature under the pinned root and
-        // the COSE signature under the leaf. Do that before CRL results can persist revocation
-        // state or deregister a signer.
+        // Keep revocation monitoring active for already-registered signers. Persisting a newly
+        // observed CRL entry protects every future registration that shares this certificate chain.
+        if !self.check_revocation_state(&plan, signer_cancel).await? {
+            return Ok(());
+        }
+
+        let Some(already_registered) = signer_cancel
+            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
+            .await
+            .transpose()?
+        else {
+            return Ok(());
+        };
+        if already_registered {
+            RegistrarMetrics::record_registration_stage(
+                RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
+            );
+            debug!(signer = %signer_address, instance = %instance_id, "already registered");
+            return Ok(());
+        }
+
+        if !self.validate_root_cache(&plan, signer_cancel).await? {
+            return Ok(());
+        }
+
         let hints = match prepared_hints {
             Some(hints) => hints,
             None => {
@@ -491,31 +520,6 @@ where
                 hints
             }
         };
-
-        // Keep revocation monitoring active for already-registered signers. Persisting a newly
-        // observed CRL entry protects every future registration that shares this certificate chain.
-        if !self.check_revocation_state(&plan, signer_cancel).await? {
-            return Ok(());
-        }
-
-        let Some(already_registered) = signer_cancel
-            .run_until_cancelled(self.registry.is_registered_signer(signer_address))
-            .await
-            .transpose()?
-        else {
-            return Ok(());
-        };
-        if already_registered {
-            RegistrarMetrics::record_registration_stage(
-                RegistrarMetrics::REGISTRATION_STAGE_ALREADY_REGISTERED,
-            );
-            debug!(signer = %signer_address, instance = %instance_id, "already registered");
-            return Ok(());
-        }
-
-        if !self.validate_root_cache(&plan, signer_cancel).await? {
-            return Ok(());
-        }
 
         if hints.cert_signature_hints.len() != plan.certs.len() {
             return Err(RegistrarError::InvalidAttestationProof(format!(
@@ -683,6 +687,25 @@ where
     /// This intentionally runs after its registration task is cancelled: a confirmed revocation
     /// must remove an existing signer even when its source becomes non-registerable.
     async fn deregister_revoked_signer(&self, signer: Address) {
+        let registered = tokio::time::timeout(
+            REVOCATION_CLEANUP_TIMEOUT,
+            self.registry.is_registered_signer(signer),
+        )
+        .await;
+        match registered {
+            Ok(Ok(false)) => return,
+            Ok(Ok(true)) => {}
+            Ok(Err(error)) => warn!(
+                error = %error,
+                signer = %signer,
+                "failed to read registration state for a revoked signer"
+            ),
+            Err(_) => warn!(
+                signer = %signer,
+                timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                "timed out reading registration state for a revoked signer"
+            ),
+        }
         self.submit_deregistration(signer, DEREG_REASON_REVOKED, Some(REVOCATION_CLEANUP_TIMEOUT))
             .await;
     }
@@ -718,21 +741,26 @@ where
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(&signer);
         });
-        let joined = if let Some(timeout) = detach_after {
-            match tokio::time::timeout(timeout, task).await {
-                Ok(joined) => Some(joined),
-                Err(_) => {
-                    warn!(
-                        signer = %signer,
-                        reason,
-                        timeout = ?timeout,
-                        "deregistration is still pending"
-                    );
-                    None
-                }
+        let timeout = detach_after.map_or_else(
+            || Either::Left(std::future::pending()),
+            |timeout| {
+                Either::Right(async move {
+                    tokio::time::sleep(timeout).await;
+                    timeout
+                })
+            },
+        );
+        let joined = tokio::select! {
+            joined = task => Some(joined),
+            timeout = timeout => {
+                warn!(
+                    signer = %signer,
+                    reason,
+                    timeout = ?timeout,
+                    "deregistration is still pending"
+                );
+                None
             }
-        } else {
-            Some(task.await)
         };
         if let Some(Err(error)) = joined {
             self.pending_deregistrations
@@ -1465,6 +1493,7 @@ mod tests {
         chain: MockChain,
         stall_get_registered: Arc<AtomicBool>,
         stall_is_registered: Arc<AtomicBool>,
+        fail_is_registered: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -1490,6 +1519,9 @@ mod tests {
         ) -> std::result::Result<bool, ContractError> {
             if self.stall_is_registered.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
+            }
+            if self.fail_is_registered.load(Ordering::SeqCst) {
+                return Err(ContractError::validation("registration state unavailable"));
             }
             Ok(self.chain.0.lock().unwrap().registered.contains(&signer))
         }
@@ -1754,6 +1786,7 @@ mod tests {
                 chain: chain.clone(),
                 stall_get_registered: Arc::new(AtomicBool::new(false)),
                 stall_is_registered: Arc::new(AtomicBool::new(false)),
+                fail_is_registered: Arc::new(AtomicBool::new(false)),
             },
             MockCertManager { chain: chain.clone() },
             MockTxManager {
@@ -1956,8 +1989,23 @@ mod tests {
 
             assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
             assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 0);
-            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn already_registered_signer_skips_hint_generation() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        chain.0.lock().unwrap().registered.insert(SIGNER_A);
+        manager.hint_semaphore.close();
+
+        manager
+            .register_plan(TEST_INSTANCE, SIGNER_A, plan, None, &CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert!(chain.sent().is_empty());
     }
 
     /// `isValidSigner` never consults certificate revocation, so a signer registered before its
@@ -1983,7 +2031,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn revoked_signer_cleanup_does_not_read_registration_state() {
+    async fn revoked_signer_cleanup_fails_safe_when_registration_state_read_fails() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -1991,12 +2039,9 @@ mod tests {
             state.registered.insert(SIGNER_A);
             state.revoked.insert(plan.certs[0].revocation_id);
         }
-        manager.registry.stall_is_registered.store(true, Ordering::SeqCst);
+        manager.registry.fail_is_registered.store(true, Ordering::SeqCst);
 
-        let result =
-            tokio::time::timeout(Duration::from_secs(1), register_prepared(&manager, plan))
-                .await
-                .expect("revocation cleanup should not query registration state");
+        let result = register_prepared(&manager, plan).await;
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
@@ -2165,7 +2210,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn confirmed_crl_revocation_deregisters_even_when_signer_is_not_registered() {
+    async fn confirmed_crl_revocation_skips_deregistration_when_signer_is_not_registered() {
         let plan = synthetic_plan(SIGNER_A);
         let cert_id = plan.certs[0].revocation_id;
         let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
@@ -2174,27 +2219,26 @@ mod tests {
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
-        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
     }
 
     #[tokio::test]
     async fn counterfeit_certificate_chain_cannot_persist_or_deregister_from_a_crl() {
-        let attestation =
+        let mut attestation =
             hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
-        let mut plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
         let signer = plan.signer;
-        plan.timestamp = TestManager::now().1.saturating_sub(1_000);
-        plan.nonce =
-            Some(TestManager::attestation_nonce_for(TEST_REGISTRY_ADDRESS, signer).to_vec());
-        *plan.certs[0].cert.last_mut().unwrap() ^= 1;
         let cert_id = plan.certs[0].revocation_id;
+        let cert = &plan.certs[0].cert;
+        let offset = attestation.windows(cert.len()).position(|window| window == cert).unwrap();
+        attestation[offset + cert.len() - 1] ^= 1;
         let mut source = MockCrlSource::new();
         source.expect_check_chain().never();
         let (manager, chain) = manager_with_crl(&plan, Box::new(source));
         chain.0.lock().unwrap().registered.insert(signer);
 
         let result = manager
-            .register_plan(TEST_INSTANCE, signer, plan, None, &CancellationToken::new())
+            .register_signer(TEST_INSTANCE, signer, &attestation, &CancellationToken::new())
             .await;
 
         assert!(matches!(result, Err(RegistrarError::Planning(_))));
