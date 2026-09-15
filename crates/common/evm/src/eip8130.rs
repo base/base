@@ -785,6 +785,13 @@ impl Eip8130Executor {
         // a different path and skew the estimate. No signature is verified here.
         let payer = tx.payer.unwrap_or(sender);
 
+        // Active runtime code-size cap (EIP-170 pre-Amsterdam, EIP-7954 after),
+        // resolved before `ctx` is borrowed so estimation applies the same create
+        // size limit as inclusion.
+        let eth_spec: SpecId = ctx.cfg().spec().into();
+        let max_code_size =
+            Eip8130Constants::max_code_size(eth_spec.is_enabled_in(SpecId::AMSTERDAM));
+
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
@@ -808,7 +815,8 @@ impl Eip8130Executor {
             //    calls run against post-change code and create/delegation gas is
             //    priced. Must precede actor/policy resolution so an actor
             //    authorized in this same estimate request is visible.
-            let has_explicit_delegation = Self::apply_account_changes(signed, sctx, sender, now)?;
+            let has_explicit_delegation =
+                Self::apply_account_changes(signed, sctx, sender, now, max_code_size)?;
 
             // 3. Resolve the acting actor's real policy gate. No signature
             //    recovery: the optional RPC hint names the intended actor (e.g. a
@@ -965,6 +973,14 @@ impl Eip8130Executor {
             return Err(BaseTransactionError::eip8130("transaction validity window has expired"));
         }
 
+        // Runtime code-size cap for enshrined creates: track the EVM's active
+        // limit (EIP-170 pre-Amsterdam, EIP-7954 from Amsterdam/Denim) so an
+        // EIP-8130 create is held to the same cap as an ordinary `CREATE`.
+        // Resolved before `ctx` is borrowed by the storage provider below.
+        let eth_spec: SpecId = ctx.cfg().spec().into();
+        let max_code_size =
+            Eip8130Constants::max_code_size(eth_spec.is_enabled_in(SpecId::AMSTERDAM));
+
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
@@ -982,9 +998,14 @@ impl Eip8130Executor {
             //    resulting post-apply state. `AccountConfiguration` storage
             //    transitions are written here; the deferred account-code effects
             //    are installed in step 2.
-            let applied_tx =
-                TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
-                    .map_err(BaseTransactionError::eip8130)?;
+            let applied_tx = TransactionAuthorizer::authorize_and_apply(
+                signed,
+                &mut acc,
+                chain_id,
+                now,
+                max_code_size,
+            )
+            .map_err(BaseTransactionError::eip8130)?;
             let has_explicit_delegation = applied_tx.applied.delegation.is_some();
             let sender_actor = applied_tx.actors.sender.resolved;
             let payer_policy_gated = applied_tx
@@ -1655,6 +1676,7 @@ impl Eip8130Executor {
         sctx: StorageCtx<'_>,
         sender: Address,
         now: u64,
+        max_code_size: usize,
     ) -> Result<bool, BaseTransactionError> {
         let mut acc_mut = AccountConfigurationStorage::new(sctx);
         let mut created_effect: Option<(Address, Bytes)> = None;
@@ -1670,8 +1692,9 @@ impl Eip8130Executor {
                             ApplyError::InvalidCreatePosition,
                         ));
                     }
-                    let created = AccountChangeApplier::apply_create(&mut acc_mut, entry)
-                        .map_err(BaseTransactionError::eip8130)?;
+                    let created =
+                        AccountChangeApplier::apply_create(&mut acc_mut, entry, max_code_size)
+                            .map_err(BaseTransactionError::eip8130)?;
                     created_effect = Some((created.address, created.code));
                 }
                 AccountChange::ConfigChange(cc) => {

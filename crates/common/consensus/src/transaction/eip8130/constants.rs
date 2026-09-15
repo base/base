@@ -282,10 +282,23 @@ impl Eip8130Constants {
     /// before transaction-pool admission limits run.
     pub const MAX_CALL_PHASES_PER_TX: usize = 1_024;
 
-    /// Maximum runtime bytecode size for a create entry, matching EIP-170's
-    /// `MAX_CODE_SIZE` limit. EIP-8130 places runtime code directly, so the
-    /// mempool rejects oversized code before execution.
+    /// Maximum runtime bytecode size for a create entry before the EIP-7954
+    /// increase, matching EIP-170's `MAX_CODE_SIZE`. EIP-8130 places runtime code
+    /// directly (bypassing the EVM's own `CREATE` size check), so the mempool and
+    /// block execution reject oversized code explicitly.
     pub const MAX_CODE_SIZE: usize = 24_576;
+
+    /// Maximum runtime bytecode size for a create entry from the EIP-7954
+    /// (Amsterdam / Denim) increase. Mirrors revm's `eip7954::MAX_CODE_SIZE`.
+    pub const MAX_CODE_SIZE_AMSTERDAM: usize = 65_536;
+
+    /// The active runtime-bytecode size cap for a create entry: the EIP-7954
+    /// limit once EIP-7954 (Amsterdam / Denim) is active, otherwise the EIP-170
+    /// limit. Callers derive `amsterdam` from the block's resolved spec so this
+    /// tracks the same limit the EVM enforces for ordinary `CREATE`.
+    pub const fn max_code_size(amsterdam: bool) -> usize {
+        if amsterdam { Self::MAX_CODE_SIZE_AMSTERDAM } else { Self::MAX_CODE_SIZE }
+    }
 }
 
 #[cfg(test)]
@@ -297,6 +310,18 @@ mod tests {
     const EIP1559_TX_TYPE: u8 = 0x02;
     const EIP7702_TX_TYPE: u8 = 0x04;
     const DEPOSIT_TX_TYPE: u8 = 0x7E;
+
+    #[test]
+    fn max_code_size_tracks_amsterdam_activation() {
+        // Pre-Amsterdam is EIP-170's 24,576; from Amsterdam it is EIP-7954's 65,536.
+        assert_eq!(Eip8130Constants::max_code_size(false), 24_576);
+        assert_eq!(Eip8130Constants::max_code_size(true), 65_536);
+        assert_eq!(Eip8130Constants::max_code_size(false), Eip8130Constants::MAX_CODE_SIZE);
+        assert_eq!(
+            Eip8130Constants::max_code_size(true),
+            Eip8130Constants::MAX_CODE_SIZE_AMSTERDAM
+        );
+    }
 
     #[test]
     fn type_bytes_are_distinct() {
