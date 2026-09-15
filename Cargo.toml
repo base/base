@@ -325,6 +325,7 @@ alloy-rlp = { version = "0.3.16", default-features = false }
 alloy-trie = { version = "0.9.4", default-features = false }
 alloy-eips = { version = "2.3.0", default-features = false }
 alloy-evm = { version = "0.38.0", default-features = false }
+revm-inspectors = { version = "0.42.2", default-features = false }
 alloy-serde = { version = "2.3.0", default-features = false }
 alloy-chains = { version = "0.2.33", default-features = false }
 alloy-genesis = { version = "2.3.0", default-features = false }
@@ -348,6 +349,7 @@ reth-ipc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-evm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-rpc = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-revm = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
+reth-errors = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-trie = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-exex = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
 reth-tasks = { git = "https://github.com/base/reth", tag = "base-v2.5.2.6" }
