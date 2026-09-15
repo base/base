@@ -143,8 +143,8 @@ pub struct CrlChainStatus {
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait CrlSource: fmt::Debug + Send + Sync {
-    /// Classifies every CA certificate in `certs` against its CRL distribution point, using
-    /// `root_cert` as the issuer of the first CA.
+    /// Classifies CA certificates in `certs` against their CRL distribution points, using
+    /// `root_cert` as the issuer of the first CA and stopping after the first revocation.
     ///
     /// A certificate with no CRL distribution point has no applicable CRL and is
     /// treated as clean.
@@ -330,6 +330,7 @@ impl CrlSource for CrlChecker {
                     status
                         .revoked
                         .push(RevokedCert { index: info.index, revocation_id: info.revocation_id });
+                    return Ok(status);
                 }
                 Ok(false) => {
                     debug!(cert_index = info.index, "certificate not on CRL");
@@ -365,6 +366,7 @@ pub struct CrlError(
 #[cfg(test)]
 mod tests {
     use hex_literal::hex;
+    use httpmock::{Method::GET, MockServer};
 
     use super::*;
 
@@ -386,6 +388,19 @@ mod tests {
     /// 2026-09-11T17:02:17Z.
     const AUTHENTIC_CRL_DER: [u8; 300] = hex!(
         "308201283081ae020101300a06082a8648ce3d0403023049310b3009060355040613025553310f300d060355040a0c06416d617a6f6e310c300a060355040b0c03415753311b301906035504030c126177732e6e6974726f2d656e636c61766573170d3236303931303136303231375a170d3236303931313137303231375aa0343032300f0603551d140408020601a08c452653301f0603551d230418301680149025b50dd90547e796c396fa729dcf99a9df4b96300a06082a8648ce3d0403020369003066023100f9ee2430efc6be388854105289c82b65e3f9c31ab3601f5e816ee9af014ca4a5c880cd55dc3b818cf243dc70924ef457023100da78011d1c80a5b4fe8cad9bf06984b55b4b46960a0e261cf6a5429c13529fc34e6d9d0c65ab7ccd9e926214e13b09a5"
+    );
+
+    /// Test root and signed CRL revoking [`REVOKED_CA_DER`]. The CRL is valid through 2048.
+    const REVOKED_ROOT_DER: [u8; 463] = hex!(
+        "308201cb30820152a003020102021402cb315b4e27e4ddedf449667737205df9e787fc300a06082a8648ce3d04030330143112301006035504030c097465737420726f6f743020170d3236303931353230343731335a180f32303534303133313230343731335a30143112301006035504030c097465737420726f6f743076301006072a8648ce3d020106052b8104002203620004c38695c54a8d80d9740885f7fab9207517e0d10235fbded6d171ee0a1f8d8521fab34d3e1ad003a569a284e6ceb33ac05e7c5a93ee56af2ad5a7681c14802bfecf49faa0f658405d4d0d1054d14e58b3c444ed400554ae9abc842dceb60d46bba3633061300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e04160414c8371d761ef5dc6194a0e37c5fa7a46af6df4a90301f0603551d23041830168014c8371d761ef5dc6194a0e37c5fa7a46af6df4a90300a06082a8648ce3d040303036700306402306af30c707cff0e8a3752314fa4b971cbe5f467648bdf7485e4d528f0a329353bf59856ed994ab1a59537c4ebc5cc80f302303e8aba07e07dd757998e3cec406bdda89282a52a8017505bcc1b3f2fdc93e5f2e83b75d9fc0b2fecd8e3694051329220"
+    );
+
+    const REVOKED_CA_DER: [u8; 533] = hex!(
+        "3082021130820196a00302010202021000300a06082a8648ce3d04030330143112301006035504030c097465737420726f6f743020170d3236303931353230343731335a180f32303534303133313230343731335a301c311a301806035504030c117465737420696e7465726d6564696174653076301006072a8648ce3d020106052b8104002203620004682a297690cdac30061c18b8e82e51ae794f21fb1261a92cd53455aee0d78397c68a49e287f2a6370e7448c60de3d9aa091b8e5a3266975a9bd0a80829388dad00b514478154afa275a341b0ea1f687e2b8fd8f1955353790fd1473d7fc2f0f3a381b03081ad30120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020106301d0603551d0e041604143e2c9264f7e7ff9815fb4af0dc7183a31d33cab7301f0603551d23041830168014c8371d761ef5dc6194a0e37c5fa7a46af6df4a9030470603551d1f0440303e303ca03aa0388636687474703a2f2f7265766f6b65642e6e6974726f2d656e636c6176652e616d617a6f6e6177732e636f6d2f7265766f6b65642e63726c300a06082a8648ce3d0403030369003066023100a3fdbfde13b6d8e5dd43a236312c8adb55d2ee088559ff2319b5b44c0286400235bd66c1fd9e94e886eb1601d1e29402023100ba7c460459ce8039ddc1d8d527c59cacadcd9dc4fb14b2716d2b2e4cc529adb2b319d631c55f2bc3867d5f649fb329cf"
+    );
+
+    const REVOKED_CRL_DER_SIGNED: [u8; 231] = hex!(
+        "3081e4306b020101300a06082a8648ce3d04030330143112301006035504030c097465737420726f6f74170d3236303931353230343731335a170d3438303831303230343731335a3015301302021000170d3236303931353230343731335aa00f300d300b0603551d14040402021000300a06082a8648ce3d0403030369003066023100b0f8cd0e49114e3b10fdc3e045bd6b16c0b1afaa21af236a5b99e290dda15f40cf27d84910e438d57de7c4c2cb6eceed023100e1955e0f507b26b56c615e66f4536e4ad43b2a6171d4dbe5c6504ef19f7622806b5c90b01a026aa824579a2dc3a48b56"
     );
 
     /// Real AWS Nitro root CA (self-signed, P384). Validity: 2019-10-28 to
@@ -554,6 +569,36 @@ mod tests {
 
         assert!(status.revoked.is_empty());
         assert!(status.indeterminate.is_empty());
+    }
+
+    #[tokio::test]
+    async fn confirmed_revocation_stops_before_checking_later_certificates() {
+        let server = MockServer::start_async().await;
+        let revoked = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/revoked.crl");
+                then.status(200).body(REVOKED_CRL_DER_SIGNED);
+            })
+            .await;
+        let http_client = reqwest::Client::builder()
+            .no_proxy()
+            .resolve("revoked.nitro-enclave.amazonaws.com", *server.address())
+            .build()
+            .unwrap();
+        let certs = vec![
+            CertPlan { cert: REVOKED_CA_DER.to_vec(), ..ca_plan(1, INTER1_HEX) },
+            ca_plan(2, DISALLOWED_CDP_CA_HEX),
+        ];
+
+        let status =
+            CrlChecker { http_client }.check_chain(&REVOKED_ROOT_DER, &certs).await.unwrap();
+
+        revoked.assert_async().await;
+        assert_eq!(
+            status.revoked,
+            vec![RevokedCert { index: 1, revocation_id: certs[0].revocation_id }]
+        );
+        assert!(status.indeterminate.is_empty(), "later certificates must not be checked");
     }
 
     #[test]

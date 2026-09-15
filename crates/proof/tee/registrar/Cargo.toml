@@ -81,6 +81,7 @@ hex.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true
+httpmock.workspace = true
 hex-literal.workspace = true
 alloy-consensus.workspace = true
 alloy-rpc-types-eth.workspace = true

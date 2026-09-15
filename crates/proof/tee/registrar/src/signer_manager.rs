@@ -586,7 +586,12 @@ where
             };
             if revoked {
                 RegistrarMetrics::onchain_revocations_detected().increment(1);
-                self.deregister_revoked_signer(plan.signer).await;
+                self.submit_deregistration(
+                    plan.signer,
+                    DEREG_REASON_REVOKED,
+                    Some(REVOCATION_CLEANUP_TIMEOUT),
+                )
+                .await;
                 return Err(RegistrarError::RevokedCertificate { label: label.into(), cert_id });
             }
         }
@@ -615,7 +620,7 @@ where
         }
     }
 
-    /// Checks every CA certificate in the plan against its AWS CRL distribution point.
+    /// Checks CA certificates in the plan against their AWS CRL distribution points.
     ///
     /// Fails closed: registration only proceeds when every applicable CRL was fetched and
     /// parsed successfully and listed no certificate in the chain. A CRL that cannot be
@@ -692,7 +697,12 @@ where
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .extend(detached);
             }
-            self.deregister_revoked_signer(plan.signer).await;
+            self.submit_deregistration(
+                plan.signer,
+                DEREG_REASON_REVOKED,
+                Some(REVOCATION_CLEANUP_TIMEOUT),
+            )
+            .await;
             return Err(RegistrarError::RevokedCertificate {
                 label: format!("CA certificate {}", first.index),
                 cert_id: first.revocation_id,
@@ -721,35 +731,10 @@ where
         Ok(true)
     }
 
-    /// Deregisters a signer whose certificate chain is confirmed revoked.
-    ///
-    /// This intentionally runs after its registration task is cancelled: a confirmed revocation
-    /// must remove an existing signer even when its source becomes non-registerable.
-    async fn deregister_revoked_signer(&self, signer: Address) {
-        let registered = tokio::time::timeout(
-            REVOCATION_CLEANUP_TIMEOUT,
-            self.registry.is_registered_signer(signer),
-        )
-        .await;
-        match registered {
-            Ok(Ok(false)) => return,
-            Ok(Ok(true)) => {}
-            Ok(Err(error)) => warn!(
-                error = %error,
-                signer = %signer,
-                "failed to read registration state for a revoked signer"
-            ),
-            Err(_) => warn!(
-                signer = %signer,
-                timeout = ?REVOCATION_CLEANUP_TIMEOUT,
-                "timed out reading registration state for a revoked signer"
-            ),
-        }
-        self.submit_deregistration(signer, DEREG_REASON_REVOKED, Some(REVOCATION_CLEANUP_TIMEOUT))
-            .await;
-    }
-
     /// Submits `deregisterSigner`, retrying transient failures for revoked signers.
+    ///
+    /// Revocation callers deliberately skip a preflight registry read because an earlier timed-out
+    /// registration transaction may still confirm.
     async fn submit_deregistration(
         &self,
         signer: Address,
@@ -2222,7 +2207,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn root_and_certificate_revocations_are_rejected_before_cache_transactions() {
+    async fn root_and_certificate_revocations_schedule_cleanup_before_cache_transactions() {
         for cert_id in [PINNED_ROOT_CERT_HASH, B256::repeat_byte(0x12)] {
             let plan = synthetic_plan(SIGNER_A);
             let (manager, chain) = manager_with_plan(&plan);
@@ -2232,7 +2217,7 @@ mod tests {
 
             assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
             assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 0);
-            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
         }
     }
 
@@ -2615,7 +2600,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn confirmed_crl_revocation_skips_deregistration_when_signer_is_not_registered() {
+    async fn confirmed_crl_revocation_schedules_deregistration_before_registration_lands() {
         let plan = synthetic_plan(SIGNER_A);
         let cert_id = plan.certs[0].revocation_id;
         let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
@@ -2624,7 +2609,7 @@ mod tests {
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
-        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
     #[tokio::test]
