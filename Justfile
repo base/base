@@ -197,6 +197,7 @@ benches:
     @just bench-execution-trie-deep-history-reads
     @just bench-builder-core
     @just bench-builder-publish
+    @just bench-txpool-validity
 
 # Runs flashblocks pending state benchmarks
 bench-flashblocks-pending-state:
@@ -241,6 +242,14 @@ bench-builder-core:
 # Runs builder publish benchmarks
 bench-builder-publish:
     cargo bench -p base-builder-publish --bench publisher
+
+# Runs txpool validity-predicate benchmarks
+bench-txpool-validity:
+    cargo bench -p base-execution-txpool --bench validity
+
+# Runs txpool same-nonce replacement-lookup benchmark (scan vs indexed)
+bench-txpool-admission:
+    cargo bench -p base-execution-txpool --bench admission
 
 # Runs the B-20 ZK proving system benchmark (requires a live local L2/rollup/prover-service stack)
 bench-b20-zk-proving:

@@ -444,7 +444,9 @@ where
         GuardMetrics::record_reconcile_releases(stale.len());
     }
 
-    fn protocol_replacement_hash(&self, sender: Address, nonce: u64) -> Option<TxHash> {
+    /// Returns the hash of the currently pooled same-sender/same-nonce
+    /// transaction that a new protocol admission would replace, if any.
+    pub fn protocol_replacement_hash(&self, sender: Address, nonce: u64) -> Option<TxHash> {
         self.protocol_pool
             .get_transactions_by_sender(sender)
             .into_iter()
