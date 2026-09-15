@@ -210,17 +210,11 @@ impl<R, C, T> SignerManager<R, C, T> {
         (now.as_secs(), u64::try_from(now.as_millis()).unwrap_or(u64::MAX))
     }
 
-    fn validate_plan(&self, expected_signer: Address, plan: &RegistrationPlan) -> Result<()> {
-        if plan.signer != expected_signer {
-            return Err(RegistrarError::InvalidAttestationProof(format!(
-                "signer mismatch: expected {expected_signer}, got {}",
-                plan.signer
-            )));
-        }
-        let expected_nonce = self.attestation_nonce(expected_signer);
+    fn validate_registration_plan(&self, signer: Address, plan: &RegistrationPlan) -> Result<()> {
+        let expected_nonce = self.attestation_nonce(signer);
         if plan.nonce.as_deref() != Some(expected_nonce.as_slice()) {
             return Err(RegistrarError::InvalidAttestationProof(format!(
-                "nonce mismatch for signer {expected_signer}: expected 0x{}, got {}",
+                "nonce mismatch for signer {signer}: expected 0x{}, got {}",
                 hex::encode(expected_nonce),
                 plan.nonce
                     .as_deref()
@@ -266,7 +260,7 @@ impl<R, C, T> SignerManager<R, C, T> {
                 "leaf certificate hash does not match the final cache step".into(),
             ));
         }
-        self.ensure_attestation_fresh(expected_signer, plan.timestamp)
+        self.ensure_attestation_fresh(signer, plan.timestamp)
     }
 
     fn ensure_attestation_fresh(&self, signer: Address, timestamp_ms: u64) -> Result<()> {
@@ -454,7 +448,12 @@ where
                 self.registry_address
             )));
         }
-        self.validate_plan(signer_address, &plan)?;
+        if plan.signer != signer_address {
+            return Err(RegistrarError::InvalidAttestationProof(format!(
+                "signer mismatch: expected {signer_address}, got {}",
+                plan.signer
+            )));
+        }
         if signer_cancel.is_cancelled() {
             return Ok(());
         }
@@ -464,6 +463,7 @@ where
         if !self.check_revocation_state(&plan, signer_cancel).await? {
             return Ok(());
         }
+        self.validate_registration_plan(signer_address, &plan)?;
 
         let Some(already_registered) = signer_cancel
             .run_until_cancelled(self.registry.is_registered_signer(signer_address))
@@ -2860,22 +2860,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_attestation_signer_and_nonce_rejections_happen_before_contract_reads() {
+    async fn real_attestation_signer_mismatch_happens_before_contract_reads() {
         let attestation =
             hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
-        let parsed = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
-        for signer in [SIGNER_B, parsed.signer] {
-            let plan = synthetic_plan(signer);
-            let (manager, chain) = manager_with_plan(&plan);
+        let plan = synthetic_plan(SIGNER_B);
+        let (manager, chain) = manager_with_plan(&plan);
 
-            let result = manager
-                .register_signer(TEST_INSTANCE, signer, &attestation, &CancellationToken::new())
-                .await;
+        let result = manager
+            .register_signer(TEST_INSTANCE, SIGNER_B, &attestation, &CancellationToken::new())
+            .await;
 
-            assert!(matches!(result, Err(RegistrarError::InvalidAttestationProof(_))));
-            assert_eq!(chain.cert_reads(), 0);
-            assert!(chain.sent().is_empty());
+        assert!(matches!(result, Err(RegistrarError::InvalidAttestationProof(_))));
+        assert_eq!(chain.cert_reads(), 0);
+        assert!(chain.sent().is_empty());
+    }
+
+    #[tokio::test]
+    async fn authenticated_wrong_nonce_still_deregisters_revoked_signer() {
+        let attestation =
+            hex::decode(include_str!("testdata/nitro_attestation.hex").trim()).unwrap();
+        let plan = AttestationPlanner::prepare_registration_plan(&attestation).unwrap();
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(plan.signer);
+            state.revoked.insert(plan.certs[0].revocation_id);
         }
+
+        let result = manager
+            .register_signer(TEST_INSTANCE, plan.signer, &attestation, &CancellationToken::new())
+            .await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(!chain.0.lock().unwrap().registered.contains(&plan.signer));
     }
 
     #[tokio::test]
@@ -2905,7 +2922,7 @@ mod tests {
         let (manager, _) = manager_with_plan(&plan);
         plan.timestamp = TestManager::now().1;
 
-        manager.validate_plan(SIGNER_A, &plan).unwrap();
+        manager.validate_registration_plan(SIGNER_A, &plan).unwrap();
     }
 
     #[tokio::test(start_paused = true)]
