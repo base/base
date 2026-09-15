@@ -86,13 +86,15 @@ cargo run -p base-system-tests --bin base-devnet -- snapshot \
 ```
 
 Use `--block-interval 200ms` for the subsecond variant. The first descendant activates `BaseTime`
-metadata and subsequent blocks advance on a deterministic 200ms schedule.
+metadata and subsequent blocks advance on a deterministic 200ms schedule. Snapshot devnets default
+to a 10 Ggas block limit at 2s and a 1 Ggas block limit at 200ms, preserving 5 Ggas/s of theoretical
+capacity at either cadence. Pass `--block-gas-limit <gas>` to override the cadence default.
 
 Startup validates the selected chain ID, the boundary L1-info transaction, `SystemConfig`, and
 sequence number. It waits for the builder to extend the snapshot and for the client to follow before
-writing the runtime file. The process then runs until Ctrl-C and shuts both EL runtimes down
-gracefully. `--chain` accepts built-in aliases such as `mainnet` and `sepolia`, or a Base genesis
-JSON path. A custom genesis whose chain ID is not built in also needs `--rollup-config <rollup.json>`.
+writing the runtime file. The process then runs until Ctrl-C or SIGTERM. `--chain` accepts built-in
+aliases such as `mainnet` and `sepolia`, or a Base genesis JSON path. A custom genesis whose chain ID
+is not built in also needs `--rollup-config <rollup.json>`.
 
 In another terminal, inspect the machine-readable endpoints and compare the live heads:
 
@@ -109,9 +111,14 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `builder_rpc_url`, `builder_flashblocks_url`, and `client_rpc_url`. Dynamic
-ports are the default and are safest for automation. `--stable-ports` binds the builder and client
-RPCs to ports 7545 and 8545, respectively, but fails if those ports are occupied.
+`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
+`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
+binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
+occupied.
+
+On Ctrl-C or SIGTERM, the snapshot devnet terminates immediately without running node or database
+cleanup because its datadirs are caller-owned writable clones. Pass a nonzero
+`--shutdown-timeout-seconds` (for example, `10`) to request bounded graceful teardown instead.
 
 To pin a run to a known snapshot boundary, pass all three of `--expected-head-number`,
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if

@@ -2,12 +2,18 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::B256;
 use alloy_rpc_types_engine::JwtSecret;
 use base_common_genesis::{RollupConfig, SystemConfig};
-use base_consensus_node::{EngineConfig, NodeMode, StandalonePrefund, StandaloneSequencerNode};
+use base_consensus_node::{
+    EngineConfig, NodeMode, SequencerAdminQuery, StandalonePrefund, StandaloneSequencerNode,
+};
 use base_protocol::L1BlockInfoTx;
 use eyre::{Result, WrapErr};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
@@ -31,6 +37,7 @@ pub struct InProcessStandaloneSequencerConfig {
 /// A running L1-free snapshot sequencer.
 pub struct InProcessStandaloneSequencer {
     cancellation: CancellationToken,
+    admin_tx: mpsc::Sender<SequencerAdminQuery>,
     error_rx: mpsc::Receiver<String>,
     handle: Option<JoinHandle<()>>,
 }
@@ -71,15 +78,18 @@ impl InProcessStandaloneSequencer {
         );
         let cancellation = CancellationToken::new();
         let node_cancellation = cancellation.clone();
+        let (admin_tx, admin_rx) = mpsc::channel(1);
         let (error_tx, error_rx) = mpsc::channel(1);
         let handle = tokio::spawn(async move {
-            if let Err(error) = node.start_with_cancellation(node_cancellation).await {
+            if let Err(error) =
+                node.start_with_cancellation_and_admin(node_cancellation, admin_rx).await
+            {
                 tracing::error!(error = %error, "standalone consensus node failed");
                 let _ = error_tx.send(error).await;
             }
         });
 
-        Ok(Self { cancellation, error_rx, handle: Some(handle) })
+        Ok(Self { cancellation, admin_tx, error_rx, handle: Some(handle) })
     }
 
     /// Waits for the standalone node to report a fatal runtime error.
@@ -88,6 +98,19 @@ impl InProcessStandaloneSequencer {
             .recv()
             .await
             .unwrap_or_else(|| "standalone consensus task exited unexpectedly".to_string())
+    }
+
+    /// Stops block production after any in-flight seal finishes while keeping the engine alive.
+    pub async fn stop_sequencer(&self) -> Result<B256> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.admin_tx
+            .send(SequencerAdminQuery::StopSequencer(response_tx))
+            .await
+            .map_err(|_| eyre::eyre!("standalone sequencer admin channel closed"))?;
+        response_rx
+            .await
+            .map_err(|_| eyre::eyre!("standalone sequencer stop response channel closed"))?
+            .map_err(eyre::Report::from)
     }
 
     /// Stops standalone consensus and waits for the task to observe cancellation.

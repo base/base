@@ -1,6 +1,16 @@
 //! Command-line launcher for development networks.
 
-use std::path::PathBuf;
+use std::{
+    io::Write as _,
+    num::NonZeroU64,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
 
 use alloy_primitives::{Address, B256};
 use clap::{Args, Parser, Subcommand};
@@ -62,6 +72,10 @@ pub struct SnapshotArgs {
     /// Interval between locally produced blocks.
     #[arg(long, value_enum, default_value_t)]
     pub block_interval: DevnetBlockInterval,
+    /// Block gas limit for locally produced descendants. Defaults to 10 Ggas for 2s blocks and
+    /// 1 Ggas for 200ms blocks.
+    #[arg(long)]
+    pub block_gas_limit: Option<NonZeroU64>,
     /// Account to mint ETH to in the first local descendant block.
     #[arg(long)]
     pub prefund_address: Option<Address>,
@@ -80,6 +94,10 @@ pub struct SnapshotArgs {
     /// Machine-readable endpoint and boundary output.
     #[arg(long, default_value = "runtime.json")]
     pub runtime_file: PathBuf,
+    /// Maximum time to wait for graceful shutdown after interruption. Zero terminates the process
+    /// immediately because snapshot datadirs are caller-owned and expected to be disposable.
+    #[arg(long, default_value_t = 0)]
+    pub shutdown_timeout_seconds: u64,
 }
 
 /// Machine-readable state emitted by the snapshot devnet launcher.
@@ -95,6 +113,8 @@ pub struct SnapshotRuntime {
     pub boundary_hash: B256,
     /// Configured interval between local blocks, in milliseconds.
     pub block_interval_ms: u64,
+    /// Configured block gas limit for local descendants.
+    pub block_gas_limit: u64,
     /// Builder execution JSON-RPC URL.
     pub builder_rpc_url: String,
     /// Builder Flashblocks WebSocket URL.
@@ -149,6 +169,7 @@ impl SnapshotArgs {
         };
         snapshot.expected_head = expected_head;
         snapshot.block_interval = self.block_interval;
+        snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.prefund = self
             .prefund_address
             .map(|address| DevnetPrefund { address, amount: self.prefund_amount });
@@ -165,11 +186,93 @@ impl SnapshotArgs {
         println!("snapshot devnet ready");
         println!("builder RPC: {}", runtime.builder_rpc_url);
         println!("client RPC:  {}", runtime.client_rpc_url);
+        println!("block gas:   {}", runtime.block_gas_limit);
         println!("runtime:     {}", self.runtime_file.display());
-        println!("press Ctrl-C to stop");
+        println!("send Ctrl-C or SIGTERM to stop");
+
+        if self.shutdown_timeout_seconds == 0 {
+            return Self::wait_for_fast_shutdown().await;
+        }
+
+        Self::wait_for_shutdown_signal().await?;
+        Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds).await
+    }
+
+    /// Replaces Reth's graceful process handlers with async-signal-safe immediate exit handlers.
+    ///
+    /// The handler itself must not allocate or run destructors. `_exit` guarantees that a
+    /// saturated Tokio runtime or non-cancellable state-root task cannot delay benchmark cleanup.
+    #[cfg(unix)]
+    async fn wait_for_fast_shutdown() -> Result<()> {
+        unsafe extern "C" fn exit_immediately(_: libc::c_int) {
+            // SAFETY: `_exit` is async-signal-safe and terminates without running destructors.
+            unsafe { libc::_exit(0) }
+        }
+
+        for signal in [libc::SIGINT, libc::SIGTERM] {
+            // SAFETY: `exit_immediately` has the required C signal-handler ABI and only calls the
+            // async-signal-safe `_exit` function.
+            let previous = unsafe {
+                libc::signal(signal, exit_immediately as *const () as libc::sighandler_t)
+            };
+            if previous == libc::SIG_ERR {
+                return Err(std::io::Error::last_os_error())
+                    .wrap_err("failed to install immediate snapshot shutdown handler");
+            }
+        }
+
+        std::future::pending().await
+    }
+
+    /// Waits for Ctrl-C before immediately terminating on platforms without Unix signals.
+    #[cfg(not(unix))]
+    async fn wait_for_fast_shutdown() -> Result<()> {
         tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
-        stack.shutdown().await?;
+        std::process::exit(0)
+    }
+
+    /// Gracefully shuts down the stack, but terminates the process if runtime destruction remains
+    /// blocked after the deadline. A native thread is used because the Tokio runtime itself may be
+    /// the component waiting on a non-cancellable blocking state-root task.
+    async fn shutdown_with_deadline(stack: SnapshotL2Stack, timeout_seconds: u64) -> Result<()> {
+        let complete = Arc::new(AtomicBool::new(false));
+        let watchdog_complete = Arc::clone(&complete);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(timeout_seconds));
+            if !watchdog_complete.load(Ordering::Acquire) {
+                eprintln!(
+                    "snapshot devnet shutdown exceeded {timeout_seconds}s; forcing failed process exit"
+                );
+                let _ = std::io::stderr().flush();
+                std::process::exit(1);
+            }
+        });
+
+        let result = stack.shutdown().await;
+        complete.store(true, Ordering::Release);
+        result
+    }
+
+    /// Waits for the interactive or process-manager shutdown signals used by the launcher.
+    #[cfg(unix)]
+    async fn wait_for_shutdown_signal() -> Result<()> {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut sigterm =
+            signal(SignalKind::terminate()).wrap_err("failed to install SIGTERM handler")?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result.wrap_err("failed to listen for Ctrl-C")?;
+            }
+            _ = sigterm.recv() => {}
+        }
         Ok(())
+    }
+
+    /// Waits for the interactive shutdown signal used by the launcher.
+    #[cfg(not(unix))]
+    async fn wait_for_shutdown_signal() -> Result<()> {
+        tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")
     }
 }
 
@@ -183,6 +286,7 @@ impl SnapshotRuntime {
             boundary_number: boundary.head.number,
             boundary_hash: boundary.head.hash,
             block_interval_ms: stack.block_interval().duration().as_millis() as u64,
+            block_gas_limit: stack.block_gas_limit(),
             builder_rpc_url: stack.builder_rpc_url()?.to_string(),
             builder_flashblocks_url: stack.builder_flashblocks_url()?.to_string(),
             client_rpc_url: stack.client_rpc_url()?.to_string(),
@@ -192,6 +296,8 @@ impl SnapshotRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use clap::Parser;
 
     use super::{DevnetCli, DevnetCommand};
@@ -222,5 +328,30 @@ mod tests {
         assert_eq!(args.builder_datadir.to_str(), Some("/tmp/builder"));
         assert!(args.prefund_address.is_some());
         assert_eq!(args.block_interval, DevnetBlockInterval::TwoHundredMilliseconds);
+        assert!(args.block_gas_limit.is_none());
+        assert_eq!(args.shutdown_timeout_seconds, 0);
+    }
+
+    #[test]
+    fn parses_snapshot_shutdown_timeout() {
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "snapshot",
+            "--builder-datadir",
+            "/tmp/builder",
+            "--client-datadir",
+            "/tmp/client",
+            "--shutdown-timeout-seconds",
+            "30",
+            "--block-gas-limit",
+            "12000000000",
+        ])
+        .unwrap();
+
+        let DevnetCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot command")
+        };
+        assert_eq!(args.shutdown_timeout_seconds, 30);
+        assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
     }
 }
