@@ -29,18 +29,14 @@ const FORK_AWARE_INTERVALS_VERSION: (u64, u64) = (0, 2);
 /// The two ABIs are disjoint, not additive: 0.2.0 added `intervalsForStartingBlock` and
 /// *removed* `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`, which it split into
 /// `SLOW_*` and `FAST_*` pairs. Exactly one of the two call shapes is valid for any given
-/// address, and the version is what decides which. 0.3.0 changed no ABI — it was a release
-/// semver bump — so the boundary is 0.2.0, and 0.1.x is the only legacy shape.
-///
-/// Nothing else in this interface differs between 0.1.0 and 0.3.0: every other method is
-/// present in both with an identical signature, so these three names are the whole split.
+/// address, and the version is what decides which.
 ///
 /// A version string that does not parse is treated as fork-aware. Every deployed verifier
 /// reports `MAJOR.MINOR.PATCH`, so an unreadable one means these bindings are behind the
 /// chain; failing on the new path produces a better error than quietly calling getters
 /// that no longer exist.
 fn supports_fork_aware_intervals(version: &str) -> bool {
-    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let core = version.split(['-', '+']).next().unwrap_or_default();
     let mut parts = core.split('.');
     let (Some(major), Some(minor)) = (parts.next(), parts.next()) else {
         return true;
@@ -64,8 +60,7 @@ fn supports_fork_aware_intervals(version: &str) -> bool {
 /// (the anchor's successor, the proposer's next proposal). For an existing game, call
 /// `read_intervals_for_starting_block` on its proxy instead so the pair it was created
 /// with is used even after an implementation upgrade; proxies older than
-/// `AggregateVerifier` 0.2.0 fall back to their fixed interval getters, selected by
-/// [`supports_fork_aware_intervals`] rather than by sniffing the revert.
+/// `AggregateVerifier` 0.2.0 fall back to their fixed interval getters.
 pub async fn resolve_intervals(
     factory_client: &dyn DisputeGameFactoryClient,
     verifier_client: &dyn AggregateVerifierClient,
@@ -119,8 +114,7 @@ sol! {
         /// Returns the parent game's address.
         function parentAddress() external pure returns (address);
 
-        /// Returns the contract's semantic version, e.g. `"0.3.0"`. Present in every
-        /// version, including 0.1.x.
+        /// Returns the contract's semantic version, e.g. `"0.3.0"`.
         function version() external pure returns (string memory);
 
         /// Returns the block interval between proposals (immutable on the implementation).
@@ -446,10 +440,8 @@ impl AggregateVerifierContractClient {
 
     /// Reads `version()` from a verifier and reports which interval ABI that address speaks.
     ///
-    /// Works through a game proxy as well as an implementation. A CWIA clone delegatecalls
-    /// into the implementation it was created against, and `version()` is `pure`, so it
-    /// cannot read the clone's immutable args or storage: the string comes from the
-    /// implementation's own code, which is the one that actually governs that game.
+    /// Works through a game proxy too: `version()` is `pure`, so a CWIA clone reports the
+    /// string of the implementation that governs it, not one of its own.
     async fn is_fork_aware(&self, verifier_address: Address) -> Result<bool, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(verifier_address, &self.provider);
@@ -585,11 +577,8 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         ) {
             Ok(result) => result,
             Err(error) if error.is_missing_method() => {
-                // A missing selector and a node returning empty data are indistinguishable at
-                // this layer, so confirm against `version()` before dropping to the pre-0.2.0
-                // getters. Guessing wrong is not self-correcting in either direction: on a
-                // 0.2.0 verifier the legacy getters were removed, so a spurious fallback
-                // reports a missing `BLOCK_INTERVAL()` and buries the real failure.
+                // Empty data and a missing selector look identical here, so confirm with
+                // `version()` before using the pre-0.2.0 getters, which 0.2.0 removed.
                 match self.is_fork_aware(verifier_address).await {
                     Ok(true) => {
                         return Err(ContractError::validation(format!(
@@ -600,9 +589,6 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                     }
                     Ok(false) => {}
                     Err(version_error) => {
-                        // Both calls failed, so the ABI is undetermined. Guessing legacy here
-                        // would report a missing `BLOCK_INTERVAL()` and bury both failures;
-                        // surface them together instead.
                         return Err(ContractError::validation(format!(
                             "intervalsForStartingBlock failed on {verifier_address} ({error}), \
                              and version() also failed ({version_error}); cannot determine \
@@ -890,8 +876,6 @@ mod tests {
 
     #[test]
     fn test_supports_fork_aware_intervals_gates_on_0_2_0() {
-        // 0.1.x: only BLOCK_INTERVAL() / INTERMEDIATE_BLOCK_INTERVAL() exist. This is what
-        // is deployed today.
         assert!(!supports_fork_aware_intervals("0.1.0"));
         assert!(!supports_fork_aware_intervals("0.1.99"));
 
@@ -903,12 +887,10 @@ mod tests {
         assert!(supports_fork_aware_intervals("0.10.0"));
         assert!(supports_fork_aware_intervals("1.0.0"));
 
-        // Pre-release and build suffixes compare on the core version.
         assert!(supports_fork_aware_intervals("0.2.0-beta.1"));
         assert!(!supports_fork_aware_intervals("0.1.0-rc.1"));
         assert!(supports_fork_aware_intervals("0.3.0+deadbeef"));
 
-        // Unreadable versions fail on the new path rather than calling removed getters.
         assert!(supports_fork_aware_intervals(""));
         assert!(supports_fork_aware_intervals("unversioned"));
         assert!(supports_fork_aware_intervals("3"));
