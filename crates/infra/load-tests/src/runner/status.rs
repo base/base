@@ -59,19 +59,19 @@ pub struct DisplaySnapshot {
     pub senders_blocked: usize,
     /// Total number of senders.
     pub total_senders: usize,
-    /// Rolling 30s TPS.
+    /// Rolling 10-second TPS.
     pub rolling_tps: f64,
-    /// Rolling 30s GPS.
+    /// Rolling 10-second GPS.
     pub rolling_gps: f64,
     /// Configured target GPS (`None` means unbounded).
     pub target_gps: Option<u64>,
-    /// Rolling 30s p50 block landing latency.
+    /// Rolling 10-second p50 block landing latency.
     pub p50_latency: Duration,
-    /// Rolling 30s p99 block landing latency.
+    /// Rolling 10-second p99 block landing latency.
     pub p99_latency: Duration,
-    /// Rolling 30s flashblocks p50 latency.
+    /// Rolling 10-second flashblocks p50 latency.
     pub flashblocks_p50_latency: Duration,
-    /// Rolling 30s flashblocks p99 latency.
+    /// Rolling 10-second flashblocks p99 latency.
     pub flashblocks_p99_latency: Duration,
     /// Current gas price in gwei.
     pub gas_price_gwei: f64,
@@ -245,7 +245,7 @@ impl LoadTestDisplay {
             100.0
         };
         self.rate.set_message(format!(
-            "rate    {:.2}% success   tps {:.1}   gps {} / {}   (30s window)",
+            "rate    {:.2}% success   tps {:.1}   gps {} / {}   (10s window)",
             success_rate,
             snap.rolling_tps,
             fmt_num(snap.rolling_gps as u64),
