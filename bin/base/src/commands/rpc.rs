@@ -555,6 +555,32 @@ mod tests {
     }
 
     #[test]
+    fn parses_rpc_state_prefetch_args() {
+        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc", "--state.prefetch-workers", "8"]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert_eq!(launch_config.standard.state_prefetch.state_prefetch_workers, 8);
+    }
+
+    #[test]
+    fn state_prefetch_workers_defaults_to_disabled() {
+        let cli = BaseCli::parse_from(rpc_args(&["base", "rpc"]));
+
+        let BaseCommand::Rpc(rpc) = cli.command else {
+            panic!("expected rpc command");
+        };
+
+        let launch_config = rpc.execution.into_launch_config(BaseChainSpec::devnet().into());
+
+        assert_eq!(launch_config.standard.state_prefetch.state_prefetch_workers, 0);
+    }
+
+    #[test]
     fn parses_rpc_validity_forwarding_args() {
         let cli = BaseCli::parse_from(rpc_args(&[
             "base",

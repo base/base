@@ -51,6 +51,7 @@ base-txpool-tracing.workspace = true
 base-flashblocks-node.workspace = true
 base-builder-metering.workspace = true
 base-execution-trie.workspace = true
+base-execution-state-prefetch.workspace = true
 base-execution-eip8130-rpc-node.workspace = true
 base-execution-payload-builder.workspace = true
 base-proofs-extension.workspace = true

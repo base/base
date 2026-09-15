@@ -6,10 +6,11 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolValue;
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
-    Asset, AssetV1, B20AssetStorage, B20AssetToken, B20FactoryStorage, B20TokenRole, B20Variant,
-    IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+    Asset, AssetV1, B20AssetStorage, B20AssetToken, B20CoreStorage, B20FactoryStorage,
+    B20TokenRole, B20Variant, IB20, IB20Factory, PolicyRegistryStorage, PolicyVersion, Token,
+    TokenAccounting,
 };
-use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
+use base_precompile_storage::{HashMapStorageProvider, PrefetchHint, StorageCtx};
 use criterion::{Criterion, criterion_group, criterion_main};
 
 struct BaseTokenBenchSetup;
@@ -503,6 +504,24 @@ fn base_b20_factory_view(c: &mut Criterion) {
     });
 }
 
+fn base_prefetch_hint_disabled(c: &mut Criterion) {
+    let token = Address::repeat_byte(0xb2);
+    let from = Address::repeat_byte(0x01);
+    let to = Address::repeat_byte(0x02);
+    let spender = Address::repeat_byte(0x03);
+
+    c.bench_function("base_prefetch_hint_disabled", |b| {
+        b.iter(|| {
+            let slots = B20CoreStorage::transfer_hint_slots(
+                black_box(from),
+                black_box(to),
+                Some(black_box(spender)),
+            );
+            PrefetchHint::send_slots(black_box(token), black_box(&slots));
+        });
+    });
+}
+
 criterion_group!(
     benches,
     base_token_metadata,
@@ -510,5 +529,6 @@ criterion_group!(
     base_token_mutate,
     base_b20_factory_mutate,
     base_b20_factory_view,
+    base_prefetch_hint_disabled,
 );
 criterion_main!(benches);

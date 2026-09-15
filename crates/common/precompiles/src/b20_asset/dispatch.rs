@@ -13,15 +13,15 @@ use alloc::{string::String, vec::Vec};
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
-use base_precompile_storage::{BasePrecompileError, PrecompileResult, StorageCtx};
+use base_precompile_storage::{BasePrecompileError, PrecompileResult, PrefetchHint, StorageCtx};
 
 use crate::{
     AssetAccounting, AssetCall, AssetVersion, AssetVersions, B20AssetStorage, B20AssetToken,
-    B20PolicyType, B20TokenRole,
+    B20CoreStorage, B20PolicyType, B20TokenRole,
     IB20::{self, IB20Calls as C},
     IB20Asset::{self, IB20AssetCalls as SC},
     NoopPrecompileCallObserver, PermitArgs, PolicyAccounting, PrecompileAuxiliaryMetrics,
-    PrecompileCallObserver, PrecompileCallRecorder, PrecompileMetricLabels,
+    PrecompileCallObserver, PrecompileCallRecorder, PrecompileMetricLabels, Token,
 };
 
 impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
@@ -217,10 +217,18 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
 
             // --- ERC-20 mutating ---
             C::transfer(c) => {
+                PrefetchHint::send_slots(
+                    self.token_address(),
+                    &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
+                );
                 logic.transfer(self, caller, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
             C::transferFrom(c) => {
+                PrefetchHint::send_slots(
+                    self.token_address(),
+                    &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
+                );
                 logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                 true.abi_encode().into()
             }
@@ -229,11 +237,19 @@ impl<S: AssetAccounting, A: PolicyAccounting> B20AssetToken<S, A> {
                 true.abi_encode().into()
             }
             C::transferWithMemo(c) => {
+                PrefetchHint::send_slots(
+                    self.token_address(),
+                    &B20CoreStorage::transfer_hint_slots(caller, c.to, None),
+                );
                 logic.transfer(self, caller, c.to, c.amount, privileged)?;
                 logic.emit_memo(self, caller, c.memo)?;
                 true.abi_encode().into()
             }
             C::transferFromWithMemo(c) => {
+                PrefetchHint::send_slots(
+                    self.token_address(),
+                    &B20CoreStorage::transfer_hint_slots(c.from, c.to, Some(caller)),
+                );
                 logic.transfer_from(self, caller, c.from, c.to, c.amount, privileged)?;
                 logic.emit_memo(self, caller, c.memo)?;
                 true.abi_encode().into()

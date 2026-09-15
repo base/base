@@ -20,6 +20,9 @@ pub use packing::{
     calc_packed_slot_count,
 };
 
+mod prefetch;
+pub use prefetch::{PrefetchHint, PrefetchRequest, StatePrefetcher};
+
 mod provider;
 pub use provider::{
     ContractStorage, FromWord, Handler, Layout, LayoutCtx, Packable, PrecompileStorageProvider,
