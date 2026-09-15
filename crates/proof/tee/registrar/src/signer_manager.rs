@@ -643,7 +643,6 @@ where
         if let Some(first) = status.revoked.first() {
             RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_REVOKED);
             RegistrarMetrics::crl_revocations_detected().increment(status.revoked.len() as u64);
-            self.deregister_revoked_signer(plan.signer).await;
             for cert in &status.revoked {
                 if let Err(e) = self.submit_revocation(cert.revocation_id, plan.signer).await {
                     warn!(
@@ -654,6 +653,7 @@ where
                     RegistrarMetrics::revoke_cert_tx_failures().increment(1);
                 }
             }
+            self.deregister_revoked_signer(plan.signer).await;
             return Err(RegistrarError::RevokedCertificate {
                 label: format!("CA certificate {}", first.index),
                 cert_id: first.revocation_id,
@@ -1400,6 +1400,7 @@ mod tests {
         sent: Vec<(Option<Address>, Bytes)>,
         outcomes: VecDeque<MockTxOutcome>,
         final_signer: Option<Address>,
+        register_before_revocation: Option<Address>,
         cert_reads: usize,
     }
 
@@ -1476,6 +1477,9 @@ mod tests {
                 state.cached.insert(spec.hash, (spec.parent, spec.verified));
             } else if data.starts_with(&ICertManager::revokeCertCall::SELECTOR) {
                 let call = ICertManager::revokeCertCall::abi_decode(data).unwrap();
+                if let Some(signer) = state.register_before_revocation.take() {
+                    state.registered.insert(signer);
+                }
                 state.revoked.insert(call.certId);
             } else if data.starts_with(&ITEEProverRegistry::registerSignerCall::SELECTOR) {
                 if let Some(signer) = state.final_signer {
@@ -2158,11 +2162,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn confirmed_crl_revocation_deregisters_signer_before_persisting_revocation() {
+    async fn confirmed_crl_revocation_cleans_up_registration_landing_before_revocation() {
         let plan = synthetic_plan(SIGNER_A);
         let cert_id = plan.certs[0].revocation_id;
         let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
-        chain.0.lock().unwrap().registered.insert(SIGNER_A);
+        chain.0.lock().unwrap().register_before_revocation = Some(SIGNER_A);
 
         let result = register_prepared(&manager, plan).await;
 
@@ -2174,7 +2178,7 @@ mod tests {
         }
         assert_eq!(
             chain.sent().iter().map(|(to, _)| *to).collect::<Vec<_>>(),
-            [Some(TEST_REGISTRY_ADDRESS), Some(TEST_CERT_MANAGER_ADDRESS)]
+            [Some(TEST_CERT_MANAGER_ADDRESS), Some(TEST_REGISTRY_ADDRESS)]
         );
     }
 
