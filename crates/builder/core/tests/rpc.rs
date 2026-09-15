@@ -18,7 +18,8 @@ async fn setup(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
+    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
+        .with_noop_metering();
     let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(config).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
@@ -76,6 +77,7 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: NoExtensions {},
     };
 
@@ -107,6 +109,7 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: NoExtensions {},
     };
 
@@ -131,6 +134,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: NoExtensions {},
     };
 
@@ -166,6 +170,7 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: validity.clone(),
     };
     let disabled: Result<(), _> =
@@ -186,6 +191,7 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: validity,
     };
     let enabled: Result<(), _> =
@@ -212,6 +218,7 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
         max_block_number: None,
         min_timestamp: None,
         max_timestamp: None,
+        metering: None,
         extensions: TransactionValidity { validity: vec![predicate; 2] },
     };
 

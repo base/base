@@ -565,6 +565,11 @@ pub trait BundleTransaction {
     /// Returns the maximum timestamp in milliseconds.
     fn max_timestamp_millis(&self) -> Option<u64>;
 
+    /// Returns the attached meter_bundle result, if any.
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        None
+    }
+
     /// Returns `true` if this transaction's bundle constraints have expired
     /// relative to the given block number and block timestamp (in seconds).
     fn is_bundle_expired(&self, block_number: u64, block_timestamp_secs: u64) -> bool {
@@ -625,6 +630,10 @@ where
 
     fn max_timestamp_millis(&self) -> Option<u64> {
         self.max_timestamp
+    }
+
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        self.metering.as_ref()
     }
 }
 

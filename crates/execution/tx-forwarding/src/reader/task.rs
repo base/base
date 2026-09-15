@@ -156,6 +156,7 @@ where
                 max_block_number: transaction.transaction.max_block_number(),
                 min_timestamp: transaction.transaction.min_timestamp_millis(),
                 max_timestamp: transaction.transaction.max_timestamp_millis(),
+                metering: transaction.transaction.metering().cloned(),
                 extensions: E::extract(transaction),
             },
             tx_hash: *transaction.transaction.hash(),
@@ -264,6 +265,7 @@ mod tests {
 
         assert_eq!(converted.tx_hash, *transaction.hash());
         assert_eq!(converted.transaction.sender, *transaction.sender_ref());
+        assert!(converted.transaction.metering.is_none());
         assert!(!converted.transaction.raw.is_empty(), "the envelope must be encoded");
     }
 
