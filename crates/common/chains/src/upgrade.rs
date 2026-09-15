@@ -336,6 +336,11 @@ mod tests {
                 BaseUpgrade::Beryl,
             ),
             (
+                Chain::base_sepolia(),
+                ChainConfig::sepolia().cobalt_timestamp.unwrap(),
+                BaseUpgrade::Cobalt,
+            ),
+            (
                 Chain::from_id(ChainConfig::zeronet().chain_id),
                 ChainConfig::zeronet().beryl_timestamp.unwrap(),
                 BaseUpgrade::Beryl,
