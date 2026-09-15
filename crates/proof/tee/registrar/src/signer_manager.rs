@@ -864,15 +864,29 @@ where
         }
     }
 
-    /// Awaits revocation and deregistration work detached from registration tasks.
+    /// Awaits revocation and deregistration work detached from registration tasks for a bounded
+    /// shutdown period.
     pub async fn drain_deregistration_tasks(&self) {
+        let deadline = tokio::time::Instant::now() + REVOCATION_CLEANUP_TIMEOUT;
         let revocations = std::mem::take(
             &mut *self.detached_revocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
         );
-        for (cert_id, task) in revocations {
-            if let Err(error) = task.await {
-                warn!(error = %error, cert_id = %cert_id, "CRL revocation task failed");
-                RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+        for (cert_id, mut task) in revocations {
+            match tokio::time::timeout_at(deadline, &mut task).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    warn!(error = %error, cert_id = %cert_id, "CRL revocation task failed");
+                    RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+                }
+                Err(_) => {
+                    task.abort();
+                    warn!(
+                        cert_id = %cert_id,
+                        timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                        "timed out waiting for CRL revocation task during shutdown"
+                    );
+                    RegistrarMetrics::revoke_cert_tx_failures().increment(1);
+                }
             }
         }
 
@@ -882,15 +896,27 @@ where
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()),
         );
-        for (signer, task) in tasks {
-            if let Err(error) = task.await {
-                self.pending_deregistrations
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(&signer);
-                warn!(error = %error, signer = %signer, "deregistration task failed");
-                RegistrarMetrics::processing_errors_total().increment(1);
+        for (signer, mut task) in tasks {
+            match tokio::time::timeout_at(deadline, &mut task).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    warn!(error = %error, signer = %signer, "deregistration task failed");
+                    RegistrarMetrics::processing_errors_total().increment(1);
+                }
+                Err(_) => {
+                    task.abort();
+                    warn!(
+                        signer = %signer,
+                        timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                        "timed out waiting for deregistration task during shutdown"
+                    );
+                    RegistrarMetrics::processing_errors_total().increment(1);
+                }
             }
+            self.pending_deregistrations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&signer);
         }
     }
 
@@ -1498,7 +1524,7 @@ mod tests {
     use alloy_primitives::Address;
     use async_trait::async_trait;
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
-    use base_tx_manager::{SendHandle, TxManagerConfig, TxManagerError};
+    use base_tx_manager::{SendHandle, TxManagerError};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -2250,7 +2276,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn detached_deregistration_stays_tracked_until_send_completes() {
+    async fn shutdown_aborts_stalled_detached_deregistration_after_timeout() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -2284,12 +2310,10 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(!drain.is_finished(), "shutdown should wait for pending deregistration");
 
-        tokio::time::advance(TxManagerConfig::default().confirmation_timeout).await;
-        assert!(!drain.is_finished(), "deregistration must remain tracked until completion");
-
-        manager.tx_manager.resume_deregistration_send.notify_one();
+        tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
         drain.await.unwrap();
-        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert!(!manager.pending_deregistrations.lock().unwrap().contains(&SIGNER_A));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
@@ -2432,7 +2456,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn stalled_crl_persistence_does_not_block_signer_cleanup() {
+    async fn shutdown_aborts_stalled_crl_persistence_after_timeout() {
         let plan = synthetic_plan(SIGNER_A);
         let cert_id = plan.certs[0].revocation_id;
         let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
@@ -2454,12 +2478,9 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(!drain.is_finished(), "shutdown should wait for pending persistence");
 
-        tokio::time::advance(TxManagerConfig::default().confirmation_timeout).await;
-        assert!(!drain.is_finished(), "revocation must remain tracked until completion");
-
-        manager.tx_manager.resume_revocation_send.notify_one();
+        tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
         drain.await.unwrap();
-        assert!(chain.0.lock().unwrap().revoked.contains(&cert_id));
+        assert!(!chain.0.lock().unwrap().revoked.contains(&cert_id));
     }
 
     #[tokio::test(start_paused = true)]

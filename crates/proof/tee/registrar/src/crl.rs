@@ -16,6 +16,7 @@ use tracing::{debug, warn};
 use x509_parser::{
     certificate::X509Certificate,
     extensions::ParsedExtension,
+    oid_registry::OID_X509_EXT_CRL_DISTRIBUTION_POINTS,
     prelude::{FromDer, GeneralName},
     revocation_list::CertificateRevocationList,
 };
@@ -46,7 +47,7 @@ impl CertCrlInfo {
     ///
     /// # Errors
     ///
-    /// Returns an error if any CA certificate cannot be parsed from DER.
+    /// Returns an error if any CA certificate or present CRL distribution point cannot be parsed.
     pub fn from_cert_plans(root_cert: &[u8], certs: &[CertPlan]) -> Result<Vec<Self>, CrlError> {
         let mut issuer_cert = root_cert;
         let mut infos = Vec::new();
@@ -67,7 +68,8 @@ impl CertCrlInfo {
             infos.push(Self {
                 index: index + 1,
                 serial_number: cert.tbs_certificate.serial.to_bytes_be(),
-                crl_url: Self::extract_crl_distribution_point(&cert),
+                crl_url: Self::extract_crl_distribution_point(&cert)
+                    .map_err(|error| CrlError(format!("certificate {}: {error}", index + 1)))?,
                 revocation_id: cert_plan.revocation_id,
                 issuer_cert: issuer_cert.to_vec(),
             });
@@ -76,25 +78,31 @@ impl CertCrlInfo {
         Ok(infos)
     }
 
-    fn extract_crl_distribution_point(cert: &X509Certificate<'_>) -> Option<String> {
-        for ext in cert.extensions() {
-            let ParsedExtension::CRLDistributionPoints(cdp) = ext.parsed_extension() else {
+    fn extract_crl_distribution_point(
+        cert: &X509Certificate<'_>,
+    ) -> Result<Option<String>, CrlError> {
+        let Some(ext) = cert
+            .get_extension_unique(&OID_X509_EXT_CRL_DISTRIBUTION_POINTS)
+            .map_err(|error| CrlError(format!("invalid CRL distribution points: {error}")))?
+        else {
+            return Ok(None);
+        };
+        let ParsedExtension::CRLDistributionPoints(cdp) = ext.parsed_extension() else {
+            return Err(CrlError("could not parse CRL distribution points".into()));
+        };
+        for dp in cdp.iter() {
+            let Some(name) = &dp.distribution_point else { continue };
+            let x509_parser::extensions::DistributionPointName::FullName(names) = name else {
                 continue;
             };
-            for dp in cdp.iter() {
-                let Some(name) = &dp.distribution_point else { continue };
-                let x509_parser::extensions::DistributionPointName::FullName(names) = name else {
-                    continue;
-                };
-                for gn in names {
-                    let GeneralName::URI(uri) = gn else { continue };
-                    if uri.starts_with("http://") || uri.starts_with("https://") {
-                        return Some(uri.to_string());
-                    }
+            for gn in names {
+                let GeneralName::URI(uri) = gn else { continue };
+                if uri.starts_with("http://") || uri.starts_with("https://") {
+                    return Ok(Some(uri.to_string()));
                 }
             }
         }
-        None
+        Err(CrlError("CRL distribution points contain no HTTP(S) URI".into()))
     }
 }
 
@@ -440,8 +448,30 @@ mod tests {
             let der = hex::decode(cert_hex).expect("static hex fixture decodes");
             let (remaining, cert) = X509Certificate::from_der(&der).unwrap();
             assert!(remaining.is_empty());
-            let url = CertCrlInfo::extract_crl_distribution_point(&cert);
+            let url = CertCrlInfo::extract_crl_distribution_point(&cert).unwrap();
             assert_eq!(url.as_deref(), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn unusable_distribution_points_are_errors_not_absent() {
+        let mut malformed = hex::decode(INTER1_HEX).unwrap();
+        let extension =
+            malformed.windows(7).position(|window| window == hex!("0603551d1f0465")).unwrap();
+        malformed[extension + 7] = 0x31;
+
+        let mut unsupported = hex::decode(INTER1_HEX).unwrap();
+        let scheme = unsupported.windows(7).position(|window| window == b"http://").unwrap();
+        unsupported[scheme..scheme + 7].copy_from_slice(b"ldap://");
+
+        for cert in [malformed, unsupported] {
+            let err = CrlChecker::new()
+                .unwrap()
+                .check_chain(&root_cert(), &[CertPlan { cert, ..ca_plan(1, INTER1_HEX) }])
+                .await
+                .unwrap_err();
+
+            assert!(err.to_string().contains("CRL distribution points"), "got: {err}");
         }
     }
 
