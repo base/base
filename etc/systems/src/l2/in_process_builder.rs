@@ -178,6 +178,11 @@ impl InProcessBuilder {
 
         let mut node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
+        // In-process system-test datadirs are disposable and may be restored from snapshots.
+        // Never reinsert a transaction journal captured in the source snapshot or write a new
+        // journal that can contaminate a later benchmark clone.
+        node_config.txpool.disable_transactions_backup = true;
+        node_config.txpool.transactions_backup_path = None;
         let db_path = node_config.datadir().db();
         let db = if config.datadir.is_some() {
             init_db(db_path, node_config.db.database_args())

@@ -70,7 +70,11 @@ rollup configuration is selected automatically and `--rollup-config` is optional
 
 `base-bench snapshot` launches the snapshot builder and validator, funds an
 ephemeral load-test account, runs the workload, verifies that both roles have
-matching canonical blocks for the measured window, and then shuts down.
+matching canonical blocks for the measured window, writes the result artifacts,
+and terminates the process without running node or database cleanup. Snapshot
+datadirs are expected to be disposable writable clones. Pass a nonzero
+`--shutdown-timeout-seconds` (for example, `10`) to request the old bounded
+graceful teardown.
 
 Each `--output-dir` is a self-contained `base/benchmark` input directory:
 

@@ -217,6 +217,11 @@ impl InProcessClient {
         if config.datadir.is_some() {
             node_config.debug.startup_sync_state_idle = true;
         }
+        // In-process system-test datadirs are disposable and may be restored from snapshots.
+        // Never reinsert a transaction journal captured in the source snapshot or write a new
+        // journal that can contaminate a later benchmark clone.
+        node_config.txpool.disable_transactions_backup = true;
+        node_config.txpool.transactions_backup_path = None;
         let metrics_addr = SocketAddr::new(
             std::net::Ipv4Addr::LOCALHOST.into(),
             config.metrics_port.unwrap_or_else(get_available_port),
