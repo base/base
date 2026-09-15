@@ -79,6 +79,8 @@ Useful sequencer-specific flags include:
 - `--conductor.rpc` enables conductor-backed leader checks.
 - `--conductor.binary-commit` uses the conductor binary commit endpoint.
 - `--flashblocks.port` selects the Flashblocks websocket port.
+- `--enable-profiling` exposes the opt-in CPU profiling HTTP endpoint (see `base-execution-profiling`);
+  `--profiling.port`, `--profiling.max-seconds`, and `--profiling.default-frequency` tune it.
 
 ## `base update`
 

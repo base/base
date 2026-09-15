@@ -10,6 +10,7 @@ use base_builder_core::BuilderApiExtension;
 use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
+use base_execution_profiling::{ProfilingConfig, ProfilingExtension};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
@@ -48,6 +49,7 @@ fn main() {
 
         let builder_api_config = builder_args.builder_api_config()?;
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
+        let profiling_config = ProfilingConfig::from(&builder_args.profiling);
         let payload_builder_cutover = builder_args.payload_builder_cutover;
         let basic_payload_builder = builder_args.basic_payload_builder;
         let builder_config = builder_args
@@ -78,6 +80,7 @@ fn main() {
             );
         }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);
+        runner.install_ext::<ProfilingExtension>(profiling_config);
         StandardBaseRethNode::install_upgrade_signal_runtime_extension(&mut runner, &rollup_args)?;
         runner.add_started_callback(|| {
             base_cli_utils::register_version_metrics!();
@@ -87,4 +90,16 @@ fn main() {
         runner.run(builder).await
     })
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    #[test]
+    fn builder_cli_argument_ids_are_unique() {
+        BuilderCli::command().debug_assert();
+    }
 }
