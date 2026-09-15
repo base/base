@@ -12,11 +12,11 @@ pub const DEFAULT_RESEND_AFTER_MS: u64 = 4000;
 pub const DEFAULT_MAX_BATCH_SIZE: usize = 100;
 /// Default maximum RPC requests per second per forwarder.
 pub const DEFAULT_MAX_RPS: u32 = 200;
-/// Default number of in-process meter_bundle workers.
+/// Default number of in-process `meter_bundle` workers.
 pub const DEFAULT_INLINE_SIMULATION_WORKERS: usize = 16;
 /// Default capacity of the pre-sim queue.
 pub const DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY: usize = 10_000;
-/// Default per-transaction meter_bundle timeout in milliseconds.
+/// Default per-transaction `meter_bundle` timeout in milliseconds.
 pub const DEFAULT_INLINE_SIMULATION_TIMEOUT_MS: u64 = 2_000;
 
 /// Full configuration for the transaction forwarding extension.
@@ -32,16 +32,16 @@ pub struct TxForwardingConfig {
     pub max_batch_size: usize,
     /// Maximum RPC requests per second per forwarder (0 = unlimited).
     pub max_rps: u32,
-    /// When true, meter_bundle runs on the mempool node before pool insert.
+    /// When true, `meter_bundle` runs on the mempool node before pool insert.
     ///
     /// Stored only until the sim-worker path is wired; forwarding behavior is
     /// unchanged while this flag is unused.
     pub inline_simulation: bool,
-    /// Number of meter_bundle worker tasks.
+    /// Number of `meter_bundle` worker tasks.
     pub inline_simulation_workers: usize,
     /// Bounded pre-sim queue capacity.
     pub inline_simulation_queue_capacity: usize,
-    /// Per-transaction meter_bundle timeout in milliseconds.
+    /// Per-transaction `meter_bundle` timeout in milliseconds.
     pub inline_simulation_timeout_ms: u64,
 }
 
@@ -91,13 +91,13 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Enables or disables in-process meter_bundle before pool insert.
+    /// Enables or disables in-process `meter_bundle` before pool insert.
     pub const fn with_inline_simulation(mut self, enabled: bool) -> Self {
         self.inline_simulation = enabled;
         self
     }
 
-    /// Sets the number of meter_bundle worker tasks.
+    /// Sets the number of `meter_bundle` worker tasks.
     pub const fn with_inline_simulation_workers(mut self, workers: usize) -> Self {
         self.inline_simulation_workers = workers;
         self
@@ -109,7 +109,7 @@ impl TxForwardingConfig {
         self
     }
 
-    /// Sets the per-transaction meter_bundle timeout in milliseconds.
+    /// Sets the per-transaction `meter_bundle` timeout in milliseconds.
     pub const fn with_inline_simulation_timeout_ms(mut self, ms: u64) -> Self {
         self.inline_simulation_timeout_ms = ms;
         self

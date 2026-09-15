@@ -412,13 +412,13 @@ pub struct RpcStandardNodeArgs {
     )]
     pub tx_forwarding_max_rps: u32,
 
-    /// Run meter_bundle on the mempool node before inserting into the forwarding pool.
+    /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
     ///
     /// Has no effect until the sim-worker path is wired; keep off in production.
     #[arg(long = "enable-inline-simulation", requires = "enable_tx_forwarding")]
     pub enable_inline_simulation: bool,
 
-    /// Number of in-process meter_bundle workers.
+    /// Number of in-process `meter_bundle` workers.
     #[arg(
         long = "inline-simulation-workers",
         value_name = "INLINE_SIMULATION_WORKERS",
@@ -427,7 +427,7 @@ pub struct RpcStandardNodeArgs {
     )]
     pub inline_simulation_workers: usize,
 
-    /// Bounded queue of txs waiting for meter_bundle.
+    /// Bounded queue of txs waiting for `meter_bundle`.
     #[arg(
         long = "inline-simulation-queue-capacity",
         value_name = "INLINE_SIMULATION_QUEUE_CAPACITY",
@@ -436,7 +436,7 @@ pub struct RpcStandardNodeArgs {
     )]
     pub inline_simulation_queue_capacity: usize,
 
-    /// Per-transaction meter_bundle timeout in milliseconds.
+    /// Per-transaction `meter_bundle` timeout in milliseconds.
     #[arg(
         long = "inline-simulation-timeout-ms",
         value_name = "INLINE_SIMULATION_TIMEOUT_MS",
