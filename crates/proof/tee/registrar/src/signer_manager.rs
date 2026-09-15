@@ -764,24 +764,14 @@ where
 
     /// Submits `deregisterSigner`, retrying transient failures for revoked signers.
     ///
-    /// Revocation callers deliberately skip a preflight registry read because an earlier timed-out
-    /// registration transaction may still confirm.
+    /// Revocation callers only preflight a previously confirmed cleanup because an earlier
+    /// timed-out registration transaction may still confirm.
     async fn submit_deregistration(
         &self,
         signer: Address,
         reason: &'static str,
         detach_after: Option<Duration>,
     ) {
-        if reason == DEREG_REASON_REVOKED
-            && self
-                .completed_revocation_cleanups
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .contains(&signer)
-        {
-            debug!(signer = %signer, reason, "revoked signer cleanup is already complete");
-            return;
-        }
         let candidate = TxCandidate {
             tx_data: Bytes::from(ITEEProverRegistry::deregisterSignerCall { signer }.abi_encode()),
             to: Some(self.registry_address),
@@ -804,6 +794,24 @@ where
         let max_tx_retries = self.max_tx_retries;
         let mut task = task::spawn(async move {
             let work = async {
+                let cleanup_completed = completed_revocation_cleanups
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .contains(&signer);
+                if reason == DEREG_REASON_REVOKED
+                    && cleanup_completed
+                    && matches!(
+                        tokio::time::timeout(
+                            REVOCATION_CLEANUP_TIMEOUT,
+                            registry.is_registered_signer(signer),
+                        )
+                        .await,
+                        Ok(Ok(false))
+                    )
+                {
+                    debug!(signer = %signer, reason, "revoked signer cleanup is already complete");
+                    return;
+                }
                 let mut submit = true;
                 for retry in 0..=max_tx_retries {
                     if submit {
@@ -813,14 +821,6 @@ where
                             Ok(receipt) => receipt.inner.status(),
                             Err(error) => error.is_retryable(),
                         };
-                        if reason == DEREG_REASON_REVOKED
-                            && result.as_ref().is_ok_and(|receipt| receipt.inner.status())
-                        {
-                            completed_revocation_cleanups
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                                .insert(signer);
-                        }
                         submit = result.as_ref().is_err();
                         Self::record_deregistration_result(signer, reason, result);
                         if reason != DEREG_REASON_REVOKED || !retryable {
@@ -2351,6 +2351,27 @@ mod tests {
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
+    }
+
+    #[tokio::test]
+    async fn late_registration_after_revocation_cleanup_is_deregistered() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_config(&plan, 0, TEST_RETRY_DELAY, TEST_MAX_AGE, None);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+        }
+
+        let result = register_prepared(&manager, plan.clone()).await;
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+
+        chain.0.lock().unwrap().registered.insert(SIGNER_A);
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 2);
     }
 
     #[tokio::test]
