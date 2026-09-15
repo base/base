@@ -262,14 +262,13 @@ tests: _install-nextest _build-contracts
 tests-ci: _install-nextest _build-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
-# Runs system test benchmarks
-bench name:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    case "{{ name }}" in
-      b20-zk-proving) cargo bench -p base-system-tests --bench b20_zk_proving ;;
-      *) echo "unknown system test bench: {{ name }}" >&2; exit 1 ;;
-    esac
+# Builds base-bench in release mode and runs a benchmark
+bench *args:
+    cargo run --release -p base-system-tests --bin base-bench -- {{ args }}
+
+# Runs the B-20 ZK proving system benchmark
+proofs-bench:
+    cargo bench -p base-system-tests --bench b20_zk_proving
 
 [private]
 _install-nextest:
