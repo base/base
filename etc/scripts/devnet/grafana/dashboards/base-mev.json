@@ -1324,7 +1324,7 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 12,
+            "w": 8,
             "x": 0,
             "y": 10
           },
@@ -1402,8 +1402,8 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 12,
-            "x": 12,
+            "w": 8,
+            "x": 8,
             "y": 10
           },
           "id": 16,
@@ -1470,6 +1470,96 @@
             }
           ],
           "title": "Predicate State Reads per Active Build",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "Weighted percentage of predicate storage-slot reads that are unique over the selected window. Warm fixed-slot stress should remain at or below 10%; cold sender+nonce+salt stress should reach at least 50%. This measures logical state-footprint uniqueness, not direct physical cache or disk misses. Predicate rescans repeat slots and therefore lower the ratio. A zero total-read rate is shown as no data rather than as a misleading percentage.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "line"
+                }
+              },
+              "decimals": 2,
+              "mappings": [],
+              "max": 100,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#5794F2",
+                    "value": null
+                  },
+                  {
+                    "color": "#F2B84B",
+                    "value": 10
+                  },
+                  {
+                    "color": "#3BD671",
+                    "value": 50
+                  }
+                ]
+              },
+              "unit": "percent"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 10
+          },
+          "id": 201,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "10.4.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "editorMode": "code",
+              "expr": "(100 * sum(rate(reth_base_builder_predicate_slots_loaded_unique_sum{job=\"l2_builder\"}[$window])) / sum(rate(reth_base_builder_predicate_slots_loaded_total_sum{job=\"l2_builder\"}[$window]))) and on() (sum(rate(reth_base_builder_predicate_slots_loaded_total_sum{job=\"l2_builder\"}[$window])) > 0)",
+              "legendFormat": "slot uniqueness · warm ≤10% · cold ≥50%",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Predicate Storage-Slot Uniqueness",
           "type": "timeseries"
         },
         {

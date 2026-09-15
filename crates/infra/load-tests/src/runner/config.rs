@@ -34,6 +34,12 @@ pub enum SlotTemplate {
         /// Mapping key address, resolved per transaction.
         key: PredicateAddress,
     },
+    /// A transaction-specific slot
+    /// `keccak256(pad32(sender) ++ pad32(nonce) ++ pad32(salt))`.
+    SenderNonce {
+        /// Domain separator that gives each predicate a distinct slot.
+        salt: U256,
+    },
 }
 
 /// Source for a storage predicate's comparison value, resolved per transaction.
@@ -78,8 +84,9 @@ pub enum BlockNumberBound {
 /// A runtime validity predicate template with literal values pre-parsed.
 ///
 /// Addresses and slots may remain symbolic ([`PredicateAddress::Sender`],
-/// [`SlotTemplate::Mapping`]) and are resolved into concrete
-/// `ValidityPredicate` values against each transaction at prepare time.
+/// [`SlotTemplate::Mapping`], [`SlotTemplate::SenderNonce`]) and are resolved
+/// into concrete `ValidityPredicate` values against each transaction at prepare
+/// time.
 #[derive(Debug, Clone)]
 pub enum ValidityPredicateTemplate {
     /// Balance comparison template.
