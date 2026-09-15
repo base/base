@@ -202,7 +202,7 @@ impl PolicyRegistryV3 {
     ///
     /// Gated on the counter, so subsequent calls cost a single read and bail. The bytecode
     /// marker must precede any storage write because the EVM path can prune writes made
-    /// under an empty native-precompile account. Kept inherent to V1 (off the trait) so it
+    /// under an empty native-precompile account. Kept inherent to V3 (off the trait) so it
     /// stays frozen with this version — it is an internal bootstrap primitive, not an ABI op.
     ///
     /// Both built-ins have a renounced (zero) admin:
