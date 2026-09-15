@@ -1820,7 +1820,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, WatchSet};
+    use crate::{
+        BaseL1BlockInfo, BaseOrdering, BasePooledTransaction, LimitClass, ValidityOperator,
+        ValidityPredicate, WatchSet,
+    };
 
     fn test_chain_id() -> u64 {
         ChainConfig::mainnet().chain_id
@@ -2101,6 +2104,29 @@ mod tests {
             assert!(result.is_ok(), "standard transaction {nonce} was guard-rejected: {result:?}");
         }
         assert!(pool.guard.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn protocol_validity_transaction_replaces_with_only_a_higher_max_fee() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let predicate =
+            ValidityPredicate::BlockNumber { op: ValidityOperator::LessThan, value: U256::from(2) };
+        let original = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_000)
+            .with_validity_predicates(vec![predicate.clone()]);
+        let original_hash = *original.hash();
+        pool.add_transaction(TransactionOrigin::Local, original).await.unwrap();
+
+        let replacement = self_paid_eoa_8130(&signer, U256::ZERO, 0, 0, 1_001)
+            .with_validity_predicates(vec![predicate]);
+        let replacement_hash = *replacement.hash();
+        pool.add_transaction(TransactionOrigin::Local, replacement)
+            .await
+            .expect("validity replacement only requires a higher max fee");
+
+        assert!(pool.get(&original_hash).is_none());
+        assert!(pool.get(&replacement_hash).is_some());
     }
 
     #[tokio::test]
