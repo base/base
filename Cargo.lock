@@ -4673,6 +4673,7 @@ dependencies = [
  "alloy-signer-local 2.4.1",
  "alloy-sol-types",
  "async-trait",
+ "base-bundles",
  "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
