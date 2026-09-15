@@ -480,7 +480,7 @@ impl StandardNodeArgs {
     }
 
     /// Sets the profiling arguments on this standard node configuration.
-    pub fn with_profiling(mut self, profiling: ProfilingArgs) -> Self {
+    pub const fn with_profiling(mut self, profiling: ProfilingArgs) -> Self {
         self.profiling = profiling;
         self
     }

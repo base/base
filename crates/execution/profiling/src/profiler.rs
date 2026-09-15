@@ -121,7 +121,10 @@ impl CpuProfiler {
         // A sub-second window samples too few stacks to be useful and a zero duration would run
         // pprof for no reason, so reject anything below the minimum.
         if duration < MIN_CAPTURE {
-            return Err(ProfilerError::DurationTooShort { requested: duration, minimum: MIN_CAPTURE });
+            return Err(ProfilerError::DurationTooShort {
+                requested: duration,
+                minimum: MIN_CAPTURE,
+            });
         }
 
         let hz = frequency.unwrap_or(self.default_frequency_hz);
