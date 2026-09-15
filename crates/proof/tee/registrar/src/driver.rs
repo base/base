@@ -185,6 +185,7 @@ where
         }
 
         proof_tasks.drain_proof_tasks().await;
+        self.signer_manager.drain_deregistration_tasks().await;
 
         info!("registration driver stopped");
         Ok(())

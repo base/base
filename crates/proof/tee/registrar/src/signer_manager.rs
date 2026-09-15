@@ -22,7 +22,7 @@ use base_tx_manager::{SendResponse, TxCandidate, TxManager, TxManagerError};
 use futures::future::Either;
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
-    task::{self, JoinError, JoinSet},
+    task::{self, JoinError, JoinHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, instrument, warn};
@@ -121,6 +121,7 @@ pub struct SignerManager<R, C, T> {
     hint_semaphore: Arc<Semaphore>,
     cert_locks: Mutex<HashMap<B256, Weak<AsyncMutex<()>>>>,
     pending_deregistrations: Arc<Mutex<HashSet<Address>>>,
+    detached_deregistrations: Mutex<Vec<(Address, JoinHandle<()>)>>,
     crl_source: Option<Box<dyn CrlSource>>,
     registry_address: Address,
     max_tx_retries: u32,
@@ -147,6 +148,7 @@ impl<R, C, T> SignerManager<R, C, T> {
             hint_semaphore: Arc::new(Semaphore::new(config.max_concurrency.max(1))),
             cert_locks: Mutex::new(HashMap::new()),
             pending_deregistrations: Arc::new(Mutex::new(HashSet::new())),
+            detached_deregistrations: Mutex::new(Vec::new()),
             crl_source,
             registry_address: config.registry_address,
             max_tx_retries: config.max_tx_retries,
@@ -708,7 +710,7 @@ where
             .await;
     }
 
-    /// Submits `deregisterSigner`, retrying revoked signers until onchain removal is confirmed.
+    /// Submits `deregisterSigner`, retrying transient failures for revoked signers.
     async fn submit_deregistration(
         &self,
         signer: Address,
@@ -733,15 +735,20 @@ where
         let registry = Arc::clone(&self.registry);
         let pending_deregistrations = Arc::clone(&self.pending_deregistrations);
         let retry_delay = self.retry_delay(1);
-        let task = task::spawn(async move {
+        let max_tx_retries = self.max_tx_retries;
+        let mut task = task::spawn(async move {
             let mut submit = true;
-            loop {
+            for retry in 0..=max_tx_retries {
                 if submit {
                     let send = tx_manager.send_async(candidate.clone()).await;
                     let result = send.await;
-                    submit = !result.as_ref().is_ok_and(|receipt| receipt.inner.status());
+                    let retryable = match &result {
+                        Ok(receipt) => receipt.inner.status(),
+                        Err(error) => error.is_retryable(),
+                    };
+                    submit = result.as_ref().is_err();
                     Self::record_deregistration_result(signer, reason, result);
-                    if reason != DEREG_REASON_REVOKED {
+                    if reason != DEREG_REASON_REVOKED || !retryable {
                         break;
                     }
                 }
@@ -776,6 +783,15 @@ where
                         "timed out confirming revoked signer deregistration, retrying"
                     ),
                 }
+                if retry == max_tx_retries {
+                    warn!(
+                        signer = %signer,
+                        reason,
+                        max_retries = max_tx_retries,
+                        "revoked signer deregistration retries exhausted"
+                    );
+                    break;
+                }
                 tokio::time::sleep(retry_delay).await;
             }
             pending_deregistrations
@@ -793,7 +809,7 @@ where
             },
         );
         let joined = tokio::select! {
-            joined = task => Some(joined),
+            joined = &mut task => Some(joined),
             timeout = timeout => {
                 warn!(
                     signer = %signer,
@@ -804,13 +820,41 @@ where
                 None
             }
         };
-        if let Some(Err(error)) = joined {
-            self.pending_deregistrations
+        match joined {
+            Some(Err(error)) => {
+                self.pending_deregistrations
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&signer);
+                warn!(error = %error, signer = %signer, reason, "deregistration task failed");
+                RegistrarMetrics::processing_errors_total().increment(1);
+            }
+            Some(Ok(())) => {}
+            None => self
+                .detached_deregistrations
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .remove(&signer);
-            warn!(error = %error, signer = %signer, reason, "deregistration task failed");
-            RegistrarMetrics::processing_errors_total().increment(1);
+                .push((signer, task)),
+        }
+    }
+
+    /// Awaits deregistration work detached from completed registration tasks.
+    pub async fn drain_deregistration_tasks(&self) {
+        let tasks = std::mem::take(
+            &mut *self
+                .detached_deregistrations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        for (signer, task) in tasks {
+            if let Err(error) = task.await {
+                self.pending_deregistrations
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&signer);
+                warn!(error = %error, signer = %signer, "deregistration task failed");
+                RegistrarMetrics::processing_errors_total().increment(1);
+            }
         }
     }
 
@@ -851,7 +895,14 @@ where
         };
         for retry in 0..=self.max_tx_retries {
             let result = self.tx_manager.send(candidate.clone()).await;
-            if matches!(self.cert_manager.is_revoked(cert_id).await, Ok(true)) {
+            if matches!(
+                tokio::time::timeout(
+                    REVOCATION_CLEANUP_TIMEOUT,
+                    self.cert_manager.is_revoked(cert_id)
+                )
+                .await,
+                Ok(Ok(true))
+            ) {
                 RegistrarMetrics::revoke_cert_success_total().increment(1);
                 return Ok(());
             }
@@ -1444,6 +1495,7 @@ mod tests {
         final_signer: Option<Address>,
         register_before_revocation: Option<Address>,
         cert_reads: usize,
+        stall_is_revoked_after_revocation: bool,
     }
 
     #[derive(Clone, Debug, Default)]
@@ -1655,9 +1707,16 @@ mod tests {
         }
 
         async fn is_revoked(&self, cert_id: B256) -> std::result::Result<bool, ContractError> {
-            let mut state = self.chain.0.lock().unwrap();
-            state.cert_reads += 1;
-            Ok(state.revoked.contains(&cert_id))
+            let (revoked, stall) = {
+                let mut state = self.chain.0.lock().unwrap();
+                state.cert_reads += 1;
+                let revoked = state.revoked.contains(&cert_id);
+                (revoked, revoked && state.stall_is_revoked_after_revocation)
+            };
+            if stall {
+                std::future::pending::<()>().await;
+            }
+            Ok(revoked)
         }
 
         async fn owner(&self) -> std::result::Result<Address, ContractError> {
@@ -2115,7 +2174,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn deregistration_handle_acquisition_continues_after_cleanup_timeout() {
+    async fn detached_deregistration_is_drained_on_shutdown() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -2144,10 +2203,13 @@ mod tests {
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
         assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
 
+        let drain_manager = Arc::clone(&manager);
+        let drain = tokio::spawn(async move { drain_manager.drain_deregistration_tasks().await });
+        tokio::task::yield_now().await;
+        assert!(!drain.is_finished(), "shutdown must wait for detached deregistration");
+
         manager.tx_manager.resume_send_async.notify_one();
-        tokio::time::timeout(Duration::from_secs(1), manager.tx_manager.send_completed.notified())
-            .await
-            .expect("deregistration send should continue after the cleanup timeout");
+        drain.await.unwrap();
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
     }
 
@@ -2170,6 +2232,30 @@ mod tests {
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 2);
+    }
+
+    #[tokio::test]
+    async fn revoked_signer_deregistration_does_not_retry_permanent_errors() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+        }
+        chain.set_outcomes([MockTxOutcome::Error(TxManagerError::ExecutionReverted {
+            reason: Some("permanent".into()),
+            data: None,
+        })]);
+
+        let result =
+            tokio::time::timeout(Duration::from_millis(100), register_prepared(&manager, plan))
+                .await
+                .expect("permanent deregistration failure must not be retried indefinitely");
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2263,6 +2349,25 @@ mod tests {
             chain.sent().iter().map(|(to, _)| *to).collect::<Vec<_>>(),
             [Some(TEST_CERT_MANAGER_ADDRESS), Some(TEST_REGISTRY_ADDRESS)]
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_post_revocation_read_does_not_block_signer_cleanup() {
+        let plan = synthetic_plan(SIGNER_A);
+        let cert_id = plan.certs[0].revocation_id;
+        let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.stall_is_revoked_after_revocation = true;
+        }
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        let state = chain.0.lock().unwrap();
+        assert!(state.revoked.contains(&cert_id));
+        assert!(!state.registered.contains(&SIGNER_A));
     }
 
     #[tokio::test]
