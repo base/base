@@ -181,6 +181,18 @@ impl<R, C, T> SignerManager<R, C, T> {
         *keccak256(input)
     }
 
+    /// Drops completed revocation and deregistration task handles.
+    pub fn reap_finished_cleanup_tasks(&self) {
+        self.detached_revocations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|(_, task)| !task.is_finished());
+        self.detached_deregistrations
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|(_, task)| !task.is_finished());
+    }
+
     fn cert_lock(&self, cert_hash: B256) -> Arc<AsyncMutex<()>> {
         let mut locks = self.cert_locks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         locks.retain(|_, lock| lock.strong_count() > 0);
@@ -2164,6 +2176,13 @@ mod tests {
             .await
     }
 
+    async fn seed_finished_task<K>(tasks: &Mutex<Vec<(K, JoinHandle<()>)>>, key: K) {
+        let task = tokio::spawn(async {});
+        tokio::task::yield_now().await;
+        assert!(task.is_finished());
+        tasks.lock().unwrap().push((key, task));
+    }
+
     #[tokio::test]
     async fn cold_chain_submits_four_cache_transactions_then_registration() {
         let plan = synthetic_plan(SIGNER_A);
@@ -2458,6 +2477,7 @@ mod tests {
     async fn shutdown_aborts_stalled_detached_deregistration_after_timeout() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
+        seed_finished_task(&manager.detached_deregistrations, SIGNER_B).await;
         {
             let mut state = chain.0.lock().unwrap();
             state.registered.insert(SIGNER_A);
@@ -2483,6 +2503,8 @@ mod tests {
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
         assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        manager.reap_finished_cleanup_tasks();
+        assert_eq!(manager.detached_deregistrations.lock().unwrap().len(), 1);
 
         let drain_manager = Arc::clone(&manager);
         let drain = tokio::spawn(async move { drain_manager.drain_deregistration_tasks().await });
@@ -2639,6 +2661,7 @@ mod tests {
         let plan = synthetic_plan(SIGNER_A);
         let cert_id = plan.certs[0].revocation_id;
         let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
+        seed_finished_task(&manager.detached_revocations, B256::repeat_byte(0xff)).await;
         chain.0.lock().unwrap().registered.insert(SIGNER_A);
         manager.tx_manager.stall_revocation_send.store(true, Ordering::SeqCst);
         let task_manager = Arc::clone(&manager);
@@ -2651,6 +2674,8 @@ mod tests {
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
         assert!(!chain.0.lock().unwrap().revoked.contains(&cert_id));
+        manager.reap_finished_cleanup_tasks();
+        assert_eq!(manager.detached_revocations.lock().unwrap().len(), 1);
 
         let drain_manager = Arc::clone(&manager);
         let drain = tokio::spawn(async move { drain_manager.drain_deregistration_tasks().await });

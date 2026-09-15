@@ -140,6 +140,7 @@ where
 
             // Keep task state current before reconcile decisions each cycle.
             proof_tasks.reap_finished_tasks();
+            self.signer_manager.reap_finished_cleanup_tasks();
 
             match discovery {
                 Ok(_) if self.config.cancel.is_cancelled() => {}
