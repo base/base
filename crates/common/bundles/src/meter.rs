@@ -80,6 +80,13 @@ pub struct MeterBundleResponse {
 }
 
 impl MeterBundleResponse {
+    /// Mempool placeholder after a sim timeout or error (`Default`).
+    ///
+    /// A real one-tx `meter_bundle` always has a result and used gas.
+    pub const fn is_placeholder(&self) -> bool {
+        self.results.is_empty() && self.total_gas_used == 0
+    }
+
     /// Heap bytes owned beyond `size_of::<Self>()`: the results buffer, each
     /// `opcode_gas` buffer, and opcode name strings.
     pub fn heap_size(&self) -> usize {
@@ -250,6 +257,13 @@ mod tests {
         assert_eq!(deserialized.state_flashblock_index, None);
         assert_eq!(deserialized.state_block_number, 12345);
         assert_eq!(deserialized.total_gas_used, 21000);
+    }
+
+    #[test]
+    fn default_response_is_the_mempool_placeholder() {
+        assert!(MeterBundleResponse::default().is_placeholder());
+        assert!(!MeterBundleResponse { total_gas_used: 21_000, ..MeterBundleResponse::default() }
+            .is_placeholder());
     }
 
     #[test]
