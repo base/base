@@ -83,7 +83,7 @@ mod policy;
 pub use policy::{
     IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, PackedPolicy, PolicyAbi,
     PolicyAccounting, PolicyRegistryLogic, PolicyRegistryPrecompile, PolicyRegistryStorage,
-    PolicyRegistryV1, PolicyRegistryV2, PolicyVersion, PolicyVersions,
+    PolicyRegistryV1, PolicyRegistryV2, PolicyRegistryV3, PolicyVersion, PolicyVersions,
 };
 
 mod tx_context;
