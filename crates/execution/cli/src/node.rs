@@ -22,7 +22,9 @@ use reth_rpc_server_types::{
 };
 use tracing::info;
 
-use crate::{MeteringArgs, ProfilingArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs};
+use crate::{
+    MeteringArgs, ProfilingArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs,
+};
 
 const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
 const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
