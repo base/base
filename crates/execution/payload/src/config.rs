@@ -16,6 +16,8 @@ use reth_storage_api::{StateProvider, StateProviderBox};
 use revm::state::EvmState;
 use tracing::{debug, warn};
 
+// Re-exported so builders can configure prewarming through the config module.
+pub use crate::PrewarmConfig;
 use crate::{
     MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
     ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
@@ -51,6 +53,8 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Opt-in concurrent predicate-state prewarming during builds. Disabled by default.
+    pub prewarm: PrewarmConfig,
 }
 
 impl Default for BaseBuilderConfig {
@@ -63,6 +67,7 @@ impl Default for BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 }
@@ -82,6 +87,7 @@ impl BaseBuilderConfig {
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 

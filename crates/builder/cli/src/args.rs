@@ -9,6 +9,7 @@ use base_builder_core::{
 };
 use base_builder_metering::MeteringStore;
 use base_execution_cli::ShadowIndexerArgs;
+use base_execution_payload_builder::config::PrewarmConfig;
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_observability_events::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, TransactionEventProducer,
@@ -279,6 +280,30 @@ pub struct Args {
     )]
     pub manifest_precheck_enabled: bool,
 
+    /// Enable opt-in concurrent predicate-state prewarming during payload builds.
+    ///
+    /// Warms the declared validity-predicate state (balances and storage slots) of
+    /// lookahead transactions into the shared execution cache on bounded IO workers.
+    /// Requires the engine to share the execution cache with the payload builder;
+    /// that sharing is enabled automatically at startup when this flag is set.
+    #[arg(long = "builder.enable-prewarming", default_value = "false")]
+    pub enable_prewarming: bool,
+
+    /// Number of prewarm IO worker threads per builder, shared across its builds.
+    ///
+    /// This is additional to the engine's prewarming pool; budget total database
+    /// read concurrency across both.
+    #[arg(long = "builder.prewarm-workers", default_value = "2")]
+    pub prewarm_workers: usize,
+
+    /// Transactions scanned ahead of the build loop for predicate-state prewarming.
+    #[arg(long = "builder.prewarm-lookahead", default_value = "64")]
+    pub prewarm_lookahead: usize,
+
+    /// Maximum distinct predicate-state keys warmed per build.
+    #[arg(long = "builder.prewarm-key-cap", default_value = "4096")]
+    pub prewarm_key_cap: usize,
+
     /// Flashblocks configuration
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
@@ -355,6 +380,10 @@ impl Default for Args {
             rejection_cache_ttl_secs: 1800,
             sampling_ratio: 100,
             manifest_precheck_enabled: true,
+            enable_prewarming: false,
+            prewarm_workers: 2,
+            prewarm_lookahead: 64,
+            prewarm_key_cap: 4096,
             flashblocks: FlashblocksArgs::default(),
             payload_builder_cutover: false,
             basic_payload_builder: false,
@@ -390,6 +419,13 @@ impl Args {
         self,
         metering_provider: SharedMeteringProvider,
     ) -> eyre::Result<BuilderConfig> {
+        eyre::ensure!(
+            !self.enable_prewarming
+                || (self.prewarm_workers > 0
+                    && self.prewarm_lookahead > 0
+                    && self.prewarm_key_cap > 0),
+            "enabled prewarming requires positive workers, lookahead, and key cap"
+        );
         if self.flashblock_execution_time_budget_us.is_some()
             || self.block_state_root_gas_limit.is_some()
             || self.state_root_gas_coefficient.is_some()
@@ -430,6 +466,12 @@ impl Args {
             rejected_tx_channel_size: self.rejected_tx_channel_size,
             max_rejected_txs_per_block: self.max_rejected_txs_per_block,
             manifest_precheck_enabled: self.manifest_precheck_enabled,
+            prewarm: PrewarmConfig {
+                enabled: self.enable_prewarming,
+                worker_count: self.prewarm_workers,
+                lookahead: self.prewarm_lookahead,
+                key_cap: self.prewarm_key_cap,
+            },
         })
     }
 }
@@ -475,6 +517,38 @@ mod tests {
         assert_eq!(config.block_time, Duration::from_millis(1000));
         assert!(config.max_gas_per_txn.is_none());
         assert!(config.manifest_precheck_enabled);
+        assert_eq!(config.prewarm, PrewarmConfig::default());
+    }
+
+    #[test]
+    fn prewarming_flags_map_to_config() {
+        let parsed = CommandParser::parse_from([
+            "builder",
+            "--builder.enable-prewarming",
+            "--builder.prewarm-workers",
+            "4",
+            "--builder.prewarm-lookahead",
+            "32",
+            "--builder.prewarm-key-cap",
+            "512",
+        ]);
+        assert_eq!(
+            convert(parsed.args).prewarm,
+            PrewarmConfig { enabled: true, worker_count: 4, lookahead: 32, key_cap: 512 }
+        );
+    }
+
+    #[test]
+    fn enabled_prewarming_rejects_zero_limits() {
+        for flag in [
+            "--builder.prewarm-workers",
+            "--builder.prewarm-lookahead",
+            "--builder.prewarm-key-cap",
+        ] {
+            let parsed =
+                CommandParser::parse_from(["builder", "--builder.enable-prewarming", flag, "0"]);
+            assert!(parsed.args.into_builder_config(Arc::new(NoopMeteringProvider)).is_err());
+        }
     }
 
     #[test]

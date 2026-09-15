@@ -77,6 +77,9 @@ impl SequencerCommand {
         let payload_builder_cutover = builder.payload_builder_cutover;
         let basic_payload_builder = builder.basic_payload_builder;
         let builder_config = builder.into_builder_config(Arc::clone(&metering_provider))?;
+        // Prewarming reads the shared execution cache the engine hands to the payload
+        // builder, so enable that sharing automatically when prewarming is opted into.
+        let enable_prewarming = builder_config.prewarm.enabled;
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
         let manifest_precheck_enabled = builder_config.manifest_precheck_enabled;
@@ -100,7 +103,10 @@ impl SequencerCommand {
             let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
 
             let task_executor = ctx.task_executor.clone();
-            let builder = execution.into_default_node_builder(ctx)?;
+            let mut builder = execution.into_default_node_builder(ctx)?;
+            if enable_prewarming {
+                builder.config_mut().engine.share_execution_cache_with_payload_builder = true;
+            }
             let mut runner = BaseNodeRunner::new(rollup_args.clone())
                 .with_da_config(da_config)
                 .with_gas_limit_config(gas_limit_config)
