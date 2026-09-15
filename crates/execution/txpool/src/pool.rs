@@ -18,7 +18,7 @@ use reth_transaction_pool::{
     GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolResult, PoolSize,
     PoolTransaction, PropagatedTransactions, SubPool, TransactionEvents, TransactionListenerKind,
     TransactionOrigin, TransactionPool, TransactionPoolExt, TransactionValidationOutcome,
-    TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction,
+    TransactionValidationTaskExecutor, TransactionValidator, ValidPoolTransaction, ValidatingPool,
     pool::{AddedTransactionState, TransactionEvent},
 };
 use tokio::{spawn, sync::mpsc};
@@ -1429,6 +1429,22 @@ where
     }
 }
 
+impl<Client, S, Evm, T, O> ValidatingPool for BaseTransactionPool<Client, S, Evm, T, O>
+where
+    Client: 'static,
+    Evm: 'static,
+    BaseTransactionValidator<Client, T, Evm>: TransactionValidator<Transaction = T>,
+    T: BasePooledTx + reth_transaction_pool::EthPoolTransaction + 'static,
+    O: reth_transaction_pool::TransactionOrdering<Transaction = T> + Clone,
+    S: BlobStore + Clone,
+{
+    type Validator = TransactionValidationTaskExecutor<BaseTransactionValidator<Client, T, Evm>>;
+
+    fn validator(&self) -> &Self::Validator {
+        self.protocol_pool.validator()
+    }
+}
+
 impl<Client, S, Evm, T, O> ParkableTransactionPool for BaseTransactionPool<Client, S, Evm, T, O>
 where
     Client: 'static,
@@ -1798,7 +1814,7 @@ mod tests {
     use reth_tasks::Runtime;
     use reth_transaction_pool::{
         CanonicalStateUpdate, PoolConfig, PoolUpdateKind, PriceBumpConfig, TransactionOrigin,
-        blobstore::InMemoryBlobStore, identifier::TransactionId,
+        ValidatingPool, blobstore::InMemoryBlobStore, identifier::TransactionId,
         validate::EthTransactionValidatorBuilder,
     };
 
@@ -2457,5 +2473,29 @@ mod tests {
         // An unbounded replacement still clears the replaced hash's stale entry.
         pool.register_block_expiry(new_hash, None, Some(replaced));
         assert!(pool.block_expiry.read().is_empty());
+    }
+
+    #[tokio::test]
+    async fn validate_does_not_insert_a_valid_transaction() {
+        let (pool, client) = build_integration_pool();
+        let signer = signer();
+        fund(&client, signer.address());
+        let transaction = signed_1559(&signer, 0);
+        let hash = *transaction.hash();
+
+        let outcome = pool.validate(TransactionOrigin::Local, transaction).await;
+        assert!(outcome.is_valid(), "funded EIP-1559 transaction must validate");
+        assert!(pool.get(&hash).is_none(), "validate must not insert into the pool");
+    }
+
+    #[tokio::test]
+    async fn validate_does_not_insert_an_invalid_transaction() {
+        let (pool, _) = build_integration_pool();
+        let transaction = signed_1559(&signer(), 0);
+        let hash = *transaction.hash();
+
+        let outcome = pool.validate(TransactionOrigin::Local, transaction).await;
+        assert!(outcome.is_invalid(), "unfunded transaction must fail validation");
+        assert!(pool.get(&hash).is_none(), "validate must not insert a rejected transaction");
     }
 }
