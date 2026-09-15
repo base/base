@@ -121,7 +121,7 @@ sol! {
 
         /// Returns the contract's semantic version, e.g. `"0.3.0"`. Present in every
         /// version, including 0.1.x.
-        function version() external view returns (string memory);
+        function version() external pure returns (string memory);
 
         /// Returns the block interval between proposals (immutable on the implementation).
         /// Removed in `AggregateVerifier` 0.2.0 in favour of `intervalsForStartingBlock`.
@@ -446,9 +446,10 @@ impl AggregateVerifierContractClient {
 
     /// Reads `version()` from a verifier and reports which interval ABI that address speaks.
     ///
-    /// Works through a game proxy as well as an implementation: `version()` is `pure`, so a
-    /// CWIA clone delegates it to the implementation it was created against and reports the
-    /// version that actually governs that game.
+    /// Works through a game proxy as well as an implementation. A CWIA clone delegatecalls
+    /// into the implementation it was created against, and `version()` is `pure`, so it
+    /// cannot read the clone's immutable args or storage: the string comes from the
+    /// implementation's own code, which is the one that actually governs that game.
     async fn is_fork_aware(&self, verifier_address: Address) -> Result<bool, ContractError> {
         let contract =
             IAggregateVerifier::IAggregateVerifierInstance::new(verifier_address, &self.provider);
@@ -589,12 +590,25 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                 // getters. Guessing wrong is not self-correcting in either direction: on a
                 // 0.2.0 verifier the legacy getters were removed, so a spurious fallback
                 // reports a missing `BLOCK_INTERVAL()` and buries the real failure.
-                if self.is_fork_aware(verifier_address).await? {
-                    return Err(ContractError::validation(format!(
-                        "intervalsForStartingBlock is unavailable on {verifier_address}, but it \
-                         reports version {}.{}.x or later, which must expose it: {error}",
-                        FORK_AWARE_INTERVALS_VERSION.0, FORK_AWARE_INTERVALS_VERSION.1
-                    )));
+                match self.is_fork_aware(verifier_address).await {
+                    Ok(true) => {
+                        return Err(ContractError::validation(format!(
+                            "intervalsForStartingBlock is unavailable on {verifier_address}, but \
+                             it reports version {}.{}.x or later, which must expose it: {error}",
+                            FORK_AWARE_INTERVALS_VERSION.0, FORK_AWARE_INTERVALS_VERSION.1
+                        )));
+                    }
+                    Ok(false) => {}
+                    Err(version_error) => {
+                        // Both calls failed, so the ABI is undetermined. Guessing legacy here
+                        // would report a missing `BLOCK_INTERVAL()` and bury both failures;
+                        // surface them together instead.
+                        return Err(ContractError::validation(format!(
+                            "intervalsForStartingBlock failed on {verifier_address} ({error}), \
+                             and version() also failed ({version_error}); cannot determine \
+                             which interval ABI this verifier speaks"
+                        )));
+                    }
                 }
 
                 let (block_interval, intermediate_block_interval) = futures::try_join!(
