@@ -297,7 +297,7 @@ impl SnapshotL2Stack {
     }
 
     /// Applies the benchmark-only EIP-1559 elasticity override to locally sequenced payloads.
-    fn with_eip1559_elasticity_override(
+    const fn with_eip1559_elasticity_override(
         mut system_config: SystemConfig,
         elasticity_override: Option<u32>,
     ) -> SystemConfig {
