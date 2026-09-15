@@ -11,12 +11,15 @@ use std::{
 
 use alloy_primitives::B256;
 use base_precompile_storage::{PrefetchRequest, StatePrefetcher};
-use reth_provider::StateProviderFactory;
+use reth_provider::{StateProvider, StateProviderFactory};
 use tracing::trace;
 
 /// Global cap for queued requests across all workers. Increasing worker count
 /// does not increase the maximum retained queue memory.
 const MAX_QUEUED_REQUESTS: usize = 4_096;
+
+/// Maximum reads served by one state-provider handle before a worker refreshes it.
+const MAX_READS_PER_PROVIDER: usize = 128;
 
 /// Maximum number of prefetch worker threads a pool will spawn.
 pub const MAX_PREFETCH_WORKERS: usize = 256;
@@ -72,6 +75,9 @@ impl StatePrefetchPool {
     }
 
     /// Reads hinted state until every sender is dropped.
+    ///
+    /// One state-provider handle is amortized across each drained batch, capped so a busy queue
+    /// cannot pin a long-lived read transaction or serve an arbitrarily stale snapshot.
     fn worker_loop<P: StateProviderFactory>(
         provider: P,
         receiver: mpsc::Receiver<PrefetchRequest>,
@@ -79,17 +85,35 @@ impl StatePrefetchPool {
     ) {
         while let Ok(request) = receiver.recv() {
             queued_requests.fetch_sub(1, Ordering::Relaxed);
-            let result = provider.latest().and_then(|state| {
-                state.storage(request.address, B256::from(request.slot)).map(|_| ())
-            });
-            if let Err(error) = result {
-                trace!(
-                    error = %error,
-                    address = %request.address,
-                    slot = %request.slot,
-                    "prefetch read failed"
-                );
+            let state = match provider.latest() {
+                Ok(state) => state,
+                Err(error) => {
+                    trace!(error = %error, request = ?request, "prefetch state provider unavailable");
+                    continue;
+                }
+            };
+            Self::read(&*state, request);
+            for _ in 1..MAX_READS_PER_PROVIDER {
+                match receiver.try_recv() {
+                    Ok(request) => {
+                        queued_requests.fetch_sub(1, Ordering::Relaxed);
+                        Self::read(&*state, request);
+                    }
+                    Err(_) => break,
+                }
             }
+        }
+    }
+
+    /// Performs one hinted read and discards the value.
+    fn read<S: StateProvider + ?Sized>(state: &S, request: PrefetchRequest) {
+        if let Err(error) = state.storage(request.address, B256::from(request.slot)) {
+            trace!(
+                error = %error,
+                address = %request.address,
+                slot = %request.slot,
+                "prefetch read failed"
+            );
         }
     }
 
