@@ -4,6 +4,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::Write as _,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -47,7 +48,7 @@ pub enum BenchmarkCommand {
     /// Run the default transfer benchmark against a fresh temporary local devnet.
     Local,
     /// Run one load test against a Base snapshot continuation.
-    Snapshot(SnapshotBenchmarkArgs),
+    Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
 }
@@ -100,6 +101,10 @@ pub struct SnapshotBenchmarkArgs {
     /// Stable build identifier for visualizer comparisons.
     #[arg(long, env = "BASE_BENCH_CLIENT_VERSION")]
     pub client_version: Option<String>,
+    /// Block gas limit for locally produced descendants. Defaults to 10 Ggas for 2s blocks and
+    /// 1 Ggas for 200ms blocks.
+    #[arg(long)]
+    pub block_gas_limit: Option<NonZeroU64>,
     /// Maximum time to wait for graceful shutdown after writing results. Zero terminates the
     /// process immediately because snapshot datadirs are disposable.
     #[arg(long, default_value_t = 0)]
@@ -330,6 +335,7 @@ impl SnapshotBenchmarkArgs {
             unreachable!("snapshot constructor must create snapshot state")
         };
         snapshot.block_interval = block_interval;
+        snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
@@ -625,7 +631,7 @@ impl SnapshotBenchmarkArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, num::NonZeroU64};
 
     use clap::Parser;
 
@@ -659,6 +665,7 @@ mod tests {
         assert_eq!(args.benchmark_run, "snapshot-throughput");
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
+        assert!(args.block_gas_limit.is_none());
         assert_eq!(args.shutdown_timeout_seconds, 0);
     }
 
@@ -683,6 +690,8 @@ mod tests {
             "manual-run-id",
             "--shutdown-timeout-seconds",
             "30",
+            "--block-gas-limit",
+            "12000000000",
         ]);
 
         let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
@@ -690,6 +699,7 @@ mod tests {
         };
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
+        assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
         assert_eq!(args.shutdown_timeout_seconds, 30);
     }
 

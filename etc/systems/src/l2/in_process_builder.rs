@@ -34,12 +34,14 @@ use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
-use super::TestNodeRuntime;
+use super::InProcessNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
 pub struct InProcessBuilderConfig {
+    /// Runtime sizing policy for the execution node.
+    pub runtime: InProcessNodeRuntime,
     /// Pre-built chain specification.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
@@ -137,7 +139,9 @@ impl InProcessBuilder {
             .wrap_err("Failed to write JWT secret")?;
 
         let runtime = RuntimeBuilder::new(
-            TestNodeRuntime::config()
+            config
+                .runtime
+                .config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;

@@ -106,6 +106,7 @@ libp2p.workspace = true
 # misc
 hex.workspace = true
 url.workspace = true
+libc.workspace = true
 rand.workspace = true
 eyre.workspace = true
 nanoid.workspace = true

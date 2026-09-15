@@ -1,6 +1,6 @@
 //! Local integration coverage for the snapshot-backed development network.
 
-use std::time::Duration;
+use std::{process::Command, time::Duration};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
@@ -20,6 +20,75 @@ use eyre::{Result, WrapErr};
 use tokio::time::{sleep, timeout};
 
 const TX_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Runs the complete snapshot benchmark in a child process and requires its bounded graceful
+/// shutdown to succeed. The child process keeps a shutdown failure from wedging the test harness
+/// and preserves the benchmark logs on the test's stdout and stderr.
+#[tokio::test]
+#[ignore = "requires two fresh writable Base snapshots and a shutdown stress load-test config"]
+async fn snapshot_benchmark_graceful_shutdown_completes() -> Result<()> {
+    let builder_datadir = std::env::var_os("BASE_SNAPSHOT_BUILDER_DATADIR")
+        .expect("BASE_SNAPSHOT_BUILDER_DATADIR must be set");
+    let client_datadir = std::env::var_os("BASE_SNAPSHOT_CLIENT_DATADIR")
+        .expect("BASE_SNAPSHOT_CLIENT_DATADIR must be set");
+    let load_test_config = std::env::var_os("BASE_SNAPSHOT_SHUTDOWN_LOAD_TEST_CONFIG")
+        .expect("BASE_SNAPSHOT_SHUTDOWN_LOAD_TEST_CONFIG must be set");
+    let chain = std::env::var("BASE_SNAPSHOT_CHAIN").unwrap_or_else(|_| "mainnet".to_string());
+    let rollup_config = std::env::var_os("BASE_SNAPSHOT_ROLLUP_CONFIG");
+    let output_root = tempfile::tempdir()?;
+    let output_dir = output_root.path().join("shutdown-regression");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_base-bench"));
+    command
+        .arg("snapshot")
+        .arg("--chain")
+        .arg(chain)
+        .arg("--builder-datadir")
+        .arg(builder_datadir)
+        .arg("--client-datadir")
+        .arg(client_datadir)
+        .arg("--load-test-config")
+        .arg(load_test_config)
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--scenario")
+        .arg("graceful-shutdown-regression")
+        .arg("--client-version")
+        .arg("shutdown-regression")
+        .arg("--shutdown-timeout-seconds")
+        .arg("30");
+    if let Some(rollup_config) = rollup_config {
+        command.arg("--rollup-config").arg(rollup_config);
+    }
+
+    let process_output = tokio::task::spawn_blocking(move || command.output()).await??;
+    let stdout = String::from_utf8_lossy(&process_output.stdout);
+    let stderr = String::from_utf8_lossy(&process_output.stderr);
+    if !process_output.status.success() {
+        eprintln!("{stdout}");
+        eprintln!("{stderr}");
+    }
+    eyre::ensure!(
+        process_output.status.success(),
+        "snapshot benchmark exited with {}",
+        process_output.status
+    );
+    eyre::ensure!(
+        !stdout.contains("account workers unavailable")
+            && !stderr.contains("account workers unavailable"),
+        "snapshot shutdown attempted to use an empty account proof-worker pool"
+    );
+    for artifact in [
+        "metadata.json",
+        "benchmark-result.json",
+        "load-test-result.json",
+        "metrics-sequencer.json",
+        "metrics-validator.json",
+    ] {
+        eyre::ensure!(output_dir.join(artifact).is_file(), "missing benchmark artifact {artifact}");
+    }
+    Ok(())
+}
 
 /// Starts real EL and CL components from caller-owned writable Base snapshots.
 #[tokio::test]
