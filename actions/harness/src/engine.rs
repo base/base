@@ -820,6 +820,18 @@ impl EngineClient for ActionEngineClient {
         Ok(info)
     }
 
+    async fn l2_block_info_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<L2BlockInfo>, EngineClientError> {
+        let guard = self.inner.lock().expect("action engine inner lock poisoned");
+        Ok(if guard.canonical_head.block_info.hash == hash {
+            Some(guard.canonical_head)
+        } else {
+            guard.executed_infos.values().find(|info| info.block_info.hash == hash).copied()
+        })
+    }
+
     async fn el_syncing(&self) -> Result<bool, EngineClientError> {
         Ok(false)
     }
@@ -1071,6 +1083,33 @@ mod tests {
     use base_common_genesis::{BaseUpgradeConfig, UpgradeConfig};
 
     use super::*;
+    use crate::ActionTestHarness;
+
+    #[tokio::test]
+    async fn block_info_by_hash_finds_current_and_historical_heads() {
+        let harness = ActionTestHarness::default();
+        let chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
+        let mut sequencer = harness.create_l2_sequencer(chain);
+        let engine = sequencer.engine_client();
+        let genesis = sequencer.head();
+        assert_eq!(
+            engine.l2_block_info_by_hash(genesis.block_info.hash).await.unwrap(),
+            Some(genesis),
+        );
+
+        sequencer.build_empty_block().await;
+        let first = sequencer.head();
+        sequencer.build_empty_block().await;
+        let second = sequencer.head();
+        assert_ne!(first.block_info.hash, second.block_info.hash);
+        for expected in [first, second] {
+            assert_eq!(
+                engine.l2_block_info_by_hash(expected.block_info.hash).await.unwrap(),
+                Some(expected),
+            );
+        }
+        assert_eq!(engine.l2_block_info_by_hash(B256::repeat_byte(0xff)).await.unwrap(), None);
+    }
 
     #[test]
     fn build_genesis_propagates_base_activations() {
