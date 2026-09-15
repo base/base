@@ -17,7 +17,7 @@ use base_common_rpc_types::BaseTransactionRequest;
 use base_execution_txpool::{NoExtensions, ValidatedTransaction};
 use base_system_tests::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_2, ANVIL_ACCOUNT_3, ANVIL_ACCOUNT_4, SystemTestProviderExt,
-    SystemTestStackBuilder,
+    SystemTestStack, SystemTestStackBuilder,
 };
 use base_tx_forwarding::TxForwardingConfig;
 use base_txpool_rpc::SendRawTransactionValidityRequest;
@@ -57,6 +57,121 @@ fn create_signed_eip1559_tx(
     let raw_tx: Bytes = signed_tx.encoded_2718().into();
 
     Ok((sender, raw_tx, tx_hash))
+}
+
+const DEAD: &str = "0x000000000000000000000000000000000000dEaD";
+/// Reth's Prometheus recorder prefixes every key with `reth.`.
+const INLINE_SIM_SECONDS: &str = "reth_inline_simulation_sim_seconds_count";
+const INLINE_SIM_DEFAULTS: &str = "reth_inline_simulation_sim_default_inserts";
+const INLINE_SIM_QUEUE_FULL: &str = "reth_inline_simulation_sim_queue_full";
+const INLINE_SIM_FAILURES: &str = "reth_inline_simulation_sim_failures";
+
+/// Process-global Prometheus counters; serialize the scrapers.
+static INLINE_SIM_E2E: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Boots L1+L2 with forwarding, then waits until both EL nodes have produced a few blocks.
+async fn boot_forwarding_stack(forwarding: TxForwardingConfig) -> Result<SystemTestStack> {
+    let system = SystemTestStackBuilder::new()
+        .with_l1_chain_id(L1_CHAIN_ID)
+        .with_l2_chain_id(L2_CHAIN_ID)
+        .with_tx_forwarding(forwarding)
+        .build()
+        .await?;
+    let builder = system.l2_builder_provider()?;
+    let client = system.l2_client_provider()?;
+    builder.wait_for_block(3, Duration::from_secs(15)).await?;
+    client.wait_for_block(3, Duration::from_secs(15)).await?;
+    Ok(system)
+}
+
+/// Signs with an Anvil genesis account.
+fn anvil_signer(private_key: &[u8]) -> Result<PrivateKeySigner> {
+    let hex = format!("0x{}", hex::encode(private_key));
+    hex.parse().map_err(|e| eyre::eyre!("invalid private key: {e:?}"))
+}
+
+/// Parses a Prometheus counter/gauge/histogram `_count` line. Missing series is 0.
+fn prometheus_value(body: &str, name: &str, label: Option<&str>) -> f64 {
+    let mut total = 0.0;
+    let mut found = false;
+    for line in body.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some((metric, value)) = line.rsplit_once(' ') else {
+            continue;
+        };
+        let (base, labels) = match metric.split_once('{') {
+            Some((base, rest)) => (base, Some(rest.trim_end_matches('}'))),
+            None => (metric, None),
+        };
+        if base != name {
+            continue;
+        }
+        if let Some(want) = label {
+            if !labels.is_some_and(|got| got.contains(want)) {
+                continue;
+            }
+        }
+        if let Ok(v) = value.parse::<f64>() {
+            total += v;
+            found = true;
+        }
+    }
+    if found { total } else { 0.0 }
+}
+
+/// Scrapes the client's Prometheus exporter, retrying until it accepts connections.
+async fn scrape_metrics(url: &url::Url) -> Result<String> {
+    let mut last_err = None;
+    for _ in 0..30 {
+        match reqwest::get(url.clone()).await {
+            Ok(resp) => {
+                return resp.text().await.wrap_err("metrics body");
+            }
+            Err(err) => {
+                last_err = Some(err);
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    Err(eyre::eyre!("metrics scrape failed: {last_err:?}"))
+}
+
+/// Polls until `name` is at least `before + min_delta`.
+async fn wait_metric_delta(
+    url: &url::Url,
+    name: &str,
+    label: Option<&str>,
+    before: f64,
+    min_delta: f64,
+) -> Result<f64> {
+    match timeout(Duration::from_secs(10), async {
+        loop {
+            let body = scrape_metrics(url).await?;
+            let now = prometheus_value(&body, name, label);
+            if now - before >= min_delta {
+                return Ok::<_, eyre::Error>(now);
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    {
+        Ok(inner) => inner,
+        Err(_) => {
+            let body = scrape_metrics(url).await.unwrap_or_default();
+            let sample: String = body
+                .lines()
+                .filter(|line| line.contains("inline_simulation") || line.contains("sim_"))
+                .take(40)
+                .collect::<Vec<_>>()
+                .join("\n");
+            eyre::bail!(
+                "{name} did not increase (before={before}). matching scrape lines:\n{sample}"
+            )
+        }
+    }
 }
 
 /// Tests that a single transaction can be inserted via `base_insertValidatedTransaction`.
@@ -248,6 +363,238 @@ async fn test_tx_forwarding_pipeline_system() -> Result<()> {
     .wrap_err("Failed to get transaction receipt")?;
 
     // Verify the transaction was included
+    assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
+    assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
+    assert_eq!(receipt.inner.from, sender);
+    assert_eq!(receipt.inner.to, Some(recipient));
+
+    Ok(())
+}
+
+/// Same pipeline as [`test_tx_forwarding_pipeline_system`] with inline simulation on.
+///
+/// `sendRaw` on the client waits for meter_bundle plus pool insert, then the
+/// forwarder sends the tx to the builder. Scrapes Prometheus so this is not just
+/// the OG insert path.
+#[tokio::test]
+async fn test_tx_forwarding_pipeline_with_inline_simulation() -> Result<()> {
+    let _guard = INLINE_SIM_E2E.lock().await;
+    let forwarding = TxForwardingConfig::new(vec![])
+        .with_resend_after_ms(2000)
+        .with_max_batch_size(100)
+        .with_inline_simulation(true);
+
+    let system = boot_forwarding_stack(forwarding).await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    let metrics = system.l2_stack().client().metrics_url()?;
+
+    let signer = anvil_signer(ANVIL_ACCOUNT_1.private_key.as_slice())?;
+    let sender = signer.address();
+    client_provider.wait_for_balance(sender, Duration::from_secs(15)).await?;
+
+    let before = scrape_metrics(&metrics).await?;
+    let seconds_before =
+        prometheus_value(&before, INLINE_SIM_SECONDS, None);
+    let defaults_before =
+        prometheus_value(&before, INLINE_SIM_DEFAULTS, None);
+
+    let nonce = client_provider.get_transaction_count(sender).await?;
+    let recipient: Address = DEAD.parse()?;
+    let (_, raw_tx, expected_tx_hash) =
+        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+
+    let pending_tx = client_provider
+        .send_raw_transaction(&raw_tx)
+        .await
+        .wrap_err("Failed to send transaction to client")?;
+    assert_eq!(*pending_tx.tx_hash(), expected_tx_hash, "Transaction hash mismatch");
+
+    let seconds_after = wait_metric_delta(
+        &metrics,
+        INLINE_SIM_SECONDS,
+        None,
+        seconds_before,
+        1.0,
+    )
+    .await?;
+    assert!(
+        seconds_after - seconds_before >= 1.0,
+        "meter_bundle must run; sim_seconds_count {seconds_before} -> {seconds_after}"
+    );
+
+    let after = scrape_metrics(&metrics).await?;
+    let defaults_after =
+        prometheus_value(&after, INLINE_SIM_DEFAULTS, None);
+    assert_eq!(
+        defaults_after, defaults_before,
+        "this tx must insert real metering, not MeterBundleResponse::default"
+    );
+
+    let receipt = builder_provider.wait_for_receipt(expected_tx_hash, TX_RECEIPT_TIMEOUT).await?;
+    assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
+    assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
+    assert_eq!(receipt.inner.from, sender);
+    assert_eq!(receipt.inner.to, Some(recipient));
+
+    Ok(())
+}
+
+/// Flag on: cheap validate still rejects a tx that cannot pay, without waiting on the oneshot.
+#[tokio::test]
+async fn test_inline_simulation_rejects_unfunded_sender() -> Result<()> {
+    let _guard = INLINE_SIM_E2E.lock().await;
+    let forwarding = TxForwardingConfig::new(vec![])
+        .with_resend_after_ms(2000)
+        .with_max_batch_size(100)
+        .with_inline_simulation(true);
+
+    let system = boot_forwarding_stack(forwarding).await?;
+    let client_provider = system.l2_client_provider()?;
+    let signer = PrivateKeySigner::random();
+    let recipient: Address = DEAD.parse()?;
+    let (_, raw_tx, _) = create_signed_eip1559_tx(&signer, L2_CHAIN_ID, 0, recipient)?;
+
+    let err = timeout(Duration::from_secs(15), client_provider.send_raw_transaction(&raw_tx))
+        .await
+        .wrap_err("unfunded sendRaw hung on the inline-sim oneshot")?
+        .expect_err("unfunded sender must fail cheap validate");
+    assert!(
+        !err.to_string().is_empty(),
+        "RPC error should describe the rejected transaction"
+    );
+
+    Ok(())
+}
+
+/// Capacity 1 + one worker: concurrent sendRaws from four senders overflow the queue.
+/// Full falls back to unmetered insert; hashes still return and txs still land.
+#[tokio::test]
+async fn test_inline_simulation_queue_full_still_forwards() -> Result<()> {
+    let _guard = INLINE_SIM_E2E.lock().await;
+    let forwarding = TxForwardingConfig::new(vec![])
+        .with_resend_after_ms(2000)
+        .with_max_batch_size(100)
+        .with_inline_simulation(true)
+        .with_inline_simulation_workers(1)
+        .with_inline_simulation_queue_capacity(1);
+
+    let system = boot_forwarding_stack(forwarding).await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    let metrics = system.l2_stack().client().metrics_url()?;
+    let recipient: Address = DEAD.parse()?;
+
+    let accounts = [&*ANVIL_ACCOUNT_1, &*ANVIL_ACCOUNT_2, &*ANVIL_ACCOUNT_3, &*ANVIL_ACCOUNT_4];
+    let mut raws = Vec::new();
+    for account in accounts {
+        let signer = anvil_signer(account.private_key.as_slice())?;
+        client_provider.wait_for_balance(signer.address(), Duration::from_secs(15)).await?;
+        let nonce = client_provider.get_transaction_count(signer.address()).await?;
+        let (_, raw_tx, hash) =
+            create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+        raws.push((signer.address(), raw_tx, hash));
+    }
+
+    let before = scrape_metrics(&metrics).await?;
+    let full_before = prometheus_value(&before, INLINE_SIM_QUEUE_FULL, None);
+
+    let (r0, r1, r2, r3) = tokio::join!(
+        client_provider.send_raw_transaction(&raws[0].1),
+        client_provider.send_raw_transaction(&raws[1].1),
+        client_provider.send_raw_transaction(&raws[2].1),
+        client_provider.send_raw_transaction(&raws[3].1),
+    );
+    for (i, result) in [r0, r1, r2, r3].into_iter().enumerate() {
+        let pending = result.wrap_err_with(|| format!("sendRaw {i} failed"))?;
+        assert_eq!(*pending.tx_hash(), raws[i].2, "hash mismatch for sendRaw {i}");
+    }
+
+    let full_after = wait_metric_delta(
+        &metrics,
+        INLINE_SIM_QUEUE_FULL,
+        None,
+        full_before,
+        1.0,
+    )
+    .await?;
+    assert!(
+        full_after - full_before >= 1.0,
+        "at least one concurrent sendRaw must overflow the 1-slot queue; {full_before} -> {full_after}"
+    );
+
+    for (sender, _, hash) in &raws {
+        let receipt = builder_provider.wait_for_receipt(*hash, TX_RECEIPT_TIMEOUT).await?;
+        assert_eq!(receipt.inner.transaction_hash, *hash);
+        assert_eq!(receipt.inner.from, *sender);
+        assert_eq!(receipt.inner.to, Some(recipient));
+    }
+
+    Ok(())
+}
+
+/// Timeout 0ms: sleep(0) wins vs spawn_blocking, so the worker inserts Default metering.
+/// The tx still returns a hash and still lands on the builder.
+#[tokio::test]
+async fn test_inline_simulation_timeout_still_forwards() -> Result<()> {
+    let _guard = INLINE_SIM_E2E.lock().await;
+    let forwarding = TxForwardingConfig::new(vec![])
+        .with_resend_after_ms(2000)
+        .with_max_batch_size(100)
+        .with_inline_simulation(true)
+        .with_inline_simulation_timeout_ms(0);
+
+    let system = boot_forwarding_stack(forwarding).await?;
+    let builder_provider = system.l2_builder_provider()?;
+    let client_provider = system.l2_client_provider()?;
+    let metrics = system.l2_stack().client().metrics_url()?;
+
+    let signer = anvil_signer(ANVIL_ACCOUNT_1.private_key.as_slice())?;
+    let sender = signer.address();
+    client_provider.wait_for_balance(sender, Duration::from_secs(15)).await?;
+
+    let before = scrape_metrics(&metrics).await?;
+    let timeout_before = prometheus_value(
+        &before,
+        INLINE_SIM_FAILURES,
+        Some(r#"reason="timeout""#),
+    );
+    let defaults_before =
+        prometheus_value(&before, INLINE_SIM_DEFAULTS, None);
+
+    let nonce = client_provider.get_transaction_count(sender).await?;
+    let recipient: Address = DEAD.parse()?;
+    let (_, raw_tx, expected_tx_hash) =
+        create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
+
+    let pending_tx = client_provider
+        .send_raw_transaction(&raw_tx)
+        .await
+        .wrap_err("Failed to send transaction to client")?;
+    assert_eq!(*pending_tx.tx_hash(), expected_tx_hash, "Transaction hash mismatch");
+
+    let timeout_after = wait_metric_delta(
+        &metrics,
+        INLINE_SIM_FAILURES,
+        Some(r#"reason="timeout""#),
+        timeout_before,
+        1.0,
+    )
+    .await?;
+    assert!(
+        timeout_after - timeout_before >= 1.0,
+        "timeout=0 must count a timeout failure; {timeout_before} -> {timeout_after}"
+    );
+
+    let after = scrape_metrics(&metrics).await?;
+    let defaults_after =
+        prometheus_value(&after, INLINE_SIM_DEFAULTS, None);
+    assert!(
+        defaults_after - defaults_before >= 1.0,
+        "timed-out sim must insert MeterBundleResponse::default; {defaults_before} -> {defaults_after}"
+    );
+
+    let receipt = builder_provider.wait_for_receipt(expected_tx_hash, TX_RECEIPT_TIMEOUT).await?;
     assert_eq!(receipt.inner.transaction_hash, expected_tx_hash);
     assert!(receipt.inner.block_number.is_some(), "Receipt should have block number");
     assert_eq!(receipt.inner.from, sender);
