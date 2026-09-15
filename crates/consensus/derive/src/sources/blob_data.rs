@@ -30,7 +30,7 @@ impl BlobData {
         let data = self.data.as_ref().ok_or(BlobDecodingError::MissingData)?;
 
         // Validate the blob encoding version
-        if data[VERSIONED_HASH_VERSION_KZG as usize] != BLOB_ENCODING_VERSION {
+        if data[0] != BLOB_ENCODING_VERSION {
             return Err(BlobDecodingError::InvalidEncodingVersion);
         }
 
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn test_blob_data_decode_invalid_length() {
         let mut data = vec![0u8; 32];
-        data[VERSIONED_HASH_VERSION_KZG as usize] = BLOB_ENCODING_VERSION;
+        data[0] = BLOB_ENCODING_VERSION;
         data[2] = 0xFF;
         data[3] = 0xFF;
         data[4] = 0xFF;
@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_blob_data_decode() {
         let mut data = vec![0u8; alloy_eips::eip4844::BYTES_PER_BLOB];
-        data[VERSIONED_HASH_VERSION_KZG as usize] = BLOB_ENCODING_VERSION;
+        data[0] = BLOB_ENCODING_VERSION;
         data[2] = 0x00;
         data[3] = 0x00;
         data[4] = 0x01;
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn test_blob_data_decode_invalid_field_element() {
         let mut data = vec![0u8; alloy_eips::eip4844::BYTES_PER_BLOB + 10];
-        data[VERSIONED_HASH_VERSION_KZG as usize] = BLOB_ENCODING_VERSION;
+        data[0] = BLOB_ENCODING_VERSION;
         data[2] = 0x00;
         data[3] = 0x00;
         data[4] = 0x01;
