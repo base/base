@@ -115,7 +115,7 @@ pub struct PendingRegistration {
 /// Coordinates signer registration and orphan signer deregistration.
 #[derive(Debug)]
 pub struct SignerManager<R, C, T> {
-    registry: R,
+    registry: Arc<R>,
     cert_manager: C,
     tx_manager: Arc<T>,
     hint_semaphore: Arc<Semaphore>,
@@ -141,7 +141,7 @@ impl<R, C, T> SignerManager<R, C, T> {
         config: SignerManagerConfig,
     ) -> Self {
         Self {
-            registry,
+            registry: Arc::new(registry),
             cert_manager,
             tx_manager: Arc::new(tx_manager),
             hint_semaphore: Arc::new(Semaphore::new(config.max_concurrency.max(1))),
@@ -377,7 +377,7 @@ impl ProofTaskSet {
 
 impl<R, C, T> SignerManager<R, C, T>
 where
-    R: TEEProverRegistryClient,
+    R: TEEProverRegistryClient + 'static,
     C: CertManagerClient,
     T: TxManager + 'static,
 {
@@ -625,13 +625,11 @@ where
         let Some(crl_source) = &self.crl_source else {
             return Ok(true);
         };
-        RegistrarMetrics::crl_checks_total().increment(1);
-        let Some(status) = signer_cancel
-            .run_until_cancelled(crl_source.check_chain(&plan.root_cert, &plan.certs))
-            .await
-        else {
+        if signer_cancel.is_cancelled() {
             return Ok(false);
-        };
+        }
+        RegistrarMetrics::crl_checks_total().increment(1);
+        let status = crl_source.check_chain(&plan.root_cert, &plan.certs).await;
         let status = match status {
             Ok(status) => status,
             Err(error) => {
@@ -710,7 +708,7 @@ where
             .await;
     }
 
-    /// Submits one `deregisterSigner` transaction and records its outcome.
+    /// Submits `deregisterSigner`, retrying revoked signers until onchain removal is confirmed.
     async fn submit_deregistration(
         &self,
         signer: Address,
@@ -732,10 +730,54 @@ where
             return;
         }
         let tx_manager = Arc::clone(&self.tx_manager);
+        let registry = Arc::clone(&self.registry);
         let pending_deregistrations = Arc::clone(&self.pending_deregistrations);
+        let retry_delay = self.retry_delay(1);
         let task = task::spawn(async move {
-            let send = tx_manager.send_async(candidate).await;
-            Self::record_deregistration_result(signer, reason, send.await);
+            let mut submit = true;
+            loop {
+                if submit {
+                    let send = tx_manager.send_async(candidate.clone()).await;
+                    let result = send.await;
+                    submit = !result.as_ref().is_ok_and(|receipt| receipt.inner.status());
+                    Self::record_deregistration_result(signer, reason, result);
+                    if reason != DEREG_REASON_REVOKED {
+                        break;
+                    }
+                }
+                match tokio::time::timeout(
+                    REVOCATION_CLEANUP_TIMEOUT,
+                    registry.is_registered_signer(signer),
+                )
+                .await
+                {
+                    Ok(Ok(false)) => break,
+                    Ok(Ok(true)) => {
+                        submit = true;
+                        warn!(
+                            signer = %signer,
+                            reason,
+                            delay = ?retry_delay,
+                            "revoked signer remains registered, retrying deregistration"
+                        );
+                    }
+                    Ok(Err(error)) => warn!(
+                        error = %error,
+                        signer = %signer,
+                        reason,
+                        delay = ?retry_delay,
+                        "failed to confirm revoked signer deregistration, retrying"
+                    ),
+                    Err(_) => warn!(
+                        signer = %signer,
+                        reason,
+                        timeout = ?REVOCATION_CLEANUP_TIMEOUT,
+                        delay = ?retry_delay,
+                        "timed out confirming revoked signer deregistration, retrying"
+                    ),
+                }
+                tokio::time::sleep(retry_delay).await;
+            }
             pending_deregistrations
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1330,7 +1372,7 @@ where
 #[cfg(test)]
 mod tests {
     //! These hand-rolled mocks share one ordered state across contract reads and transaction
-    //! writes, which `mockall` cannot express while transactions race through per-certificate locks.
+    //! writes or pause a CRL response while it is in flight, which `mockall` cannot express.
 
     use std::{
         collections::VecDeque,
@@ -1691,6 +1733,26 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct PausedCrlSource {
+        started: Arc<Notify>,
+        resume: Arc<Notify>,
+        revocation_id: B256,
+    }
+
+    #[async_trait]
+    impl CrlSource for PausedCrlSource {
+        async fn check_chain(
+            &self,
+            _root_cert: &[u8],
+            _certs: &[CertPlan],
+        ) -> std::result::Result<CrlChainStatus, CrlError> {
+            self.started.notify_one();
+            self.resume.notified().await;
+            Ok(revoked_chain(self.revocation_id))
+        }
+    }
+
     type TestManager = SignerManager<MockRegistry, MockCertManager, MockTxManager>;
 
     fn verified_cert(kind: CertKind) -> VerifiedCert {
@@ -2034,7 +2096,7 @@ mod tests {
         assert_eq!(call.signer, SIGNER_A);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn revoked_signer_cleanup_fails_safe_when_registration_state_read_fails() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
@@ -2087,6 +2149,27 @@ mod tests {
             .await
             .expect("deregistration send should continue after the cleanup timeout");
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn revoked_signer_deregistration_retries_until_registry_confirms_removal() {
+        let plan = synthetic_plan(SIGNER_A);
+        let (manager, chain) = manager_with_plan(&plan);
+        {
+            let mut state = chain.0.lock().unwrap();
+            state.registered.insert(SIGNER_A);
+            state.revoked.insert(plan.certs[0].revocation_id);
+        }
+        chain.set_outcomes([
+            MockTxOutcome::Error(TxManagerError::Rpc("deregistration failed".into())),
+            MockTxOutcome::Success,
+        ]);
+
+        let result = register_prepared(&manager, plan).await;
+
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 2);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2180,6 +2263,41 @@ mod tests {
             chain.sent().iter().map(|(to, _)| *to).collect::<Vec<_>>(),
             [Some(TEST_CERT_MANAGER_ADDRESS), Some(TEST_REGISTRY_ADDRESS)]
         );
+    }
+
+    #[tokio::test]
+    async fn cancellation_waits_for_an_in_flight_crl_result() {
+        let plan = synthetic_plan(SIGNER_A);
+        let cert_id = plan.certs[0].revocation_id;
+        let started = Arc::new(Notify::new());
+        let resume = Arc::new(Notify::new());
+        let source = PausedCrlSource {
+            started: Arc::clone(&started),
+            resume: Arc::clone(&resume),
+            revocation_id: cert_id,
+        };
+        let (manager, chain) = manager_with_crl(&plan, Box::new(source));
+        chain.0.lock().unwrap().registered.insert(SIGNER_A);
+        let cancel = CancellationToken::new();
+        let task_manager = Arc::clone(&manager);
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            task_manager
+                .register_plan(TEST_INSTANCE, SIGNER_A, plan, Some(synthetic_hints()), &task_cancel)
+                .await
+        });
+
+        started.notified().await;
+        cancel.cancel();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished(), "the in-flight CRL result must not be discarded");
+        resume.notify_one();
+
+        let result = task.await.unwrap();
+        assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        let state = chain.0.lock().unwrap();
+        assert!(state.revoked.contains(&cert_id));
+        assert!(!state.registered.contains(&SIGNER_A));
     }
 
     #[tokio::test(start_paused = true)]
