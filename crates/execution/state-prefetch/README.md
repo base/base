@@ -14,3 +14,7 @@ Prefetching is purely a page-cache warmer: fetched values are discarded and
 the metered journaled reads remain unchanged, so enabling or disabling it has
 no consensus-visible effect. It is disabled unless the node starts with a
 non-zero `--state.prefetch-workers` value.
+
+The pool exports `state.prefetch.read_seconds` along with hint, enqueue, drop,
+and read-error counters so operators can measure real storage latency and
+backpressure on enabled nodes.

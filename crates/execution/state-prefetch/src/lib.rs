@@ -6,5 +6,8 @@
 mod extension;
 pub use extension::{StatePrefetchConfig, StatePrefetchExtension};
 
+mod metrics;
+pub use metrics::PrefetchMetrics;
+
 mod pool;
 pub use pool::{MAX_PREFETCH_WORKERS, StatePrefetchPool};
