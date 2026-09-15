@@ -139,19 +139,20 @@ impl BenchmarkCli {
         let run_result: Result<()> = async {
             let builder_rpc = stack.l2_rpc_url()?;
             let client_rpc = stack.l2_client_rpc_url()?;
-            let mut test_config = TestConfig::default();
-            test_config.transaction_submission_rpcs = vec![builder_rpc];
-            test_config.query_rpc = Some(client_rpc);
-            test_config.flashblocks_ws = Some(
-                stack
-                    .l2_stack()
-                    .builder()
-                    .flashblocks_url()
-                    .parse()
-                    .wrap_err("invalid fresh-devnet Flashblocks URL")?,
-            );
-            test_config.chain_id = Some(chain_id);
-            test_config.skip_drain = true;
+            let flashblocks_ws = stack
+                .l2_stack()
+                .builder()
+                .flashblocks_url()
+                .parse()
+                .wrap_err("invalid fresh-devnet Flashblocks URL")?;
+            let test_config = TestConfig {
+                transaction_submission_rpcs: vec![builder_rpc],
+                query_rpc: Some(client_rpc),
+                flashblocks_ws: Some(flashblocks_ws),
+                chain_id: Some(chain_id),
+                skip_drain: true,
+                ..Default::default()
+            };
 
             let load_config = test_config.to_load_config(None)?;
             let output = LoadTestExecutor::run_prepared(
