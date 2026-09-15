@@ -10,6 +10,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadEnvelopeV3, BaseExecutionPayloadEnvelopeV4, BaseExecutionPayloadEnvelopeV5,
     ExecutionData,
 };
+use base_execution_chainspec::BaseEngineApiForks;
 use base_execution_consensus::{BaseConsensusError, isthmus};
 use base_execution_payload_builder::{
     Attributes, BaseExecutionPayloadValidator, BasePayloadBuilderAttributes, BasePayloadTypes,
@@ -282,7 +283,7 @@ where
             payload_or_attrs.withdrawals().is_some(),
         )?;
         validate_parent_beacon_block_root_presence(
-            self.chain_spec(),
+            &BaseEngineApiForks(self.chain_spec()),
             version,
             payload_or_attrs.message_validation_kind(),
             payload_or_attrs.timestamp(),
@@ -296,7 +297,7 @@ where
         attributes: &<Types as PayloadTypes>::PayloadAttributes,
     ) -> Result<(), EngineObjectValidationError> {
         validate_version_specific_fields(
-            self.chain_spec(),
+            &BaseEngineApiForks(self.chain_spec()),
             version,
             PayloadOrAttributes::<ExecutionData, Types::PayloadAttributes>::PayloadAttributes(
                 attributes,
@@ -404,7 +405,9 @@ mod tests {
     use base_common_rpc_types_engine::BasePayloadAttributes;
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_execution_consensus::BaseConsensusError;
-    use reth_ethereum_forks::ForkCondition;
+    use reth_chainspec::EthereumHardforks;
+    use reth_ethereum_forks::{EthereumHardfork, ForkCondition};
+    use reth_payload_primitives::validate_payload_timestamp;
     use reth_primitives_traits::WithEncoded;
     use reth_provider::{
         noop::NoopProvider,
@@ -432,6 +435,7 @@ mod tests {
     fn denim_validator() -> BaseEngineValidator<BaseTxEnvelope, BaseChainSpec> {
         validator_with_chain_spec(
             BaseChainSpecBuilder::base_mainnet()
+                .with_fork(EthereumHardfork::Amsterdam, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                 .build(),
         )
@@ -490,6 +494,53 @@ mod tests {
             WithEncoded::from_2718_encodable(TxDeposit::default().seal_slow().into()),
             WithEncoded::from_2718_encodable(metadata.into()),
         ];
+    }
+
+    #[test]
+    fn denim_preserves_base_engine_api_versions() {
+        let validator = denim_validator();
+        assert!(validator.chain_spec().is_amsterdam_active_at_timestamp(DENIM_TIMESTAMP));
+
+        for timestamp in [DENIM_TIMESTAMP - 1, DENIM_TIMESTAMP, DENIM_TIMESTAMP + 1] {
+            let attributes = denim_attributes(timestamp);
+            <BaseEngineValidator<_, _> as EngineApiValidator<BaseEngineTypes>>::ensure_well_formed_attributes(
+                &validator,
+                EngineApiMessageVersion::V3,
+                &attributes,
+            )
+            .expect("Base forkchoiceUpdatedV3 remains supported across Denim");
+
+            for (version, kind) in [
+                (EngineApiMessageVersion::V3, MessageValidationKind::PayloadAttributes),
+                (EngineApiMessageVersion::V4, MessageValidationKind::Payload),
+                (EngineApiMessageVersion::V5, MessageValidationKind::GetPayload),
+            ] {
+                validate_payload_timestamp(
+                    BaseEngineApiForks(validator.chain_spec()),
+                    version,
+                    timestamp,
+                    kind,
+                )
+                .expect("Denim does not introduce Ethereum Amsterdam wire formats");
+            }
+
+            for version in [
+                EngineApiMessageVersion::V2,
+                EngineApiMessageVersion::V4,
+                EngineApiMessageVersion::V6,
+            ] {
+                assert!(
+                    validate_payload_timestamp(
+                        BaseEngineApiForks(validator.chain_spec()),
+                        version,
+                        timestamp,
+                        MessageValidationKind::GetPayload,
+                    )
+                    .is_err(),
+                    "unsupported getPayload versions must still be rejected"
+                );
+            }
+        }
     }
 
     #[test]

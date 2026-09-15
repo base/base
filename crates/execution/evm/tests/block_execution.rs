@@ -105,7 +105,10 @@ fn execute_same_block_base_time_read(getter_selector: [u8; 4]) -> U256 {
     let user_tx: BaseTransactionSigned = TxEip1559 {
         chain_id: chain_spec.chain.id(),
         nonce: 0,
-        gas_limit: 100_000,
+        // The reader SSTOREs the getter result to a fresh slot. Once Denim activates
+        // SpecId::AMSTERDAM, that zero->nonzero store costs EIP-8037's 97,920 gas, so 100,000
+        // no longer covers intrinsic + STATICCALL + SSTORE. Give it ample headroom.
+        gas_limit: 300_000,
         to: BASE_TIME_READER.into(),
         input: getter_selector.into(),
         ..Default::default()
