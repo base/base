@@ -95,6 +95,14 @@ impl MockContainerManager {
             .iter()
             .any(|name| name == container_name)
     }
+
+    fn stopped_container_names(&self) -> Vec<String> {
+        self.stopped_containers.lock().expect("lock should not be poisoned").clone()
+    }
+
+    fn started_container_names(&self) -> Vec<String> {
+        self.started_containers.lock().expect("lock should not be poisoned").clone()
+    }
 }
 
 #[async_trait]
@@ -147,7 +155,7 @@ impl TipChecker for MockTipChecker {
 fn test_config(bucket: &str, tmp: &Path) -> base_snapshotter::SnapshotterConfig {
     base_snapshotter::SnapshotterConfig {
         container_name: "fake-el".to_string(),
-        consensus_container_name: "fake-cl".to_string(),
+        consensus_container_name: Some("fake-cl".to_string()),
         el_rpc_url: "http://127.0.0.1:8545".parse().expect("valid test URL"),
         tip_threshold_secs: base_snapshotter::DEFAULT_TIP_THRESHOLD_SECS,
         source_datadir: tmp.join("nonexistent-datadir"),
@@ -1494,6 +1502,46 @@ async fn orchestrator_proceeds_when_at_tip() -> Result<()> {
     assert!(manager.stopped_container("fake-cl"), "CL container should have been stopped");
     assert!(manager.started_container("fake-el"), "EL container should have been restarted");
     assert!(manager.started_container("fake-cl"), "CL container should have been restarted");
+
+    Ok(())
+}
+
+/// When no CL container is configured, only the EL is stopped and restarted.
+#[tokio::test]
+#[serial]
+async fn orchestrator_skips_cl_when_consensus_container_name_is_none() -> Result<()> {
+    let harness = TestHarness::new().await?;
+    let manager = std::sync::Arc::new(MockContainerManager::new());
+    let uploader = SnapshotUploader::new(
+        harness.storage_client.clone(),
+        harness.bucket_name.clone(),
+        "test".to_string(),
+        None,
+    );
+
+    let tmp = tempfile::tempdir()?;
+    let mut config = test_config(&harness.bucket_name, tmp.path());
+    config.consensus_container_name = None;
+
+    let snapshotter = base_snapshotter::Snapshotter::new(
+        std::sync::Arc::clone(&manager),
+        MockTipChecker::new(true),
+        uploader,
+        config,
+    );
+
+    let result = snapshotter.run().await;
+    assert!(result.is_err(), "should fail because source_datadir doesn't exist");
+    assert_eq!(
+        manager.stopped_container_names(),
+        ["fake-el"],
+        "unified snapshot should stop only the EL container"
+    );
+    assert_eq!(
+        manager.started_container_names(),
+        ["fake-el"],
+        "unified snapshot should start only the EL container"
+    );
 
     Ok(())
 }

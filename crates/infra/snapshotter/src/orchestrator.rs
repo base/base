@@ -13,11 +13,12 @@ use crate::{
     upload::{SnapshotUploader, StreamingS3ArchiveSink},
 };
 
-/// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
+/// Orchestrates the full snapshot flow: optionally stop CL, stop EL → generate →
+/// upload → restart EL, then optionally restart CL.
 ///
-/// Both containers are always restarted, even if snapshot generation or upload
-/// fails. This prevents leaving the node in a stopped state on errors and ensures
-/// the CL reconnects to the EL after the snapshot.
+/// The EL is always restarted, even if snapshot generation or upload fails. When a
+/// CL container is configured, it is stopped first and restarted last so it can
+/// reconnect to the EL. This prevents leaving the node in a stopped state on errors.
 pub struct Snapshotter<C: ContainerManager, T: TipChecker> {
     container_manager: C,
     tip_checker: T,
@@ -46,12 +47,12 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     /// Executes the full snapshot lifecycle.
     ///
     /// 0. Captures the EL's latest block and verifies it is at chain tip; skips the run if it is not
-    /// 1. Stops the CL and EL containers
-    /// 2. Verifies both containers are stopped
+    /// 1. Stops the CL (when configured) then the EL
+    /// 2. Verifies stopped containers are no longer running
     /// 3. Generates snapshot archives
     /// 4. Uploads to S3/R2
     /// 5. Clears reth's persisted peer list (best effort)
-    /// 6. Restarts the EL and then the CL (always, even on failure)
+    /// 6. Restarts the EL and then the CL when configured (always, even on failure)
     pub async fn run(&self) -> Result<()> {
         // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
         // node would publish stale data and pause a node that is still syncing.
@@ -74,10 +75,14 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             return Ok(());
         }
 
-        // Stop the dependent CL first, then the EL. Restarting in the reverse
-        // order below ensures the EL is available when the CL reconnects.
-        let cl_stop_result =
-            self.container_manager.stop(&self.config.consensus_container_name).await;
+        // Stop the dependent CL first when configured, then the EL. Restarting
+        // in the reverse order below ensures the EL is available when the CL
+        // reconnects.
+        let cl_stop_result = if let Some(ref cl_name) = self.config.consensus_container_name {
+            self.container_manager.stop(cl_name).await
+        } else {
+            Ok(())
+        };
         let result = match cl_stop_result {
             Ok(()) => match self.container_manager.stop(&self.config.container_name).await {
                 Ok(()) => self.generate_and_upload(tip.block_number).await,
@@ -102,16 +107,19 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             );
         }
 
-        let cl_restart_result =
-            self.container_manager.start(&self.config.consensus_container_name).await;
-
-        if let Err(ref restart_err) = cl_restart_result {
-            error!(
-                error = %restart_err,
-                container = %self.config.consensus_container_name,
-                "CRITICAL: failed to restart CL container after snapshot"
-            );
-        }
+        let cl_restart_result = if let Some(ref cl_name) = self.config.consensus_container_name {
+            let cl_restart_result = self.container_manager.start(cl_name).await;
+            if let Err(ref restart_err) = cl_restart_result {
+                error!(
+                    error = %restart_err,
+                    container = %cl_name,
+                    "CRITICAL: failed to restart CL container after snapshot"
+                );
+            }
+            cl_restart_result
+        } else {
+            Ok(())
+        };
 
         let restart_result = match (el_restart_result, cl_restart_result) {
             (Ok(()), Ok(())) => Ok(()),
@@ -128,7 +136,12 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 Ok(())
             }
             (Err(snapshot_err), Ok(())) => {
-                Err(snapshot_err).context("snapshot failed but EL and CL containers were restarted")
+                let restarted = if self.config.consensus_container_name.is_some() {
+                    "snapshot failed but EL and CL containers were restarted"
+                } else {
+                    "snapshot failed but EL container was restarted"
+                };
+                Err(snapshot_err).context(restarted)
             }
             (Ok(()), Err(restart_err)) => {
                 bail!(
