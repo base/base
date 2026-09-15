@@ -60,6 +60,10 @@ name = "b20_policy_v1_golden"
 required-features = ["test-utils"]
 
 [[test]]
+name = "b20_policy_v3_golden"
+required-features = ["test-utils"]
+
+[[test]]
 name = "b20_factory_v1_golden"
 required-features = ["test-utils"]
 

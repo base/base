@@ -15,7 +15,7 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, PolicyAccounting, PolicyRegistryLogic,
-    PolicyRegistryV1, PolicyRegistryV2,
+    PolicyRegistryV1, PolicyRegistryV2, PolicyRegistryV3,
 };
 
 /// An activated version of the `PolicyRegistry` precompile logic.
@@ -27,6 +27,8 @@ pub enum PolicyVersion {
     V1,
     /// Introduced at Cobalt, superseding [`Self::V1`].
     V2,
+    /// Introduced at Denim, superseding [`Self::V2`].
+    V3,
 }
 
 impl PolicyVersion {
@@ -37,16 +39,19 @@ impl PolicyVersion {
     {
         static V1: PolicyRegistryV1 = PolicyRegistryV1;
         static V2: PolicyRegistryV2 = PolicyRegistryV2;
+        static V3: PolicyRegistryV3 = PolicyRegistryV3;
         match self {
             Self::V1 => &V1,
             Self::V2 => &V2,
+            Self::V3 => &V3,
         }
     }
     /// Returns the wire (ABI) surface frozen for this version.
     pub const fn abi(self) -> PolicyAbi {
         match self {
             Self::V1 => PolicyAbi::V1,
-            Self::V2 => PolicyAbi::V2,
+            // V3 reuses the Cobalt wire surface until a later Denim PR adds selectors.
+            Self::V2 | Self::V3 => PolicyAbi::V2,
         }
     }
 }
@@ -120,6 +125,7 @@ impl PolicyVersions {
     /// Returns the version active at `upgrade`, or `None` before the introduction
     pub fn from_base_upgrade(upgrade: BaseUpgrade) -> Option<PolicyVersion> {
         match upgrade {
+            u if u >= BaseUpgrade::Denim => Some(PolicyVersion::V3),
             u if u >= BaseUpgrade::Cobalt => Some(PolicyVersion::V2),
             u if u >= BaseUpgrade::Beryl => Some(PolicyVersion::V1),
             _ => None,
@@ -154,17 +160,26 @@ mod tests {
         assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt), Some(PolicyVersion::V2));
     }
 
+    #[test]
+    fn resolves_v3_from_denim() {
+        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Denim), Some(PolicyVersion::V3));
+        assert_eq!(PolicyVersions::from_base_upgrade(BaseUpgrade::Zenith), Some(PolicyVersion::V3));
+    }
+
     /// The logic axis and the wire axis meet only here. Driven from the fork ladder so the whole
     /// chain (upgrade -> version -> surface) is pinned, not just the inner lookup.
     #[test]
     fn each_fork_resolves_to_its_wire_surface() {
         assert_eq!(PolicyVersion::V1.abi(), PolicyAbi::V1);
         assert_eq!(PolicyVersion::V2.abi(), PolicyAbi::V2);
+        assert_eq!(PolicyVersion::V3.abi(), PolicyAbi::V2);
 
         let beryl = PolicyVersions::from_base_upgrade(BaseUpgrade::Beryl).unwrap();
         let cobalt = PolicyVersions::from_base_upgrade(BaseUpgrade::Cobalt).unwrap();
+        let denim = PolicyVersions::from_base_upgrade(BaseUpgrade::Denim).unwrap();
         assert_eq!(beryl.abi(), PolicyAbi::V1);
         assert_eq!(cobalt.abi(), PolicyAbi::V2);
+        assert_eq!(denim.abi(), PolicyAbi::V2);
     }
 
     /// The dispatcher re-decodes against the canonical surface after a frozen surface accepts, so
