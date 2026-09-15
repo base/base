@@ -26,24 +26,26 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, PrometheusBlockCollector,
-    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
-    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder, VisualizerMetadata,
-    VisualizerRun,
+    ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
+    PrometheusBlockCollector, SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult,
+    SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
+    VisualizerMetadata, VisualizerRun,
 };
 
 /// Base benchmark launcher.
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark a Base development network")]
 pub struct BenchmarkCli {
-    /// Benchmark target.
+    /// Benchmark target. Omitting it runs the default fresh-devnet transfer benchmark.
     #[command(subcommand)]
-    pub command: BenchmarkCommand,
+    pub command: Option<BenchmarkCommand>,
 }
 
 /// Supported benchmark targets.
 #[derive(Debug, Subcommand)]
 pub enum BenchmarkCommand {
+    /// Run the default transfer benchmark against a fresh temporary local devnet.
+    Local,
     /// Run one load test against a Base snapshot continuation.
     Snapshot(SnapshotBenchmarkArgs),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
@@ -116,9 +118,68 @@ impl BenchmarkCli {
     pub async fn run(self) -> Result<()> {
         let _progress = LoadTestDisplay::init_tracing();
         match self.command {
-            BenchmarkCommand::Snapshot(args) => args.run().await,
-            BenchmarkCommand::Aggregate(args) => args.run(),
+            None | Some(BenchmarkCommand::Local) => Self::run_default_local().await,
+            Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
+            Some(BenchmarkCommand::Aggregate(args)) => args.run(),
         }
+    }
+
+    /// Starts an isolated fresh devnet, runs the portable default transfer profile, and tears the
+    /// stack down. This deliberately has no flags or persistent datadir: it is the quick local
+    /// smoke benchmark. Snapshot benchmarks retain their explicit arguments for repeatable,
+    /// shareable performance runs.
+    async fn run_default_local() -> Result<()> {
+        let devnet = DevnetConfig::standard();
+        let chain_id = devnet.l2_chain_id;
+        let funder_key = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
+            .wrap_err("failed to construct the fresh-devnet funder key")?;
+        let stack = SystemTestStackBuilder::new().with_devnet_config(devnet).build().await?;
+
+        println!("running default transfer benchmark against a fresh temporary devnet");
+        let run_result: Result<()> = async {
+            let builder_rpc = stack.l2_rpc_url()?;
+            let client_rpc = stack.l2_client_rpc_url()?;
+            let mut test_config = TestConfig::default();
+            test_config.transaction_submission_rpcs = vec![builder_rpc];
+            test_config.query_rpc = Some(client_rpc);
+            test_config.flashblocks_ws = Some(
+                stack
+                    .l2_stack()
+                    .builder()
+                    .flashblocks_url()
+                    .parse()
+                    .wrap_err("invalid fresh-devnet Flashblocks URL")?,
+            );
+            test_config.chain_id = Some(chain_id);
+            test_config.skip_drain = true;
+
+            let load_config = test_config.to_load_config(None)?;
+            let output = LoadTestExecutor::run_prepared(
+                test_config,
+                load_config,
+                funder_key,
+                LoadTestRunOptions {
+                    continuous: false,
+                    install_signal_handler: true,
+                    skip_drain: true,
+                },
+                LoadTestRunHooks {
+                    display: None,
+                    before_cleanup: (|_: &MetricsSummary| {}) as fn(&MetricsSummary),
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&output.summary)?);
+            if let Some(error) = output.run_error {
+                return Err(error.into());
+            }
+            Ok(())
+        }
+        .await;
+
+        let shutdown_result = stack.shutdown().await;
+        run_result?;
+        shutdown_result
     }
 }
 
@@ -584,7 +645,7 @@ mod tests {
             "example-scenario",
         ]);
 
-        let BenchmarkCommand::Snapshot(args) = cli.command else {
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
             panic!("expected snapshot benchmark command");
         };
         assert_eq!(args.chain, "sepolia");
@@ -619,7 +680,7 @@ mod tests {
             "30",
         ]);
 
-        let BenchmarkCommand::Snapshot(args) = cli.command else {
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
             panic!("expected snapshot benchmark command");
         };
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
@@ -698,11 +759,25 @@ mod tests {
             "results",
             "results/run-a",
         ]);
-        let BenchmarkCommand::Aggregate(args) = cli.command else {
+        let Some(BenchmarkCommand::Aggregate(args)) = cli.command else {
             panic!("expected aggregate benchmark command");
         };
         assert_eq!(args.output_dir, std::path::PathBuf::from("results"));
         assert_eq!(args.run_output_dirs, vec![std::path::PathBuf::from("results/run-a")]);
+    }
+
+    #[test]
+    fn defaults_to_fresh_local_benchmark_without_arguments() {
+        let cli = BenchmarkCli::parse_from(["base-bench"]);
+
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_explicit_fresh_local_benchmark() {
+        let cli = BenchmarkCli::parse_from(["base-bench", "local"]);
+
+        assert!(matches!(cli.command, Some(BenchmarkCommand::Local)));
     }
 
     #[test]
