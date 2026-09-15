@@ -684,34 +684,35 @@ where
         first_nonces.entry(tx.signer()).or_insert_with(|| tx.nonce());
     }
 
-    let mut account_infos: HashMap<Address, Option<Account>> = HashMap::default();
+    let mut account_infos: HashMap<Address, Account> = HashMap::default();
     for (&addr, &nonce) in &first_nonces {
         let cache_account = db.load_cache_account(addr)?;
-        if let Some(ref mut account) = cache_account.account {
-            let max_nonce = account.info.nonce.saturating_add(MAX_NONCE_AHEAD);
-            if nonce > max_nonce {
-                return Err(eyre!(
-                    "transaction nonce {} for {} exceeds max allowed (on-chain {} + {})",
-                    nonce,
-                    addr,
-                    account.info.nonce,
-                    MAX_NONCE_AHEAD,
-                ));
-            }
-            account.info.nonce = nonce;
-
-            account_infos.insert(
+        // Missing senders match reth's pool validator: `basic_account()?.unwrap_or_default()`.
+        let mut account = cache_account
+            .account
+            .as_ref()
+            .map(|account| Account {
+                nonce: account.info.nonce,
+                balance: account.info.balance,
+                bytecode_hash: (account.info.code_hash != KECCAK_EMPTY)
+                    .then_some(account.info.code_hash),
+            })
+            .unwrap_or_default();
+        let max_nonce = account.nonce.saturating_add(MAX_NONCE_AHEAD);
+        if nonce > max_nonce {
+            return Err(eyre!(
+                "transaction nonce {} for {} exceeds max allowed (on-chain {} + {})",
+                nonce,
                 addr,
-                Some(Account {
-                    nonce: account.info.nonce,
-                    balance: account.info.balance,
-                    bytecode_hash: (account.info.code_hash != KECCAK_EMPTY)
-                        .then_some(account.info.code_hash),
-                }),
-            );
-        } else {
-            account_infos.insert(addr, None);
+                account.nonce,
+                MAX_NONCE_AHEAD,
+            ));
         }
+        account.nonce = nonce;
+        if let Some(ref mut cached) = cache_account.account {
+            cached.info.nonce = nonce;
+        }
+        account_infos.insert(addr, account);
     }
 
     // Set up next block attributes
@@ -773,8 +774,8 @@ where
             };
             let account = account_infos
                 .get(&from)
-                .ok_or_else(|| eyre!("Account not found for address: {from}"))?
-                .ok_or_else(|| eyre!("Account is none for tx: {tx_hash}"))?;
+                .copied()
+                .ok_or_else(|| eyre!("Account not found for address: {from}"))?;
 
             validate_tx(account, tx, &mut l1_block_info, spec)
                 .map_err(|e| eyre!("Transaction {tx_hash} validation failed: {e}"))?;
@@ -2632,6 +2633,56 @@ mod tests {
         assert!(
             result.unwrap_err().to_string().contains("Insufficient funds"),
             "Expected insufficient funds error"
+        );
+
+        Ok(())
+    }
+
+    /// A sender with no state entry is an empty account, same as reth's
+    /// `basic_account()?.unwrap_or_default()`, then fails funds — not "Account is none".
+    #[tokio::test]
+    async fn meter_bundle_missing_sender_defaults_then_fails_funds() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        let latest = harness.latest_block();
+        let header = latest.sealed_header().clone();
+
+        let signed_tx = TransactionBuilder::default()
+            .signer(B256::random())
+            .chain_id(harness.chain_id())
+            .nonce(0)
+            .to(Address::random())
+            .value(1)
+            .gas_limit(21_000)
+            .max_fee_per_gas(MIN_BASEFEE as u128)
+            .max_priority_fee_per_gas(0)
+            .into_eip1559();
+
+        let tx = BaseTransactionSigned::Eip1559(
+            signed_tx.as_eip1559().expect("eip1559 transaction").clone(),
+        );
+
+        let state_provider = harness
+            .blockchain_provider()
+            .state_by_block_hash(latest.hash())
+            .context("getting state provider")?;
+
+        let result = meter_bundle(MeterBundleInput {
+            state_provider,
+            chain_spec: harness.chain_spec(),
+            bundle: create_parsed_bundle(vec![tx])?,
+            header,
+            l1_block_info: L1BlockInfo::default(),
+            metered_opcodes: Arc::new(MeteredOpcodes::default()),
+        });
+
+        let err = result.expect_err("missing sender must not simulate successfully").to_string();
+        assert!(
+            err.contains("Insufficient funds"),
+            "missing sender should fail funds after defaulting, got {err}"
+        );
+        assert!(
+            !err.contains("Account is none"),
+            "missing sender must not use the old none-account error, got {err}"
         );
 
         Ok(())
