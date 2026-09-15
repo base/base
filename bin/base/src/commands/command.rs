@@ -19,6 +19,9 @@ use crate::{
 #[derive(Subcommand, Debug)]
 #[non_exhaustive]
 pub(crate) enum BaseCommand {
+    /// Assemble Base genesis inputs and state (full workflow: `just genesis`).
+    #[cfg(feature = "genesis")]
+    Genesis(Box<base_genesis::GenesisCommand>),
     /// Submit L2 batch data to L1.
     #[command(name = "batcher", hide = true)]
     Batcher(Box<BatcherArgs>),
@@ -55,6 +58,11 @@ impl BaseCommand {
         metrics_enabled: bool,
     ) -> eyre::Result<()> {
         match self {
+            #[cfg(feature = "genesis")]
+            Self::Genesis(command) => {
+                chain_resolver.reject_for_reth_command("base genesis")?;
+                base_genesis::GenesisBuilder::generate(*command)
+            }
             Self::Batcher(batcher) => {
                 chain_resolver.reject_for_reth_command("base batcher")?;
                 RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))

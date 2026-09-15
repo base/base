@@ -249,3 +249,8 @@ bench-b20-zk-proving:
 # Run basectl TUI dashboard
 basectl:
     cargo run -p basectl --release -- monitor
+
+# Generate a complete devnet using the prepared contracts bundle.
+genesis *args:
+    CARGO_INCREMENTAL=0 cargo build -p base --features genesis
+    BASE_GENESIS_BIN="{{justfile_directory()}}/target/debug/base" bash "{{justfile_directory()}}/etc/genesis/generate.sh" "$@"

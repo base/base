@@ -18,9 +18,9 @@ use crate::config::{BATCHER, BUILDER, CHALLENGER, DEPLOYER, PROPOSER, SEQUENCER}
 
 const SETUP_IMAGE_NAME: &str = "devnet-setup";
 // Bump this interface version when cached setup images can no longer serve callers.
-// v2 invokes the integrated offline generator as `op-deployer` without a subcommand.
-const SETUP_IMAGE_TAG: &str = "local-v2";
-const SETUP_IMAGE_REFERENCE: &str = "devnet-setup:local-v2";
+// v4 invokes the shell workflow as `base-genesis`; Rust only assembles state.
+const SETUP_IMAGE_TAG: &str = "local-v4";
+const SETUP_IMAGE_REFERENCE: &str = "devnet-setup:local-v4";
 const SETUP_IMAGE_BUILD_LOCK_DIR: &str = "base-system-test-setup-image-build.lock";
 const SETUP_IMAGE_BUILD_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 const SETUP_IMAGE_BUILD_LOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -232,7 +232,7 @@ impl L2DeploymentOutput {
     }
 }
 
-/// A container for generating both chains with the offline Base op-deployer.
+/// A container for generating both chains with the offline Base genesis generator.
 #[derive(Debug, Clone)]
 pub struct SetupContainer {
     output_dir: PathBuf,
@@ -331,8 +331,6 @@ impl SetupContainer {
             .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
             .with_network("none")
             .with_env_var("OUTPUT_DIR", "/output")
-            .with_env_var("L2_OUTPUT_DIR", "/output/l2")
-            .with_env_var("SHARED_DIR", "/output/shared")
             .with_env_var("CHAIN_ID", self.chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
             .with_env_var("SLOT_DURATION", self.slot_duration.to_string())
@@ -377,9 +375,9 @@ impl SetupContainer {
 
         let _container = container
             .with_mount(Mount::bind_mount(output_mount, "/output"))
-            .with_cmd(["op-deployer"])
+            .with_cmd(["base-genesis"])
             .start()
-            .wrap_err("Failed to generate devnet genesis with op-deployer")?;
+            .wrap_err("Failed to generate devnet genesis with base-genesis")?;
 
         ensure!(self.output_dir.join("cl/genesis.ssz").exists(), "genesis.ssz was not generated");
         ensure!(

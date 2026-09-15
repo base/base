@@ -34,6 +34,7 @@ base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-shadow-indexer.workspace = true
+base-genesis = { workspace = true, optional = true }
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }
@@ -60,6 +61,7 @@ base-common-genesis.workspace = true
 figment = { workspace = true, features = ["test"] }
 
 [features]
+genesis = ["dep:base-genesis"]
 jemalloc-prof = [
 	"base-builder-core/jemalloc-prof",
 	"base-execution-cli/jemalloc-symbols",

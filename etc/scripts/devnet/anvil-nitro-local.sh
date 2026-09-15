@@ -15,7 +15,7 @@ STATE_DIR="$REPO_ROOT/.devnet/anvil-no-nitro"
 ADDRESSES_FILE="$STATE_DIR/addresses.json"
 ROLLUP_CONFIG="$STATE_DIR/rollup.json"
 RUNTIME_ENV="$STATE_DIR/runtime.env"
-L2_CONFIG_DIR="$REPO_ROOT/.devnet/l2/configs"
+L2_CONFIG_DIR="$REPO_ROOT/.devnet/genesis/l2"
 L2_GENESIS="$L2_CONFIG_DIR/genesis.json"
 GENERATED_ROLLUP_CONFIG="$L2_CONFIG_DIR/rollup.json"
 UPGRADE_SIGNAL_ENV="$L2_CONFIG_DIR/upgrade-signal.env"
@@ -31,8 +31,8 @@ L1_SLOT_DURATION="${L1_SLOT_DURATION_OVERRIDE:-12}"
 CONTAINER_L1_RPC="${UPGRADE_SIGNAL_CONTAINER_L1_RPC:-http://l1-el:$L1_HTTP_PORT}"
 MIN_PROTOCOL_VERSION="${UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION:-4294967296}"
 
-CONTRACTS_REPO="https://github.com/base/contracts.git"
-CONTRACTS_DIR="$STATE_DIR/contracts"
+GENESIS_ARTIFACTS_DIR="${BASE_DEVNET_ARTIFACTS:-$REPO_ROOT/build/genesis}"
+CONTRACTS_DIR="$GENESIS_ARTIFACTS_DIR/contracts"
 GAME_TYPE="621"
 TEE_IMAGE_HASH="0x0000000000000000000000000000000000000000000000000000000000000000"
 NO_NITRO_CONFIG_HASH="0x846b1fd10a5e22fb7572cc4ac794454d301b382c64ab934091e519486e5200be"
@@ -164,15 +164,14 @@ load_rollup_config() {
     exit 1
   fi
 
-  temp=$(mktemp "$L2_CONFIG_DIR/rollup.json.XXXXXX")
+  temp=$(mktemp "$STATE_DIR/rollup.json.XXXXXX")
   if ! jq --arg hash "$l1_hash" '.genesis.l1.hash = $hash' \
     "$GENERATED_ROLLUP_CONFIG" >"$temp"; then
     rm -f "$temp"
     exit 1
   fi
   chmod --reference="$GENERATED_ROLLUP_CONFIG" "$temp"
-  mv "$temp" "$GENERATED_ROLLUP_CONFIG"
-  cp "$GENERATED_ROLLUP_CONFIG" "$ROLLUP_CONFIG"
+  mv "$temp" "$ROLLUP_CONFIG"
 }
 
 genesis_output_root() {
@@ -192,14 +191,11 @@ genesis_output_root() {
 }
 
 prepare_contracts() {
-  echo "Fetching the latest base/contracts default branch ..."
-  git clone --depth 1 --quiet "$CONTRACTS_REPO" "$CONTRACTS_DIR"
-
-  echo "Installing contract dependencies ..."
-  # Foundry 1.7 breaks nested submodules when --no-git removes each dependency's Git metadata.
-  sed -i.bak 's/forge install --no-git/forge install/' "$CONTRACTS_DIR/justfile"
-  (cd "$CONTRACTS_DIR" && just deps)
-  mv "$CONTRACTS_DIR/justfile.bak" "$CONTRACTS_DIR/justfile"
+  if [ ! -f "$GENESIS_ARTIFACTS_DIR/manifest.json" ]; then
+    (cd "$REPO_ROOT" && just build genesis-contracts)
+  fi
+  test -f "$CONTRACTS_DIR/scripts/multiproof/DeployDevNoNitro.s.sol"
+  echo "Using prepared base/contracts from $CONTRACTS_DIR"
 }
 
 write_deploy_config() {

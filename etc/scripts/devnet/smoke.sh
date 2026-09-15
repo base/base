@@ -16,7 +16,7 @@ echo "blob" | cast send --private-key $PK --rpc-url $L1_RPC --blob --path /dev/s
 
 echo ""
 echo "=== L1 Base Contract Verification ==="
-ADDRESSES=".devnet/l2/configs/l1-addresses.json"
+ADDRESSES=".devnet/genesis/l2/l1-addresses.json"
 echo "Checking OptimismPortal..." && cast code --rpc-url $L1_RPC $(cat $ADDRESSES | jq -r '.OptimismPortalProxy') | head -c 100 && echo "... (deployed)"
 echo "Checking SystemConfig..." && cast code --rpc-url $L1_RPC $(cat $ADDRESSES | jq -r '.SystemConfigProxy') | head -c 100 && echo "... (deployed)"
 echo "Checking L1StandardBridge..." && cast code --rpc-url $L1_RPC $(cat $ADDRESSES | jq -r '.L1StandardBridgeProxy') | head -c 100 && echo "... (deployed)"
