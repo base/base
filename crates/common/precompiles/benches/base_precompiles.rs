@@ -512,12 +512,13 @@ fn base_prefetch_hint_disabled(c: &mut Criterion) {
 
     c.bench_function("base_prefetch_hint_disabled", |b| {
         b.iter(|| {
-            let slots = B20CoreStorage::transfer_hint_slots(
-                black_box(from),
-                black_box(to),
-                Some(black_box(spender)),
-            );
-            PrefetchHint::send_slots(black_box(token), black_box(&slots));
+            let token = black_box(token);
+            let from = black_box(from);
+            let to = black_box(to);
+            let spender = black_box(spender);
+            PrefetchHint::send_slots_with(token, || {
+                B20CoreStorage::transfer_hint_slots(from, to, Some(spender))
+            });
         });
     });
 }

@@ -28,4 +28,9 @@ alloy-primitives.workspace = true
 tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+criterion.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
+
+[[bench]]
+name = "pool"
+harness = false

@@ -2,6 +2,7 @@
 
 use std::{
     sync::{
+        Arc,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
@@ -13,9 +14,9 @@ use base_precompile_storage::{PrefetchRequest, StatePrefetcher};
 use reth_provider::StateProviderFactory;
 use tracing::trace;
 
-/// Per-worker queue capacity. Overflow drops the hint rather than blocking the
-/// execution path that produced it.
-const WORKER_QUEUE_CAPACITY: usize = 1024;
+/// Global cap for queued requests across all workers. Increasing worker count
+/// does not increase the maximum retained queue memory.
+const MAX_QUEUED_REQUESTS: usize = 4_096;
 
 /// Maximum number of prefetch worker threads a pool will spawn.
 pub const MAX_PREFETCH_WORKERS: usize = 256;
@@ -30,6 +31,7 @@ pub struct StatePrefetchPool {
     senders: Vec<mpsc::SyncSender<PrefetchRequest>>,
     workers: Vec<thread::JoinHandle<()>>,
     next_worker: AtomicUsize,
+    queued_requests: Arc<AtomicUsize>,
 }
 
 impl StatePrefetchPool {
@@ -45,17 +47,20 @@ impl StatePrefetchPool {
         assert!(workers > 0, "prefetch pool requires at least one worker");
         let mut senders = Vec::with_capacity(workers);
         let mut handles = Vec::with_capacity(workers);
+        let queued_requests = Arc::new(AtomicUsize::new(0));
+        let worker_queue_capacity = MAX_QUEUED_REQUESTS.div_ceil(workers);
         for index in 0..workers {
-            let (sender, receiver) = mpsc::sync_channel(WORKER_QUEUE_CAPACITY);
+            let (sender, receiver) = mpsc::sync_channel(worker_queue_capacity);
             let provider = provider.clone();
+            let queued_requests = Arc::clone(&queued_requests);
             let handle = thread::Builder::new()
                 .name(format!("state-prefetch-{index}"))
-                .spawn(move || Self::worker_loop(provider, receiver))
+                .spawn(move || Self::worker_loop(provider, receiver, queued_requests))
                 .expect("failed to spawn state prefetch worker");
             senders.push(sender);
             handles.push(handle);
         }
-        Self { senders, workers: handles, next_worker: AtomicUsize::new(0) }
+        Self { senders, workers: handles, next_worker: AtomicUsize::new(0), queued_requests }
     }
 
     /// Drains all queued hints and waits for every worker to exit.
@@ -70,8 +75,10 @@ impl StatePrefetchPool {
     fn worker_loop<P: StateProviderFactory>(
         provider: P,
         receiver: mpsc::Receiver<PrefetchRequest>,
+        queued_requests: Arc<AtomicUsize>,
     ) {
         while let Ok(request) = receiver.recv() {
+            queued_requests.fetch_sub(1, Ordering::Relaxed);
             let result = provider.latest().and_then(|state| {
                 state.storage(request.address, B256::from(request.slot)).map(|_| ())
             });
@@ -85,13 +92,35 @@ impl StatePrefetchPool {
             }
         }
     }
+
+    /// Reserves one of the globally bounded queue entries without blocking a producer.
+    fn try_reserve_queue_slot(&self) -> bool {
+        let mut queued = self.queued_requests.load(Ordering::Relaxed);
+        while queued < MAX_QUEUED_REQUESTS {
+            match self.queued_requests.compare_exchange_weak(
+                queued,
+                queued + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(current) => queued = current,
+            }
+        }
+        false
+    }
 }
 
 impl StatePrefetcher for StatePrefetchPool {
     fn prefetch(&self, requests: &[PrefetchRequest]) {
         for &request in requests {
+            if !self.try_reserve_queue_slot() {
+                continue;
+            }
             let index = self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len();
-            let _ = self.senders[index].try_send(request);
+            if self.senders[index].try_send(request).is_err() {
+                self.queued_requests.fetch_sub(1, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -102,6 +131,21 @@ mod tests {
     use reth_provider::test_utils::MockEthProvider;
 
     use super::*;
+
+    #[test]
+    fn queue_admission_is_globally_bounded() {
+        let pool = StatePrefetchPool {
+            senders: Vec::new(),
+            workers: Vec::new(),
+            next_worker: AtomicUsize::new(0),
+            queued_requests: Arc::new(AtomicUsize::new(0)),
+        };
+
+        for _ in 0..MAX_QUEUED_REQUESTS {
+            assert!(pool.try_reserve_queue_slot());
+        }
+        assert!(!pool.try_reserve_queue_slot());
+    }
 
     #[test]
     fn drains_all_hinted_requests_and_exits_cleanly() {

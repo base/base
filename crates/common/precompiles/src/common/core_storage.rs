@@ -1,6 +1,6 @@
 //! Core B-20 EVM storage layout shared by all token variants.
 
-use alloc::{string::String, vec, vec::Vec};
+use alloc::string::String;
 
 use alloy_primitives::{Address, B256, FixedBytes, U256};
 use base_precompile_macros::Storable;
@@ -98,28 +98,40 @@ pub struct B20CoreStorage {
 }
 
 impl B20CoreStorage {
+    /// Maximum storage slots read by a `transferFrom` with distinct accounts.
+    pub const TRANSFER_HINT_SLOTS: usize = 5;
+
     /// Storage slots a `transfer` (`spender == None`) or `transferFrom` reads, derivable from
-    /// calldata alone: the paused bitmask, the packed transfer-policy-id word, both balances,
-    /// and the `allowances[from][spender]` entry for the `transferFrom` path.
+    /// calldata alone: the paused bitmask, the packed transfer-policy-id word, both balances
+    /// (deduplicated for self-transfers), and the `allowances[from][spender]` entry for the
+    /// `transferFrom` path.
     ///
-    /// Used to issue a [`base_precompile_storage::PrefetchHint`] before dispatching the
-    /// operation, so the slots can be paged in concurrently instead of faulting one at a time
-    /// during execution. Slot arithmetic mirrors the generated handlers: namespace root plus the
-    /// generated per-field offset, with mapping keys folded in via [`StorageKey::mapping_slot`].
-    pub fn transfer_hint_slots(from: Address, to: Address, spender: Option<Address>) -> Vec<U256> {
+    /// This returns a stack-backed buffer plus its initialized length so issuing an optional
+    /// prefetch hint never allocates. Slot arithmetic mirrors the generated handlers: namespace
+    /// root plus the generated per-field offset, with mapping keys folded in via
+    /// [`StorageKey::mapping_slot`].
+    pub fn transfer_hint_slots(
+        from: Address,
+        to: Address,
+        spender: Option<Address>,
+    ) -> ([U256; Self::TRANSFER_HINT_SLOTS], usize) {
         let root = <Self as StorableType>::STORAGE_NAMESPACE_ROOT;
         let balances = root.saturating_add(__packing_b20_core_storage::BALANCES);
-        let mut slots = vec![
-            root.saturating_add(__packing_b20_core_storage::PAUSED),
-            root.saturating_add(__packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID),
-            from.mapping_slot(balances),
-        ];
-        slots.push(to.mapping_slot(balances));
+        let mut slots = [U256::ZERO; Self::TRANSFER_HINT_SLOTS];
+        slots[0] = root.saturating_add(__packing_b20_core_storage::PAUSED);
+        slots[1] = root.saturating_add(__packing_b20_core_storage::TRANSFER_SENDER_POLICY_ID);
+        slots[2] = from.mapping_slot(balances);
+        let mut slot_count = 3;
+        if to != from {
+            slots[slot_count] = to.mapping_slot(balances);
+            slot_count += 1;
+        }
         if let Some(spender) = spender {
             let allowances = root.saturating_add(__packing_b20_core_storage::ALLOWANCES);
-            slots.push(spender.mapping_slot(from.mapping_slot(allowances)));
+            slots[slot_count] = spender.mapping_slot(from.mapping_slot(allowances));
+            slot_count += 1;
         }
-        slots
+        (slots, slot_count)
     }
 }
 
@@ -155,7 +167,7 @@ impl B20CoreStorageHandler<'_> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{U256, uint};
+    use alloy_primitives::{Address, U256, uint};
     use base_precompile_storage::StorableType;
 
     use super::__packing_b20_core_storage;
@@ -163,6 +175,14 @@ mod tests {
 
     const B20_ROOT: U256 =
         uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434000_U256);
+
+    #[test]
+    fn transfer_hint_slots_dedupe_self_transfer_balance() {
+        let account = Address::repeat_byte(0xaa);
+        let spender = Address::repeat_byte(0xbb);
+        assert_eq!(B20CoreStorage::transfer_hint_slots(account, account, None).1, 3);
+        assert_eq!(B20CoreStorage::transfer_hint_slots(account, account, Some(spender)).1, 4);
+    }
 
     #[test]
     fn b20_namespaces_match_base_std_roots() {
