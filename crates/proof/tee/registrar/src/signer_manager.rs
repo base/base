@@ -43,7 +43,6 @@ pub const DEFAULT_TX_RETRY_DELAY_SECS: u64 = 5;
 const ATTESTATION_NONCE_DOMAIN: &[u8] = b"base-proof-tee-registrar:attestation-nonce:v1";
 const MAX_TX_RETRY_BACKOFF_DELAY: Duration = Duration::from_secs(60);
 const REVOCATION_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
-const REVOCATION_TASK_TIMEOUT: Duration = Duration::from_secs(60);
 const DEREG_REASON_REVOKED: &str = "revoked_certificate";
 const DEREG_REASON_ORPHAN: &str = "orphan";
 const DEBUG_MODE_PCR0_HASH: B256 =
@@ -820,19 +819,7 @@ where
                     tokio::time::sleep(retry_delay).await;
                 }
             };
-            if reason == DEREG_REASON_REVOKED {
-                if tokio::time::timeout(REVOCATION_TASK_TIMEOUT, work).await.is_err() {
-                    warn!(
-                        signer = %signer,
-                        reason,
-                        timeout = ?REVOCATION_TASK_TIMEOUT,
-                        "deregistration task timed out"
-                    );
-                    RegistrarMetrics::processing_errors_total().increment(1);
-                }
-            } else {
-                work.await;
-            }
+            work.await;
             pending_deregistrations
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -877,7 +864,7 @@ where
         }
     }
 
-    /// Awaits bounded revocation and deregistration work detached from registration tasks.
+    /// Awaits revocation and deregistration work detached from registration tasks.
     pub async fn drain_deregistration_tasks(&self) {
         let revocations = std::mem::take(
             &mut *self.detached_revocations.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
@@ -913,19 +900,15 @@ where
         let max_tx_retries = self.max_tx_retries;
         let tx_retry_delay = self.tx_retry_delay;
         task::spawn(async move {
-            let result = tokio::time::timeout(
-                REVOCATION_TASK_TIMEOUT,
-                Self::submit_revocation(
-                    tx_manager.as_ref(),
-                    cert_manager.as_ref(),
-                    max_tx_retries,
-                    tx_retry_delay,
-                    cert_id,
-                    signer,
-                ),
+            let result = Self::submit_revocation(
+                tx_manager.as_ref(),
+                cert_manager.as_ref(),
+                max_tx_retries,
+                tx_retry_delay,
+                cert_id,
+                signer,
             )
-            .await
-            .unwrap_or(Err(TxManagerError::SendTimeout.into()));
+            .await;
             if let Err(error) = result {
                 warn!(error = %error, cert_id = %cert_id, "failed to persist CRL revocation");
                 RegistrarMetrics::revoke_cert_tx_failures().increment(1);
@@ -1515,7 +1498,7 @@ mod tests {
     use alloy_primitives::Address;
     use async_trait::async_trait;
     use base_proof_contracts::{ContractError, ICertManager, VerifiedCert};
-    use base_tx_manager::{SendHandle, TxManagerError};
+    use base_tx_manager::{SendHandle, TxManagerConfig, TxManagerError};
     #[cfg(feature = "metrics")]
     use metrics_util::{
         CompositeKey, MetricKind,
@@ -1824,9 +1807,9 @@ mod tests {
         stall_revocation_send: Arc<AtomicBool>,
         revocation_send_started: Arc<Notify>,
         resume_revocation_send: Arc<Notify>,
-        stall_send_async: Arc<AtomicBool>,
-        send_async_started: Arc<Notify>,
-        resume_send_async: Arc<Notify>,
+        stall_deregistration_send: Arc<AtomicBool>,
+        deregistration_send_started: Arc<Notify>,
+        resume_deregistration_send: Arc<Notify>,
         send_completed: Arc<Notify>,
     }
 
@@ -1842,6 +1825,12 @@ mod tests {
             {
                 self.revocation_send_started.notify_one();
                 self.resume_revocation_send.notified().await;
+            }
+            if candidate.to == Some(TEST_REGISTRY_ADDRESS)
+                && self.stall_deregistration_send.load(Ordering::SeqCst)
+            {
+                self.deregistration_send_started.notify_one();
+                self.resume_deregistration_send.notified().await;
             }
             let response = match outcome {
                 MockTxOutcome::Success => {
@@ -1863,12 +1852,6 @@ mod tests {
         }
 
         async fn send_async(&self, candidate: TxCandidate) -> SendHandle {
-            if candidate.to == Some(TEST_REGISTRY_ADDRESS)
-                && self.stall_send_async.load(Ordering::SeqCst)
-            {
-                self.send_async_started.notify_one();
-                self.resume_send_async.notified().await;
-            }
             let (tx, rx) = tokio::sync::oneshot::channel();
             let manager = self.clone();
             tokio::spawn(async move {
@@ -2009,9 +1992,9 @@ mod tests {
                 stall_revocation_send: Arc::new(AtomicBool::new(false)),
                 revocation_send_started: Arc::new(Notify::new()),
                 resume_revocation_send: Arc::new(Notify::new()),
-                stall_send_async: Arc::new(AtomicBool::new(false)),
-                send_async_started: Arc::new(Notify::new()),
-                resume_send_async: Arc::new(Notify::new()),
+                stall_deregistration_send: Arc::new(AtomicBool::new(false)),
+                deregistration_send_started: Arc::new(Notify::new()),
+                resume_deregistration_send: Arc::new(Notify::new()),
                 send_completed: Arc::new(Notify::new()),
             },
             crl_source,
@@ -2267,7 +2250,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn detached_deregistration_times_out_and_can_be_retried() {
+    async fn detached_deregistration_stays_tracked_until_send_completes() {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         {
@@ -2275,7 +2258,7 @@ mod tests {
             state.registered.insert(SIGNER_A);
             state.revoked.insert(plan.certs[0].revocation_id);
         }
-        manager.tx_manager.stall_send_async.store(true, Ordering::SeqCst);
+        manager.tx_manager.stall_deregistration_send.store(true, Ordering::SeqCst);
         let cancel = CancellationToken::new();
         let task_manager = Arc::clone(&manager);
         let task_cancel = cancel.clone();
@@ -2285,7 +2268,7 @@ mod tests {
                 .await
         });
 
-        manager.tx_manager.send_async_started.notified().await;
+        manager.tx_manager.deregistration_send_started.notified().await;
         cancel.cancel();
         tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
         tokio::task::yield_now().await;
@@ -2293,20 +2276,19 @@ mod tests {
         assert!(task.is_finished(), "registration task should finish after cleanup timeout");
         let result = task.await.unwrap();
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
-        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 0);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
         assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
 
         let drain_manager = Arc::clone(&manager);
         let drain = tokio::spawn(async move { drain_manager.drain_deregistration_tasks().await });
         tokio::task::yield_now().await;
-        assert!(!drain.is_finished(), "shutdown should wait for bounded deregistration");
+        assert!(!drain.is_finished(), "shutdown should wait for pending deregistration");
 
-        tokio::time::advance(REVOCATION_TASK_TIMEOUT).await;
+        tokio::time::advance(TxManagerConfig::default().confirmation_timeout).await;
+        assert!(!drain.is_finished(), "deregistration must remain tracked until completion");
+
+        manager.tx_manager.resume_deregistration_send.notify_one();
         drain.await.unwrap();
-        assert!(chain.0.lock().unwrap().registered.contains(&SIGNER_A));
-
-        manager.tx_manager.stall_send_async.store(false, Ordering::SeqCst);
-        register_prepared(&manager, synthetic_plan(SIGNER_A)).await.unwrap_err();
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
     }
@@ -2361,13 +2343,13 @@ mod tests {
         let plan = synthetic_plan(SIGNER_A);
         let (manager, chain) = manager_with_plan(&plan);
         chain.0.lock().unwrap().registered.insert(SIGNER_A);
-        manager.tx_manager.stall_send_async.store(true, Ordering::SeqCst);
+        manager.tx_manager.stall_deregistration_send.store(true, Ordering::SeqCst);
         let task_manager = Arc::clone(&manager);
         let task = tokio::spawn(async move {
             task_manager.run_orphan_dereg(&HashSet::new(), &CancellationToken::new()).await
         });
 
-        manager.tx_manager.send_async_started.notified().await;
+        manager.tx_manager.deregistration_send_started.notified().await;
         tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
         tokio::task::yield_now().await;
 
@@ -2381,7 +2363,7 @@ mod tests {
         .expect("duplicate deregistration should be skipped")
         .unwrap();
 
-        manager.tx_manager.resume_send_async.notify_one();
+        manager.tx_manager.resume_deregistration_send.notify_one();
         manager.tx_manager.send_completed.notified().await;
         task.await.unwrap().unwrap();
         assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
@@ -2470,7 +2452,10 @@ mod tests {
         let drain_manager = Arc::clone(&manager);
         let drain = tokio::spawn(async move { drain_manager.drain_deregistration_tasks().await });
         tokio::task::yield_now().await;
-        assert!(!drain.is_finished(), "shutdown should wait for bounded persistence");
+        assert!(!drain.is_finished(), "shutdown should wait for pending persistence");
+
+        tokio::time::advance(TxManagerConfig::default().confirmation_timeout).await;
+        assert!(!drain.is_finished(), "revocation must remain tracked until completion");
 
         manager.tx_manager.resume_revocation_send.notify_one();
         drain.await.unwrap();
@@ -2537,7 +2522,7 @@ mod tests {
         let cert_id = plan.certs[0].revocation_id;
         let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
         chain.0.lock().unwrap().registered.insert(SIGNER_A);
-        manager.tx_manager.stall_send_async.store(true, Ordering::SeqCst);
+        manager.tx_manager.stall_deregistration_send.store(true, Ordering::SeqCst);
         let cancel = CancellationToken::new();
         let task_manager = Arc::clone(&manager);
         let task_cancel = cancel.clone();
@@ -2547,7 +2532,7 @@ mod tests {
                 .await
         });
 
-        manager.tx_manager.send_async_started.notified().await;
+        manager.tx_manager.deregistration_send_started.notified().await;
         cancel.cancel();
         tokio::time::advance(REVOCATION_CLEANUP_TIMEOUT).await;
         let result = task.await.unwrap();
@@ -2557,7 +2542,7 @@ mod tests {
         assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
         manager.tx_manager.send_completed.notified().await;
 
-        manager.tx_manager.resume_send_async.notify_one();
+        manager.tx_manager.resume_deregistration_send.notify_one();
         manager.tx_manager.send_completed.notified().await;
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
     }
