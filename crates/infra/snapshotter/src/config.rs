@@ -29,7 +29,7 @@ pub enum S3ConfigType {
 /// Configuration for the snapshotter sidecar.
 #[derive(Debug, Args)]
 pub struct SnapshotterConfig {
-    /// Docker container name of the execution layer node to stop/start.
+    /// Docker container name of the execution layer or unified node to stop/start.
     #[arg(long)]
     pub container_name: String,
 
