@@ -6,8 +6,9 @@ use reth_cli_commands::download::DownloadDefaults;
 use reth_node_core::args::DefaultPruningValues;
 use reth_prune_types::PruneMode;
 
-pub(crate) const DEFAULT_DOWNLOAD_URL: &str = "https://chain.base.org/8453";
-const SNAPSHOT_API_URL: &str = "https://chain.base.org/api/snapshots";
+/// Must stay a bare host: reth derives `{root}/api/snapshots` from it and appends
+/// its own path segments, so a chain path here produces 404 manifest URLs.
+const SNAPSHOT_SOURCE_URL: &str = "https://chain.base.org";
 const FULL_HISTORY_DISTANCE: u64 = 1_339_200;
 
 /// Reth snapshot and pruning-default initialization for Base execution layer binaries.
@@ -15,6 +16,17 @@ const FULL_HISTORY_DISTANCE: u64 = 1_339_200;
 pub struct Snapshots;
 
 impl Snapshots {
+    /// Snapshot sources advertised in `--help`, derived from one snapshot root.
+    pub fn download_defaults() -> DownloadDefaults {
+        DownloadDefaults::default().with_snapshot_source_url(SNAPSHOT_SOURCE_URL).with_snapshots(
+            vec![
+                Cow::Borrowed("https://mainnet-v2-snapshots.base.org (mainnet)"),
+                Cow::Borrowed("https://sepolia-v2-snapshots.base.org (sepolia)"),
+                Cow::Borrowed("https://zeronet-v2-snapshots.base.org (zeronet)"),
+            ],
+        )
+    }
+
     /// Initializes Reth's global snapshot download URLs and pruning defaults.
     ///
     /// This sets up the snapshot sources and makes the full preset retain approximately one month
@@ -24,19 +36,7 @@ impl Snapshots {
     ///
     /// Panics if the download URLs or pruning defaults were already initialized.
     pub fn init_snapshots() {
-        let download_defaults = DownloadDefaults {
-            available_snapshots: vec![
-                Cow::Owned(format!("{DEFAULT_DOWNLOAD_URL} (mainnet)")),
-                Cow::Borrowed("https://chain.base.org/84532 (sepolia)"),
-                Cow::Borrowed("https://chain.base.org/763360 (zeronet)"),
-            ],
-            default_base_url: Cow::Borrowed(DEFAULT_DOWNLOAD_URL),
-            default_chain_aware_base_url: None,
-            snapshot_api_url: Cow::Borrowed(SNAPSHOT_API_URL),
-            long_help: None,
-        };
-
-        download_defaults.try_init().expect("failed to initialize download URLs");
+        Self::download_defaults().try_init().expect("failed to initialize download URLs");
 
         let mut pruning_defaults = DefaultPruningValues::default();
         pruning_defaults.full_prune_modes.bodies_history =
@@ -68,6 +68,23 @@ macro_rules! init_snapshots {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_root_carries_no_chain_path() {
+        let defaults = Snapshots::download_defaults();
+        let host = defaults.default_base_url.trim_start_matches("https://");
+
+        assert!(
+            !host.contains('/'),
+            "default base URL {} must be the snapshot root; a chain path makes reth \
+             build 404 manifest URLs",
+            defaults.default_base_url
+        );
+        assert_eq!(
+            defaults.snapshot_api_url,
+            format!("{}/api/snapshots", defaults.default_base_url)
+        );
+    }
 
     #[test]
     fn full_preset_retains_one_month_of_history() {
