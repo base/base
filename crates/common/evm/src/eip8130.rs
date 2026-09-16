@@ -941,10 +941,15 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        // The nonce-free replay ring records the transaction's upper validity
-        // bound (`valid_before`, Unix milliseconds); the ring compares it against
-        // `block.timestamp * 1000` internally.
-        let valid_before = tx.valid_before;
+        // Validity bounds are normalized to Unix milliseconds (seconds bounds are
+        // scaled by 1000 per EIP-8130 Timestamp Normalization); `0` stays `0`
+        // (disabled). The nonce-free replay ring records this normalized upper
+        // bound and compares it against `block.timestamp * 1000` internally, so
+        // it MUST be the normalized value. The raw `valid_after`/`valid_before`
+        // remain the signed/encoded/replay-committed fields; only these
+        // comparisons use the normalized view.
+        let valid_after = tx.valid_after_ms();
+        let valid_before = tx.valid_before_ms();
 
         // Consensus-level validity window. The transaction is includable only
         // within the inclusive interval `[valid_after, valid_before]` on the
@@ -958,7 +963,7 @@ impl Eip8130Executor {
         // its own admission window (`valid_before > now_ms`) when it records the
         // nonce, so a nonce-free transaction at the boundary still fails there.
         let now_ms = now.saturating_mul(1_000);
-        if tx.valid_after != 0 && now_ms < tx.valid_after {
+        if valid_after != 0 && now_ms < valid_after {
             return Err(BaseTransactionError::eip8130("transaction is not yet valid"));
         }
         if valid_before != 0 && now_ms > valid_before {
@@ -3279,6 +3284,46 @@ mod tests {
             .transact_raw(into_base_tx(&signed))
             .expect("counterfactual create + call should execute");
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+    }
+
+    #[test]
+    fn execution_window_normalizes_seconds_denominated_valid_before() {
+        // The block timestamp is `NOW` seconds, so the consensus inclusion window
+        // compares against `now_ms = NOW * 1000`. A `valid_before` supplied in
+        // *seconds* must be normalized to milliseconds first: `NOW + 1` seconds
+        // normalizes to `(NOW + 1) * 1000` ms, one second in the future, so the
+        // transaction is includable. Without normalization the raw `NOW + 1`
+        // would compare as far below `now_ms` and be wrongly rejected as expired.
+        let key = signing_key(0x7a);
+        let sender = eoa_address(&key);
+        let target = address!("0x00000000000000000000000000000000000000d2");
+        let initial = U256::from(10u64).pow(U256::from(18u64));
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.valid_before = NOW + 1;
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
+        let outcome = evm
+            .transact_raw(into_base_tx(&signed))
+            .expect("a seconds valid_before in the future must be admitted");
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+
+        // A seconds `valid_before` one second in the past normalizes to
+        // `(NOW - 1) * 1000` ms and is strictly past `now_ms`, so the inclusion
+        // window rejects it.
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.valid_before = NOW - 1;
+        let signed = eoa_signed(tx, &key);
+        let mut evm = evm_with_accounts(initial, sender, &[(target, bytes!("00"))]);
+        let err = evm
+            .transact_raw(into_base_tx(&signed))
+            .expect_err("a seconds valid_before in the past must be rejected");
+        let EVMError::Transaction(BaseTransactionError::Eip8130(got)) = err else {
+            panic!("expected an Eip8130 validity rejection, got {err:?}");
+        };
+        assert!(got.contains("validity window has expired"), "unexpected reason: {got}");
     }
 
     #[test]

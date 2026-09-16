@@ -2033,6 +2033,13 @@ mod tests {
         BaseEvmConfig,
     >;
 
+    /// Realistic wall clock the integration pool starts at (Unix seconds), so
+    /// millisecond `valid_before` bounds are compared against a representative
+    /// `block.timestamp * 1000` rather than the epoch.
+    const INTEGRATION_POOL_NOW_SECS: u64 = 1_700_000_000;
+    /// [`INTEGRATION_POOL_NOW_SECS`] expressed in milliseconds.
+    const INTEGRATION_POOL_NOW_MS: u64 = INTEGRATION_POOL_NOW_SECS * 1_000;
+
     fn build_integration_pool()
     -> (IntegrationPool, MockEthProvider<BasePrimitives, Arc<BaseChainSpec>>) {
         let mut genesis = build_test_genesis_zenith();
@@ -2048,8 +2055,24 @@ mod tests {
             .no_cancun()
             .build_with_tasks(Runtime::test(), blob_store.clone())
             .map(|inner| {
-                BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
-                    .require_l1_data_gas_fee(false)
+                // Seed a realistic wall clock so millisecond-scale nonce-free
+                // `valid_before` bounds evaluate against a representative `now`
+                // (default is timestamp 0, where no future ms bound is reachable).
+                // Reuse the same seam the live head uses: `update_l1_block_info`
+                // with `tx = None` stores only the header timestamp and leaves the
+                // L1 block info untouched, so the harness shares the one admission
+                // clock writer rather than a second, unsynchronized setter.
+                let validator =
+                    BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+                        .require_l1_data_gas_fee(false);
+                validator.update_l1_block_info::<_, TxEip1559>(
+                    &alloy_consensus::Header {
+                        timestamp: INTEGRATION_POOL_NOW_SECS,
+                        ..Default::default()
+                    },
+                    None,
+                );
+                validator
             });
         let ordering = BaseOrdering::default();
         let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
@@ -2184,24 +2207,44 @@ mod tests {
         fund(&client, signer.address());
         let cap = u64::from(GuardLimits::default().signature_limit);
 
+        // Distinct millisecond `valid_before` bounds, each inside the nonce-free
+        // admission window `(now_ms, now_ms + NONCE_FREE_MAX_EXPIRY_WINDOW]`, so
+        // each is a separately-tracked sidecar member; `cap` stays far below the
+        // 20_000 ms window.
         let mut admitted = Vec::new();
         for offset in 0..cap {
-            let transaction =
-                self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, offset + 1, 1_000);
+            let transaction = self_paid_eoa_8130(
+                &signer,
+                Eip8130Constants::NONCE_KEY_MAX,
+                0,
+                INTEGRATION_POOL_NOW_MS + offset + 1,
+                1_000,
+            );
             admitted.push(*transaction.hash());
             assert!(pool.add_transaction(TransactionOrigin::Local, transaction).await.is_ok());
         }
         assert!(admitted.iter().all(|hash| pool.nonce_pool.read().contains(hash)));
 
-        let over = self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 1, 1_000);
+        let over = self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + cap + 1,
+            1_000,
+        );
         let over_hash = *over.hash();
         assert!(pool.add_transaction(TransactionOrigin::Local, over).await.is_err());
         assert!(pool.get(&over_hash).is_none());
 
         let removed = pool.remove_transactions(vec![admitted[0]]);
         assert_eq!(removed.len(), 1);
-        let replacement =
-            self_paid_eoa_8130(&signer, Eip8130Constants::NONCE_KEY_MAX, 0, cap + 2, 1_000);
+        let replacement = self_paid_eoa_8130(
+            &signer,
+            Eip8130Constants::NONCE_KEY_MAX,
+            0,
+            INTEGRATION_POOL_NOW_MS + cap + 2,
+            1_000,
+        );
         assert!(pool.add_transaction(TransactionOrigin::Local, replacement).await.is_ok());
     }
 
@@ -2335,7 +2378,7 @@ mod tests {
             &signer,
             Eip8130Constants::NONCE_KEY_MAX,
             0,
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             1_000,
         );
         let nonce_free_hash = *nonce_free.hash();
@@ -2382,7 +2425,7 @@ mod tests {
             &signer,
             Eip8130Constants::NONCE_KEY_MAX,
             0,
-            Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
+            INTEGRATION_POOL_NOW_MS + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
             1_000,
         );
         let hash = *transaction.hash();
