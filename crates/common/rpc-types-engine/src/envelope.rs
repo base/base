@@ -13,6 +13,8 @@ use alloy_rpc_types_engine::{
 };
 
 use crate::{BaseExecutionPayload, BaseExecutionPayloadSidecar, BaseExecutionPayloadV4};
+#[cfg(feature = "std")]
+use crate::{BoundedExecutionPayloadV1, BoundedExecutionPayloadV2, BoundedExecutionPayloadV3};
 
 /// Maximum allowed decoded size for a snappy-compressed [`NetworkPayloadEnvelope`].
 ///
@@ -317,9 +319,8 @@ impl NetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload = BaseExecutionPayload::V1(
-            alloy_rpc_types_engine::ExecutionPayloadV1::from_ssz_bytes(block_data)?,
-        );
+        let payload =
+            BaseExecutionPayload::V1(BoundedExecutionPayloadV1::from_ssz_bytes(block_data)?.0);
 
         Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
     }
@@ -360,9 +361,8 @@ impl NetworkPayloadEnvelope {
         let signature = Signature::try_from(sig_data)?;
         let hash = PayloadHash::from(block_data);
 
-        let payload = BaseExecutionPayload::V2(
-            alloy_rpc_types_engine::ExecutionPayloadV2::from_ssz_bytes(block_data)?,
-        );
+        let payload =
+            BaseExecutionPayload::V2(BoundedExecutionPayloadV2::from_ssz_bytes(block_data)?.0);
 
         Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
     }
@@ -407,9 +407,8 @@ impl NetworkPayloadEnvelope {
             [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
         );
 
-        let payload = BaseExecutionPayload::V3(
-            alloy_rpc_types_engine::ExecutionPayloadV3::from_ssz_bytes(block_data)?,
-        );
+        let payload =
+            BaseExecutionPayload::V3(BoundedExecutionPayloadV3::from_ssz_bytes(block_data)?.0);
 
         Ok(Self {
             payload,
