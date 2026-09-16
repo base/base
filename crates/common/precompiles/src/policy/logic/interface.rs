@@ -99,7 +99,7 @@ pub trait PolicyRegistryLogic<S: PolicyAccounting> {
     }
 
     /// (V3) Toggles the invert flag on `policy_id` without reading state.
-    fn inverted_policy_id(&self, _policy_id: u64) -> Result<u64> {
+    fn compute_inverted_policy_id(&self, _policy_id: u64) -> Result<u64> {
         reject_frozen_selector!()
     }
 }

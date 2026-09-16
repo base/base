@@ -200,7 +200,7 @@ impl PolicyRegistryStorage<'_> {
             }
             // Introduced in V3 (Denim).
             C::invertedPolicyId(call) => {
-                let policy_id = logic.inverted_policy_id(call.policyId)?;
+                let policy_id = logic.compute_inverted_policy_id(call.policyId)?;
                 Ok(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(&policy_id).into())
             }
         }

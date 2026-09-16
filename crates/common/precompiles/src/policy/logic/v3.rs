@@ -605,7 +605,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
         storage.read_children(policy_id)
     }
 
-    fn inverted_policy_id(&self, policy_id: u64) -> Result<u64> {
+    fn compute_inverted_policy_id(&self, policy_id: u64) -> Result<u64> {
         Ok(Self::inverted_policy_id(policy_id))
     }
 }
