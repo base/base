@@ -11,12 +11,48 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
+use tracing::warn;
 
 use crate::{
     ContractError,
     anchor_state_registry::{AnchorPreflight, AnchorRoot, IAnchorStateRegistry},
     dispute_game_factory::DisputeGameFactoryClient,
 };
+
+/// The first `AggregateVerifier` version that exposes `intervalsForStartingBlock`.
+///
+/// Compared as `(major, minor)`; the patch level is not part of the ABI contract.
+const FORK_AWARE_INTERVALS_VERSION: (u64, u64) = (0, 2);
+
+/// Returns whether an `AggregateVerifier` reporting `version` speaks the fork-aware
+/// interval ABI.
+///
+/// The two ABIs are disjoint, not additive: 0.2.0 added `intervalsForStartingBlock` and
+/// *removed* `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`, which it split into
+/// `SLOW_*` and `FAST_*` pairs. Exactly one of the two call shapes is valid for any given
+/// address, and the version is what decides which.
+///
+/// Anything that is not exactly three numeric components is treated as fork-aware. Every
+/// deployed verifier reports `MAJOR.MINOR.PATCH`, so an unreadable one means these bindings
+/// are behind the chain; failing on the new path produces a better error than quietly
+/// calling getters that no longer exist. The patch component is required but not compared —
+/// a string like `0.1.x` is malformed, not a 0.1 release, and must not buy its way onto the
+/// legacy path by having two parseable components in front.
+fn supports_fork_aware_intervals(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or_default();
+    let mut parts = core.split('.');
+    let (Some(major), Some(minor), Some(patch), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return true;
+    };
+    let (Ok(major), Ok(minor), Ok(_)) =
+        (major.trim().parse::<u64>(), minor.trim().parse::<u64>(), patch.trim().parse::<u64>())
+    else {
+        return true;
+    };
+    (major, minor) >= FORK_AWARE_INTERVALS_VERSION
+}
 
 /// Resolves the `(block_interval, intermediate_block_interval)` pair that applies to a
 /// game of `game_type` whose range starts at `starting_block`.
@@ -30,8 +66,8 @@ use crate::{
 /// proxy — is queried because callers resolve intervals for games that do not exist yet
 /// (the anchor's successor, the proposer's next proposal). For an existing game, call
 /// `read_intervals_for_starting_block` on its proxy instead so the pair it was created
-/// with is used even after an implementation upgrade; legacy proxies without
-/// `intervalsForStartingBlock` fall back to their fixed interval getters.
+/// with is used even after an implementation upgrade; proxies older than
+/// `AggregateVerifier` 0.2.0 fall back to their fixed interval getters.
 pub async fn resolve_intervals(
     factory_client: &dyn DisputeGameFactoryClient,
     verifier_client: &dyn AggregateVerifierClient,
@@ -85,7 +121,11 @@ sol! {
         /// Returns the parent game's address.
         function parentAddress() external pure returns (address);
 
+        /// Returns the contract's semantic version, e.g. `"0.3.0"`.
+        function version() external pure returns (string memory);
+
         /// Returns the block interval between proposals (immutable on the implementation).
+        /// Removed in `AggregateVerifier` 0.2.0 in favour of `intervalsForStartingBlock`.
         function BLOCK_INTERVAL() external view returns (uint256);
 
         /// Returns the intermediate block interval for intermediate output root checkpoints.
@@ -288,9 +328,10 @@ pub trait AggregateVerifierClient: Send + Sync {
     /// that does not exist yet) or an existing game's proxy. A game proxy is a CWIA
     /// clone, not an upgradeable proxy: it delegates to the implementation baked into
     /// its bytecode at creation, so reading through it returns the pair the game was
-    /// created with regardless of any later `setImplementation`. Verifiers deployed
-    /// before `intervalsForStartingBlock` existed fall back to their fixed interval
-    /// getters.
+    /// created with regardless of any later `setImplementation`. Verifiers older than
+    /// 0.2.0 fall back to `BLOCK_INTERVAL()` / `INTERMEDIATE_BLOCK_INTERVAL()`; the two
+    /// ABIs are disjoint, so which one applies is decided by reading `version()`, not by
+    /// treating an empty revert as a missing selector.
     async fn read_intervals_for_starting_block(
         &self,
         verifier_address: Address,
@@ -402,6 +443,17 @@ impl AggregateVerifierContractClient {
     /// Creates a new client backed by the given L1 provider.
     pub const fn new(provider: RootProvider) -> Self {
         Self { provider }
+    }
+
+    /// Reads `version()` from a verifier and reports which interval ABI that address speaks.
+    ///
+    /// Works through a game proxy too: `version()` is `pure`, so a CWIA clone reports the
+    /// string of the implementation that governs it, not one of its own.
+    async fn is_fork_aware(&self, verifier_address: Address) -> Result<bool, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(verifier_address, &self.provider);
+        let version: String = contract_call!(contract.version().call(), "version failed")?;
+        Ok(supports_fork_aware_intervals(&version))
     }
 }
 
@@ -532,6 +584,31 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
         ) {
             Ok(result) => result,
             Err(error) if error.is_missing_method() => {
+                // Empty data and a missing selector look identical here, so confirm with
+                // `version()` before using the pre-0.2.0 getters, which 0.2.0 removed.
+                match self.is_fork_aware(verifier_address).await {
+                    Ok(true) => {
+                        return Err(ContractError::validation(format!(
+                            "intervalsForStartingBlock is unavailable on {verifier_address}, but \
+                             it reports version {}.{}.x or later, which must expose it: {error}",
+                            FORK_AWARE_INTERVALS_VERSION.0, FORK_AWARE_INTERVALS_VERSION.1
+                        )));
+                    }
+                    Ok(false) => {}
+                    Err(version_error) => {
+                        // Undetermined ABI. Return the original error rather than a new
+                        // one: callers key on `is_missing_method()` to treat a non-verifier
+                        // address as simply having no intervals, and wrapping would break
+                        // that. Log the second failure so it is not lost.
+                        warn!(
+                            %verifier_address,
+                            %version_error,
+                            "version() failed while disambiguating intervalsForStartingBlock"
+                        );
+                        return Err(error);
+                    }
+                }
+
                 let (block_interval, intermediate_block_interval) = futures::try_join!(
                     self.read_block_interval(verifier_address),
                     self.read_intermediate_block_interval(verifier_address),
@@ -808,6 +885,35 @@ mod tests {
     use alloy_sol_types::SolCall as _;
 
     use super::*;
+
+    #[test]
+    fn test_supports_fork_aware_intervals_gates_on_0_2_0() {
+        assert!(!supports_fork_aware_intervals("0.1.0"));
+        assert!(!supports_fork_aware_intervals("0.1.99"));
+
+        // 0.2.0 is the ABI break (contracts#431): only intervalsForStartingBlock exists.
+        // 0.3.0 (contracts#438) was a release semver bump with no ABI change.
+        assert!(supports_fork_aware_intervals("0.2.0"));
+        assert!(supports_fork_aware_intervals("0.2.99"));
+        assert!(supports_fork_aware_intervals("0.3.0"));
+        assert!(supports_fork_aware_intervals("0.10.0"));
+        assert!(supports_fork_aware_intervals("1.0.0"));
+
+        assert!(supports_fork_aware_intervals("0.2.0-beta.1"));
+        assert!(!supports_fork_aware_intervals("0.1.0-rc.1"));
+        assert!(supports_fork_aware_intervals("0.3.0+deadbeef"));
+
+        assert!(supports_fork_aware_intervals(""));
+        assert!(supports_fork_aware_intervals("unversioned"));
+        assert!(supports_fork_aware_intervals("3"));
+
+        // Malformed strings whose first two components happen to parse below the boundary
+        // must not reach the legacy getters.
+        assert!(supports_fork_aware_intervals("0.1"));
+        assert!(supports_fork_aware_intervals("0.1.x"));
+        assert!(supports_fork_aware_intervals("0.1.0.1"));
+        assert!(supports_fork_aware_intervals("0.1."));
+    }
 
     #[test]
     fn test_encode_nullify_calldata_has_selector() {
