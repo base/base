@@ -374,6 +374,12 @@ impl SnapshotBenchmarkArgs {
             if let Some(error) = run_error {
                 return Err(error.into());
             }
+            let validation_errors = Self::comparability_validation_errors(&result);
+            eyre::ensure!(
+                validation_errors.is_empty(),
+                "benchmark result is non-comparable:\n  - {}",
+                validation_errors.join("\n  - ")
+            );
             if result.load_test.throughput.total_confirmed == 0 {
                 eyre::bail!("benchmark completed without confirmed transactions")
             }
@@ -524,6 +530,66 @@ impl SnapshotBenchmarkArgs {
         Ok((result, output.run_error))
     }
 
+    /// Returns actionable reasons why a completed saturated snapshot run should not be compared
+    /// with healthy benchmark results.
+    fn comparability_validation_errors(result: &SnapshotBenchmarkResult) -> Vec<String> {
+        let mut errors = Vec::new();
+        let throughput = &result.load_test.throughput;
+        if throughput.total_confirmed != throughput.total_submitted || throughput.total_failed != 0
+        {
+            errors.push(format!(
+                "confirmation validation failed: submitted={}, confirmed={}, failed={}",
+                throughput.total_submitted, throughput.total_confirmed, throughput.total_failed
+            ));
+        }
+
+        let pacing = &result.load_test.pacing;
+        if pacing.undrained_transactions != 0 || pacing.undrained_gas != 0 {
+            errors.push(format!(
+                "drain validation failed: undrained_transactions={}, undrained_gas={}",
+                pacing.undrained_transactions, pacing.undrained_gas
+            ));
+        }
+
+        if let Some(expected) =
+            result.load_test.config.as_ref().and_then(|config| config.measurement_blocks)
+        {
+            let sequencer_blocks = result.blocks.len() as u64;
+            let validator_blocks = result.validator_blocks.len() as u64;
+            if result.load_test.measurement_block_count != expected
+                || sequencer_blocks != expected
+                || validator_blocks != expected
+            {
+                errors.push(format!(
+                    "block-count validation failed: requested={expected}, measured={}, sequencer={sequencer_blocks}, validator={validator_blocks}",
+                    result.load_test.measurement_block_count
+                ));
+            }
+            if pacing.blocks_observed != expected || pacing.canonical_cycles != expected {
+                errors.push(format!(
+                    "canonical-availability validation failed: requested={expected}, blocks_observed={}, canonical_cycles={}, availability_p99={:?}, availability_max={:?}",
+                    pacing.blocks_observed,
+                    pacing.canonical_cycles,
+                    pacing.availability_lag.p99,
+                    pacing.availability_lag.max
+                ));
+            }
+        }
+
+        if pacing.chain_bound_cycles == 0 {
+            errors.push(format!(
+                "chain-bound validation failed: chain_bound_cycles=0, canonical_cycles={}, safety_cycles={}, capacity_limited_cycles={}, presign_starved_cycles={}, rpc_bound_cycles={}",
+                pacing.canonical_cycles,
+                pacing.safety_cycles,
+                pacing.capacity_limited_cycles,
+                pacing.presign_starved_cycles,
+                pacing.rpc_bound_cycles
+            ));
+        }
+
+        errors
+    }
+
     /// Fetches every canonical block in the measured window from the builder.
     pub async fn collect_block_metrics(
         rpc_url: &url::Url,
@@ -631,11 +697,88 @@ impl SnapshotBenchmarkArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, num::NonZeroU64};
+    use std::{collections::BTreeMap, fs, num::NonZeroU64};
 
+    use alloy_primitives::{Address, B256};
+    use base_load_tests::{MetricsSummary, PacingMetrics, TestConfig, ThroughputMetrics};
     use clap::Parser;
 
-    use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+    use super::{
+        AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs,
+        SnapshotBenchmarkResult, SnapshotBlockMetrics,
+    };
+
+    fn benchmark_block(number: u64) -> SnapshotBlockMetrics {
+        SnapshotBlockMetrics {
+            number,
+            hash: B256::with_last_byte(number as u8),
+            timestamp: number,
+            timestamp_ms: number.saturating_mul(1_000),
+            gas_used: 1,
+            gas_limit: 2,
+            transaction_count: 1,
+            prometheus_metrics: BTreeMap::new(),
+        }
+    }
+
+    fn comparable_result() -> SnapshotBenchmarkResult {
+        let config = TestConfig::from_yaml(
+            r#"
+transaction_submission_rpcs: http://127.0.0.1:1
+measurement_blocks: 2
+"#,
+        )
+        .unwrap()
+        .to_summary();
+        SnapshotBenchmarkResult {
+            chain_id: 84532,
+            block_interval_ms: 200,
+            boundary_number: 0,
+            boundary_hash: B256::ZERO,
+            builder_rpc_url: "http://127.0.0.1:1".to_string(),
+            client_rpc_url: "http://127.0.0.1:2".to_string(),
+            funder_address: Address::ZERO,
+            load_test: MetricsSummary {
+                config: Some(config),
+                measurement_block_count: 2,
+                throughput: ThroughputMetrics {
+                    total_submitted: 1,
+                    total_confirmed: 1,
+                    ..Default::default()
+                },
+                pacing: PacingMetrics {
+                    blocks_observed: 2,
+                    canonical_cycles: 2,
+                    chain_bound_cycles: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            blocks: vec![benchmark_block(1), benchmark_block(2)],
+            validator_blocks: vec![benchmark_block(1), benchmark_block(2)],
+        }
+    }
+
+    #[test]
+    fn comparability_validation_reports_each_failed_invariant() {
+        let mut result = comparable_result();
+        assert!(SnapshotBenchmarkArgs::comparability_validation_errors(&result).is_empty());
+
+        result.load_test.throughput.total_confirmed = 0;
+        result.load_test.pacing.undrained_transactions = 1;
+        result.load_test.pacing.blocks_observed = 1;
+        result.load_test.pacing.canonical_cycles = 1;
+        result.load_test.pacing.chain_bound_cycles = 0;
+        result.validator_blocks.pop();
+
+        let errors = SnapshotBenchmarkArgs::comparability_validation_errors(&result);
+        assert_eq!(errors.len(), 5);
+        assert!(errors[0].starts_with("confirmation validation failed:"));
+        assert!(errors[1].starts_with("drain validation failed:"));
+        assert!(errors[2].starts_with("block-count validation failed:"));
+        assert!(errors[3].starts_with("canonical-availability validation failed:"));
+        assert!(errors[4].starts_with("chain-bound validation failed:"));
+    }
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
