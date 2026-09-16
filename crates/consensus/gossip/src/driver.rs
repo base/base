@@ -7,13 +7,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{Address, hex};
+use alloy_primitives::Address;
 use base_common_genesis::RollupConfig;
 use base_common_rpc_types_engine::NetworkPayloadEnvelope;
 use base_consensus_peers::{EnrValidation, PeerMonitoring, PeerUtils};
 use derive_more::Debug;
 use discv5::Enr;
-use futures::{AsyncWriteExt, stream::StreamExt};
+use futures::stream::StreamExt;
 use libp2p::{
     Multiaddr, PeerId, Swarm, TransportError,
     gossipsub::{IdentTopic, MessageId},
@@ -23,7 +23,6 @@ use libp2p::{
     },
 };
 use libp2p_identity::Keypair;
-use libp2p_stream::IncomingStreams;
 use lru::LruCache;
 use tokio::sync::Mutex;
 
@@ -56,17 +55,6 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub addr: Multiaddr,
     /// The [`BlockHandler`].
     pub handler: BlockHandler,
-    /// A [`libp2p_stream::Control`] instance. Can be used to control the sync request/response
-    #[debug(skip)]
-    pub sync_handler: libp2p_stream::Control,
-    /// The inbound streams for the sync request/response protocol.
-    ///
-    /// This is an option to allow to take the underlying value when the gossip driver gets
-    /// activated.
-    ///
-    /// TODO: remove the sync-req-resp protocol once it is fully deprecated upstream.
-    #[debug(skip)]
-    pub sync_protocol: Option<IncomingStreams>,
     /// LRU cache of identify metadata keyed by [`PeerId`].
     pub peerstore: LruCache<PeerId, libp2p::identify::Info>,
     /// If set, the gossip layer will monitor peer scores and ban peers that are below a given
@@ -101,8 +89,6 @@ where
         swarm: Swarm<Behaviour>,
         addr: Multiaddr,
         handler: BlockHandler,
-        sync_handler: libp2p_stream::Control,
-        sync_protocol: IncomingStreams,
         gate: G,
         config: GossipDriverConfig,
     ) -> Self {
@@ -113,8 +99,6 @@ where
             peerstore: LruCache::new(config.max_identify_peerstore_peers),
             peer_monitoring: config.peer_monitoring,
             peer_connection_start: Default::default(),
-            sync_handler,
-            sync_protocol: Some(sync_protocol),
             connection_gate: gate,
             connection_limits_config: config.connection_limits_config,
             ping: Arc::new(Mutex::new(Default::default())),
@@ -149,63 +133,10 @@ where
         Ok(Some(id))
     }
 
-    /// Handles the sync request/response protocol.
-    ///
-    /// This is a mock handler that supports the `payload_by_number` protocol.
-    /// It always returns: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-    ///
-    /// ## Note
-    ///
-    /// This is used to ensure peer nodes are not penalizing base-nodes for not supporting it.
-    /// This feature is being deprecated upstream. Once it is fully removed we will remove this handler.
-    pub(super) fn sync_protocol_handler(&mut self) {
-        let Some(mut sync_protocol) = self.sync_protocol.take() else {
-            return;
-        };
-
-        // Spawn a single task to handle all inbound sync substreams serially.
-        // The response is a constant 2-byte write — no I/O wait benefits from per-stream
-        // concurrency. Inlining eliminates per-substream task allocation and bounds
-        // heap exposure.
-        tokio::spawn(async move {
-            loop {
-                let Some((peer_id, mut inbound_stream)) = sync_protocol.next().await else {
-                    warn!(target: "gossip", "The sync protocol stream has ended");
-                    return;
-                };
-
-                trace!(target: "gossip", peer_id = %peer_id, "Received sync request");
-                Metrics::sync_requests().increment(1);
-
-                // We return: not found (1), version (0). `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-                // Response format: <response> = <res><version><payload>
-                // No payload is returned.
-                const OUTPUT: [u8; 2] = hex!("0100");
-                const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-
-                match tokio::time::timeout(WRITE_TIMEOUT, inbound_stream.write_all(&OUTPUT)).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(e)) => {
-                        error!(target: "gossip", error = %e, peer_id = %peer_id, "Failed to write sync response");
-                    }
-                    Err(_) => {
-                        warn!(target: "gossip", peer_id = %peer_id, "Sync response write timed out");
-                    }
-                }
-            }
-        });
-    }
-
-    /// Starts the libp2p Swarm.
-    ///
-    /// - Starts the sync request/response protocol handler.
-    /// - Tells the swarm to listen on the given [`Multiaddr`].
+    /// Starts the libp2p swarm listening on the configured [`Multiaddr`].
     ///
     /// Waits for the swarm to start listen before returning and connecting to peers.
     pub async fn start(&mut self) -> Result<Multiaddr, TransportError<std::io::Error>> {
-        // Start the sync request/response protocol handler.
-        self.sync_protocol_handler();
-
         match self.swarm.listen_on(self.addr.clone()) {
             Ok(id) => loop {
                 if let SwarmEvent::NewListenAddr { address, listener_id } =
@@ -385,10 +316,6 @@ where
                 });
             }
             Event::Identify(e) => self.handle_identify_event(*e),
-            // Don't do anything with stream events as this should be unreachable code.
-            Event::Stream => {
-                error!(target: "gossip", "Stream events should not be emitted!");
-            }
         };
 
         None
@@ -579,6 +506,10 @@ fn peerstore_eviction_candidate<T>(
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
+    use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
+    use alloy_primitives::{B256, Signature};
+    use alloy_rpc_types_engine::ExecutionPayloadV3;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
 
     use super::*;
 
@@ -599,6 +530,73 @@ mod tests {
         .unwrap();
 
         driver
+    }
+
+    #[tokio::test]
+    async fn v4_gossip_works_without_legacy_sync_advertisement() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let mut sender = test_driver();
+            let mut receiver = test_driver();
+            sender.handler.rollup_config.upgrades.isthmus_time = Some(0);
+            receiver.handler.rollup_config.upgrades.isthmus_time = Some(0);
+            let address = receiver.start().await.unwrap();
+            sender.start().await.unwrap();
+            sender.swarm.dial(address).unwrap();
+            let topic = receiver.handler.blocks_v4_topic.hash();
+
+            // Wait for actual Identify exchange and the current block-topic mesh.
+            while sender.peerstore.peek(receiver.local_peer_id()).is_none()
+                || receiver.peerstore.peek(sender.local_peer_id()).is_none()
+                || sender.swarm.behaviour().gossipsub.mesh_peers(&topic).count() == 0
+                || receiver.swarm.behaviour().gossipsub.mesh_peers(&topic).count() == 0
+            {
+                tokio::select! {
+                    event = sender.next() => sender.handle_event(event.unwrap()),
+                    event = receiver.next() => receiver.handle_event(event.unwrap()),
+                };
+            }
+            for info in [
+                sender.peerstore.peek(receiver.local_peer_id()).unwrap(),
+                receiver.peerstore.peek(sender.local_peer_id()).unwrap(),
+            ] {
+                assert!(info.protocols.iter().any(|protocol| protocol.as_ref().starts_with("/meshsub/")));
+                assert!(info.protocols.iter().all(|protocol| !protocol.as_ref().starts_with("/opstack/req/payload_by_number/")));
+            }
+
+            let mut block = crate::v4_valid_block();
+            block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
+            let payload = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+                ExecutionPayloadV3::from_block_slow(&block),
+                block.header.withdrawals_root.unwrap(),
+            );
+            let envelope = NetworkPayloadEnvelope {
+                payload: BaseExecutionPayload::V4(payload),
+                signature: Signature::test_signature(),
+                payload_hash: PayloadHash(B256::ZERO),
+                parent_beacon_block_root: block.header.parent_beacon_block_root,
+            };
+            let decoded = NetworkPayloadEnvelope::decode_v4(&envelope.encode_v4().unwrap()).unwrap();
+            let signing_hash = decoded.payload_hash.signature_message(receiver.handler.rollup_config.l2_chain_id.id());
+            let signer = decoded.signature.recover_address_from_prehash(&signing_hash).unwrap();
+            let (_signer_tx, signer_rx) = tokio::sync::watch::channel(signer);
+            receiver.handler.signer_recv = signer_rx;
+            sender.publish(|handler| handler.blocks_v4_topic.clone(), Some(envelope.clone())).unwrap();
+
+            loop {
+                tokio::select! {
+                    event = sender.next() => { sender.handle_event(event.unwrap()); }
+                    event = receiver.next() => {
+                        if let Some(received) = receiver.handle_event(event.unwrap()) {
+                            assert_eq!(received.payload, envelope.payload);
+                            assert_eq!(received.parent_beacon_block_root, envelope.parent_beacon_block_root);
+                            break;
+                        }
+                    }
+                }
+            }
+            assert!(sender.swarm.is_connected(receiver.local_peer_id()));
+            assert!(receiver.swarm.is_connected(sender.local_peer_id()));
+        }).await.expect("Identify exchange and V4 propagation must complete without legacy sync");
     }
 
     #[tokio::test]

@@ -444,9 +444,8 @@ impl P2pRpcRequest {
                                     // See `<https://github.com/libp2p/rust-libp2p/issues/6058>`
                                     behavioral_penalty: Default::default(),
                                 },
-                                // We only support a shim implementation for the req/resp
-                                // protocol so we're not
-                                // computing scores for it.
+                                // Retained for RPC compatibility. Base does not support
+                                // the legacy request/response sync protocol.
                                 req_resp: Default::default(),
                             },
                         },
@@ -516,7 +515,6 @@ impl P2pRpcRequest {
                     "/ipfs/ping/1.0.0".to_string(),
                     "/meshsub/1.2.0".to_string(),
                     "/ipfs/id/1.0.0".to_string(),
-                    format!("/opstack/req/payload_by_number/{chain_id}/0/"),
                     "/meshsub/1.0.0".to_string(),
                     "/floodsub/1.0.0".to_string(),
                 ]),

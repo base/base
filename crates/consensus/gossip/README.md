@@ -7,6 +7,9 @@ that subscribes to unsafe block topics and propagates validated payloads. `Block
 validates incoming blocks against the rollup config, `ConnectionGater` enforces IP-based rate
 limits and peer bans, and Prometheus metrics are recorded via `Metrics`.
 
+Base does not advertise or implement the legacy op-node `payload_by_number` request-response
+protocol. This does not affect execution-layer synchronization or HTTP follow-mode payload fetching.
+
 ## Key Components
 
 - [`GossipDriver`]: Main driver managing the libp2p swarm and event handling

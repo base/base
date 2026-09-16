@@ -62,12 +62,6 @@ pub enum GossipDriverBuilderError {
     /// An error when building the gossip behaviour.
     #[error("error building gossip behaviour")]
     BehaviourError(BehaviourError),
-    /// An error when setting up the sync request/response protocol.
-    #[error("error setting up sync request/response protocol")]
-    SetupSyncReqRespError,
-    /// The sync request/response protocol has already been accepted.
-    #[error("sync request/response protocol already accepted")]
-    SyncReqRespAlreadyAccepted,
 }
 
 /// An error type representing reasons why a peer connection cannot be established.

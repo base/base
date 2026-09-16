@@ -33,7 +33,6 @@ base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
 # Networking
 snap.workspace = true
 futures.workspace = true
-libp2p-stream.workspace = true
 ipnet = { workspace = true, features = ["serde"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
