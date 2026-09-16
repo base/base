@@ -177,6 +177,15 @@ impl TestRollupConfigBuilder {
         self
     }
 
+    /// Sets the Denim activation timestamp.
+    ///
+    /// Denim is a standalone Base-specific fork, independent of the inherited fork cascade.
+    /// It requires Cobalt, so schedule Cobalt at or before the same timestamp.
+    pub const fn with_denim_at(mut self, t: u64) -> Self {
+        self.config.upgrades.base.denim = Some(t);
+        self
+    }
+
     /// Sets the Zenith activation timestamp.
     ///
     /// Zenith is a standalone Base-specific fork, independent of the inherited fork cascade.

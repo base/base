@@ -23,6 +23,12 @@ pub(crate) const BERYL_ACTIVATION_TIMESTAMP: u64 = 4;
 /// L2 timestamp where the Cobalt fork activates in tests that opt into it.
 pub(crate) const COBALT_ACTIVATION_TIMESTAMP: u64 = 8;
 
+/// L2 timestamp where the Denim fork activates in tests that opt into it.
+///
+/// Denim resolves the policy registry to V3, which routes inverted policy IDs. Cobalt is scheduled
+/// at the same timestamp because Denim requires it.
+pub(crate) const DENIM_ACTIVATION_TIMESTAMP: u64 = 4;
+
 /// B-20 token storage slot for `total_supply`.
 const B20_TOTAL_SUPPLY_SLOT: U256 =
     uint!(0xc78b71fee795ddd74aff64ea9b2474194c938c3196430e10bb5f01ed48434003_U256);
@@ -120,6 +126,42 @@ impl BerylTestEnv {
     /// Creates an environment with Base Beryl and Cobalt scheduled.
     pub(crate) fn new_with_cobalt() -> Self {
         Self::with_cobalt_activation(Some(COBALT_ACTIVATION_TIMESTAMP))
+    }
+
+    /// Creates an environment that crosses the Base Denim boundary, resolving the policy registry
+    /// to V3 (which routes inverted policy IDs). Beryl and Cobalt are active from genesis so the
+    /// B-20 stack is available immediately; Denim (which requires Cobalt) is the only boundary the
+    /// scenario crosses. Cobalt is at genesis rather than the Denim timestamp because the sequencer
+    /// actor remaps only Denim onto its accelerated block cadence, and a later Cobalt would then
+    /// order after Denim and violate the "Cobalt precedes Denim" invariant.
+    pub(crate) fn new_with_denim() -> Self {
+        let batcher_cfg = BatcherConfig {
+            encoder: EncoderConfig { da_type: DaType::Calldata, ..EncoderConfig::default() },
+            ..Default::default()
+        };
+
+        let rollup_cfg = TestRollupConfigBuilder::base_mainnet(&batcher_cfg)
+            .through_isthmus()
+            .with_jovian_at(0)
+            .with_azul_at(0)
+            .with_beryl_at(0)
+            .with_cobalt_at(0)
+            .with_denim_at(DENIM_ACTIVATION_TIMESTAMP)
+            .build();
+        let chain_id = rollup_cfg.l2_chain_id.id();
+        let harness = ActionTestHarness::new(L1MinerConfig::default(), rollup_cfg);
+
+        let l1_chain = SharedL1Chain::from_blocks(harness.l1.chain().to_vec());
+        let mut sequencer = harness.create_l2_sequencer(l1_chain);
+
+        let (node, chain) = harness.create_test_rollup_node_from_sequencer(
+            &mut sequencer,
+            SharedL1Chain::from_blocks(harness.l1.chain().to_vec()),
+        );
+
+        let bob_account = TestAccount::new(Account::Bob.signer_b256());
+
+        Self { sequencer, harness, batcher_cfg, node, chain, chain_id, bob_account }
     }
 
     fn with_cobalt_activation(cobalt_activation: Option<u64>) -> Self {
