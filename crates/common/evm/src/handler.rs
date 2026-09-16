@@ -567,6 +567,14 @@ where
         // unrestricted default EOA. A revoked / expired / scoped k1 is
         // skipped (`continue`), same as a bad signature or nonce — the
         // transaction is still included, that delegation is not applied.
+        //
+        // FIXME(cobalt-nostd): `std`-only, so absent (fails *open*) in the
+        // `no_std` proof guest — see the deposit gate above for the port that
+        // removes this `cfg`. This path is the most subtle of the three: the
+        // stock revm apply still runs in `no_std`, so a revoked authority's
+        // delegation is *applied* (account code changes) rather than skipped.
+        // Sequencer vs guest would then disagree on the post-state of an
+        // otherwise-valid 7702 tx, not merely on whether the tx is accepted.
         #[cfg(feature = "std")]
         if evm.ctx().cfg().spec().is_enabled_in(BaseUpgrade::Cobalt) {
             return StandardKeystoreGate::apply_eip7702_auth_list(evm.ctx_mut(), gas);
