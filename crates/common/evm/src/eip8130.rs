@@ -1807,15 +1807,20 @@ impl Eip8130Executor {
         // branch is invalid. The floor dominates sender-intrinsic gas, so this
         // single check subsumes the underfunded-intrinsic case.
         let sender_floor = intrinsic.sender_floor();
+        debug_assert!(
+            sender_floor >= intrinsic.sender_intrinsic(),
+            "EIP-7623 sender floor is at least sender-intrinsic gas"
+        );
         if gas_limit < sender_floor {
             return Err(BaseTransactionError::eip8130(
                 "EIP-8130 gas limit is below the EIP-7623 calldata floor",
             ));
         }
-        let execution_gas_available =
-            intrinsic.execution_gas_available(gas_limit).ok_or_else(|| {
-                BaseTransactionError::eip8130("EIP-8130 sender-intrinsic gas exceeds the gas limit")
-            })?;
+        // Infallible: `gas_limit >= sender_floor >= sender_intrinsic` (the
+        // floor formula, asserted above, plus the check just above).
+        let execution_gas_available = intrinsic
+            .execution_gas_available(gas_limit)
+            .expect("gas_limit >= sender_floor >= sender_intrinsic after the floor check");
         Ok((
             intrinsic.sender_intrinsic(),
             sender_floor,
