@@ -95,6 +95,96 @@ fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs
     datadir_args
 }
 
+/// Extracts `--manifest-url` so proofs reuse the same snapshot reth downloaded.
+fn resolve_manifest_url_arg(args: impl IntoIterator<Item = OsString>) -> Option<String> {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else { continue };
+
+        if arg == "--manifest-url" {
+            return args.next().and_then(|value| value.into_string().ok());
+        }
+
+        if let Some(value) = arg.strip_prefix("--manifest-url=") {
+            return Some(value.to_string());
+        }
+    }
+
+    None
+}
+
+/// Reads a snapshot API field that may be a JSON number or a numeric string.
+fn json_u64(value: Option<&serde_json::Value>) -> Option<u64> {
+    match value {
+        Some(serde_json::Value::Number(n)) => n.as_u64(),
+        Some(serde_json::Value::String(s)) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+/// Discovers the latest modular snapshot manifest URL for `chain_id`.
+///
+/// Reth's download pipeline queries the snapshot API (`metadataUrl`) rather than
+/// concatenating `{default_base_url}/{chain_id}/manifest.json`. `default_base_url`
+/// is already chain-specific (`https://chain.base.org/8453`), so appending another
+/// chain ID produced 404s such as `https://chain.base.org/8453/763360/manifest.json`.
+async fn discover_latest_manifest_url(api_url: &str, chain_id: u64) -> Result<String> {
+    info!(
+        target: "reth::cli",
+        api_url = %api_url,
+        chain_id,
+        "Discovering latest snapshot manifest for proofs"
+    );
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?;
+
+    let listing: serde_json::Value = client
+        .get(api_url)
+        .send()
+        .await
+        .map_err(|e| eyre::eyre!("failed to fetch snapshot listing from {api_url}: {e}"))?
+        .error_for_status()
+        .map_err(|e| eyre::eyre!("failed to fetch snapshot listing from {api_url}: {e}"))?
+        .json()
+        .await
+        .map_err(|e| eyre::eyre!("failed to parse snapshot listing from {api_url}: {e}"))?;
+
+    let entries = listing
+        .as_array()
+        .ok_or_else(|| eyre::eyre!("snapshot listing from {api_url} is not a JSON array"))?;
+
+    let (block, metadata_url) = entries
+        .iter()
+        .filter_map(|entry| {
+            let id = json_u64(entry.get("chainId"))?;
+            if id != chain_id {
+                return None;
+            }
+            let metadata_url = entry.get("metadataUrl").and_then(|v| v.as_str())?;
+            if !metadata_url.ends_with("manifest.json") {
+                return None;
+            }
+            let block = json_u64(entry.get("block"))?;
+            Some((block, metadata_url.to_string()))
+        })
+        .max_by_key(|(block, _)| *block)
+        .ok_or_else(|| {
+            eyre::eyre!("no modular snapshot manifest found for chain {chain_id} at {api_url}")
+        })?;
+
+    info!(
+        target: "reth::cli",
+        block,
+        url = %metadata_url,
+        "Found latest snapshot manifest for proofs"
+    );
+
+    Ok(metadata_url)
+}
+
 impl<C: ChainSpecParser> BaseDownloadCommand<C> {
     /// Returns the underlying chain spec.
     pub fn chain_spec(&self) -> Option<&Arc<C::ChainSpec>> {
@@ -120,10 +210,13 @@ struct ProofsDownloader;
 impl ProofsDownloader {
     /// Runs the full proofs download pipeline for the given chain.
     async fn run(target_dir: &Path, chain_id: u64) -> Result<()> {
-        let defaults = DownloadDefaults::get_global();
-        let base_url =
-            defaults.default_chain_aware_base_url.as_deref().unwrap_or(&defaults.default_base_url);
-        let manifest_url = format!("{base_url}/{chain_id}/manifest.json");
+        let manifest_url = match resolve_manifest_url_arg(std::env::args_os()) {
+            Some(url) => url,
+            None => {
+                let api_url = DownloadDefaults::get_global().snapshot_api_url.as_ref();
+                discover_latest_manifest_url(api_url, chain_id).await?
+            }
+        };
 
         Self::run_from_manifest(target_dir, &manifest_url).await
     }
@@ -478,6 +571,147 @@ mod tests {
             Path::new("/tmp/base-download-test"),
             "proofs download should use --datadir=VALUE without adding the chain directory"
         );
+    }
+
+    #[test]
+    fn resolve_manifest_url_arg_reads_separate_flag() {
+        let url = resolve_manifest_url_arg([
+            OsString::from("test"),
+            OsString::from("--manifest-url"),
+            OsString::from("https://zeronet-v2-snapshots.base.org/1789516802/manifest.json"),
+        ]);
+
+        assert_eq!(
+            url.as_deref(),
+            Some("https://zeronet-v2-snapshots.base.org/1789516802/manifest.json"),
+            "proofs should reuse the same --manifest-url as reth's downloader"
+        );
+    }
+
+    #[test]
+    fn resolve_manifest_url_arg_reads_equals_syntax() {
+        let url = resolve_manifest_url_arg([
+            OsString::from("test"),
+            OsString::from(
+                "--manifest-url=https://zeronet-v2-snapshots.base.org/1789516802/manifest.json",
+            ),
+        ]);
+
+        assert_eq!(
+            url.as_deref(),
+            Some("https://zeronet-v2-snapshots.base.org/1789516802/manifest.json"),
+            "proofs should reuse --manifest-url=VALUE"
+        );
+    }
+
+    #[test]
+    fn resolve_manifest_url_arg_is_none_without_flag() {
+        let url = resolve_manifest_url_arg([
+            OsString::from("test"),
+            OsString::from("--proofs"),
+            OsString::from("--chain"),
+            OsString::from("base-zeronet"),
+        ]);
+
+        assert_eq!(url, None, "missing --manifest-url should fall back to snapshot API discovery");
+    }
+
+    async fn start_snapshot_api_server(
+        listing: serde_json::Value,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listing_bytes = serde_json::to_vec(&listing).unwrap();
+        let app = Router::new().route(
+            "/api/snapshots",
+            get(move || {
+                let data = listing_bytes.clone();
+                async move { ([(axum::http::header::CONTENT_TYPE, "application/json")], data) }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let api_url = format!("http://127.0.0.1:{}/api/snapshots", addr.port());
+
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        (api_url, handle)
+    }
+
+    #[tokio::test]
+    async fn discover_latest_manifest_url_picks_latest_modular_for_chain() {
+        let listing = serde_json::json!([
+            {
+                "chainId": "8453",
+                "block": "100",
+                "metadataUrl": "https://mainnet-v2-snapshots.base.org/old/manifest.json"
+            },
+            {
+                "chainId": "763360",
+                "block": "10",
+                "metadataUrl": "https://zeronet-v2-snapshots.base.org/old/manifest.json"
+            },
+            {
+                "chainId": "763360",
+                "block": "20",
+                "metadataUrl": "https://zeronet-v2-snapshots.base.org/new/manifest.json"
+            },
+            {
+                "chainId": "763360",
+                "block": "15",
+                "metadataUrl": "https://zeronet-v2-snapshots.base.org/not-a-manifest.tar.zst"
+            }
+        ]);
+
+        let (api_url, handle) = start_snapshot_api_server(listing).await;
+        let url = discover_latest_manifest_url(&api_url, 763360).await.unwrap();
+
+        assert_eq!(
+            url, "https://zeronet-v2-snapshots.base.org/new/manifest.json",
+            "proofs must use the latest modular metadataUrl for the requested chain"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_latest_manifest_url_accepts_numeric_ids() {
+        let listing = serde_json::json!([{
+            "chainId": 763360,
+            "block": 3584106,
+            "metadataUrl": "https://zeronet-v2-snapshots.base.org/1789516802/manifest.json"
+        }]);
+
+        let (api_url, handle) = start_snapshot_api_server(listing).await;
+        let url = discover_latest_manifest_url(&api_url, 763360).await.unwrap();
+
+        assert_eq!(
+            url, "https://zeronet-v2-snapshots.base.org/1789516802/manifest.json",
+            "snapshot API numeric chainId/block fields should be accepted"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn discover_latest_manifest_url_fails_when_chain_missing() {
+        let listing = serde_json::json!([{
+            "chainId": "8453",
+            "block": "100",
+            "metadataUrl": "https://mainnet-v2-snapshots.base.org/old/manifest.json"
+        }]);
+
+        let (api_url, handle) = start_snapshot_api_server(listing).await;
+        let result = discover_latest_manifest_url(&api_url, 763360).await;
+
+        assert!(result.is_err(), "missing chain should fail discovery");
+        assert!(
+            result.unwrap_err().to_string().contains("no modular snapshot manifest"),
+            "error should name the missing modular snapshot"
+        );
+
+        handle.abort();
     }
 
     #[tokio::test]
