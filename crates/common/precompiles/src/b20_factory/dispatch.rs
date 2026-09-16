@@ -102,12 +102,8 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        match DecodedCreateB20::decode_if_create_b20(calldata, version) {
-            Some(Ok(decoded)) => {
-                return self.run_create_b20(ctx, version, upgrade, &observer, decoded);
-            }
-            Some(Err(error)) => return Err(error),
-            None => {}
+        if let Some(decoded) = DecodedCreateB20::decode_if_create_b20(calldata, version) {
+            return self.run_create_b20(ctx, version, upgrade, &observer, decoded);
         }
 
         let logic = version.implementation();
@@ -195,19 +191,15 @@ struct DecodedCreateB20<'a> {
 impl<'a> DecodedCreateB20<'a> {
     /// Tries to interpret `calldata` as a `createB20` dialable at `version`.
     ///
-    /// `None` skips the fast path entirely; `Some` decides the call, successfully or not.
-    /// - `None`: the leading 4 bytes aren't the `createB20` selector, `version` doesn't dial it,
-    ///   or [`BorrowedCallDecode::decode_args_borrowed`] rejects the payload — which it does iff
-    ///   Alloy's owned `abi_decode_validate` would. All are cheap; no token exists yet to
-    ///   re-encode. The caller falls through to the generic owned decode, which reproduces the
-    ///   authoritative, consensus-frozen error bytes. A future `FactoryVersion` could return a
-    ///   bounded `Some(Err(_))` on the rejection path instead (the way `AssetVersion::V2` does for
-    ///   `announce`), which is why the return type carries a `Result`; V1/Beryl cannot, since its
-    ///   revert bytes are already live.
-    /// - `Some(Ok(_))`: the borrowed decode accepted, so the token matches what the owned path
-    ///   would have produced, minus the copying `detokenize` step. Fields are read straight off it
-    ///   as slices into `calldata`.
-    fn decode_if_create_b20(calldata: &'a [u8], version: FactoryVersion) -> Option<Result<Self>> {
+    /// `None` when the leading 4 bytes aren't the `createB20` selector, `version` doesn't dial it,
+    /// or [`BorrowedCallDecode::decode_args_borrowed`] rejects the payload — which it does iff
+    /// Alloy's owned `abi_decode_validate` would. The caller then falls through to the generic owned
+    /// decode, which reproduces the authoritative, consensus-frozen error bytes.
+    ///
+    /// `Some` when the borrowed decode accepted: the token matches what the owned path would have
+    /// produced, minus the copying `detokenize` step, and its fields are read as slices into
+    /// `calldata`.
+    fn decode_if_create_b20(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Factory::createB20Call::SELECTOR {
             return None;
@@ -215,19 +207,13 @@ impl<'a> DecodedCreateB20<'a> {
         if !version.abi().valid_selector(selector) {
             return None;
         }
-        let Some(token) = IB20Factory::createB20Call::decode_args_borrowed(&calldata[4..]) else {
-            return match version {
-                // V1/Beryl: revert bytes are already consensus-frozen — keep falling through to
-                // the owned decoder's diagnostic, however expensive, unchanged.
-                FactoryVersion::V1 => None,
-            };
-        };
-        Some(Ok(Self {
+        let token = IB20Factory::createB20Call::decode_args_borrowed(&calldata[4..])?;
+        Some(Self {
             variant: <IB20Factory::B20Variant as SolType>::detokenize(token.0),
             salt: token.1.0,
             params: token.2.0,
             init_calls: token.3.0.iter().map(|c| c.0).collect(),
-        }))
+        })
     }
 
     /// Builds a `DecodedCreateB20` from an already owned-decoded call. Only the safety-net arm in
@@ -1142,6 +1128,17 @@ mod tests {
         let mut trailing_garbage = one_element.clone();
         trailing_garbage.extend_from_slice(&[0u8; 16]);
 
+        // The `variant` enum sits in the first argument word (`calldata[4..36]`), right-aligned.
+        // An out-of-range discriminant is the one field the fast path detokenizes, so pin that its
+        // rejection matches the owned decode rather than mishandling the value.
+        let mut invalid_variant = one_element.clone();
+        invalid_variant[35] = 0x07;
+
+        // Non-canonical high-order padding on the variant word: caught by validation, not strict
+        // mode, so the borrowed `valid_token` and the owned `type_check` must agree.
+        let mut dirty_variant_padding = one_element.clone();
+        dirty_variant_padding[4] = 0xff;
+
         let truncated_head = IB20Factory::createB20Call::SELECTOR.to_vec();
         let no_calldata: Vec<u8> = Vec::new();
 
@@ -1150,6 +1147,8 @@ mod tests {
             ("honest multi-element valid", multi_element, true),
             ("aliased offsets valid", aliased, true),
             ("length word overruns buffer", past_end_length, false),
+            ("out-of-range variant discriminant", invalid_variant, false),
+            ("non-canonical variant padding", dirty_variant_padding, false),
             // alloy follows absolute offsets, so bytes past the last tail get ignored. The oracle
             // accepts, and the fast path must match.
             ("trailing garbage after valid payload", trailing_garbage, true),
