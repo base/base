@@ -75,12 +75,12 @@ impl<'a> B20FactoryStorage<'a> {
         upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        let decoded = DecodedCreateB20::from_owned(&call);
+        let request = CreateB20Request::from_call(&call);
         FactoryV1.create_b20_decoded(
             self,
-            decoded.variant,
-            decoded.params,
-            &decoded.init_calls,
+            request.variant,
+            request.params,
+            &request.init_calls,
             address_hash,
             upgrade,
         )
@@ -88,7 +88,7 @@ impl<'a> B20FactoryStorage<'a> {
 
     /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
     ///
-    /// Tries the borrowed `createB20` fast path first (see [`DecodedCreateB20`]) before falling
+    /// Tries the borrowed `createB20` fast path first (see [`CreateB20Request`]) before falling
     /// through to the generic owned decode below, so an aliased `initCalls` payload never forces
     /// the N x M owned copy Alloy's `detokenize` would otherwise perform. Removal: `alloy-aliasing`.
     fn route<O>(
@@ -102,8 +102,8 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        if let Some(decoded) = DecodedCreateB20::decode_if_create_b20(calldata, version) {
-            return self.run_create_b20(ctx, version, upgrade, &observer, decoded);
+        if let Some(request) = CreateB20Request::try_from_calldata(calldata, version) {
+            return self.run_create_b20(ctx, version, upgrade, &observer, request);
         }
 
         let logic = version.implementation();
@@ -113,7 +113,7 @@ impl<'a> B20FactoryStorage<'a> {
                 version,
                 upgrade,
                 &observer,
-                DecodedCreateB20::from_owned(&call),
+                CreateB20Request::from_call(&call),
             ),
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
                 let v = B20Variant::from_abi(call.variant).expect(
@@ -143,7 +143,7 @@ impl<'a> B20FactoryStorage<'a> {
         version: FactoryVersion,
         upgrade: BaseUpgrade,
         observer: &O,
-        decoded: DecodedCreateB20<'_>,
+        request: CreateB20Request<'_>,
     ) -> Result<Bytes>
     where
         O: PrecompileCallObserver,
@@ -152,16 +152,16 @@ impl<'a> B20FactoryStorage<'a> {
         let caller = ctx.caller();
         // Both decode paths reject non-canonical discriminants before reaching here, so
         // `from_abi` returning `None` would be an internal invariant violation.
-        let variant = B20Variant::from_abi(decoded.variant)
+        let variant = B20Variant::from_abi(request.variant)
             .expect("decode paths reject non-canonical discriminants before dispatch");
-        let address_hash = ctx.metered_keccak256(&(caller, decoded.salt).abi_encode())?;
-        let internal_call_count = decoded.init_calls.len();
-        let internal_call_bytes = decoded.init_calls.iter().map(|c| c.len()).sum();
+        let address_hash = ctx.metered_keccak256(&(caller, request.salt).abi_encode())?;
+        let internal_call_count = request.init_calls.len();
+        let internal_call_bytes = request.init_calls.iter().map(|c| c.len()).sum();
         let token = logic.create_b20_decoded(
             self,
-            decoded.variant,
-            decoded.params,
-            &decoded.init_calls,
+            request.variant,
+            request.params,
+            &request.init_calls,
             address_hash,
             upgrade,
         )?;
@@ -175,24 +175,23 @@ impl<'a> B20FactoryStorage<'a> {
     }
 }
 
-/// The `createB20` request [`B20FactoryStorage::run_create_b20`] operates on. Both entry paths
-/// produce this shape: the borrowed fast path decodes an aliased `initCalls` payload without
-/// materializing the `bytes[]` blobs, mirroring the same technique already used for `announce`'s
-/// `internalCalls`; the owned safety net feeds an already-decoded [`IB20Factory::createB20Call`]
-/// through the same runner. `params` and `init_calls` borrow from the source calldata (or an owned
-/// call's fields), never copy, so aliased offsets cost fat-pointers instead of blob copies.
+/// Normalized input to [`B20FactoryStorage::run_create_b20`]. Both entry paths produce this shape:
+/// the borrowed fast path decodes an aliased `initCalls` payload without materializing the `bytes[]`
+/// blobs, while the owned safety net borrows fields from an already-decoded
+/// [`IB20Factory::createB20Call`]. `params` and `init_calls` never copy their payloads, so aliased
+/// offsets cost fat-pointers instead of blob copies.
 ///
 /// Removal (`alloy-aliasing`): once Alloy's owned decode stops copying aliased offsets, delete this
-/// type with `decode_if_create_b20`/`run_create_b20` and the fast-path arm in [`B20FactoryStorage::route`],
+/// type with `try_from_calldata`/`run_create_b20` and the fast-path arm in [`B20FactoryStorage::route`],
 /// and revert the other `alloy-aliasing` sites to the plain owned decode.
-struct DecodedCreateB20<'a> {
+struct CreateB20Request<'a> {
     variant: IB20Factory::B20Variant,
     salt: B256,
     params: &'a [u8],
     init_calls: Vec<&'a [u8]>,
 }
 
-impl<'a> DecodedCreateB20<'a> {
+impl<'a> CreateB20Request<'a> {
     /// Tries to interpret `calldata` as a `createB20` dialable at `version`.
     ///
     /// `None` when the leading 4 bytes aren't the `createB20` selector, `version` doesn't dial it,
@@ -203,7 +202,7 @@ impl<'a> DecodedCreateB20<'a> {
     /// `Some` when the borrowed decode accepted: the token matches what the owned path would have
     /// produced, minus the copying `detokenize` step, and its fields are read as slices into
     /// `calldata`.
-    fn decode_if_create_b20(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
+    fn try_from_calldata(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Factory::createB20Call::SELECTOR {
             return None;
@@ -234,10 +233,10 @@ impl<'a> DecodedCreateB20<'a> {
         })
     }
 
-    /// Builds a `DecodedCreateB20` from an already owned-decoded call. Only the safety-net arm in
+    /// Builds a `CreateB20Request` from an already owned-decoded call. Only the safety-net arm in
     /// [`B20FactoryStorage::route`] reaches this: every accepted `createB20` takes the borrowed
     /// fast path first.
-    fn from_owned(call: &'a IB20Factory::createB20Call) -> Self {
+    fn from_call(call: &'a IB20Factory::createB20Call) -> Self {
         Self {
             variant: call.variant,
             salt: call.salt,

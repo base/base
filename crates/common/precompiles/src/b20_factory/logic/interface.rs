@@ -6,6 +6,10 @@ use base_precompile_storage::Result;
 
 use crate::{B20FactoryStorage, IB20Factory};
 
+/// Borrowed `createB20` initialization calldata, ordered as supplied by the caller.
+/// TODO: Remove this and use `Vec<Bytes>` when we can use alloy-alias decoding.
+pub type InitCalls<'a> = [&'a [u8]];
+
 /// The B-20 token factory logic interface.
 ///
 /// This trait is append-only: new versions add methods, never remove or change the
@@ -26,7 +30,7 @@ pub trait Factory {
         storage: &mut B20FactoryStorage<'_>,
         variant: IB20Factory::B20Variant,
         params: &[u8],
-        init_calls: &[&[u8]],
+        init_calls: &InitCalls<'_>,
         address_hash: B256,
         upgrade: BaseUpgrade,
     ) -> Result<Address>;

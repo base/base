@@ -11,7 +11,7 @@ use revm::state::Bytecode;
 use crate::{
     ActivationRegistryStorage, AssetVersions, B20AssetInit, B20AssetStorage, B20AssetToken,
     B20FactoryStorage, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken, B20TokenRole,
-    B20Variant, Factory, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
+    B20Variant, Factory, IB20Factory, InitCalls, NoopPrecompileCallObserver, PolicyRegistryStorage,
     PolicyVersions, StablecoinVersions, Token,
 };
 
@@ -43,7 +43,7 @@ impl FactoryV1 {
         token_address: Address,
         common: CommonParams,
         init: B20StablecoinInit,
-        init_calls: &[&[u8]],
+        init_calls: &InitCalls<'_>,
         upgrade: BaseUpgrade,
     ) -> Result<()> {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
@@ -106,7 +106,7 @@ impl FactoryV1 {
         token_address: Address,
         common: CommonParams,
         init: B20AssetInit,
-        init_calls: &[&[u8]], // Vec<Bytes>
+        init_calls: &InitCalls<'_>,
         upgrade: BaseUpgrade,
     ) -> Result<()> {
         let policy_version = PolicyVersions::from_base_upgrade(upgrade)
@@ -191,7 +191,7 @@ impl Factory for FactoryV1 {
         storage: &mut B20FactoryStorage<'_>,
         variant: IB20Factory::B20Variant,
         params: &[u8],
-        init_calls: &[&[u8]],
+        init_calls: &InitCalls<'_>,
         address_hash: B256,
         upgrade: BaseUpgrade,
     ) -> Result<Address> {
