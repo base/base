@@ -7,6 +7,8 @@ use alloy_primitives::{
 use base_execution_txpool::{PredicateContext, ValidityPredicate};
 use revm::{Database, state::EvmState};
 
+use crate::{PredicateDatabase, PredicateReadRecorder};
+
 /// Location that currently blocks a parked validity predicate.
 ///
 /// State keys ([`Self::Balance`], [`Self::Storage`]) are woken by
@@ -54,6 +56,30 @@ impl ValidityPredicateKey {
         }
         Ok(None)
     }
+
+    /// Returns the first predicate that does not hold against a builder state.
+    ///
+    /// Balance predicates use the recorder's balance-only state read, while all
+    /// other variants retain [`ValidityPredicate::matches`] semantics. Evaluation
+    /// remains lazy and stops before reading predicates after the first failure.
+    pub fn first_unsatisfied_state<DB: PredicateDatabase>(
+        predicates: &[ValidityPredicate],
+        db: &mut PredicateReadRecorder<'_, DB>,
+        context: &PredicateContext,
+    ) -> Result<Option<Self>, DB::Error> {
+        for predicate in predicates {
+            let matches = match predicate {
+                ValidityPredicate::Balance { address, op, value } => {
+                    op.matches(db.balance(*address)?, *value)
+                }
+                _ => predicate.matches(db, context)?,
+            };
+            if !matches {
+                return Ok(Some(Self::for_predicate(predicate)));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// Result of evaluating a transaction's validity predicates at one build position.
@@ -80,6 +106,23 @@ impl ValidityPredicateEvaluation {
         context: &PredicateContext,
     ) -> Result<Self, DB::Error> {
         let Some(blocker) = ValidityPredicateKey::first_unsatisfied(predicates, db, context)?
+        else {
+            return Ok(Self::Matched);
+        };
+        Ok(Self::Unsatisfied {
+            blocker,
+            expired: ValidityPredicate::is_batch_expired(predicates, context),
+        })
+    }
+
+    /// Evaluates predicates against the current builder state using balance-only
+    /// account reads where safe.
+    pub fn evaluate_state<DB: PredicateDatabase>(
+        predicates: &[ValidityPredicate],
+        db: &mut PredicateReadRecorder<'_, DB>,
+        context: &PredicateContext,
+    ) -> Result<Self, DB::Error> {
+        let Some(blocker) = ValidityPredicateKey::first_unsatisfied_state(predicates, db, context)?
         else {
             return Ok(Self::Matched);
         };

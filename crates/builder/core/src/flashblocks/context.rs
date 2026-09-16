@@ -913,7 +913,7 @@ impl BasePayloadBuilderCtx {
                 match Self::accumulate_elapsed(&mut predicate_eval_total, || {
                     let mut recorder =
                         PredicateReadRecorder::new(&mut **evm.db_mut(), &mut info.predicate_loads);
-                    ValidityPredicateEvaluation::evaluate(
+                    ValidityPredicateEvaluation::evaluate_state(
                         tx.validity_predicates(),
                         &mut recorder,
                         &predicate_context,
@@ -1533,7 +1533,7 @@ impl BasePayloadBuilderCtx {
                             &mut **evm.db_mut(),
                             &mut info.predicate_loads,
                         );
-                        ValidityPredicateEvaluation::evaluate(
+                        ValidityPredicateEvaluation::evaluate_state(
                             parked_transaction.validity_predicates(),
                             &mut recorder,
                             &predicate_context,

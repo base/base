@@ -23,6 +23,7 @@
 use alloy_primitives::{Address, B256, U256, map::HashSet};
 use revm::{
     Database,
+    database::{State, bal::EvmDatabaseError},
     state::{AccountInfo, Bytecode},
 };
 
@@ -86,6 +87,33 @@ impl PredicateLoadTracker {
     }
 }
 
+/// Database operations specialized for validity-predicate evaluation.
+pub trait PredicateDatabase: Database {
+    /// Reads an account balance without materializing unrelated account fields.
+    fn predicate_balance(&mut self, address: Address) -> Result<U256, Self::Error>;
+}
+
+impl<DB: Database> PredicateDatabase for State<DB> {
+    fn predicate_balance(&mut self, address: Address) -> Result<U256, Self::Error> {
+        if self.has_bal() {
+            return self
+                .basic(address)
+                .map(|account| account.map_or(U256::ZERO, |account| account.balance));
+        }
+        self.load_cache_account(address)
+            .map(|account| {
+                account.account.as_ref().map_or(U256::ZERO, |account| account.info.balance)
+            })
+            .map_err(EvmDatabaseError::Database)
+    }
+}
+
+impl<DB: Database> PredicateDatabase for &mut State<DB> {
+    fn predicate_balance(&mut self, address: Address) -> Result<U256, Self::Error> {
+        (**self).predicate_balance(address)
+    }
+}
+
 /// A [`Database`] wrapper that records validity-predicate state reads.
 ///
 /// Wraps the builder's [`Database`] for the duration of a predicate evaluation and
@@ -104,6 +132,17 @@ impl<'a, DB> PredicateReadRecorder<'a, DB> {
     /// Wraps `database`, recording reads into `tracker`.
     pub const fn new(database: &'a mut DB, tracker: &'a mut PredicateLoadTracker) -> Self {
         Self { database, tracker }
+    }
+}
+
+impl<DB: PredicateDatabase> PredicateReadRecorder<'_, DB> {
+    /// Reads an account balance while recording exactly one attempted read.
+    ///
+    /// Predicate reads do not contribute to a BAL being built: revm's BAL builder
+    /// is populated by committed state changes, not database reads.
+    pub fn balance(&mut self, address: Address) -> Result<U256, DB::Error> {
+        self.tracker.record_account(address);
+        self.database.predicate_balance(address)
     }
 }
 
@@ -131,13 +170,57 @@ impl<DB: Database> Database for PredicateReadRecorder<'_, DB> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{Address, U256};
+    use std::{fmt, sync::Arc};
+
+    use alloy_primitives::{Address, B256, U256};
     use base_execution_txpool::{PredicateContext, ValidityOperator, ValidityPredicate};
     use reth_revm::State;
-    use revm::{database::InMemoryDB, state::AccountInfo};
+    use revm::{
+        Database, DatabaseCommit,
+        database::{BundleState, DBErrorMarker, InMemoryDB},
+        state::{
+            Account, AccountInfo, Bytecode,
+            bal::{AccountBal, Bal},
+        },
+    };
 
     use super::{PredicateLoadTracker, PredicateReadRecorder};
-    use crate::ValidityPredicateKey;
+    use crate::{ValidityPredicateEvaluation, ValidityPredicateKey};
+
+    #[derive(Debug)]
+    struct ReadError;
+
+    impl fmt::Display for ReadError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("read failed")
+        }
+    }
+
+    impl std::error::Error for ReadError {}
+    impl DBErrorMarker for ReadError {}
+
+    #[derive(Debug)]
+    struct FailingDatabase;
+
+    impl Database for FailingDatabase {
+        type Error = ReadError;
+
+        fn basic(&mut self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+            Err(ReadError)
+        }
+
+        fn code_by_hash(&mut self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
+            Err(ReadError)
+        }
+
+        fn storage(&mut self, _address: Address, _index: U256) -> Result<U256, Self::Error> {
+            Err(ReadError)
+        }
+
+        fn block_hash(&mut self, _number: u64) -> Result<B256, Self::Error> {
+            Err(ReadError)
+        }
+    }
 
     fn context() -> PredicateContext {
         PredicateContext { block_number: 1, flashblock_index: 0 }
@@ -181,8 +264,12 @@ mod tests {
         for _ in 0..2 {
             let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
             assert_eq!(
-                ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
-                    .unwrap(),
+                ValidityPredicateKey::first_unsatisfied_state(
+                    &predicates,
+                    &mut recorder,
+                    &context(),
+                )
+                .unwrap(),
                 None
             );
         }
@@ -218,8 +305,12 @@ mod tests {
         {
             let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
             assert_eq!(
-                ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
-                    .unwrap(),
+                ValidityPredicateKey::first_unsatisfied_state(
+                    &predicates,
+                    &mut recorder,
+                    &context(),
+                )
+                .unwrap(),
                 Some(ValidityPredicateKey::Balance(address))
             );
         }
@@ -228,6 +319,136 @@ mod tests {
         assert_eq!(tracker.slot_reads(), 0, "storage slot must not be read after short circuit");
         assert_eq!(tracker.unique_accounts(), 1);
         assert_eq!(tracker.unique_slots(), 0);
+    }
+
+    #[test]
+    fn balance_reads_current_committed_and_destroyed_state() {
+        let address = Address::with_last_byte(0x22);
+        let mut state = State::builder().with_database(InMemoryDB::default()).build();
+        let mut tracker = PredicateLoadTracker::default();
+
+        let mut changed = Account::default();
+        changed.info.balance = U256::from(42);
+        changed.mark_touch();
+        state.commit([(address, changed)].into_iter().collect());
+        assert_eq!(
+            PredicateReadRecorder::new(&mut state, &mut tracker).balance(address),
+            Ok(U256::from(42))
+        );
+
+        let mut destroyed = Account::default();
+        destroyed.mark_touch();
+        destroyed.mark_selfdestruct();
+        state.commit([(address, destroyed)].into_iter().collect());
+        assert_eq!(
+            PredicateReadRecorder::new(&mut state, &mut tracker).balance(address),
+            Ok(U256::ZERO)
+        );
+        assert_eq!(tracker.account_reads(), 2);
+    }
+
+    #[test]
+    fn balance_reads_preloaded_bundle_and_absent_account() {
+        let present = Address::with_last_byte(0x33);
+        let absent = Address::with_last_byte(0x44);
+        let bundle = BundleState::builder(0..=0)
+            .state_present_account_info(
+                present,
+                AccountInfo { balance: U256::from(99), ..Default::default() },
+            )
+            .build();
+        let mut state = State::builder()
+            .with_database(InMemoryDB::default())
+            .with_bundle_prestate(bundle)
+            .build();
+        let mut tracker = PredicateLoadTracker::default();
+        let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
+
+        assert_eq!(recorder.balance(present), Ok(U256::from(99)));
+        assert_eq!(recorder.balance(absent), Ok(U256::ZERO));
+    }
+
+    #[test]
+    fn balance_preserves_bal_consumer_and_builder_semantics() {
+        let address = Address::with_last_byte(0x55);
+        let mut database = InMemoryDB::default();
+        database.insert_account_info(
+            address,
+            AccountInfo { balance: U256::from(7), ..Default::default() },
+        );
+        let bal = Arc::new(Bal::from_iter([(address, AccountBal::default())]));
+        let mut state =
+            State::builder().with_database(database).with_bal(bal).with_bal_builder().build();
+        let expected = state.basic(address).unwrap().unwrap().balance;
+        let mut tracker = PredicateLoadTracker::default();
+
+        assert_eq!(
+            PredicateReadRecorder::new(&mut state, &mut tracker).balance(address),
+            Ok(expected)
+        );
+        assert!(
+            PredicateReadRecorder::new(&mut state, &mut tracker)
+                .balance(Address::with_last_byte(0x56))
+                .is_err()
+        );
+        assert!(state.take_built_bal().unwrap().accounts.is_empty());
+        assert_eq!(tracker.account_reads(), 2);
+    }
+
+    #[test]
+    fn state_evaluation_preserves_expired_context_predicates_without_reads() {
+        let mut state = State::builder().with_database(InMemoryDB::default()).build();
+        let mut tracker = PredicateLoadTracker::default();
+        let context = PredicateContext { block_number: 10, flashblock_index: 3 };
+        let block_number = [ValidityPredicate::BlockNumber {
+            op: ValidityOperator::LessThan,
+            value: U256::from(context.block_number),
+        }];
+        let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate_state(&block_number, &mut recorder, &context)
+                .unwrap(),
+            ValidityPredicateEvaluation::Unsatisfied {
+                blocker: ValidityPredicateKey::BlockNumber,
+                expired: true,
+            }
+        );
+
+        let flashblock_index = [
+            ValidityPredicate::BlockNumber {
+                op: ValidityOperator::Equal,
+                value: U256::from(context.block_number),
+            },
+            ValidityPredicate::FlashblockIndex {
+                op: ValidityOperator::LessThan,
+                value: U256::from(context.flashblock_index),
+            },
+        ];
+        let mut recorder = PredicateReadRecorder::new(&mut state, &mut tracker);
+        assert_eq!(
+            ValidityPredicateEvaluation::evaluate_state(
+                &flashblock_index,
+                &mut recorder,
+                &context,
+            )
+            .unwrap(),
+            ValidityPredicateEvaluation::Unsatisfied {
+                blocker: ValidityPredicateKey::FlashblockIndex,
+                expired: true,
+            }
+        );
+        assert_eq!(tracker.account_reads(), 0);
+        assert_eq!(tracker.slot_reads(), 0);
+    }
+
+    #[test]
+    fn failed_balance_read_is_counted_and_propagated() {
+        let address = Address::with_last_byte(0x66);
+        let mut state = State::builder().with_database(FailingDatabase).build();
+        let mut tracker = PredicateLoadTracker::default();
+
+        assert!(PredicateReadRecorder::new(&mut state, &mut tracker).balance(address).is_err());
+        assert_eq!(tracker.account_reads(), 1);
     }
 
     #[test]

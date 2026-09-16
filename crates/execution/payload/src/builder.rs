@@ -56,10 +56,10 @@ use tracing::{debug, debug_span, info, instrument, trace, warn};
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
     InclusionTracker, MeteringProvider, ParkableBestPayloadTransactions,
-    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
-    PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects, ValidityMetrics,
-    ValidityPredicateEvaluation, config::BaseBuilderConfig, error::BasePayloadBuilderError,
-    payload::BaseBuiltPayload,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateDatabase,
+    PredicateLoadTracker, PredicateReadRecorder, RejectionCacheMetrics, StateChangeEffects,
+    ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
+    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -927,7 +927,7 @@ where
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
-        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
+        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: PredicateDatabase,
     {
         let gas_limit = builder.evm_mut().block().gas_limit();
         // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
@@ -1083,7 +1083,7 @@ where
                         builder.evm_mut().db_mut(),
                         &mut predicate_loads,
                     );
-                    ValidityPredicateEvaluation::evaluate(
+                    ValidityPredicateEvaluation::evaluate_state(
                         tx.validity_predicates(),
                         &mut recorder,
                         &predicate_context,
@@ -1419,7 +1419,7 @@ where
                         builder.evm_mut().db_mut(),
                         &mut predicate_loads,
                     );
-                    ValidityPredicateEvaluation::evaluate(
+                    ValidityPredicateEvaluation::evaluate_state(
                         parked_transaction.validity_predicates(),
                         &mut recorder,
                         &predicate_context,
