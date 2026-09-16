@@ -157,6 +157,7 @@ incremental = false
 [workspace.dependencies]
 # Base Primitives
 base-bundles = { path = "crates/common/bundles" }
+base-block-stats = { path = "crates/common/block-stats" }
 base-common-signer = { path = "crates/common/signer" }
 base-common-chains = { path = "crates/common/chains" }
 base-common-network = { path = "crates/common/network" }

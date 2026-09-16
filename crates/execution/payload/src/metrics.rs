@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use base_block_stats::BlockStats;
+
 use crate::{
     FLOW_STANDARD, FLOW_VALIDITY, InclusionTracker, ParkedPredicateIndex, PredicateLoadTracker,
 };
@@ -84,6 +86,14 @@ base_metrics::define_metrics! {
     #[label(name = "flow", default = ["standard", "validity"])]
     #[label(name = "bid", default = ["coinbase_tip", "priority_fee"])]
     tip_per_gas: histogram,
+    #[describe("Total gas used per sealed block, including deposits")]
+    block_gas_used: histogram,
+    #[describe("Total transaction count per sealed block, including deposits")]
+    block_transaction_count: histogram,
+    #[describe("Non-deposit transaction count per sealed block")]
+    block_non_deposit_transaction_count: histogram,
+    #[describe("Adjacent effective-tip increases among non-deposit transactions per sealed block")]
+    block_priority_fee_inversions: histogram,
 }
 
 impl ValidityMetrics {
@@ -160,6 +170,20 @@ impl BuilderMetrics {
         let bid = if has_coinbase_tip { "coinbase_tip" } else { "priority_fee" };
         Self::tip_per_gas(flow, bid).record(tip_per_gas);
     }
+
+    /// Records whole-block figures derived from a sealed block's header and body.
+    ///
+    /// These cover the entire sealed block, including deposits, unlike the
+    /// flow-segmented inclusion histograms that count only mempool-sourced
+    /// transactions. Always emits one observation per block so the histograms
+    /// describe the full per-block distribution.
+    pub fn record_block(stats: &BlockStats) {
+        Self::block_gas_used().record(stats.gas_used as f64);
+        Self::block_transaction_count().record(stats.transaction_count as f64);
+        Self::block_non_deposit_transaction_count()
+            .record(stats.non_deposit_transaction_count as f64);
+        Self::block_priority_fee_inversions().record(stats.priority_fee_inversions as f64);
+    }
 }
 
 #[cfg(all(test, feature = "metrics"))]
@@ -228,5 +252,28 @@ mod tests {
         });
 
         assert!(!handle.render().contains("predicate_accounts_loaded_total"));
+    }
+
+    #[test]
+    fn records_whole_block_metrics() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        let stats = BlockStats {
+            gas_used: 21_000,
+            transaction_count: 5,
+            non_deposit_transaction_count: 4,
+            priority_fee_inversions: 2,
+        };
+
+        metrics::with_local_recorder(&recorder, || {
+            BuilderMetrics::record_block(&stats);
+        });
+
+        let rendered = handle.render();
+        assert!(rendered.contains("base_builder_block_gas_used_sum 21000"));
+        assert!(rendered.contains("base_builder_block_transaction_count_sum 5"));
+        assert!(rendered.contains("base_builder_block_non_deposit_transaction_count_sum 4"));
+        assert!(rendered.contains("base_builder_block_priority_fee_inversions_sum 2"));
     }
 }

@@ -1,6 +1,7 @@
 //! Statistics derived from persisted shadow blocks.
 
-use alloy_consensus::{Header, Transaction};
+use alloy_consensus::Header;
+use base_block_stats::BlockStats;
 use base_common_consensus::BaseTxEnvelope;
 use base_shadow_indexer_db::ShadowBlockRow;
 
@@ -40,9 +41,7 @@ impl ShadowBlockStats {
 
     /// Derives metrics from a header and transaction list, without a full row.
     ///
-    /// Deposits stay in totals but leave the fee vector because they are not fee-ordered.
-    /// Missing tips are skipped, not zeroed; zero would invent an inversion.
-    /// Strict `next > previous` matches the builder assertion and excludes equal tips.
+    /// Delegates the per-block figures to [`BlockStats::from_transactions`].
     #[must_use]
     pub fn from_parts(
         number: i64,
@@ -50,23 +49,17 @@ impl ShadowBlockStats {
         header: &Header,
         transactions: &[BaseTxEnvelope],
     ) -> Self {
-        let base_fee = header.base_fee_per_gas.unwrap_or_default();
-        let tips: Vec<u128> = transactions
-            .iter()
-            .filter(|tx| !tx.is_deposit())
-            .filter_map(|tx| tx.effective_tip_per_gas(base_fee))
-            .collect();
-
-        let non_deposit_tx_count = transactions.iter().filter(|tx| !tx.is_deposit()).count();
-        let priority_fee_inversions =
-            tips.windows(2).filter(|window| window[1] > window[0]).count();
-
+        let stats = BlockStats::from_transactions(
+            header.gas_used,
+            header.base_fee_per_gas.unwrap_or_default(),
+            transactions,
+        );
         Self {
             number,
-            gas_used: header.gas_used,
-            transaction_count: transactions.len(),
-            non_deposit_tx_count,
-            priority_fee_inversions,
+            gas_used: stats.gas_used,
+            transaction_count: stats.transaction_count,
+            non_deposit_tx_count: stats.non_deposit_transaction_count,
+            priority_fee_inversions: stats.priority_fee_inversions,
             builder_version,
         }
     }

@@ -14,6 +14,7 @@ workspace = true
 tracing.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+base-block-stats.workspace = true
 base-shadow-indexer-db.workspace = true
 base-common-consensus = { workspace = true, features = ["reth"] }
 serde = { workspace = true, features = ["derive"] }

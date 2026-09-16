@@ -3158,6 +3158,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-block-stats"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-primitives",
+ "base-common-consensus",
+]
+
+[[package]]
 name = "base-builder-bin"
 version = "0.0.0"
 dependencies = [
@@ -4499,6 +4508,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
+ "base-block-stats",
  "base-bundles",
  "base-common-chains",
  "base-common-consensus",
@@ -6147,6 +6157,7 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "axum 0.8.9",
+ "base-block-stats",
  "base-common-consensus",
  "base-shadow-indexer-db",
  "chrono",

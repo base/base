@@ -13,6 +13,7 @@ use alloy_evm::{
 use alloy_primitives::{Address, B256, TxHash, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
+use base_block_stats::BlockStats;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
@@ -494,6 +495,12 @@ impl<Txs> Builder<'_, Txs> {
         let sealed_block = Arc::new(block.sealed_block().clone());
         debug!(target: "payload_builder", id=%ctx.payload_id(), sealed_block_header = ?sealed_block.header(), "sealed built block");
 
+        let block_stats = BlockStats::from_transactions(
+            sealed_block.header().gas_used(),
+            sealed_block.header().base_fee_per_gas().unwrap_or_default(),
+            &sealed_block.body().transactions,
+        );
+
         let execution_outcome =
             BlockExecutionOutput { state: db.take_bundle(), result: execution_result };
 
@@ -515,6 +522,7 @@ impl<Txs> Builder<'_, Txs> {
             block_access_list.map(|bal| alloy_rlp::encode(bal).into()),
         );
         BuilderMetrics::record_inclusion(&info.inclusion);
+        BuilderMetrics::record_block(&block_stats);
 
         if no_tx_pool || ctx.is_denim_active() {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
