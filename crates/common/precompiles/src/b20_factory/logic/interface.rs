@@ -44,12 +44,8 @@ pub trait Factory {
     /// Creates a token from already-decoded `createB20` fields, borrowed rather than owned.
     ///
     /// Takes no `salt`: the dispatcher folds it into `address_hash` before calling this method,
-    /// and nothing below needs the raw value.
-    ///
-    /// An aliased `bytes[] initCalls` payload otherwise forces Alloy's owned ABI decode to
-    /// materialize N x M bytes of heap from an N-times-aliased M-byte tail. Taking
-    /// `params`/`init_calls` as borrowed slices lets the dispatcher (`B20FactoryStorage::route`)
-    /// decode straight from calldata without that copy. This is the primary entry point;
+    /// and nothing below needs the raw value. Borrowed `params`/`init_calls` let the dispatcher
+    /// decode straight from calldata without copying. This is the primary entry point;
     /// [`Self::create_b20`] is a thin owned-call convenience built on top of it.
     ///
     /// Removal (`alloy-aliasing`): drop this method and give `create_b20` back the owned body,
