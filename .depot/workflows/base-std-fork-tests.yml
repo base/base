@@ -37,7 +37,11 @@ jobs:
           - fork: Cobalt
             key: cobalt
             upgrade: cobalt
-            base_std_ref: 4571b325c1b9c4d6e21c59d2b7f9b4b60f62ec7c
+            base_std_ref: v1.1.0
+          - fork: Denim
+            key: denim
+            upgrade: denim
+            base_std_ref: 91427ab4435cce088603798318dddd390821b6d1
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
