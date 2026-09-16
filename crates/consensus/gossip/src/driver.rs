@@ -25,6 +25,8 @@ use libp2p::{
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
 use lru::LruCache;
+#[cfg(test)]
+pub use tests::GossipPair;
 use tokio::{
     sync::Mutex,
     time::{Instant as TokioInstant, sleep_until},
@@ -116,7 +118,7 @@ where
         gate: G,
         config: GossipDriverConfig,
     ) -> Self {
-        Self {
+        let driver = Self {
             swarm,
             addr,
             handler,
@@ -129,7 +131,10 @@ where
             connection_limits_config: config.connection_limits_config,
             ping: Arc::new(Mutex::new(Default::default())),
             next_topic_retirement: TokioInstant::now(),
-        }
+        };
+        #[cfg(feature = "metrics")]
+        driver.record_block_topic_metrics();
+        driver
     }
 
     /// Publishes an unsafe block to gossip.
@@ -157,6 +162,9 @@ where
         // GossipSub can publish to unsubscribed topics. Do not let a retired
         // topic re-enter the publishing path, including after a clock rollback.
         if !self.swarm.behaviour().gossipsub.topics().any(|topic| *topic == topic_hash) {
+            if let Some(version) = self.handler.topic_version(&topic_hash) {
+                Metrics::block_topic_blocked_total(version, "outbound").increment(1);
+            }
             return Err(HandlerEncodeError::UnknownTopic(topic_hash).into());
         }
         let data = self.handler.encode(topic, payload)?;
@@ -279,19 +287,42 @@ where
     pub fn retire_block_topics(&mut self, timestamp: u64) -> usize {
         let active_topics = self.handler.topics_at(timestamp);
         let mut retired = 0;
-        for topic in [
-            &self.handler.blocks_v1_topic,
-            &self.handler.blocks_v2_topic,
-            &self.handler.blocks_v3_topic,
+        for (version, topic) in [
+            ("v1", &self.handler.blocks_v1_topic),
+            ("v2", &self.handler.blocks_v2_topic),
+            ("v3", &self.handler.blocks_v3_topic),
         ] {
             if !active_topics.contains(&topic.hash())
                 && self.swarm.behaviour_mut().gossipsub.unsubscribe(topic)
             {
                 info!(target: "gossip", topic = %topic, "Retired block gossip topic");
+                Metrics::block_topic_retirements_total(version).increment(1);
                 retired += 1;
             }
         }
+        #[cfg(feature = "metrics")]
+        self.record_block_topic_metrics();
         retired
+    }
+
+    /// Samples actual subscriptions and peer membership, including zeroes for retired topics.
+    /// Called at startup and on every retirement check, even when the network is idle.
+    #[cfg(feature = "metrics")]
+    pub fn record_block_topic_metrics(&self) {
+        let gossip = &self.swarm.behaviour().gossipsub;
+        for (version, topic) in [
+            ("v1", &self.handler.blocks_v1_topic),
+            ("v2", &self.handler.blocks_v2_topic),
+            ("v3", &self.handler.blocks_v3_topic),
+            ("v4", &self.handler.blocks_v4_topic),
+        ] {
+            let hash = topic.hash();
+            let subscribed = gossip.topics().any(|topic| *topic == hash);
+            Metrics::block_topic_subscribed(version).set(u8::from(subscribed));
+            Metrics::block_topic_mesh_peers(version).set(gossip.mesh_peers(&hash).count() as f64);
+            let peers = gossip.all_peers().filter(|(_, topics)| topics.contains(&&hash)).count();
+            Metrics::block_topic_peers(version).set(peers as f64);
+        }
     }
 
     /// Returns the number of connected peers.
@@ -519,6 +550,9 @@ where
                         .report_message_validation_result(&id, &src, status);
                     return payload;
                 }
+                if let Some(version) = self.handler.topic_version(&message.topic) {
+                    Metrics::block_topic_blocked_total(version, "inbound").increment(1);
+                }
             }
             libp2p::gossipsub::Event::Subscribed { peer_id, topic } => {
                 trace!(target: "gossip", peer_id = %peer_id, topic = ?topic, "Peer subscribed");
@@ -639,13 +673,205 @@ fn peerstore_eviction_candidate<T>(
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
+    use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
     use alloy_primitives::{B256, Signature};
-    use alloy_rpc_types_engine::ExecutionPayloadV2;
+    use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
     use base_common_genesis::UpgradeConfig;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, PayloadHash};
+    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
     use libp2p::gossipsub::{Message, MessageAcceptance};
+    #[cfg(feature = "metrics")]
+    use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
+
+    /// A real TCP gossip pair. The second peer retains its original subscriptions
+    /// to model a node that has not implemented topic retirement yet.
+    #[derive(std::fmt::Debug)]
+    pub struct GossipPair {
+        /// Peer running the production retirement loop.
+        pub retiring: GossipDriver<ConnectionGater>,
+        /// Peer retaining the subscriptions established at startup.
+        pub legacy: GossipDriver<ConnectionGater>,
+    }
+
+    impl GossipPair {
+        /// Drives both real swarms and fails if their connection closes.
+        pub async fn poll(&mut self) -> Option<NetworkPayloadEnvelope> {
+            tokio::select! {
+                event = self.retiring.next() => {
+                    let event = event.expect("retiring swarm remains open");
+                    assert!(!matches!(event, SwarmEvent::ConnectionClosed { .. }), "{event:?}");
+                    self.retiring.handle_event(event)
+                }
+                // Poll the swarm directly so this peer keeps advertising old topics.
+                event = self.legacy.swarm.next() => {
+                    let event = event.expect("legacy swarm remains open");
+                    assert!(!matches!(event, SwarmEvent::ConnectionClosed { .. }), "{event:?}");
+                    self.legacy.handle_event(event)
+                }
+            }
+        }
+
+        /// Publishes a fresh V4 payload and waits for its validated delivery.
+        pub async fn publish_v4(&mut self) {
+            let mut block = crate::v4_valid_block();
+            block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
+            let payload = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
+                ExecutionPayloadV3::from_block_slow(&block),
+                block.header.withdrawals_root.unwrap(),
+            );
+            let envelope = NetworkPayloadEnvelope {
+                payload: BaseExecutionPayload::V4(payload),
+                signature: Signature::test_signature(),
+                payload_hash: PayloadHash(B256::ZERO),
+                parent_beacon_block_root: block.header.parent_beacon_block_root,
+            };
+            let decoded =
+                NetworkPayloadEnvelope::decode_v4(&envelope.encode_v4().unwrap()).unwrap();
+            let signing_hash = decoded
+                .payload_hash
+                .signature_message(self.retiring.handler.rollup_config.l2_chain_id.id());
+            let signer = decoded.signature.recover_address_from_prehash(&signing_hash).unwrap();
+            let (_sender, receiver) = tokio::sync::watch::channel(signer);
+            self.retiring.handler.signer_recv = receiver;
+            let expected_hash = envelope.payload.block_hash();
+            self.legacy.publish(|handler| handler.blocks_v4_topic.clone(), Some(envelope)).unwrap();
+            loop {
+                if let Some(received) = self.poll().await {
+                    assert_eq!(received.payload.block_hash(), expected_hash);
+                    break;
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_peer_observes_retirement_without_losing_v4_propagation() {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let mut pair = GossipPair { retiring: test_driver(), legacy: test_driver() };
+            let address = pair.retiring.start().await.unwrap();
+            pair.legacy.start().await.unwrap();
+            pair.legacy.swarm.dial(address).unwrap();
+            let v3 = pair.retiring.handler.blocks_v3_topic.hash();
+            let v4 = pair.retiring.handler.blocks_v4_topic.hash();
+
+            // Both old and future topic meshes must actually form before retirement.
+            while [&pair.retiring, &pair.legacy].iter().any(|driver| {
+                let gossip = &driver.swarm.behaviour().gossipsub;
+                gossip.mesh_peers(&v3).count() != 1 || gossip.mesh_peers(&v4).count() != 1
+            }) {
+                pair.poll().await;
+            }
+
+            // Activate Isthmus within its grace period, without a wall-clock sleep.
+            let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            pair.retiring.handler.rollup_config.upgrades.isthmus_time = Some(now);
+            pair.legacy.handler.rollup_config.upgrades.isthmus_time = Some(now);
+            assert_eq!(pair.retiring.retire_block_topics(now + 59), 0);
+            pair.publish_v4().await;
+
+            // Advance the retirement action to the exact boundary. The legacy
+            // peer must learn the unsubscribe over the wire, not by shared state.
+            assert_eq!(pair.retiring.retire_block_topics(now + 60), 3);
+            loop {
+                if pair
+                    .legacy
+                    .swarm
+                    .behaviour()
+                    .gossipsub
+                    .all_peers()
+                    .any(|(peer, topics)| peer == pair.retiring.local_peer_id() && topics == [&v4])
+                {
+                    break;
+                }
+                pair.poll().await;
+            }
+            assert_eq!(pair.retiring.retire_block_topics(now), 0, "rollback must not rejoin");
+            assert!(pair.retiring.swarm.is_connected(pair.legacy.local_peer_id()));
+            assert_eq!(pair.retiring.swarm.behaviour().gossipsub.mesh_peers(&v4).count(), 1);
+            assert_eq!(pair.legacy.swarm.behaviour().gossipsub.mesh_peers(&v4).count(), 1);
+            pair.publish_v4().await;
+
+            #[cfg(feature = "metrics")]
+            {
+                let recorder = PrometheusBuilder::new().build_recorder();
+                metrics::with_local_recorder(&recorder, || {
+                    pair.retiring.record_block_topic_metrics();
+                });
+                let output = recorder.handle().render();
+                // A legacy peer still advertises V3, but is no longer in our V3 mesh.
+                assert!(output.contains("base_node_block_topic_subscribed{version=\"v3\"} 0"));
+                assert!(output.contains("base_node_block_topic_peers{version=\"v3\"} 1"));
+                assert!(output.contains("base_node_block_topic_mesh_peers{version=\"v3\"} 0"));
+                assert!(output.contains("base_node_block_topic_subscribed{version=\"v4\"} 1"));
+                assert!(output.contains("base_node_block_topic_peers{version=\"v4\"} 1"));
+                assert!(output.contains("base_node_block_topic_mesh_peers{version=\"v4\"} 1"));
+            }
+        })
+        .await
+        .expect("mesh formation, unsubscribe and V4 delivery must complete");
+    }
+
+    #[test]
+    #[cfg(feature = "metrics")]
+    fn topic_metrics_report_startup_retirement_and_rollback() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let mut driver = test_driver();
+            for version in ["v1", "v2", "v3", "v4"] {
+                assert!(handle.render().contains(&format!(
+                    "base_node_block_topic_subscribed{{version=\"{version}\"}} 1"
+                )));
+            }
+            driver.handler.rollup_config.upgrades.isthmus_time = Some(100);
+            driver.retire_block_topics(160);
+            driver.retire_block_topics(160);
+            driver.retire_block_topics(0);
+            let output = handle.render();
+            for version in ["v1", "v2", "v3"] {
+                assert!(output.contains(&format!(
+                    "base_node_block_topic_subscribed{{version=\"{version}\"}} 0"
+                )));
+                assert!(output.contains(&format!(
+                    "base_node_block_topic_retirements_total{{version=\"{version}\"}} 1"
+                )));
+            }
+            assert!(output.contains("base_node_block_topic_subscribed{version=\"v4\"} 1"));
+            assert!(output.contains("base_node_block_topic_mesh_peers{version=\"v3\"} 0"));
+            assert!(output.contains("base_node_block_topic_peers{version=\"v4\"} 0"));
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "metrics")]
+    fn startup_metrics_distinguish_skipped_topics_from_runtime_retirement() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            let config = RollupConfig {
+                upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+                ..Default::default()
+            };
+            let (_driver, _signer) = GossipDriver::<ConnectionGater>::builder(
+                config,
+                Address::ZERO,
+                "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+                Keypair::generate_secp256k1(),
+            )
+            .build()
+            .unwrap();
+        });
+        let output = recorder.handle().render();
+        for version in ["v1", "v2", "v3"] {
+            assert!(
+                output.contains(&format!(
+                    "base_node_block_topic_subscribed{{version=\"{version}\"}} 0"
+                ))
+            );
+        }
+        assert!(output.contains("base_node_block_topic_subscribed{version=\"v4\"} 1"));
+        assert!(!output.contains("base_node_block_topic_retirements_total"));
+    }
 
     fn test_driver() -> GossipDriver<ConnectionGater> {
         let rollup_config = RollupConfig {
@@ -726,6 +952,11 @@ mod tests {
 
     #[test]
     fn retired_topics_stay_disabled_after_a_clock_rollback() {
+        #[cfg(feature = "metrics")]
+        let recorder = PrometheusBuilder::new().build_recorder();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
         let mut driver = test_driver();
         driver.handler.rollup_config.upgrades.isthmus_time = Some(100);
         assert_eq!(driver.retire_block_topics(160), 3);
@@ -770,6 +1001,15 @@ mod tests {
                 message,
             })));
         assert!(driver.handle_event(event).is_none());
+        #[cfg(feature = "metrics")]
+        {
+            let output = recorder.handle().render();
+            for direction in ["inbound", "outbound"] {
+                assert!(output.contains(&format!(
+                    "base_node_block_topic_blocked_total{{version=\"v2\",direction=\"{direction}\"}} 1"
+                )), "{output}");
+            }
+        }
     }
 
     #[tokio::test]

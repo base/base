@@ -12,7 +12,7 @@ use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
 use tracing::instrument;
 
-use crate::HandlerEncodeError;
+use crate::{HandlerEncodeError, Metrics};
 
 /// This trait defines the functionality required to process incoming messages
 /// and determine their acceptance within the network.
@@ -76,6 +76,9 @@ impl Handler for BlockHandler {
 
         // Do not decompress or SSZ-decode queued messages from a retired topic.
         if !self.topics().contains(&msg.topic) {
+            if let Some(version) = self.topic_version(&msg.topic) {
+                Metrics::block_topic_blocked_total(version, "inbound").increment(1);
+            }
             trace!(target: "gossip", topic = %msg.topic, "Ignoring retired block topic");
             return (MessageAcceptance::Ignore, None);
         }
@@ -114,6 +117,19 @@ impl BlockHandler {
     /// Also defines the topic retirement grace period: after a replacement fork
     /// has been active this long, every block from the old version is too old.
     pub const MAX_BLOCK_AGE: u64 = 60;
+
+    /// Returns a bounded version label for a known block topic.
+    /// Unknown peer-supplied topics must not become metric labels.
+    pub fn topic_version(&self, topic: &TopicHash) -> Option<&'static str> {
+        [
+            ("v1", &self.blocks_v1_topic),
+            ("v2", &self.blocks_v2_topic),
+            ("v3", &self.blocks_v3_topic),
+            ("v4", &self.blocks_v4_topic),
+        ]
+        .into_iter()
+        .find_map(|(version, known)| (known.hash() == *topic).then_some(version))
+    }
 
     /// Returns the non-retired gossip topics at a local Unix timestamp.
     ///
@@ -176,6 +192,9 @@ impl BlockHandler {
         envelope: NetworkPayloadEnvelope,
     ) -> Result<Vec<u8>, HandlerEncodeError> {
         if !self.topics().contains(&topic.hash()) {
+            if let Some(version) = self.topic_version(&topic.hash()) {
+                Metrics::block_topic_blocked_total(version, "outbound").increment(1);
+            }
             return Err(HandlerEncodeError::UnknownTopic(topic.hash()));
         }
         let encoded = match topic.hash() {
@@ -200,6 +219,8 @@ mod tests {
     use base_common_genesis::{BaseUpgradeConfig, ChainGenesis, UpgradeConfig};
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
     use base_protocol::BaseTimeUpdateTx;
+    #[cfg(feature = "metrics")]
+    use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
@@ -264,6 +285,11 @@ mod tests {
 
     #[test]
     fn retired_topics_are_ignored_before_decode() {
+        #[cfg(feature = "metrics")]
+        let recorder = PrometheusBuilder::new().build_recorder();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
         let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
         let mut handler = BlockHandler::new(
             RollupConfig {
@@ -291,10 +317,25 @@ mod tests {
             let message = Message { source: None, sequence_number: None, topic, data: vec![0xff] };
             assert!(matches!(handler.handle(message), (MessageAcceptance::Reject, None)));
         }
+        #[cfg(feature = "metrics")]
+        {
+            let output = recorder.handle().render();
+            for version in ["v1", "v2", "v3"] {
+                assert!(output.contains(&format!(
+                    "base_node_block_topic_blocked_total{{version=\"{version}\",direction=\"inbound\"}} 1"
+                )), "{output}");
+            }
+            assert!(!output.contains("unknown"), "unknown topics must not create metric labels");
+        }
     }
 
     #[test]
     fn retired_topics_cannot_be_encoded_for_gossip() {
+        #[cfg(feature = "metrics")]
+        let recorder = PrometheusBuilder::new().build_recorder();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
         let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
         let handler = BlockHandler::new(
             RollupConfig {
@@ -313,6 +354,10 @@ mod tests {
         assert!(matches!(
             handler.encode(handler.blocks_v2_topic.clone(), envelope),
             Err(HandlerEncodeError::UnknownTopic(topic)) if topic == handler.blocks_v2_topic.hash()
+        ));
+        #[cfg(feature = "metrics")]
+        assert!(recorder.handle().render().contains(
+            "base_node_block_topic_blocked_total{version=\"v2\",direction=\"outbound\"} 1"
         ));
     }
 

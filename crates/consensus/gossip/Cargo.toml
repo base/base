@@ -55,6 +55,7 @@ metrics = { workspace = true, optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 multihash.workspace = true
+metrics-exporter-prometheus.workspace = true
 alloy-rlp = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["thread_rng"] }
