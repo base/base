@@ -278,8 +278,7 @@ fn golden_reads_for_nonexistent_and_builtins() {
 #[test]
 fn golden_inverted_policy_id_selector_unknown_in_v2() {
     let mut storage = fresh();
-    let calldata =
-        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode();
+    let calldata = IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode();
 
     let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
 

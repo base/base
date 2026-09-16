@@ -408,8 +408,7 @@ fn golden_composite_child_ids_selector_unknown_in_v1() {
 #[test]
 fn golden_inverted_policy_id_selector_unknown_in_v1() {
     let mut storage = fresh();
-    let calldata =
-        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode();
+    let calldata = IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode();
 
     let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
 
