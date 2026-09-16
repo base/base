@@ -78,6 +78,25 @@ pub enum BaseTransactionError {
     /// the transaction's journal writes are reverted and it is not added to the
     /// block.
     Eip8130(alloc::string::String),
+    /// A standard (legacy / EIP-2930 / EIP-1559 / EIP-7702) sender failed
+    /// EIP-8130 keystore authorization after ecrecover. The default EOA is
+    /// revoked, expired, or not an unrestricted owner. Consensus-critical from
+    /// Cobalt onward; cause for non-inclusion.
+    StandardSender(alloc::string::String),
+    /// A deposit transaction's sender is an EIP-8130 account whose inline
+    /// default EOA is revoked, expired, or no longer an unrestricted owner.
+    ///
+    /// A deposit originating from an unaliased L1 EOA (`msg.sender == tx.origin`)
+    /// arrives on L2 with `from` equal to that account, so without this gate a
+    /// revoked k1 key could still act as the account through the force-included
+    /// deposit path, bypassing the keystore revoke. Deposits cannot be dropped,
+    /// so this is not a non-inclusion error: like [`Self::DepositSystemTxPostRegolith`]
+    /// it bubbles up to the failed-deposit path in the `revm` handler
+    /// ([`BaseHaltReason::FailedDeposit`][crate::BaseHaltReason::FailedDeposit]),
+    /// which credits the `mint` to the account, bumps the nonce, and discards
+    /// the account-authorized call and value transfer. Consensus-critical from
+    /// Cobalt onward.
+    DepositSender(alloc::string::String),
 }
 
 impl BaseTransactionError {
@@ -87,6 +106,18 @@ impl BaseTransactionError {
     /// `.map_err(BaseTransactionError::eip8130)?`.
     pub fn eip8130(reason: impl Display) -> Self {
         Self::Eip8130(alloc::string::ToString::to_string(&reason))
+    }
+
+    /// Wraps a standard-transaction keystore rejection as
+    /// [`BaseTransactionError::StandardSender`].
+    pub fn standard_sender(reason: impl Display) -> Self {
+        Self::StandardSender(alloc::string::ToString::to_string(&reason))
+    }
+
+    /// Wraps a deposit-sender keystore rejection as
+    /// [`BaseTransactionError::DepositSender`].
+    pub fn deposit_sender(reason: impl Display) -> Self {
+        Self::DepositSender(alloc::string::ToString::to_string(&reason))
     }
 }
 
@@ -111,6 +142,12 @@ impl Display for BaseTransactionError {
             Self::Eip8130(reason) => {
                 write!(f, "EIP-8130 transaction rejected: {reason}")
             }
+            Self::StandardSender(reason) => {
+                write!(f, "standard transaction keystore authorization failed: {reason}")
+            }
+            Self::DepositSender(reason) => {
+                write!(f, "deposit transaction keystore neutralization: {reason}")
+            }
         }
     }
 }
@@ -119,6 +156,16 @@ impl InvalidTxError for BaseTransactionError {
     fn as_invalid_tx_err(&self) -> Option<&InvalidTransaction> {
         match self {
             Self::Base(tx) => Some(tx),
+            // Base's own variants (keystore authorization failures, missing
+            // enveloped tx, ...) are surfaced through their `Display` and the
+            // RPC conversion, not this borrowed view, so they return `None`
+            // like the enshrined 8130 (`Eip8130`) variant. Block builders still
+            // skip them: the flashblocks path branches on
+            // `alloy_evm::EvmError::as_invalid_tx_err`, which is `Some` for
+            // every `EVMError::Transaction(_)` regardless of this inner impl.
+            // This inner classifier is only consulted for `is_nonce_too_low`,
+            // which none of these are. Returning `Some(Str(..))` here would only
+            // strip the concrete reason from reth's generic RPC conversion.
             _ => None,
         }
     }
@@ -166,6 +213,14 @@ mod tests {
         assert_eq!(
             BaseTransactionError::eip8130("nonce too low").to_string(),
             "EIP-8130 transaction rejected: nonce too low"
+        );
+        assert_eq!(
+            BaseTransactionError::standard_sender("default EOA actor is revoked").to_string(),
+            "standard transaction keystore authorization failed: default EOA actor is revoked"
+        );
+        assert_eq!(
+            BaseTransactionError::deposit_sender("default EOA actor is revoked").to_string(),
+            "deposit transaction keystore neutralization: default EOA actor is revoked"
         );
     }
 

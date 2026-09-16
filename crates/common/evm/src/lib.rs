@@ -27,7 +27,7 @@ pub use transaction::{
 };
 
 mod handler;
-pub use handler::{BaseHandler, IsTxError};
+pub use handler::{BaseHandler, IsTxError, StandardKeystoreGate};
 
 mod precompiles;
 pub use precompiles::BasePrecompiles;
