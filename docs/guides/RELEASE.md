@@ -75,12 +75,6 @@ Updating only `main` does not change push-triggered workflows on existing releas
 
 Before retrying a legacy **Create RC** run, check its checkout ref: older definitions checked out the moving release branch rather than the triggering SHA, so rerunning them can tag a newer commit instead of recovering the missed RC.
 
-The tag-allocation and retry regression tests run locally without network access:
-
-```sh
-python3 etc/scripts/release/test_create_tag.py -v
-```
-
 ## Quick reference
 
 | Action | Workflow | Trigger | Output |
