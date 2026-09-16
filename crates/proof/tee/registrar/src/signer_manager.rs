@@ -700,6 +700,8 @@ where
                 return Err(error.into());
             }
         };
+        RegistrarMetrics::crl_indeterminate_certs_detected()
+            .increment(status.indeterminate.len() as u64);
 
         if let Some(first) = status.revoked.first() {
             RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_REVOKED);
@@ -754,8 +756,6 @@ where
 
         if let Some(first) = status.indeterminate.first() {
             RegistrarMetrics::record_crl_check(RegistrarMetrics::CRL_OUTCOME_INDETERMINATE);
-            RegistrarMetrics::crl_indeterminate_certs_detected()
-                .increment(status.indeterminate.len() as u64);
             warn!(
                 signer = %plan.signer,
                 indeterminate_certs = status.indeterminate.len(),
@@ -802,7 +802,7 @@ where
         let registry = Arc::clone(&self.registry);
         let pending_deregistrations = Arc::clone(&self.pending_deregistrations);
         let completed_revocation_cleanups = Arc::clone(&self.completed_revocation_cleanups);
-        let retry_delay = Self::retry_delay(self.tx_retry_delay, 1);
+        let tx_retry_delay = self.tx_retry_delay;
         let max_tx_retries = self.max_tx_retries;
         let mut task = task::spawn(async move {
             let work = async {
@@ -839,6 +839,7 @@ where
                             break;
                         }
                     }
+                    let retry_delay = Self::retry_delay(tx_retry_delay, retry + 1);
                     match tokio::time::timeout(
                         REVOCATION_CLEANUP_TIMEOUT,
                         registry.is_registered_signer(signer),
@@ -2529,14 +2530,18 @@ mod tests {
         }
         chain.set_outcomes([
             MockTxOutcome::Error(TxManagerError::Rpc("deregistration failed".into())),
+            MockTxOutcome::Error(TxManagerError::Rpc("deregistration failed".into())),
+            MockTxOutcome::Error(TxManagerError::Rpc("deregistration failed".into())),
             MockTxOutcome::Success,
         ]);
+        let start = tokio::time::Instant::now();
 
         let result = register_prepared(&manager, plan).await;
 
         assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
+        assert_eq!(start.elapsed(), TEST_RETRY_DELAY * 7);
         assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
-        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 2);
+        assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 4);
     }
 
     #[tokio::test]
@@ -3039,7 +3044,10 @@ mod tests {
                     let plan = synthetic_plan(SIGNER_A);
                     let cert_id = plan.certs[0].revocation_id;
                     let status = match outcome {
-                        RegistrarMetrics::CRL_OUTCOME_REVOKED => revoked_chain(cert_id),
+                        RegistrarMetrics::CRL_OUTCOME_REVOKED => CrlChainStatus {
+                            indeterminate: partially_indeterminate_chain(cert_id).indeterminate,
+                            ..revoked_chain(cert_id)
+                        },
                         RegistrarMetrics::CRL_OUTCOME_INDETERMINATE => {
                             partially_indeterminate_chain(cert_id)
                         }
@@ -3063,6 +3071,11 @@ mod tests {
                 "expected exactly one {outcome} CRL check"
             );
         }
+        assert!(snapshot.iter().any(|(key, _, _, value)| {
+            key.kind() == MetricKind::Counter
+                && key.key().name() == "base_registrar.crl_indeterminate_certs_detected"
+                && matches!(value, DebugValue::Counter(2))
+        }));
     }
 
     /// Sums a registrar counter across every series carrying `outcome`.
