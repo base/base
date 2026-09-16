@@ -153,6 +153,7 @@ pub struct BlockWatcher {
     results_tracker: ResultsTracker,
     block_time: Duration,
     pulse_tx: mpsc::Sender<InclusionPulse>,
+    canonical_head_stream_active: Option<Arc<AtomicBool>>,
     cancel_token: CancellationToken,
 }
 
@@ -163,9 +164,17 @@ impl BlockWatcher {
         results_tracker: ResultsTracker,
         block_time: Duration,
         pulse_tx: mpsc::Sender<InclusionPulse>,
+        canonical_head_stream_active: Option<Arc<AtomicBool>>,
         cancel_token: CancellationToken,
     ) -> Self {
-        Self { provider, results_tracker, block_time, pulse_tx, cancel_token }
+        Self {
+            provider,
+            results_tracker,
+            block_time,
+            pulse_tx,
+            canonical_head_stream_active,
+            cancel_token,
+        }
     }
 
     /// Spawns the watcher as a background task.
@@ -242,7 +251,10 @@ impl BlockWatcher {
                     }
                 }
 
-                if !availability_miss_logged && Instant::now() >= availability_deadline {
+                if self.should_emit_canonical_pulses()
+                    && !availability_miss_logged
+                    && Instant::now() >= availability_deadline
+                {
                     if last_availability_warning.elapsed() >= Duration::from_secs(15) {
                         warn!(
                             expected_boundary_ms_ago = Instant::now()
@@ -277,7 +289,8 @@ impl BlockWatcher {
                 + self.block_time.saturating_mul(
                     u32::try_from(blocks_advanced.saturating_sub(1)).unwrap_or(u32::MAX),
                 );
-            if !availability_miss_logged
+            if self.should_emit_canonical_pulses()
+                && !availability_miss_logged
                 && latest.observation.observed_at
                     >= pulse_expected_boundary + clock.availability_window()
                 && last_availability_warning.elapsed() >= Duration::from_secs(15)
@@ -311,11 +324,12 @@ impl BlockWatcher {
                 expected_boundary: pulse_expected_boundary,
                 observed_at: latest.observation.observed_at,
             };
-            if self
-                .pulse_tx
-                .send(InclusionPulse::canonical(block_pulse, block_match.released_gas))
-                .await
-                .is_err()
+            if self.should_emit_canonical_pulses()
+                && self
+                    .pulse_tx
+                    .send(InclusionPulse::canonical(block_pulse, block_match.released_gas))
+                    .await
+                    .is_err()
             {
                 return;
             }
@@ -420,6 +434,12 @@ impl BlockWatcher {
         }
 
         debug!("block watcher stopped");
+    }
+
+    fn should_emit_canonical_pulses(&self) -> bool {
+        self.canonical_head_stream_active
+            .as_ref()
+            .is_none_or(|active| !active.load(Ordering::Acquire))
     }
 
     /// Fetches the current tip so incremental scans begin at tip+1 after startup.

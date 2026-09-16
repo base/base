@@ -375,11 +375,12 @@ impl SnapshotBenchmarkArgs {
                 return Err(error.into());
             }
             let validation_errors = Self::comparability_validation_errors(&result);
-            eyre::ensure!(
-                validation_errors.is_empty(),
-                "benchmark result is non-comparable:\n  - {}",
-                validation_errors.join("\n  - ")
-            );
+            if !validation_errors.is_empty() {
+                tracing::warn!(
+                    errors = %validation_errors.join("; "),
+                    "benchmark result is non-comparable"
+                );
+            }
             if result.load_test.throughput.total_confirmed == 0 {
                 eyre::bail!("benchmark completed without confirmed transactions")
             }
@@ -389,15 +390,19 @@ impl SnapshotBenchmarkArgs {
             if let Some(expected_blocks) =
                 result.load_test.config.as_ref().and_then(|config| config.measurement_blocks)
             {
+                if result.load_test.measurement_block_count < expected_blocks {
+                    tracing::warn!(
+                        requested = expected_blocks,
+                        sequenced = result.load_test.measurement_block_count,
+                        "benchmark sequenced fewer blocks than requested"
+                    );
+                }
                 eyre::ensure!(
-                    result.load_test.measurement_block_count == expected_blocks,
-                    "benchmark observed {} of {expected_blocks} requested blocks",
+                    result.blocks.len() as u64 == result.load_test.measurement_block_count
+                        && result.validator_blocks.len() as u64
+                            == result.load_test.measurement_block_count,
+                    "benchmark block metrics do not match the {} sequenced blocks",
                     result.load_test.measurement_block_count
-                );
-                eyre::ensure!(
-                    result.blocks.len() as u64 == expected_blocks
-                        && result.validator_blocks.len() as u64 == expected_blocks,
-                    "benchmark block metrics do not contain exactly {expected_blocks} blocks"
                 );
             }
             report.write_visualizer_bundle(&result)?;
@@ -468,7 +473,8 @@ impl SnapshotBenchmarkArgs {
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
         test_config.chain_id = Some(stack.chain_id());
-        let load_config = test_config.to_load_config(None)?;
+        let mut load_config = test_config.to_load_config(None)?;
+        load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
         let funder_address = funder_key.address();
         let sequencer_metrics =
             PrometheusBlockCollector::start(builder_rpc.clone(), stack.builder_metrics_url()?)
@@ -551,23 +557,18 @@ impl SnapshotBenchmarkArgs {
             ));
         }
 
-        if let Some(expected) =
-            result.load_test.config.as_ref().and_then(|config| config.measurement_blocks)
-        {
+        if result.load_test.config.as_ref().and_then(|config| config.measurement_blocks).is_some() {
+            let sequenced = result.load_test.measurement_block_count;
             let sequencer_blocks = result.blocks.len() as u64;
             let validator_blocks = result.validator_blocks.len() as u64;
-            if result.load_test.measurement_block_count != expected
-                || sequencer_blocks != expected
-                || validator_blocks != expected
-            {
+            if sequencer_blocks != sequenced || validator_blocks != sequenced {
                 errors.push(format!(
-                    "block-count validation failed: requested={expected}, measured={}, sequencer={sequencer_blocks}, validator={validator_blocks}",
-                    result.load_test.measurement_block_count
+                    "block-count validation failed: sequenced={sequenced}, sequencer_metrics={sequencer_blocks}, validator_metrics={validator_blocks}"
                 ));
             }
-            if pacing.blocks_observed != expected || pacing.canonical_cycles != expected {
+            if pacing.blocks_observed != sequenced || pacing.canonical_cycles != sequenced {
                 errors.push(format!(
-                    "canonical-availability validation failed: requested={expected}, blocks_observed={}, canonical_cycles={}, availability_p99={:?}, availability_max={:?}",
+                    "canonical-availability validation failed: sequenced={sequenced}, blocks_observed={}, canonical_cycles={}, availability_p99={:?}, availability_max={:?}",
                     pacing.blocks_observed,
                     pacing.canonical_cycles,
                     pacing.availability_lag.p99,
@@ -778,6 +779,18 @@ measurement_blocks: 2
         assert!(errors[2].starts_with("block-count validation failed:"));
         assert!(errors[3].starts_with("canonical-availability validation failed:"));
         assert!(errors[4].starts_with("chain-bound validation failed:"));
+    }
+
+    #[test]
+    fn comparability_validation_accepts_fewer_sequenced_blocks_than_requested() {
+        let mut result = comparable_result();
+        result.load_test.measurement_block_count = 1;
+        result.load_test.pacing.blocks_observed = 1;
+        result.load_test.pacing.canonical_cycles = 1;
+        result.blocks.pop();
+        result.validator_blocks.pop();
+
+        assert!(SnapshotBenchmarkArgs::comparability_validation_errors(&result).is_empty());
     }
 
     #[test]

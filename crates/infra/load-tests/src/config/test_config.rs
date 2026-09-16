@@ -687,6 +687,7 @@ impl TestConfig {
             batch_size: self.batch_size as usize,
             max_gas_price: crate::runner::DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: self.flashblocks_ws.clone(),
+            canonical_heads_ws: None,
             fresh_recipient_ratio: self.fresh_recipient_ratio,
             validity_ratio: self.validity.ratio,
             validity_predicates: self.validity.to_templates()?,

@@ -25,10 +25,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockPulse, BlockWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer, InclusionPulse,
-    InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage, PipelineStartConfig,
-    PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker, SignedBatch,
-    SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer,
+    InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
+    PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
+    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -456,16 +456,31 @@ impl LoadRunner {
         let receipt_provider = RootProvider::<Base>::new_http(self.config.query_rpc.clone());
         let watcher_cancel = self.cancel_token.child_token();
         let _watcher_cancel_guard = watcher_cancel.clone().drop_guard();
+        let canonical_heads_ws = self.config.canonical_heads_ws.clone();
+        let canonical_head_stream_active =
+            canonical_heads_ws.as_ref().map(|_| Arc::new(AtomicBool::new(false)));
         let block_watcher_task = Some(
             BlockWatcher::new(
                 receipt_provider.clone(),
                 results_tracker.clone(),
                 self.config.block_time,
                 inclusion_pulse_tx.clone(),
+                canonical_head_stream_active.clone(),
                 watcher_cancel.clone(),
             )
             .start(),
         );
+        let canonical_head_watcher_task = canonical_heads_ws.map(|ws_url| {
+            CanonicalHeadWatcher::new(
+                ws_url,
+                results_tracker.clone(),
+                self.config.block_time,
+                inclusion_pulse_tx.clone(),
+                canonical_head_stream_active.expect("created with canonical head URL"),
+                watcher_cancel.clone(),
+            )
+            .start()
+        });
         let flashblock_watcher_task = self.config.flashblocks_ws.clone().map(|ws_url| {
             FlashblockWatcher::new(
                 ws_url,
@@ -1131,6 +1146,14 @@ impl LoadRunner {
                 _ => {}
             }
         }
+        if let Some(task) = canonical_head_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(error)) if error.is_panic() => {
+                    warn!(error = %error, "canonical head watcher panicked");
+                }
+                _ => {}
+            }
+        }
 
         let confirmed = self.collector.confirmed_count();
         info!(confirmed, submitted, "confirmation collection complete");
@@ -1637,6 +1660,11 @@ impl LoadRunner {
                 let Some(canonical) = pulse.canonical else {
                     continue;
                 };
+                if last_recorded_canonical_block
+                    .is_some_and(|recorded| canonical.number <= recorded)
+                {
+                    continue;
+                }
                 enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
                 Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
                 last_recorded_canonical_block = Some(canonical.number);
@@ -1649,6 +1677,12 @@ impl LoadRunner {
                     let Some(pulse) = maybe_pulse else {
                         return Ok(());
                     };
+                    if pulse.canonical.is_some_and(|canonical| {
+                        last_recorded_canonical_block
+                            .is_some_and(|recorded| canonical.number <= recorded)
+                    }) {
+                        continue;
+                    }
                     if let Some(canonical) = pulse.canonical {
                         last_block_gas_limit = canonical.gas_limit;
                         enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
