@@ -32,6 +32,20 @@ const VERSION: &[u8] = b"1";
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AssetV3;
 
+/// One token movement: `caller` sends `amount` from `from` to `to`.
+///
+/// `from` / `to` are [`NonZeroAddress`]: callers validate zero addresses (and choose the typed
+/// revert) before any policy SLOAD. `policies` carries all three transfer policy ids pre-read from
+/// their shared slot; `Some` enforces them (unprivileged path), `None` skips them (factory-privileged
+/// path).
+struct TokenTransfer<'a> {
+    caller: Address,
+    from: NonZeroAddress,
+    to: NonZeroAddress,
+    amount: U256,
+    policies: Option<&'a TransferPolicyIds>,
+}
+
 impl AssetV3 {
     const PAUSABLE_FEATURES: &[IB20::PausableFeature] = &[
         IB20::PausableFeature::TRANSFER,
@@ -54,30 +68,22 @@ impl AssetV3 {
     pub const MAX_UI_MULTIPLIER: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
-    ///
-    /// `from` / `to` are [`NonZeroAddress`]: callers validate zero addresses (and choose the
-    /// typed revert) before any policy SLOAD. `policies` carries all three transfer policy ids
-    /// pre-read from their shared slot by the caller; `Some` enforces them (unprivileged path),
-    /// `None` skips them (factory-privileged path).
     fn transfer_inner<S: AssetAccounting, A: PolicyAccounting>(
         &self,
         token: &mut B20AssetToken<S, A>,
-        caller: Address,
-        from: NonZeroAddress,
-        to: NonZeroAddress,
-        amount: U256,
-        policies: Option<&TransferPolicyIds>,
+        transfer: TokenTransfer<'_>,
     ) -> Result<()> {
-        let from = from.get();
-        let to = to.get();
-        if let Some(policies) = policies {
+        let from = transfer.from.get();
+        let to = transfer.to.get();
+        if let Some(policies) = transfer.policies {
             B20Guards::ensure_authorized_by_id(
                 token,
                 B20PolicyType::TransferExecutor.id(),
                 policies.executor,
-                caller,
+                transfer.caller,
             )?;
-            let should_check_sender_policy = caller != from || policies.executor != policies.sender;
+            let should_check_sender_policy =
+                transfer.caller != from || policies.executor != policies.sender;
             if should_check_sender_policy {
                 B20Guards::ensure_authorized_by_id(
                     token,
@@ -93,7 +99,7 @@ impl AssetV3 {
                 to,
             )?;
         }
-        self.move_balance(token, from, to, amount)
+        self.move_balance(token, from, to, transfer.amount)
     }
 
     /// Debits `from`, credits `to`, and emits `Transfer(from, to, amount)`.
@@ -254,10 +260,16 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
         if privileged {
-            return self.transfer_inner(token, caller, from, to, amount, None);
+            return self.transfer_inner(
+                token,
+                TokenTransfer { caller, from, to, amount, policies: None },
+            );
         }
         let policies = token.accounting().transfer_policy_ids()?;
-        self.transfer_inner(token, caller, from, to, amount, Some(&policies))
+        self.transfer_inner(
+            token,
+            TokenTransfer { caller, from, to, amount, policies: Some(&policies) },
+        )
     }
 
     fn transfer_from(
@@ -285,11 +297,17 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
             }));
         }
         if privileged {
-            self.transfer_inner(token, caller, from, to, amount, None)?;
+            self.transfer_inner(
+                token,
+                TokenTransfer { caller, from, to, amount, policies: None },
+            )?;
         } else {
             // One SLOAD fetches all transfer policy ids for the shared transfer checks.
             let policies = token.accounting().transfer_policy_ids()?;
-            self.transfer_inner(token, caller, from, to, amount, Some(&policies))?;
+            self.transfer_inner(
+                token,
+                TokenTransfer { caller, from, to, amount, policies: Some(&policies) },
+            )?;
         }
         if is_infinite {
             return Ok(());
