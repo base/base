@@ -87,10 +87,6 @@ impl<'a> B20FactoryStorage<'a> {
     }
 
     /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
-    ///
-    /// Tries the borrowed `createB20` fast path first (see [`CreateB20Request`]) before falling
-    /// through to the generic owned decode below, so an aliased `initCalls` payload never forces
-    /// the N x M owned copy Alloy's `detokenize` would otherwise perform. Removal: `alloy-aliasing`.
     fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -175,15 +171,7 @@ impl<'a> B20FactoryStorage<'a> {
     }
 }
 
-/// Normalized input to [`B20FactoryStorage::run_create_b20`]. Both entry paths produce this shape:
-/// the borrowed fast path decodes an aliased `initCalls` payload without materializing the `bytes[]`
-/// blobs, while the owned safety net borrows fields from an already-decoded
-/// [`IB20Factory::createB20Call`]. `params` and `init_calls` never copy their payloads, so aliased
-/// offsets cost fat-pointers instead of blob copies.
-///
-/// Removal (`alloy-aliasing`): once Alloy's owned decode stops copying aliased offsets, delete this
-/// type with `try_from_calldata`/`run_create_b20` and the fast-path arm in [`B20FactoryStorage::route`],
-/// and revert the other `alloy-aliasing` sites to the plain owned decode.
+/// Normalized input to [`B20FactoryStorage::run_create_b20`].
 struct CreateB20Request<'a> {
     variant: IB20Factory::B20Variant,
     salt: B256,
@@ -192,16 +180,7 @@ struct CreateB20Request<'a> {
 }
 
 impl<'a> CreateB20Request<'a> {
-    /// Tries to interpret `calldata` as a `createB20` dialable at `version`.
-    ///
-    /// `None` when the leading 4 bytes aren't the `createB20` selector, `version` doesn't dial it,
-    /// or the borrowed decode rejects the payload — which it does iff Alloy's owned
-    /// `abi_decode_validate` would. The caller then falls through to the generic owned decode, which
-    /// reproduces the authoritative, consensus-frozen error bytes.
-    ///
-    /// `Some` when the borrowed decode accepted: the token matches what the owned path would have
-    /// produced, minus the copying `detokenize` step, and its fields are read as slices into
-    /// `calldata`.
+    /// Returns a borrowed `createB20` request when `calldata` selects and validates at `version`.
     fn try_from_calldata(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Factory::createB20Call::SELECTOR {
@@ -210,12 +189,7 @@ impl<'a> CreateB20Request<'a> {
         if !version.abi().valid_selector(selector) {
             return None;
         }
-        // Borrowed, validating decode. `decode_sequence` + `valid_token` accept exactly the set
-        // Alloy's owned `abi_decode_validate` accepts — its validating config sets `validate`
-        // without `strict`, adding no decode-time checks over `decode_sequence`, and the only extra
-        // step is the `type_check` that `valid_token` performs — but stop before the copying
-        // `detokenize`, which is what would materialize aliased `initCalls` offsets into N owned
-        // copies. `None` means the owned decode would also reject, so the caller falls through.
+        // `decode_sequence` followed by `valid_token` matches Alloy's validating call decode.
         let rest = &calldata[4..];
         let token =
             abi::decode_sequence::<<IB20Factory::createB20Call as SolCall>::Token<'a>>(rest)
@@ -233,9 +207,7 @@ impl<'a> CreateB20Request<'a> {
         })
     }
 
-    /// Builds a `CreateB20Request` from an already owned-decoded call. Only the safety-net arm in
-    /// [`B20FactoryStorage::route`] reaches this: every accepted `createB20` takes the borrowed
-    /// fast path first.
+    /// Builds a `CreateB20Request` from an already-decoded call.
     fn from_call(call: &'a IB20Factory::createB20Call) -> Self {
         Self {
             variant: call.variant,
@@ -921,14 +893,6 @@ mod tests {
         );
     }
 
-    // --- Aliased-`bytes[]` `initCalls` borrowed decode ------------------------------------------
-
-    /// Builds `createB20` calldata where `n` `initCalls` element offsets all alias one shared
-    /// `tail`.
-    ///
-    /// Starts from a valid one-element encoding and widens the array's offset table so every
-    /// element offset points at the same tail blob. `initCalls` is `createB20`'s last argument, so
-    /// unlike a leading aliased array, nothing after it needs its offsets shifted.
     fn aliased_create_b20_calldata(
         n: usize,
         tail: &[u8],
@@ -979,8 +943,6 @@ mod tests {
         out
     }
 
-    /// Borrowed slices route to real state effects: `n` aliased `initCalls` entries each execute
-    /// once, not one entry re-copied `n` times.
     #[test]
     fn aliased_create_b20_redispatches_each_entry() {
         let mut storage = HashMapStorageProvider::new(1);
@@ -1008,9 +970,6 @@ mod tests {
         });
     }
 
-    /// An aliased-offset `initCalls` payload and a semantically equivalent, honestly-encoded (`n`
-    /// distinct copies) payload must produce identical dispatch output — the borrowed fast path
-    /// changes only how the wire is decoded, never what it means.
     #[test]
     fn aliased_create_b20_matches_non_aliased_output() {
         let creator = Address::repeat_byte(0xCA);
@@ -1054,8 +1013,6 @@ mod tests {
         );
     }
 
-    /// A 1,024-way aliased-offset payload is accepted and executes. This is the front-door
-    /// behavioral counterpart to the amplification the borrowed decode eliminates.
     #[test]
     fn large_aliased_create_b20_succeeds() {
         let mut storage = HashMapStorageProvider::new(1);
@@ -1083,16 +1040,6 @@ mod tests {
         });
     }
 
-    /// Behavioral parity check against the ABI oracle, at `FactoryVersion::V1` (the only live
-    /// version):
-    ///
-    /// * `route` accepts iff `createB20Call::abi_decode_validate(payload).is_ok()`;
-    /// * on decode-time rejection, the returned error equals `version.abi().decode(payload)
-    ///   .unwrap_err()`, the same fall-through the fast path guarantees.
-    ///
-    /// The aliased-offsets row is the front-door counterpart to the amplification the borrowed
-    /// decode eliminates. Any consensus-relevant drift (accept-set change, error-byte change)
-    /// makes the offending row fail with its name in the assertion.
     #[test]
     fn create_b20_dispatch_matches_owned_abi_oracle() {
         let salt = B256::repeat_byte(0x50);

@@ -184,8 +184,6 @@ impl FactoryV1 {
 }
 
 impl Factory for FactoryV1 {
-    // Removal (`alloy-aliasing`): fold this back into an owned `create_b20(call)`, with
-    // `init_stablecoin`/`init_asset_token` taking `Vec<Bytes>` again.
     fn create_b20_decoded(
         &self,
         storage: &mut B20FactoryStorage<'_>,

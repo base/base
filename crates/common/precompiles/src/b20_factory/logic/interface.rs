@@ -23,8 +23,6 @@ pub trait Factory {
     /// `params`/`init_calls` let the dispatcher decode straight from calldata without copying;
     /// `B20FactoryStorage::create_b20` is a thin owned-call convenience that borrows into this.
     ///
-    /// Removal (`alloy-aliasing`): restore an owned `create_b20` taking `params: &Bytes` and
-    /// `init_calls: Vec<Bytes>`, and revert `B20FactoryStorage::create_b20` to call it.
     fn create_b20_decoded(
         &self,
         storage: &mut B20FactoryStorage<'_>,
