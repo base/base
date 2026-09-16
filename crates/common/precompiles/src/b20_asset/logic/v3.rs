@@ -77,7 +77,8 @@ impl AssetV3 {
                 policies.executor,
                 caller,
             )?;
-            if caller != from || policies.executor != policies.sender {
+            let should_check_sender_policy = caller != from || policies.executor != policies.sender;
+            if should_check_sender_policy {
                 B20Guards::ensure_authorized_by_id(
                     token,
                     B20PolicyType::TransferSender.id(),
