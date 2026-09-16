@@ -11,6 +11,7 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::RootProvider;
 use alloy_sol_types::{SolCall, SolError, sol};
 use async_trait::async_trait;
+use tracing::warn;
 
 use crate::{
     ContractError,
@@ -589,11 +590,16 @@ impl AggregateVerifierClient for AggregateVerifierContractClient {
                     }
                     Ok(false) => {}
                     Err(version_error) => {
-                        return Err(ContractError::validation(format!(
-                            "intervalsForStartingBlock failed on {verifier_address} ({error}), \
-                             and version() also failed ({version_error}); cannot determine \
-                             which interval ABI this verifier speaks"
-                        )));
+                        // Undetermined ABI. Return the original error rather than a new
+                        // one: callers key on `is_missing_method()` to treat a non-verifier
+                        // address as simply having no intervals, and wrapping would break
+                        // that. Log the second failure so it is not lost.
+                        warn!(
+                            %verifier_address,
+                            %version_error,
+                            "version() failed while disambiguating intervalsForStartingBlock"
+                        );
+                        return Err(error);
                     }
                 }
 
