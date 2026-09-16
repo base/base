@@ -437,15 +437,6 @@ impl RollupConfig {
         (full_millis.saturating_div(1_000), (full_millis % 1_000) as u16)
     }
 
-    /// Computes the lower-bound block number for a timestamp, relative to the L2 genesis time and
-    /// the block time.
-    ///
-    /// This uses floor division, so multiple blocks can share the same seconds-denominated
-    /// timestamp while still mapping to the same lower bound.
-    pub const fn block_number_lower_bound_from_timestamp(&self, timestamp: u64) -> u64 {
-        timestamp.saturating_sub(self.genesis.l2_time).saturating_div(self.block_time)
-    }
-
     /// Checks the scalar value in Ecotone.
     pub fn check_ecotone_l1_system_config_scalar(scalar: [u8; 32]) -> Result<(), &'static str> {
         let version_byte = scalar[0];
@@ -1286,17 +1277,5 @@ mod tests {
     fn l2_block_full_millis_saturates() {
         let saturating = rollup_config_with_denim(u64::MAX, u64::MAX, None);
         assert_eq!(saturating.l2_block_timestamp_millis(1), u64::MAX);
-    }
-
-    #[test]
-    fn test_compute_block_number_lower_bound_from_time() {
-        let cfg = RollupConfig {
-            genesis: ChainGenesis { l2_time: 10, ..Default::default() },
-            block_time: 2,
-            ..Default::default()
-        };
-
-        assert_eq!(cfg.block_number_lower_bound_from_timestamp(20), 5);
-        assert_eq!(cfg.block_number_lower_bound_from_timestamp(30), 10);
     }
 }
