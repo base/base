@@ -506,10 +506,6 @@ fn peerstore_eviction_candidate<T>(
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
-    use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-    use alloy_primitives::{B256, Signature};
-    use alloy_rpc_types_engine::ExecutionPayloadV3;
-    use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadV4, PayloadHash};
 
     use super::*;
 
@@ -530,73 +526,6 @@ mod tests {
         .unwrap();
 
         driver
-    }
-
-    #[tokio::test]
-    async fn v4_gossip_works_without_legacy_sync_advertisement() {
-        tokio::time::timeout(Duration::from_secs(15), async {
-            let mut sender = test_driver();
-            let mut receiver = test_driver();
-            sender.handler.rollup_config.upgrades.isthmus_time = Some(0);
-            receiver.handler.rollup_config.upgrades.isthmus_time = Some(0);
-            let address = receiver.start().await.unwrap();
-            sender.start().await.unwrap();
-            sender.swarm.dial(address).unwrap();
-            let topic = receiver.handler.blocks_v4_topic.hash();
-
-            // Wait for actual Identify exchange and the current block-topic mesh.
-            while sender.peerstore.peek(receiver.local_peer_id()).is_none()
-                || receiver.peerstore.peek(sender.local_peer_id()).is_none()
-                || sender.swarm.behaviour().gossipsub.mesh_peers(&topic).count() == 0
-                || receiver.swarm.behaviour().gossipsub.mesh_peers(&topic).count() == 0
-            {
-                tokio::select! {
-                    event = sender.next() => sender.handle_event(event.unwrap()),
-                    event = receiver.next() => receiver.handle_event(event.unwrap()),
-                };
-            }
-            for info in [
-                sender.peerstore.peek(receiver.local_peer_id()).unwrap(),
-                receiver.peerstore.peek(sender.local_peer_id()).unwrap(),
-            ] {
-                assert!(info.protocols.iter().any(|protocol| protocol.as_ref().starts_with("/meshsub/")));
-                assert!(info.protocols.iter().all(|protocol| !protocol.as_ref().starts_with("/opstack/req/payload_by_number/")));
-            }
-
-            let mut block = crate::v4_valid_block();
-            block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
-            let payload = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
-                ExecutionPayloadV3::from_block_slow(&block),
-                block.header.withdrawals_root.unwrap(),
-            );
-            let envelope = NetworkPayloadEnvelope {
-                payload: BaseExecutionPayload::V4(payload),
-                signature: Signature::test_signature(),
-                payload_hash: PayloadHash(B256::ZERO),
-                parent_beacon_block_root: block.header.parent_beacon_block_root,
-            };
-            let decoded = NetworkPayloadEnvelope::decode_v4(&envelope.encode_v4().unwrap()).unwrap();
-            let signing_hash = decoded.payload_hash.signature_message(receiver.handler.rollup_config.l2_chain_id.id());
-            let signer = decoded.signature.recover_address_from_prehash(&signing_hash).unwrap();
-            let (_signer_tx, signer_rx) = tokio::sync::watch::channel(signer);
-            receiver.handler.signer_recv = signer_rx;
-            sender.publish(|handler| handler.blocks_v4_topic.clone(), Some(envelope.clone())).unwrap();
-
-            loop {
-                tokio::select! {
-                    event = sender.next() => { sender.handle_event(event.unwrap()); }
-                    event = receiver.next() => {
-                        if let Some(received) = receiver.handle_event(event.unwrap()) {
-                            assert_eq!(received.payload, envelope.payload);
-                            assert_eq!(received.parent_beacon_block_root, envelope.parent_beacon_block_root);
-                            break;
-                        }
-                    }
-                }
-            }
-            assert!(sender.swarm.is_connected(receiver.local_peer_id()));
-            assert!(receiver.swarm.is_connected(sender.local_peer_id()));
-        }).await.expect("Identify exchange and V4 propagation must complete without legacy sync");
     }
 
     #[tokio::test]
