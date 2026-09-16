@@ -75,7 +75,15 @@ impl<'a> B20FactoryStorage<'a> {
         upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        FactoryV1.create_b20(self, call, address_hash, upgrade)
+        let decoded = DecodedCreateB20::from_owned(&call);
+        FactoryV1.create_b20_decoded(
+            self,
+            decoded.variant,
+            decoded.params,
+            &decoded.init_calls,
+            address_hash,
+            upgrade,
+        )
     }
 
     /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
