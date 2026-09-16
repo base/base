@@ -32,17 +32,23 @@ const FORK_AWARE_INTERVALS_VERSION: (u64, u64) = (0, 2);
 /// `SLOW_*` and `FAST_*` pairs. Exactly one of the two call shapes is valid for any given
 /// address, and the version is what decides which.
 ///
-/// A version string that does not parse is treated as fork-aware. Every deployed verifier
-/// reports `MAJOR.MINOR.PATCH`, so an unreadable one means these bindings are behind the
-/// chain; failing on the new path produces a better error than quietly calling getters
-/// that no longer exist.
+/// Anything that is not exactly three numeric components is treated as fork-aware. Every
+/// deployed verifier reports `MAJOR.MINOR.PATCH`, so an unreadable one means these bindings
+/// are behind the chain; failing on the new path produces a better error than quietly
+/// calling getters that no longer exist. The patch component is required but not compared —
+/// a string like `0.1.x` is malformed, not a 0.1 release, and must not buy its way onto the
+/// legacy path by having two parseable components in front.
 fn supports_fork_aware_intervals(version: &str) -> bool {
     let core = version.split(['-', '+']).next().unwrap_or_default();
     let mut parts = core.split('.');
-    let (Some(major), Some(minor)) = (parts.next(), parts.next()) else {
+    let (Some(major), Some(minor), Some(patch), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
         return true;
     };
-    let (Ok(major), Ok(minor)) = (major.trim().parse::<u64>(), minor.trim().parse::<u64>()) else {
+    let (Ok(major), Ok(minor), Ok(_)) =
+        (major.trim().parse::<u64>(), minor.trim().parse::<u64>(), patch.trim().parse::<u64>())
+    else {
         return true;
     };
     (major, minor) >= FORK_AWARE_INTERVALS_VERSION
@@ -900,6 +906,13 @@ mod tests {
         assert!(supports_fork_aware_intervals(""));
         assert!(supports_fork_aware_intervals("unversioned"));
         assert!(supports_fork_aware_intervals("3"));
+
+        // Malformed strings whose first two components happen to parse below the boundary
+        // must not reach the legacy getters.
+        assert!(supports_fork_aware_intervals("0.1"));
+        assert!(supports_fork_aware_intervals("0.1.x"));
+        assert!(supports_fork_aware_intervals("0.1.0.1"));
+        assert!(supports_fork_aware_intervals("0.1."));
     }
 
     #[test]
