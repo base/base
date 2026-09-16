@@ -33,7 +33,7 @@ use super::{
     ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
+    InProcessNodeRuntime, L2ContainerConfig, ShadowSequencer, ShadowSequencerConfig,
 };
 use crate::config::{ANVIL_ACCOUNT_1, BATCHER, SEQUENCER};
 
@@ -212,6 +212,7 @@ impl L2Stack {
 
         // 1. Start the builder (in-process EL).
         let builder_config = InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec: builder_chain_spec,
             datadir: config.builder_datadir,
             jwt_secret: config.jwt_secret,
@@ -298,6 +299,7 @@ impl L2Stack {
         };
 
         let client_config = InProcessClientConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec: ChainSpecSource::GenesisJson(config.l2_genesis.clone()),
             datadir: config.client_datadir,
             jwt_secret: config.jwt_secret,

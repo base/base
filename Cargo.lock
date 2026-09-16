@@ -6348,6 +6348,7 @@ dependencies = [
  "indicatif 0.18.6",
  "jsonrpsee",
  "k256 0.13.4",
+ "libc",
  "libp2p",
  "nanoid",
  "prometheus-scraper",

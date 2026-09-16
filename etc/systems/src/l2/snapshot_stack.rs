@@ -19,8 +19,8 @@ use url::Url;
 use super::{
     ChainSpecSource, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
     InProcessClientConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ContainerConfig,
-    SnapshotBoundary,
+    InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
+    L2ContainerConfig, SnapshotBoundary,
 };
 use crate::{DevnetBlockInterval, DevnetSnapshotConfig};
 
@@ -57,6 +57,7 @@ pub struct SnapshotL2Stack {
     follow_consensus: Option<InProcessFollowConsensus>,
     follow_config: Option<InProcessFollowConsensusConfig>,
     block_interval: DevnetBlockInterval,
+    block_gas_limit: u64,
     rollup_config: Arc<RollupConfig>,
     chain_id: u64,
 }
@@ -89,6 +90,7 @@ impl SnapshotL2Stack {
         let jwt_secret = JwtSecret::random();
 
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::Host,
             chain_spec: Arc::clone(&chain_spec),
             datadir: Some(config.snapshot.builder_datadir),
             jwt_secret,
@@ -124,10 +126,13 @@ impl SnapshotL2Stack {
             first_block_timestamp > boundary.head.timestamp,
             "snapshot boundary timestamp must be earlier than the local schedule anchor"
         );
-        let system_config = Self::with_eip1559_elasticity_override(
+        let system_config = Self::with_snapshot_overrides(
             boundary.system_config,
+            block_interval,
+            config.snapshot.block_gas_limit,
             config.snapshot.eip1559_elasticity_override,
         );
+        let block_gas_limit = system_config.gas_limit;
         let rollup_config = Arc::new(Self::anchored_rollup_config(
             (*canonical_rollup_config).clone(),
             boundary.head.number,
@@ -136,6 +141,7 @@ impl SnapshotL2Stack {
         )?);
 
         let client = InProcessClient::start(InProcessClientConfig {
+            runtime: InProcessNodeRuntime::Host,
             chain_spec: ChainSpecSource::Parsed(chain_spec),
             datadir: Some(config.snapshot.client_datadir),
             jwt_secret,
@@ -214,6 +220,7 @@ impl SnapshotL2Stack {
             follow_consensus: None,
             follow_config: Some(follow_config),
             block_interval,
+            block_gas_limit,
             rollup_config: canonical_rollup_config,
             chain_id: chain.l2_chain_id,
         })
@@ -223,9 +230,9 @@ impl SnapshotL2Stack {
     pub async fn stop_sequencer(&mut self) -> Result<()> {
         let consensus = self
             .standalone_consensus
-            .take()
+            .as_ref()
             .ok_or_else(|| eyre::eyre!("snapshot sequencer is not running"))?;
-        consensus.shutdown().await;
+        consensus.stop_sequencer().await?;
         Ok(())
     }
 
@@ -296,11 +303,15 @@ impl SnapshotL2Stack {
         chain_spec
     }
 
-    /// Applies the benchmark-only EIP-1559 elasticity override to locally sequenced payloads.
-    const fn with_eip1559_elasticity_override(
+    /// Applies local snapshot overrides to the recovered system configuration.
+    fn with_snapshot_overrides(
         mut system_config: SystemConfig,
+        block_interval: DevnetBlockInterval,
+        block_gas_limit: Option<u64>,
         elasticity_override: Option<u32>,
     ) -> SystemConfig {
+        system_config.gas_limit =
+            block_gas_limit.unwrap_or_else(|| block_interval.snapshot_block_gas_limit());
         if let Some(elasticity) = elasticity_override {
             system_config.eip1559_elasticity = Some(elasticity);
         }
@@ -365,6 +376,11 @@ impl SnapshotL2Stack {
     /// Returns the configured interval between locally produced blocks.
     pub const fn block_interval(&self) -> DevnetBlockInterval {
         self.block_interval
+    }
+
+    /// Returns the block gas limit for locally produced descendants.
+    pub const fn block_gas_limit(&self) -> u64 {
+        self.block_gas_limit
     }
 
     /// Returns the L2 chain ID of the continued snapshot.
@@ -511,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_elasticity_override_preserves_other_system_config_fields() {
+    fn snapshot_overrides_replace_gas_limit_and_elasticity() {
         let original = SystemConfig {
             gas_limit: 1_200_000_000,
             eip1559_denominator: Some(50),
@@ -520,12 +536,38 @@ mod tests {
             ..Default::default()
         };
 
-        let overridden = SnapshotL2Stack::with_eip1559_elasticity_override(original, Some(1));
+        let overridden = SnapshotL2Stack::with_snapshot_overrides(
+            original,
+            DevnetBlockInterval::TwoSeconds,
+            Some(12_000_000_000),
+            Some(1),
+        );
 
         assert_eq!(overridden.eip1559_elasticity, Some(1));
         assert_eq!(overridden.eip1559_denominator, original.eip1559_denominator);
-        assert_eq!(overridden.gas_limit, original.gas_limit);
+        assert_eq!(overridden.gas_limit, 12_000_000_000);
         assert_eq!(overridden.min_base_fee, original.min_base_fee);
+    }
+
+    #[test]
+    fn snapshot_gas_limit_defaults_follow_block_interval() {
+        let original = SystemConfig { gas_limit: 1_200_000_000, ..Default::default() };
+
+        let two_second = SnapshotL2Stack::with_snapshot_overrides(
+            original,
+            DevnetBlockInterval::TwoSeconds,
+            None,
+            None,
+        );
+        let subsecond = SnapshotL2Stack::with_snapshot_overrides(
+            original,
+            DevnetBlockInterval::TwoHundredMilliseconds,
+            None,
+            None,
+        );
+
+        assert_eq!(two_second.gas_limit, 10_000_000_000);
+        assert_eq!(subsecond.gas_limit, 1_000_000_000);
     }
 
     #[test]

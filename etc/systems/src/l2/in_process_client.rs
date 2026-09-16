@@ -35,7 +35,7 @@ use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
-use super::TestNodeRuntime;
+use super::InProcessNodeRuntime;
 
 type BuiltExtensions = (Vec<Box<dyn BaseNodeExtension>>, Option<FlashblocksConfig>);
 
@@ -51,6 +51,8 @@ pub enum ChainSpecSource {
 /// Configuration for starting an in-process client node.
 #[derive(Debug)]
 pub struct InProcessClientConfig {
+    /// Runtime sizing policy for the execution node.
+    pub runtime: InProcessNodeRuntime,
     /// Chain specification source.
     pub chain_spec: ChainSpecSource,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
@@ -134,7 +136,9 @@ impl InProcessClient {
 
         let (data_dir, temp_dir) = Self::prepare_datadir(config.datadir.clone())?;
         let runtime = RuntimeBuilder::new(
-            TestNodeRuntime::config()
+            config
+                .runtime
+                .config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;
