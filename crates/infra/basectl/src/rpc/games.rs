@@ -583,8 +583,8 @@ mod tests {
         push_abi(&asserter, &(1_u32, 1_u64, unsupported_game));
         push_abi(&asserter, &unsupported_impl);
         asserter.push_success(&Bytes::new());
-        asserter.push_success(&Bytes::new());
         push_abi(&asserter, &aggregate_impl);
+        push_abi(&asserter, &"0.3.0".to_string());
         push_abi(&asserter, &(U256::from(100), U256::from(10)));
 
         let skipped = client
@@ -657,7 +657,9 @@ mod tests {
 
         push_game_details_reads(&asserter);
         push_abi(&asserter, &(game, 0_u64));
-        push_abi(&asserter, &(U256::from(1000), U256::from(100)));
+        push_abi(&asserter, &"0.2.0".to_string());
+        push_abi(&asserter, &U256::from(1000));
+        push_abi(&asserter, &U256::from(100));
 
         let details = client.game_details(game).await.unwrap();
 
@@ -678,7 +680,6 @@ mod tests {
 
         push_game_details_reads(&asserter);
         push_abi(&asserter, &(game, 0_u64));
-        asserter.push_success(&Bytes::new());
         asserter.push_success(&Bytes::new());
 
         let details = client.game_details(game).await.unwrap();
