@@ -277,14 +277,18 @@ fn golden_reads_for_nonexistent_and_builtins() {
 
 #[test]
 fn golden_inverted_policy_id_selector_unknown_in_v2() {
-    let mut s = fresh();
-    let (rev, bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode(),
+    let mut storage = fresh();
+    let calldata =
+        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode();
+
+    let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
+
+    assert!(reverted, "invertedPolicyId is a V3 selector and must revert on V2");
+    assert_eq!(
+        revert_data,
+        Bytes::from(IPolicyRegistry::invertedPolicyIdCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
-    assert!(rev);
-    assert_eq!(bytes, Bytes::from(IPolicyRegistry::invertedPolicyIdCall::SELECTOR.as_ref()));
 }
 
 // ============================================================================

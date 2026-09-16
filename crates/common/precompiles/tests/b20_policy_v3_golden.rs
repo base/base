@@ -275,22 +275,22 @@ fn golden_reads_for_nonexistent_and_builtins() {
 
 #[test]
 fn golden_inverted_policy_id_reads_before_activation() {
-    let mut s = HashMapStorageProvider::new_with_storage_features(
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
         CHAIN_ID,
         UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Denim),
     );
     let policy_id = ALLOWLIST_ID;
-    let (rev, bytes) = call_policy(
-        &mut s,
-        OUTSIDER,
-        IPolicyRegistry::invertedPolicyIdCall { policyId: policy_id }.abi_encode(),
-    );
-    assert!(!rev, "invertedPolicyId is a view and must bypass activation");
+    let calldata = IPolicyRegistry::invertedPolicyIdCall { policyId: policy_id }.abi_encode();
+
+    let (reverted, return_data) = call_policy(&mut storage, OUTSIDER, calldata);
+
+    assert!(!reverted, "invertedPolicyId is a view and must bypass activation");
     assert_eq!(
-        bytes,
+        return_data,
         Bytes::from(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(
             &(policy_id | PolicyRegistryV3::INVERTED_POLICY_BIT)
-        ))
+        )),
+        "invertedPolicyId returns the id with the inverted-policy bit set",
     );
 }
 

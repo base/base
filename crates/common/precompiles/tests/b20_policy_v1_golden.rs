@@ -350,61 +350,75 @@ fn golden_create_composite_selector_unknown_in_v1() {
     // Composite policies are a V2 feature. The ABI is shared, but V1 predates these selectors,
     // so it must keep reverting with UnknownFunctionSelector (raw 4-byte selector) — the old
     // behavior — rather than routing them.
-    let mut s = fresh();
-    let (rev, bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::createCompositePolicyCall {
-            admin: ADMIN,
-            policyType: PolicyType::UNION,
-            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
-        }
-        .abi_encode(),
+    let mut storage = fresh();
+    let calldata = IPolicyRegistry::createCompositePolicyCall {
+        admin: ADMIN,
+        policyType: PolicyType::UNION,
+        childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+    }
+    .abi_encode();
+
+    let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
+
+    assert!(reverted, "createCompositePolicy is a V2 selector and must revert on V1");
+    assert_eq!(
+        revert_data,
+        Bytes::from(IPolicyRegistry::createCompositePolicyCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
-    assert!(rev);
-    assert_eq!(bytes, Bytes::from(IPolicyRegistry::createCompositePolicyCall::SELECTOR.as_ref()));
 }
 
 #[test]
 fn golden_update_composite_selector_unknown_in_v1() {
-    let mut s = fresh();
-    let (rev, bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::updateCompositeCall {
-            policyId: BLOCKLIST_ID,
-            childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
-        }
-        .abi_encode(),
+    let mut storage = fresh();
+    let calldata = IPolicyRegistry::updateCompositeCall {
+        policyId: BLOCKLIST_ID,
+        childPolicyIds: vec![BLOCKLIST_ID, ALLOWLIST_ID],
+    }
+    .abi_encode();
+
+    let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
+
+    assert!(reverted, "updateComposite is a V2 selector and must revert on V1");
+    assert_eq!(
+        revert_data,
+        Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
-    assert!(rev);
-    assert_eq!(bytes, Bytes::from(IPolicyRegistry::updateCompositeCall::SELECTOR.as_ref()));
 }
 
 #[test]
 fn golden_composite_child_ids_selector_unknown_in_v1() {
     // Views bypass the activation gate but NOT the wire gate: the selector is absent from the
     // frozen V1 surface, so Beryl must reject it as unknown rather than answering the read.
-    let mut s = fresh();
-    let (rev, bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::compositePolicyChildIdsCall { policyId: BLOCKLIST_ID }.abi_encode(),
+    let mut storage = fresh();
+    let calldata =
+        IPolicyRegistry::compositePolicyChildIdsCall { policyId: BLOCKLIST_ID }.abi_encode();
+
+    let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
+
+    assert!(reverted, "compositePolicyChildIds is a V2 selector and must revert on V1");
+    assert_eq!(
+        revert_data,
+        Bytes::from(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
-    assert!(rev);
-    assert_eq!(bytes, Bytes::from(IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR.as_ref()));
 }
 
 #[test]
 fn golden_inverted_policy_id_selector_unknown_in_v1() {
-    let mut s = fresh();
-    let (rev, bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode(),
+    let mut storage = fresh();
+    let calldata =
+        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode();
+
+    let (reverted, revert_data) = call_policy(&mut storage, ADMIN, calldata);
+
+    assert!(reverted, "invertedPolicyId is a V3 selector and must revert on V1");
+    assert_eq!(
+        revert_data,
+        Bytes::from(IPolicyRegistry::invertedPolicyIdCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
-    assert!(rev);
-    assert_eq!(bytes, Bytes::from(IPolicyRegistry::invertedPolicyIdCall::SELECTOR.as_ref()));
 }
 
 #[test]
@@ -412,27 +426,27 @@ fn golden_min_max_composite_child_policies_selector_unknown_in_v1() {
     // MIN_COMPOSITE_CHILD_POLICIES/MAX_COMPOSITE_CHILD_POLICIES are V2-only getters — composite
     // policies do not exist at Beryl, so their selectors must stay unknown, same as the other
     // composite selectors above.
-    let mut s = fresh();
-    let (min_rev, min_bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
-    );
-    assert!(min_rev);
+    let mut storage = fresh();
+    let min_calldata = IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall {}.abi_encode();
+
+    let (min_reverted, min_revert_data) = call_policy(&mut storage, ADMIN, min_calldata);
+
+    assert!(min_reverted, "MIN_COMPOSITE_CHILD_POLICIES is a V2 selector and must revert on V1");
     assert_eq!(
-        min_bytes,
-        Bytes::from(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref())
+        min_revert_data,
+        Bytes::from(IPolicyRegistry::MIN_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
 
-    let (max_rev, max_bytes) = call_policy(
-        &mut s,
-        ADMIN,
-        IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall {}.abi_encode(),
-    );
-    assert!(max_rev);
+    let max_calldata = IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall {}.abi_encode();
+
+    let (max_reverted, max_revert_data) = call_policy(&mut storage, ADMIN, max_calldata);
+
+    assert!(max_reverted, "MAX_COMPOSITE_CHILD_POLICIES is a V2 selector and must revert on V1");
     assert_eq!(
-        max_bytes,
-        Bytes::from(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref())
+        max_revert_data,
+        Bytes::from(IPolicyRegistry::MAX_COMPOSITE_CHILD_POLICIESCall::SELECTOR.as_ref()),
+        "unknown-selector revert data is the 4-byte selector, not a typed error",
     );
 }
 
