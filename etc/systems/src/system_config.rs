@@ -105,9 +105,7 @@ pub struct ResolvedSnapshotChain {
 impl SnapshotChainConfig {
     /// Resolves a built-in chain name or a Base genesis JSON plus its rollup configuration.
     pub fn resolve(&self) -> Result<ResolvedSnapshotChain> {
-        if let Some(config) =
-            ChainConfig::from_base_chain(&self.chain).or_else(|| ChainConfig::by_name(&self.chain))
-        {
+        if let Some(config) = ChainConfig::by_any_name(&self.chain) {
             return Ok(ResolvedSnapshotChain {
                 chain_spec: Arc::new(BaseChainSpec::try_from(config)?),
                 rollup_config: Arc::new(config.rollup_config()),
