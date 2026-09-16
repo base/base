@@ -661,16 +661,6 @@ impl BaseL1BlockInfo {
     pub fn timestamp(&self) -> u64 {
         self.timestamp.load(Ordering::Relaxed)
     }
-
-    /// Seeds the tracked block timestamp (Unix seconds).
-    ///
-    /// Normally set from the canonical head via `update_l1_block_info`; this
-    /// seam lets a harness start the validator at a realistic wall clock so
-    /// millisecond-scale `valid_after`/`valid_before` bounds evaluate the same
-    /// way they would against a live head.
-    pub fn set_timestamp(&self, timestamp: u64) {
-        self.timestamp.store(timestamp, Ordering::Relaxed);
-    }
 }
 
 /// Validator for Base transactions.
@@ -1628,12 +1618,19 @@ where
         // The `window` bound only governs the nonce-free "too far in the future"
         // rejection; logging it for the other variants (e.g. a nonce-bearing
         // `Expired`) would wrongly imply the nonce-free window was involved.
+        // Log the *normalized* (millisecond) bounds that `validate_timestamp`
+        // actually compared against `now` (also milliseconds); the raw fields may
+        // be seconds-denominated, so logging them beside a millisecond `now` reads
+        // as decades of skew. The raw values are kept under distinct names for
+        // debugging the seconds/milliseconds auto-detection itself.
         if matches!(error, Eip8130TimestampError::NonceFreeExpiryTooFar) {
             tracing::debug!(
                 reason,
                 now,
-                valid_after = tx.valid_after,
-                valid_before = tx.valid_before,
+                valid_after = tx.valid_after_ms(),
+                valid_before = tx.valid_before_ms(),
+                valid_after_raw = tx.valid_after,
+                valid_before_raw = tx.valid_before,
                 nonce_key = %tx.nonce_key,
                 window = Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW,
                 "EIP-8130 timestamp validation failed",
@@ -1642,8 +1639,10 @@ where
             tracing::debug!(
                 reason,
                 now,
-                valid_after = tx.valid_after,
-                valid_before = tx.valid_before,
+                valid_after = tx.valid_after_ms(),
+                valid_before = tx.valid_before_ms(),
+                valid_after_raw = tx.valid_after,
+                valid_before_raw = tx.valid_before,
                 nonce_key = %tx.nonce_key,
                 "EIP-8130 timestamp validation failed",
             );
@@ -2695,15 +2694,19 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_free_not_yet_valid() {
-        // Default fixture sits at block timestamp 0 (now_ms = 0). A future
-        // `valid_after` opens the window later, so the nonce-free branch must
-        // reject with `NotYetValid` before the (satisfiable) expiry checks.
+        // Realistic millisecond clock (both bounds >= TIMESTAMP_MS_THRESHOLD, so
+        // normalization is a no-op). A future `valid_after` opens the window
+        // later, so the nonce-free branch must reject with `NotYetValid` before
+        // the expiry checks (which `validate_timestamp` evaluates afterward).
         let validator = build_test_validator();
+        let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_after: 50_000,
-            valid_before: 60_000,
+            valid_after: now_ms + 50_000,
+            valid_before: now_ms + 60_000,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
@@ -2715,11 +2718,15 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_bearing_not_yet_valid() {
-        // Sequenced (nonce-bearing) transaction with a future `valid_after` and
-        // now_ms = 0: the else-branch of `validate_timestamp` must reject with
+        // Sequenced (nonce-bearing) transaction on a realistic millisecond clock
+        // with a future `valid_after` (>= TIMESTAMP_MS_THRESHOLD, so normalization
+        // is a no-op): the else-branch of `validate_timestamp` must reject with
         // `NotYetValid`.
         let validator = build_test_validator();
-        let tx = TxEip8130 { valid_after: 50_000, ..minimal_valid_eoa_tx() };
+        let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        let now_ms = 1_700_000_000_000;
+        let tx = TxEip8130 { valid_after: now_ms + 50_000, ..minimal_valid_eoa_tx() };
         let signed = sign_eoa_eip8130(tx);
         assert_structural_reason(
             validator.validate_eip8130_structural(&signed),
@@ -2729,12 +2736,19 @@ mod tests {
 
     #[test]
     fn rejects_eip8130_nonce_free_expiry_too_far_in_future() {
+        // Seed a realistic millisecond clock and place `valid_before` exactly one
+        // millisecond past the admission-window edge (`now_ms +
+        // NONCE_FREE_MAX_EXPIRY_WINDOW`). Both bounds are >= TIMESTAMP_MS_THRESHOLD
+        // so normalization is a no-op; this exercises the true edge+1 rejection,
+        // the mirror of `accepts_eip8130_nonce_free_at_expiry_window_edge`.
         let validator = build_test_validator();
-        // block_timestamp returns 0 by default; cap is NONCE_FREE_MAX_EXPIRY_WINDOW.
+        let header = alloy_consensus::Header { timestamp: 1_700_000_000, ..Default::default() };
+        validator.update_l1_block_info::<_, TxEip1559>(&header, None);
+        let now_ms = 1_700_000_000_000;
         let tx = TxEip8130 {
             nonce_key: Eip8130Constants::NONCE_KEY_MAX,
             nonce_sequence: 0,
-            valid_before: Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
+            valid_before: now_ms + Eip8130Constants::NONCE_FREE_MAX_EXPIRY_WINDOW + 1,
             ..minimal_valid_eoa_tx()
         };
         let signed = sign_eoa_eip8130(tx);
