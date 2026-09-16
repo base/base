@@ -2058,10 +2058,21 @@ mod tests {
                 // Seed a realistic wall clock so millisecond-scale nonce-free
                 // `valid_before` bounds evaluate against a representative `now`
                 // (default is timestamp 0, where no future ms bound is reachable).
-                let block_info = BaseL1BlockInfo::default();
-                block_info.set_timestamp(INTEGRATION_POOL_NOW_SECS);
-                BaseTransactionValidator::with_block_info(inner, block_info)
-                    .require_l1_data_gas_fee(false)
+                // Reuse the same seam the live head uses: `update_l1_block_info`
+                // with `tx = None` stores only the header timestamp and leaves the
+                // L1 block info untouched, so the harness shares the one admission
+                // clock writer rather than a second, unsynchronized setter.
+                let validator =
+                    BaseTransactionValidator::with_block_info(inner, BaseL1BlockInfo::default())
+                        .require_l1_data_gas_fee(false);
+                validator.update_l1_block_info::<_, TxEip1559>(
+                    &alloy_consensus::Header {
+                        timestamp: INTEGRATION_POOL_NOW_SECS,
+                        ..Default::default()
+                    },
+                    None,
+                );
+                validator
             });
         let ordering = BaseOrdering::default();
         let pool = Pool::new(validator, ordering.clone(), blob_store, PoolConfig::default());
