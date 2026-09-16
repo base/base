@@ -309,6 +309,9 @@ struct ProofsManifestEntry {
 /// times without aborting the process.
 const MAX_IDLE_DOWNLOAD_ATTEMPTS: u32 = 8;
 
+/// Idle read timeout so a stalled CDN socket fails into retry instead of hanging.
+const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Shared write-progress for one parallel proofs download.
 #[derive(Clone)]
 struct RangeProgress {
@@ -478,7 +481,8 @@ impl ProofsDownloader {
         let part_path = cache_dir.join(format!("{}.part", entry.file_name));
 
         let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(DOWNLOAD_READ_TIMEOUT)
             .build()?;
 
         info!(target: "reth::cli", url = %entry.archive_url, "Downloading proofs database");
@@ -705,7 +709,8 @@ impl ProofsDownloader {
         );
 
         let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(DOWNLOAD_READ_TIMEOUT)
             .pool_max_idle_per_host(concurrency)
             .build()?;
         let progress = Arc::new(AtomicU64::new(initial_progress));
