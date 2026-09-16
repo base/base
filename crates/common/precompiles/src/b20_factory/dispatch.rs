@@ -8,14 +8,14 @@
 use alloc::vec::Vec;
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
-use alloy_sol_types::{SolCall, SolType, SolValue};
+use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
-    B20FactoryStorage, B20Variant, BorrowedCallDecode, Factory, FactoryV1, FactoryVersion,
-    FactoryVersions, IB20Factory, NoopPrecompileCallObserver, PrecompileAuxiliaryMetrics,
-    PrecompileCallObserver, PrecompileCallRecorder, PrecompileMetricLabels,
+    B20FactoryStorage, B20Variant, Factory, FactoryV1, FactoryVersion, FactoryVersions,
+    IB20Factory, NoopPrecompileCallObserver, PrecompileAuxiliaryMetrics, PrecompileCallObserver,
+    PrecompileCallRecorder, PrecompileMetricLabels,
 };
 
 impl<'a> B20FactoryStorage<'a> {
@@ -181,6 +181,10 @@ impl<'a> B20FactoryStorage<'a> {
 /// `internalCalls`; the owned safety net feeds an already-decoded [`IB20Factory::createB20Call`]
 /// through the same runner. `params` and `init_calls` borrow from the source calldata (or an owned
 /// call's fields), never copy, so aliased offsets cost fat-pointers instead of blob copies.
+///
+/// Removal (`alloy-aliasing`): once Alloy's owned decode stops copying aliased offsets, delete this
+/// type with `decode_if_create_b20`/`run_create_b20` and the fast-path arm in [`B20FactoryStorage::route`],
+/// and revert the other `alloy-aliasing` sites to the plain owned decode.
 struct DecodedCreateB20<'a> {
     variant: IB20Factory::B20Variant,
     salt: B256,
@@ -192,9 +196,9 @@ impl<'a> DecodedCreateB20<'a> {
     /// Tries to interpret `calldata` as a `createB20` dialable at `version`.
     ///
     /// `None` when the leading 4 bytes aren't the `createB20` selector, `version` doesn't dial it,
-    /// or [`BorrowedCallDecode::decode_args_borrowed`] rejects the payload — which it does iff
-    /// Alloy's owned `abi_decode_validate` would. The caller then falls through to the generic owned
-    /// decode, which reproduces the authoritative, consensus-frozen error bytes.
+    /// or the borrowed decode rejects the payload — which it does iff Alloy's owned
+    /// `abi_decode_validate` would. The caller then falls through to the generic owned decode, which
+    /// reproduces the authoritative, consensus-frozen error bytes.
     ///
     /// `Some` when the borrowed decode accepted: the token matches what the owned path would have
     /// produced, minus the copying `detokenize` step, and its fields are read as slices into
@@ -207,7 +211,21 @@ impl<'a> DecodedCreateB20<'a> {
         if !version.abi().valid_selector(selector) {
             return None;
         }
-        let token = IB20Factory::createB20Call::decode_args_borrowed(&calldata[4..])?;
+        // Borrowed, validating decode. `decode_sequence` + `valid_token` accept exactly the set
+        // Alloy's owned `abi_decode_validate` accepts — its validating config sets `validate`
+        // without `strict`, adding no decode-time checks over `decode_sequence`, and the only extra
+        // step is the `type_check` that `valid_token` performs — but stop before the copying
+        // `detokenize`, which is what would materialize aliased `initCalls` offsets into N owned
+        // copies. `None` means the owned decode would also reject, so the caller falls through.
+        let rest = &calldata[4..];
+        let token =
+            abi::decode_sequence::<<IB20Factory::createB20Call as SolCall>::Token<'a>>(rest)
+                .ok()?;
+        if !<<IB20Factory::createB20Call as SolCall>::Parameters<'a> as SolType>::valid_token(
+            &token,
+        ) {
+            return None;
+        }
         Some(Self {
             variant: <IB20Factory::B20Variant as SolType>::detokenize(token.0),
             salt: token.1.0,
@@ -236,7 +254,9 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{
+        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
+    };
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
@@ -1048,13 +1068,8 @@ mod tests {
 
         let params = token_params("Large Aliased Token", "LGA").abi_encode().into();
         let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
-        let calldata = aliased_create_b20_calldata(
-            1_024,
-            &tail,
-            params,
-            salt,
-            IB20Factory::B20Variant::ASSET,
-        );
+        let calldata =
+            aliased_create_b20_calldata(1_024, &tail, params, salt, IB20Factory::B20Variant::ASSET);
 
         storage.set_caller(creator);
         StorageCtx::enter(&mut storage, |ctx| {
@@ -1105,13 +1120,8 @@ mod tests {
         }
         .abi_encode();
 
-        let aliased = aliased_create_b20_calldata(
-            1_024,
-            &tail,
-            params,
-            salt,
-            IB20Factory::B20Variant::ASSET,
-        );
+        let aliased =
+            aliased_create_b20_calldata(1_024, &tail, params, salt, IB20Factory::B20Variant::ASSET);
 
         // The `initCalls` length word sits right after the head plus the `params` blob. Locate it
         // from the head's offset word (word index 3) rather than hardcoding a position, since
@@ -1159,8 +1169,7 @@ mod tests {
         for (name, calldata, must_accept) in rows {
             // Oracle: alloy's owned validator is the ABI spec, independent of the fix. It reads
             // full calldata (selector included) since `abi_decode_validate` peels the selector.
-            let oracle_accepts =
-                IB20Factory::createB20Call::abi_decode_validate(&calldata).is_ok();
+            let oracle_accepts = IB20Factory::createB20Call::abi_decode_validate(&calldata).is_ok();
             assert_eq!(
                 oracle_accepts, must_accept,
                 "row `{name}`: oracle disagrees; refresh the test if the payload changed"

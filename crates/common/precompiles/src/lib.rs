@@ -7,9 +7,6 @@ extern crate alloc;
 
 mod macros;
 
-mod borrowed_call;
-pub use borrowed_call::BorrowedCallDecode;
-
 mod provider;
 pub use provider::BasePrecompiles;
 
