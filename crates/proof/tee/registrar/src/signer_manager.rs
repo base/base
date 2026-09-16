@@ -896,7 +896,6 @@ where
                                 "revoked signer remains registered, retrying deregistration"
                             );
                         }
-                        Ok(Ok(true)) => break,
                         Ok(Err(error)) if retryable => warn!(
                             error = %error,
                             signer = %signer,
@@ -904,7 +903,6 @@ where
                             delay = ?retry_delay,
                             "failed to confirm revoked signer deregistration, retrying"
                         ),
-                        Ok(Err(_)) => break,
                         Err(_) if retryable => warn!(
                             signer = %signer,
                             reason,
@@ -912,7 +910,7 @@ where
                             delay = ?retry_delay,
                             "timed out confirming revoked signer deregistration, retrying"
                         ),
-                        Err(_) => break,
+                        Ok(Ok(true)) | Ok(Err(_)) | Err(_) => break,
                     }
                     if retry == max_tx_retries {
                         warn!(
