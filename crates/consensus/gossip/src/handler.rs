@@ -186,6 +186,9 @@ impl BlockHandler {
     ///
     /// Retired and unknown topics are rejected. Historical payloads can still
     /// be encoded directly through the [`NetworkPayloadEnvelope`] codecs.
+    /// The local-clock cutoff applies even before the driver's next subscription
+    /// sweep. The driver separately checks subscription state so a clock rollback
+    /// cannot re-enable publishing on an already-unsubscribed topic.
     pub fn encode(
         &self,
         topic: IdentTopic,

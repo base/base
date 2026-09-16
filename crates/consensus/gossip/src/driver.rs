@@ -161,6 +161,8 @@ where
         let topic_hash = topic.hash();
         // GossipSub can publish to unsubscribed topics. Do not let a retired
         // topic re-enter the publishing path, including after a clock rollback.
+        // The handler's clock check additionally enforces the cutoff before
+        // the next periodic sweep removes the subscription.
         if !self.swarm.behaviour().gossipsub.topics().any(|topic| *topic == topic_hash) {
             if let Some(version) = self.handler.topic_version(&topic_hash) {
                 Metrics::block_topic_blocked_total(version, "outbound").increment(1);
@@ -534,14 +536,9 @@ where
             } => {
                 trace!(target: "gossip", topic = %message.topic, "Received message");
                 Metrics::gossip_event("message").increment(1.0);
-                if self.handler.topics().contains(&message.topic)
-                    && self
-                        .swarm
-                        .behaviour()
-                        .gossipsub
-                        .topics()
-                        .any(|topic| *topic == message.topic)
-                {
+                // Subscription state makes retirement irreversible; the handler
+                // checks the clock once, before decoding, between sweeps.
+                if self.swarm.behaviour().gossipsub.topics().any(|topic| *topic == message.topic) {
                     let (status, payload) = self.handler.handle(message);
                     _ = self
                         .swarm
@@ -948,6 +945,48 @@ mod tests {
             driver.swarm.behaviour().gossipsub.topics().cloned().collect::<Vec<_>>(),
             [driver.handler.blocks_v4_topic.hash()]
         );
+    }
+
+    #[test]
+    fn retired_topics_are_blocked_before_the_subscription_sweep() {
+        #[cfg(feature = "metrics")]
+        let recorder = PrometheusBuilder::new().build_recorder();
+        #[cfg(feature = "metrics")]
+        let _metrics_guard = metrics::set_default_local_recorder(&recorder);
+
+        let mut driver = test_driver();
+        // Make the clock cutoff due while the startup subscription still exists.
+        driver.handler.rollup_config.upgrades.isthmus_time = Some(0);
+        let topic = driver.handler.blocks_v2_topic.hash();
+        assert!(driver.swarm.behaviour().gossipsub.topics().any(|subscribed| *subscribed == topic));
+        let envelope = NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V2(ExecutionPayloadV2::from_block_slow(
+                &crate::v2_valid_block(),
+            )),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+        assert!(matches!(
+            driver.publish(|handler| handler.blocks_v2_topic.clone(), Some(envelope)),
+            Err(PublishError::EncodeError(HandlerEncodeError::UnknownTopic(_)))
+        ));
+        let event =
+            SwarmEvent::Behaviour(Event::Gossipsub(Box::new(libp2p::gossipsub::Event::Message {
+                propagation_source: PeerId::random(),
+                message_id: MessageId(vec![1]),
+                message: Message { source: None, sequence_number: None, topic, data: vec![0xff] },
+            })));
+        assert!(driver.handle_event(event).is_none());
+        #[cfg(feature = "metrics")]
+        {
+            let output = recorder.handle().render();
+            for direction in ["inbound", "outbound"] {
+                assert!(output.contains(&format!(
+                    "base_node_block_topic_blocked_total{{version=\"v2\",direction=\"{direction}\"}} 1"
+                )), "{output}");
+            }
+        }
     }
 
     #[test]
