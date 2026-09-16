@@ -464,6 +464,33 @@ mod tests {
     }
 
     #[test]
+    fn inline_self_on_scoped_state_is_never_admin() {
+        // `authorize_inline_self` only validates the inline self (revoked /
+        // expired); it never resolves policy, so it always returns
+        // `policy_target == address(0)` — even for a policy-gated self. That is
+        // only safe because a scoped self is never `is_admin()`, so every caller
+        // requiring an unrestricted owner rejects it via the admin check rather
+        // than acting on the structurally-partial actor. Pin that invariant so
+        // the always-`ZERO` `policy_target` cannot become a footgun for a future
+        // caller that forgets the admin check.
+        for scope in [Eip8130Constants::SCOPE_POLICY, Eip8130Constants::SCOPE_OPERATOR] {
+            let state = AccountState::from_word(pack_self(scope, 0, false));
+
+            let resolved = ActorAuthorizer::authorize_inline_self(ACCOUNT, &state, NOW)
+                .expect("a live scoped self still resolves");
+            assert_eq!(resolved.scope, scope);
+            assert_eq!(resolved.policy_target, Address::ZERO);
+            assert!(!resolved.is_admin(), "a scoped self must never be admin");
+
+            // The unrestricted-owner caller rejects exactly that partial actor.
+            assert_eq!(
+                ActorAuthorizer::authorize_standard_sender_from_state(ACCOUNT, &state, NOW),
+                Err(AuthorizeError::StandardSenderNotAdmin { account: ACCOUNT }),
+            );
+        }
+    }
+
+    #[test]
     fn expired_self_is_rejected() {
         let key = k1_key(0x11);
         let account = k1_address(&key);

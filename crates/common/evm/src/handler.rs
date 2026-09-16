@@ -1436,6 +1436,25 @@ mod tests {
             .with_cfg(CfgEnv::new_with_spec(BaseSpecId::new(spec)))
     }
 
+    /// Like [`standard_keystore_context`] on Cobalt, but with
+    /// `enable_amsterdam_eip2780` forced on the cfg. No `BaseSpecId` reaches
+    /// Amsterdam yet, so this is the only way to drive the handler's
+    /// `apply_eip7702_auth_list` dispatch into the EIP-2780 branch.
+    fn standard_keystore_context_eip2780(db: InMemoryDB) -> crate::BaseContext<InMemoryDB> {
+        Context::base()
+            .with_db(db)
+            .with_chain(L1BlockInfo {
+                l2_block: Some(U256::ZERO),
+                operator_fee_scalar: Some(U256::ZERO),
+                operator_fee_constant: Some(U256::ZERO),
+                ..Default::default()
+            })
+            .with_cfg(
+                CfgEnv::new_with_spec(BaseSpecId::new(BaseUpgrade::Cobalt))
+                    .with_enable_amsterdam_eip2780(true),
+            )
+    }
+
     fn authorize_standard_sender(
         db: InMemoryDB,
         spec: BaseUpgrade,
@@ -1737,6 +1756,76 @@ mod tests {
             .is_some_and(|code| code.is_eip7702());
         assert!(live_delegated, "live EOA authority must still apply");
         assert!(!revoked_delegated, "revoked authority must be skipped");
+    }
+
+    #[test]
+    fn cobalt_7702_dispatch_routes_into_eip2780_branch() {
+        // The direct `apply_auth_list_eip2780` tests bypass the handler's
+        // `apply_eip7702_auth_list` dispatch (no `BaseSpecId` reaches Amsterdam),
+        // so force `enable_amsterdam_eip2780` on the cfg to exercise the routing.
+        // The 2780 branch records its charges on the tx-level gas and returns a
+        // zero refund, whereas the regular path returns `Some(refund * accepted)`.
+        // Running the identical mixed list both ways shows the dispatch diverges
+        // on the flag, and the keystore gate must skip the revoked authority on
+        // either path.
+        let live = Address::repeat_byte(0x11);
+        let revoked = Address::repeat_byte(0x12);
+        let delegate = Address::repeat_byte(0x44);
+        let caller = Address::repeat_byte(0x33);
+
+        let scenario = |eip2780: bool| {
+            let mut db = standard_keystore_db(live, None);
+            db.insert_account_info(
+                revoked,
+                AccountInfo { balance: U256::from(1_000_000), ..Default::default() },
+            );
+            seed_account_state(&mut db, revoked, pack_inline_self(0, 0, true));
+            let auths = vec![recovered_auth(live, delegate), recovered_auth(revoked, delegate)];
+            let ctx = if eip2780 {
+                standard_keystore_context_eip2780(db)
+            } else {
+                standard_keystore_context(db, BaseUpgrade::Cobalt)
+            }
+            .with_tx(standard_7702_tx(caller, auths));
+            let mut evm = ctx.build_base();
+            let handler =
+                BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new(
+                );
+            let mut gas = GasTracker::new(100_000, 100_000, 0);
+            let refund = handler
+                .apply_eip7702_auth_list(&mut evm, &mut gas)
+                .expect("mixed 7702 list must not fail the transaction");
+            let mut delegated = |authority: Address| {
+                evm.ctx_mut()
+                    .journal_mut()
+                    .load_account_with_code(authority)
+                    .unwrap()
+                    .info
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.is_eip7702())
+            };
+            (refund, delegated(live), delegated(revoked))
+        };
+
+        let (regular_refund, regular_live, regular_revoked) = scenario(false);
+        let (eip2780_refund, eip2780_live, eip2780_revoked) = scenario(true);
+
+        // Dispatch diverged on the flag: the regular path refunds the accepted,
+        // funded authority; the 2780 path records charges on the tx gas and
+        // returns a zero refund.
+        assert!(
+            regular_refund.is_some_and(|refund| refund > 0),
+            "regular dispatch must refund the accepted authority, got {regular_refund:?}"
+        );
+        assert_eq!(eip2780_refund, Some(0), "EIP-2780 dispatch returns a zero refund");
+
+        // The keystore gate holds on both dispatch paths.
+        assert!(regular_live && eip2780_live, "live authority must apply on both paths");
+        assert!(
+            !regular_revoked && !eip2780_revoked,
+            "revoked authority must be skipped on both paths"
+        );
     }
 
     #[test]
