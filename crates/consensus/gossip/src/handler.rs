@@ -1,10 +1,13 @@
 //! Block Handler
 
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::SystemTime,
+};
 
 use alloy_primitives::{Address, B256};
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types_engine::NetworkPayloadEnvelope;
+use base_common_rpc_types_engine::{NetworkPayloadEnvelope, PayloadEnvelopeError};
 use libp2p::gossipsub::{IdentTopic, Message, MessageAcceptance, TopicHash};
 use tokio::sync::watch::Receiver;
 use tracing::instrument;
@@ -57,20 +60,27 @@ impl Handler for BlockHandler {
         )
     )]
     fn handle(&mut self, msg: Message) -> (MessageAcceptance, Option<NetworkPayloadEnvelope>) {
-        let decoded = if msg.topic == self.blocks_v1_topic.hash() {
-            NetworkPayloadEnvelope::decode_v1(&msg.data)
-        } else if msg.topic == self.blocks_v2_topic.hash() {
-            NetworkPayloadEnvelope::decode_v2(&msg.data)
-        } else if msg.topic == self.blocks_v3_topic.hash() {
-            NetworkPayloadEnvelope::decode_v3(&msg.data)
-        } else if msg.topic == self.blocks_v4_topic.hash() {
-            NetworkPayloadEnvelope::decode_v4(&msg.data)
-        } else {
-            warn!(target: "gossip", topic = ?msg.topic, "Received block with unknown topic");
-            return (MessageAcceptance::Reject, None);
-        };
+        let decode: fn(&[u8]) -> Result<NetworkPayloadEnvelope, PayloadEnvelopeError> =
+            if msg.topic == self.blocks_v1_topic.hash() {
+                NetworkPayloadEnvelope::decode_v1
+            } else if msg.topic == self.blocks_v2_topic.hash() {
+                NetworkPayloadEnvelope::decode_v2
+            } else if msg.topic == self.blocks_v3_topic.hash() {
+                NetworkPayloadEnvelope::decode_v3
+            } else if msg.topic == self.blocks_v4_topic.hash() {
+                NetworkPayloadEnvelope::decode_v4
+            } else {
+                warn!(target: "gossip", topic = ?msg.topic, "Received block with unknown topic");
+                return (MessageAcceptance::Reject, None);
+            };
 
-        match decoded {
+        // Do not decompress or SSZ-decode queued messages from a retired topic.
+        if !self.topics().contains(&msg.topic) {
+            trace!(target: "gossip", topic = %msg.topic, "Ignoring retired block topic");
+            return (MessageAcceptance::Ignore, None);
+        }
+
+        match decode(&msg.data) {
             Ok(envelope) => {
                 tracing::Span::current()
                     .record("block_hash", tracing::field::display(envelope.payload.block_hash()));
@@ -90,18 +100,40 @@ impl Handler for BlockHandler {
         }
     }
 
-    /// The gossip topics accepted for new blocks
+    /// Topics not yet retired according to the local clock and configured forks.
     fn topics(&self) -> Vec<TopicHash> {
-        vec![
+        let timestamp =
+            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+        self.topics_at(timestamp)
+    }
+}
+
+impl BlockHandler {
+    /// Maximum age of a gossip block, in seconds.
+    ///
+    /// Also defines the topic retirement grace period: after a replacement fork
+    /// has been active this long, every block from the old version is too old.
+    pub const MAX_BLOCK_AGE: u64 = 60;
+
+    /// Returns the non-retired gossip topics at a local Unix timestamp.
+    ///
+    /// Future topics remain subscribed ahead of activation so the mesh is ready
+    /// for a fork. An old topic retires once it can no longer carry a block in
+    /// the accepted timestamp window. This uses the local clock, never a peer's
+    /// claimed block timestamp, and respects custom fork configurations.
+    pub fn topics_at(&self, timestamp: u64) -> Vec<TopicHash> {
+        let oldest_topic = self.topic(timestamp.saturating_sub(Self::MAX_BLOCK_AGE)).hash();
+        [
             self.blocks_v1_topic.hash(),
             self.blocks_v2_topic.hash(),
             self.blocks_v3_topic.hash(),
             self.blocks_v4_topic.hash(),
         ]
+        .into_iter()
+        .skip_while(|topic| *topic != oldest_topic)
+        .collect()
     }
-}
 
-impl BlockHandler {
     /// Creates a new [`BlockHandler`].
     ///
     /// Requires the chain ID and a receiver channel for the unsafe block signer.
@@ -135,11 +167,17 @@ impl BlockHandler {
 
     /// Encodes a [`NetworkPayloadEnvelope`] into a byte array
     /// based on the specified topic.
+    ///
+    /// Retired and unknown topics are rejected. Historical payloads can still
+    /// be encoded directly through the [`NetworkPayloadEnvelope`] codecs.
     pub fn encode(
         &self,
         topic: IdentTopic,
         envelope: NetworkPayloadEnvelope,
     ) -> Result<Vec<u8>, HandlerEncodeError> {
+        if !self.topics().contains(&topic.hash()) {
+            return Err(HandlerEncodeError::UnknownTopic(topic.hash()));
+        }
         let encoded = match topic.hash() {
             hash if hash == self.blocks_v1_topic.hash() => envelope.encode_v1()?,
             hash if hash == self.blocks_v2_topic.hash() => envelope.encode_v2()?,
@@ -165,6 +203,118 @@ mod tests {
 
     use super::*;
     use crate::{v2_valid_block, v3_valid_block, v4_valid_block};
+
+    #[test]
+    fn topics_retire_after_each_forks_gossip_age_window() {
+        let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
+        let handler = BlockHandler::new(
+            RollupConfig {
+                upgrades: UpgradeConfig {
+                    canyon_time: Some(100),
+                    ecotone_time: Some(200),
+                    isthmus_time: Some(300),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            signer,
+        );
+        let all = [
+            handler.blocks_v1_topic.hash(),
+            handler.blocks_v2_topic.hash(),
+            handler.blocks_v3_topic.hash(),
+            handler.blocks_v4_topic.hash(),
+        ];
+
+        // At fork + 59, a block from the preceding second is still within the
+        // 60-second age window. At fork + 60, every pre-fork block is too old.
+        for (timestamp, first_topic) in [
+            (0, 0),
+            (99, 0),
+            (100, 0),
+            (159, 0),
+            (160, 1),
+            (259, 1),
+            (260, 2),
+            (359, 2),
+            (360, 3),
+            (u64::MAX, 3),
+        ] {
+            assert_eq!(handler.topics_at(timestamp), all[first_topic..], "timestamp {timestamp}");
+        }
+    }
+
+    #[test]
+    fn topics_respect_unscheduled_simultaneous_and_genesis_forks() {
+        let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
+        let mut handler = BlockHandler::new(RollupConfig::default(), signer);
+        let all = handler.topics_at(0);
+        assert_eq!(all.len(), 4);
+        assert_eq!(handler.topics_at(u64::MAX), all);
+
+        // Later forks imply their predecessors, even if the earlier timestamps
+        // are omitted by a custom chain configuration.
+        handler.rollup_config.upgrades.isthmus_time = Some(100);
+        assert_eq!(handler.topics_at(159), all);
+        assert_eq!(handler.topics_at(160), [handler.blocks_v4_topic.hash()]);
+
+        handler.rollup_config.upgrades.isthmus_time = Some(0);
+        assert_eq!(handler.topics_at(0), [handler.blocks_v4_topic.hash()]);
+    }
+
+    #[test]
+    fn retired_topics_are_ignored_before_decode() {
+        let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
+        let mut handler = BlockHandler::new(
+            RollupConfig {
+                upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            signer,
+        );
+
+        for topic in [
+            handler.blocks_v1_topic.hash(),
+            handler.blocks_v2_topic.hash(),
+            handler.blocks_v3_topic.hash(),
+        ] {
+            let message = Message {
+                source: None,
+                sequence_number: None,
+                topic,
+                // Invalid Snappy would be rejected, not ignored, if decoded.
+                data: vec![0xff],
+            };
+            assert!(matches!(handler.handle(message), (MessageAcceptance::Ignore, None)));
+        }
+        for topic in [handler.blocks_v4_topic.hash(), IdentTopic::new("unknown").hash()] {
+            let message = Message { source: None, sequence_number: None, topic, data: vec![0xff] };
+            assert!(matches!(handler.handle(message), (MessageAcceptance::Reject, None)));
+        }
+    }
+
+    #[test]
+    fn retired_topics_cannot_be_encoded_for_gossip() {
+        let (_, signer) = tokio::sync::watch::channel(Address::ZERO);
+        let handler = BlockHandler::new(
+            RollupConfig {
+                upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            signer,
+        );
+        let v2 = ExecutionPayloadV2::from_block_slow(&v2_valid_block());
+        let envelope = NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V2(v2),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+        assert!(matches!(
+            handler.encode(handler.blocks_v2_topic.clone(), envelope),
+            Err(HandlerEncodeError::UnknownTopic(topic)) if topic == handler.blocks_v2_topic.hash()
+        ));
+    }
 
     #[test]
     fn denim_schedules_are_checked_before_gossip_acceptance() {
@@ -491,7 +641,8 @@ mod tests {
 
     #[test]
     fn test_valid_decode_v4() {
-        let block = v4_valid_block();
+        let mut block = v4_valid_block();
+        block.header.requests_hash = Some(EMPTY_REQUESTS_HASH);
 
         let v3 = ExecutionPayloadV3::from_block_slow(&block);
         let v4 = BaseExecutionPayloadV4::from_v3_with_withdrawals_root(
@@ -513,7 +664,11 @@ mod tests {
         let signer = envelope.signature.recover_address_from_prehash(&msg).unwrap();
         let (_, unsafe_signer) = tokio::sync::watch::channel(signer);
         let mut handler = BlockHandler::new(
-            RollupConfig { l2_chain_id: Chain::base_mainnet(), ..Default::default() },
+            RollupConfig {
+                l2_chain_id: Chain::base_mainnet(),
+                upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+                ..Default::default()
+            },
             unsafe_signer,
         );
 

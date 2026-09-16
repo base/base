@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     num::NonZeroUsize,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use alloy_primitives::{Address, hex};
@@ -25,11 +25,14 @@ use libp2p::{
 use libp2p_identity::Keypair;
 use libp2p_stream::IncomingStreams;
 use lru::LruCache;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::Mutex,
+    time::{Instant as TokioInstant, sleep_until},
+};
 
 use crate::{
     Behaviour, BlockHandler, ConnectionGate, ConnectionGater, ConnectionLimitsConfig, Event,
-    GossipDriverBuilder, Handler, Metrics, PublishError,
+    GossipDriverBuilder, Handler, HandlerEncodeError, Metrics, PublishError,
 };
 
 /// Configuration applied when constructing a [`GossipDriver`].
@@ -80,12 +83,19 @@ pub struct GossipDriver<G: ConnectionGate> {
     pub connection_limits_config: ConnectionLimitsConfig,
     /// Tracks ping times for peers.
     pub ping: Arc<Mutex<HashMap<PeerId, Duration>>>,
+    /// Next check for obsolete block topics. Kept across polls so busy traffic
+    /// or cancellation of `next` cannot indefinitely postpone retirement.
+    pub next_topic_retirement: TokioInstant,
 }
 
 impl<G> GossipDriver<G>
 where
     G: ConnectionGate,
 {
+    /// How often to reconcile subscriptions with the configured fork schedule.
+    /// The handler enforces retirement before decoding even between checks.
+    pub const TOPIC_RETIREMENT_INTERVAL: Duration = Duration::from_secs(5);
+
     /// Returns the [`GossipDriverBuilder`] that can be used to construct the [`GossipDriver`].
     pub const fn builder(
         rollup_config: RollupConfig,
@@ -118,6 +128,7 @@ where
             connection_gate: gate,
             connection_limits_config: config.connection_limits_config,
             ping: Arc::new(Mutex::new(Default::default())),
+            next_topic_retirement: TokioInstant::now(),
         }
     }
 
@@ -143,6 +154,11 @@ where
         };
         let topic = selector(&self.handler);
         let topic_hash = topic.hash();
+        // GossipSub can publish to unsubscribed topics. Do not let a retired
+        // topic re-enter the publishing path, including after a clock rollback.
+        if !self.swarm.behaviour().gossipsub.topics().any(|topic| *topic == topic_hash) {
+            return Err(HandlerEncodeError::UnknownTopic(topic_hash).into());
+        }
         let data = self.handler.encode(topic, payload)?;
         let id = self.swarm.behaviour_mut().gossipsub.publish(topic_hash, data)?;
         Metrics::unsafe_block_published().increment(1.0);
@@ -236,9 +252,46 @@ where
         self.swarm.behaviour_mut()
     }
 
-    /// Attempts to select the next event from the Swarm.
+    /// Attempts to select the next event from the swarm, retiring obsolete block
+    /// topics periodically even while the network is idle.
     pub async fn next(&mut self) -> Option<SwarmEvent<Event>> {
-        self.swarm.next().await
+        loop {
+            if TokioInstant::now() >= self.next_topic_retirement {
+                let timestamp = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                self.retire_block_topics(timestamp);
+                self.next_topic_retirement = TokioInstant::now() + Self::TOPIC_RETIREMENT_INTERVAL;
+            }
+
+            tokio::select! {
+                event = self.swarm.next() => return event,
+                _ = sleep_until(self.next_topic_retirement) => {}
+            }
+        }
+    }
+
+    /// Unsubscribes obsolete block topics according to a local Unix timestamp.
+    ///
+    /// Returns the number of subscriptions removed. Future topics are retained
+    /// and removed topics are not rejoined if the local clock moves backwards.
+    pub fn retire_block_topics(&mut self, timestamp: u64) -> usize {
+        let active_topics = self.handler.topics_at(timestamp);
+        let mut retired = 0;
+        for topic in [
+            &self.handler.blocks_v1_topic,
+            &self.handler.blocks_v2_topic,
+            &self.handler.blocks_v3_topic,
+        ] {
+            if !active_topics.contains(&topic.hash())
+                && self.swarm.behaviour_mut().gossipsub.unsubscribe(topic)
+            {
+                info!(target: "gossip", topic = %topic, "Retired block gossip topic");
+                retired += 1;
+            }
+        }
+        retired
     }
 
     /// Returns the number of connected peers.
@@ -450,7 +503,14 @@ where
             } => {
                 trace!(target: "gossip", topic = %message.topic, "Received message");
                 Metrics::gossip_event("message").increment(1.0);
-                if self.handler.topics().contains(&message.topic) {
+                if self.handler.topics().contains(&message.topic)
+                    && self
+                        .swarm
+                        .behaviour()
+                        .gossipsub
+                        .topics()
+                        .any(|topic| *topic == message.topic)
+                {
                     let (status, payload) = self.handler.handle(message);
                     _ = self
                         .swarm
@@ -579,6 +639,11 @@ fn peerstore_eviction_candidate<T>(
 #[cfg(test)]
 mod tests {
     use alloy_chains::Chain;
+    use alloy_primitives::{B256, Signature};
+    use alloy_rpc_types_engine::ExecutionPayloadV2;
+    use base_common_genesis::UpgradeConfig;
+    use base_common_rpc_types_engine::{BaseExecutionPayload, PayloadHash};
+    use libp2p::gossipsub::{Message, MessageAcceptance};
 
     use super::*;
 
@@ -599,6 +664,112 @@ mod tests {
         .unwrap();
 
         driver
+    }
+
+    #[test]
+    fn obsolete_topics_leave_the_mesh_after_the_grace_period() {
+        let mut driver = test_driver();
+        driver.handler.rollup_config.upgrades = UpgradeConfig {
+            canyon_time: Some(100),
+            ecotone_time: Some(200),
+            isthmus_time: Some(300),
+            ..Default::default()
+        };
+        let all = [
+            driver.handler.blocks_v1_topic.hash(),
+            driver.handler.blocks_v2_topic.hash(),
+            driver.handler.blocks_v3_topic.hash(),
+            driver.handler.blocks_v4_topic.hash(),
+        ];
+        for (timestamp, first_topic, removed) in [
+            (159, 0, 0),
+            (160, 1, 1),
+            (160, 1, 0),
+            (259, 1, 0),
+            (260, 2, 1),
+            (359, 2, 0),
+            (360, 3, 1),
+            (0, 3, 0),
+        ] {
+            assert_eq!(driver.retire_block_topics(timestamp), removed);
+            let mut subscribed =
+                driver.swarm.behaviour().gossipsub.topics().cloned().collect::<Vec<_>>();
+            subscribed.sort();
+            assert_eq!(subscribed, all[first_topic..], "timestamp {timestamp}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_polling_retires_topics_without_an_inbound_message() {
+        let mut driver = test_driver();
+        // Complete the initial no-op retirement check, then cancel the idle
+        // poll. Subsequent checks must still run without a swarm event.
+        assert!(tokio::time::timeout(Duration::from_millis(1), driver.next()).await.is_err());
+        assert_eq!(driver.swarm.behaviour().gossipsub.topics().count(), 4);
+
+        // Make retirement due after startup without depending on wall-clock
+        // sleeps. Tokio's paused clock advances the periodic poll deadline.
+        driver.handler.rollup_config.upgrades.isthmus_time = Some(0);
+        assert!(
+            tokio::time::timeout(
+                GossipDriver::<ConnectionGater>::TOPIC_RETIREMENT_INTERVAL * 2,
+                driver.next()
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            driver.swarm.behaviour().gossipsub.topics().cloned().collect::<Vec<_>>(),
+            [driver.handler.blocks_v4_topic.hash()]
+        );
+    }
+
+    #[test]
+    fn retired_topics_stay_disabled_after_a_clock_rollback() {
+        let mut driver = test_driver();
+        driver.handler.rollup_config.upgrades.isthmus_time = Some(100);
+        assert_eq!(driver.retire_block_topics(160), 3);
+        // Even if the clock/config subsequently permits an older version,
+        // GossipSub's ability to publish without subscribing must not revive it.
+        driver.handler.rollup_config.upgrades = UpgradeConfig::default();
+        let envelope = NetworkPayloadEnvelope {
+            payload: BaseExecutionPayload::V2(ExecutionPayloadV2::from_block_slow(
+                &crate::v2_valid_block(),
+            )),
+            signature: Signature::test_signature(),
+            payload_hash: PayloadHash(B256::ZERO),
+            parent_beacon_block_root: None,
+        };
+        let encoded = envelope.encode_v2().unwrap();
+        let decoded = NetworkPayloadEnvelope::decode_v2(&encoded).unwrap();
+        let signing_hash =
+            decoded.payload_hash.signature_message(driver.handler.rollup_config.l2_chain_id.id());
+        let signer = decoded.signature.recover_address_from_prehash(&signing_hash).unwrap();
+        let (_, receiver) = tokio::sync::watch::channel(signer);
+        driver.handler.signer_recv = receiver;
+        let message = Message {
+            source: None,
+            sequence_number: None,
+            topic: driver.handler.blocks_v2_topic.hash(),
+            data: encoded,
+        };
+        // The restored policy and signature would otherwise accept this block.
+        assert!(matches!(
+            driver.handler.clone().handle(message.clone()),
+            (MessageAcceptance::Accept, Some(_))
+        ));
+
+        assert!(matches!(
+            driver.publish(|handler| handler.blocks_v2_topic.clone(), Some(envelope)),
+            Err(PublishError::EncodeError(HandlerEncodeError::UnknownTopic(_)))
+        ));
+        let event =
+            SwarmEvent::Behaviour(Event::Gossipsub(Box::new(libp2p::gossipsub::Event::Message {
+                propagation_source: PeerId::random(),
+                message_id: MessageId(vec![1]),
+                message,
+            })));
+        assert!(driver.handle_event(event).is_none());
     }
 
     #[tokio::test]

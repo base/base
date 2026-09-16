@@ -58,6 +58,7 @@ multihash.workspace = true
 alloy-rlp = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["thread_rng"] }
+tokio = { workspace = true, features = ["test-util"] }
 alloy-chains = { workspace = true, features = ["std"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
