@@ -5,15 +5,17 @@
 //! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
 //! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
 
-use alloy_primitives::{Address, Bytes, keccak256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloc::vec::Vec;
+
+use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_sol_types::{SolCall, SolType, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
 use crate::{
-    B20FactoryStorage, B20Variant, Factory, FactoryV1, FactoryVersion, FactoryVersions,
-    IB20Factory, NoopPrecompileCallObserver, PrecompileAuxiliaryMetrics, PrecompileCallObserver,
-    PrecompileCallRecorder, PrecompileMetricLabels,
+    B20FactoryStorage, B20Variant, BorrowedCallDecode, Factory, FactoryV1, FactoryVersion,
+    FactoryVersions, IB20Factory, NoopPrecompileCallObserver, PrecompileAuxiliaryMetrics,
+    PrecompileCallObserver, PrecompileCallRecorder, PrecompileMetricLabels,
 };
 
 impl<'a> B20FactoryStorage<'a> {
@@ -77,6 +79,10 @@ impl<'a> B20FactoryStorage<'a> {
     }
 
     /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
+    ///
+    /// Tries the borrowed `createB20` fast path first (see [`DecodedCreateB20`]) before falling
+    /// through to the generic owned decode below, so an aliased `initCalls` payload never forces
+    /// the N x M owned copy Alloy's `detokenize` would otherwise perform. Removal: `alloy-aliasing`.
     fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -88,27 +94,23 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
+        match DecodedCreateB20::decode_if_create_b20(calldata, version) {
+            Some(Ok(decoded)) => {
+                return self.run_create_b20(ctx, version, upgrade, &observer, decoded);
+            }
+            Some(Err(error)) => return Err(error),
+            None => {}
+        }
+
         let logic = version.implementation();
         match version.abi().decode(calldata)? {
-            IB20Factory::IB20FactoryCalls::createB20(call) => {
-                let caller = ctx.caller();
-                // abi_decode_validate rejects non-canonical discriminants before dispatch,
-                // so from_abi returning None here would be an internal invariant violation.
-                let variant = B20Variant::from_abi(call.variant).expect(
-                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
-                );
-                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
-                let internal_call_count = call.initCalls.len();
-                let internal_call_bytes = call.initCalls.iter().map(|c| c.len()).sum();
-                let token = logic.create_b20(self, call, address_hash, upgrade)?;
-                observer.record_internal_calls(
-                    &PrecompileAuxiliaryMetrics::singleton("factory", "createB20"),
-                    internal_call_count,
-                    internal_call_bytes,
-                );
-                observer.record_b20_created(variant.as_label());
-                Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
-            }
+            IB20Factory::IB20FactoryCalls::createB20(call) => self.run_create_b20(
+                ctx,
+                version,
+                upgrade,
+                &observer,
+                DecodedCreateB20::from_owned(&call),
+            ),
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
                 let v = B20Variant::from_abi(call.variant).expect(
                     "abi_decode_validate rejects non-canonical discriminants before dispatch",
@@ -127,6 +129,110 @@ impl<'a> B20FactoryStorage<'a> {
             }
         }
     }
+
+    /// Posts a `createB20` request: resolves the token variant, computes its deterministic
+    /// address, and routes creation to `version`'s logic. Shared by the borrowed fast path and
+    /// the owned safety net in [`Self::route`] so both take an identical path once decoded.
+    fn run_create_b20<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        version: FactoryVersion,
+        upgrade: BaseUpgrade,
+        observer: &O,
+        decoded: DecodedCreateB20<'_>,
+    ) -> Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
+        let logic = version.implementation();
+        let caller = ctx.caller();
+        // Both decode paths reject non-canonical discriminants before reaching here, so
+        // `from_abi` returning `None` would be an internal invariant violation.
+        let variant = B20Variant::from_abi(decoded.variant)
+            .expect("decode paths reject non-canonical discriminants before dispatch");
+        let address_hash = ctx.metered_keccak256(&(caller, decoded.salt).abi_encode())?;
+        let internal_call_count = decoded.init_calls.len();
+        let internal_call_bytes = decoded.init_calls.iter().map(|c| c.len()).sum();
+        let token = logic.create_b20_decoded(
+            self,
+            decoded.variant,
+            decoded.params,
+            &decoded.init_calls,
+            address_hash,
+            upgrade,
+        )?;
+        observer.record_internal_calls(
+            &PrecompileAuxiliaryMetrics::singleton("factory", "createB20"),
+            internal_call_count,
+            internal_call_bytes,
+        );
+        observer.record_b20_created(variant.as_label());
+        Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
+    }
+}
+
+/// The `createB20` request [`B20FactoryStorage::run_create_b20`] operates on. Both entry paths
+/// produce this shape: the borrowed fast path decodes an aliased `initCalls` payload without
+/// materializing the `bytes[]` blobs, mirroring the same technique already used for `announce`'s
+/// `internalCalls`; the owned safety net feeds an already-decoded [`IB20Factory::createB20Call`]
+/// through the same runner. `params` and `init_calls` borrow from the source calldata (or an owned
+/// call's fields), never copy, so aliased offsets cost fat-pointers instead of blob copies.
+struct DecodedCreateB20<'a> {
+    variant: IB20Factory::B20Variant,
+    salt: B256,
+    params: &'a [u8],
+    init_calls: Vec<&'a [u8]>,
+}
+
+impl<'a> DecodedCreateB20<'a> {
+    /// Tries to interpret `calldata` as a `createB20` dialable at `version`.
+    ///
+    /// `None` skips the fast path entirely; `Some` decides the call, successfully or not.
+    /// - `None`: the leading 4 bytes aren't the `createB20` selector, `version` doesn't dial it,
+    ///   or [`BorrowedCallDecode::decode_args_borrowed`] rejects the payload — which it does iff
+    ///   Alloy's owned `abi_decode_validate` would. All are cheap; no token exists yet to
+    ///   re-encode. The caller falls through to the generic owned decode, which reproduces the
+    ///   authoritative, consensus-frozen error bytes. A future `FactoryVersion` could return a
+    ///   bounded `Some(Err(_))` on the rejection path instead (the way `AssetVersion::V2` does for
+    ///   `announce`), which is why the return type carries a `Result`; V1/Beryl cannot, since its
+    ///   revert bytes are already live.
+    /// - `Some(Ok(_))`: the borrowed decode accepted, so the token matches what the owned path
+    ///   would have produced, minus the copying `detokenize` step. Fields are read straight off it
+    ///   as slices into `calldata`.
+    fn decode_if_create_b20(calldata: &'a [u8], version: FactoryVersion) -> Option<Result<Self>> {
+        let selector = calldata.first_chunk::<4>().copied()?;
+        if selector != IB20Factory::createB20Call::SELECTOR {
+            return None;
+        }
+        if !version.abi().valid_selector(selector) {
+            return None;
+        }
+        let Some(token) = IB20Factory::createB20Call::decode_args_borrowed(&calldata[4..]) else {
+            return match version {
+                // V1/Beryl: revert bytes are already consensus-frozen — keep falling through to
+                // the owned decoder's diagnostic, however expensive, unchanged.
+                FactoryVersion::V1 => None,
+            };
+        };
+        Some(Ok(Self {
+            variant: <IB20Factory::B20Variant as SolType>::detokenize(token.0),
+            salt: token.1.0,
+            params: token.2.0,
+            init_calls: token.3.0.iter().map(|c| c.0).collect(),
+        }))
+    }
+
+    /// Builds a `DecodedCreateB20` from an already owned-decoded call. Only the safety-net arm in
+    /// [`B20FactoryStorage::route`] reaches this: every accepted `createB20` takes the borrowed
+    /// fast path first.
+    fn from_owned(call: &'a IB20Factory::createB20Call) -> Self {
+        Self {
+            variant: call.variant,
+            salt: call.salt,
+            params: call.params.as_ref(),
+            init_calls: call.initCalls.iter().map(|call| call.as_ref()).collect(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -136,12 +242,13 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant, IB20,
-        IB20Factory, PolicyRegistryStorage, PolicyVersion,
+        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant,
+        FactoryVersion, IB20, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
+        PolicyVersion,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -799,5 +906,291 @@ mod tests {
             1,
             "createB20 must call keccak256 exactly once for a valid variant"
         );
+    }
+
+    // --- Aliased-`bytes[]` `initCalls` borrowed decode ------------------------------------------
+
+    /// Builds `createB20` calldata where `n` `initCalls` element offsets all alias one shared
+    /// `tail`.
+    ///
+    /// Starts from a valid one-element encoding and widens the array's offset table so every
+    /// element offset points at the same tail blob. `initCalls` is `createB20`'s last argument, so
+    /// unlike a leading aliased array, nothing after it needs its offsets shifted.
+    fn aliased_create_b20_calldata(
+        n: usize,
+        tail: &[u8],
+        params: Bytes,
+        salt: B256,
+        variant: IB20Factory::B20Variant,
+    ) -> Vec<u8> {
+        assert!(n >= 1, "need at least one aliased entry");
+        let base = IB20Factory::createB20Call {
+            variant,
+            salt,
+            params,
+            initCalls: alloc::vec![Bytes::copy_from_slice(tail)],
+        }
+        .abi_encode();
+
+        let args = &base[4..];
+        let read_off = |at: usize| -> usize {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&args[at + 24..at + 32]);
+            u64::from_be_bytes(buf) as usize
+        };
+        let write_off = |out: &mut [u8], at: usize, v: usize| {
+            out[at..at + 32].fill(0);
+            out[at + 24..at + 32].copy_from_slice(&(v as u64).to_be_bytes());
+        };
+
+        // Head: [variant][salt][off_params][off_initCalls]. `initCalls` is declared last, so
+        // nothing follows its tail block — widening its offset table needs no other shifts.
+        let off_init_calls = read_off(96);
+        assert_eq!(read_off(off_init_calls), 1, "base encoding must be one element");
+
+        // initCalls tail block (n == 1): [len=1][off0][blob..].
+        let blob_off = read_off(off_init_calls + 32);
+        let blob = &args[off_init_calls + 32 + blob_off..];
+
+        let shared_elem_off = n * 32; // offset of the shared blob, relative to right after len
+
+        let mut out = base[..4 + off_init_calls + 32].to_vec();
+        out.resize(4 + off_init_calls + 32 + n * 32 + blob.len(), 0);
+        let a = &mut out[4..];
+        write_off(a, off_init_calls, n); // array length
+        for i in 0..n {
+            write_off(a, off_init_calls + 32 + i * 32, shared_elem_off);
+        }
+        let blob_at = off_init_calls + 32 + n * 32;
+        a[blob_at..blob_at + blob.len()].copy_from_slice(blob);
+        out
+    }
+
+    /// Borrowed slices route to real state effects: `n` aliased `initCalls` entries each execute
+    /// once, not one entry re-copied `n` times.
+    #[test]
+    fn aliased_create_b20_redispatches_each_entry() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let creator = Address::repeat_byte(0xCA);
+        let bob = Address::repeat_byte(0xBB);
+        let salt = B256::repeat_byte(0x40);
+        let (token_addr, _) = B20Variant::Asset.compute_address(creator, salt);
+
+        let params = token_params("Aliased Token", "ALS").abi_encode().into();
+        let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
+        let calldata =
+            aliased_create_b20_calldata(8, &tail, params, salt, IB20Factory::B20Variant::ASSET);
+
+        storage.set_caller(creator);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let out = factory.dispatch(ctx, &calldata, BaseUpgrade::Beryl).unwrap();
+            assert!(!out.is_revert(), "aliased createB20 must succeed: {:?}", out.bytes);
+
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: bob }),
+                U256::from(8u64).abi_encode(),
+            );
+        });
+    }
+
+    /// An aliased-offset `initCalls` payload and a semantically equivalent, honestly-encoded (`n`
+    /// distinct copies) payload must produce identical dispatch output — the borrowed fast path
+    /// changes only how the wire is decoded, never what it means.
+    #[test]
+    fn aliased_create_b20_matches_non_aliased_output() {
+        let creator = Address::repeat_byte(0xCA);
+        let bob = Address::repeat_byte(0xBB);
+        let n = 5usize;
+        let salt = B256::repeat_byte(0x41);
+        let params: Bytes = token_params("Parity Token", "PAR").abi_encode().into();
+        let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
+
+        let aliased = aliased_create_b20_calldata(
+            n,
+            &tail,
+            params.clone(),
+            salt,
+            IB20Factory::B20Variant::ASSET,
+        );
+        let honest = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt,
+            params,
+            initCalls: alloc::vec![Bytes::copy_from_slice(&tail); n],
+        }
+        .abi_encode();
+
+        let run = |calldata: &[u8]| -> Bytes {
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_precompiles(&mut storage);
+            storage.set_caller(creator);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut factory = B20FactoryStorage::new(ctx);
+                let out = factory.dispatch(ctx, calldata, BaseUpgrade::Beryl).unwrap();
+                assert!(!out.is_revert(), "createB20 must succeed: {:?}", out.bytes);
+                out.bytes
+            })
+        };
+
+        assert_eq!(
+            run(&aliased),
+            run(&honest),
+            "aliased and honestly-encoded initCalls must return identical output"
+        );
+    }
+
+    /// A 1,024-way aliased-offset payload is accepted and executes. This is the front-door
+    /// behavioral counterpart to the amplification the borrowed decode eliminates.
+    #[test]
+    fn large_aliased_create_b20_succeeds() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let creator = Address::repeat_byte(0xCA);
+        let bob = Address::repeat_byte(0xBB);
+        let salt = B256::repeat_byte(0x42);
+        let (token_addr, _) = B20Variant::Asset.compute_address(creator, salt);
+
+        let params = token_params("Large Aliased Token", "LGA").abi_encode().into();
+        let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
+        let calldata = aliased_create_b20_calldata(
+            1_024,
+            &tail,
+            params,
+            salt,
+            IB20Factory::B20Variant::ASSET,
+        );
+
+        storage.set_caller(creator);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let out = factory.dispatch(ctx, &calldata, BaseUpgrade::Beryl).unwrap();
+            assert!(!out.is_revert(), "large aliased createB20 must succeed: {:?}", out.bytes);
+
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: bob }),
+                U256::from(1_024u64).abi_encode(),
+            );
+        });
+    }
+
+    /// Behavioral parity check against the ABI oracle, at `FactoryVersion::V1` (the only live
+    /// version):
+    ///
+    /// * `route` accepts iff `createB20Call::abi_decode_validate(payload).is_ok()`;
+    /// * on decode-time rejection, the returned error equals `version.abi().decode(payload)
+    ///   .unwrap_err()`, the same fall-through the fast path guarantees.
+    ///
+    /// The aliased-offsets row is the front-door counterpart to the amplification the borrowed
+    /// decode eliminates. Any consensus-relevant drift (accept-set change, error-byte change)
+    /// makes the offending row fail with its name in the assertion.
+    #[test]
+    fn create_b20_dispatch_matches_owned_abi_oracle() {
+        let salt = B256::repeat_byte(0x50);
+        let params: Bytes = token_params("Oracle Token", "ORC").abi_encode().into();
+        let tail =
+            IB20::mintCall { to: Address::repeat_byte(0xEE), amount: U256::ONE }.abi_encode();
+
+        let one_element = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt,
+            params: params.clone(),
+            initCalls: alloc::vec![Bytes::copy_from_slice(&tail)],
+        }
+        .abi_encode();
+        let multi_element = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt,
+            params: params.clone(),
+            initCalls: alloc::vec![
+                Bytes::copy_from_slice(&tail),
+                Bytes::copy_from_slice(&tail),
+                Bytes::copy_from_slice(&tail),
+            ],
+        }
+        .abi_encode();
+
+        let aliased = aliased_create_b20_calldata(
+            1_024,
+            &tail,
+            params,
+            salt,
+            IB20Factory::B20Variant::ASSET,
+        );
+
+        // The `initCalls` length word sits right after the head plus the `params` blob. Locate it
+        // from the head's offset word (word index 3) rather than hardcoding a position, since
+        // unlike `announce`, `createB20` has another dynamic argument (`params`) ahead of it.
+        let read_off = |bytes: &[u8], at: usize| -> usize {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&bytes[at + 24..at + 32]);
+            u64::from_be_bytes(buf) as usize
+        };
+        let off_init_calls = read_off(&one_element, 4 + 96);
+        let mut past_end_length = one_element.clone();
+        past_end_length[4 + off_init_calls..4 + off_init_calls + 32].fill(0xff);
+
+        let mut trailing_garbage = one_element.clone();
+        trailing_garbage.extend_from_slice(&[0u8; 16]);
+
+        let truncated_head = IB20Factory::createB20Call::SELECTOR.to_vec();
+        let no_calldata: Vec<u8> = Vec::new();
+
+        let rows: alloc::vec::Vec<(&'static str, Vec<u8>, bool)> = alloc::vec![
+            ("honest single-element valid", one_element, true),
+            ("honest multi-element valid", multi_element, true),
+            ("aliased offsets valid", aliased, true),
+            ("length word overruns buffer", past_end_length, false),
+            // alloy follows absolute offsets, so bytes past the last tail get ignored. The oracle
+            // accepts, and the fast path must match.
+            ("trailing garbage after valid payload", trailing_garbage, true),
+            ("truncated head (only selector)", truncated_head, false),
+            ("no calldata at all", no_calldata, false),
+        ];
+
+        for (name, calldata, must_accept) in rows {
+            // Oracle: alloy's owned validator is the ABI spec, independent of the fix. It reads
+            // full calldata (selector included) since `abi_decode_validate` peels the selector.
+            let oracle_accepts =
+                IB20Factory::createB20Call::abi_decode_validate(&calldata).is_ok();
+            assert_eq!(
+                oracle_accepts, must_accept,
+                "row `{name}`: oracle disagrees; refresh the test if the payload changed"
+            );
+
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_precompiles(&mut storage);
+            storage.set_caller(Address::repeat_byte(0x01));
+            let outcome = StorageCtx::enter(&mut storage, |ctx| {
+                B20FactoryStorage::new(ctx).route(
+                    ctx,
+                    &calldata,
+                    FactoryVersion::V1,
+                    BaseUpgrade::Beryl,
+                    NoopPrecompileCallObserver,
+                )
+            });
+
+            assert_eq!(
+                outcome.is_ok(),
+                must_accept,
+                "row `{name}`: accept-set disagrees with the oracle",
+            );
+
+            if let Err(err) = outcome {
+                let control = FactoryVersion::V1.abi().decode(&calldata).unwrap_err();
+                assert_eq!(err, control, "row `{name}`: error bytes must match owned decode");
+                // Decode-time rejections target the createB20 selector. Payloads too short to
+                // carry a selector hit the shared unknown-selector path instead.
+                match err {
+                    BasePrecompileError::AbiDecodeFailed { selector, .. } => {
+                        assert_eq!(selector, IB20Factory::createB20Call::SELECTOR)
+                    }
+                    BasePrecompileError::UnknownFunctionSelector(_) => {}
+                    other => panic!("row `{name}`: unexpected error {other:?}"),
+                }
+            }
+        }
     }
 }
