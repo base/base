@@ -198,6 +198,22 @@ fn load_range_sidecar(path: &Path, concurrency: usize, expected_size: u64) -> Op
     (written.len() == concurrency).then_some(written)
 }
 
+/// Trusts a sidecar only when the `.part` file is already the declared size.
+///
+/// A missing or resized `.part` means the sidecar describes bytes that are
+/// no longer on disk, so resume must start from zero.
+fn load_trusted_range_sidecar(
+    path: &Path,
+    concurrency: usize,
+    expected_size: u64,
+    part_len: u64,
+) -> Option<Vec<u64>> {
+    if part_len != expected_size {
+        return None;
+    }
+    load_range_sidecar(path, concurrency, expected_size)
+}
+
 /// Extracts `--manifest-url` so proofs reuse the same snapshot reth downloaded.
 fn resolve_manifest_url_arg(args: impl IntoIterator<Item = OsString>) -> Option<String> {
     let mut args = args.into_iter();
@@ -479,6 +495,16 @@ impl ProofsDownloader {
     ) -> Result<std::path::PathBuf> {
         let dest_path = cache_dir.join(&entry.file_name);
         let part_path = cache_dir.join(format!("{}.part", entry.file_name));
+        let sidecar_path = cache_dir.join(format!("{}.part.ranges", entry.file_name));
+
+        if tokio::fs::try_exists(&sidecar_path).await.unwrap_or(false) {
+            info!(
+                target: "reth::cli",
+                "Discarding parallel range sidecar and preallocated .part before sequential download"
+            );
+            tokio::fs::remove_file(&sidecar_path).await.ok();
+            tokio::fs::remove_file(&part_path).await.ok();
+        }
 
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(30))
@@ -684,9 +710,13 @@ impl ProofsDownloader {
         concurrency: usize,
     ) -> Result<std::path::PathBuf> {
         let ranges = split_byte_ranges(entry.expected_size, concurrency);
-        let written = load_range_sidecar(sidecar_path, concurrency, entry.expected_size)
-            .unwrap_or_else(|| vec![0; ranges.len()]);
+        let part_len = tokio::fs::metadata(part_path).await.map(|m| m.len()).unwrap_or(0);
+        let written =
+            load_trusted_range_sidecar(sidecar_path, concurrency, entry.expected_size, part_len)
+                .unwrap_or_else(|| vec![0; ranges.len()]);
         let initial_progress: u64 = written.iter().sum();
+
+        persist_range_sidecar(sidecar_path, concurrency, entry.expected_size, &written).await?;
 
         let file = tokio::fs::OpenOptions::new()
             .create(true)
@@ -696,8 +726,6 @@ impl ProofsDownloader {
             .await?;
         file.set_len(entry.expected_size).await?;
         drop(file);
-
-        persist_range_sidecar(sidecar_path, concurrency, entry.expected_size, &written).await?;
 
         info!(
             target: "reth::cli",
@@ -1765,6 +1793,114 @@ mod tests {
         assert!(
             !cache_dir.path().join("proofs.tar.zst.part.ranges").exists(),
             "range sidecar should be removed after a complete parallel download"
+        );
+
+        handle.abort();
+    }
+
+    fn write_test_sidecar(path: &Path, concurrency: usize, expected_size: u64, written: &[u64]) {
+        let mut line = format!("{concurrency} {expected_size}");
+        for amount in written {
+            line.push(' ');
+            line.push_str(&amount.to_string());
+        }
+        std::fs::write(path, line).unwrap();
+    }
+
+    #[test]
+    fn load_trusted_range_sidecar_rejects_missing_or_short_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("proofs.tar.zst.part.ranges");
+        write_test_sidecar(&sidecar, 4, 100, &[25, 25, 25, 25]);
+
+        assert_eq!(
+            load_trusted_range_sidecar(&sidecar, 4, 100, 0),
+            None,
+            "sidecar without a full-sized .part must not skip ranges"
+        );
+        assert_eq!(
+            load_trusted_range_sidecar(&sidecar, 4, 100, 50),
+            None,
+            "sidecar with a resized .part must not skip ranges"
+        );
+        assert_eq!(
+            load_trusted_range_sidecar(&sidecar, 4, 100, 100),
+            Some(vec![25, 25, 25, 25]),
+            "sidecar should be trusted only when .part is the declared size"
+        );
+    }
+
+    #[tokio::test]
+    async fn download_archive_sequential_discards_stale_parallel_part() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"not-zeros-from-set-len")]);
+        let (base_url, handle) = start_range_aware_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let part_path = cache_dir.path().join("proofs.tar.zst.part");
+        std::fs::write(&part_path, vec![0u8; archive.len()]).unwrap();
+        write_test_sidecar(
+            &cache_dir.path().join("proofs.tar.zst.part.ranges"),
+            4,
+            archive.len() as u64,
+            &[0, 0, 0, 0],
+        );
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
+            .await
+            .expect("sequential download should not accept a preallocated parallel .part");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "stale parallel .part filled with zeros must be re-downloaded"
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part.ranges").exists(),
+            "stale sidecar should be removed"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_parallel_ignores_sidecar_without_part_file() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"download-over-missing-part")]);
+        let (base_url, _max_in_flight, handle) =
+            start_concurrent_range_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        write_test_sidecar(
+            &cache_dir.path().join("proofs.tar.zst.part.ranges"),
+            4,
+            archive.len() as u64,
+            &[
+                archive.len() as u64 / 4,
+                archive.len() as u64 / 4,
+                archive.len() as u64 / 4,
+                archive.len() as u64 - 3 * (archive.len() as u64 / 4),
+            ],
+        );
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("missing .part should re-download instead of trusting the sidecar");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "sidecar without a matching .part must not leave zero-filled holes"
         );
 
         handle.abort();
