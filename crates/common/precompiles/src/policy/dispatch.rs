@@ -68,7 +68,8 @@ impl PolicyRegistryStorage<'_> {
                         || sel == IPolicyRegistry::policyExistsCall::SELECTOR
                         || sel == IPolicyRegistry::policyAdminCall::SELECTOR
                         || sel == IPolicyRegistry::pendingPolicyAdminCall::SELECTOR
-                        || sel == IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR) =>
+                        || sel == IPolicyRegistry::compositePolicyChildIdsCall::SELECTOR
+                        || sel == IPolicyRegistry::invertedPolicyIdCall::SELECTOR) =>
             {
                 self.route(calldata, version, &observer)
             }
@@ -196,6 +197,11 @@ impl PolicyRegistryStorage<'_> {
                 let children = logic.composite_policy_child_ids(self, call.policyId)?;
                 Ok(IPolicyRegistry::compositePolicyChildIdsCall::abi_encode_returns(&children)
                     .into())
+            }
+            // Introduced in V3 (Denim).
+            C::invertedPolicyId(call) => {
+                let policy_id = logic.inverted_policy_id(call.policyId)?;
+                Ok(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(&policy_id).into())
             }
         }
     }

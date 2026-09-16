@@ -272,6 +272,22 @@ fn golden_reads_for_nonexistent_and_builtins() {
 }
 
 // ============================================================================
+// invertedPolicyId (V3 ABI; unknown to V2)
+// ============================================================================
+
+#[test]
+fn golden_inverted_policy_id_selector_unknown_in_v2() {
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::invertedPolicyIdCall::SELECTOR.as_ref()));
+}
+
+// ============================================================================
 // createPolicy
 // ============================================================================
 
@@ -1224,5 +1240,7 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_min_max_composite_child_policies,
             golden_min_max_composite_child_policies_read_before_activation,
         ]),
+        // V3 ABI; unknown to V2.
+        C::invertedPolicyId(_) => covered(&[golden_inverted_policy_id_selector_unknown_in_v2]),
     }
 }

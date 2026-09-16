@@ -11,7 +11,7 @@ use crate::{
     PolicyRegistryLogic,
 };
 
-/// Third `PolicyRegistry` implementation. Activated at Denim, behavior-identical to V2 (scaffold seam for future changes).
+/// Third `PolicyRegistry` implementation. Activated at Denim, adding inverted policy IDs.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PolicyRegistryV3;
 
@@ -33,6 +33,10 @@ impl PolicyRegistryV3 {
 
     /// Mask covering the low 56 bits of a policy ID (the counter space).
     pub const COUNTER_MASK: u64 = (1u64 << 56) - 1;
+
+    /// Bit 63 of a policy ID. When set, authorization evaluates the base policy and negates
+    /// the result without creating or storing a second policy record.
+    pub const INVERTED_POLICY_BIT: u64 = 1u64 << 63;
 
     /// Maximum number of accounts per membership batch (`createPolicyWithAccounts`,
     /// `updateAllowlist`, `updateBlocklist`).
@@ -59,6 +63,11 @@ impl PolicyRegistryV3 {
     /// Encodes a policy ID from its type discriminant and counter.
     pub const fn make_id(policy_type: u8, counter: u64) -> u64 {
         (policy_type as u64) << Self::POLICY_ID_TYPE_SHIFT | (counter & Self::COUNTER_MASK)
+    }
+
+    /// Returns `policy_id` with its invert flag toggled.
+    pub const fn inverted_policy_id(policy_id: u64) -> u64 {
+        policy_id ^ Self::INVERTED_POLICY_BIT
     }
 
     /// Reads a custom (non-built-in) policy word, reverting `PolicyNotFound` if absent.
@@ -116,6 +125,11 @@ impl PolicyRegistryV3 {
         policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID
     }
 
+    /// Removes the invert flag so a read can resolve the stored base policy.
+    const fn base_policy_id(policy_id: u64) -> u64 {
+        policy_id & !Self::INVERTED_POLICY_BIT
+    }
+
     /// Reverts `ChildPoliciesOutsideOfRange` when the child count is outside `[2, 4]`.
     fn require_child_policy_in_range(child_policy_ids: &[u64]) -> Result<()> {
         let count = child_policy_ids.len();
@@ -136,11 +150,12 @@ impl PolicyRegistryV3 {
         child_policy_ids: &[u64],
     ) -> Result<()> {
         for &child in child_policy_ids {
-            // Reverts PolicyNotFound when the child does not exist.
-            self.require_existing_policy(storage, child)?;
+            // Reverts PolicyNotFound when the child's base policy does not exist.
+            self.require_existing_policy(storage, Self::base_policy_id(child))?;
         }
         for &child in child_policy_ids {
-            if Self::is_builtin(child) || Self::is_composite(child) {
+            let base = Self::base_policy_id(child);
+            if Self::is_builtin(base) || Self::is_composite(base) {
                 return Err(BasePrecompileError::revert(IPolicyRegistry::InvalidChildPolicy {
                     childPolicyId: child,
                 }));
@@ -516,11 +531,21 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
     fn is_authorized(&self, storage: &S, policy_id: u64, account: Address) -> Result<bool> {
         // Built-in short-circuits precede any storage read: ALWAYS_ALLOW_ID = 0 is the EVM
         // default for any uninitialized policy field, so this must work before init has run.
+        // Inverted built-ins have a different ID and therefore fall through to the invert branch.
         if policy_id == Self::ALWAYS_ALLOW_ID {
             return Ok(true);
         }
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(false);
+        }
+        if policy_id & Self::INVERTED_POLICY_BIT != 0 {
+            let base = Self::base_policy_id(policy_id);
+            // An unknown blocklist normally authorizes due to its empty member set. Do not allow
+            // inversion to turn a missing policy into an allow-everyone authorization.
+            if !self.policy_exists(storage, base)? {
+                return Ok(false);
+            }
+            return self.is_authorized(storage, base, account).map(|authorized| !authorized);
         }
         // Malformed IDs (type byte > INTERSECT) are treated as unauthorized rather than reverting.
         if !Self::is_well_formed(policy_id) {
@@ -536,6 +561,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
     }
 
     fn policy_exists(&self, storage: &S, policy_id: u64) -> Result<bool> {
+        let policy_id = Self::base_policy_id(policy_id);
         if policy_id == Self::ALWAYS_ALLOW_ID || policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(true);
         }
@@ -547,6 +573,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
     }
 
     fn get_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
+        let policy_id = Self::base_policy_id(policy_id);
         if !Self::is_well_formed(policy_id) {
             return Ok(Address::ZERO);
         }
@@ -558,6 +585,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
     }
 
     fn pending_policy_admin(&self, storage: &S, policy_id: u64) -> Result<Address> {
+        let policy_id = Self::base_policy_id(policy_id);
         if !Self::is_well_formed(policy_id) {
             return Ok(Address::ZERO);
         }
@@ -568,6 +596,7 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
     }
 
     fn composite_policy_child_ids(&self, storage: &S, policy_id: u64) -> Result<Vec<u64>> {
+        let policy_id = Self::base_policy_id(policy_id);
         if !Self::is_well_formed(policy_id) {
             return Ok(Vec::new());
         }
@@ -575,6 +604,10 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
             return Ok(Vec::new());
         }
         storage.read_children(policy_id)
+    }
+
+    fn inverted_policy_id(&self, policy_id: u64) -> Result<u64> {
+        Ok(Self::inverted_policy_id(policy_id))
     }
 }
 
@@ -1597,5 +1630,132 @@ mod tests {
                 childPolicyId: PolicyRegistryV3::ALWAYS_BLOCK_ID,
             })
         );
+    }
+
+    // --- inverted policy IDs (V3 / Denim) ---
+
+    #[test]
+    fn inverted_policy_id_toggles_bit_and_round_trips() {
+        let policy_id = PolicyRegistryV3::make_id(PolicyType::ALLOWLIST as u8, 42);
+        let inverted = PolicyRegistryV3::inverted_policy_id(policy_id);
+        assert_eq!(inverted, policy_id ^ PolicyRegistryV3::INVERTED_POLICY_BIT);
+        assert_eq!(PolicyRegistryV3::inverted_policy_id(inverted), policy_id);
+    }
+
+    #[test]
+    fn inverted_unknown_policy_fails_closed() {
+        let rt = initialized();
+        let unknown_blocklist = PolicyRegistryV3::make_id(PolicyType::BLOCKLIST as u8, 999);
+        assert!(is_authorized(&rt, unknown_blocklist, ALICE));
+        assert!(!is_authorized(
+            &rt,
+            unknown_blocklist | PolicyRegistryV3::INVERTED_POLICY_BIT,
+            ALICE,
+        ));
+    }
+
+    #[test]
+    fn inverted_policies_negate_simple_composite_and_builtin_authorization() {
+        let mut rt = initialized();
+        let allowlist = create_allowlist(&mut rt);
+        LOGIC.update_allowlist(&mut rt, allowlist, true, vec![ALICE]).unwrap();
+        let inverted_allowlist = allowlist | PolicyRegistryV3::INVERTED_POLICY_BIT;
+        assert!(!is_authorized(&rt, inverted_allowlist, ALICE));
+        assert!(is_authorized(&rt, inverted_allowlist, BOB));
+
+        let other = create_allowlist(&mut rt);
+        let composite = create_union(&mut rt, vec![allowlist, other]);
+        assert!(is_authorized(&rt, composite, ALICE));
+        assert!(!is_authorized(&rt, composite | PolicyRegistryV3::INVERTED_POLICY_BIT, ALICE,));
+        assert!(!is_authorized(&rt, composite, BOB));
+        assert!(is_authorized(&rt, composite | PolicyRegistryV3::INVERTED_POLICY_BIT, BOB,));
+
+        assert!(!is_authorized(&rt, PolicyRegistryV3::INVERTED_POLICY_BIT, ALICE));
+        assert!(is_authorized(
+            &rt,
+            PolicyRegistryV3::ALWAYS_BLOCK_ID | PolicyRegistryV3::INVERTED_POLICY_BIT,
+            ALICE,
+        ));
+    }
+
+    #[test]
+    fn inverted_simple_children_are_valid_and_remain_verbatim() {
+        let mut rt = initialized();
+        let allowlist = create_allowlist(&mut rt);
+        let exclusion = create_allowlist(&mut rt);
+        let inverted_exclusion = exclusion | PolicyRegistryV3::INVERTED_POLICY_BIT;
+        LOGIC.update_allowlist(&mut rt, allowlist, true, vec![ALICE]).unwrap();
+        let composite = create_intersect(&mut rt, vec![allowlist, inverted_exclusion]);
+
+        assert_eq!(
+            LOGIC.composite_policy_child_ids(&rt, composite).unwrap(),
+            vec![allowlist, inverted_exclusion],
+        );
+        assert_eq!(
+            LOGIC
+                .composite_policy_child_ids(&rt, composite | PolicyRegistryV3::INVERTED_POLICY_BIT,)
+                .unwrap(),
+            vec![allowlist, inverted_exclusion],
+        );
+        assert!(is_authorized(&rt, composite, ALICE));
+
+        LOGIC.update_allowlist(&mut rt, exclusion, true, vec![ALICE]).unwrap();
+        assert!(!is_authorized(&rt, composite, ALICE));
+    }
+
+    #[test]
+    fn update_composite_accepts_an_inverted_simple_child() {
+        let mut rt = initialized();
+        let first = create_allowlist(&mut rt);
+        let second = create_allowlist(&mut rt);
+        let replacement = create_allowlist(&mut rt);
+        let composite = create_union(&mut rt, vec![first, second]);
+        let inverted_replacement = replacement | PolicyRegistryV3::INVERTED_POLICY_BIT;
+
+        LOGIC.update_composite(&mut rt, composite, vec![first, inverted_replacement]).unwrap();
+        assert_eq!(
+            LOGIC.composite_policy_child_ids(&rt, composite).unwrap(),
+            vec![first, inverted_replacement],
+        );
+    }
+
+    #[test]
+    fn inverted_composite_child_is_rejected_with_original_id() {
+        let mut rt = initialized();
+        let first = create_allowlist(&mut rt);
+        let second = create_allowlist(&mut rt);
+        let composite = create_union(&mut rt, vec![first, second]);
+        let inverted_composite = composite | PolicyRegistryV3::INVERTED_POLICY_BIT;
+        let third = create_allowlist(&mut rt);
+
+        let err = LOGIC
+            .create_composite_policy(
+                &mut rt,
+                ADMIN,
+                PolicyType::INTERSECT,
+                vec![third, inverted_composite],
+            )
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BasePrecompileError::revert(IPolicyRegistry::InvalidChildPolicy {
+                childPolicyId: inverted_composite,
+            })
+        );
+    }
+
+    #[test]
+    fn inverted_getters_resolve_the_base_policy() {
+        let mut rt = initialized();
+        let policy_id = create_allowlist(&mut rt);
+        let inverted = policy_id | PolicyRegistryV3::INVERTED_POLICY_BIT;
+        LOGIC.stage_update_admin(&mut rt, policy_id, NEW_ADMIN).unwrap();
+
+        assert_eq!(
+            LOGIC.policy_exists(&rt, inverted).unwrap(),
+            LOGIC.policy_exists(&rt, policy_id).unwrap()
+        );
+        assert_eq!(LOGIC.get_policy_admin(&rt, inverted).unwrap(), ADMIN);
+        assert_eq!(LOGIC.pending_policy_admin(&rt, inverted).unwrap(), NEW_ADMIN);
     }
 }

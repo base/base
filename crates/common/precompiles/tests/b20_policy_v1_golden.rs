@@ -396,6 +396,18 @@ fn golden_composite_child_ids_selector_unknown_in_v1() {
 }
 
 #[test]
+fn golden_inverted_policy_id_selector_unknown_in_v1() {
+    let mut s = fresh();
+    let (rev, bytes) = call_policy(
+        &mut s,
+        ADMIN,
+        IPolicyRegistry::invertedPolicyIdCall { policyId: ALLOWLIST_ID }.abi_encode(),
+    );
+    assert!(rev);
+    assert_eq!(bytes, Bytes::from(IPolicyRegistry::invertedPolicyIdCall::SELECTOR.as_ref()));
+}
+
+#[test]
 fn golden_min_max_composite_child_policies_selector_unknown_in_v1() {
     // MIN_COMPOSITE_CHILD_POLICIES/MAX_COMPOSITE_CHILD_POLICIES are V2-only getters — composite
     // policies do not exist at Beryl, so their selectors must stay unknown, same as the other
@@ -1062,5 +1074,7 @@ fn v1_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
         C::MIN_COMPOSITE_CHILD_POLICIES(_) | C::MAX_COMPOSITE_CHILD_POLICIES(_) => {
             covered(&[golden_min_max_composite_child_policies_selector_unknown_in_v1])
         }
+        // V3 ABI; unknown to V1.
+        C::invertedPolicyId(_) => covered(&[golden_inverted_policy_id_selector_unknown_in_v1]),
     }
 }
