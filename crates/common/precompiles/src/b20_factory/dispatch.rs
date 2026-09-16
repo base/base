@@ -5,7 +5,7 @@
 //! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
 //! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_sol_types::{SolCall, SolType, SolValue, abi};
@@ -97,8 +97,14 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
-        if let Some(request) = CreateB20Request::try_from_calldata(calldata, version) {
-            return self.run_create_b20(ctx, version, upgrade, &observer, request);
+        let should_revert_selector =
+            ctx.storage_features().selector_only_abi_decode_errors_enabled();
+        match CreateB20Request::try_from_calldata(calldata, version, should_revert_selector) {
+            Some(Ok(request)) => {
+                return self.run_create_b20(ctx, version, upgrade, &observer, request);
+            }
+            Some(Err(error)) => return Err(error),
+            None => {}
         }
 
         let logic = version.implementation();
@@ -173,7 +179,11 @@ struct CreateB20Request<'a> {
 }
 
 impl<'a> CreateB20Request<'a> {
-    fn try_from_calldata(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
+    fn try_from_calldata(
+        calldata: &'a [u8],
+        version: FactoryVersion,
+        should_revert_selector: bool,
+    ) -> Option<Result<Self>> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Factory::createB20Call::SELECTOR {
             return None;
@@ -188,14 +198,20 @@ impl<'a> CreateB20Request<'a> {
         if !<<IB20Factory::createB20Call as SolCall>::Parameters<'a> as SolType>::valid_token(
             &token,
         ) {
-            return None;
+            if !should_revert_selector {
+                return None;
+            }
+            return Some(Err(BasePrecompileError::AbiDecodeFailed {
+                selector,
+                error: String::from("createB20: malformed payload"),
+            }));
         }
-        Some(Self {
+        Some(Ok(Self {
             variant: <IB20Factory::B20Variant as SolType>::detokenize(token.0),
             salt: token.1.0,
             params: token.2.0,
             init_calls: token.3.0.iter().map(|c| c.0).collect(),
-        })
+        }))
     }
 
     fn from_call(call: &'a IB20Factory::createB20Call) -> Self {
@@ -1127,5 +1143,192 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn aliased_reject_diagnostic_is_bounded_at_cobalt() {
+        let salt = B256::repeat_byte(0x77);
+        let params: Bytes = token_params("Amp", "AMP").abi_encode().into();
+        let tail = alloc::vec![0xcd_u8; 256];
+
+        // Aliased `initCalls` with a dirtied variant word: `decode_sequence` succeeds but
+        // `valid_token` fails, so this is exactly the reject vector the owned decoder re-encodes.
+        let dirty_aliased = |n: usize| {
+            let mut calldata = aliased_create_b20_calldata(
+                n,
+                &tail,
+                params.clone(),
+                salt,
+                IB20Factory::B20Variant::ASSET,
+            );
+            calldata[4] = 0xff;
+            calldata
+        };
+
+        let reject_error = |calldata: &[u8], features, upgrade| {
+            let mut storage = HashMapStorageProvider::new_with_storage_features(1, features);
+            activate_precompiles(&mut storage);
+            storage.set_caller(Address::repeat_byte(0x01));
+            StorageCtx::enter(&mut storage, |ctx| {
+                B20FactoryStorage::new(ctx)
+                    .route(ctx, calldata, FactoryVersion::V1, upgrade, NoopPrecompileCallObserver)
+                    .unwrap_err()
+            })
+        };
+
+        let error_string = |err| match err {
+            BasePrecompileError::AbiDecodeFailed { selector, error } => {
+                assert_eq!(selector, IB20Factory::createB20Call::SELECTOR);
+                error
+            }
+            other => panic!("expected AbiDecodeFailed, got {other:?}"),
+        };
+
+        // Cobalt: identical fixed diagnostic for tiny and huge payloads — the O(N*M) re-encode never ran.
+        let cobalt_small = error_string(reject_error(
+            &dirty_aliased(8),
+            base_precompile_storage::StorageFeatures::Cobalt,
+            BaseUpgrade::Cobalt,
+        ));
+        let cobalt_large = error_string(reject_error(
+            &dirty_aliased(1_024),
+            base_precompile_storage::StorageFeatures::Cobalt,
+            BaseUpgrade::Cobalt,
+        ));
+        assert_eq!(cobalt_small, "createB20: malformed payload");
+        assert_eq!(
+            cobalt_small, cobalt_large,
+            "Cobalt reject diagnostic must not scale with the aliased element count"
+        );
+
+        // Beryl: revert bytes are consensus-frozen, so the amplifying owned diagnostic is preserved.
+        let n = 1_024usize;
+        let logical = n * tail.len();
+        let beryl_large = error_string(reject_error(
+            &dirty_aliased(n),
+            base_precompile_storage::StorageFeatures::Legacy,
+            BaseUpgrade::Beryl,
+        ));
+        assert!(
+            beryl_large.len() > logical,
+            "Beryl diagnostic must still track logical N*M (logical={logical}, got={})",
+            beryl_large.len()
+        );
+    }
+
+    /// End-to-end at Cobalt: an aliased reject reverts with selector-only bytes (the amplified string
+    /// never reaches consensus output), while a valid aliased payload still creates the token — the
+    /// accept/reject decision is unchanged, only the reject *diagnostic* is bounded.
+    #[test]
+    fn aliased_reject_output_is_selector_only_at_cobalt() {
+        let creator = Address::repeat_byte(0xCA);
+        let salt = B256::repeat_byte(0x78);
+        let params: Bytes = token_params("Amp", "AMP").abi_encode().into();
+        let tail =
+            IB20::mintCall { to: Address::repeat_byte(0xBB), amount: U256::ONE }.abi_encode();
+
+        let valid =
+            aliased_create_b20_calldata(64, &tail, params, salt, IB20Factory::B20Variant::ASSET);
+        let mut rejected = valid.clone();
+        rejected[4] = 0xff;
+
+        let mut storage = HashMapStorageProvider::new_with_storage_features(
+            1,
+            base_precompile_storage::StorageFeatures::Cobalt,
+        );
+        activate_precompiles(&mut storage);
+        storage.set_caller(creator);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let ok =
+                B20FactoryStorage::new(ctx).dispatch(ctx, &valid, BaseUpgrade::Cobalt).unwrap();
+            assert!(!ok.is_revert(), "valid aliased createB20 must still succeed at Cobalt");
+
+            let revert =
+                B20FactoryStorage::new(ctx).dispatch(ctx, &rejected, BaseUpgrade::Cobalt).unwrap();
+            assert!(revert.is_revert());
+            assert_eq!(
+                revert.bytes,
+                Bytes::from(IB20Factory::createB20Call::SELECTOR),
+                "Cobalt reject must emit only the selector, not the amplified diagnostic"
+            );
+        });
+    }
+
+    /// Reject-path diagnostic on the frozen fork: dirty variant padding plus aliased `initCalls`.
+    ///
+    /// On Beryl (`should_revert_selector == false`) the borrowed decoder must NOT emit a bounded
+    /// fast error — it returns `None` and falls through to alloy's owned `type_check` failure, which
+    /// re-encodes the token (`type_check_fail_token`) and hex-encodes that blob into the error
+    /// string, giving an O(N·M) diagnostic from O(32N+M) physical calldata. Those revert bytes are
+    /// consensus-frozen, so this pins that they are preserved exactly; only Cobalt+ bounds them (see
+    /// `aliased_reject_diagnostic_is_bounded_at_cobalt`). Invert these bounds if Beryl is ever
+    /// allowed to short-circuit.
+    #[test]
+    fn aliased_init_calls_reject_path_diagnostic_amplification() {
+        let n = 128usize;
+        let tail = alloc::vec![0xcd_u8; 256];
+        let params: Bytes = token_params("Amp", "AMP").abi_encode().into();
+        let salt = B256::repeat_byte(0x79);
+        let mut calldata =
+            aliased_create_b20_calldata(n, &tail, params, salt, IB20Factory::B20Variant::ASSET);
+        calldata[4] = 0xff;
+
+        let physical = calldata.len();
+        let logical = n * tail.len();
+        assert!(
+            logical > physical,
+            "probe must be aliased: logical {logical} vs physical {physical}"
+        );
+
+        // Beryl gate: no fast error — the reject misses the borrowed path and falls through.
+        assert!(
+            super::CreateB20Request::try_from_calldata(&calldata, FactoryVersion::V1, false)
+                .is_none(),
+            "Beryl reject must miss the borrowed path (no bounded short-circuit)"
+        );
+
+        let owned_msg =
+            IB20Factory::createB20Call::abi_decode_validate(&calldata).unwrap_err().to_string();
+
+        let factory_err = FactoryVersion::V1.abi().decode(&calldata).unwrap_err();
+        let BasePrecompileError::AbiDecodeFailed { selector, error } = &factory_err else {
+            panic!("expected AbiDecodeFailed, got {factory_err:?}");
+        };
+        assert_eq!(*selector, IB20Factory::createB20Call::SELECTOR);
+
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        storage.set_caller(Address::repeat_byte(0x01));
+        let route_err = StorageCtx::enter(&mut storage, |ctx| {
+            B20FactoryStorage::new(ctx)
+                .route(
+                    ctx,
+                    &calldata,
+                    FactoryVersion::V1,
+                    BaseUpgrade::Beryl,
+                    NoopPrecompileCallObserver,
+                )
+                .unwrap_err()
+        });
+        assert_eq!(route_err, factory_err);
+
+        let revert = route_err.into_precompile_result(0, 0).unwrap();
+        assert!(revert.is_revert());
+        let revert_len = revert.bytes.len();
+
+        // The owned `type_check_fail_token` re-encodes every aliased `bytes[]` entry, then hex-encodes
+        // it into `AbiDecodeFailed` — so the diagnostic dwarfs the physical calldata.
+        assert!(
+            error.len() > logical,
+            "Beryl diagnostic should track logical N·M (physical={physical}, logical={logical}, error={})",
+            error.len()
+        );
+        assert!(
+            error.len() > physical * 4,
+            "Beryl diagnostic should dwarf physical calldata (physical={physical}, error={})",
+            error.len()
+        );
+        assert_eq!(owned_msg.len(), error.len(), "SolCall and FactoryAbi diagnostics must match");
+        assert_eq!(revert_len, 4 + error.len(), "Beryl revert is selector || error string");
     }
 }
