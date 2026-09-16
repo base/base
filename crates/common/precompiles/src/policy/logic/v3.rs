@@ -538,10 +538,9 @@ impl<S: PolicyAccounting> PolicyRegistryLogic<S> for PolicyRegistryV3 {
         if policy_id == Self::ALWAYS_BLOCK_ID {
             return Ok(false);
         }
-        if policy_id & Self::INVERTED_POLICY_BIT != 0 {
+        let is_policy_inverted = policy_id & Self::INVERTED_POLICY_BIT != 0;
+        if is_policy_inverted {
             let base = Self::base_policy_id(policy_id);
-            // An unknown blocklist normally authorizes due to its empty member set. Do not allow
-            // inversion to turn a missing policy into an allow-everyone authorization.
             if !self.policy_exists(storage, base)? {
                 return Ok(false);
             }
