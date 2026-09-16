@@ -5,8 +5,10 @@
 //! `createB20`'s business logic to it. `getB20Address`, `isB20`, and
 //! `isB20Initialized` are answered via version-invariant computations/pass-throughs.
 
-use alloy_primitives::{Address, Bytes, keccak256};
-use alloy_sol_types::{SolCall, SolValue};
+use alloc::vec::Vec;
+
+use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_sol_types::{SolCall, SolType, SolValue, abi};
 use base_common_genesis::BaseUpgrade;
 use base_precompile_storage::{BasePrecompileError, PrecompileResult, Result, StorageCtx};
 
@@ -73,10 +75,17 @@ impl<'a> B20FactoryStorage<'a> {
         upgrade: BaseUpgrade,
     ) -> Result<Address> {
         let address_hash = keccak256((caller, call.salt).abi_encode());
-        FactoryV1.create_b20(self, call, address_hash, upgrade)
+        let request = CreateB20Request::from_call(&call);
+        FactoryV1.create_b20_decoded(
+            self,
+            request.variant,
+            request.params,
+            &request.init_calls,
+            address_hash,
+            upgrade,
+        )
     }
 
-    /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
     fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -88,27 +97,19 @@ impl<'a> B20FactoryStorage<'a> {
     where
         O: PrecompileCallObserver,
     {
+        if let Some(request) = CreateB20Request::try_from_calldata(calldata, version) {
+            return self.run_create_b20(ctx, version, upgrade, &observer, request);
+        }
+
         let logic = version.implementation();
         match version.abi().decode(calldata)? {
-            IB20Factory::IB20FactoryCalls::createB20(call) => {
-                let caller = ctx.caller();
-                // abi_decode_validate rejects non-canonical discriminants before dispatch,
-                // so from_abi returning None here would be an internal invariant violation.
-                let variant = B20Variant::from_abi(call.variant).expect(
-                    "abi_decode_validate rejects non-canonical discriminants before dispatch",
-                );
-                let address_hash = ctx.metered_keccak256(&(caller, call.salt).abi_encode())?;
-                let internal_call_count = call.initCalls.len();
-                let internal_call_bytes = call.initCalls.iter().map(|c| c.len()).sum();
-                let token = logic.create_b20(self, call, address_hash, upgrade)?;
-                observer.record_internal_calls(
-                    &PrecompileAuxiliaryMetrics::singleton("factory", "createB20"),
-                    internal_call_count,
-                    internal_call_bytes,
-                );
-                observer.record_b20_created(variant.as_label());
-                Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
-            }
+            IB20Factory::IB20FactoryCalls::createB20(call) => self.run_create_b20(
+                ctx,
+                version,
+                upgrade,
+                &observer,
+                CreateB20Request::from_call(&call),
+            ),
             IB20Factory::IB20FactoryCalls::getB20Address(call) => {
                 let v = B20Variant::from_abi(call.variant).expect(
                     "abi_decode_validate rejects non-canonical discriminants before dispatch",
@@ -127,6 +128,84 @@ impl<'a> B20FactoryStorage<'a> {
             }
         }
     }
+
+    fn run_create_b20<O>(
+        &mut self,
+        ctx: StorageCtx<'_>,
+        version: FactoryVersion,
+        upgrade: BaseUpgrade,
+        observer: &O,
+        request: CreateB20Request<'_>,
+    ) -> Result<Bytes>
+    where
+        O: PrecompileCallObserver,
+    {
+        let logic = version.implementation();
+        let caller = ctx.caller();
+        let variant = B20Variant::from_abi(request.variant)
+            .expect("decode paths reject non-canonical discriminants before dispatch");
+        let address_hash = ctx.metered_keccak256(&(caller, request.salt).abi_encode())?;
+        let internal_call_count = request.init_calls.len();
+        let internal_call_bytes = request.init_calls.iter().map(|c| c.len()).sum();
+        let token = logic.create_b20_decoded(
+            self,
+            request.variant,
+            request.params,
+            &request.init_calls,
+            address_hash,
+            upgrade,
+        )?;
+        observer.record_internal_calls(
+            &PrecompileAuxiliaryMetrics::singleton("factory", "createB20"),
+            internal_call_count,
+            internal_call_bytes,
+        );
+        observer.record_b20_created(variant.as_label());
+        Ok(IB20Factory::createB20Call::abi_encode_returns(&token).into())
+    }
+}
+
+struct CreateB20Request<'a> {
+    variant: IB20Factory::B20Variant,
+    salt: B256,
+    params: &'a [u8],
+    init_calls: Vec<&'a [u8]>,
+}
+
+impl<'a> CreateB20Request<'a> {
+    fn try_from_calldata(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
+        let selector = calldata.first_chunk::<4>().copied()?;
+        if selector != IB20Factory::createB20Call::SELECTOR {
+            return None;
+        }
+        if !version.abi().valid_selector(selector) {
+            return None;
+        }
+        let rest = &calldata[4..];
+        let token =
+            abi::decode_sequence::<<IB20Factory::createB20Call as SolCall>::Token<'a>>(rest)
+                .ok()?;
+        if !<<IB20Factory::createB20Call as SolCall>::Parameters<'a> as SolType>::valid_token(
+            &token,
+        ) {
+            return None;
+        }
+        Some(Self {
+            variant: <IB20Factory::B20Variant as SolType>::detokenize(token.0),
+            salt: token.1.0,
+            params: token.2.0,
+            init_calls: token.3.0.iter().map(|c| c.0).collect(),
+        })
+    }
+
+    fn from_call(call: &'a IB20Factory::createB20Call) -> Self {
+        Self {
+            variant: call.variant,
+            salt: call.salt,
+            params: call.params.as_ref(),
+            init_calls: call.initCalls.iter().map(|call| call.as_ref()).collect(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -136,12 +215,15 @@ mod tests {
     use alloy_primitives::{Address, B256, Bytes, U256, address};
     use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
     use base_common_genesis::BaseUpgrade;
-    use base_precompile_storage::{Handler, HashMapStorageProvider, StorageCtx};
+    use base_precompile_storage::{
+        BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx,
+    };
 
     use crate::{
         ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, AssetAccounting,
-        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant, IB20,
-        IB20Factory, PolicyRegistryStorage, PolicyVersion,
+        B20AssetStorage, B20AssetToken, B20FactoryStorage, B20StablecoinStorage, B20Variant,
+        FactoryVersion, IB20, IB20Factory, NoopPrecompileCallObserver, PolicyRegistryStorage,
+        PolicyVersion,
     };
 
     const ACTIVATION_ADMIN: Address = address!("0xcb00000000000000000000000000000000000000");
@@ -799,5 +881,251 @@ mod tests {
             1,
             "createB20 must call keccak256 exactly once for a valid variant"
         );
+    }
+
+    fn aliased_create_b20_calldata(
+        n: usize,
+        tail: &[u8],
+        params: Bytes,
+        salt: B256,
+        variant: IB20Factory::B20Variant,
+    ) -> Vec<u8> {
+        assert!(n >= 1, "need at least one aliased entry");
+        let base = IB20Factory::createB20Call {
+            variant,
+            salt,
+            params,
+            initCalls: alloc::vec![Bytes::copy_from_slice(tail)],
+        }
+        .abi_encode();
+
+        let args = &base[4..];
+        let read_off = |at: usize| -> usize {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&args[at + 24..at + 32]);
+            u64::from_be_bytes(buf) as usize
+        };
+        let write_off = |out: &mut [u8], at: usize, v: usize| {
+            out[at..at + 32].fill(0);
+            out[at + 24..at + 32].copy_from_slice(&(v as u64).to_be_bytes());
+        };
+
+        let off_init_calls = read_off(96);
+        assert_eq!(read_off(off_init_calls), 1, "base encoding must be one element");
+
+        let blob_off = read_off(off_init_calls + 32);
+        let blob = &args[off_init_calls + 32 + blob_off..];
+
+        let shared_elem_off = n * 32;
+
+        let mut out = base[..4 + off_init_calls + 32].to_vec();
+        out.resize(4 + off_init_calls + 32 + n * 32 + blob.len(), 0);
+        let a = &mut out[4..];
+        write_off(a, off_init_calls, n);
+        for i in 0..n {
+            write_off(a, off_init_calls + 32 + i * 32, shared_elem_off);
+        }
+        let blob_at = off_init_calls + 32 + n * 32;
+        a[blob_at..blob_at + blob.len()].copy_from_slice(blob);
+        out
+    }
+
+    #[test]
+    fn aliased_create_b20_redispatches_each_entry() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let creator = Address::repeat_byte(0xCA);
+        let bob = Address::repeat_byte(0xBB);
+        let salt = B256::repeat_byte(0x40);
+        let (token_addr, _) = B20Variant::Asset.compute_address(creator, salt);
+
+        let params = token_params("Aliased Token", "ALS").abi_encode().into();
+        let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
+        let calldata =
+            aliased_create_b20_calldata(8, &tail, params, salt, IB20Factory::B20Variant::ASSET);
+
+        storage.set_caller(creator);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let out = factory.dispatch(ctx, &calldata, BaseUpgrade::Beryl).unwrap();
+            assert!(!out.is_revert(), "aliased createB20 must succeed: {:?}", out.bytes);
+
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: bob }),
+                U256::from(8u64).abi_encode(),
+            );
+        });
+    }
+
+    #[test]
+    fn aliased_create_b20_matches_non_aliased_output() {
+        let creator = Address::repeat_byte(0xCA);
+        let bob = Address::repeat_byte(0xBB);
+        let n = 5usize;
+        let salt = B256::repeat_byte(0x41);
+        let params: Bytes = token_params("Parity Token", "PAR").abi_encode().into();
+        let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
+
+        let aliased = aliased_create_b20_calldata(
+            n,
+            &tail,
+            params.clone(),
+            salt,
+            IB20Factory::B20Variant::ASSET,
+        );
+        let honest = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt,
+            params,
+            initCalls: alloc::vec![Bytes::copy_from_slice(&tail); n],
+        }
+        .abi_encode();
+
+        let run = |calldata: &[u8]| -> Bytes {
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_precompiles(&mut storage);
+            storage.set_caller(creator);
+            StorageCtx::enter(&mut storage, |ctx| {
+                let mut factory = B20FactoryStorage::new(ctx);
+                let out = factory.dispatch(ctx, calldata, BaseUpgrade::Beryl).unwrap();
+                assert!(!out.is_revert(), "createB20 must succeed: {:?}", out.bytes);
+                out.bytes
+            })
+        };
+
+        assert_eq!(
+            run(&aliased),
+            run(&honest),
+            "aliased and honestly-encoded initCalls must return identical output"
+        );
+    }
+
+    #[test]
+    fn large_aliased_create_b20_succeeds() {
+        let mut storage = HashMapStorageProvider::new(1);
+        activate_precompiles(&mut storage);
+        let creator = Address::repeat_byte(0xCA);
+        let bob = Address::repeat_byte(0xBB);
+        let salt = B256::repeat_byte(0x42);
+        let (token_addr, _) = B20Variant::Asset.compute_address(creator, salt);
+
+        let params = token_params("Large Aliased Token", "LGA").abi_encode().into();
+        let tail = IB20::mintCall { to: bob, amount: U256::ONE }.abi_encode();
+        let calldata =
+            aliased_create_b20_calldata(1_024, &tail, params, salt, IB20Factory::B20Variant::ASSET);
+
+        storage.set_caller(creator);
+        StorageCtx::enter(&mut storage, |ctx| {
+            let mut factory = B20FactoryStorage::new(ctx);
+            let out = factory.dispatch(ctx, &calldata, BaseUpgrade::Beryl).unwrap();
+            assert!(!out.is_revert(), "large aliased createB20 must succeed: {:?}", out.bytes);
+
+            assert_output(
+                dispatch_b20_success(ctx, token_addr, IB20::balanceOfCall { account: bob }),
+                U256::from(1_024u64).abi_encode(),
+            );
+        });
+    }
+
+    #[test]
+    fn create_b20_dispatch_matches_owned_abi_oracle() {
+        let salt = B256::repeat_byte(0x50);
+        let params: Bytes = token_params("Oracle Token", "ORC").abi_encode().into();
+        let tail =
+            IB20::mintCall { to: Address::repeat_byte(0xEE), amount: U256::ONE }.abi_encode();
+
+        let one_element = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt,
+            params: params.clone(),
+            initCalls: alloc::vec![Bytes::copy_from_slice(&tail)],
+        }
+        .abi_encode();
+        let multi_element = IB20Factory::createB20Call {
+            variant: IB20Factory::B20Variant::ASSET,
+            salt,
+            params: params.clone(),
+            initCalls: alloc::vec![
+                Bytes::copy_from_slice(&tail),
+                Bytes::copy_from_slice(&tail),
+                Bytes::copy_from_slice(&tail),
+            ],
+        }
+        .abi_encode();
+
+        let aliased =
+            aliased_create_b20_calldata(1_024, &tail, params, salt, IB20Factory::B20Variant::ASSET);
+
+        let read_off = |bytes: &[u8], at: usize| -> usize {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&bytes[at + 24..at + 32]);
+            u64::from_be_bytes(buf) as usize
+        };
+        let off_init_calls = read_off(&one_element, 4 + 96);
+        let mut past_end_length = one_element.clone();
+        past_end_length[4 + off_init_calls..4 + off_init_calls + 32].fill(0xff);
+
+        let mut trailing_garbage = one_element.clone();
+        trailing_garbage.extend_from_slice(&[0u8; 16]);
+
+        let mut invalid_variant = one_element.clone();
+        invalid_variant[35] = 0x07;
+
+        let mut dirty_variant_padding = one_element.clone();
+        dirty_variant_padding[4] = 0xff;
+
+        let truncated_head = IB20Factory::createB20Call::SELECTOR.to_vec();
+        let no_calldata: Vec<u8> = Vec::new();
+
+        let rows: alloc::vec::Vec<(&'static str, Vec<u8>, bool)> = alloc::vec![
+            ("honest single-element valid", one_element, true),
+            ("honest multi-element valid", multi_element, true),
+            ("aliased offsets valid", aliased, true),
+            ("length word overruns buffer", past_end_length, false),
+            ("out-of-range variant discriminant", invalid_variant, false),
+            ("non-canonical variant padding", dirty_variant_padding, false),
+            ("trailing garbage after valid payload", trailing_garbage, true),
+            ("truncated head (only selector)", truncated_head, false),
+            ("no calldata at all", no_calldata, false),
+        ];
+
+        for (name, calldata, must_accept) in rows {
+            let oracle_accepts = IB20Factory::createB20Call::abi_decode_validate(&calldata).is_ok();
+            assert_eq!(
+                oracle_accepts, must_accept,
+                "row `{name}`: oracle disagrees; refresh the test if the payload changed"
+            );
+
+            let mut storage = HashMapStorageProvider::new(1);
+            activate_precompiles(&mut storage);
+            storage.set_caller(Address::repeat_byte(0x01));
+            let outcome = StorageCtx::enter(&mut storage, |ctx| {
+                B20FactoryStorage::new(ctx).route(
+                    ctx,
+                    &calldata,
+                    FactoryVersion::V1,
+                    BaseUpgrade::Beryl,
+                    NoopPrecompileCallObserver,
+                )
+            });
+
+            assert_eq!(
+                outcome.is_ok(),
+                must_accept,
+                "row `{name}`: accept-set disagrees with the oracle",
+            );
+
+            if let Err(err) = outcome {
+                let control = FactoryVersion::V1.abi().decode(&calldata).unwrap_err();
+                assert_eq!(err, control, "row `{name}`: error bytes must match owned decode");
+                match err {
+                    BasePrecompileError::AbiDecodeFailed { selector, .. } => {
+                        assert_eq!(selector, IB20Factory::createB20Call::SELECTOR)
+                    }
+                    BasePrecompileError::UnknownFunctionSelector(_) => {}
+                    other => panic!("row `{name}`: unexpected error {other:?}"),
+                }
+            }
+        }
     }
 }
