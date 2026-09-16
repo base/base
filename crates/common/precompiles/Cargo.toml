@@ -48,11 +48,19 @@ name = "b20_stablecoin_v2_golden"
 required-features = ["test-utils"]
 
 [[test]]
+name = "b20_stablecoin_v3_golden"
+required-features = ["test-utils"]
+
+[[test]]
 name = "b20_asset_v1_golden"
 required-features = ["test-utils"]
 
 [[test]]
 name = "b20_asset_v2_golden"
+required-features = ["test-utils"]
+
+[[test]]
+name = "b20_asset_v3_golden"
 required-features = ["test-utils"]
 
 [[test]]
