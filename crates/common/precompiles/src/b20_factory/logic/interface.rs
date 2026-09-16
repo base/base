@@ -6,8 +6,7 @@ use base_precompile_storage::Result;
 
 use crate::{B20FactoryStorage, IB20Factory};
 
-/// Borrowed `createB20` initialization calldata, ordered as supplied by the caller.
-/// TODO: Remove this and use `Vec<Bytes>` when we can use alloy-alias decoding.
+/// Borrowed `createB20` initialization calldata.
 pub type InitCalls<'a> = [&'a [u8]];
 
 /// The B-20 token factory logic interface.
@@ -15,14 +14,7 @@ pub type InitCalls<'a> = [&'a [u8]];
 /// This trait is append-only: new versions add methods, never remove or change the
 /// signature of an existing one.
 pub trait Factory {
-    /// Creates a token from already-decoded `createB20` fields, borrowed rather than owned.
-    ///
-    /// `address_hash` must be `keccak256(abi_encode(caller, salt))`. Computing (and metering) that
-    /// hash is the dispatcher's responsibility; this method only consumes the result, so it takes
-    /// no `salt`. `upgrade` selects the policy-logic version the created token is bound to. Borrowed
-    /// `params`/`init_calls` let the dispatcher decode straight from calldata without copying;
-    /// `B20FactoryStorage::create_b20` is a thin owned-call convenience that borrows into this.
-    ///
+    /// Creates a token from decoded `createB20` fields.
     fn create_b20_decoded(
         &self,
         storage: &mut B20FactoryStorage<'_>,

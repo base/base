@@ -86,7 +86,6 @@ impl<'a> B20FactoryStorage<'a> {
         )
     }
 
-    /// Decodes calldata against the active wire surface and routes it to `version`'s logic.
     fn route<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -130,9 +129,6 @@ impl<'a> B20FactoryStorage<'a> {
         }
     }
 
-    /// Posts a `createB20` request: resolves the token variant, computes its deterministic
-    /// address, and routes creation to `version`'s logic. Shared by the borrowed fast path and
-    /// the owned safety net in [`Self::route`] so both take an identical path once decoded.
     fn run_create_b20<O>(
         &mut self,
         ctx: StorageCtx<'_>,
@@ -146,8 +142,6 @@ impl<'a> B20FactoryStorage<'a> {
     {
         let logic = version.implementation();
         let caller = ctx.caller();
-        // Both decode paths reject non-canonical discriminants before reaching here, so
-        // `from_abi` returning `None` would be an internal invariant violation.
         let variant = B20Variant::from_abi(request.variant)
             .expect("decode paths reject non-canonical discriminants before dispatch");
         let address_hash = ctx.metered_keccak256(&(caller, request.salt).abi_encode())?;
@@ -171,7 +165,6 @@ impl<'a> B20FactoryStorage<'a> {
     }
 }
 
-/// Normalized input to [`B20FactoryStorage::run_create_b20`].
 struct CreateB20Request<'a> {
     variant: IB20Factory::B20Variant,
     salt: B256,
@@ -180,7 +173,6 @@ struct CreateB20Request<'a> {
 }
 
 impl<'a> CreateB20Request<'a> {
-    /// Returns a borrowed `createB20` request when `calldata` selects and validates at `version`.
     fn try_from_calldata(calldata: &'a [u8], version: FactoryVersion) -> Option<Self> {
         let selector = calldata.first_chunk::<4>().copied()?;
         if selector != IB20Factory::createB20Call::SELECTOR {
@@ -189,7 +181,6 @@ impl<'a> CreateB20Request<'a> {
         if !version.abi().valid_selector(selector) {
             return None;
         }
-        // `decode_sequence` followed by `valid_token` matches Alloy's validating call decode.
         let rest = &calldata[4..];
         let token =
             abi::decode_sequence::<<IB20Factory::createB20Call as SolCall>::Token<'a>>(rest)
@@ -207,7 +198,6 @@ impl<'a> CreateB20Request<'a> {
         })
     }
 
-    /// Builds a `CreateB20Request` from an already-decoded call.
     fn from_call(call: &'a IB20Factory::createB20Call) -> Self {
         Self {
             variant: call.variant,
@@ -920,21 +910,18 @@ mod tests {
             out[at + 24..at + 32].copy_from_slice(&(v as u64).to_be_bytes());
         };
 
-        // Head: [variant][salt][off_params][off_initCalls]. `initCalls` is declared last, so
-        // nothing follows its tail block — widening its offset table needs no other shifts.
         let off_init_calls = read_off(96);
         assert_eq!(read_off(off_init_calls), 1, "base encoding must be one element");
 
-        // initCalls tail block (n == 1): [len=1][off0][blob..].
         let blob_off = read_off(off_init_calls + 32);
         let blob = &args[off_init_calls + 32 + blob_off..];
 
-        let shared_elem_off = n * 32; // offset of the shared blob, relative to right after len
+        let shared_elem_off = n * 32;
 
         let mut out = base[..4 + off_init_calls + 32].to_vec();
         out.resize(4 + off_init_calls + 32 + n * 32 + blob.len(), 0);
         let a = &mut out[4..];
-        write_off(a, off_init_calls, n); // array length
+        write_off(a, off_init_calls, n);
         for i in 0..n {
             write_off(a, off_init_calls + 32 + i * 32, shared_elem_off);
         }
@@ -1069,9 +1056,6 @@ mod tests {
         let aliased =
             aliased_create_b20_calldata(1_024, &tail, params, salt, IB20Factory::B20Variant::ASSET);
 
-        // The `initCalls` length word sits right after the head plus the `params` blob. Locate it
-        // from the head's offset word (word index 3) rather than hardcoding a position, since
-        // unlike `announce`, `createB20` has another dynamic argument (`params`) ahead of it.
         let read_off = |bytes: &[u8], at: usize| -> usize {
             let mut buf = [0u8; 8];
             buf.copy_from_slice(&bytes[at + 24..at + 32]);
@@ -1084,14 +1068,9 @@ mod tests {
         let mut trailing_garbage = one_element.clone();
         trailing_garbage.extend_from_slice(&[0u8; 16]);
 
-        // The `variant` enum sits in the first argument word (`calldata[4..36]`), right-aligned.
-        // An out-of-range discriminant is the one field the fast path detokenizes, so pin that its
-        // rejection matches the owned decode rather than mishandling the value.
         let mut invalid_variant = one_element.clone();
         invalid_variant[35] = 0x07;
 
-        // Non-canonical high-order padding on the variant word: caught by validation, not strict
-        // mode, so the borrowed `valid_token` and the owned `type_check` must agree.
         let mut dirty_variant_padding = one_element.clone();
         dirty_variant_padding[4] = 0xff;
 
@@ -1105,16 +1084,12 @@ mod tests {
             ("length word overruns buffer", past_end_length, false),
             ("out-of-range variant discriminant", invalid_variant, false),
             ("non-canonical variant padding", dirty_variant_padding, false),
-            // alloy follows absolute offsets, so bytes past the last tail get ignored. The oracle
-            // accepts, and the fast path must match.
             ("trailing garbage after valid payload", trailing_garbage, true),
             ("truncated head (only selector)", truncated_head, false),
             ("no calldata at all", no_calldata, false),
         ];
 
         for (name, calldata, must_accept) in rows {
-            // Oracle: alloy's owned validator is the ABI spec, independent of the fix. It reads
-            // full calldata (selector included) since `abi_decode_validate` peels the selector.
             let oracle_accepts = IB20Factory::createB20Call::abi_decode_validate(&calldata).is_ok();
             assert_eq!(
                 oracle_accepts, must_accept,
@@ -1143,8 +1118,6 @@ mod tests {
             if let Err(err) = outcome {
                 let control = FactoryVersion::V1.abi().decode(&calldata).unwrap_err();
                 assert_eq!(err, control, "row `{name}`: error bytes must match owned decode");
-                // Decode-time rejections target the createB20 selector. Payloads too short to
-                // carry a selector hit the shared unknown-selector path instead.
                 match err {
                     BasePrecompileError::AbiDecodeFailed { selector, .. } => {
                         assert_eq!(selector, IB20Factory::createB20Call::SELECTOR)
