@@ -23,6 +23,15 @@ use crate::{InflightCounters, InvalidationIndex, InvalidationKey, PayerBook, Wat
 pub const DEFAULT_SIGNATURE_LIMIT: u32 = 4;
 /// Default cap on inflight payments per count-limited payer account.
 pub const DEFAULT_PAYMENT_LIMIT: u32 = 4;
+/// Default cap on inflight config-change transactions per account.
+///
+/// Config changes mutate the account's own authorization surface (actor set,
+/// policy, local epoch/sequence), so a landed one can invalidate every other
+/// inflight transaction that reads that surface. At most one may be pending per
+/// account, and — unlike the signature dimension — this cap is **not** lifted by
+/// a locked or trusted classification: the stability that earns the unlimited
+/// signature exemption is precisely what a config change is about to disturb.
+pub const DEFAULT_ACCOUNT_CHANGE_LIMIT: u32 = 1;
 
 /// Configurable per-account admission caps.
 #[derive(Debug, Clone, Copy)]
@@ -33,11 +42,18 @@ pub struct GuardLimits {
     /// Cap on inflight payments for a count-limited payer. Balance-bounded
     /// trusted payers use aggregate reservations instead.
     pub payment_limit: u32,
+    /// Cap on inflight config-change transactions per changed account. Applies
+    /// regardless of lock/trusted status (see [`DEFAULT_ACCOUNT_CHANGE_LIMIT`]).
+    pub account_change_limit: u32,
 }
 
 impl Default for GuardLimits {
     fn default() -> Self {
-        Self { signature_limit: DEFAULT_SIGNATURE_LIMIT, payment_limit: DEFAULT_PAYMENT_LIMIT }
+        Self {
+            signature_limit: DEFAULT_SIGNATURE_LIMIT,
+            payment_limit: DEFAULT_PAYMENT_LIMIT,
+            account_change_limit: DEFAULT_ACCOUNT_CHANGE_LIMIT,
+        }
     }
 }
 
@@ -56,6 +72,9 @@ pub enum LimitRejection {
     /// A balance-bounded payer cannot afford another reservation.
     #[error("payer balance is insufficient for reservation")]
     PayerBalance,
+    /// The changed account already has an inflight config-change transaction.
+    #[error("account already has an inflight config change")]
+    AccountChangeLimit,
 }
 
 /// Per-transaction admission classification resolved during validation and
@@ -87,6 +106,10 @@ pub struct LimitClass {
     pub payer_balance: U256,
     /// The maximum cost this transaction can charge the payer.
     pub max_cost: U256,
+    /// The account whose authorization surface this transaction mutates via a
+    /// config change, or `None` if it carries none. Charged against the
+    /// account-change dimension regardless of lock/trusted status.
+    pub account_change: Option<Address>,
 }
 
 /// A validated transaction presented for admission, carrying the classification
@@ -114,6 +137,10 @@ pub struct Admission {
     pub max_cost: U256,
     /// Effective-tip priority used for balance-bounded eviction ordering.
     pub priority: u128,
+    /// The account whose authorization surface this transaction mutates via a
+    /// config change, or `None` if it carries none. Charged against the
+    /// account-change dimension regardless of lock/trusted status.
+    pub account_change: Option<Address>,
     /// The invalidation surfaces this transaction depends on.
     pub watch_set: WatchSet,
 }
@@ -137,6 +164,8 @@ pub struct AdmissionRecord {
     pub payer_trusted: bool,
     /// Maximum payer cost reserved by this transaction.
     pub max_cost: U256,
+    /// The account charged on the account-change dimension, if any.
+    pub account_change: Option<Address>,
 }
 
 /// In-memory admission and invalidation ledger for the pool.
@@ -145,6 +174,7 @@ pub struct MempoolGuard {
     index: InvalidationIndex,
     signature_counts: InflightCounters,
     payment_counts: InflightCounters,
+    change_counts: InflightCounters,
     payer_books: HashMap<Address, PayerBook>,
     records: HashMap<TxHash, AdmissionRecord>,
     limits: GuardLimits,
@@ -157,7 +187,11 @@ impl MempoolGuard {
     /// is rejected for exceeding a per-account count.
     #[must_use]
     pub fn unlimited() -> Self {
-        Self::new(GuardLimits { signature_limit: u32::MAX, payment_limit: u32::MAX })
+        Self::new(GuardLimits {
+            signature_limit: u32::MAX,
+            payment_limit: u32::MAX,
+            account_change_limit: u32::MAX,
+        })
     }
 
     /// Creates a guard with the given limits.
@@ -167,6 +201,7 @@ impl MempoolGuard {
             index: InvalidationIndex::new(),
             signature_counts: InflightCounters::new(),
             payment_counts: InflightCounters::new(),
+            change_counts: InflightCounters::new(),
             payer_books: HashMap::new(),
             records: HashMap::new(),
             limits,
@@ -223,6 +258,10 @@ impl MempoolGuard {
             // aggregate accounting to count accounting, but never vice versa.
             debug_assert!(!record.payer_trusted || admission.payer_trusted);
             debug_assert_eq!(
+                record.account_change, admission.account_change,
+                "re-admission changed account-change classification"
+            );
+            debug_assert_eq!(
                 self.index.watch_set(&admission.hash),
                 Some(&admission.watch_set),
                 "re-admission changed invalidation surfaces"
@@ -230,10 +269,20 @@ impl MempoolGuard {
             return Ok(());
         }
 
+        // The account-change dimension is charged first: it is independent of the
+        // signature/payment dimensions and is never lifted by lock/trusted status,
+        // so an early rejection here needs no rollback.
+        if let Some(account) = admission.account_change
+            && !self.change_counts.try_increment(account, self.limits.account_change_limit)
+        {
+            return Err(LimitRejection::AccountChangeLimit);
+        }
+
         let sender_signature_charged = !admission.sender_locked;
         if sender_signature_charged
             && !self.signature_counts.try_increment(admission.sender, self.limits.signature_limit)
         {
+            self.release_change(admission.account_change);
             return Err(LimitRejection::SenderLimit);
         }
 
@@ -245,6 +294,7 @@ impl MempoolGuard {
             if sender_signature_charged {
                 self.signature_counts.decrement(admission.sender);
             }
+            self.release_change(admission.account_change);
             return Err(LimitRejection::PayerLimit);
         }
 
@@ -270,6 +320,7 @@ impl MempoolGuard {
             if payer_signature_charged {
                 self.signature_counts.decrement(admission.payer);
             }
+            self.release_change(admission.account_change);
             // A freshly created, now-empty payer book is pruned to avoid leaking
             // an entry for a payer that never successfully reserved.
             if admission.payer_trusted
@@ -293,6 +344,7 @@ impl MempoolGuard {
                 payer_signature_charged,
                 payer_trusted: admission.payer_trusted,
                 max_cost: admission.max_cost,
+                account_change: admission.account_change,
             },
         );
         self.index.insert(admission.hash, admission.watch_set);
@@ -335,11 +387,19 @@ impl MempoolGuard {
             // aggregate accounting to count accounting, but never vice versa.
             debug_assert!(!record.payer_trusted || admission.payer_trusted);
             debug_assert_eq!(
+                record.account_change, admission.account_change,
+                "forced re-admission changed account-change classification"
+            );
+            debug_assert_eq!(
                 self.index.watch_set(&admission.hash),
                 Some(&admission.watch_set),
                 "forced re-admission changed invalidation surfaces"
             );
             return;
+        }
+        if let Some(account) = admission.account_change {
+            let change_ok = self.change_counts.try_increment(account, u32::MAX);
+            debug_assert!(change_ok, "uncapped increment must always succeed");
         }
         let sender_signature_charged = !admission.sender_locked;
         if sender_signature_charged {
@@ -384,6 +444,7 @@ impl MempoolGuard {
                 payer_signature_charged,
                 payer_trusted,
                 max_cost: admission.max_cost,
+                account_change: admission.account_change,
             },
         );
         self.index.insert(admission.hash, admission.watch_set);
@@ -412,8 +473,16 @@ impl MempoolGuard {
         } else {
             self.payment_counts.decrement(record.payer);
         }
+        self.release_change(record.account_change);
         self.index.remove(hash);
         true
+    }
+
+    /// Releases the account-change reservation for `account_change`, if any.
+    fn release_change(&mut self, account_change: Option<Address>) {
+        if let Some(account) = account_change {
+            self.change_counts.decrement(account);
+        }
     }
 
     /// Releases and returns every transaction tracked by the guard.
@@ -537,6 +606,7 @@ mod tests {
             payer_balance: U256::from(1_000_000u64),
             max_cost: U256::from(max_cost),
             priority: 1,
+            account_change: None,
             watch_set: WatchSet::new(),
         }
     }
@@ -583,6 +653,136 @@ mod tests {
             assert!(guard.try_admit(adm).is_ok());
         }
         assert_eq!(guard.len(), 50);
+    }
+
+    #[test]
+    fn account_change_limit_is_one_regardless_of_lock_status() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let account = addr(1);
+
+        // A locked sender is exempt from the signature dimension but NOT from the
+        // config-change dimension: the first config change is admitted, a second
+        // for the same account is rejected even though the sender is "unlimited".
+        let first = Admission {
+            sender_locked: true,
+            account_change: Some(account),
+            payer: addr(100),
+            ..self_pay(1, account, 10)
+        };
+        assert!(guard.try_admit(first).is_ok());
+
+        let second = Admission {
+            sender_locked: true,
+            account_change: Some(account),
+            payer: addr(101),
+            ..self_pay(2, account, 10)
+        };
+        assert_eq!(guard.try_admit(second), Err(LimitRejection::AccountChangeLimit));
+        assert_eq!(guard.len(), 1);
+
+        // A config change for a *different* account is unaffected.
+        let other = addr(2);
+        let other_change = Admission {
+            sender_locked: true,
+            account_change: Some(other),
+            payer: addr(102),
+            ..self_pay(3, other, 10)
+        };
+        assert!(guard.try_admit(other_change).is_ok());
+    }
+
+    #[test]
+    fn account_change_slot_frees_on_release() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let account = addr(1);
+
+        let first = Admission {
+            account_change: Some(account),
+            payer: addr(100),
+            ..self_pay(1, account, 10)
+        };
+        assert!(guard.try_admit(first).is_ok());
+        let blocked = Admission {
+            account_change: Some(account),
+            payer: addr(101),
+            ..self_pay(2, account, 10)
+        };
+        assert_eq!(guard.try_admit(blocked), Err(LimitRejection::AccountChangeLimit));
+
+        assert!(guard.release(&hash(1)));
+        let after = Admission {
+            account_change: Some(account),
+            payer: addr(102),
+            ..self_pay(3, account, 10)
+        };
+        assert!(guard.try_admit(after).is_ok());
+    }
+
+    #[test]
+    fn account_change_charge_rolls_back_when_a_later_dimension_rejects() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let payer = addr(9);
+
+        // Saturate the payer's payment count with distinct senders. A locked
+        // payer is charged only on the payment dimension, so the config change
+        // below binds there rather than on the payer signature dimension.
+        for i in 0..DEFAULT_PAYMENT_LIMIT as u8 {
+            let fill = Admission { payer, payer_locked: true, ..self_pay(i, addr(i + 1), 10) };
+            assert!(guard.try_admit(fill).is_ok());
+        }
+
+        let account = addr(200);
+        // A config change whose payer is over the payment limit is rejected on the
+        // payment dimension — the account-change charge must be rolled back.
+        let rejected = Admission {
+            payer,
+            payer_locked: true,
+            account_change: Some(account),
+            ..self_pay(100, account, 10)
+        };
+        assert_eq!(guard.try_admit(rejected), Err(LimitRejection::PaymentLimit));
+
+        // The rollback freed the account-change slot: the same account admits a
+        // config change through a fresh payer.
+        let accepted = Admission {
+            payer: addr(250),
+            payer_locked: true,
+            account_change: Some(account),
+            ..self_pay(101, account, 10)
+        };
+        assert!(guard.try_admit(accepted).is_ok());
+    }
+
+    #[test]
+    fn insert_forced_bypasses_account_change_cap_for_replacement() {
+        let mut guard = MempoolGuard::new(GuardLimits::default());
+        let account = addr(1);
+
+        let first = Admission {
+            account_change: Some(account),
+            payer: addr(100),
+            ..self_pay(1, account, 10)
+        };
+        assert!(guard.try_admit(first).is_ok());
+        let new = Admission {
+            account_change: Some(account),
+            payer: addr(101),
+            ..self_pay(2, account, 10)
+        };
+        assert_eq!(guard.try_admit(new), Err(LimitRejection::AccountChangeLimit));
+
+        // A replacement releases the old hash first, then force-inserts the
+        // fee-bumped one; the swap stays at the cap and is never rejected.
+        assert!(guard.release(&hash(1)));
+        let replacement = Admission {
+            account_change: Some(account),
+            payer: addr(102),
+            ..self_pay(3, account, 10)
+        };
+        guard.insert_forced(replacement);
+        assert!(guard.contains(&hash(3)));
+        assert!(!guard.contains(&hash(1)));
+        assert_eq!(guard.len(), 1);
     }
 
     #[test]

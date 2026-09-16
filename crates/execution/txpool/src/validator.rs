@@ -96,6 +96,10 @@ struct Eip8130ValidationState {
     payer_locked: bool,
     payer_trusted: bool,
     payer_max_cost: U256,
+    /// The changed account when the transaction carries a config change (always
+    /// the sender), or `None` otherwise. Bounds the per-account inflight
+    /// config-change dimension independently of lock/trusted status.
+    account_change: Option<Address>,
     /// Authorization reads and predicates used for build-time revalidation.
     manifest: WatchManifest,
 }
@@ -938,6 +942,7 @@ where
                 payer_trusted: state.payer_trusted,
                 payer_balance: state.payer_balance,
                 max_cost: state.payer_max_cost,
+                account_change: state.account_change,
             });
             let outcome = TransactionValidationOutcome::Valid {
                 balance: state.payer_balance_after_auth,
@@ -1269,6 +1274,19 @@ where
             [transaction_expiry, sender_expiry, payer_expiry].into_iter().min().unwrap_or(u64::MAX);
         let manifest = WatchManifest::new(config_reads, payer, payer_max_cost, manifest_expiry);
 
+        // A config change mutates the sender's own authorization surface, so it
+        // is charged against the per-account config-change dimension. Create and
+        // Delegation entries are not surface mutations of an existing account and
+        // do not count. All config changes in a transaction target the sender
+        // (`TransactionAuthorizer` applies them against `sender_account`), so the
+        // dimension is keyed by the sender.
+        let account_change = signed
+            .tx()
+            .account_changes
+            .iter()
+            .any(|change| matches!(change, AccountChange::ConfigChange(_)))
+            .then_some(sender);
+
         Ok(Eip8130ValidationState {
             sender,
             payer,
@@ -1283,6 +1301,7 @@ where
             payer_locked,
             payer_trusted,
             payer_max_cost,
+            account_change,
             manifest,
         })
     }
