@@ -956,8 +956,9 @@ where
 
     /// After ecrecover, require the recovered sender still present a live
     /// unrestricted default EOA in the EIP-8130 keystore (Cobalt+). Deposits and
-    /// EIP-8130 transactions are not gated here. Watches `account_state[sender]`
-    /// so a later revoke/import evicts admitted standard txs.
+    /// EIP-8130 transactions are not gated here. This is an admission-time gate
+    /// only; no invalidation watch is registered (see the note in the body), so
+    /// the consensus gate at block build is the authority for revoked senders.
     fn authorize_standard_sender(
         &self,
         outcome: TransactionValidationOutcome<Tx>,
@@ -1002,39 +1003,31 @@ where
             }
         };
         let mut storage = StateProviderPrecompileStorage::new(&*state, local_chain_id, now);
-        let resolved = match StorageCtx::enter(&mut storage, |ctx| {
+        if let Err(error) = StorageCtx::enter(&mut storage, |ctx| {
             let acc = AccountConfigurationStorage::new(ctx);
             ActorAuthorizer::authorize_standard_sender(&acc, sender, now)
         }) {
-            Ok(resolved) => resolved,
-            Err(error) => {
-                return TransactionValidationOutcome::Invalid(
-                    valid_tx.into_transaction(),
-                    Self::map_tx_auth_error(TxAuthError::Authorize(error)),
-                );
-            }
-        };
-        let mut watch_set = WatchSet::new().watch(InvalidationKey::Slot {
-            address: AccountConfigurationStorage::ADDRESS,
-            slot: AccountConfigurationStorage::account_state_slot(sender),
-        });
-        if resolved.expiry != 0 {
-            watch_set.push(InvalidationKey::expiry_bucket(resolved.expiry));
+            return TransactionValidationOutcome::Invalid(
+                valid_tx.into_transaction(),
+                Self::map_tx_auth_error(TxAuthError::Authorize(error)),
+            );
         }
         // 7702 authorities use the same k1 recovery. Drop any whose default
         // EOA is gone so the pool does not treat them as live delegations.
         // The transaction stays valid — inclusion skips those auths.
         //
-        // Watch every recovered authority's `account_state` slot (kept or
-        // dropped) so a later keystore change — e.g. a dropped authority getting
-        // un-revoked — re-runs this filter instead of leaving the list stale.
+        // No `WatchSet` is attached to standard txs: `BasePool::admission_for`
+        // only indexes EIP-8130 transactions, so any invalidation keys placed
+        // here would never be registered by the pool. A later revoke therefore
+        // does not retroactively evict already-admitted standard txs. This is
+        // acceptable because the consensus gate re-checks every candidate at
+        // block build (`BaseHandler::validate_against_state_and_deduct_caller`):
+        // a revoked sender's stale txs are skipped each block, and the revoked
+        // account can no longer advance its nonce, so they age out under
+        // pool-size pressure rather than through targeted eviction.
         let authorities = authorities.map(|list| {
             list.into_iter()
                 .filter(|authority| {
-                    watch_set.push(InvalidationKey::Slot {
-                        address: AccountConfigurationStorage::ADDRESS,
-                        slot: AccountConfigurationStorage::account_state_slot(*authority),
-                    });
                     StorageCtx::enter(&mut storage, |ctx| {
                         let acc = AccountConfigurationStorage::new(ctx);
                         ActorAuthorizer::authorize_standard_sender(&acc, *authority, now)
@@ -1043,7 +1036,6 @@ where
                 })
                 .collect()
         });
-        tx.set_watch_set(watch_set);
         TransactionValidationOutcome::Valid {
             balance,
             state_nonce,
@@ -4001,13 +3993,12 @@ mod tests {
         let outcome = validator.validate_one(TransactionOrigin::External, pooled).await;
         match outcome {
             TransactionValidationOutcome::Valid { transaction, .. } => {
-                let watched = InvalidationKey::Slot {
-                    address: AccountConfigurationStorage::ADDRESS,
-                    slot: AccountConfigurationStorage::account_state_slot(sender),
-                };
+                // Standard txs pass the admission-time keystore gate but do not
+                // carry a watch set: `BasePool::admission_for` only indexes 8130
+                // txs, so any keys attached here would be dead weight.
                 assert!(
-                    transaction.transaction().watch_set().is_some_and(|set| set.contains(&watched)),
-                    "standard 1559 must watch account_state[sender]"
+                    transaction.transaction().watch_set().is_none(),
+                    "standard txs must not carry a (never-indexed) watch set"
                 );
             }
             other => panic!("untouched EOA 1559 must be admitted, got {other:?}"),

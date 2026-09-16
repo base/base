@@ -156,26 +156,16 @@ impl InvalidTxError for BaseTransactionError {
     fn as_invalid_tx_err(&self) -> Option<&InvalidTransaction> {
         match self {
             Self::Base(tx) => Some(tx),
-            // A standard sender that fails keystore authorization (default EOA
-            // revoked / expired / scoped) is a *per-transaction* invalidity, not
-            // an EVM misconfiguration: the sender could have revoked their
-            // default EOA (via an EIP-8130 config change) after this transaction
-            // was admitted to the pool. Classify it as an invalid transaction so
-            // block builders that branch on `as_invalid_tx_err` — notably the
-            // flashblocks builder, which treats a `None` here as fatal — skip the
-            // transaction (and its descendants) instead of aborting the whole
-            // block. The concrete reason is preserved on the `StandardSender`
-            // variant (its `Display` and the RPC conversion); this borrowed view
-            // only needs to classify the error as skippable, so it carries a
-            // static message. Deliberately not matched for `DepositSender`: a
-            // revoked deposit sender is neutralized through the `FailedDeposit`
-            // handler (mint-only, forced inclusion), never skipped.
-            Self::StandardSender(_) => {
-                static STANDARD_SENDER_INVALID: InvalidTransaction = InvalidTransaction::Str(
-                    alloc::borrow::Cow::Borrowed("standard transaction keystore authorization failed"),
-                );
-                Some(&STANDARD_SENDER_INVALID)
-            }
+            // Base's own variants (keystore authorization failures, missing
+            // enveloped tx, ...) are surfaced through their `Display` and the
+            // RPC conversion, not this borrowed view, so they return `None`
+            // like the enshrined 8130 (`Eip8130`) variant. Block builders still
+            // skip them: the flashblocks path branches on
+            // `alloy_evm::EvmError::as_invalid_tx_err`, which is `Some` for
+            // every `EVMError::Transaction(_)` regardless of this inner impl.
+            // This inner classifier is only consulted for `is_nonce_too_low`,
+            // which none of these are. Returning `Some(Str(..))` here would only
+            // strip the concrete reason from reth's generic RPC conversion.
             _ => None,
         }
     }
@@ -232,27 +222,6 @@ mod tests {
             BaseTransactionError::deposit_sender("default EOA actor is revoked").to_string(),
             "deposit transaction keystore neutralization: default EOA actor is revoked"
         );
-    }
-
-    #[test]
-    fn standard_sender_is_a_skippable_invalid_tx() {
-        // A revoked/expired/scoped standard sender must classify as an invalid
-        // transaction so builders skip it rather than treating it as fatal (the
-        // flashblocks builder aborts the block on a `None` here). It must not
-        // masquerade as a nonce error, which has dedicated skip handling.
-        let err = BaseTransactionError::standard_sender("default EOA actor is revoked");
-        let invalid = err.as_invalid_tx_err().expect("standard sender must be a skippable invalid tx");
-        assert!(matches!(invalid, InvalidTransaction::Str(_)));
-        assert!(!err.is_nonce_too_low());
-    }
-
-    #[test]
-    fn deposit_sender_is_not_a_skippable_invalid_tx() {
-        // A deposit sender rejection is neutralized through the `FailedDeposit`
-        // handler (mint-only, forced inclusion); it must never be surfaced as a
-        // skippable invalid transaction.
-        let err = BaseTransactionError::deposit_sender("default EOA actor is revoked");
-        assert!(err.as_invalid_tx_err().is_none());
     }
 
     #[cfg(feature = "serde")]

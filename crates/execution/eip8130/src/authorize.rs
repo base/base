@@ -187,7 +187,7 @@ impl ActorAuthorizer {
             // Validity (revoked / expired) is checked first so a rejected self
             // never pays the policy-manager SLOAD that `inline_self_policy_target`
             // would incur for a `SCOPE_POLICY` self.
-            let resolved = Self::authorize_inline_self(account, state, now, Address::ZERO)?;
+            let resolved = Self::authorize_inline_self(account, state, now)?;
             let policy_target =
                 Self::inline_self_policy_target(storage, account, recovered, state)?;
             return Ok(ResolvedActor { policy_target, ..resolved });
@@ -227,7 +227,7 @@ impl ActorAuthorizer {
         state: &AccountState,
         now: u64,
     ) -> Result<ResolvedActor, AuthorizeError> {
-        let resolved = Self::authorize_inline_self(caller, state, now, Address::ZERO)?;
+        let resolved = Self::authorize_inline_self(caller, state, now)?;
         if !resolved.is_admin() {
             return Err(AuthorizeError::StandardSenderNotAdmin { account: caller });
         }
@@ -239,19 +239,16 @@ impl ActorAuthorizer {
     /// Shared by [`Self::authorize_k1`] (which still accepts a scoped self) and
     /// [`Self::authorize_standard_sender`] (which additionally requires admin).
     ///
-    /// This only validates the inline self (revoked / expired) and echoes the
-    /// supplied `policy_target` straight into the returned [`ResolvedActor`]; it
-    /// does *not* resolve policy itself. When `SCOPE_POLICY` is set the caller is
-    /// responsible for either resolving the manager (via
-    /// [`Self::inline_self_policy_target`], as [`Self::authorize_k1`] does) or
-    /// rejecting the scope outright (as [`Self::authorize_standard_sender`]
-    /// does). Passing `address(0)` for a policy-scoped self therefore yields a
-    /// deliberately partial actor that the caller must finish resolving.
+    /// This only validates the inline self (revoked / expired); it does not
+    /// resolve policy, so the returned [`ResolvedActor`] always carries
+    /// `policy_target == address(0)`. A `SCOPE_POLICY` self is finished by the
+    /// caller — resolving the manager via [`Self::inline_self_policy_target`]
+    /// (as [`Self::authorize_k1`] does) or rejecting the scope outright (as
+    /// [`Self::authorize_standard_sender`] does).
     pub fn authorize_inline_self(
         account: Address,
         state: &AccountState,
         now: u64,
-        policy_target: Address,
     ) -> Result<ResolvedActor, AuthorizeError> {
         let actor_id = AccountConfigurationStorage::self_actor_id(account);
         // Flag set => the inline k1 self is disabled: either revoked outright
@@ -262,12 +259,15 @@ impl ActorAuthorizer {
         }
         // 0 = no expiry; otherwise valid while now <= expiry.
         if state.default_eoa_expiry != 0 && now > state.default_eoa_expiry {
-            return Err(AuthorizeError::ActorExpired { actor_id, expiry: state.default_eoa_expiry });
+            return Err(AuthorizeError::ActorExpired {
+                actor_id,
+                expiry: state.default_eoa_expiry,
+            });
         }
         Ok(ResolvedActor {
             actor_id,
             scope: state.default_eoa_scope,
-            policy_target,
+            policy_target: Address::ZERO,
             expiry: state.default_eoa_expiry,
         })
     }
