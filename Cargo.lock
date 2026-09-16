@@ -3043,6 +3043,8 @@ dependencies = [
  "clap",
  "eyre",
  "humantime",
+ "metrics",
+ "metrics-exporter-prometheus",
  "tracing",
  "url",
 ]
