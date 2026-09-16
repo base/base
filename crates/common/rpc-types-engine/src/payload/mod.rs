@@ -1,5 +1,12 @@
 //! Versioned execution payloads
 
+#[cfg(feature = "std")]
+mod bounded;
+#[cfg(feature = "std")]
+pub use bounded::{
+    BoundedExecutionPayloadV1, BoundedExecutionPayloadV2, BoundedExecutionPayloadV3,
+};
+
 mod error;
 pub use error::BasePayloadError;
 
@@ -767,6 +774,7 @@ impl BaseExecutionPayload {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "serde")]
     use super::*;
 
     #[test]
