@@ -359,6 +359,7 @@ impl ValidityPredicate {
     /// a zero balance. Storage values are masked before comparison. Callers must
     /// treat database errors as an inability to verify the predicate rather than
     /// as a successful match.
+    #[inline]
     pub fn matches<DB: Database>(
         &self,
         db: &mut DB,
