@@ -19,9 +19,14 @@ base-cli-utils.workspace = true
 base-tx-manager.workspace = true
 base-batcher-core.workspace = true
 alloy-signer-local.workspace = true
+metrics-exporter-prometheus.workspace = true
 tracing = { workspace = true, features = ["std"] }
 base-runtime = { workspace = true, features = ["tokio"] }
 clap = { workspace = true, features = ["derive", "env"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-batcher-encoder = { workspace = true, features = ["clap"] }
 base-batcher-service = { workspace = true, features = ["metrics"] }
+
+[dev-dependencies]
+metrics.workspace = true
+base-batcher-encoder = { workspace = true, features = ["metrics"] }
