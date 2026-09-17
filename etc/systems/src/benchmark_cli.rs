@@ -462,7 +462,8 @@ impl SnapshotBenchmarkArgs {
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
         test_config.chain_id = Some(stack.chain_id());
-        let load_config = test_config.to_load_config(None)?;
+        let mut load_config = test_config.to_load_config(None)?;
+        load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
         let funder_address = funder_key.address();
         let sequencer_metrics =
             PrometheusBlockCollector::start(builder_rpc.clone(), stack.builder_metrics_url()?)

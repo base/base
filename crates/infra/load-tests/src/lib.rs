@@ -47,7 +47,7 @@ pub use workload::{
 mod runner;
 pub use runner::{
     AdaptiveBackoff, BatchTxError, BlockClock, BlockMatch, BlockNumberBound, BlockObservation,
-    BlockPulse, BlockReceipt, BlockWatcher, DEFAULT_MAX_GAS_PRICE,
+    BlockPulse, BlockReceipt, BlockWatcher, CanonicalHeadWatcher, DEFAULT_MAX_GAS_PRICE,
     DEFAULT_MAX_IN_FLIGHT_PER_SENDER, DisplaySnapshot, FUNDING_MAX_FEE_BASE_FEE_MULTIPLIER, Fees,
     FlashblockInclusion, FlashblockWatcher, GasPricer, InclusionPulse, InclusionSource,
     InjectLimit, InjectPlan, LoadConfig, LoadRunner, LoadTestDisplay, LoadTestStage,

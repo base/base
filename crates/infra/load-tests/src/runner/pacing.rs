@@ -25,10 +25,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockPulse, BlockWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer, InclusionPulse,
-    InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage, PipelineStartConfig,
-    PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker, SignedBatch,
-    SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer,
+    InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
+    PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
+    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -466,6 +466,10 @@ impl LoadRunner {
             )
             .start(),
         );
+        let canonical_head_watcher_task = self.config.canonical_heads_ws.clone().map(|ws_url| {
+            CanonicalHeadWatcher::new(ws_url, results_tracker.clone(), watcher_cancel.clone())
+                .start()
+        });
         let flashblock_watcher_task = self.config.flashblocks_ws.clone().map(|ws_url| {
             FlashblockWatcher::new(
                 ws_url,
@@ -1120,6 +1124,14 @@ impl LoadRunner {
         if let Some(task) = block_watcher_task {
             match tokio::time::timeout(Duration::from_secs(2), task).await {
                 Ok(Err(e)) if e.is_panic() => warn!(error = %e, "block watcher panicked"),
+                _ => {}
+            }
+        }
+        if let Some(task) = canonical_head_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(error)) if error.is_panic() => {
+                    warn!(error = %error, "canonical head watcher panicked");
+                }
                 _ => {}
             }
         }

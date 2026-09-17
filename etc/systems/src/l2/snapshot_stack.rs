@@ -393,6 +393,11 @@ impl SnapshotL2Stack {
         self.builder.rpc_url()
     }
 
+    /// Returns the builder WebSocket RPC URL.
+    pub fn builder_ws_url(&self) -> Result<Url> {
+        self.builder.ws_url()
+    }
+
     /// Returns the client RPC URL.
     pub fn client_rpc_url(&self) -> Result<Url> {
         self.client.rpc_url()
