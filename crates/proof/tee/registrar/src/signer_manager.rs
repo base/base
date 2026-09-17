@@ -905,13 +905,7 @@ where
                         let result = send.await;
                         let retryable = match &result {
                             Ok(receipt) => receipt.inner.status(),
-                            Err(error) => {
-                                error.is_retryable()
-                                    || matches!(
-                                        error,
-                                        TxManagerError::SendTimeout | TxManagerError::ChannelClosed
-                                    )
-                            }
+                            Err(error) => error.is_retryable(),
                         };
                         submit = result.as_ref().is_err();
                         Self::record_deregistration_result(signer, reason, result);
@@ -1197,13 +1191,7 @@ where
                             "CertManager revocation sender is not authorized"
                         );
                     }
-                    if !(error.is_retryable()
-                        || matches!(
-                            error,
-                            TxManagerError::SendTimeout | TxManagerError::ChannelClosed
-                        ))
-                        || retry == max_tx_retries
-                    {
+                    if !error.is_retryable() || retry == max_tx_retries {
                         return Err(error.into());
                     }
                     let retry = retry + 1;
@@ -2700,10 +2688,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn revoked_signer_deregistration_resolves_ambiguous_send_errors_from_registry_state() {
-        for (outcome, expected_transactions) in [
-            (MockTxOutcome::Error(TxManagerError::SendTimeout), 2),
-            (MockTxOutcome::ApplyThenError(TxManagerError::ChannelClosed), 1),
+    async fn revoked_signer_deregistration_reconciles_non_retryable_send_errors() {
+        for (outcome, expected_registered) in [
+            (MockTxOutcome::Error(TxManagerError::SendTimeout), true),
+            (MockTxOutcome::ApplyThenError(TxManagerError::ChannelClosed), false),
         ] {
             let plan = synthetic_plan(SIGNER_A);
             let (manager, chain) = manager_with_plan(&plan);
@@ -2717,8 +2705,8 @@ mod tests {
             let result = register_prepared(&manager, plan).await;
 
             assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
-            assert!(!chain.0.lock().unwrap().registered.contains(&SIGNER_A));
-            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), expected_transactions);
+            assert_eq!(chain.0.lock().unwrap().registered.contains(&SIGNER_A), expected_registered);
+            assert_eq!(chain.tx_count_to(TEST_REGISTRY_ADDRESS), 1);
         }
     }
 
@@ -2835,21 +2823,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn confirmed_crl_revocation_retries_ambiguous_send_errors() {
-        for (outcome, expected_transactions) in [
-            (MockTxOutcome::Error(TxManagerError::SendTimeout), 2),
-            (MockTxOutcome::ApplyThenError(TxManagerError::ChannelClosed), 1),
+    async fn confirmed_crl_revocation_reconciles_non_retryable_send_errors() {
+        for (outcome, expected_revoked) in [
+            (MockTxOutcome::Error(TxManagerError::SendTimeout), false),
+            (MockTxOutcome::ApplyThenError(TxManagerError::ChannelClosed), true),
         ] {
             let plan = synthetic_plan(SIGNER_A);
             let cert_id = plan.certs[0].revocation_id;
             let (manager, chain) = manager_with_crl(&plan, crl_source(Ok(revoked_chain(cert_id))));
-            chain.set_outcomes([outcome, MockTxOutcome::Success]);
+            chain.set_outcomes([outcome]);
 
             let result = register_prepared(&manager, plan).await;
 
             assert!(matches!(result, Err(RegistrarError::RevokedCertificate { .. })));
-            assert!(chain.0.lock().unwrap().revoked.contains(&cert_id));
-            assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), expected_transactions);
+            assert_eq!(chain.0.lock().unwrap().revoked.contains(&cert_id), expected_revoked);
+            assert_eq!(chain.tx_count_to(TEST_CERT_MANAGER_ADDRESS), 1);
         }
     }
 
