@@ -9,7 +9,7 @@ use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_proof_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
 use serde::{Deserialize, Serialize};
 
-use crate::{ScheduleId, errors::OracleProviderError};
+use crate::{ScheduleId, SupportedChain, errors::OracleProviderError};
 
 /// The local key identifier for the L1 head hash.
 ///
@@ -41,9 +41,9 @@ pub const L2_CLAIM_BLOCK_NUMBER_KEY: U256 = uint!(4_U256);
 
 /// The local key identifier for the L2 chain ID.
 ///
-/// This key retrieves the L2 network identifier, which is used to load the
-/// appropriate rollup configuration and ensure network-specific validation
-/// rules are applied correctly.
+/// This key retrieves the L2 network identifier, which is used to load the appropriate rollup
+/// configuration and ensure network-specific validation rules are applied correctly. Chain IDs
+/// outside the built-in Base set are rejected during boot loading.
 pub const L2_CHAIN_ID_KEY: U256 = uint!(5_U256);
 
 /// The local key identifier for the L2 rollup configuration.
@@ -56,9 +56,9 @@ pub const L2_ROLLUP_CONFIG_KEY: U256 = uint!(6_U256);
 
 /// The local key identifier for the L1 chain configuration.
 ///
-/// This key is used as a fallback to retrieve the chain configuration from
-/// the preimage oracle when no hardcoded configuration is available for the
-/// given chain ID. Oracle-loaded configs require additional validation.
+/// This key is used as a fallback to retrieve the chain configuration from the preimage oracle when
+/// no built-in configuration is available for the L1 chain ID. Only the local devnet can reach that
+/// fallback; every other supported chain pins a built-in L1 configuration.
 pub const L1_CONFIG_KEY: U256 = uint!(7_U256);
 
 /// The local key identifier for the proposer address.
@@ -162,11 +162,13 @@ pub struct BootInfo {
     ///
     /// **Security**: Fixed built-in chains use trusted compiled derivation parameters. Their
     /// oracle-provided contract-backed upgrade timestamps are separately bound by `schedule_id`;
-    /// the mutable local devnet and unknown chains use the oracle-provided configuration.
+    /// only the mutable local devnet uses the oracle-provided configuration. Chain IDs outside the
+    /// built-in Base set are rejected.
     pub rollup_config: RollupConfig,
     /// An optional configuration for the l1 chain associated with the l2 chain.
     ///
-    /// **Security**: Loaded from built-in config (secure) or oracle (requires validation).
+    /// **Security**: Loaded from the built-in config for every supported chain. Only the mutable
+    /// local devnet may fall back to the oracle-provided configuration.
     pub l1_config: ChainConfig,
     /// The proposer address that will submit the proof transaction on-chain.
     ///
@@ -245,6 +247,7 @@ impl BootInfo {
     /// - **Slice conversion errors**: Invalid data format for numeric values
     /// - **Serde errors**: Failed to deserialize rollup configuration
     /// - **Missing data**: Required boot parameters not available in oracle
+    /// - **Unsupported chain**: The committed L2 chain ID is not a built-in Base chain
     pub async fn load<O>(oracle: &O) -> Result<Self, OracleProviderError>
     where
         O: PreimageOracleClient + Send,
@@ -286,8 +289,12 @@ impl BootInfo {
                 .map_err(OracleProviderError::SliceConversion)?,
         );
 
-        let activation_admin_address =
-            base_common_chains::ChainConfig::beryl_activation_admin_address_by_chain_id(chain_id);
+        // Base is the only chain family this program proves. An unsupported chain ID has no
+        // compiled configuration to execute against, so reject it before reading — let alone
+        // trusting — any node-served rollup or L1 configuration.
+        let chain_config = SupportedChain::config(chain_id)?;
+
+        let activation_admin_address = chain_config.beryl_activation_admin_address();
 
         let ser_cfg = oracle
             .get(PreimageKey::new_local(L2_ROLLUP_CONFIG_KEY.to()))
@@ -308,11 +315,10 @@ impl BootInfo {
         // Fixed built-in chains must execute with their compiled static derivation parameters. Only
         // contract-backed activation timestamps may come from the node, because ScheduleId commits
         // them separately. The local devnet is mutable, so its live node-served config is required.
-        let trusted_chain_config =
-            base_common_chains::ChainConfig::by_chain_id(chain_id).filter(|chain_config| {
-                chain_config.chain_id != base_common_chains::ChainConfig::DEVNET.chain_id
-            });
-        let mut rollup_config = if let Some(chain_config) = trusted_chain_config {
+        let is_devnet = chain_config.chain_id == base_common_chains::ChainConfig::DEVNET.chain_id;
+        let mut rollup_config = if is_devnet {
+            oracle_rollup_config
+        } else {
             let mut trusted_rollup_config = chain_config.rollup_config();
             for upgrade in BaseUpgrade::CONTRACT_VARIANTS {
                 trusted_rollup_config.apply_upgrade_activation(
@@ -321,34 +327,31 @@ impl BootInfo {
                 );
             }
             trusted_rollup_config
-        } else {
-            warn!(
-                target: "boot_loader",
-                chain_id,
-                "no fixed trusted rollup config available, falling back to preimage oracle; insecure in production without additional validation"
-            );
-            oracle_rollup_config
         };
 
-        // Attempt to load the L1 config from the rollup config's L1 chain ID. If there is no config
-        // for the chain, fall back to loading the config from the preimage oracle.
-        let l1_config = if let Some(config) =
-            base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id)
-        {
-            config.clone()
-        } else {
-            warn!(
-                target: "boot_loader",
-                chain_id = rollup_config.l1_chain_id,
-                "no l1 config found in built-in mapping, falling back to preimage oracle; insecure in production without additional validation"
-            );
-            let ser_cfg = oracle
-                .get(PreimageKey::new_local(L1_CONFIG_KEY.to()))
-                .await
-                .map_err(OracleProviderError::Preimage)?;
+        // Every supported chain except the devnet pins its L1 chain ID in the compiled config, and
+        // each of those L1 chains has a built-in config. Only the devnet, whose L1 is deployed
+        // locally, may fall back to the node-served L1 config.
+        let l1_config =
+            if let Some(config) = base_common_chains::L1_CONFIGS.get(&rollup_config.l1_chain_id) {
+                config.clone()
+            } else if is_devnet {
+                warn!(
+                    target: "boot_loader",
+                    l1_chain_id = rollup_config.l1_chain_id,
+                    "no built-in l1 config for the devnet L1, falling back to preimage oracle"
+                );
+                let ser_cfg = oracle
+                    .get(PreimageKey::new_local(L1_CONFIG_KEY.to()))
+                    .await
+                    .map_err(OracleProviderError::Preimage)?;
 
-            serde_json::from_slice(&ser_cfg).map_err(OracleProviderError::Serde)?
-        };
+                serde_json::from_slice(&ser_cfg).map_err(OracleProviderError::Serde)?
+            } else {
+                return Err(OracleProviderError::MissingL1ChainConfig {
+                    l1_chain_id: rollup_config.l1_chain_id,
+                });
+            };
 
         debug!(
             target: "boot_loader",
@@ -500,7 +503,12 @@ mod tests {
 
     use super::*;
 
-    const ORACLE_CHAIN_ID: u64 = 999_999_999;
+    /// A chain ID outside the built-in Base set.
+    const UNSUPPORTED_CHAIN_ID: u64 = 999_999_999;
+
+    /// The local devnet is the only supported chain that executes with the full node-served rollup
+    /// config, so tests that mutate derivation parameters boot as the devnet.
+    const DEVNET_CHAIN_ID: u64 = BaseChainConfig::DEVNET.chain_id;
 
     struct MockOracle {
         data: Vec<(PreimageKey, Vec<u8>)>,
@@ -824,7 +832,7 @@ mod tests {
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let err = BootInfo::load(&oracle).await.expect_err("zero block time should fail");
         assert!(matches!(err, OracleProviderError::InvalidL2BlockTime));
@@ -841,7 +849,7 @@ mod tests {
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let err = BootInfo::load(&oracle).await.expect_err("pre-genesis claim should fail");
         assert!(matches!(
@@ -863,7 +871,7 @@ mod tests {
             oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
             oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
             oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
-            oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+            oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
             let err = BootInfo::load(&oracle).await.expect_err("active Zenith upgrade should fail");
             assert!(matches!(err, OracleProviderError::UncommittedZenithUpgrade));
@@ -885,7 +893,7 @@ mod tests {
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, CLAIM_BLOCK.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
 
@@ -928,7 +936,7 @@ mod tests {
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, CLAIM_BLOCK.to_be_bytes().to_vec());
         oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, SCHEDULE_BLOCK.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let boot_info =
             BootInfo::load(&oracle).await.expect("pre-Zenith subrange should load despite pin");
@@ -957,7 +965,7 @@ mod tests {
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, CLAIM_BLOCK.to_be_bytes().to_vec());
         oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, SCHEDULE_BLOCK.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let err = BootInfo::load(&oracle)
             .await
@@ -988,7 +996,7 @@ mod tests {
             if schedule_block != CLAIM_BLOCK {
                 oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, schedule_block.to_be_bytes().to_vec());
             }
-            oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+            oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
             let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
             let mut expected_rollup_config = rollup_config.clone();
@@ -1025,7 +1033,7 @@ mod tests {
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1_003u64.to_be_bytes().to_vec());
         oracle.insert(L2_SCHEDULE_BLOCK_NUMBER_KEY, 1_007u64.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let boot_info =
             BootInfo::load(&oracle).await.expect("Zenith activates after the claimed Denim block");
@@ -1036,7 +1044,7 @@ mod tests {
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1_007u64.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let err =
             BootInfo::load(&oracle).await.expect_err("Zenith is active at the claimed Denim block");
@@ -1055,7 +1063,7 @@ mod tests {
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 1u64.to_be_bytes().to_vec());
-        oracle.insert_rollup_config(ORACLE_CHAIN_ID, &rollup_config);
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
 
         let err = BootInfo::load(&oracle).await.expect_err("zero L2 genesis timestamp should fail");
         assert!(matches!(err, OracleProviderError::InvalidL2GenesisTimestamp));
@@ -1070,7 +1078,7 @@ mod tests {
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
-        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
+        oracle.insert(L2_CHAIN_ID_KEY, BaseChainConfig::MAINNET.chain_id.to_be_bytes().to_vec());
         oracle.insert(
             L2_ROLLUP_CONFIG_KEY,
             serde_json::to_vec(&rollup_config).expect("rollup config should serialize"),
@@ -1080,89 +1088,77 @@ mod tests {
         assert!(matches!(
             err,
             OracleProviderError::RollupConfigChainIdMismatch {
-                boot_chain_id: ORACLE_CHAIN_ID,
+                boot_chain_id: 8453,
                 rollup_config_chain_id: 84532,
             }
         ));
     }
 
     #[tokio::test]
-    async fn accepts_oracle_rollup_config_with_matching_chain_id() {
+    async fn rejects_unsupported_chain_id() {
         let rollup_config = BaseChainConfig::SEPOLIA.rollup_config();
-        let mut rollup_config_value =
-            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
-        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
-        rollup_config_value["base"]["beryl"] = serde_json::Value::Null;
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
         oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
-        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
-        oracle.insert(
-            L2_ROLLUP_CONFIG_KEY,
-            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
-        );
+        // The oracle config agrees with the committed chain ID, so the chain ID binding check
+        // passes and only the supported-chain gate can reject this boot.
+        oracle.insert_rollup_config(UNSUPPORTED_CHAIN_ID, &rollup_config);
 
-        let boot_info = BootInfo::load(&oracle).await.expect("boot info should load");
-
-        assert_eq!(boot_info.chain_id, ORACLE_CHAIN_ID);
-        assert_eq!(boot_info.activation_admin_address, None);
-        assert_eq!(boot_info.rollup_config.l2_chain_id.id(), ORACLE_CHAIN_ID);
+        let err =
+            BootInfo::load(&oracle).await.expect_err("unsupported chain ID should be rejected");
+        assert!(matches!(err, OracleProviderError::UnknownChainId(UNSUPPORTED_CHAIN_ID)));
     }
 
     #[tokio::test]
-    async fn accepts_pre_beryl_oracle_chain_without_activation_admin() {
-        let rollup_config = BaseChainConfig::SEPOLIA.rollup_config();
-        let mut rollup_config_value =
-            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
-        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
-        rollup_config_value["base"] = serde_json::json!({ "beryl": u64::MAX });
+    async fn falls_back_to_oracle_l1_config_for_a_devnet_l1() {
+        const DEVNET_L1_CHAIN_ID: u64 = 31_337;
+
+        assert!(
+            !base_common_chains::L1_CONFIGS.contains_key(&DEVNET_L1_CHAIN_ID),
+            "premise: the devnet L1 has no built-in config"
+        );
+        let mut rollup_config = BaseChainConfig::DEVNET.rollup_config();
+        rollup_config.l1_chain_id = DEVNET_L1_CHAIN_ID;
+        rollup_config.genesis.l2_time = 1_000;
 
         let mut oracle = MockOracle::new();
         oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
         oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
         oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
-        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
-        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
+        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 100u64.to_be_bytes().to_vec());
+        oracle.insert_rollup_config(DEVNET_CHAIN_ID, &rollup_config);
         oracle.insert(
-            L2_ROLLUP_CONFIG_KEY,
-            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
+            L1_CONFIG_KEY,
+            serde_json::to_vec(&ChainConfig { chain_id: DEVNET_L1_CHAIN_ID, ..Default::default() })
+                .expect("L1 config should serialize"),
         );
 
-        let boot_info = BootInfo::load(&oracle).await.expect("pre-Beryl boot info should load");
+        let boot_info = BootInfo::load(&oracle).await.expect("devnet boot info should load");
 
-        assert_eq!(boot_info.activation_admin_address, None);
-        assert_eq!(boot_info.rollup_config.upgrades.base.beryl, None);
+        assert_eq!(boot_info.l1_config.chain_id, DEVNET_L1_CHAIN_ID);
     }
 
-    #[tokio::test]
-    async fn rejects_oracle_rollup_config_with_beryl_and_no_activation_admin() {
-        let rollup_config = BaseChainConfig::SEPOLIA.rollup_config();
-        let mut rollup_config_value =
-            serde_json::to_value(&rollup_config).expect("rollup config should convert to value");
-        rollup_config_value["l2_chain_id"] = serde_json::json!(ORACLE_CHAIN_ID);
-        rollup_config_value["base"] = serde_json::json!({ "beryl": 1 });
-
-        let mut oracle = MockOracle::new();
-        oracle.insert(L1_HEAD_KEY, B256::repeat_byte(0x11).to_vec());
-        oracle.insert(L2_OUTPUT_ROOT_KEY, B256::repeat_byte(0x22).to_vec());
-        oracle.insert(L2_CLAIM_KEY, B256::repeat_byte(0x33).to_vec());
-        oracle.insert(L2_CLAIM_BLOCK_NUMBER_KEY, 40_308_263u64.to_be_bytes().to_vec());
-        oracle.insert(L2_CHAIN_ID_KEY, ORACLE_CHAIN_ID.to_be_bytes().to_vec());
-        oracle.insert(
-            L2_ROLLUP_CONFIG_KEY,
-            serde_json::to_vec(&rollup_config_value).expect("rollup config should serialize"),
-        );
-
-        let err = BootInfo::load(&oracle)
-            .await
-            .expect_err("Beryl-enabled oracle config without activation admin should fail");
-        assert!(matches!(
-            err,
-            OracleProviderError::MissingActivationAdminAddress { chain_id: ORACLE_CHAIN_ID }
-        ));
+    /// `load` resolves the activation admin and the L1 config from compiled data and treats a gap in
+    /// either as fatal. Neither gap exists for the chains that ship today, so this pins the
+    /// invariant here rather than letting a newly added chain fail inside the enclave.
+    #[test]
+    fn every_supported_chain_compiles_its_boot_dependencies() {
+        for chain_config in BaseChainConfig::all() {
+            assert!(
+                chain_config.beryl_activation_admin_address().is_some(),
+                "chain {} has no Beryl activation admin address",
+                chain_config.chain_id
+            );
+            assert!(
+                base_common_chains::L1_CONFIGS.contains_key(&chain_config.l1_chain_id),
+                "chain {} has no built-in config for L1 chain {}",
+                chain_config.chain_id,
+                chain_config.l1_chain_id
+            );
+        }
     }
 
     /// Builds an oracle with all required boot keys present for a built-in chain, so that only the

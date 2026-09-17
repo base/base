@@ -31,6 +31,9 @@ pub use hint::{Hint, HintType};
 mod boot;
 pub use boot::*;
 
+mod supported_chain;
+pub use supported_chain::SupportedChain;
+
 mod caching_oracle;
 pub use caching_oracle::CachingOracle;
 
