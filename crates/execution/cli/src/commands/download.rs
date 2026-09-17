@@ -12,10 +12,11 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base_execution_chainspec::BaseChainSpec;
+use base_reth_cli::ProgressDisplay;
 use clap::Parser;
 use eyre::Result;
 use futures::{StreamExt, future::try_join_all};
@@ -27,7 +28,7 @@ use tokio::{
     io::{AsyncSeekExt, AsyncWriteExt},
     sync::Mutex,
 };
-use tracing::{info, warn};
+use tracing::{debug, info};
 
 /// Download Base node snapshots from R2 storage.
 ///
@@ -182,6 +183,24 @@ fn retry_delay(idle_attempts: u32, throttled: bool) -> Duration {
 
     let multiplier = 1u64 << idle_attempts.saturating_sub(1).min(4);
     Duration::from_secs((2 * multiplier).min(30))
+}
+
+/// Logs proofs download progress using the same fields as snapshot compression.
+fn log_proofs_download_progress(downloaded: u64, expected: u64, started: Instant, baseline: u64) {
+    let elapsed = started.elapsed();
+    let session_done = downloaded.saturating_sub(baseline);
+    let session_total = expected.saturating_sub(baseline);
+    let speed = session_done as f64 / elapsed.as_secs_f64();
+    let eta = ProgressDisplay::eta(session_done, session_total, elapsed)
+        .map_or_else(|| "unknown".to_string(), |eta| eta.to_string());
+    info!(
+        target: "reth::cli",
+        progress = %ProgressDisplay::human_byte_progress(downloaded, expected),
+        speed = %ProgressDisplay::speed(speed),
+        eta = %eta,
+        elapsed = %ProgressDisplay::duration(elapsed),
+        "Proofs download progress"
+    );
 }
 
 /// Loads parallel-range resume state when it matches this download.
@@ -592,7 +611,8 @@ impl ProofsDownloader {
                 .await?;
 
             let mut downloaded = start_size;
-            let mut last_log = tokio::time::Instant::now();
+            let started = Instant::now();
+            let mut last_log = started;
             let mut stream_error = None;
 
             let mut stream = response.bytes_stream();
@@ -601,14 +621,14 @@ impl ProofsDownloader {
                     Ok(chunk) => {
                         file.write_all(&chunk).await?;
                         downloaded += chunk.len() as u64;
-                        if last_log.elapsed() >= std::time::Duration::from_secs(30) {
-                            info!(
-                                target: "reth::cli",
-                                downloaded_mb = downloaded / (1024 * 1024),
-                                expected_mb = entry.expected_size / (1024 * 1024),
-                                "Proofs download progress"
+                        if last_log.elapsed() >= Duration::from_secs(30) {
+                            log_proofs_download_progress(
+                                downloaded,
+                                entry.expected_size,
+                                started,
+                                start_size,
                             );
-                            last_log = tokio::time::Instant::now();
+                            last_log = Instant::now();
                         }
                     }
                     Err(error) => {
@@ -678,7 +698,7 @@ impl ProofsDownloader {
     ) -> Result<()> {
         if made_progress {
             *idle_attempts = 0;
-            warn!(target: "reth::cli", error = %reason, "Proofs download interrupted, resuming");
+            debug!(target: "reth::cli", error = %reason, "Proofs download interrupted, resuming");
             return Ok(());
         }
 
@@ -690,7 +710,7 @@ impl ProofsDownloader {
         }
 
         let delay = retry_delay(*idle_attempts, throttled);
-        warn!(
+        debug!(
             target: "reth::cli",
             error = %reason,
             idle_attempts = *idle_attempts,
@@ -731,8 +751,8 @@ impl ProofsDownloader {
             target: "reth::cli",
             url = %entry.archive_url,
             streams = ranges.len(),
-            resume_bytes = initial_progress,
-            expected_mb = entry.expected_size / (1024 * 1024),
+            resume = %ProgressDisplay::bytes(initial_progress as f64),
+            expected = %ProgressDisplay::bytes(entry.expected_size as f64),
             "Downloading proofs database with parallel Range requests"
         );
 
@@ -747,17 +767,17 @@ impl ProofsDownloader {
         let ticker = {
             let progress = Arc::clone(&progress);
             let expected_size = entry.expected_size;
+            let started = Instant::now();
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
                 interval.tick().await;
                 loop {
                     interval.tick().await;
-                    let downloaded = progress.load(Ordering::Relaxed);
-                    info!(
-                        target: "reth::cli",
-                        downloaded_mb = downloaded / (1024 * 1024),
-                        expected_mb = expected_size / (1024 * 1024),
-                        "Proofs download progress"
+                    log_proofs_download_progress(
+                        progress.load(Ordering::Relaxed),
+                        expected_size,
+                        started,
+                        initial_progress,
                     );
                 }
             })
