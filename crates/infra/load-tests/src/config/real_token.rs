@@ -16,7 +16,10 @@ pub struct RealTokenSetupConfig {
     #[serde(default)]
     pub allow_chain_id_8453: bool,
     /// WETH contract address.
-    pub weth: Address,
+    ///
+    /// Required unless a harness flow auto-wires swap setup addresses.
+    #[serde(default)]
+    pub weth: Option<Address>,
     /// Target WETH balance to leave each sender with after setup.
     pub weth_amount_per_sender: U256,
     /// Non-WETH token setup.
@@ -50,7 +53,10 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealTokenPairTokenConfig {
     /// Token contract address.
-    pub token: Address,
+    ///
+    /// Required unless a harness flow auto-wires swap setup addresses.
+    #[serde(default)]
+    pub token: Option<Address>,
     /// Target pair-token balance per sender.
     pub amount_per_sender: U256,
     /// Explicit setup route for acquiring the pair token.
@@ -64,7 +70,10 @@ pub enum RealTokenAcquisitionConfig {
     /// Uniswap V3 `exactInputSingle` route.
     UniswapV3ExactInput {
         /// Router contract address.
-        router: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap setup addresses.
+        #[serde(default)]
+        router: Option<Address>,
         /// Fee tier.
         #[serde(default = "default_uniswap_v3_fee")]
         fee: u32,
@@ -77,7 +86,10 @@ pub enum RealTokenAcquisitionConfig {
     /// Aerodrome Slipstream `exactInputSingle` route.
     AerodromeClExactInput {
         /// Router contract address.
-        router: Address,
+        ///
+        /// Required unless a harness flow auto-wires swap setup addresses.
+        #[serde(default)]
+        router: Option<Address>,
         /// Tick spacing.
         #[serde(default = "default_aerodrome_tick_spacing")]
         tick_spacing: i32,
@@ -106,7 +118,12 @@ pub(super) fn parse_real_token_setup(
         ));
     }
 
-    let weth = setup.weth;
+    let weth = setup.weth.ok_or_else(|| {
+        BaselineError::Config(
+            "real_token_setup weth is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+                .into(),
+        )
+    })?;
     let weth_amount_per_sender = setup.weth_amount_per_sender;
     if weth_amount_per_sender == U256::ZERO {
         return Err(BaselineError::Config(
@@ -114,7 +131,12 @@ pub(super) fn parse_real_token_setup(
         ));
     }
 
-    let pair_token = setup.pair_token.token;
+    let pair_token = setup.pair_token.token.ok_or_else(|| {
+        BaselineError::Config(
+            "real_token_setup pair_token token is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+                .into(),
+        )
+    })?;
     if pair_token == weth {
         return Err(BaselineError::Config(
             "real_token_setup pair_token must differ from weth".into(),
@@ -157,7 +179,21 @@ fn validate_real_token_pair_matches_swaps(
     for tx in transactions {
         let (token_in, token_out) = match &tx.tx_type {
             TxTypeConfig::UniswapV3 { token_in, token_out, .. }
-            | TxTypeConfig::AerodromeCl { token_in, token_out, .. } => (*token_in, *token_out),
+            | TxTypeConfig::AerodromeCl { token_in, token_out, .. } => {
+                let token_in = token_in.ok_or_else(|| {
+                    BaselineError::Config(
+                        "real_token_setup requires swap token_in (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+                            .into(),
+                    )
+                })?;
+                let token_out = token_out.ok_or_else(|| {
+                    BaselineError::Config(
+                        "real_token_setup requires swap token_out (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+                            .into(),
+                    )
+                })?;
+                (token_in, token_out)
+            }
             TxTypeConfig::Transfer
             | TxTypeConfig::Calldata { .. }
             | TxTypeConfig::Erc20 { .. }
@@ -196,6 +232,12 @@ fn parse_real_token_acquisition(
             amount_in,
             min_amount_out,
         } => {
+            let router = router.ok_or_else(|| {
+                BaselineError::Config(
+                    "real_token_setup uniswap_v3_exact_input router is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+                        .into(),
+                )
+            })?;
             let max_u24: u32 = (1 << 24) - 1;
             if *fee > max_u24 {
                 return Err(BaselineError::Config(format!(
@@ -208,7 +250,7 @@ fn parse_real_token_acquisition(
                 ));
             }
             Ok(RealTokenAcquisition::UniswapV3ExactInput {
-                router: *router,
+                router,
                 fee: *fee,
                 amount_in: *amount_in,
                 min_amount_out: *min_amount_out,
@@ -220,6 +262,12 @@ fn parse_real_token_acquisition(
             amount_in,
             min_amount_out,
         } => {
+            let router = router.ok_or_else(|| {
+                BaselineError::Config(
+                    "real_token_setup aerodrome_cl_exact_input router is required (set deploy_devnet_swap_harness for fresh-devnet auto-deploy)"
+                        .into(),
+                )
+            })?;
             if !(-8_388_608..=8_388_607).contains(tick_spacing) {
                 return Err(BaselineError::Config(format!(
                     "real_token_setup acquisition tick_spacing {tick_spacing} exceeds i24 range"
@@ -231,7 +279,7 @@ fn parse_real_token_acquisition(
                 ));
             }
             Ok(RealTokenAcquisition::AerodromeClExactInput {
-                router: *router,
+                router,
                 tick_spacing: *tick_spacing,
                 amount_in: *amount_in,
                 min_amount_out: *min_amount_out,
@@ -434,5 +482,29 @@ transactions:
         let config = TestConfig::from_yaml(yaml).unwrap();
         let err = config.parse_real_token_setup(8453).unwrap_err();
         assert!(err.to_string().contains("WETH/pair token"));
+    }
+
+    #[test]
+    fn real_token_setup_reports_missing_addresses_for_harnessless_runs() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+real_token_setup:
+  enabled: true
+  weth_amount_per_sender: "800000000000000000"
+  pair_token:
+    amount_per_sender: "1000000000"
+    acquisition:
+      type: uniswap_v3_exact_input
+      fee: 500
+      amount_in: "10000000000000000"
+transactions:
+  - weight: 100
+    type: uniswap_v3
+    fee: 500
+"#;
+        let config = TestConfig::from_yaml(yaml).unwrap();
+        let err = config.parse_real_token_setup(84532).unwrap_err();
+        assert!(err.to_string().contains("real_token_setup weth is required"));
     }
 }
