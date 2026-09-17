@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     ConductorClient, DerivationClientResult, EngineActor, EngineDerivationClient, EngineProcessor,
     L1OriginSelectorError, NodeActor, OriginSelector, PayloadBuilder, QueuedSequencerEngineClient,
-    RecoveryModeGuard, SequencerActor, SequencerEngineRequestCoordinator,
+    RecoveryModeGuard, SequencerActor, SequencerAdminQuery, SequencerEngineRequestCoordinator,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
@@ -272,6 +272,16 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         &self,
         cancellation: CancellationToken,
     ) -> Result<(), String> {
+        let (_sequencer_admin_tx, sequencer_admin_rx) = mpsc::channel(1024);
+        self.start_with_cancellation_and_admin(cancellation, sequencer_admin_rx).await
+    }
+
+    /// Runs the standalone sequencer with caller-provided cancellation and admin control.
+    pub async fn start_with_cancellation_and_admin(
+        &self,
+        cancellation: CancellationToken,
+        sequencer_admin_rx: mpsc::Receiver<SequencerAdminQuery>,
+    ) -> Result<(), String> {
         let (engine_actor_request_tx, engine_actor_request_rx) = mpsc::channel(1024);
         let (unsafe_head_tx, unsafe_head_rx) = watch::channel(L2BlockInfo::default());
         let (engine_state_tx, engine_state_rx) = watch::channel(EngineState::default());
@@ -293,7 +303,6 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             unsafe_head_rx,
             engine_state_rx,
         });
-        let (_sequencer_admin_tx, sequencer_admin_rx) = mpsc::channel(1024);
         let recovery_mode = RecoveryModeGuard::new(false);
         let sequencer_actor: SequencerActor<_, ConductorClient, _, _, _> = SequencerActor {
             admin_api_rx: sequencer_admin_rx,

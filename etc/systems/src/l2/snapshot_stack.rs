@@ -223,9 +223,9 @@ impl SnapshotL2Stack {
     pub async fn stop_sequencer(&mut self) -> Result<()> {
         let consensus = self
             .standalone_consensus
-            .take()
+            .as_ref()
             .ok_or_else(|| eyre::eyre!("snapshot sequencer is not running"))?;
-        consensus.shutdown().await;
+        consensus.stop_sequencer().await?;
         Ok(())
     }
 
