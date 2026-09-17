@@ -6011,6 +6011,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-replay-build-bench"
+version = "0.0.0"
+dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
+ "alloy-primitives",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-execution-chainspec",
+ "base-execution-evm",
+ "base-execution-payload-builder",
+ "base-execution-txpool",
+ "base-node-runner",
+ "clap",
+ "eyre",
+ "reth-basic-payload-builder",
+ "reth-evm",
+ "reth-execution-cache",
+ "reth-payload-builder",
+ "reth-payload-primitives",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-revm",
+ "reth-stages-types",
+ "reth-storage-api",
+ "reth-tasks",
+ "reth-transaction-pool",
+ "reth-trie",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
