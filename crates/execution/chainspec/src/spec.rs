@@ -303,7 +303,7 @@ impl BaseChainSpec {
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
-        let cfg = ChainConfig::by_name(s)?;
+        let cfg = ChainConfig::by_any_name(s)?;
         Some(Arc::new(
             Self::try_from(cfg).expect("recognized Base chain config must build a valid chainspec"),
         ))

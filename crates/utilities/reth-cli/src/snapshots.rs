@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use base_common_chains::ChainConfig;
 use reth_cli_commands::download::DownloadDefaults;
 use reth_node_core::args::DefaultPruningValues;
 use reth_prune_types::PruneMode;
@@ -9,6 +10,9 @@ use reth_prune_types::PruneMode;
 /// Must stay a bare host: reth derives `{root}/api/snapshots` from it and appends
 /// its own path segments, so a chain path here produces 404 manifest URLs.
 const SNAPSHOT_SOURCE_URL: &str = "https://chain.base.org";
+const MAINNET_SNAPSHOT_URL: &str = "https://mainnet-v2-snapshots.base.org";
+const SEPOLIA_SNAPSHOT_URL: &str = "https://sepolia-v2-snapshots.base.org";
+const ZERONET_SNAPSHOT_URL: &str = "https://zeronet-v2-snapshots.base.org";
 const FULL_HISTORY_DISTANCE: u64 = 1_339_200;
 
 /// Reth snapshot and pruning-default initialization for Base execution layer binaries.
@@ -16,13 +20,23 @@ const FULL_HISTORY_DISTANCE: u64 = 1_339_200;
 pub struct Snapshots;
 
 impl Snapshots {
-    /// Snapshot sources advertised in `--help`, derived from one snapshot root.
+    /// Snapshot sources advertised in `--help`, each labelled with the `--chain` name
+    /// that selects it.
     pub fn download_defaults() -> DownloadDefaults {
         DownloadDefaults::default().with_snapshot_source_url(SNAPSHOT_SOURCE_URL).with_snapshots(
             vec![
-                Cow::Borrowed("https://mainnet-v2-snapshots.base.org (mainnet)"),
-                Cow::Borrowed("https://sepolia-v2-snapshots.base.org (sepolia)"),
-                Cow::Borrowed("https://zeronet-v2-snapshots.base.org (zeronet)"),
+                Cow::Owned(format!(
+                    "{MAINNET_SNAPSHOT_URL} (--chain {})",
+                    ChainConfig::MAINNET_SELECTOR
+                )),
+                Cow::Owned(format!(
+                    "{SEPOLIA_SNAPSHOT_URL} (--chain {})",
+                    ChainConfig::SEPOLIA_SELECTOR
+                )),
+                Cow::Owned(format!(
+                    "{ZERONET_SNAPSHOT_URL} (--chain {})",
+                    ChainConfig::ZERONET_SELECTOR
+                )),
             ],
         )
     }
@@ -68,6 +82,22 @@ macro_rules! init_snapshots {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn advertised_snapshot_sources_name_chains_the_parser_accepts() {
+        for source in &Snapshots::download_defaults().available_snapshots {
+            let (url, chain) = source
+                .split_once(" (--chain ")
+                .unwrap_or_else(|| panic!("snapshot source {source} is missing a --chain label"));
+            let chain = chain.trim_end_matches(')');
+
+            assert!(url.starts_with("https://"), "snapshot source {url} must be an https URL");
+            assert!(
+                ChainConfig::by_any_name(chain).is_some(),
+                "advertised --chain {chain} is rejected by the Base chain parser"
+            );
+        }
+    }
 
     #[test]
     fn snapshot_root_carries_no_chain_path() {
