@@ -94,7 +94,7 @@ pub struct ValidatedTransaction<E = NoExtensions> {
     /// EIP-2718 encoded transaction bytes.
     pub raw: Bytes,
     /// In-process `meter_bundle` result. Nested so `u128` timing fields do not go
-    /// through `#[serde(flatten)]`, which serde_json cannot represent.
+    /// through `#[serde(flatten)]`, which `serde_json` cannot represent.
     ///
     /// Omitted when `None`, so existing payloads stay byte-compatible until
     /// inline simulation starts sending it.

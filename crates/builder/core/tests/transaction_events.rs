@@ -17,7 +17,7 @@ use base_observability_events::{TransactionEventCapture, TransactionEventType};
 
 fn validity_instance() -> LocalInstanceBuilder {
     LocalInstanceBuilder::new(BuilderConfig::for_tests()).install_ext::<BuilderApiExtension>(
-        BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES),
+        BuilderApiExtensionConfig::new(true, DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering(),
     )
 }
 
@@ -45,6 +45,7 @@ async fn recoverable_predicate_emits_builder_deferred() -> eyre::Result<()> {
             (ValidatedTransaction {
                 sender: accounts[0].address(),
                 raw: gated.encoded_2718().into(),
+                metering: None,
                 extensions: TransactionValidity {
                     validity: vec![ValidityPredicate::Balance {
                         address: watched,
@@ -134,6 +135,7 @@ async fn expired_position_predicate_emits_builder_expired() -> eyre::Result<()> 
             (ValidatedTransaction {
                 sender: accounts[0].address(),
                 raw: expired.encoded_2718().into(),
+                metering: None,
                 extensions: TransactionValidity {
                     validity: vec![ValidityPredicate::BlockNumber {
                         op: ValidityOperator::LessThanOrEqual,

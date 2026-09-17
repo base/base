@@ -55,7 +55,8 @@ async fn setup_with_validity_ingress(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
+    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
+        .with_noop_metering();
     let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
     if accept_validity {
         builder = builder.with_ext::<SendRawTransactionValidityExtension>(

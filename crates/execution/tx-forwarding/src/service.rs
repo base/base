@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::Encodable2718;
-use base_execution_txpool::{NoExtensions, ValidatedTransactionExtensions};
+use base_execution_txpool::{BasePooledTx, NoExtensions, ValidatedTransactionExtensions};
 use futures::{StreamExt, future::join_all, stream::FuturesUnordered};
 use jsonrpsee::http_client::HttpClientBuilder;
 use reth_tasks::TaskExecutor;
@@ -52,7 +52,7 @@ impl TxForwardingService {
     pub fn spawn<P>(self, pool: P, executor: &TaskExecutor) -> TxForwardingHandle
     where
         P: TransactionPool + Clone + Send + 'static,
-        P::Transaction: PoolTransaction,
+        P::Transaction: PoolTransaction + BasePooledTx,
         <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     {
         self.spawn_with_extensions::<P, NoExtensions>(pool, executor)
@@ -62,7 +62,7 @@ impl TxForwardingService {
     pub fn spawn_with_extensions<P, E>(self, pool: P, executor: &TaskExecutor) -> TxForwardingHandle
     where
         P: TransactionPool + Clone + Send + 'static,
-        P::Transaction: PoolTransaction,
+        P::Transaction: PoolTransaction + BasePooledTx,
         <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
         E: ValidatedTransactionExtensions<P::Transaction>,
     {

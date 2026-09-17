@@ -148,7 +148,6 @@ where
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let recovered = Recovered::new_unchecked(consensus_tx, sender);
         let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
         if let Some(metering) = tx.metering {
             if let Some(cache) = &self.metering_cache {
