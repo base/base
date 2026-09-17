@@ -2919,6 +2919,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-reth-cli",
  "base-shadow-indexer",
  "base-txpool-rpc",
  "base-upgrade-signal",
@@ -6008,6 +6009,7 @@ name = "base-reth-cli"
 version = "1.4.1"
 dependencies = [
  "anyhow",
+ "base-common-chains",
  "blake3",
  "humantime",
  "rayon",
