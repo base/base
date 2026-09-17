@@ -43,6 +43,7 @@ serde = { workspace = true, features = ["derive", "std"] }
 [dev-dependencies]
 rstest.workspace = true
 httpmock.workspace = true
+metrics-util = { workspace = true, features = ["debugging"] }
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [features]
