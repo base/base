@@ -2904,6 +2904,7 @@ name = "base"
 version = "0.0.0"
 dependencies = [
  "alloy-chains",
+ "axum 0.8.9",
  "base-batcher-cli",
  "base-builder-cli",
  "base-builder-core",
@@ -2930,7 +2931,9 @@ dependencies = [
  "reth-cli-commands",
  "reth-cli-runner",
  "reth-cli-util",
+ "rstest",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -57,10 +57,14 @@ serde = { workspace = true, features = ["derive"] }
 figment = { workspace = true, features = ["env", "toml"] }
 
 [dev-dependencies]
+rstest.workspace = true
 reqwest.workspace = true
 tempfile.workspace = true
+serde_json.workspace = true
 base-common-genesis.workspace = true
 figment = { workspace = true, features = ["test"] }
+axum = { workspace = true, features = ["tokio", "http1"] }
+tokio = { workspace = true, features = ["net", "time", "macros", "process", "rt-multi-thread"] }
 
 [features]
 jemalloc-prof = [
