@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use base_common_genesis::BaseUpgrade;
 
-use crate::{UpgradeSignal, UpgradeSignalSchedule};
+use crate::{UpgradeSignal, UpgradeSignalMode, UpgradeSignalSchedule};
 
 /// Upgrade signal metric layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,10 @@ impl UpgradeSignalMetricLayer {
 
 base_metrics::define_metrics! {
     base.upgrade_signal, struct = UpgradeSignalMetrics,
+    #[describe("1 for the configured upgrade signal mode; disabled when no contract is configured")]
+    #[label(layer)]
+    #[label(mode)]
+    mode_info: gauge,
     #[describe("Configured activation timestamp read from L1")]
     #[label(layer)]
     #[label(upgrade)]
@@ -64,6 +68,21 @@ base_metrics::define_metrics! {
 }
 
 impl UpgradeSignalMetrics {
+    /// Records the startup mode after the metrics recorder is installed, without reading L1.
+    ///
+    /// `None` means no upgrade signal contract is configured. Only the selected mode is emitted;
+    /// it remains exposed on subsequent scrapes for the lifetime of the process.
+    pub fn record_mode(layer: UpgradeSignalMetricLayer, mode: Option<UpgradeSignalMode>) {
+        Self::init();
+        let mode = match mode {
+            Some(UpgradeSignalMode::MetricsOnly) => "metrics-only",
+            Some(UpgradeSignalMode::StartupApply) => "startup-apply",
+            Some(UpgradeSignalMode::RuntimeAdmin) => "runtime-admin",
+            None => "disabled",
+        };
+        Self::mode_info(layer.label(), mode).set(1.0);
+    }
+
     /// Records all metrics derived from a successfully read schedule.
     pub fn record_schedule(layer: UpgradeSignalMetricLayer, schedule: &UpgradeSignalSchedule) {
         Self::init();
@@ -185,7 +204,52 @@ impl UpgradeSignalMetrics {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "metrics")]
+    use metrics_util::{
+        MetricKind,
+        debugging::{DebugValue, DebuggingRecorder},
+    };
+    #[cfg(feature = "metrics")]
+    use rstest::rstest;
+
     use super::*;
+
+    #[cfg(feature = "metrics")]
+    #[rstest]
+    #[case(None, "disabled")]
+    #[case(Some(UpgradeSignalMode::MetricsOnly), "metrics-only")]
+    #[case(Some(UpgradeSignalMode::StartupApply), "startup-apply")]
+    #[case(Some(UpgradeSignalMode::RuntimeAdmin), "runtime-admin")]
+    fn records_only_selected_mode(
+        #[case] mode: Option<UpgradeSignalMode>,
+        #[case] expected_mode: &str,
+        #[values(UpgradeSignalMetricLayer::Execution, UpgradeSignalMetricLayer::Consensus)]
+        layer: UpgradeSignalMetricLayer,
+    ) {
+        let recorder = DebuggingRecorder::new();
+        let snapshotter = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, || {
+            UpgradeSignalMetrics::record_mode(layer, mode);
+            UpgradeSignalMetrics::record_mode(layer, mode);
+        });
+
+        let snapshot = snapshotter.snapshot().into_vec();
+        let entries: Vec<_> = snapshot
+            .iter()
+            .filter(|(key, _, _, _)| key.key().name() == "base.upgrade_signal.mode_info")
+            .collect();
+        assert_eq!(entries.len(), 1);
+        let (key, _, _, value) = entries[0];
+        assert_eq!(key.kind(), MetricKind::Gauge);
+        assert_eq!(*value, DebugValue::Gauge(1.0.into()));
+        let mut labels: Vec<_> = key.key().labels().map(|l| (l.key(), l.value())).collect();
+        labels.sort_unstable();
+        let expected_layer = match layer {
+            UpgradeSignalMetricLayer::Execution => "el",
+            UpgradeSignalMetricLayer::Consensus => "cl",
+        };
+        assert_eq!(labels, [("layer", expected_layer), ("mode", expected_mode)]);
+    }
 
     #[test]
     fn converts_packed_semver_protocol_version_to_metric_value() {
