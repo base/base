@@ -2917,6 +2917,7 @@ dependencies = [
  "base-execution-cli",
  "base-execution-consensus",
  "base-execution-evm",
+ "base-execution-profiling",
  "base-node-core",
  "base-node-runner",
  "base-shadow-indexer",
