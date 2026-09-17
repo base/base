@@ -16,7 +16,10 @@ impl TestNodeRuntime {
     /// Threads for the Rayon CPU, RPC, and storage pools.
     const POOL_THREADS: usize = 2;
     /// Threads for the proof, prewarming, BAL streaming, and state-trie overlay pools.
-    const WORKER_POOL_THREADS: usize = 1;
+    ///
+    /// Reth halves proof-worker counts for small blocks. This must remain at least two so integer
+    /// division does not turn `1 / 2` into an empty account or storage worker pool.
+    const WORKER_POOL_THREADS: usize = 2;
 
     /// Returns a [`RuntimeConfig`] with bounded Rayon pools.
     pub fn config() -> RuntimeConfig {
@@ -31,5 +34,18 @@ impl TestNodeRuntime {
             state_trie_overlay_worker_threads: Some(Self::WORKER_POOL_THREADS),
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TestNodeRuntime;
+
+    #[test]
+    fn proof_worker_pools_survive_small_block_halving() {
+        let config = TestNodeRuntime::config();
+
+        assert!(config.rayon.proof_storage_worker_threads.unwrap() / 2 > 0);
+        assert!(config.rayon.proof_account_worker_threads.unwrap() / 2 > 0);
     }
 }
