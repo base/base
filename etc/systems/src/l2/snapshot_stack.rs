@@ -19,8 +19,8 @@ use url::Url;
 use super::{
     ChainSpecSource, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
     InProcessClientConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
-    L2ContainerConfig, SnapshotBoundary,
+    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ContainerConfig,
+    SnapshotBoundary,
 };
 use crate::{DevnetBlockInterval, DevnetSnapshotConfig};
 
