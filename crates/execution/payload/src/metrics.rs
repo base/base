@@ -116,6 +116,22 @@ base_metrics::define_metrics! {
     worker_disconnected_total: counter,
     #[describe("Prewarm jobs skipped entirely because no worker was available")]
     jobs_skipped_busy_total: counter,
+    #[describe("Transaction simulation prewarm jobs scheduled to prewarm workers")]
+    sim_jobs_scheduled_total: counter,
+    #[describe("Simulation jobs skipped as already scheduled within the same build")]
+    sim_jobs_deduped_total: counter,
+    #[describe(
+        "Simulation jobs dropped because the prewarm queue was full or closed"
+    )]
+    sim_jobs_dropped_total: counter,
+    #[describe("Transaction simulations executed by prewarm workers")]
+    sim_executions_total: counter,
+    #[describe("Prewarm transaction simulations that failed to execute")]
+    sim_exec_errors_total: counter,
+    #[describe(
+        "Build-loop candidates consumed while their simulation prewarm job was still queued or in flight"
+    )]
+    canonical_overtook_sim_total: counter,
 }
 
 impl ValidityMetrics {
