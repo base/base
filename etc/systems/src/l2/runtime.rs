@@ -2,6 +2,25 @@
 
 use reth_tasks::{RayonConfig, RuntimeConfig};
 
+/// Runtime sizing policy for an in-process execution node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InProcessNodeRuntime {
+    /// Use Reth's host-derived worker pool sizing for benchmarks and developer networks.
+    Host,
+    /// Use bounded worker pools to keep concurrent system tests from oversubscribing CI hosts.
+    SystemTest,
+}
+
+impl InProcessNodeRuntime {
+    /// Returns the Reth runtime configuration for this policy.
+    pub fn config(self) -> RuntimeConfig {
+        match self {
+            Self::Host => RuntimeConfig::default(),
+            Self::SystemTest => TestNodeRuntime::config(),
+        }
+    }
+}
+
 /// Small, fixed Rayon thread-pool sizing for the reth runtime backing an in-process test node.
 ///
 /// The in-process nodes share the test Tokio runtime, but Reth's default Rayon pools are sized

@@ -67,10 +67,10 @@ pub use l2::{
     ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ClientConsensus,
-    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack,
-    SnapshotL2StackConfig, TestNodeRuntime,
+    InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
+    L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
+    ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary,
+    SnapshotL2Stack, SnapshotL2StackConfig, TestNodeRuntime,
 };
 
 mod network;
