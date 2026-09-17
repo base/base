@@ -275,7 +275,7 @@ impl ChainConfig {
     ///
     /// Use this to normalize any recognized chain input back to the canonical
     /// selector understood by the `base` binary's `--chain` surface, for example
-    /// `from_base_chain(x).or_else(|| by_name(x)).and_then(Self::base_chain_selector)`.
+    /// `by_any_name(x).and_then(Self::base_chain_selector)`.
     ///
     /// Returns `None` for chains that have no built-in selector.
     pub const fn base_chain_selector(&self) -> Option<&'static str> {
