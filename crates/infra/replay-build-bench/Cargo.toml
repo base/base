@@ -1,0 +1,49 @@
+[package]
+name = "base-replay-build-bench"
+description = "Replayed building benchmark: canonical-state build loop with canonical state advancement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-common-chains.workspace = true
+base-common-consensus.workspace = true
+base-common-evm.workspace = true
+base-execution-chainspec.workspace = true
+base-execution-evm.workspace = true
+base-execution-payload-builder.workspace = true
+base-execution-txpool.workspace = true
+base-node-runner.workspace = true
+
+# reth
+reth-evm.workspace = true
+reth-revm.workspace = true
+reth-trie.workspace = true
+reth-provider.workspace = true
+reth-storage-api.workspace = true
+reth-stages-types.workspace = true
+reth-payload-builder.workspace = true
+reth-execution-cache.workspace = true
+reth-transaction-pool.workspace = true
+reth-primitives-traits.workspace = true
+reth-payload-primitives.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-tasks = { workspace = true, features = ["rayon"] }
+
+# alloy
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+
+# misc
+clap = { workspace = true, features = ["derive"] }
+eyre.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
