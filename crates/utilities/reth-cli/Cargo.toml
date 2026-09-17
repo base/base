@@ -23,6 +23,7 @@ serde_json.workspace = true
 reth-node-core.workspace = true
 reth-prune-types.workspace = true
 reth-cli-commands.workspace = true
+base-common-chains.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

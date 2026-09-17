@@ -6016,6 +6016,7 @@ name = "base-reth-cli"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "base-common-chains",
  "blake3",
  "humantime",
  "rayon",
