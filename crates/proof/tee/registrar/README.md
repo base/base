@@ -10,6 +10,23 @@ documents via `enclave_signerAttestation`, validates and plans them locally,
 generates P-384 inverse hints, caches certificate chains through `CertManager`,
 and submits hinted registration transactions to `TEEProverRegistry` on L1.
 
+## Certificate Revocation
+
+Every registration attempt checks the plan's certificates twice: against the
+onchain `CertManager` revocation sentinel, and against the AWS Nitro CRL
+distribution points named by the certificates themselves.
+
+Both checks are fail-closed. A CRL that cannot be fetched and parsed leaves that
+certificate's revocation status indeterminate, which blocks registration rather
+than being treated as clean — a partial failure in a multi-certificate chain can
+never collapse into a clean result. When a check confirms a revocation, the
+registrar persists it to `CertManager` and deregisters the signer if it is
+already registered, because `TEEProverRegistry.isValidSigner` does not consult
+certificate revocation state.
+
+AWS CRL checking is only enabled when `crl_nitro_verifier_address` is
+configured. With it unset, the onchain sentinel is the only revocation check.
+
 ## Discovery Cache TTL
 
 When an instance disappears from otherwise successful discovery output or is
@@ -22,6 +39,7 @@ longer TTLs protect against flakes but delay real cleanup.
 
 - **`service`** — [`RegistrarConfig`] runtime config and lifecycle runner.
 - **`error`** — [`RegistrarError`] enum covering all failure modes.
+- **`crl`** — [`CrlSource`] revocation status abstraction and its [`CrlChecker`] HTTP implementation.
 - **`planner`** — [`AttestationPlanner`] for CertManager-oriented registration plans.
 - **`hints`** — [`P384Hints`] Agora / `nitro-validator` inverse-transcript generator.
 - **`prover`** — [`ProverClient`] JSON-RPC client for polling prover readiness and signer endpoints.

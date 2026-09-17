@@ -21,20 +21,24 @@ base_metrics::define_metrics! {
     #[describe("Total number of processing errors encountered")]
     processing_errors_total: counter,
 
-    #[describe("Total number of CRL checks performed")]
+    #[describe("Total number of CRL checks started, including checks abandoned by cancellation")]
     crl_checks_total: counter,
+
+    #[describe("Total number of CRL checks by the terminal status of the whole certificate chain")]
+    #[label(name = "outcome", default = ["clean", "revoked", "indeterminate"])]
+    crl_check_outcome_total: counter,
 
     #[describe("Total number of certificate revocations detected via CRL")]
     crl_revocations_detected: counter,
+
+    #[describe("Total number of certificates whose CRL could not be fetched and parsed")]
+    crl_indeterminate_certs_detected: counter,
 
     #[describe("Total number of onchain durable revocation pre-checks performed")]
     onchain_revocation_checks_total: counter,
 
     #[describe("Total number of intermediates rejected by the onchain durable revocation sentinel")]
     onchain_revocations_detected: counter,
-
-    #[describe("Total number of onchain revocation pre-checks that failed and fell through to the AWS CRL layer (fail-open)")]
-    onchain_revocation_check_errors: counter,
 
     #[describe("Total number of revokeCert transaction submission failures")]
     revoke_cert_tx_failures: counter,
@@ -140,6 +144,19 @@ impl RegistrarMetrics {
     /// Records a registration lifecycle stage.
     pub fn record_registration_stage(stage: &'static str) {
         Self::registration_stage_total(stage).increment(1);
+    }
+
+    /// Every applicable CRL in the chain was fetched and parsed and listed no certificate.
+    pub const CRL_OUTCOME_CLEAN: &'static str = "clean";
+    /// At least one certificate in the chain is listed on its CRL.
+    pub const CRL_OUTCOME_REVOKED: &'static str = "revoked";
+    /// At least one applicable CRL could not be fetched and parsed, so the chain's revocation
+    /// status is unknown and registration fails closed.
+    pub const CRL_OUTCOME_INDETERMINATE: &'static str = "indeterminate";
+
+    /// Records the terminal status of one certificate chain's CRL check.
+    pub fn record_crl_check(outcome: &'static str) {
+        Self::crl_check_outcome_total(outcome).increment(1);
     }
 
     /// Bounded label for a certificate-cache kind.
