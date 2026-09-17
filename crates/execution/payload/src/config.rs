@@ -17,9 +17,9 @@ use revm::state::EvmState;
 use tracing::{debug, warn};
 
 use crate::{
-    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
-    ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
-    ResourceThrottlingDecision, SharedMeteringProvider,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
+    RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -34,6 +34,8 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
+    /// Number of parked predicates that converts one state bucket to ordered wakeups.
+    pub predicate_bucket_ordered_threshold: usize,
     /// Resource-unit metering used to throttle transactions in the native
     /// payload builder.
     pub resource_metering: ResourceMeteringConfig,
@@ -60,6 +62,7 @@ impl Default for BaseBuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
@@ -79,6 +82,7 @@ impl BaseBuilderConfig {
             gas_limit_config,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
