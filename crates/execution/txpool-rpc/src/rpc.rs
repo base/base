@@ -20,9 +20,9 @@ use jsonrpsee::{
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_chainspec::ChainSpecProvider;
-use reth_rpc_eth_types::error::RpcPoolError;
+use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::BlockReaderIdExt;
-use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
+use reth_transaction_pool::{BatchTxRequest, PoolTransaction, TransactionOrigin, TransactionPool};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -112,57 +112,59 @@ pub struct TransactionStatusApiImpl<Pool: TransactionPool> {
 
 /// Local mempool-ingress implementation for validity-bearing transactions.
 #[derive(Debug, Clone)]
-pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
-    pool: Pool,
+pub struct SendRawTransactionValidityApiImpl<Provider> {
     provider: Provider,
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
+    transaction_sender: tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>>,
 }
 
-impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
-    /// Creates a validity transaction ingress backed by the given pool and default limits.
-    ///
-    /// The provider fork-gates the RPC method on the Zenith hard fork.
-    pub const fn new(pool: Pool, provider: Provider) -> Self {
+impl<Provider> SendRawTransactionValidityApiImpl<Provider> {
+    /// Creates a validity transaction ingress backed by the shared pool sender and default limits.
+    pub const fn new(
+        provider: Provider,
+        transaction_sender: tokio::sync::mpsc::UnboundedSender<
+            BatchTxRequest<BasePooledTransaction>,
+        >,
+    ) -> Self {
         Self::with_validity_limits(
-            pool,
             provider,
             DEFAULT_MAX_VALIDITY_PREDICATES,
             DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            transaction_sender,
         )
     }
 
     /// Creates a validity transaction ingress with a predicate limit and default expiry window.
-    ///
-    /// The provider fork-gates the RPC method on the Zenith hard fork.
     pub const fn with_max_validity_predicates(
-        pool: Pool,
         provider: Provider,
         max_validity_predicates: usize,
+        transaction_sender: tokio::sync::mpsc::UnboundedSender<
+            BatchTxRequest<BasePooledTransaction>,
+        >,
     ) -> Self {
         Self::with_validity_limits(
-            pool,
             provider,
             max_validity_predicates,
             DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            transaction_sender,
         )
     }
 
     /// Creates a validity transaction ingress with explicit predicate and expiry limits.
-    ///
-    /// The expiry limit is expressed in seconds and converted to blocks using the active full-
-    /// block cadence at submission time.
     pub const fn with_validity_limits(
-        pool: Pool,
         provider: Provider,
         max_validity_predicates: usize,
         max_validity_expiry_secs: u64,
+        transaction_sender: tokio::sync::mpsc::UnboundedSender<
+            BatchTxRequest<BasePooledTransaction>,
+        >,
     ) -> Self {
-        Self { pool, provider, max_validity_predicates, max_validity_expiry_secs }
+        Self { provider, max_validity_predicates, max_validity_expiry_secs, transaction_sender }
     }
 }
 
-impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider>
+impl<Provider> SendRawTransactionValidityApiImpl<Provider>
 where
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades>,
 {
@@ -252,10 +254,8 @@ impl<Pool: TransactionPool + 'static> TransactionStatusApiServer
 }
 
 #[async_trait]
-impl<Pool, Provider> SendRawTransactionValidityApiServer
-    for SendRawTransactionValidityApiImpl<Pool, Provider>
+impl<Provider> SendRawTransactionValidityApiServer for SendRawTransactionValidityApiImpl<Provider>
 where
-    Pool: TransactionPool<Transaction = BasePooledTransaction> + 'static,
     Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + 'static,
 {
     async fn send_raw_transaction_validity(
@@ -328,13 +328,16 @@ where
         );
 
         // Retain predicates for canonical forwarding to builders.
-        self.pool
-            .add_transaction(
-                TransactionOrigin::Private,
-                transaction.with_validity_predicates(options.validity),
-            )
+        let transaction = transaction.with_validity_predicates(options.validity);
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        self.transaction_sender
+            .send(BatchTxRequest::new(TransactionOrigin::Private, transaction, response_tx))
+            .map_err(|_| ErrorObjectOwned::from(EthApiError::BatchTxSendError))?;
+        response_rx
             .await
-            .map_err(|error| ErrorObjectOwned::from(RpcPoolError::from(error)))?;
+            .map_err(EthApiError::from)
+            .and_then(|result| result.map_err(EthApiError::from))
+            .map_err(ErrorObjectOwned::from)?;
 
         Ok(tx_hash)
     }
@@ -425,6 +428,21 @@ mod tests {
         NoopTransactionPool::<BasePooledTransaction>::new()
     }
 
+    fn test_transaction_sender()
+    -> tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>> {
+        tokio::sync::mpsc::unbounded_channel().0
+    }
+
+    fn validity_rpc<Provider>(provider: Provider) -> SendRawTransactionValidityApiImpl<Provider>
+    where
+        Provider: BlockReaderIdExt + ChainSpecProvider<ChainSpec: Upgrades> + 'static,
+    {
+        let (processor, transaction_sender) =
+            reth_transaction_pool::BatchTxProcessor::new(validity_pool(), 1);
+        tokio::spawn(processor);
+        SendRawTransactionValidityApiImpl::new(provider, transaction_sender)
+    }
+
     fn validity_request(tx: Bytes) -> (Bytes, SendRawTransactionValidityOptions) {
         (
             tx,
@@ -473,7 +491,10 @@ mod tests {
 
     #[test]
     fn max_validity_expiry_blocks_uses_the_active_full_block_cadence() {
-        let legacy = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider());
+        let legacy = SendRawTransactionValidityApiImpl::new(
+            pre_zenith_provider(),
+            test_transaction_sender(),
+        );
         assert_eq!(legacy.max_validity_expiry_blocks(0), 30);
 
         let denim_provider = MockEthProvider::<BasePrimitives>::new()
@@ -483,7 +504,8 @@ mod tests {
                     .build(),
             ))
             .with_genesis_block();
-        let denim = SendRawTransactionValidityApiImpl::new(validity_pool(), denim_provider);
+        let denim =
+            SendRawTransactionValidityApiImpl::new(denim_provider, test_transaction_sender());
         assert_eq!(denim.max_validity_expiry_blocks(0), 300);
 
         let transition_provider = MockEthProvider::<BasePrimitives>::new()
@@ -494,7 +516,7 @@ mod tests {
             ))
             .with_genesis_block();
         let transition =
-            SendRawTransactionValidityApiImpl::new(validity_pool(), transition_provider);
+            SendRawTransactionValidityApiImpl::new(transition_provider, test_transaction_sender());
         assert_eq!(transition.max_validity_expiry_blocks(0), 300);
     }
 
@@ -652,7 +674,7 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc = validity_rpc(zenith_provider());
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let tx_hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap_or_else(|_| {
@@ -679,7 +701,8 @@ mod tests {
 
     #[test]
     fn send_raw_transaction_validity_method_is_registered() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
         let module = SendRawTransactionValidityApiServer::into_rpc(rpc);
 
         assert!(module.method_names().any(|name| name == "base_sendRawTransactionValidity"));
@@ -689,7 +712,10 @@ mod tests {
     async fn send_raw_transaction_validity_rejects_eip8130_before_zenith() {
         let signer = PrivateKeySigner::random();
         let raw = signed_eip8130(&signer);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider());
+        let rpc = SendRawTransactionValidityApiImpl::new(
+            pre_zenith_provider(),
+            test_transaction_sender(),
+        );
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let error = rpc
@@ -709,7 +735,7 @@ mod tests {
         let capture = TransactionEventCapture::install();
         let signer = PrivateKeySigner::random();
         let raw = signed_eip1559(&signer, 0, 1);
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider());
+        let rpc = validity_rpc(pre_zenith_provider());
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
 
         let error = rpc
@@ -730,7 +756,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_malformed_transaction() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
 
         let (raw, options) = validity_request(Bytes::from_static(&[0xff]));
         let error = rpc
@@ -745,9 +772,9 @@ mod tests {
     #[tokio::test]
     async fn send_raw_transaction_validity_enforces_configured_predicate_limit() {
         let rpc = SendRawTransactionValidityApiImpl::with_max_validity_predicates(
-            validity_pool(),
             zenith_provider(),
             2,
+            test_transaction_sender(),
         );
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![options.validity[0].clone(); 3];
@@ -764,7 +791,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_empty_predicates() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity.clear();
 
@@ -779,7 +807,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_requires_block_number_expiry() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::GreaterThanOrEqual,
@@ -807,7 +836,7 @@ mod tests {
                 body: BlockBody::default(),
             },
         );
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
+        let rpc = SendRawTransactionValidityApiImpl::new(provider, test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
@@ -825,7 +854,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_storage_value_outside_mask() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::Storage {
             address: Address::repeat_byte(0xab),
@@ -846,7 +876,8 @@ mod tests {
 
     #[tokio::test]
     async fn send_raw_transaction_validity_rejects_unsatisfiable_flashblock_index() {
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         // A flashblock-index predicate that only holds at index 0, which pooled
         // transactions never reach, would park forever if admitted.
@@ -927,7 +958,8 @@ mod tests {
     async fn send_raw_transaction_validity_rejects_expired_block_number_bound() {
         // The genesis block is the latest committed block, so the block being built is 1.
         // A predicate capping inclusion at block 0 can never be satisfied.
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), zenith_provider());
+        let rpc =
+            SendRawTransactionValidityApiImpl::new(zenith_provider(), test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThanOrEqual,
@@ -955,7 +987,7 @@ mod tests {
                 body: BlockBody::default(),
             },
         );
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
+        let rpc = SendRawTransactionValidityApiImpl::new(provider, test_transaction_sender());
         let (raw, mut options) = validity_request(Bytes::from_static(&[0x02]));
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::LessThan,
@@ -987,7 +1019,7 @@ mod tests {
                 body: BlockBody::default(),
             },
         );
-        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
+        let rpc = validity_rpc(provider);
         let mut options = SendRawTransactionValidityOptions { validity: vec![] };
         options.validity = vec![ValidityPredicate::BlockNumber {
             op: base_execution_txpool::ValidityOperator::Equal,
