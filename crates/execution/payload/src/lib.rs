@@ -38,13 +38,19 @@ pub use parkable::{
 };
 
 mod metrics;
-pub use metrics::{BuilderMetrics, ValidityMetrics};
+pub use metrics::{BuilderMetrics, PrewarmMetrics, ValidityMetrics};
 
 mod inclusion;
 pub use inclusion::{FLOW_STANDARD, FLOW_VALIDITY, InclusionFlow, InclusionTracker};
 
 mod predicate_loads;
 pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
+
+mod prewarm;
+pub use prewarm::{
+    JobCompletion, KeyQueue, KeyQueueState, PrewarmConfig, PrewarmJob, PrewarmScheduler,
+    PrewarmWorkerPool, PrewarmingBestTransactions, WarmJob, WarmKey, WorkerJob, WorkerLease,
+};
 
 mod traits;
 pub use traits::*;
@@ -53,7 +59,8 @@ pub use types::BasePayloadTypes;
 
 mod validity;
 pub use validity::{
-    ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 pub mod validator;

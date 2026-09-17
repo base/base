@@ -16,10 +16,12 @@ use reth_storage_api::{StateProvider, StateProviderBox};
 use revm::state::EvmState;
 use tracing::{debug, warn};
 
+// Re-exported so builders can configure prewarming through the config module.
+pub use crate::PrewarmConfig;
 use crate::{
-    MeteringProvider, NoopMeteringProvider, RejectionCache, ResourceMeteringError,
-    ResourceMeteringMetrics, ResourceMeteringSchedule, ResourceMeteringUsage, ResourceSample,
-    ResourceThrottlingDecision, SharedMeteringProvider,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, MeteringProvider, NoopMeteringProvider,
+    RejectionCache, ResourceMeteringError, ResourceMeteringMetrics, ResourceMeteringSchedule,
+    ResourceMeteringUsage, ResourceSample, ResourceThrottlingDecision, SharedMeteringProvider,
 };
 
 /// Settings for the Base payload builder.
@@ -34,6 +36,8 @@ pub struct BaseBuilderConfig {
     pub manifest_precheck_enabled: bool,
     /// Hard cutoff on cumulative validity-predicate evaluation time per payload build.
     pub predicate_eval_hard_cutoff: Duration,
+    /// Number of parked predicates that converts one state bucket to ordered wakeups.
+    pub predicate_bucket_ordered_threshold: usize,
     /// Resource-unit metering used to throttle transactions in the native
     /// payload builder.
     pub resource_metering: ResourceMeteringConfig,
@@ -51,6 +55,8 @@ pub struct BaseBuilderConfig {
     /// label. Adds overhead to every state read, so it follows reth's
     /// `--engine.state-provider-metrics` and stays off by default.
     pub state_provider_metrics: bool,
+    /// Opt-in concurrent predicate-state prewarming during builds. Disabled by default.
+    pub prewarm: PrewarmConfig,
 }
 
 impl Default for BaseBuilderConfig {
@@ -60,9 +66,11 @@ impl Default for BaseBuilderConfig {
             gas_limit_config: GasLimitConfig::default(),
             manifest_precheck_enabled: true,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 }
@@ -79,9 +87,11 @@ impl BaseBuilderConfig {
             gas_limit_config,
             manifest_precheck_enabled,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
             state_provider_metrics: false,
+            prewarm: PrewarmConfig::default(),
         }
     }
 

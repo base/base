@@ -86,6 +86,38 @@ base_metrics::define_metrics! {
     tip_per_gas: histogram,
 }
 
+base_metrics::define_metrics! {
+    base_payload.prewarm,
+    struct = PrewarmMetrics,
+    #[describe("Payload builds with predicate-state prewarming active")]
+    jobs_total: counter,
+    #[describe("Transactions scanned by the prewarm lookahead cursor")]
+    transactions_scanned_total: counter,
+    #[describe("Distinct predicate-state keys scheduled to prewarm workers")]
+    keys_scheduled_total: counter,
+    #[describe("Predicate-state keys skipped as already scheduled within the same build")]
+    keys_deduped_total: counter,
+    #[describe("Predicate-state keys dropped because the prewarm queue was full")]
+    keys_dropped_full_total: counter,
+    #[describe("Predicate-state keys dropped because the per-build distinct-key cap was reached")]
+    keys_dropped_key_cap_total: counter,
+    #[describe("State reads performed by prewarm workers")]
+    #[label(kind)]
+    reads_total: counter,
+    #[describe("Failed prewarm state reads")]
+    warm_errors_total: counter,
+    #[describe("Failed parent state provider opens in prewarm workers")]
+    provider_open_errors_total: counter,
+    #[describe("Failed prewarm worker thread spawns")]
+    worker_spawn_errors_total: counter,
+    #[describe("Prewarm jobs dispatched to a subset of workers because others were busy")]
+    worker_busy_skips_total: counter,
+    #[describe("Prewarm dispatches rejected because the worker thread has exited")]
+    worker_disconnected_total: counter,
+    #[describe("Prewarm jobs skipped entirely because no worker was available")]
+    jobs_skipped_busy_total: counter,
+}
+
 impl ValidityMetrics {
     /// Records the total validity predicate evaluation time accumulated across one build.
     pub fn record_predicate_eval_duration(duration: Duration) {
@@ -167,10 +199,10 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::{Address, B256, U256};
+    use base_execution_txpool::{ValidityOperator, ValidityPredicate};
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
-    use crate::ValidityPredicateKey;
 
     #[test]
     fn records_predicate_metrics() {
@@ -184,7 +216,15 @@ mod tests {
         tracker.record_slot(account, slot);
 
         let mut index = ParkedPredicateIndex::default();
-        index.park(B256::with_last_byte(1), (), ValidityPredicateKey::Balance(account));
+        index.park(
+            B256::with_last_byte(1),
+            (),
+            ValidityPredicate::Balance {
+                address: account,
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            },
+        );
 
         metrics::with_local_recorder(&recorder, || {
             ValidityMetrics::record_predicate_eval_duration(Duration::from_millis(500));
