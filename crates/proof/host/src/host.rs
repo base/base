@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
+use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
 use base_optimism_rpc::OptimismRollupProviderExt;
-use base_proof::{HintType, SupportedChain};
+use base_proof::HintType;
 use base_proof_client::{FaultProofProgramError, Prologue};
 use base_proof_preimage::{
     BidirectionalChannel, Channel, HintReader, HintWriter, OracleReader, OracleServer,
@@ -46,7 +47,7 @@ impl Host {
     /// never boot, and surfaces the misconfiguration as a host error.
     pub const fn validate_supported_chain(&self) -> Result<()> {
         let chain_id = self.config.prover.l2_chain_id;
-        if !SupportedChain::is_supported(chain_id) {
+        if ChainConfig::by_chain_id(chain_id).is_none() {
             return Err(HostError::UnsupportedChain(chain_id));
         }
 

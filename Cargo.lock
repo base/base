@@ -5338,6 +5338,7 @@ dependencies = [
  "alloy-transport",
  "ark-ff 0.6.0",
  "async-trait",
+ "base-common-chains",
  "base-common-consensus",
  "base-common-evm",
  "base-common-genesis",

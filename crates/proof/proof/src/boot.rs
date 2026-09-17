@@ -9,7 +9,7 @@ use base_common_genesis::{BaseUpgrade, RollupConfig};
 use base_proof_preimage::{PreimageKey, PreimageOracleClient, errors::PreimageOracleError};
 use serde::{Deserialize, Serialize};
 
-use crate::{ScheduleId, SupportedChain, errors::OracleProviderError};
+use crate::{ScheduleId, errors::OracleProviderError};
 
 /// The local key identifier for the L1 head hash.
 ///
@@ -292,7 +292,8 @@ impl BootInfo {
         // Base is the only chain family this program proves. An unsupported chain ID has no
         // compiled configuration to execute against, so reject it before reading — let alone
         // trusting — any node-served rollup or L1 configuration.
-        let chain_config = SupportedChain::config(chain_id)?;
+        let chain_config = base_common_chains::ChainConfig::by_chain_id(chain_id)
+            .ok_or(OracleProviderError::UnknownChainId(chain_id))?;
 
         let activation_admin_address = chain_config.beryl_activation_admin_address();
 
