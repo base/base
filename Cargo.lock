@@ -6374,6 +6374,7 @@ dependencies = [
  "reth-tasks",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sqlx",
  "tempfile",
  "testcontainers",
