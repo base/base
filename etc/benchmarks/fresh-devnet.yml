@@ -6,9 +6,10 @@
 # settings use TestConfig's portable defaults: a 60-second, 20M gas/s, two-
 # second-cadence test.
 #
-# `uniswap-swap` deliberately is not included here. Its WETH, USDC, and router
-# addresses are real Base Sepolia contracts, so it needs a funded Sepolia
-# snapshot rather than an empty devnet. Keep it in the snapshot benchmark suite.
+# Optional swap workloads can set `deploy_devnet_swap_harness: true` to deploy
+# a fresh devnet USDC token plus Uniswap/Aerodrome router shims per workload.
+# In that mode, swap `router`/`token_in`/`token_out` and real-token setup
+# `weth`/`pair_token.token`/acquisition `router` can be omitted.
 benchmark_workloads:
   - workload: b20-transfer
     transaction_payload: b20-transfer-existing
