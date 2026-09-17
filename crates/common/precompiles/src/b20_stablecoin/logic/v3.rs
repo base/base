@@ -217,10 +217,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
         if privileged {
-            return self.transfer_inner(
-                token,
-                TokenTransfer { caller, from, to, amount, policies: None },
-            );
+            return self
+                .transfer_inner(token, TokenTransfer { caller, from, to, amount, policies: None });
         }
         let policies = token.accounting().transfer_policy_ids()?;
         self.transfer_inner(
@@ -254,10 +252,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
             }));
         }
         if privileged {
-            self.transfer_inner(
-                token,
-                TokenTransfer { caller, from, to, amount, policies: None },
-            )?;
+            self.transfer_inner(token, TokenTransfer { caller, from, to, amount, policies: None })?;
         } else {
             // One SLOAD fetches all transfer policy ids for the shared transfer checks.
             let policies = token.accounting().transfer_policy_ids()?;
