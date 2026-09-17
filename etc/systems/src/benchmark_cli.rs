@@ -1396,10 +1396,7 @@ real_token_setup:
         LocalBenchmarkArgs::apply_devnet_swap_harness(&mut config, harness).unwrap();
 
         let setup = config.real_token_setup.expect("setup should be configured");
-        assert_eq!(
-            setup.weth,
-            Some("0x4200000000000000000000000000000000000006".parse().unwrap())
-        );
+        assert_eq!(setup.weth, Some("0x4200000000000000000000000000000000000006".parse().unwrap()));
         assert_eq!(setup.pair_token.token, Some(harness.usdc));
         match setup.pair_token.acquisition {
             base_load_tests::RealTokenAcquisitionConfig::UniswapV3ExactInput { router, .. } => {
@@ -1411,10 +1408,7 @@ real_token_setup:
         for transaction in config.transactions {
             match transaction.tx_type {
                 base_load_tests::TxTypeConfig::UniswapV3 {
-                    router,
-                    token_in,
-                    token_out,
-                    ..
+                    router, token_in, token_out, ..
                 } => {
                     assert_eq!(router, Some(harness.uniswap_router));
                     assert_eq!(token_out, Some(harness.usdc));
@@ -1424,10 +1418,7 @@ real_token_setup:
                     );
                 }
                 base_load_tests::TxTypeConfig::AerodromeCl {
-                    router,
-                    token_in,
-                    token_out,
-                    ..
+                    router, token_in, token_out, ..
                 } => {
                     assert_eq!(router, Some(harness.aerodrome_router));
                     assert_eq!(token_out, Some(harness.usdc));
