@@ -1,0 +1,35 @@
+name: Snapshot Manifests
+on:
+  pull_request:
+    paths:
+      - "etc/scripts/ci/check-snapshot-manifests.py"
+      - "etc/scripts/ci/test_snapshot_manifests.py"
+      - ".depot/workflows/snapshot-manifests.yml"
+  merge_group:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  snapshot-manifests:
+    name: Snapshot Manifests
+    runs-on: depot-ubuntu-24.04-8
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - name: Test manifest checker without network access
+        run: python3 -B -m unittest discover -s etc/scripts/ci -p 'test_snapshot_manifests.py'
+      # External availability must not make PR or merge-queue checks flaky.
+      - name: Check live manifest discovery and reachability
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python3 -u etc/scripts/ci/check-snapshot-manifests.py

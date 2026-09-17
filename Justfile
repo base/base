@@ -99,6 +99,10 @@ install-nextest:
 test: install-nextest build::contracts build::elfs
     cargo nextest run --workspace --all-features --exclude base-system-tests --no-fail-fast
 
+# Checks published Base snapshot manifests without downloading snapshot archives (live network)
+check-snapshot-manifests:
+    python3 etc/scripts/ci/check-snapshot-manifests.py
+
 # Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash
