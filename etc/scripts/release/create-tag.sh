@@ -34,9 +34,13 @@ main() {
     local TAG
 
     if [[ "$RELEASE_TYPE" == "rc" ]]; then
-        RC_NUMBER=$(get_next_rc_number "$VERSION")
-        TAG="v${VERSION}-rc.${RC_NUMBER}"
-        echo "Creating RC tag: $TAG"
+        # Reuse the triggering commit's tag when retrying a failed build dispatch.
+        TAG=$(git tag --list "v${VERSION}-rc.*" --points-at HEAD --sort=version:refname | tail -1)
+        if [[ -z "$TAG" ]]; then
+            RC_NUMBER=$(get_next_rc_number "$VERSION")
+            TAG="v${VERSION}-rc.${RC_NUMBER}"
+        fi
+        echo "Using RC tag: $TAG"
     else
         TAG="v${VERSION}"
         echo "Creating final release tag: $TAG"

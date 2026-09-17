@@ -2,8 +2,9 @@
 //!
 //! [`Stablecoin`] (in [`interface`](self)) is the append-only business-logic
 //! interface each version implements; [`B20StablecoinToken`] is the minimal
-//! storage + policy holder the logic operates on; and [`StablecoinV1`] is the
-//! first frozen implementation.
+//! storage + policy holder the logic operates on; [`StablecoinV1`] is the first
+//! frozen implementation (activated at Beryl), [`StablecoinV2`] the second (activated
+//! at Cobalt), and [`StablecoinV3`] the third (activated at Denim).
 
 use alloy_primitives::Address;
 
@@ -17,6 +18,9 @@ pub use v1::StablecoinV1;
 
 mod v2;
 pub use v2::StablecoinV2;
+
+mod v3;
+pub use v3::StablecoinV3;
 
 /// Storage + policy binding the stablecoin logic operates on.
 ///
