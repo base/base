@@ -4,7 +4,7 @@ mod config;
 pub use config::L2ContainerConfig;
 
 mod runtime;
-pub use runtime::TestNodeRuntime;
+pub use runtime::{InProcessNodeRuntime, TestNodeRuntime};
 
 mod in_process_batcher;
 pub use in_process_batcher::{InProcessBatcher, InProcessBatcherConfig};

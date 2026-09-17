@@ -365,28 +365,30 @@ impl RollupConfig {
 
     /// Returns the L2 block offset from genesis at which Denim activates.
     ///
-    /// If Denim is not configured, returns [`None`].
+    /// If Denim is not configured or the block time is zero, returns [`None`].
     pub fn denim_activation_block_number(&self) -> Option<u64> {
         let denim_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Denim)?;
+        let block_time = self.block_time;
 
-        if self.block_time == 0 {
-            panic!("rollup config: block time cannot be 0");
+        if block_time == 0 {
+            return None;
         }
 
-        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+        Some(denim_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(block_time))
     }
 
     /// Returns the L2 block number at which the genesis-only Zenith testing gate activates.
     ///
-    /// If Zenith is not configured, returns [`None`].
+    /// If Zenith is not configured or the block time is zero, returns [`None`].
     pub fn zenith_activation_block_number(&self) -> Option<u64> {
         let zenith_timestamp = self.upgrade_activation_timestamp(BaseUpgrade::Zenith)?;
+        let block_time = self.block_time;
 
-        if self.block_time == 0 {
-            panic!("rollup config: block time cannot be 0");
+        if block_time == 0 {
+            return None;
         }
 
-        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(self.block_time))
+        Some(zenith_timestamp.saturating_sub(self.genesis.l2_time).div_ceil(block_time))
     }
 
     /// Returns the deterministic timestamp of an L2 block in milliseconds.
@@ -1205,9 +1207,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "rollup config: block time cannot be 0")]
-    fn denim_activation_block_number_rejects_zero_block_time() {
-        rollup_config_with_denim(100, 0, Some(101)).denim_activation_block_number();
+    fn denim_activation_block_number_returns_none_for_zero_block_time() {
+        let cfg = rollup_config_with_denim(100, 0, Some(101));
+
+        assert_eq!(cfg.denim_activation_block_number(), None);
+        assert_eq!(cfg.l2_block_timestamp_millis(1), 100_000);
     }
 
     #[test]
@@ -1277,9 +1281,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "rollup config: block time cannot be 0")]
-    fn zenith_activation_block_number_rejects_zero_block_time() {
-        rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number();
+    fn zenith_activation_block_number_returns_none_for_zero_block_time() {
+        assert_eq!(
+            rollup_config_with_zenith(100, 0, Some(101)).zenith_activation_block_number(),
+            None
+        );
     }
 
     #[test]

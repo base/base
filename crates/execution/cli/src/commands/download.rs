@@ -6,20 +6,29 @@
 
 use std::{
     ffi::OsString,
+    io::SeekFrom,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use base_execution_chainspec::BaseChainSpec;
+use base_reth_cli::ProgressDisplay;
 use clap::Parser;
 use eyre::Result;
-use futures::StreamExt;
+use futures::{StreamExt, future::try_join_all};
 use reth_chainspec::EthChainSpec;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::download::{DownloadCommand, DownloadDefaults};
 use reth_node_core::args::DatadirArgs;
-use tokio::io::AsyncWriteExt;
-use tracing::info;
+use tokio::{
+    io::{AsyncSeekExt, AsyncWriteExt},
+    sync::Mutex,
+};
+use tracing::{debug, info};
 
 /// Download Base node snapshots from R2 storage.
 ///
@@ -64,7 +73,8 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
 
         if let (Some(data_dir), Some(chain_id)) = (data_dir, chain_id) {
             let target_dir = data_dir.data_dir().to_path_buf();
-            ProofsDownloader::run(&target_dir, chain_id).await?;
+            let concurrency = resolve_download_concurrency_arg(std::env::args_os());
+            ProofsDownloader::run(&target_dir, chain_id, concurrency).await?;
         }
 
         Ok(())
@@ -93,6 +103,134 @@ fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs
     }
 
     datadir_args
+}
+
+/// Matches reth's `--download-concurrency` default.
+const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 8;
+
+/// Extracts `--download-concurrency` so proofs use the same parallel budget as reth.
+fn resolve_download_concurrency_arg(args: impl IntoIterator<Item = OsString>) -> usize {
+    let mut concurrency = DEFAULT_DOWNLOAD_CONCURRENCY;
+    let mut args = args.into_iter();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else { continue };
+
+        if arg == "--download-concurrency" {
+            if let Some(value) = args.next()
+                && let Ok(parsed) = value.to_string_lossy().parse::<usize>()
+            {
+                concurrency = parsed;
+            }
+            continue;
+        }
+
+        if let Some(value) = arg.strip_prefix("--download-concurrency=")
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            concurrency = parsed;
+        }
+    }
+
+    concurrency.max(1)
+}
+
+/// Splits `total` bytes into `parts` contiguous half-open ranges.
+fn split_byte_ranges(total: u64, parts: usize) -> Vec<std::ops::Range<u64>> {
+    let parts = parts.max(1);
+    if total == 0 {
+        return Vec::new();
+    }
+
+    let parts = parts.min(total as usize);
+    let chunk = total / parts as u64;
+    let rem = total % parts as u64;
+    let mut ranges = Vec::with_capacity(parts);
+    let mut start = 0u64;
+    for i in 0..parts {
+        let extra = u64::from((i as u64) < rem);
+        let end = start + chunk + extra;
+        ranges.push(start..end);
+        start = end;
+    }
+    ranges
+}
+
+/// Writes parallel-range resume state next to the `.part` file.
+async fn persist_range_sidecar(
+    path: &Path,
+    concurrency: usize,
+    expected_size: u64,
+    written: &[u64],
+) -> Result<()> {
+    let mut line = format!("{concurrency} {expected_size}");
+    for amount in written {
+        line.push(' ');
+        line.push_str(&amount.to_string());
+    }
+    tokio::fs::write(path, line).await?;
+    Ok(())
+}
+
+/// Delay before an idle proofs download retry.
+///
+/// Stream drops stay at 1s. HTTP 429/5xx use exponential backoff so a
+/// rate-limiting CDN is not hammered.
+fn retry_delay(idle_attempts: u32, throttled: bool) -> Duration {
+    if !throttled {
+        return Duration::from_secs(1);
+    }
+
+    let multiplier = 1u64 << idle_attempts.saturating_sub(1).min(4);
+    Duration::from_secs((2 * multiplier).min(30))
+}
+
+/// Logs proofs download progress using the same fields as snapshot compression.
+fn log_proofs_download_progress(downloaded: u64, expected: u64, started: Instant, baseline: u64) {
+    let elapsed = started.elapsed();
+    let session_done = downloaded.saturating_sub(baseline);
+    let session_total = expected.saturating_sub(baseline);
+    let speed = session_done as f64 / elapsed.as_secs_f64();
+    let eta = ProgressDisplay::eta(session_done, session_total, elapsed)
+        .map_or_else(|| "unknown".to_string(), |eta| eta.to_string());
+    info!(
+        target: "reth::cli",
+        progress = %ProgressDisplay::human_byte_progress(downloaded, expected),
+        speed = %ProgressDisplay::speed(speed),
+        eta = %eta,
+        elapsed = %ProgressDisplay::duration(elapsed),
+        "Proofs download progress"
+    );
+}
+
+/// Loads parallel-range resume state when it matches this download.
+fn load_range_sidecar(path: &Path, concurrency: usize, expected_size: u64) -> Option<Vec<u64>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut parts = text.split_whitespace();
+    let stored_concurrency = parts.next()?.parse::<usize>().ok()?;
+    let stored_expected = parts.next()?.parse::<u64>().ok()?;
+    if stored_concurrency != concurrency || stored_expected != expected_size {
+        return None;
+    }
+
+    let written = parts.map(|part| part.parse().ok()).collect::<Option<Vec<u64>>>()?;
+    (written.len() == concurrency).then_some(written)
+}
+
+/// Trusts a sidecar only when the `.part` file is already the declared size.
+///
+/// A missing or resized `.part` means the sidecar describes bytes that are
+/// no longer on disk, so resume must start from zero.
+fn load_trusted_range_sidecar(
+    path: &Path,
+    concurrency: usize,
+    expected_size: u64,
+    part_len: u64,
+) -> Option<Vec<u64>> {
+    if part_len != expected_size {
+        return None;
+    }
+    load_range_sidecar(path, concurrency, expected_size)
 }
 
 /// Extracts `--manifest-url` so proofs reuse the same snapshot reth downloaded.
@@ -125,9 +263,9 @@ fn json_u64(value: Option<&serde_json::Value>) -> Option<u64> {
 /// Discovers the latest modular snapshot manifest URL for `chain_id`.
 ///
 /// Reth's download pipeline queries the snapshot API (`metadataUrl`) rather than
-/// concatenating `{default_base_url}/{chain_id}/manifest.json`. `default_base_url`
-/// is already chain-specific (`https://chain.base.org/8453`), so appending another
-/// chain ID produced 404s such as `https://chain.base.org/8453/763360/manifest.json`.
+/// concatenating `{default_base_url}/{chain_id}/manifest.json`. Each chain publishes
+/// manifests under its own bucket (`https://zeronet-v2-snapshots.base.org/...`), so
+/// deriving a URL from the snapshot root instead produces 404s.
 async fn discover_latest_manifest_url(api_url: &str, chain_id: u64) -> Result<String> {
     info!(
         target: "reth::cli",
@@ -200,6 +338,25 @@ struct ProofsManifestEntry {
     archive_url: String,
 }
 
+/// Consecutive Range-resume attempts that write no new bytes before failing.
+///
+/// Resets on progress so a multi-hundred-GiB Cloudflare GET can drop many
+/// times without aborting the process.
+const MAX_IDLE_DOWNLOAD_ATTEMPTS: u32 = 8;
+
+/// Idle read timeout so a stalled CDN socket fails into retry instead of hanging.
+const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Shared write-progress for one parallel proofs download.
+#[derive(Clone)]
+struct RangeProgress {
+    sidecar_path: PathBuf,
+    concurrency: usize,
+    expected_size: u64,
+    written: Arc<Mutex<Vec<u64>>>,
+    progress: Arc<AtomicU64>,
+}
+
 /// Downloads the proofs database from a snapshot manifest.
 ///
 /// Encapsulates the full pipeline: manifest fetch → archive download with
@@ -209,7 +366,7 @@ struct ProofsDownloader;
 
 impl ProofsDownloader {
     /// Runs the full proofs download pipeline for the given chain.
-    async fn run(target_dir: &Path, chain_id: u64) -> Result<()> {
+    async fn run(target_dir: &Path, chain_id: u64, concurrency: usize) -> Result<()> {
         let manifest_url = match resolve_manifest_url_arg(std::env::args_os()) {
             Some(url) => url,
             None => {
@@ -218,17 +375,21 @@ impl ProofsDownloader {
             }
         };
 
-        Self::run_from_manifest(target_dir, &manifest_url).await
+        Self::run_from_manifest(target_dir, &manifest_url, concurrency).await
     }
 
     /// Runs the full proofs download pipeline from a manifest URL.
-    async fn run_from_manifest(target_dir: &Path, manifest_url: &str) -> Result<()> {
+    async fn run_from_manifest(
+        target_dir: &Path,
+        manifest_url: &str,
+        concurrency: usize,
+    ) -> Result<()> {
         let entry = Self::fetch_manifest_entry(manifest_url).await?;
 
         let cache_dir = target_dir.join(".snapshot-cache");
         tokio::fs::create_dir_all(&cache_dir).await?;
 
-        let archive_path = Self::download_archive(&entry, &cache_dir).await?;
+        let archive_path = Self::download_archive(&entry, &cache_dir, concurrency).await?;
 
         Self::extract_and_cleanup(&archive_path, target_dir, &cache_dir).await
     }
@@ -289,17 +450,25 @@ impl ProofsDownloader {
         Ok(ProofsManifestEntry { file_name, expected_size, archive_url })
     }
 
-    /// Downloads the proofs archive with resume support and size verification.
+    /// Downloads the proofs archive with in-process resume and size verification.
+    ///
+    /// `concurrency > 1` splits the archive into parallel Range streams. An
+    /// existing sequential `.part` leftover is finished as a single stream so
+    /// an interrupted one-stream download is not thrown away.
     async fn download_archive(
         entry: &ProofsManifestEntry,
         cache_dir: &Path,
+        concurrency: usize,
     ) -> Result<std::path::PathBuf> {
         let dest_path = cache_dir.join(&entry.file_name);
         let part_path = cache_dir.join(format!("{}.part", entry.file_name));
+        let sidecar_path = cache_dir.join(format!("{}.part.ranges", entry.file_name));
+        let concurrency = concurrency.max(1);
 
-        let mut existing_size = tokio::fs::metadata(&part_path).await.map(|m| m.len()).unwrap_or(0);
+        let existing_size = tokio::fs::metadata(&part_path).await.map(|m| m.len()).unwrap_or(0);
+        let has_sidecar = tokio::fs::try_exists(&sidecar_path).await.unwrap_or(false);
 
-        if existing_size == entry.expected_size {
+        if existing_size == entry.expected_size && !has_sidecar {
             info!(target: "reth::cli", "Part file already matches expected size, skipping download");
             tokio::fs::rename(&part_path, &dest_path).await?;
             return Ok(dest_path);
@@ -313,70 +482,335 @@ impl ProofsDownloader {
                 "Part file exceeds expected size, restarting proofs download"
             );
             tokio::fs::remove_file(&part_path).await.ok();
-            existing_size = 0;
+            tokio::fs::remove_file(&sidecar_path).await.ok();
+        }
+
+        let sequential_leftover =
+            existing_size > 0 && existing_size < entry.expected_size && !has_sidecar;
+
+        if concurrency == 1 || sequential_leftover {
+            if sequential_leftover && concurrency > 1 {
+                info!(
+                    target: "reth::cli",
+                    existing_size,
+                    "Finishing existing sequential proofs .part before using parallel ranges"
+                );
+            }
+            return Self::download_archive_sequential(entry, cache_dir).await;
+        }
+
+        Self::download_archive_parallel(entry, &part_path, &dest_path, &sidecar_path, concurrency)
+            .await
+    }
+
+    /// Downloads the proofs archive as a single resumable stream.
+    ///
+    /// Stream drops and truncated bodies retry from the current `.part` offset.
+    /// A complete HTTP entity whose size does not match the manifest is still
+    /// a hard error.
+    async fn download_archive_sequential(
+        entry: &ProofsManifestEntry,
+        cache_dir: &Path,
+    ) -> Result<std::path::PathBuf> {
+        let dest_path = cache_dir.join(&entry.file_name);
+        let part_path = cache_dir.join(format!("{}.part", entry.file_name));
+        let sidecar_path = cache_dir.join(format!("{}.part.ranges", entry.file_name));
+
+        if tokio::fs::try_exists(&sidecar_path).await.unwrap_or(false) {
+            info!(
+                target: "reth::cli",
+                "Discarding parallel range sidecar and preallocated .part before sequential download"
+            );
+            tokio::fs::remove_file(&sidecar_path).await.ok();
+            tokio::fs::remove_file(&part_path).await.ok();
         }
 
         let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(DOWNLOAD_READ_TIMEOUT)
             .build()?;
-
-        let mut request = client.get(&entry.archive_url);
-        if existing_size > 0 {
-            request = request.header("Range", format!("bytes={existing_size}-"));
-            info!(target: "reth::cli", resume_from = existing_size, "Resuming proofs download");
-        }
 
         info!(target: "reth::cli", url = %entry.archive_url, "Downloading proofs database");
 
-        let response = request.send().await.map_err(|e| {
-            eyre::eyre!("failed to download proofs from {}: {e}", entry.archive_url)
-        })?;
-        let status = response.status();
+        let mut idle_attempts = 0u32;
+        loop {
+            let mut existing_size =
+                tokio::fs::metadata(&part_path).await.map(|m| m.len()).unwrap_or(0);
 
-        if !status.is_success() {
-            eyre::bail!("proofs download failed with HTTP {status}: {}", entry.archive_url);
-        }
+            if existing_size == entry.expected_size {
+                info!(target: "reth::cli", "Part file already matches expected size, skipping download");
+                tokio::fs::rename(&part_path, &dest_path).await?;
+                return Ok(dest_path);
+            }
 
-        let is_resume = status == reqwest::StatusCode::PARTIAL_CONTENT;
-
-        if existing_size > 0 && !is_resume {
-            info!(target: "reth::cli", "Server returned full response despite range request, restarting download");
-            tokio::fs::remove_file(&part_path).await.ok();
-        }
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(is_resume)
-            .write(!is_resume)
-            .truncate(!is_resume)
-            .open(&part_path)
-            .await?;
-
-        let mut downloaded: u64 = if is_resume { existing_size } else { 0 };
-        let mut last_log = tokio::time::Instant::now();
-
-        let mut stream = response.bytes_stream();
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result.map_err(|e| {
-                eyre::eyre!("stream interrupted downloading {}: {e}", entry.archive_url)
-            })?;
-            file.write_all(&chunk).await?;
-            downloaded += chunk.len() as u64;
-            if last_log.elapsed() >= std::time::Duration::from_secs(30) {
+            if existing_size > entry.expected_size {
                 info!(
                     target: "reth::cli",
-                    downloaded_mb = downloaded / (1024 * 1024),
-                    expected_mb = entry.expected_size / (1024 * 1024),
-                    "Proofs download progress"
+                    existing_size,
+                    expected_size = entry.expected_size,
+                    "Part file exceeds expected size, restarting proofs download"
                 );
-                last_log = tokio::time::Instant::now();
+                tokio::fs::remove_file(&part_path).await.ok();
+                existing_size = 0;
             }
-        }
-        file.shutdown().await?;
 
-        let downloaded_size = tokio::fs::metadata(&part_path).await?.len();
+            let mut request = client.get(&entry.archive_url);
+            if existing_size > 0 {
+                request = request.header("Range", format!("bytes={existing_size}-"));
+                info!(target: "reth::cli", resume_from = existing_size, "Resuming proofs download");
+            }
+
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    Self::wait_before_retry(
+                        &mut idle_attempts,
+                        false,
+                        false,
+                        &format!("failed to download proofs from {}: {error}", entry.archive_url),
+                    )
+                    .await?;
+                    continue;
+                }
+            };
+            let status = response.status();
+
+            if !status.is_success() {
+                if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    Self::wait_before_retry(
+                        &mut idle_attempts,
+                        false,
+                        true,
+                        &format!(
+                            "proofs download failed with HTTP {status}: {}",
+                            entry.archive_url
+                        ),
+                    )
+                    .await?;
+                    continue;
+                }
+                eyre::bail!("proofs download failed with HTTP {status}: {}", entry.archive_url);
+            }
+
+            let is_resume = status == reqwest::StatusCode::PARTIAL_CONTENT;
+
+            if existing_size > 0 && !is_resume {
+                info!(target: "reth::cli", "Server returned full response despite range request, restarting download");
+                tokio::fs::remove_file(&part_path).await.ok();
+            }
+
+            let start_size = if is_resume { existing_size } else { 0 };
+            let content_length = response.content_length();
+
+            let mut file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(is_resume)
+                .write(!is_resume)
+                .truncate(!is_resume)
+                .open(&part_path)
+                .await?;
+
+            let mut downloaded = start_size;
+            let started = Instant::now();
+            let mut last_log = started;
+            let mut stream_error = None;
+
+            let mut stream = response.bytes_stream();
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        file.write_all(&chunk).await?;
+                        downloaded += chunk.len() as u64;
+                        if last_log.elapsed() >= Duration::from_secs(30) {
+                            log_proofs_download_progress(
+                                downloaded,
+                                entry.expected_size,
+                                started,
+                                start_size,
+                            );
+                            last_log = Instant::now();
+                        }
+                    }
+                    Err(error) => {
+                        stream_error = Some(error);
+                        break;
+                    }
+                }
+            }
+            file.flush().await?;
+            file.shutdown().await?;
+
+            let downloaded_size = tokio::fs::metadata(&part_path).await?.len();
+            let written_this_attempt = downloaded_size.saturating_sub(start_size);
+            let entity_complete = stream_error.is_none()
+                && content_length.map_or(downloaded_size == entry.expected_size, |len| {
+                    written_this_attempt >= len
+                });
+
+            if !entity_complete {
+                let reason = match (stream_error, content_length) {
+                    (Some(error), _) => {
+                        format!("stream interrupted downloading {}: {error}", entry.archive_url)
+                    }
+                    (None, Some(len)) => format!(
+                        "truncated body downloading {}: received {written_this_attempt} of {len} bytes",
+                        entry.archive_url
+                    ),
+                    (None, None) => format!(
+                        "incomplete download without Content-Length {}: {downloaded_size}/{} bytes",
+                        entry.archive_url, entry.expected_size
+                    ),
+                };
+                Self::wait_before_retry(
+                    &mut idle_attempts,
+                    downloaded_size > start_size,
+                    false,
+                    &reason,
+                )
+                .await?;
+                continue;
+            }
+
+            if downloaded_size != entry.expected_size {
+                tokio::fs::remove_file(&part_path).await.ok();
+                eyre::bail!(
+                    "proofs archive size mismatch: downloaded {downloaded_size} bytes, \
+                     manifest declares {} bytes — archive may be truncated or corrupt",
+                    entry.expected_size
+                );
+            }
+
+            tokio::fs::rename(&part_path, &dest_path).await?;
+            return Ok(dest_path);
+        }
+    }
+
+    /// Waits before retrying an interrupted proofs download.
+    ///
+    /// Progress resets the idle counter so a large Cloudflare GET can drop
+    /// many times. Eight idle attempts without new bytes is treated as stalled.
+    /// HTTP 429/5xx use exponential backoff; stream drops stay at 1s.
+    async fn wait_before_retry(
+        idle_attempts: &mut u32,
+        made_progress: bool,
+        throttled: bool,
+        reason: &str,
+    ) -> Result<()> {
+        if made_progress {
+            *idle_attempts = 0;
+            debug!(target: "reth::cli", error = %reason, "Proofs download interrupted, resuming");
+            return Ok(());
+        }
+
+        *idle_attempts += 1;
+        if *idle_attempts >= MAX_IDLE_DOWNLOAD_ATTEMPTS {
+            eyre::bail!(
+                "proofs download stalled after {MAX_IDLE_DOWNLOAD_ATTEMPTS} attempts without progress: {reason}"
+            );
+        }
+
+        let delay = retry_delay(*idle_attempts, throttled);
+        debug!(
+            target: "reth::cli",
+            error = %reason,
+            idle_attempts = *idle_attempts,
+            retry_in_secs = delay.as_secs(),
+            "Proofs download interrupted without progress, retrying"
+        );
+        tokio::time::sleep(delay).await;
+        Ok(())
+    }
+
+    /// Downloads the proofs archive with parallel Range streams.
+    async fn download_archive_parallel(
+        entry: &ProofsManifestEntry,
+        part_path: &Path,
+        dest_path: &Path,
+        sidecar_path: &Path,
+        concurrency: usize,
+    ) -> Result<std::path::PathBuf> {
+        let ranges = split_byte_ranges(entry.expected_size, concurrency);
+        let part_len = tokio::fs::metadata(part_path).await.map(|m| m.len()).unwrap_or(0);
+        let written =
+            load_trusted_range_sidecar(sidecar_path, concurrency, entry.expected_size, part_len)
+                .unwrap_or_else(|| vec![0; ranges.len()]);
+        let initial_progress: u64 = written.iter().sum();
+
+        persist_range_sidecar(sidecar_path, concurrency, entry.expected_size, &written).await?;
+
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(part_path)
+            .await?;
+        file.set_len(entry.expected_size).await?;
+        drop(file);
+
+        info!(
+            target: "reth::cli",
+            url = %entry.archive_url,
+            streams = ranges.len(),
+            resume = %ProgressDisplay::bytes(initial_progress as f64),
+            expected = %ProgressDisplay::bytes(entry.expected_size as f64),
+            "Downloading proofs database with parallel Range requests"
+        );
+
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(DOWNLOAD_READ_TIMEOUT)
+            .pool_max_idle_per_host(concurrency)
+            .build()?;
+        let progress = Arc::new(AtomicU64::new(initial_progress));
+        let written = Arc::new(Mutex::new(written));
+
+        let ticker = {
+            let progress = Arc::clone(&progress);
+            let expected_size = entry.expected_size;
+            let started = Instant::now();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                interval.tick().await;
+                loop {
+                    interval.tick().await;
+                    log_proofs_download_progress(
+                        progress.load(Ordering::Relaxed),
+                        expected_size,
+                        started,
+                        initial_progress,
+                    );
+                }
+            })
+        };
+
+        let range_progress = RangeProgress {
+            sidecar_path: sidecar_path.to_path_buf(),
+            concurrency,
+            expected_size: entry.expected_size,
+            written,
+            progress,
+        };
+
+        let downloads = ranges.iter().enumerate().map(|(range_idx, range)| {
+            let client = client.clone();
+            let url = entry.archive_url.clone();
+            let part_path = part_path.to_path_buf();
+            let range_progress = range_progress.clone();
+            let range = range.clone();
+            async move {
+                Self::download_range(&client, &url, &part_path, range, range_idx, range_progress)
+                    .await
+            }
+        });
+
+        let result = try_join_all(downloads).await;
+        ticker.abort();
+        result?;
+
+        let downloaded_size = tokio::fs::metadata(part_path).await?.len();
         if downloaded_size != entry.expected_size {
-            tokio::fs::remove_file(&part_path).await.ok();
+            tokio::fs::remove_file(part_path).await.ok();
+            tokio::fs::remove_file(sidecar_path).await.ok();
             eyre::bail!(
                 "proofs archive size mismatch: downloaded {downloaded_size} bytes, \
                  manifest declares {} bytes — archive may be truncated or corrupt",
@@ -384,8 +818,136 @@ impl ProofsDownloader {
             );
         }
 
-        tokio::fs::rename(&part_path, &dest_path).await?;
-        Ok(dest_path)
+        tokio::fs::remove_file(sidecar_path).await.ok();
+        tokio::fs::rename(part_path, dest_path).await?;
+        Ok(dest_path.to_path_buf())
+    }
+
+    /// Downloads one byte range, retrying stream drops from the current offset.
+    async fn download_range(
+        client: &reqwest::Client,
+        url: &str,
+        part_path: &Path,
+        range: std::ops::Range<u64>,
+        range_idx: usize,
+        range_progress: RangeProgress,
+    ) -> Result<()> {
+        let range_len = range.end.saturating_sub(range.start);
+        let mut idle_attempts = 0u32;
+
+        loop {
+            let already = range_progress.written.lock().await[range_idx];
+            if already >= range_len {
+                return Ok(());
+            }
+
+            let abs_start = range.start + already;
+            let response = match client
+                .get(url)
+                .header("Range", format!("bytes={abs_start}-{}", range.end.saturating_sub(1)))
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    Self::wait_before_retry(
+                        &mut idle_attempts,
+                        false,
+                        false,
+                        &format!(
+                            "failed to download proofs range {abs_start}-{} from {url}: {error}",
+                            range.end
+                        ),
+                    )
+                    .await?;
+                    continue;
+                }
+            };
+
+            let status = response.status();
+            if status != reqwest::StatusCode::PARTIAL_CONTENT {
+                if status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    Self::wait_before_retry(
+                        &mut idle_attempts,
+                        false,
+                        true,
+                        &format!("proofs range download failed with HTTP {status}: {url}"),
+                    )
+                    .await?;
+                    continue;
+                }
+                eyre::bail!(
+                    "expected HTTP 206 for proofs range {abs_start}-{}, got {status}: {url}",
+                    range.end
+                );
+            }
+
+            let content_length = response.content_length();
+            let mut file = tokio::fs::OpenOptions::new().write(true).open(part_path).await?;
+            file.seek(SeekFrom::Start(abs_start)).await?;
+
+            let mut offset = abs_start;
+            let mut stream_error = None;
+            let mut stream = response.bytes_stream();
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        file.write_all(&chunk).await?;
+                        offset += chunk.len() as u64;
+                        range_progress.progress.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                    }
+                    Err(error) => {
+                        stream_error = Some(error);
+                        break;
+                    }
+                }
+            }
+            file.flush().await?;
+
+            let done = offset.saturating_sub(range.start).min(range_len);
+            {
+                let mut written = range_progress.written.lock().await;
+                written[range_idx] = done;
+                persist_range_sidecar(
+                    &range_progress.sidecar_path,
+                    range_progress.concurrency,
+                    range_progress.expected_size,
+                    &written,
+                )
+                .await?;
+            }
+
+            if done >= range_len {
+                return Ok(());
+            }
+
+            let written_this_attempt = offset.saturating_sub(abs_start);
+            let truncated = content_length.is_some_and(|len| written_this_attempt < len);
+            let reason = match stream_error {
+                Some(error) => {
+                    format!(
+                        "stream interrupted downloading proofs range {abs_start}-{} from {url}: {error}",
+                        range.end
+                    )
+                }
+                None if truncated => {
+                    format!(
+                        "truncated proofs range {abs_start}-{} from {url}: received {written_this_attempt} of {} bytes",
+                        range.end,
+                        content_length.unwrap_or(0)
+                    )
+                }
+                None => {
+                    format!(
+                        "incomplete proofs range {abs_start}-{} from {url}: {done}/{range_len} bytes",
+                        range.end
+                    )
+                }
+            };
+
+            Self::wait_before_retry(&mut idle_attempts, written_this_attempt > 0, false, &reason)
+                .await?;
+        }
     }
 
     /// Extracts the archive and cleans up the cache directory.
@@ -421,16 +983,24 @@ impl ProofsDownloader {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{
+        path::Path,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
 
     use axum::{
         Router,
+        body::{Body, Bytes},
         extract::State,
         http::{HeaderMap, StatusCode},
         response::IntoResponse,
         routing::get,
     };
     use clap::Parser;
+    use futures::stream;
 
     use super::*;
     use crate::chainspec::BaseChainSpecParser;
@@ -511,23 +1081,177 @@ mod tests {
         (base_url, handle)
     }
 
+    fn parse_byte_range(headers: &HeaderMap, len: usize) -> Option<(usize, usize)> {
+        let spec = headers.get("Range")?.to_str().ok()?.strip_prefix("bytes=")?;
+        let (start, end) = spec.split_once('-')?;
+        let start = start.parse::<usize>().ok()?;
+        let end = if end.is_empty() { len.saturating_sub(1) } else { end.parse::<usize>().ok()? };
+        let end = end.min(len.saturating_sub(1));
+        (start < len && start <= end).then_some((start, end))
+    }
+
     async fn handle_range(State(data): State<Vec<u8>>, headers: HeaderMap) -> impl IntoResponse {
-        if let Some(range) = headers.get("Range").and_then(|v| v.to_str().ok())
-            && let Some(start_str) = range.strip_prefix("bytes=")
-            && let Ok(start) = start_str.trim_end_matches('-').parse::<usize>()
-            && start < data.len()
-        {
+        if let Some((start, end)) = parse_byte_range(&headers, data.len()) {
             return (
                 StatusCode::PARTIAL_CONTENT,
                 [(
                     axum::http::header::CONTENT_RANGE,
-                    format!("bytes {}-{}/{}", start, data.len() - 1, data.len()),
+                    format!("bytes {start}-{end}/{}", data.len()),
                 )],
-                data[start..].to_vec(),
+                data[start..=end].to_vec(),
             )
                 .into_response();
         }
         (StatusCode::OK, data).into_response()
+    }
+
+    #[derive(Clone)]
+    struct RecordingRangeState {
+        data: Vec<u8>,
+        requests: Arc<Mutex<Vec<(u64, u64)>>>,
+    }
+
+    /// Serves Range GETs and records each inclusive byte range that was asked for.
+    async fn start_recording_range_server(
+        archive_bytes: Vec<u8>,
+    ) -> (String, Arc<Mutex<Vec<(u64, u64)>>>, tokio::task::JoinHandle<()>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new().route("/proofs.tar.zst", get(handle_recording_range)).with_state(
+            RecordingRangeState { data: archive_bytes, requests: Arc::clone(&requests) },
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        (base_url, requests, handle)
+    }
+
+    async fn handle_recording_range(
+        State(state): State<RecordingRangeState>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        if let Some((start, end)) = parse_byte_range(&headers, state.data.len()) {
+            state.requests.lock().await.push((start as u64, end as u64));
+            return (
+                StatusCode::PARTIAL_CONTENT,
+                [(
+                    axum::http::header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{}", state.data.len()),
+                )],
+                state.data[start..=end].to_vec(),
+            )
+                .into_response();
+        }
+
+        state.requests.lock().await.push((0, state.data.len().saturating_sub(1) as u64));
+        (StatusCode::OK, state.data).into_response()
+    }
+
+    #[derive(Clone)]
+    struct DropThenRangeState {
+        data: Vec<u8>,
+        requests: Arc<AtomicUsize>,
+    }
+
+    async fn start_drop_then_range_server(
+        archive_bytes: Vec<u8>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new().route("/proofs.tar.zst", get(handle_drop_then_range)).with_state(
+            DropThenRangeState { data: archive_bytes, requests: Arc::clone(&requests) },
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        (base_url, requests, handle)
+    }
+
+    async fn handle_drop_then_range(
+        State(state): State<DropThenRangeState>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        let request_n = state.requests.fetch_add(1, Ordering::SeqCst);
+        let (start, end) = parse_byte_range(&headers, state.data.len())
+            .unwrap_or_else(|| (0, state.data.len().saturating_sub(1)));
+
+        if request_n == 0 {
+            let remaining = end.saturating_sub(start) + 1;
+            let drop_at = start + remaining / 2;
+            let first = Bytes::from(state.data[start..drop_at].to_vec());
+            let body = Body::from_stream(stream::iter([
+                Ok::<_, std::io::Error>(first),
+                Err(std::io::Error::other("error decoding response body")),
+            ]));
+            let status = if headers.get("Range").is_some() {
+                StatusCode::PARTIAL_CONTENT
+            } else {
+                StatusCode::OK
+            };
+            return (status, body).into_response();
+        }
+
+        (
+            StatusCode::PARTIAL_CONTENT,
+            [(
+                axum::http::header::CONTENT_RANGE,
+                format!("bytes {start}-{end}/{}", state.data.len()),
+            )],
+            state.data[start..=end].to_vec(),
+        )
+            .into_response()
+    }
+
+    #[derive(Clone)]
+    struct ConcurrentRangeState {
+        data: Vec<u8>,
+        in_flight: Arc<AtomicUsize>,
+        max_in_flight: Arc<AtomicUsize>,
+    }
+
+    async fn start_concurrent_range_server(
+        archive_bytes: Vec<u8>,
+    ) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let app = Router::new().route("/proofs.tar.zst", get(handle_concurrent_range)).with_state(
+            ConcurrentRangeState {
+                data: archive_bytes,
+                in_flight: Arc::new(AtomicUsize::new(0)),
+                max_in_flight: Arc::clone(&max_in_flight),
+            },
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        (base_url, max_in_flight, handle)
+    }
+
+    async fn handle_concurrent_range(
+        State(state): State<ConcurrentRangeState>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        let current = state.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        state.max_in_flight.fetch_max(current, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let response = handle_range(State(state.data), headers).await;
+        state.in_flight.fetch_sub(1, Ordering::SeqCst);
+        response
     }
 
     #[test]
@@ -614,6 +1338,86 @@ mod tests {
         ]);
 
         assert_eq!(url, None, "missing --manifest-url should fall back to snapshot API discovery");
+    }
+
+    #[test]
+    fn resolve_download_concurrency_arg_defaults_to_reth() {
+        let concurrency =
+            resolve_download_concurrency_arg([OsString::from("test"), OsString::from("--proofs")]);
+
+        assert_eq!(
+            concurrency, DEFAULT_DOWNLOAD_CONCURRENCY,
+            "proofs should use reth's default --download-concurrency"
+        );
+    }
+
+    #[test]
+    fn resolve_download_concurrency_arg_reads_separate_flag() {
+        let concurrency = resolve_download_concurrency_arg([
+            OsString::from("test"),
+            OsString::from("--download-concurrency"),
+            OsString::from("16"),
+        ]);
+
+        assert_eq!(concurrency, 16, "proofs should reuse --download-concurrency");
+    }
+
+    #[test]
+    fn resolve_download_concurrency_arg_reads_equals_syntax() {
+        let concurrency = resolve_download_concurrency_arg([
+            OsString::from("test"),
+            OsString::from("--download-concurrency=4"),
+        ]);
+
+        assert_eq!(concurrency, 4, "proofs should reuse --download-concurrency=VALUE");
+    }
+
+    #[test]
+    fn resolve_download_concurrency_arg_rejects_zero() {
+        let concurrency = resolve_download_concurrency_arg([
+            OsString::from("test"),
+            OsString::from("--download-concurrency"),
+            OsString::from("0"),
+        ]);
+
+        assert_eq!(concurrency, 1, "zero concurrency should be clamped to one stream");
+    }
+
+    #[test]
+    fn split_byte_ranges_covers_the_whole_file() {
+        let ranges = split_byte_ranges(10, 4);
+
+        assert_eq!(
+            ranges,
+            vec![0..3, 3..6, 6..8, 8..10],
+            "remainder should land on the first ranges"
+        );
+        assert_eq!(ranges.last().map(|range| range.end), Some(10));
+    }
+
+    #[test]
+    fn split_byte_ranges_clamps_parts_to_file_size() {
+        let ranges = split_byte_ranges(3, 8);
+
+        assert_eq!(ranges, vec![0..1, 1..2, 2..3], "cannot split into more streams than bytes");
+    }
+
+    #[test]
+    fn retry_delay_keeps_stream_drops_at_one_second() {
+        assert_eq!(retry_delay(1, false), std::time::Duration::from_secs(1));
+        assert_eq!(retry_delay(8, false), std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn retry_delay_uses_exponential_backoff_when_throttled() {
+        assert_eq!(retry_delay(1, true), std::time::Duration::from_secs(2));
+        assert_eq!(retry_delay(2, true), std::time::Duration::from_secs(4));
+        assert_eq!(retry_delay(3, true), std::time::Duration::from_secs(8));
+        assert_eq!(
+            retry_delay(5, true),
+            std::time::Duration::from_secs(30),
+            "backoff should cap at 30s"
+        );
     }
 
     async fn start_snapshot_api_server(
@@ -835,7 +1639,7 @@ mod tests {
         let (manifest_url, handle) = start_test_server(manifest, archive).await;
         let target = tempfile::tempdir().unwrap();
 
-        ProofsDownloader::run_from_manifest(target.path(), &manifest_url)
+        ProofsDownloader::run_from_manifest(target.path(), &manifest_url, 1)
             .await
             .expect("full pipeline should succeed");
 
@@ -925,11 +1729,368 @@ mod tests {
             archive_url: format!("{base_url}/proofs.tar.zst"),
         };
 
-        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await.unwrap();
         let downloaded = std::fs::read(&dest).unwrap();
 
         assert_eq!(downloaded.len(), archive.len(), "resumed download should produce full archive");
         assert_eq!(downloaded, archive, "resumed archive should match original byte-for-byte");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_retries_after_stream_interrupt() {
+        let archive =
+            create_proofs_archive(&[("proofs/data.mdb", b"complete-proof-data-after-cf-drop")]);
+        let (base_url, requests, handle) = start_drop_then_range_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
+            .await
+            .expect("stream drop should resume in-process instead of failing");
+        let downloaded = std::fs::read(&dest).unwrap();
+
+        assert_eq!(
+            downloaded, archive,
+            "in-process resume after stream drop should yield the full archive"
+        );
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "stream drop should trigger a Range retry, got {} requests",
+            requests.load(Ordering::SeqCst)
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part").exists(),
+            "completed download should rename .part into place"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_retries_when_body_ends_without_content_length() {
+        let archive =
+            create_proofs_archive(&[("proofs/data.mdb", b"resume-after-silent-truncation")]);
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app =
+            Router::new().route("/proofs.tar.zst", get(handle_short_stream_then_range)).with_state(
+                DropThenRangeState { data: archive.clone(), requests: Arc::clone(&requests) },
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
+            .await
+            .expect("a clean close without Content-Length should resume, not delete .part");
+
+        assert_eq!(std::fs::read(&dest).unwrap(), archive);
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "silent truncation should retry, got {} requests",
+            requests.load(Ordering::SeqCst)
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part").exists(),
+            "completed download should rename .part into place"
+        );
+
+        handle.abort();
+    }
+
+    async fn handle_short_stream_then_range(
+        State(state): State<DropThenRangeState>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        let request_n = state.requests.fetch_add(1, Ordering::SeqCst);
+        if request_n == 0 {
+            let half = state.data.len() / 2;
+            let first = Bytes::from(state.data[..half].to_vec());
+            let body = Body::from_stream(stream::iter([Ok::<_, std::io::Error>(first)]));
+            return (StatusCode::OK, body).into_response();
+        }
+
+        handle_range(State(state.data), headers).await.into_response()
+    }
+
+    #[tokio::test]
+    async fn download_archive_uses_parallel_range_requests() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"parallel-range-proof-data")]);
+        let (base_url, max_in_flight, handle) =
+            start_concurrent_range_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("parallel Range download should succeed");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "assembled ranges should match the archive"
+        );
+        assert!(
+            max_in_flight.load(Ordering::SeqCst) >= 2,
+            "download-concurrency=4 should issue overlapping Range requests, max in-flight was {}",
+            max_in_flight.load(Ordering::SeqCst)
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part.ranges").exists(),
+            "range sidecar should be removed after a complete parallel download"
+        );
+
+        handle.abort();
+    }
+
+    fn write_test_sidecar(path: &Path, concurrency: usize, expected_size: u64, written: &[u64]) {
+        let mut line = format!("{concurrency} {expected_size}");
+        for amount in written {
+            line.push(' ');
+            line.push_str(&amount.to_string());
+        }
+        std::fs::write(path, line).unwrap();
+    }
+
+    #[test]
+    fn load_trusted_range_sidecar_rejects_missing_or_short_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("proofs.tar.zst.part.ranges");
+        write_test_sidecar(&sidecar, 4, 100, &[25, 25, 25, 25]);
+
+        assert_eq!(
+            load_trusted_range_sidecar(&sidecar, 4, 100, 0),
+            None,
+            "sidecar without a full-sized .part must not skip ranges"
+        );
+        assert_eq!(
+            load_trusted_range_sidecar(&sidecar, 4, 100, 50),
+            None,
+            "sidecar with a resized .part must not skip ranges"
+        );
+        assert_eq!(
+            load_trusted_range_sidecar(&sidecar, 4, 100, 100),
+            Some(vec![25, 25, 25, 25]),
+            "sidecar should be trusted only when .part is the declared size"
+        );
+    }
+
+    /// Verifies a crash-restart with a trusted sidecar only fetches unfinished ranges.
+    #[tokio::test]
+    async fn download_archive_parallel_resumes_from_trusted_sidecar() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"resume-two-of-four-ranges")]);
+        let ranges = split_byte_ranges(archive.len() as u64, 4);
+        assert_eq!(ranges.len(), 4, "archive must split into four ranges");
+
+        let mut part = vec![0u8; archive.len()];
+        for range in &ranges[..2] {
+            let start = range.start as usize;
+            let end = range.end as usize;
+            part[start..end].copy_from_slice(&archive[start..end]);
+        }
+
+        let (base_url, requests, handle) = start_recording_range_server(archive.clone()).await;
+        let cache_dir = tempfile::tempdir().unwrap();
+        let part_path = cache_dir.path().join("proofs.tar.zst.part");
+        std::fs::write(&part_path, &part).unwrap();
+        write_test_sidecar(
+            &cache_dir.path().join("proofs.tar.zst.part.ranges"),
+            4,
+            archive.len() as u64,
+            &[ranges[0].end - ranges[0].start, ranges[1].end - ranges[1].start, 0, 0],
+        );
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("trusted sidecar resume should finish the remaining ranges");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "resumed ranges plus already-written ranges should match the archive"
+        );
+
+        let mut got = requests.lock().await.clone();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec![(ranges[2].start, ranges[2].end - 1), (ranges[3].start, ranges[3].end - 1),],
+            "only the two incomplete ranges should be fetched"
+        );
+
+        handle.abort();
+    }
+
+    /// Verifies an in-flight sequential `.part` is finished as one stream, not `set_len`.
+    #[tokio::test]
+    async fn download_archive_finishes_sequential_leftover_before_parallel() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"finish-sequential-leftover")]);
+        let half = archive.len() / 2;
+        assert!(half > 0 && half < archive.len(), "archive must have a sequential midpoint");
+
+        let (base_url, requests, handle) = start_recording_range_server(archive.clone()).await;
+        let cache_dir = tempfile::tempdir().unwrap();
+        std::fs::write(cache_dir.path().join("proofs.tar.zst.part"), &archive[..half]).unwrap();
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("sequential leftover should finish as one stream");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "sequential leftover resume should yield the full archive"
+        );
+        assert_eq!(
+            requests.lock().await.clone(),
+            vec![(half as u64, archive.len() as u64 - 1)],
+            "existing sequential .part must resume with one open-ended Range, not parallel splits"
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part.ranges").exists(),
+            "sequential leftover must not write a parallel sidecar"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_sequential_discards_stale_parallel_part() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"not-zeros-from-set-len")]);
+        let (base_url, handle) = start_range_aware_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let part_path = cache_dir.path().join("proofs.tar.zst.part");
+        std::fs::write(&part_path, vec![0u8; archive.len()]).unwrap();
+        write_test_sidecar(
+            &cache_dir.path().join("proofs.tar.zst.part.ranges"),
+            4,
+            archive.len() as u64,
+            &[0, 0, 0, 0],
+        );
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1)
+            .await
+            .expect("sequential download should not accept a preallocated parallel .part");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "stale parallel .part filled with zeros must be re-downloaded"
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part.ranges").exists(),
+            "stale sidecar should be removed"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_parallel_ignores_sidecar_without_part_file() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"download-over-missing-part")]);
+        let (base_url, _max_in_flight, handle) =
+            start_concurrent_range_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        write_test_sidecar(
+            &cache_dir.path().join("proofs.tar.zst.part.ranges"),
+            4,
+            archive.len() as u64,
+            &[
+                archive.len() as u64 / 4,
+                archive.len() as u64 / 4,
+                archive.len() as u64 / 4,
+                archive.len() as u64 - 3 * (archive.len() as u64 / 4),
+            ],
+        );
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("missing .part should re-download instead of trusting the sidecar");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "sidecar without a matching .part must not leave zero-filled holes"
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn download_archive_parallel_retries_after_stream_interrupt() {
+        let archive =
+            create_proofs_archive(&[("proofs/data.mdb", b"parallel-proof-data-after-cf-drop")]);
+        let (base_url, requests, handle) = start_drop_then_range_server(archive.clone()).await;
+
+        let cache_dir = tempfile::tempdir().unwrap();
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("parallel stream drop should resume the failed range in-process");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "parallel resume after stream drop should yield the full archive"
+        );
+        assert!(
+            requests.load(Ordering::SeqCst) >= 2,
+            "dropped range should retry, got {} requests",
+            requests.load(Ordering::SeqCst)
+        );
 
         handle.abort();
     }
@@ -969,7 +2130,7 @@ mod tests {
             archive_url: format!("{base_url}/proofs.tar.zst"),
         };
 
-        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await.unwrap();
         let downloaded = std::fs::read(&dest).unwrap();
 
         assert_eq!(downloaded, archive, "should discard stale .part and download fresh archive");
@@ -1008,7 +2169,7 @@ mod tests {
             archive_url: format!("{base_url}/proofs.tar.zst"),
         };
 
-        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path()).await.unwrap();
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await.unwrap();
 
         assert_eq!(dest, cache_dir.path().join("proofs.tar.zst"));
         assert_eq!(std::fs::read(&dest).unwrap(), archive);
@@ -1049,7 +2210,7 @@ mod tests {
             archive_url: format!("{base_url}/proofs.tar.zst"),
         };
 
-        let result = ProofsDownloader::download_archive(&entry, cache_dir.path()).await;
+        let result = ProofsDownloader::download_archive(&entry, cache_dir.path(), 1).await;
 
         assert!(result.is_err(), "size mismatch should fail");
         let err = result.unwrap_err().to_string();

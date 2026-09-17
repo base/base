@@ -86,7 +86,9 @@ cargo run -p base-system-tests --bin base-devnet -- snapshot \
 ```
 
 Use `--block-interval 200ms` for the subsecond variant. The first descendant activates `BaseTime`
-metadata and subsequent blocks advance on a deterministic 200ms schedule.
+metadata and subsequent blocks advance on a deterministic 200ms schedule. Snapshot devnets default
+to a 10 Ggas block limit at 2s and a 1 Ggas block limit at 200ms, preserving 5 Ggas/s of theoretical
+capacity at either cadence. Pass `--block-gas-limit <gas>` to override the cadence default.
 
 Startup validates the selected chain ID, the boundary L1-info transaction, `SystemConfig`, and
 sequence number. It waits for the builder to extend the snapshot and for the client to follow before
@@ -109,9 +111,10 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `builder_rpc_url`, `builder_flashblocks_url`, and `client_rpc_url`. Dynamic
-ports are the default and are safest for automation. `--stable-ports` binds the builder and client
-RPCs to ports 7545 and 8545, respectively, but fails if those ports are occupied.
+`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
+`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
+binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
+occupied.
 
 To pin a run to a known snapshot boundary, pass all three of `--expected-head-number`,
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
@@ -126,7 +129,7 @@ local devnet, runs the default 60-second plain-transfer profile, prints its
 load-test summary, and shuts everything down:
 
 ```bash
-cargo run --release -p base-system-tests --bin base-bench
+just devnet bench
 ```
 
 It needs Docker, but it needs neither a snapshot nor a funded key. The generated
@@ -150,7 +153,7 @@ CPU-bound far below the 400M block gas limit.
 mkdir -p results
 export BASE_BENCH_CLIENT_VERSION="base/v0.0.0-$(git rev-parse --short HEAD)"
 
-cargo run --release -p base-system-tests --bin base-bench -- snapshot \
+just devnet bench snapshot \
   --chain mainnet \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \

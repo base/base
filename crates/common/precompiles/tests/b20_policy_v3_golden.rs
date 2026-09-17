@@ -1,12 +1,10 @@
 //! Golden tests pinning Policy Registry **V3** behavior of the B-20 precompile.
 //!
-//! V3 is activated at Denim as a behavior-preserving copy of V2 (a scaffold seam for future
-//! Denim-era changes). Its logic and storage layout are identical to V2, so this suite pins its
-//! own roots to lock V3's behavior independently: a future edit that alters V3 must re-bless these
-//! roots. These goldens run production Cobalt storage features (Denim inherits them via
-//! `upgrade >= Cobalt`) while the V1 suite runs Legacy, so a root matches V2's only when the op
-//! does not diverge; ops that write shrinking dynamic values can legitimately diverge from V1's
-//! Legacy pin.
+//! V3 is activated at Denim and extends V2 with query-time inverted policy IDs. Its storage
+//! layout remains identical to V2: inversion is represented only by bit 63 of the policy ID. These
+//! goldens pin Denim behavior independently. They run production Cobalt storage features (Denim
+//! inherits them via `upgrade >= Cobalt`) while the V1 suite runs Legacy, so an operation that
+//! writes shrinking dynamic values can legitimately diverge from V1's Legacy pin.
 //!
 //! Every op (policy creation, admin lifecycle, allow/block membership, and evaluation reads) is
 //! driven through the real `PolicyRegistryStorage` entry (version-resolver-gated `dispatch`,
@@ -34,7 +32,8 @@ use alloy_sol_types::{SolCall, SolError, SolEvent};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     ActivationAdminConfig, ActivationFeature, ActivationRegistryStorage, IPolicyRegistry,
-    PolicyRegistryStorage, PolicyVersion, PolicyVersions, UpgradeGatedStorageFeatures,
+    PolicyRegistryStorage, PolicyRegistryV3, PolicyVersion, PolicyVersions,
+    UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{HashMapStorageProvider, StorageCtx};
 
@@ -55,10 +54,8 @@ const ALLOWLIST_ID: u64 = (1u64 << 56) | 2;
 
 // --- pinned storage hashes (bless with BLESS_GOLDEN=1; see module docs) --------
 //
-// V3 is a behavior- and layout-preserving copy of V2, so these track V2's roots — but pinned
-// independently here: these goldens run `StorageFeatures::Cobalt` (inherited at Denim) while the
-// V1 suite runs Legacy, so an op that triggers Cobalt dynamic tail cleanup can diverge from its
-// V1 pin. Re-blessing reflects the true Denim snapshot for each.
+// V3 preserves V2 storage layout. These roots remain independently pinned because they execute
+// at Denim under `StorageFeatures::Cobalt`, while the V1 suite runs Legacy.
 
 const ROOT_CREATE_BLOCKLIST: B256 =
     b256!("5ff0dab60b6daec34cbc6135f09097ddbbe31c6f662d4cdd9c6c4c7b5a589556");
@@ -269,6 +266,31 @@ fn golden_reads_for_nonexistent_and_builtins() {
     assert_eq!(
         bytes,
         Bytes::from(IPolicyRegistry::pendingPolicyAdminCall::abi_encode_returns(&Address::ZERO))
+    );
+}
+
+// ============================================================================
+// invertedPolicyId (V3 / Denim)
+// ============================================================================
+
+#[test]
+fn golden_inverted_policy_id_reads_before_activation() {
+    let mut storage = HashMapStorageProvider::new_with_storage_features(
+        CHAIN_ID,
+        UpgradeGatedStorageFeatures::from_upgrade(BaseUpgrade::Denim),
+    );
+    let policy_id = ALLOWLIST_ID;
+    let calldata = IPolicyRegistry::invertedPolicyIdCall { policyId: policy_id }.abi_encode();
+
+    let (reverted, return_data) = call_policy(&mut storage, OUTSIDER, calldata);
+
+    assert!(!reverted, "invertedPolicyId is a view and must bypass activation");
+    assert_eq!(
+        return_data,
+        Bytes::from(IPolicyRegistry::invertedPolicyIdCall::abi_encode_returns(
+            &(policy_id | PolicyRegistryV3::INVERTED_POLICY_BIT)
+        )),
+        "invertedPolicyId returns the id with the inverted-policy bit set",
     );
 }
 
@@ -1153,7 +1175,7 @@ fn golden_gas_footprints() {
 /// Compile-time coverage checklist — never called; its exhaustive `match` (no `_` arm) names the
 /// golden `#[test]` fn(s) pinning each op. Adding an ABI op fails the build until a golden is added.
 #[allow(dead_code)]
-fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
+fn v3_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
     use IPolicyRegistry::IPolicyRegistryCalls as C;
 
     fn covered(_goldens: &[fn()]) {}
@@ -1225,5 +1247,6 @@ fn v2_op_coverage_checklist(call: IPolicyRegistry::IPolicyRegistryCalls) {
             golden_min_max_composite_child_policies,
             golden_min_max_composite_child_policies_read_before_activation,
         ]),
+        C::invertedPolicyId(_) => covered(&[golden_inverted_policy_id_reads_before_activation]),
     }
 }

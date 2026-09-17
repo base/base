@@ -28,6 +28,18 @@ Execution-side readers also need `--upgrade-signal.l1-rpc` or
 from their consensus `--l1-eth-rpc` by default so execution and consensus read the same L1 source
 unless an explicit override is supplied.
 
+## Mode Metric
+
+Execution nodes and consensus rollup nodes expose `base_upgrade_signal_mode_info` with value `1`
+for their configured mode, labeled by `layer` (`el` or `cl`) and `mode` (`metrics-only`,
+`startup-apply`, `runtime-admin`, or `disabled` when no contract is configured). The execution
+recorder prefixes the Prometheus name with `reth_`, including CL metrics in unified nodes.
+
+The gauge is recorded at node startup after recorder installation and remains available on every
+scrape, independently of L1 polling or apply outcomes. It describes configuration, not upgrade
+readiness. Count recent reporters separately by layer to avoid double-counting unified nodes;
+missing telemetry from older or unreachable nodes must not be interpreted as `disabled`.
+
 ## Runtime Behavior
 
 All modes with a configured contract start a live observer. The observer polls L1 on an interval

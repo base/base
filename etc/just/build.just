@@ -37,6 +37,10 @@ elfs:
 node:
     cargo build --bin base-reth-node
 
+# Builds the base-bench binary in release mode
+base-bench:
+    cargo build --release -p base-system-tests --bin base-bench
+
 # Builds the test contracts
 contracts:
     cd {{justfile_directory()}}/crates/utilities/test-utils/contracts && forge soldeer install && forge build

@@ -1,4 +1,8 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    fmt::Debug,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -80,7 +84,14 @@ where
             }
 
             info!(target: "follow", block = current_block, "Inserting source payload");
+            let validation_started_at = Instant::now();
             engine.insert_payload(payload).await?;
+            info!(
+                target: "follow",
+                block = current_block,
+                elapsed = ?validation_started_at.elapsed(),
+                "Source payload validated"
+            );
             if !insert_delay.is_zero() {
                 debug!(
                     target: "follow",

@@ -36,7 +36,9 @@ use base_txpool_rpc::{
     TxPoolRpcExtension,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_upgrade_signal::{
+    UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalStartupMode,
+};
 use tracing::warn;
 use url::Url;
 
@@ -619,7 +621,14 @@ impl StandardBaseRethNode {
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
-        let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
+        let config = Self::upgrade_signal_config(rollup_args)?;
+        let mode = config.as_ref().map(|config| config.signal_config.mode);
+        // Unified nodes may install their recorder during launch. Include disabled nodes too.
+        runner.add_started_callback(move || {
+            UpgradeSignalMetrics::record_mode(UpgradeSignalMetricLayer::Execution, mode);
+            Ok(())
+        });
+        let Some(config) = config else {
             return Ok(());
         };
 

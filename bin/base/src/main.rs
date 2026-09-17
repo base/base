@@ -16,5 +16,7 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 static MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 fn main() {
+    base_reth_cli::init_snapshots!();
+
     base_cli_utils::run_cli_main!(cli::BaseCli);
 }

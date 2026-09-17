@@ -277,6 +277,11 @@ Swap payloads randomly choose direction for each generated transaction, alternat
 
 `real_token_setup` runs a pre-test phase before the measured loop: it wraps sender ETH into WETH, acquires the paired token through the configured acquisition route if the sender's balance is below `amount_per_sender`, and approves all measured routers for both tokens. When present and enabled, it replaces fixture-token minting (`swap_token_amount`).
 
+When this config is executed via `base-bench local --workload-config`, setting
+`deploy_devnet_swap_harness: true` on the workload entry deploys a fresh
+devnet USDC token plus Uniswap/Aerodrome router shims and auto-wires all swap
+and acquisition addresses. In that mode, these address fields can be omitted.
+
 ```yaml
 real_token_setup:
   enabled: true

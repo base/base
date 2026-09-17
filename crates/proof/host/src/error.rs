@@ -16,6 +16,9 @@ pub enum HostError {
     /// A custom error message.
     #[error("{0}")]
     Custom(String),
+    /// The configured L2 chain is not a built-in Base chain.
+    #[error("Unsupported L2 chain ID: {0}")]
+    UnsupportedChain(u64),
     /// Block not found error.
     #[error("Block not found: {0}")]
     BlockNotFound(B256),

@@ -20,12 +20,17 @@ on:
         description: "base/base-std ref to smoke test against"
         required: false
         default: main
+      base_upgrade:
+        description: "base upgrade passed to anvil --base"
+        required: false
+        default: denim
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 env:
   BASE_ANVIL_REF: ${{ github.event.inputs.base_anvil_ref || '98e7839c65f64aee9627b69a9b98b79afaeb1fae' }}
   BASE_STD_REF: ${{ github.event.inputs.base_std_ref || 'main' }}
+  BASE_UPGRADE: ${{ github.event.inputs.base_upgrade || 'denim' }}
   CARGO_TERM_COLOR: always
   REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/base-anvil
   RUSTC_WRAPPER: "sccache"
@@ -187,6 +192,7 @@ jobs:
           ANVIL_BIN="$BASE_ANVIL_DIR/target/release/anvil" \
             FORGE_BIN="$BASE_ANVIL_DIR/target/release/forge" \
             ANVIL_LOG="$RUNNER_TEMP/base-std-anvil.log" \
+            BASE_UPGRADE="$BASE_UPGRADE" \
             make fork-tests
       - name: Upload anvil log
         if: always() && matrix.settings.smoke_test
@@ -232,12 +238,14 @@ jobs:
             --arg std_repo "base/base-std" \
             --arg std_ref "$BASE_STD_REF" \
             --arg std_sha "$BASE_STD_SHA" \
+            --arg base_upgrade "$BASE_UPGRADE" \
             --argjson smoke_tested "$SMOKE_TESTED" \
             '{
               package: $package,
               platform: $platform,
               base: {repo: $base_repo, ref: $base_ref, sha: $base_sha},
               base_anvil: {repo: $anvil_repo, ref: $anvil_ref, sha: $anvil_sha},
+              base_upgrade: $base_upgrade,
               base_std: {
                 repo: $std_repo,
                 ref: $std_ref,
@@ -329,7 +337,7 @@ jobs:
           primary_tag="sha-$GITHUB_SHA"
           tags=("$REGISTRY_IMAGE:$primary_tag")
 
-          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "98e7839c65f64aee9627b69a9b98b79afaeb1fae" && "$BASE_STD_REF" == "main" ]]; then
+          if [[ "$GITHUB_REF_NAME" == "main" && "$BASE_ANVIL_REF" == "98e7839c65f64aee9627b69a9b98b79afaeb1fae" && "$BASE_STD_REF" == "main" && "$BASE_UPGRADE" == "denim" ]]; then
             tags+=("$REGISTRY_IMAGE:main")
             tags+=("$REGISTRY_IMAGE:main-$commit_date-$short_sha")
           else
