@@ -374,6 +374,7 @@ mod tests {
             ValidityPredicateEvaluation::evaluate(&block_number, &mut recorder, &context).unwrap(),
             ValidityPredicateEvaluation::Unsatisfied {
                 blocker: ValidityPredicateKey::BlockNumber,
+                blocker_index: 0,
                 expired: true,
             }
         );
@@ -394,6 +395,7 @@ mod tests {
                 .unwrap(),
             ValidityPredicateEvaluation::Unsatisfied {
                 blocker: ValidityPredicateKey::FlashblockIndex,
+                blocker_index: 1,
                 expired: true,
             }
         );
