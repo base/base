@@ -6607,6 +6607,7 @@ dependencies = [
  "futures",
  "httpmock",
  "metrics",
+ "metrics-util",
  "reqwest 0.13.4",
  "rstest",
  "serde",
