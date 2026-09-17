@@ -1,7 +1,7 @@
-//! Command-line orchestration for snapshot-backed benchmarks.
+//! Command-line orchestration for fresh-devnet and snapshot-backed benchmarks.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write as _,
     num::NonZeroU64,
@@ -18,19 +18,22 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
+use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
-    MetricsSummary, TestConfig,
+    MetricsSummary, TestConfig, TxTypeConfig,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
-    PrometheusBlockCollector, SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult,
-    SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
-    VisualizerMetadata, VisualizerRun,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, DevnetBlockInterval, DevnetConfig,
+    DevnetL2State, DevnetPrefund, PrometheusBlockCollector, SnapshotBenchmarkReportConfig,
+    SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
+    SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
+    VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
 };
 
 /// Base benchmark launcher.
@@ -45,12 +48,80 @@ pub struct BenchmarkCli {
 /// Supported benchmark targets.
 #[derive(Debug, Subcommand)]
 pub enum BenchmarkCommand {
-    /// Run the default transfer benchmark against a fresh temporary local devnet.
-    Local,
+    /// Run one benchmark or a workload suite against fresh temporary local devnets.
+    Local(LocalBenchmarkArgs),
     /// Run one load test against a Base snapshot continuation.
     Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
+}
+
+/// Arguments for a fresh-devnet benchmark.
+#[derive(Debug, Args, Default)]
+pub struct LocalBenchmarkArgs {
+    /// Load-test YAML. Its endpoint fields are replaced with fresh-devnet endpoints.
+    #[arg(long, conflicts_with = "workload_config")]
+    pub load_test_config: Option<PathBuf>,
+    /// YAML workload suite. Each workload runs against its own empty temporary devnet.
+    #[arg(long, conflicts_with = "load_test_config")]
+    pub workload_config: Option<PathBuf>,
+    /// Directory for a single result or a workload-suite visualizer bundle.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Stable client build label written into workload-suite visualizer metadata.
+    #[arg(long, env = "BASE_BENCH_CLIENT_VERSION")]
+    pub client_version: Option<String>,
+}
+
+/// One entry in a fresh-devnet workload suite.
+#[derive(Debug, Deserialize)]
+pub struct LocalBenchmarkWorkload {
+    /// Stable workload identifier and output-directory name.
+    pub workload: String,
+    /// Human-readable payload label for the visualizer.
+    pub transaction_payload: String,
+    /// Load-test settings for this workload.
+    #[serde(flatten)]
+    pub test_config: TestConfig,
+}
+
+/// YAML configuration for a fresh-devnet workload suite.
+#[derive(Debug, Deserialize)]
+pub struct LocalBenchmarkWorkloadConfig {
+    /// Workloads to run serially. Every workload receives a newly initialized devnet.
+    pub benchmark_workloads: Vec<LocalBenchmarkWorkload>,
+}
+
+/// Machine-readable outcome for one fresh-devnet workload.
+#[derive(Debug, Serialize)]
+pub struct LocalBenchmarkWorkloadResult {
+    /// Stable workload identifier.
+    pub workload: String,
+    /// Human-readable payload label.
+    pub transaction_payload: String,
+    /// Relative output directory when a load-test sidecar was written.
+    pub output_dir: String,
+    /// Whether the load test completed without a terminal error.
+    pub success: bool,
+    /// Terminal error, when startup or execution failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Machine-readable outcomes for a fresh-devnet workload suite.
+#[derive(Debug, Serialize)]
+pub struct LocalBenchmarkWorkloadResults {
+    /// Results in the same order as the workload configuration.
+    pub runs: Vec<LocalBenchmarkWorkloadResult>,
+}
+
+/// In-memory outcome from one local load-test invocation.
+#[derive(Debug)]
+pub struct LocalBenchmarkResult {
+    /// Native load-test metrics, written to `load-test-result.json` when requested.
+    pub summary: MetricsSummary,
+    /// A terminal load-test error preserved after its metrics were written.
+    pub error: Option<String>,
 }
 
 /// Arguments for aggregating self-contained snapshot benchmark artifacts.
@@ -117,31 +188,75 @@ const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
 /// benchmark load cannot raise the base fee and strand already-submitted transaction nonce lanes.
 const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
+const LOCAL_RESULT_FILE_NAME: &str = "load-test-result.json";
+const FRESH_DEVNET_BLOCK_TIME: Duration = Duration::from_secs(2);
+const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
+const FRESH_DEVNET_BERYL_ACTIVATION_BLOCK: u64 = 3;
+const FRESH_DEVNET_BERYL_READY_BLOCK: u64 = FRESH_DEVNET_BERYL_ACTIVATION_BLOCK + 1;
+const FRESH_DEVNET_BERYL_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl BenchmarkCli {
     /// Runs the selected benchmark case.
     pub async fn run(self) -> Result<()> {
         let _progress = LoadTestDisplay::init_tracing();
         match self.command {
-            None | Some(BenchmarkCommand::Local) => Self::run_default_local().await,
+            None => LocalBenchmarkArgs::default().run().await,
+            Some(BenchmarkCommand::Local(args)) => args.run().await,
             Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
             Some(BenchmarkCommand::Aggregate(args)) => args.run(),
         }
     }
+}
 
-    /// Starts an isolated fresh devnet, runs the portable default transfer profile, and tears the
-    /// stack down. This deliberately has no flags or persistent datadir: it is the quick local
-    /// smoke benchmark. Snapshot benchmarks retain their explicit arguments for repeatable,
-    /// shareable performance runs.
-    async fn run_default_local() -> Result<()> {
+impl LocalBenchmarkArgs {
+    /// Runs either one configured local benchmark or a suite of isolated local benchmarks.
+    pub async fn run(self) -> Result<()> {
+        if let Some(workload_config) = &self.workload_config {
+            let output_dir = self.output_dir.as_deref().ok_or_else(|| {
+                eyre::eyre!("--output-dir is required when --workload-config is provided")
+            })?;
+            return self.run_workload_suite(workload_config, output_dir).await;
+        }
+
+        let test_config = self
+            .load_test_config
+            .as_ref()
+            .map(TestConfig::load)
+            .transpose()
+            .wrap_err("failed to load fresh-devnet benchmark configuration")?
+            .unwrap_or_default();
+        let result = self.run_one(test_config).await?;
+        if let Some(error) = result.error {
+            eyre::bail!(error)
+        }
+        Ok(())
+    }
+
+    /// Starts an isolated fresh devnet, executes one load-test configuration, and tears it down.
+    ///
+    /// The configuration's RPC endpoints are deliberately ignored: every run targets the dynamic
+    /// endpoints assigned to its newly created devnet. A B-20 workload schedules Azul and Beryl,
+    /// then activates the B-20 asset feature before creating its token fixtures.
+    pub async fn run_one(&self, mut test_config: TestConfig) -> Result<LocalBenchmarkResult> {
         let devnet = DevnetConfig::standard();
         let chain_id = devnet.l2_chain_id;
         let funder_key = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
             .wrap_err("failed to construct the fresh-devnet funder key")?;
-        let stack = SystemTestStackBuilder::new().with_devnet_config(devnet).build().await?;
+        let requires_b20_activation = Self::requires_beryl(&test_config);
+        let mut stack_builder = SystemTestStackBuilder::new().with_devnet_config(devnet);
+        if requires_b20_activation {
+            stack_builder = stack_builder
+                .with_base_azul_activation_block(FRESH_DEVNET_AZUL_ACTIVATION_BLOCK)
+                .with_base_beryl_activation_block(FRESH_DEVNET_BERYL_ACTIVATION_BLOCK);
+        }
+        let stack = stack_builder.build().await?;
 
-        println!("running default transfer benchmark against a fresh temporary devnet");
-        let run_result: Result<()> = async {
+        if requires_b20_activation {
+            Self::activate_b20_asset_feature(&stack, chain_id).await?;
+        }
+
+        println!("running benchmark against a fresh temporary devnet");
+        let run_result: Result<LocalBenchmarkResult> = async {
             let builder_rpc = stack.l2_rpc_url()?;
             let client_rpc = stack.l2_client_rpc_url()?;
             let flashblocks_ws = stack
@@ -150,16 +265,18 @@ impl BenchmarkCli {
                 .flashblocks_url()
                 .parse()
                 .wrap_err("invalid fresh-devnet Flashblocks URL")?;
-            let test_config = TestConfig {
-                transaction_submission_rpcs: vec![builder_rpc],
-                query_rpc: Some(client_rpc),
-                flashblocks_ws: Some(flashblocks_ws),
-                chain_id: Some(chain_id),
-                skip_drain: true,
-                ..Default::default()
-            };
+            test_config.transaction_submission_rpcs = vec![builder_rpc];
+            test_config.query_rpc = Some(client_rpc);
+            test_config.txpool_nodes.clear();
+            test_config.flashblocks_ws = Some(flashblocks_ws);
+            test_config.chain_id = Some(chain_id);
 
             let load_config = test_config.to_load_config(None)?;
+            eyre::ensure!(
+                load_config.block_time == FRESH_DEVNET_BLOCK_TIME,
+                "fresh devnet uses a 2s block time, but the workload requests {}",
+                test_config.block_time
+            );
             let output = LoadTestExecutor::run_prepared(
                 test_config,
                 load_config,
@@ -176,16 +293,212 @@ impl BenchmarkCli {
             )
             .await?;
             println!("{}", serde_json::to_string_pretty(&output.summary)?);
-            if let Some(error) = output.run_error {
-                return Err(error.into());
-            }
-            Ok(())
+            self.write_result(&output.summary)?;
+            Ok(LocalBenchmarkResult {
+                summary: output.summary,
+                error: output.run_error.map(|error| error.to_string()),
+            })
         }
         .await;
 
         let shutdown_result = stack.shutdown().await;
-        run_result?;
-        shutdown_result
+        let result = run_result?;
+        shutdown_result?;
+        Ok(result)
+    }
+
+    /// Runs every workload in a YAML suite serially and writes a base/benchmark visualizer bundle.
+    pub async fn run_workload_suite(
+        &self,
+        workload_config_path: &Path,
+        output_dir: &Path,
+    ) -> Result<()> {
+        let workload_config = Self::load_workload_config(workload_config_path)?;
+        eyre::ensure!(
+            !workload_config.benchmark_workloads.is_empty(),
+            "fresh-devnet workload configuration contains no benchmark_workloads"
+        );
+        fs::create_dir_all(output_dir).wrap_err_with(|| {
+            format!(
+                "failed to create fresh-devnet benchmark output directory {}",
+                output_dir.display()
+            )
+        })?;
+
+        let client_version =
+            self.client_version.clone().unwrap_or_else(|| "base/unknown".to_string());
+        let chain_id = DevnetConfig::standard().l2_chain_id;
+        let mut result_runs = Vec::with_capacity(workload_config.benchmark_workloads.len());
+        let mut visualizer_runs = Vec::with_capacity(workload_config.benchmark_workloads.len());
+        let mut workload_names = BTreeSet::new();
+
+        for workload in workload_config.benchmark_workloads {
+            eyre::ensure!(
+                workload_names.insert(workload.workload.clone()),
+                "fresh-devnet workload configuration contains duplicate workload {:?}",
+                workload.workload
+            );
+            let output_dir_name = format!("fresh-devnet-{}", workload.workload);
+            let workload_output_dir = Self::workload_output_dir(output_dir, &output_dir_name)?;
+            let result = Self { output_dir: Some(workload_output_dir), ..Self::default() }
+                .run_one(workload.test_config)
+                .await;
+
+            let (summary, success, error) = match result {
+                Ok(result) => {
+                    let success = result.error.is_none();
+                    (Some(result.summary), success, result.error)
+                }
+                Err(error) => (None, false, Some(format!("{error:?}"))),
+            };
+            let complete = summary.is_some();
+            let gas_per_second =
+                summary.as_ref().map(|summary| summary.throughput.gps).unwrap_or_default();
+
+            result_runs.push(LocalBenchmarkWorkloadResult {
+                workload: workload.workload.clone(),
+                transaction_payload: workload.transaction_payload.clone(),
+                output_dir: output_dir_name.clone(),
+                success,
+                error: error.clone(),
+            });
+            visualizer_runs.push(VisualizerRun {
+                id: format!("fresh-devnet-{}-{}", workload.workload, Utc::now().timestamp_millis()),
+                source_file: "base-fresh-devnet".to_string(),
+                output_dir: output_dir_name,
+                test_name: format!("Base fresh-devnet {}", workload.workload),
+                test_description: format!(
+                    "{} load test against a newly initialized empty Base devnet",
+                    workload.transaction_payload
+                ),
+                test_config: BTreeMap::from([
+                    (
+                        "BenchmarkRun".to_string(),
+                        serde_json::Value::String("fresh-devnet".to_string()),
+                    ),
+                    ("Scenario".to_string(), serde_json::Value::String(workload.workload)),
+                    ("ChainId".to_string(), chain_id.into()),
+                    ("BlockTimeMilliseconds".to_string(), 2_000.into()),
+                    ("NodeType".to_string(), serde_json::Value::String("fresh-devnet".to_string())),
+                    (
+                        "TransactionPayload".to_string(),
+                        serde_json::Value::String(workload.transaction_payload),
+                    ),
+                    (
+                        "ClientVersion".to_string(),
+                        serde_json::Value::String(client_version.clone()),
+                    ),
+                ]),
+                result: VisualizerRunResult {
+                    success,
+                    complete,
+                    client_version: client_version.clone(),
+                    // This is the end-to-end load-test GPS, not a per-node Prometheus scrape.
+                    // It fills the visualizer's headline field while the detailed load-test page
+                    // renders the native MetricsSummary sidecar.
+                    sequencer_metrics: VisualizerSequencerMetrics { gas_per_second },
+                    validator_metrics: VisualizerValidatorMetrics { gas_per_second },
+                    artifacts: if complete {
+                        BTreeMap::from([(
+                            "loadTestResult".to_string(),
+                            LOCAL_RESULT_FILE_NAME.to_string(),
+                        )])
+                    } else {
+                        BTreeMap::new()
+                    },
+                },
+                created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            });
+        }
+
+        let suite_results = LocalBenchmarkWorkloadResults { runs: result_runs };
+        Self::write_json(
+            &output_dir.join("suite-results.json"),
+            &suite_results,
+            "fresh-devnet workload results",
+        )?;
+        Self::write_json(
+            &output_dir.join("metadata.json"),
+            &VisualizerMetadata { runs: visualizer_runs },
+            "fresh-devnet visualizer metadata",
+        )?;
+
+        let failed = suite_results.runs.iter().filter(|run| !run.success).count();
+        eyre::ensure!(failed == 0, "{failed} fresh-devnet benchmark workload(s) failed");
+        Ok(())
+    }
+
+    /// Writes a single load-test sidecar for a local benchmark when an output directory was set.
+    pub fn write_result(&self, summary: &MetricsSummary) -> Result<()> {
+        let Some(output_dir) = &self.output_dir else { return Ok(()) };
+        let result_path = output_dir.join(LOCAL_RESULT_FILE_NAME);
+        Self::write_json(&result_path, summary, "fresh-devnet load-test result")?;
+        println!("benchmark result: {}", result_path.display());
+        Ok(())
+    }
+
+    /// Loads a fresh-devnet workload suite from YAML.
+    pub fn load_workload_config(path: &Path) -> Result<LocalBenchmarkWorkloadConfig> {
+        let contents = fs::read_to_string(path).wrap_err_with(|| {
+            format!("failed to read workload configuration {}", path.display())
+        })?;
+        serde_yaml::from_str(&contents)
+            .wrap_err_with(|| format!("failed to parse workload configuration {}", path.display()))
+    }
+
+    /// Returns the output directory for one workload after validating that it cannot escape root.
+    pub fn workload_output_dir(root: &Path, workload: &str) -> Result<PathBuf> {
+        eyre::ensure!(
+            !workload.is_empty()
+                && workload != "."
+                && workload != ".."
+                && !workload.contains('/')
+                && !workload.contains('\\'),
+            "workload must be a single directory name: {workload:?}"
+        );
+        Ok(root.join(workload))
+    }
+
+    /// Writes one JSON artifact and ensures its parent directory exists.
+    pub fn write_json<T: Serialize>(path: &Path, value: &T, artifact: &str) -> Result<()> {
+        let parent = path.parent().ok_or_else(|| {
+            eyre::eyre!("{artifact} path has no parent directory: {}", path.display())
+        })?;
+        fs::create_dir_all(parent).wrap_err_with(|| {
+            format!("failed to create {artifact} directory {}", parent.display())
+        })?;
+        fs::write(path, serde_json::to_vec_pretty(value)?)
+            .wrap_err_with(|| format!("failed to write {artifact} {}", path.display()))
+    }
+
+    /// Returns whether a workload needs Base Beryl enabled in its empty devnet.
+    pub fn requires_beryl(test_config: &TestConfig) -> bool {
+        test_config
+            .transactions
+            .iter()
+            .any(|transaction| matches!(transaction.tx_type, TxTypeConfig::B20))
+    }
+
+    /// Waits for Beryl and activates the B-20 asset feature with the devnet sequencer account.
+    pub async fn activate_b20_asset_feature(stack: &SystemTestStack, chain_id: u64) -> Result<()> {
+        let provider = stack.l2_builder_provider()?;
+        tokio::time::timeout(FRESH_DEVNET_BERYL_READY_TIMEOUT, async {
+            loop {
+                if provider.get_block_number().await? >= FRESH_DEVNET_BERYL_READY_BLOCK {
+                    return Ok::<_, eyre::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .wrap_err("timed out waiting for Beryl to activate on the fresh devnet")??;
+
+        let activation_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
+            .wrap_err("failed to construct the fresh-devnet Beryl activation-admin key")?;
+        B20PrecompileClient::new(&provider, &activation_admin, chain_id)
+            .activate_feature(ActivationFeature::B20Asset.id())
+            .await
+            .wrap_err("failed to activate the B-20 asset feature on the fresh devnet")
     }
 }
 
@@ -462,7 +775,8 @@ impl SnapshotBenchmarkArgs {
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
         test_config.chain_id = Some(stack.chain_id());
-        let load_config = test_config.to_load_config(None)?;
+        let mut load_config = test_config.to_load_config(None)?;
+        load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
         let funder_address = funder_key.address();
         let sequencer_metrics =
             PrometheusBlockCollector::start(builder_rpc.clone(), stack.builder_metrics_url()?)
@@ -633,9 +947,13 @@ impl SnapshotBenchmarkArgs {
 mod tests {
     use std::{fs, num::NonZeroU64};
 
+    use base_load_tests::MetricsSummary;
     use clap::Parser;
 
-    use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+    use super::{
+        AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
+        LocalBenchmarkWorkloadConfig, SnapshotBenchmarkArgs,
+    };
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
@@ -792,7 +1110,77 @@ mod tests {
     fn parses_explicit_fresh_local_benchmark() {
         let cli = BenchmarkCli::parse_from(["base-bench", "local"]);
 
-        assert!(matches!(cli.command, Some(BenchmarkCommand::Local)));
+        let Some(BenchmarkCommand::Local(args)) = cli.command else {
+            panic!("expected local benchmark command");
+        };
+        assert!(args.load_test_config.is_none());
+        assert!(args.workload_config.is_none());
+        assert!(args.output_dir.is_none());
+    }
+
+    #[test]
+    fn parses_fresh_devnet_workload_suite() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "local",
+            "--workload-config",
+            "etc/benchmarks/fresh-devnet.yml",
+            "--output-dir",
+            "results/fresh-devnet",
+            "--client-version",
+            "base/test",
+        ]);
+
+        let Some(BenchmarkCommand::Local(args)) = cli.command else {
+            panic!("expected local benchmark command");
+        };
+        assert_eq!(
+            args.workload_config,
+            Some(std::path::PathBuf::from("etc/benchmarks/fresh-devnet.yml"))
+        );
+        assert_eq!(args.output_dir, Some(std::path::PathBuf::from("results/fresh-devnet")));
+        assert_eq!(args.client_version.as_deref(), Some("base/test"));
+    }
+
+    #[test]
+    fn parses_checked_in_fresh_devnet_workload_configuration() {
+        let config: LocalBenchmarkWorkloadConfig =
+            serde_yaml::from_str(include_str!("../../benchmarks/fresh-devnet.yml")).unwrap();
+
+        assert_eq!(config.benchmark_workloads.len(), 4);
+        assert_eq!(config.benchmark_workloads[0].workload, "b20-transfer");
+        assert_eq!(config.benchmark_workloads[0].transaction_payload, "b20-transfer-existing");
+        assert_eq!(config.benchmark_workloads[0].test_config.sender_count, 400);
+        assert_eq!(config.benchmark_workloads[0].test_config.funding_amount, "100000000000000000");
+        assert_eq!(config.benchmark_workloads[1].workload, "eth-new");
+        assert_eq!(config.benchmark_workloads[1].test_config.sender_count, 1000);
+        assert_eq!(config.benchmark_workloads[2].workload, "eth-existing");
+        assert_eq!(config.benchmark_workloads[3].workload, "blake2f-50000");
+    }
+
+    #[test]
+    fn writes_local_load_test_sidecar_when_output_is_requested() {
+        let output = tempfile::tempdir().unwrap();
+        let args = LocalBenchmarkArgs {
+            output_dir: Some(output.path().to_path_buf()),
+            ..Default::default()
+        };
+        let summary = MetricsSummary { measurement_block_count: 10, ..Default::default() };
+
+        args.write_result(&summary).unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.path().join("load-test-result.json")).unwrap())
+                .unwrap();
+        assert_eq!(written["measurement_block_count"], 10);
+    }
+
+    #[test]
+    fn rejects_workload_names_that_escape_the_result_root() {
+        let root = tempfile::tempdir().unwrap();
+
+        assert!(LocalBenchmarkArgs::workload_output_dir(root.path(), "../escape").is_err());
+        assert!(LocalBenchmarkArgs::workload_output_dir(root.path(), "b20-transfer").is_ok());
     }
 
     #[test]

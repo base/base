@@ -37,7 +37,11 @@ jobs:
           - fork: Cobalt
             key: cobalt
             upgrade: cobalt
-            base_std_ref: 4571b325c1b9c4d6e21c59d2b7f9b4b60f62ec7c
+            base_std_ref: v1.1.0
+          - fork: Denim
+            key: denim
+            upgrade: denim
+            base_std_ref: 7321d891c9039040b5dad7248618de6fe5973661
     env:
       FORK_NAME: ${{ matrix.fork }}
       FORK_KEY: ${{ matrix.key }}
@@ -45,6 +49,9 @@ jobs:
       BASE_STD_REF: ${{ matrix.base_std_ref }}
       # Consumed by base-std's fork harness to launch `anvil --base $BASE_UPGRADE`.
       BASE_UPGRADE: ${{ matrix.upgrade }}
+      # Runs fork tests with forge's `base` upgrade set to the selected fork.
+      # Figment maps FOUNDRY_BASE onto the `base` key.
+      FOUNDRY_BASE: ${{ matrix.upgrade }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
