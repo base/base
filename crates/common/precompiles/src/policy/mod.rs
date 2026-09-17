@@ -1,7 +1,7 @@
 //! `PolicyRegistry` native precompile — global singleton transfer-policy registry for B-20 tokens.
 
 mod abi;
-pub use abi::{IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2};
+pub use abi::{IPolicyRegistry, IPolicyRegistryV1, IPolicyRegistryV2, IPolicyRegistryV3};
 
 mod accounting;
 pub use accounting::PolicyAccounting;
