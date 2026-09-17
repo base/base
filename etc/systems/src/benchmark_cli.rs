@@ -17,6 +17,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
+use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
     MetricsSummary, TestConfig, TxTypeConfig,
@@ -27,11 +28,11 @@ use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ANVIL_ACCOUNT_1, DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund,
-    PrometheusBlockCollector, SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult,
-    SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
-    VisualizerMetadata, VisualizerRun, VisualizerRunResult, VisualizerSequencerMetrics,
-    VisualizerValidatorMetrics,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, DevnetBlockInterval, DevnetConfig,
+    DevnetL2State, DevnetPrefund, PrometheusBlockCollector, SnapshotBenchmarkReportConfig,
+    SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
+    SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
+    VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
 };
 
 /// Base benchmark launcher.
@@ -185,6 +186,10 @@ const RESULT_FILE_NAME: &str = "benchmark-result.json";
 const LOCAL_RESULT_FILE_NAME: &str = "load-test-result.json";
 const FRESH_DEVNET_BLOCK_TIME: Duration = Duration::from_secs(2);
 const FRESH_DEVNET_CHAIN_ID: u64 = 84_538_453;
+const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
+const FRESH_DEVNET_BERYL_ACTIVATION_BLOCK: u64 = 3;
+const FRESH_DEVNET_BERYL_READY_BLOCK: u64 = FRESH_DEVNET_BERYL_ACTIVATION_BLOCK + 1;
+const FRESH_DEVNET_BERYL_READY_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl BenchmarkCli {
     /// Runs the selected benchmark case.
@@ -226,18 +231,25 @@ impl LocalBenchmarkArgs {
     /// Starts an isolated fresh devnet, executes one load-test configuration, and tears it down.
     ///
     /// The configuration's RPC endpoints are deliberately ignored: every run targets the dynamic
-    /// endpoints assigned to its newly created devnet. A B-20 workload activates Beryl at genesis
-    /// so it can exercise the B-20 precompiles on an otherwise empty chain.
+    /// endpoints assigned to its newly created devnet. A B-20 workload schedules Azul and Beryl,
+    /// then activates the B-20 asset feature before creating its token fixtures.
     pub async fn run_one(&self, mut test_config: TestConfig) -> Result<LocalBenchmarkResult> {
         let devnet = DevnetConfig::standard();
         let chain_id = devnet.l2_chain_id;
         let funder_key = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
             .wrap_err("failed to construct the fresh-devnet funder key")?;
+        let requires_b20_activation = Self::requires_beryl(&test_config);
         let mut stack_builder = SystemTestStackBuilder::new().with_devnet_config(devnet);
-        if Self::requires_beryl(&test_config) {
-            stack_builder = stack_builder.with_base_beryl_activation_block(0);
+        if requires_b20_activation {
+            stack_builder = stack_builder
+                .with_base_azul_activation_block(FRESH_DEVNET_AZUL_ACTIVATION_BLOCK)
+                .with_base_beryl_activation_block(FRESH_DEVNET_BERYL_ACTIVATION_BLOCK);
         }
         let stack = stack_builder.build().await?;
+
+        if requires_b20_activation {
+            Self::activate_b20_asset_feature(&stack, chain_id).await?;
+        }
 
         println!("running benchmark against a fresh temporary devnet");
         let run_result: Result<LocalBenchmarkResult> = async {
@@ -460,6 +472,28 @@ impl LocalBenchmarkArgs {
             .transactions
             .iter()
             .any(|transaction| matches!(transaction.tx_type, TxTypeConfig::B20))
+    }
+
+    /// Waits for Beryl and activates the B-20 asset feature with the devnet sequencer account.
+    pub async fn activate_b20_asset_feature(stack: &SystemTestStack, chain_id: u64) -> Result<()> {
+        let provider = stack.l2_builder_provider()?;
+        tokio::time::timeout(FRESH_DEVNET_BERYL_READY_TIMEOUT, async {
+            loop {
+                if provider.get_block_number().await? >= FRESH_DEVNET_BERYL_READY_BLOCK {
+                    return Ok::<_, eyre::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .wrap_err("timed out waiting for Beryl to activate on the fresh devnet")??;
+
+        let activation_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
+            .wrap_err("failed to construct the fresh-devnet Beryl activation-admin key")?;
+        B20PrecompileClient::new(&provider, &activation_admin, chain_id)
+            .activate_feature(ActivationFeature::B20Asset.id())
+            .await
+            .wrap_err("failed to activate the B-20 asset feature on the fresh devnet")
     }
 }
 
