@@ -137,6 +137,44 @@ datadirs are temporary and are removed during shutdown. Use the explicit
 `base-bench snapshot` arguments below for reproducible snapshot benchmarks and
 report artifacts.
 
+## Run the fresh-devnet workload suite
+
+The checked-in fresh-devnet suite runs every workload on a distinct empty
+devnet, so token state, accounts, the transaction pool, and caches cannot leak
+between scenarios. It currently covers B-20 transfers (with Beryl activated at
+genesis), high-concurrency ETH transfers to new and existing recipients, and a
+50,000-round Blake2f precompile profile:
+
+```sh
+cargo run --release -p base-system-tests --bin base-bench -- local \
+  --workload-config etc/benchmarks/fresh-devnet.yml \
+  --output-dir results/fresh-devnet \
+  --client-version "base/$(git rev-parse --short HEAD)"
+```
+
+The command writes one native load-test sidecar per workload plus a top-level
+visualizer manifest:
+
+```text
+results/fresh-devnet/
+├── metadata.json
+├── suite-results.json
+├── fresh-devnet-b20-transfer/load-test-result.json
+├── fresh-devnet-eth-new/load-test-result.json
+├── fresh-devnet-eth-existing/load-test-result.json
+└── fresh-devnet-blake2f-50000/load-test-result.json
+```
+
+`metadata.json` and the load-test sidecars are directly consumable by the
+static visualizer in `base/benchmark`; link this output directory to that
+repository's ignored `output/` directory and run its normal production build.
+The Depot PR workflow does this automatically, uploads both the raw sidecars
+and static visualizer, and updates one PR comment with the workload summaries.
+
+The real-token Uniswap V3 workload is intentionally excluded from this suite:
+it depends on funded WETH, USDC, and router contracts at Base Sepolia addresses
+and therefore belongs in a snapshot benchmark, not a blank devnet.
+
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
 YAML with dynamically allocated builder endpoints, runs the load generator, writes JSON, and shuts
