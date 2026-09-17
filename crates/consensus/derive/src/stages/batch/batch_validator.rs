@@ -1,6 +1,6 @@
 //! Contains the [`BatchValidator`] stage.
 
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 
 use alloy_eips::BlockNumHash;
@@ -12,7 +12,10 @@ use super::NextBatchProvider;
 use crate::{
     Metrics,
     errors::{PipelineError, PipelineErrorKind, ResetError},
-    traits::{AttributesProvider, L2ChainProvider, OriginAdvancer, OriginProvider, StageReset},
+    traits::{
+        AttributesProvider, BatchValidationProviderDerive, L2ChainProvider, OriginAdvancer,
+        OriginProvider, StageReset,
+    },
     types::PipelineResult,
 };
 
@@ -259,8 +262,14 @@ where
                 let ancestor = match self.provider.l2_block_info_by_number(number).await {
                     Ok(ancestor) => ancestor,
                     Err(error) => {
-                        self.pending_batch = Some((next_batch, inclusion_block));
-                        return Err(PipelineError::Provider(error.to_string()).temp());
+                        let kind =
+                            <F as BatchValidationProviderDerive>::provider_error_into_pipeline_error(
+                                error,
+                            );
+                        if matches!(kind, PipelineErrorKind::Temporary(_)) {
+                            self.pending_batch = Some((next_batch, inclusion_block));
+                        }
+                        return Err(kind);
                     }
                 };
                 if ancestor.block_info.hash == next_batch.parent_hash {
@@ -366,19 +375,55 @@ where
 
 #[cfg(test)]
 mod tests {
-    use alloc::{sync::Arc, vec, vec::Vec};
+    use alloc::{boxed::Box, sync::Arc, vec, vec::Vec};
 
-    use alloy_eips::BlockNumHash;
+    use alloy_eips::{BlockId, BlockNumHash};
     use alloy_primitives::B256;
+    use async_trait::async_trait;
+    use base_common_consensus::BaseBlock;
     use base_common_genesis::{BaseUpgradeConfig, RollupConfig, SystemConfig, UpgradeConfig};
-    use base_protocol::{Batch, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch};
+    use base_protocol::{
+        Batch, BatchValidationProvider, BlockInfo, L2BlockInfo, SingleBatch, SpanBatch,
+    };
     use tracing::Level;
 
     use crate::{
-        AttributesProvider, BatchValidator, NextBatchProvider, OriginAdvancer, PipelineError,
-        PipelineErrorKind, PipelineResult, ResetError, StageReset,
+        AttributesProvider, BatchValidator, L2ChainProvider, NextBatchProvider, OriginAdvancer,
+        PipelineError, PipelineErrorKind, PipelineResult, ResetError, StageReset,
         test_utils::{TestL2ChainProvider, TestNextBatchProvider},
     };
+
+    #[derive(Debug, Default, Clone, Copy)]
+    struct ResettingL2ChainProvider;
+
+    #[async_trait]
+    impl BatchValidationProvider for ResettingL2ChainProvider {
+        type Error = ResetError;
+
+        async fn l2_block_info_by_number(
+            &mut self,
+            number: u64,
+        ) -> Result<L2BlockInfo, Self::Error> {
+            Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
+        }
+
+        async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
+            Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
+        }
+    }
+
+    #[async_trait]
+    impl L2ChainProvider for ResettingL2ChainProvider {
+        type Error = ResetError;
+
+        async fn system_config_by_number(
+            &mut self,
+            number: u64,
+            _: Arc<RollupConfig>,
+        ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
+            Err(ResetError::BlockNotFound(BlockId::Number(number.into())))
+        }
+    }
 
     #[tokio::test]
     async fn test_batch_validator_origin_behind_eof() {
@@ -741,5 +786,45 @@ mod tests {
         assert_eq!(bv.next_batch(parent).await.unwrap_err(), PipelineError::NotEnoughData.temp());
         assert!(bv.pending_batch.is_none());
         assert!(bv.prev.flushed);
+    }
+
+    #[tokio::test]
+    async fn test_denim_validator_does_not_retry_reset_class_ancestry_error() {
+        let origin = BlockInfo { number: 1, hash: B256::repeat_byte(0x11), ..Default::default() };
+        let parent = L2BlockInfo {
+            block_info: BlockInfo {
+                number: 3,
+                hash: B256::repeat_byte(0x33),
+                ..Default::default()
+            },
+            l1_origin: BlockNumHash { number: 0, ..Default::default() },
+            ..Default::default()
+        };
+        let batch = SingleBatch {
+            parent_hash: B256::repeat_byte(0xff),
+            epoch_num: origin.number,
+            epoch_hash: origin.hash,
+            ..Default::default()
+        };
+        let mut prev = TestNextBatchProvider::new(vec![Ok(Batch::Single(batch))]);
+        prev.origin = Some(origin);
+        let cfg = Arc::new(RollupConfig {
+            block_time: 2,
+            upgrades: UpgradeConfig {
+                holocene_time: Some(0),
+                base: BaseUpgradeConfig { denim: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let mut bv = BatchValidator::new(cfg, prev, ResettingL2ChainProvider);
+        bv.origin = Some(origin);
+        bv.l1_blocks = vec![origin, origin];
+
+        assert!(matches!(
+            bv.next_batch(parent).await.unwrap_err(),
+            PipelineErrorKind::Reset(ResetError::BlockNotFound(_))
+        ));
+        assert!(bv.pending_batch.is_none());
     }
 }
