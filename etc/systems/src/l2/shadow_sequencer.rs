@@ -27,6 +27,7 @@ use url::Url;
 
 use super::{
     InProcessBuilder, InProcessBuilderConfig, InProcessConsensus, InProcessConsensusConfig,
+    InProcessNodeRuntime,
 };
 
 /// Configuration for starting a single [`ShadowSequencer`].
@@ -83,6 +84,7 @@ impl ShadowSequencer {
         let chain_spec = InProcessBuilderConfig::chain_spec_from_genesis_json(&config.l2_genesis)
             .wrap_err("Failed to parse shadow builder L2 chain spec")?;
         let builder = InProcessBuilder::start(InProcessBuilderConfig {
+            runtime: InProcessNodeRuntime::SystemTest,
             chain_spec,
             datadir: None,
             jwt_secret: config.jwt_secret,
