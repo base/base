@@ -13,7 +13,7 @@ use super::ResultsTracker;
 /// Header notifications establish the measurement boundary promptly. The polling block watcher
 /// continues to scan full blocks and remains the sole source of inclusion-aware pacing pulses.
 #[derive(Debug)]
-pub(crate) struct CanonicalHeadWatcher {
+pub struct CanonicalHeadWatcher {
     ws_url: Url,
     results_tracker: ResultsTracker,
     cancel_token: CancellationToken,
@@ -21,7 +21,7 @@ pub(crate) struct CanonicalHeadWatcher {
 
 impl CanonicalHeadWatcher {
     /// Creates a canonical head watcher.
-    pub(crate) const fn new(
+    pub const fn new(
         ws_url: Url,
         results_tracker: ResultsTracker,
         cancel_token: CancellationToken,
@@ -30,7 +30,7 @@ impl CanonicalHeadWatcher {
     }
 
     /// Starts the watcher in a background task.
-    pub(crate) fn start(self) -> tokio::task::JoinHandle<()> {
+    pub fn start(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move { self.run().await })
     }
 

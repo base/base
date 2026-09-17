@@ -16,7 +16,7 @@ mod block_watcher;
 pub use block_watcher::{BlockClock, BlockPulse, BlockWatcher};
 
 mod canonical_head_watcher;
-pub(crate) use canonical_head_watcher::CanonicalHeadWatcher;
+pub use canonical_head_watcher::CanonicalHeadWatcher;
 
 mod inclusion;
 pub use inclusion::{InclusionPulse, InclusionSource};
