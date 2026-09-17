@@ -20,8 +20,7 @@ use super::{
     ChainSpecSource, InProcessBuilder, InProcessBuilderConfig, InProcessClient,
     InProcessClientConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
     InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
-    L2ContainerConfig,
-    SnapshotBoundary,
+    L2ContainerConfig, SnapshotBoundary,
 };
 use crate::{DevnetBlockInterval, DevnetSnapshotConfig};
 
