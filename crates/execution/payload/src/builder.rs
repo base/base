@@ -18,8 +18,8 @@ use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
-    estimated_da_size::DataAvailabilitySized,
+    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, PredicateDatabase,
+    ValidityPredicate, estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
@@ -979,7 +979,7 @@ where
     ) -> Result<Option<()>, PayloadBuilderError>
     where
         Builder: BlockBuilder<Primitives = Evm::Primitives>,
-        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
+        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: PredicateDatabase,
     {
         let gas_limit = builder.evm_mut().block().gas_limit();
         // If a gas limit is configured, use that limit as target if it's smaller, otherwise use
