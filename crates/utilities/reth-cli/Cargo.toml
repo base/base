@@ -13,7 +13,6 @@ workspace = true
 
 [dependencies]
 tar.workspace = true
-zstd.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 rayon.workspace = true
@@ -24,6 +23,7 @@ reth-node-core.workspace = true
 reth-prune-types.workspace = true
 reth-cli-commands.workspace = true
 base-common-chains.workspace = true
+zstd = { workspace = true, features = ["zstdmt"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -26,8 +26,8 @@ use aws_sdk_s3::{
     types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier},
 };
 use base_reth_cli::{
-    ChunkFilename, ComponentManifest, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotManifest,
-    SnapshotManifestExt,
+    ChunkFilename, ComponentManifest, ProgressDisplay, SnapshotArchiveSink, SnapshotArchiveWriter,
+    SnapshotManifest, SnapshotManifestExt,
 };
 use bytes::Bytes;
 use futures::stream::{self, StreamExt, TryStreamExt};
@@ -35,13 +35,13 @@ use tokio::{
     runtime::Handle,
     sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
-    time::sleep,
+    time::{MissedTickBehavior, interval, sleep},
 };
 use tracing::{debug, error, info, warn};
 
 use crate::{
     config::DEFAULT_MAX_STREAMING_PART_UPLOADS,
-    progress::{UploadProgress, UploadStage},
+    progress::{PROGRESS_LOG_INTERVAL, UploadProgress, UploadStage},
 };
 
 /// Maximum number of concurrent file uploads.
@@ -158,9 +158,9 @@ pub struct SnapshotUploader {
 ///
 /// Snapshot archive generation is synchronous (tar and zstd write through `io::Write`), whereas
 /// the AWS SDK is asynchronous. This type bridges those models with a bounded channel: complete
-/// 640 `MiB` parts are handed to an async task, and the synchronous producer blocks when that task
-/// has not consumed the previous part. Consequently, archive bytes are never staged in a local
-/// file and memory remains bounded per active archive.
+/// 128 `MiB` parts are handed to an async task, and the synchronous producer blocks when the global
+/// queued/in-flight part limit is reached. Consequently, archive bytes are never staged in a local
+/// file and aggregate memory remains bounded.
 ///
 /// Call [`Self::finish`] only after the archive writer has been finalized (for zstd, after
 /// `Encoder::finish`). Then call [`Self::complete`] to wait for S3 to complete the multipart
@@ -547,9 +547,15 @@ impl SnapshotUploader {
         let result = async {
             let mut completed_parts = Vec::new();
             let mut uploads = futures::stream::FuturesUnordered::new();
+            let started = std::time::Instant::now();
+            let mut progress = interval(PROGRESS_LOG_INTERVAL);
+            progress.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            progress.tick().await;
+            let mut bytes_received = 0u64;
             let mut bytes_uploaded = 0u64;
             let mut part_number = 1i32;
             let mut received_finish = false;
+            let mut input_finished_at = None;
 
             while !received_finish || !uploads.is_empty() {
                 tokio::select! {
@@ -559,6 +565,7 @@ impl SnapshotUploader {
                             bail!("streaming multipart upload for {key} exceeds S3's 10,000-part limit");
                         }
                         let part_len = u64::try_from(bytes.len())?;
+                        bytes_received = bytes_received.saturating_add(part_len);
                         let number = part_number;
                         let part_key = key.clone();
                         let part_upload_id = upload_id.clone();
@@ -570,6 +577,17 @@ impl SnapshotUploader {
                     }
                     Some(StreamingUploadMessage::Finish) => {
                         received_finish = true;
+                        input_finished_at = Some(std::time::Instant::now());
+                        info!(
+                            key = %key,
+                            compressed_size = %ProgressDisplay::bytes(bytes_received as f64),
+                            uploaded_size = %ProgressDisplay::bytes(bytes_uploaded as f64),
+                            pending_size = %ProgressDisplay::bytes(bytes_received.saturating_sub(bytes_uploaded) as f64),
+                            parts_completed = completed_parts.len(),
+                            parts_in_flight = uploads.len(),
+                            elapsed = %ProgressDisplay::duration(started.elapsed()),
+                            "streamed archive compression complete, draining uploads"
+                        );
                     }
                     None => bail!("streaming archive writer for {key} was dropped before it finalized the zstd stream"),
                     },
@@ -577,6 +595,20 @@ impl SnapshotUploader {
                         let (_number, part_len, completed) = result?;
                         completed_parts.push(completed);
                         bytes_uploaded = bytes_uploaded.saturating_add(part_len);
+                    }
+                    _ = progress.tick() => {
+                        info!(
+                            key = %key,
+                            uploaded_size = %ProgressDisplay::bytes(bytes_uploaded as f64),
+                            received_size = %ProgressDisplay::bytes(bytes_received as f64),
+                            pending_size = %ProgressDisplay::bytes(bytes_received.saturating_sub(bytes_uploaded) as f64),
+                            speed = %ProgressDisplay::speed(bytes_uploaded as f64 / started.elapsed().as_secs_f64()),
+                            parts_completed = completed_parts.len(),
+                            parts_in_flight = uploads.len(),
+                            input_finished = received_finish,
+                            elapsed = %ProgressDisplay::duration(started.elapsed()),
+                            "uploading streamed snapshot archive (progress)"
+                        );
                     }
                 }
             }
@@ -589,6 +621,7 @@ impl SnapshotUploader {
             }
 
             completed_parts.sort_unstable_by_key(|part| part.part_number);
+            let parts_completed = completed_parts.len();
 
             self.complete_streaming_multipart_upload(
                 &key,
@@ -597,6 +630,17 @@ impl SnapshotUploader {
                 completed_parts,
             )
             .await?;
+            info!(
+                key = %key,
+                uploaded_size = %ProgressDisplay::bytes(bytes_uploaded as f64),
+                speed = %ProgressDisplay::speed(bytes_uploaded as f64 / started.elapsed().as_secs_f64()),
+                parts_completed,
+                upload_drain_elapsed = %ProgressDisplay::duration(
+                    input_finished_at.map_or(Duration::ZERO, |finished| finished.elapsed())
+                ),
+                elapsed = %ProgressDisplay::duration(started.elapsed()),
+                "streamed snapshot archive upload complete"
+            );
             Ok(bytes_uploaded)
         }
         .await;
