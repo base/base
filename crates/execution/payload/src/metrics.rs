@@ -86,6 +86,38 @@ base_metrics::define_metrics! {
     tip_per_gas: histogram,
 }
 
+base_metrics::define_metrics! {
+    base_payload.prewarm,
+    struct = PrewarmMetrics,
+    #[describe("Payload builds with predicate-state prewarming active")]
+    jobs_total: counter,
+    #[describe("Transactions scanned by the prewarm lookahead cursor")]
+    transactions_scanned_total: counter,
+    #[describe("Distinct predicate-state keys scheduled to prewarm workers")]
+    keys_scheduled_total: counter,
+    #[describe("Predicate-state keys skipped as already scheduled within the same build")]
+    keys_deduped_total: counter,
+    #[describe("Predicate-state keys dropped because the prewarm queue was full")]
+    keys_dropped_full_total: counter,
+    #[describe("Predicate-state keys dropped because the per-build distinct-key cap was reached")]
+    keys_dropped_key_cap_total: counter,
+    #[describe("State reads performed by prewarm workers")]
+    #[label(kind)]
+    reads_total: counter,
+    #[describe("Failed prewarm state reads")]
+    warm_errors_total: counter,
+    #[describe("Failed parent state provider opens in prewarm workers")]
+    provider_open_errors_total: counter,
+    #[describe("Failed prewarm worker thread spawns")]
+    worker_spawn_errors_total: counter,
+    #[describe("Prewarm jobs dispatched to a subset of workers because others were busy")]
+    worker_busy_skips_total: counter,
+    #[describe("Prewarm dispatches rejected because the worker thread has exited")]
+    worker_disconnected_total: counter,
+    #[describe("Prewarm jobs skipped entirely because no worker was available")]
+    jobs_skipped_busy_total: counter,
+}
+
 impl ValidityMetrics {
     /// Records the total validity predicate evaluation time accumulated across one build.
     pub fn record_predicate_eval_duration(duration: Duration) {
