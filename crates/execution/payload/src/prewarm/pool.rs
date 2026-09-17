@@ -76,10 +76,24 @@ impl WorkerJob {
                 WarmJob::Key(key) => key.warm(&provider),
                 WarmJob::Simulate(job) => {
                     PrewarmMetrics::sim_executions_total().increment(1);
-                    (job.simulate)(&provider);
-                    // Mark the simulation complete only once its reads have landed, so a
-                    // build loop that reaches this transaction earlier is counted as
-                    // having overtaken the warm.
+                    // Isolate the full EVM run: a simulation panic (edge-case opcode or
+                    // upstream bug) must not unwind out of the worker loop and terminate
+                    // this worker permanently, which would degrade throughput for the
+                    // rest of the process. The overlay is throwaway, so nothing the
+                    // simulation touched can be left inconsistent.
+                    let simulate = &job.simulate;
+                    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        simulate(&provider);
+                    }))
+                    .is_err()
+                    {
+                        PrewarmMetrics::sim_panics_total().increment(1);
+                        warn!(target: TARGET, tx_hash = %job.tx_hash, "prewarm simulation panicked");
+                    }
+                    // Mark the simulation complete only once its reads have landed (or it
+                    // panicked), so a build loop that reaches this transaction earlier is
+                    // counted as having overtaken the warm and the pending count never
+                    // permanently drifts.
                     self.scheduler.finish_simulation(&job.tx_hash);
                 }
             }

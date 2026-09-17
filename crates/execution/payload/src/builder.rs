@@ -809,11 +809,10 @@ where
         let simulate = move |provider: &CachedStateProvider<StateProviderBox>| {
             // A fresh throwaway overlay per simulation: simulated writes land here and
             // are dropped with it, so they never reach the build's database. Only the
-            // reads reach the provider, which fills the shared cache.
-            let mut db = State::builder()
-                .with_database(StateProviderDatabase::new(provider))
-                .with_bundle_update()
-                .build();
+            // reads reach the provider, which fills the shared cache. No bundle tracking:
+            // the output is discarded, so accumulating state changes would only allocate.
+            let mut db =
+                State::builder().with_database(StateProviderDatabase::new(provider)).build();
             let mut evm = evm_config.evm_with_env(&mut db, evm_env.clone());
             // A revert or halt is a legitimate outcome that still warmed reads; only a
             // database or environment failure is an error.

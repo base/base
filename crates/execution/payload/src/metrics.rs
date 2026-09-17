@@ -128,6 +128,8 @@ base_metrics::define_metrics! {
     sim_executions_total: counter,
     #[describe("Prewarm transaction simulations that failed to execute")]
     sim_exec_errors_total: counter,
+    #[describe("Prewarm transaction simulations that panicked and were isolated by the worker")]
+    sim_panics_total: counter,
     #[describe(
         "Build-loop candidates consumed while their simulation prewarm job was still queued or in flight"
     )]
