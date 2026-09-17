@@ -244,8 +244,9 @@ mod tests {
                                 "reth_base_node_upgrades{{upgrade=\"{upgrade}\"}} {time}"
                             )
                         })
-                    })
-                {
+                    }) && body.lines().any(|line| {
+                    line == "reth_base_upgrade_signal_mode_info{layer=\"el\",mode=\"disabled\"} 1"
+                }) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
