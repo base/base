@@ -101,7 +101,7 @@ test: install-nextest build::contracts build::elfs
 
 # Checks published Base snapshot manifests without downloading snapshot archives (live network)
 check-snapshot-manifests:
-    python3 etc/scripts/ci/check-snapshot-manifests.py
+    cargo test --locked -p base --test snapshot_defaults -- --ignored --nocapture
 
 # Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs
