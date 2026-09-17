@@ -555,6 +555,11 @@ impl ResultsTracker {
         self.inner.read().measurement_finished
     }
 
+    /// Records that a canonical head was observed, independently of transaction hash scanning.
+    pub fn observe_measurement_block(&self, block_number: u64) {
+        self.inner.write().observe_measurement_block(block_number);
+    }
+
     /// Returns the configured measurement window boundaries.
     pub fn measurement_window(&self) -> MeasurementWindow {
         let inner = self.inner.read();

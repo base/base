@@ -292,6 +292,8 @@ pub struct LoadConfig {
     pub max_gas_price: u128,
     /// Optional builder flashblocks WebSocket used for early inclusion signals.
     pub flashblocks_ws: Option<Url>,
+    /// Optional canonical `newHeads` WebSocket used for lightweight block-boundary pacing.
+    pub canonical_heads_ws: Option<Url>,
     /// Fraction of transactions that draw a fresh recipient address instead of cycling through
     /// the sender pool. Used to drive account-trie fan-out for account-create workloads.
     pub fresh_recipient_ratio: f64,
@@ -334,6 +336,7 @@ impl LoadConfig {
             batch_size: crate::rpc::MAX_BATCH_RPC_SIZE,
             max_gas_price: DEFAULT_MAX_GAS_PRICE,
             flashblocks_ws: None,
+            canonical_heads_ws: None,
             fresh_recipient_ratio: 0.0,
             validity_ratio: 0.0,
             validity_predicates: Vec::new(),
@@ -445,6 +448,12 @@ impl LoadConfig {
         }
         if self.flashblocks_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss")) {
             return Err(BaselineError::Config("flashblocks_ws must use ws:// or wss://".into()));
+        }
+        if self.canonical_heads_ws.as_ref().is_some_and(|url| !matches!(url.scheme(), "ws" | "wss"))
+        {
+            return Err(BaselineError::Config(
+                "canonical_heads_ws must use ws:// or wss://".into(),
+            ));
         }
         Ok(())
     }
