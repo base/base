@@ -21,7 +21,7 @@ use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidi
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    mdbx::{DatabaseArguments, GIGABYTE, KILOBYTE, MaxReadTransactionDuration},
 };
 use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
@@ -490,7 +490,10 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
         db_path,
         DatabaseArguments::new(ClientVersion::default())
             .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
-            .with_geometry_max_size(Some(4 * MEGABYTE))
+            // This is a virtual MDBX map limit rather than an eagerly allocated file. A 4 MiB
+            // map can overflow during the high-concurrency fresh-devnet benchmarks before their
+            // duration elapses, killing the Engine API and leaving the consensus task retrying.
+            .with_geometry_max_size(Some(4 * GIGABYTE))
             .with_growth_step(Some(4 * KILOBYTE)),
     )
     .wrap_err("Failed to initialize database")?;
