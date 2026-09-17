@@ -195,7 +195,6 @@ const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
 const LOCAL_RESULT_FILE_NAME: &str = "load-test-result.json";
 const FRESH_DEVNET_BLOCK_TIME: Duration = Duration::from_secs(2);
-const FRESH_DEVNET_CHAIN_ID: u64 = 84_538_453;
 const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
 const FRESH_DEVNET_BERYL_ACTIVATION_BLOCK: u64 = 3;
 const FRESH_DEVNET_BERYL_READY_BLOCK: u64 = FRESH_DEVNET_BERYL_ACTIVATION_BLOCK + 1;
@@ -352,6 +351,7 @@ impl LocalBenchmarkArgs {
 
         let client_version =
             self.client_version.clone().unwrap_or_else(|| "base/unknown".to_string());
+        let chain_id = DevnetConfig::standard().l2_chain_id;
         let mut result_runs = Vec::with_capacity(workload_config.benchmark_workloads.len());
         let mut visualizer_runs = Vec::with_capacity(workload_config.benchmark_workloads.len());
         let mut workload_names = BTreeSet::new();
@@ -401,7 +401,7 @@ impl LocalBenchmarkArgs {
                         serde_json::Value::String("fresh-devnet".to_string()),
                     ),
                     ("Scenario".to_string(), serde_json::Value::String(workload.workload)),
-                    ("ChainId".to_string(), FRESH_DEVNET_CHAIN_ID.into()),
+                    ("ChainId".to_string(), chain_id.into()),
                     ("BlockTimeMilliseconds".to_string(), 2_000.into()),
                     ("NodeType".to_string(), serde_json::Value::String("fresh-devnet".to_string())),
                     (
