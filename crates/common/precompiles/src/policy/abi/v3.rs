@@ -76,7 +76,7 @@ sol! {
         /// Introduced in V2 (Cobalt). Read function for composite policy child IDs.
         function compositePolicyChildIds(uint64 policyId) external view returns (uint64[] memory);
         /// Introduced in V3 (Denim). Flips bit 63 of a policy ID without reading state.
-        function invertedPolicyId(uint64 policyId) external view returns (uint64);
+        function invertedPolicyId(uint64 policyId) external pure returns (uint64);
     }
 }
 
