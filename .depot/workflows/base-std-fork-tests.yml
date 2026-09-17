@@ -49,6 +49,12 @@ jobs:
       BASE_STD_REF: ${{ matrix.base_std_ref }}
       # Consumed by base-std's fork harness to launch `anvil --base $BASE_UPGRADE`.
       BASE_UPGRADE: ${{ matrix.upgrade }}
+      # Fork tests execute in forge's own EVM, not the anvil node, so forge must
+      # inject the same precompile upgrade as anvil. base-std's `[profile.fork]`
+      # pins `base = true` (base-anvil's default upgrade, Cobalt); without this
+      # override forge would run V2 precompiles while the suite expects the
+      # selected fork's behavior. Figment maps FOUNDRY_BASE onto the `base` key.
+      FOUNDRY_BASE: ${{ matrix.upgrade }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
