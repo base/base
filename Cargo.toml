@@ -512,7 +512,6 @@ discv5 = "0.10"
 libp2p = "0.56.0"
 multihash = "0.19"
 libp2p-identity = "0.2.12"
-libp2p-stream = "0.4.0-alpha"
 unsigned-varint = { version = "0.8", default-features = false }
 
 # serde

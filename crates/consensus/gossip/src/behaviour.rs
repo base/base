@@ -42,10 +42,6 @@ pub struct Behaviour {
     /// Enables the identify protocol.
     #[debug(skip)]
     pub identify: libp2p::identify::Behaviour,
-    /// Enables the sync request/response protocol.
-    /// See `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-    #[debug(skip)]
-    pub sync_req_resp: libp2p_stream::Behaviour,
 }
 
 impl Behaviour {
@@ -83,8 +79,6 @@ impl Behaviour {
                 .with_agent_version("base".to_string()),
         );
 
-        let sync_req_resp = libp2p_stream::Behaviour::new();
-
         let subscriptions = handlers
             .iter()
             .flat_map(|handler| {
@@ -109,7 +103,7 @@ impl Behaviour {
             info!(target: "gossip", topic = %topic, "Subscribed");
         }
 
-        Ok(Self { connection_limits, identify, ping, gossipsub, sync_req_resp })
+        Ok(Self { connection_limits, identify, ping, gossipsub })
     }
 }
 

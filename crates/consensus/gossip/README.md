@@ -7,6 +7,9 @@ that subscribes to unsafe block topics and propagates validated payloads. `Block
 validates incoming blocks against the rollup config, `ConnectionGater` enforces IP-based rate
 limits and peer bans, and Prometheus metrics are recorded via `Metrics`.
 
+Base does not advertise or implement the legacy op-node `payload_by_number` request-response
+protocol. This does not affect execution-layer synchronization or HTTP follow-mode payload fetching.
+
 Block topics retire according to the configured fork schedule once every pre-fork block is
 outside the 60-second gossip age window. Startup skips already-retired topics, and the driver
 checks for retirement every five seconds while running, including when idle. Inbound decoding
@@ -32,6 +35,7 @@ directly disconnect its peers, but an old-topic-only connection may subsequently
 Coverage includes a real-TCP mixed-subscription peer test in this crate, production-handler
 delivery into an action-test verifier (`unsafe_gossip`), and a Docker-backed system test
 (`gossip_topic_retirement`) that checks peer-topic RPCs and unsafe sync with batching stopped.
+
 
 ## Key Components
 
