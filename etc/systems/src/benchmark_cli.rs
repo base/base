@@ -6,7 +6,6 @@ use std::{
     io::Write as _,
     num::NonZeroU64,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -29,6 +28,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 
 use crate::{
     ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, DevnetBlockInterval, DevnetConfig,
@@ -291,7 +291,7 @@ impl LocalBenchmarkArgs {
 
             if deploy_devnet_swap_harness {
                 println!("deploying fresh devnet swap harness");
-                let harness = Self::deploy_devnet_swap_harness(&builder_rpc)?;
+                let harness = Self::deploy_devnet_swap_harness(&builder_rpc).await?;
                 Self::apply_devnet_swap_harness(&mut test_config, harness)?;
             }
 
@@ -452,7 +452,9 @@ impl LocalBenchmarkArgs {
         Ok(())
     }
 
-    fn deploy_devnet_swap_harness(builder_rpc: &url::Url) -> Result<DevnetSwapHarnessAddresses> {
+    async fn deploy_devnet_swap_harness(
+        builder_rpc: &url::Url,
+    ) -> Result<DevnetSwapHarnessAddresses> {
         let contracts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEVNET_SWAP_CONTRACTS_DIR);
         eyre::ensure!(
             contracts_dir.is_dir(),
@@ -464,6 +466,7 @@ impl LocalBenchmarkArgs {
             .args(["soldeer", "install"])
             .current_dir(&contracts_dir)
             .output()
+            .await
             .wrap_err("failed to execute forge soldeer install for devnet swap harness")?;
         if !install_output.status.success() {
             eyre::bail!(
@@ -483,6 +486,7 @@ impl LocalBenchmarkArgs {
             .arg("--broadcast")
             .current_dir(&contracts_dir)
             .output()
+            .await
             .wrap_err("failed to execute devnet swap harness deployment")?;
         let deploy_logs = format!(
             "{}\n{}",
@@ -492,49 +496,49 @@ impl LocalBenchmarkArgs {
         if !deploy_output.status.success() {
             eyre::bail!("devnet swap harness deployment failed:\n{deploy_logs}");
         }
+        Self::parse_devnet_swap_harness_addresses(&deploy_logs)
+    }
 
-        let mut usdc = None;
-        let mut uniswap_router = None;
-        let mut aerodrome_router = None;
+    fn parse_devnet_swap_harness_addresses(
+        deploy_logs: &str,
+    ) -> Result<DevnetSwapHarnessAddresses> {
+        let usdc = Self::parse_deployed_address_from_logs(deploy_logs, "USDC:", "USDC")?;
+        let uniswap_router = Self::parse_deployed_address_from_logs(
+            deploy_logs,
+            "Uniswap router shim:",
+            "Uniswap router",
+        )?;
+        let aerodrome_router = Self::parse_deployed_address_from_logs(
+            deploy_logs,
+            "Aerodrome router shim:",
+            "Aerodrome router",
+        )?;
+        Ok(DevnetSwapHarnessAddresses { usdc, uniswap_router, aerodrome_router })
+    }
+
+    fn parse_deployed_address_from_logs(
+        deploy_logs: &str,
+        marker: &str,
+        deployment_name: &str,
+    ) -> Result<Address> {
         for line in deploy_logs.lines() {
-            let fields: Vec<_> = line.split_whitespace().collect();
-            if fields.len() >= 2 && fields[0] == "USDC:" {
-                usdc = Some(fields[1].parse::<Address>().wrap_err_with(|| {
-                    format!("failed to parse deployed USDC address from line: {line}")
-                })?);
+            let Some((_, rest)) = line.split_once(marker) else {
                 continue;
+            };
+
+            for token in rest.split_whitespace() {
+                let token = token.trim_matches(|char| {
+                    matches!(char, ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '"')
+                });
+                if let Ok(address) = token.parse::<Address>() {
+                    return Ok(address);
+                }
             }
-            if fields.len() >= 4
-                && fields[0] == "Uniswap"
-                && fields[1] == "router"
-                && fields[2] == "shim:"
-            {
-                uniswap_router = Some(fields[3].parse::<Address>().wrap_err_with(|| {
-                    format!("failed to parse deployed Uniswap router address from line: {line}")
-                })?);
-                continue;
-            }
-            if fields.len() >= 4
-                && fields[0] == "Aerodrome"
-                && fields[1] == "router"
-                && fields[2] == "shim:"
-            {
-                aerodrome_router = Some(fields[3].parse::<Address>().wrap_err_with(|| {
-                    format!("failed to parse deployed Aerodrome router address from line: {line}")
-                })?);
-            }
+
+            eyre::bail!("failed to parse deployed {deployment_name} address from line: {line}");
         }
 
-        let usdc = usdc
-            .ok_or_else(|| eyre::eyre!("missing USDC address in devnet swap harness deployment"))?;
-        let uniswap_router = uniswap_router.ok_or_else(|| {
-            eyre::eyre!("missing Uniswap router address in devnet swap harness deployment")
-        })?;
-        let aerodrome_router = aerodrome_router.ok_or_else(|| {
-            eyre::eyre!("missing Aerodrome router address in devnet swap harness deployment")
-        })?;
-
-        Ok(DevnetSwapHarnessAddresses { usdc, uniswap_router, aerodrome_router })
+        eyre::bail!("missing {deployment_name} address in devnet swap harness deployment")
     }
 
     fn apply_devnet_swap_harness(
@@ -1360,6 +1364,31 @@ benchmark_workloads:
         let config: LocalBenchmarkWorkloadConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.benchmark_workloads.len(), 1);
         assert!(config.benchmark_workloads[0].deploy_devnet_swap_harness);
+    }
+
+    #[test]
+    fn parses_devnet_swap_harness_deployment_logs() {
+        let usdc = Address::repeat_byte(0x11);
+        let uniswap_router = Address::repeat_byte(0x22);
+        let aerodrome_router = Address::repeat_byte(0x33);
+        let logs = format!(
+            "compiling contracts\nUSDC: [{usdc}]\nUniswap router shim: ({uniswap_router})\nAerodrome router shim: {aerodrome_router};\ndeployment complete"
+        );
+
+        let parsed = LocalBenchmarkArgs::parse_devnet_swap_harness_addresses(&logs).unwrap();
+
+        assert_eq!(parsed.usdc, usdc);
+        assert_eq!(parsed.uniswap_router, uniswap_router);
+        assert_eq!(parsed.aerodrome_router, aerodrome_router);
+    }
+
+    #[test]
+    fn devnet_swap_harness_log_parsing_requires_all_addresses() {
+        let logs = format!("USDC: {}", Address::repeat_byte(0x11));
+
+        let err = LocalBenchmarkArgs::parse_devnet_swap_harness_addresses(&logs).unwrap_err();
+
+        assert!(err.to_string().contains("missing Uniswap router address"));
     }
 
     #[test]
