@@ -237,6 +237,14 @@ pub struct Args {
     #[arg(long = "builder.predicate-eval-hard-cutoff-ms", default_value = "10")]
     pub predicate_eval_hard_cutoff_ms: u64,
 
+    /// Parked predicate bucket depth at which state wakeups become threshold-aware.
+    #[arg(
+        long = "builder.predicate-bucket-ordered-threshold",
+        default_value = "32",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    pub predicate_bucket_ordered_threshold: usize,
+
     /// URL of the audit-archiver RPC endpoint for forwarding rejected transactions
     #[arg(long = "builder.audit-archiver-url", env = "BUILDER_AUDIT_ARCHIVER_URL")]
     pub audit_archiver_url: Option<String>,
@@ -371,6 +379,7 @@ impl Default for Args {
             max_uncompressed_block_size: None,
             metering_wait_duration_ms: None,
             predicate_eval_hard_cutoff_ms: 10,
+            predicate_bucket_ordered_threshold: 32,
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
@@ -457,6 +466,7 @@ impl Args {
             max_uncompressed_block_size: self.max_uncompressed_block_size,
             metering_wait_duration: self.metering_wait_duration_ms.map(Duration::from_millis),
             predicate_eval_hard_cutoff: Duration::from_millis(self.predicate_eval_hard_cutoff_ms),
+            predicate_bucket_ordered_threshold: self.predicate_bucket_ordered_threshold,
             metering_provider,
             rejection_cache: RejectionCache::new(
                 self.rejection_cache_max_capacity,
@@ -771,6 +781,20 @@ mod tests {
         let args = Args { predicate_eval_hard_cutoff_ms: input, ..Default::default() };
         let config = convert(args);
         assert_eq!(config.predicate_eval_hard_cutoff, expected);
+    }
+
+    #[test]
+    fn predicate_bucket_threshold_is_nonzero_and_propagated() {
+        let config = convert(Args { predicate_bucket_ordered_threshold: 64, ..Default::default() });
+        assert_eq!(config.predicate_bucket_ordered_threshold, 64);
+        assert!(
+            CommandParser::try_parse_from([
+                "builder",
+                "--builder.predicate-bucket-ordered-threshold",
+                "0",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

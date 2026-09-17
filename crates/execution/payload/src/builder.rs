@@ -995,7 +995,8 @@ where
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
-        let mut predicate_index = ParkedPredicateIndex::default();
+        let mut predicate_index =
+            ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
@@ -1173,7 +1174,11 @@ where
                         }
                         continue;
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired: false }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied {
+                        blocker,
+                        blocker_index,
+                        expired: false,
+                    }) => {
                         ValidityMetrics::validity_predicate_evaluations_total("not_satisfied")
                             .increment(1);
                         trace!(
@@ -1193,7 +1198,8 @@ where
                                     "defer_detail" => "a validity predicate is not satisfied by the current build state",
                                 }
                             );
-                            predicate_index.park(tx_hash, tx, blocker);
+                            let predicate = tx.validity_predicates()[blocker_index].clone();
+                            predicate_index.park(tx_hash, tx, predicate);
                         } else {
                             emit_native_validity_event!(
                                 self,
@@ -1486,12 +1492,14 @@ where
                         predicate_index.remove(parked_hash);
                         best_txs.promote(parked_hash);
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker_index, .. }) => {
                         ValidityMetrics::validity_predicate_evaluations_total(
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        predicate_index.reindex(parked_hash, blocker);
+                        let predicate =
+                            parked_transaction.validity_predicates()[blocker_index].clone();
+                        predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
                         ValidityMetrics::validity_predicate_evaluations_total("rescan_read_error")

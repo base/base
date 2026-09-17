@@ -199,10 +199,10 @@ mod tests {
     use std::time::Duration;
 
     use alloy_primitives::{Address, B256, U256};
+    use base_execution_txpool::{ValidityOperator, ValidityPredicate};
     use metrics_exporter_prometheus::PrometheusBuilder;
 
     use super::*;
-    use crate::ValidityPredicateKey;
 
     #[test]
     fn records_predicate_metrics() {
@@ -216,7 +216,15 @@ mod tests {
         tracker.record_slot(account, slot);
 
         let mut index = ParkedPredicateIndex::default();
-        index.park(B256::with_last_byte(1), (), ValidityPredicateKey::Balance(account));
+        index.park(
+            B256::with_last_byte(1),
+            (),
+            ValidityPredicate::Balance {
+                address: account,
+                op: ValidityOperator::Equal,
+                value: U256::ZERO,
+            },
+        );
 
         metrics::with_local_recorder(&recorder, || {
             ValidityMetrics::record_predicate_eval_duration(Duration::from_millis(500));

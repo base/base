@@ -276,7 +276,7 @@ mod tests {
             assert_eq!(
                 ValidityPredicateKey::first_unsatisfied(&predicates, &mut recorder, &context())
                     .unwrap(),
-                Some(ValidityPredicateKey::Balance(address))
+                Some((0, ValidityPredicateKey::Balance(address)))
             );
         }
 
