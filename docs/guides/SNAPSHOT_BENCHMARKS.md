@@ -76,6 +76,11 @@ datadirs are expected to be disposable writable clones. Pass a nonzero
 `--shutdown-timeout-seconds` (for example, `10`) to request the old bounded
 graceful teardown.
 
+The local sequencer defaults to a 10 Ggas block limit for 2s workloads and a 1 Ggas block limit for
+200ms workloads, keeping theoretical block capacity at 5 Ggas/s for both cadences. Pass
+`--block-gas-limit <gas>` to override the cadence default for a benchmark run. The load-test YAML's
+`block_gas_limit` setting only controls load-generator pacing and does not change produced blocks.
+
 Each `--output-dir` is a self-contained `base/benchmark` input directory:
 
 ```text
