@@ -2,7 +2,6 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 use base_protocol::BlockInfo;
-use derive_more::Constructor;
 use tokio::sync::mpsc;
 
 use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResult};
@@ -23,15 +22,34 @@ pub trait L1WatcherDerivationClient: Debug + Send + Sync {
 }
 
 /// Client to use to send messages to the [`crate::DerivationActor`]'s inbound channel.
-#[derive(Constructor, Debug)]
+#[derive(Debug)]
 pub struct QueuedL1WatcherDerivationClient {
     /// A channel to use to send the [`DerivationActorRequest`]s to the [`crate::DerivationActor`].
     pub derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+    /// Whether requests should be sent to a derivation actor.
+    pub enabled: bool,
+}
+
+impl QueuedL1WatcherDerivationClient {
+    /// Creates an enabled derivation client.
+    pub const fn new(derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>) -> Self {
+        Self { derivation_actor_request_tx, enabled: true }
+    }
+
+    /// Creates a disabled derivation client for a node without a derivation actor.
+    pub const fn disabled(
+        derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+    ) -> Self {
+        Self { derivation_actor_request_tx, enabled: false }
+    }
 }
 
 #[async_trait]
 impl L1WatcherDerivationClient for QueuedL1WatcherDerivationClient {
     async fn send_finalized_l1_block(&self, block: BlockInfo) -> DerivationClientResult<()> {
+        if !self.enabled {
+            return Ok(());
+        }
         trace!(target: "l1_watcher", ?block, "Sending finalized l1 block to derivation actor.");
         let _ = self
             .derivation_actor_request_tx
@@ -45,6 +63,9 @@ impl L1WatcherDerivationClient for QueuedL1WatcherDerivationClient {
     }
 
     async fn send_new_l1_head(&self, block: BlockInfo) -> DerivationClientResult<()> {
+        if !self.enabled {
+            return Ok(());
+        }
         trace!(target: "l1_watcher", ?block, "Sending new l1 head to derivation actor.");
         self.derivation_actor_request_tx
             .send(DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::new(block)))

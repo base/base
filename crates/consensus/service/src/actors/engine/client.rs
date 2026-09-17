@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use base_consensus_derive::Signal;
 use base_protocol::L2BlockInfo;
-use derive_more::Constructor;
 use tokio::sync::mpsc;
 
 use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResult};
@@ -27,15 +26,34 @@ pub trait EngineDerivationClient: Debug + Send + Sync {
 }
 
 /// Client to use to send messages to the [`crate::DerivationActor`]'s inbound channel.
-#[derive(Constructor, Debug)]
+#[derive(Debug)]
 pub struct QueuedEngineDerivationClient {
     /// A channel to use to send the [`DerivationActorRequest`]s to the [`crate::DerivationActor`].
     pub derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+    /// Whether requests should be sent to a derivation actor.
+    pub enabled: bool,
+}
+
+impl QueuedEngineDerivationClient {
+    /// Creates an enabled derivation client.
+    pub const fn new(derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>) -> Self {
+        Self { derivation_actor_request_tx, enabled: true }
+    }
+
+    /// Creates a disabled derivation client for a node without a derivation actor.
+    pub const fn disabled(
+        derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+    ) -> Self {
+        Self { derivation_actor_request_tx, enabled: false }
+    }
 }
 
 #[async_trait]
 impl EngineDerivationClient for QueuedEngineDerivationClient {
     async fn notify_sync_completed(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()> {
+        if !self.enabled {
+            return Ok(());
+        }
         info!(target: "engine", "Sending sync completed to derivation actor");
 
         self.derivation_actor_request_tx
@@ -52,6 +70,9 @@ impl EngineDerivationClient for QueuedEngineDerivationClient {
         &self,
         safe_head: L2BlockInfo,
     ) -> DerivationClientResult<()> {
+        if !self.enabled {
+            return Ok(());
+        }
         info!(target: "engine", safe_head = ?safe_head, "Sending new safe head to derivation actor");
 
         self.derivation_actor_request_tx
@@ -65,6 +86,9 @@ impl EngineDerivationClient for QueuedEngineDerivationClient {
     }
 
     async fn send_signal(&self, signal: Signal) -> DerivationClientResult<()> {
+        if !self.enabled {
+            return Ok(());
+        }
         info!(target: "engine", signal = ?signal, "Sending signal to derivation actor");
 
         self.derivation_actor_request_tx
