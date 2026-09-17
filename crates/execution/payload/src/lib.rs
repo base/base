@@ -53,7 +53,8 @@ pub use types::BasePayloadTypes;
 
 mod validity;
 pub use validity::{
-    ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 pub mod validator;
