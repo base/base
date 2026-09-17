@@ -365,7 +365,6 @@ mod tests {
     use alloc::vec;
 
     use alloy_eips::eip2718::Encodable2718;
-
     use alloy_primitives::Bytes;
     use base_common_consensus::{Eip8130Signed, TxEip8130};
 
