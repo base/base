@@ -1,12 +1,18 @@
 //! Additional configuration for the Base payload builder.
 
 use std::{
+    fmt,
     path::Path,
     sync::{Arc, atomic::AtomicU64},
     time::Duration,
 };
 
 use alloy_primitives::TxHash;
+use reth_engine_tree::tree::instrumented_state::{InstrumentedStateProvider, StateProviderStats};
+use reth_execution_cache::{
+    CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider, ExecutionCache,
+};
+use reth_storage_api::{StateProvider, StateProviderBox};
 use revm::state::EvmState;
 use tracing::{debug, warn};
 
@@ -38,6 +44,13 @@ pub struct BaseBuilderConfig {
     /// skipped for the current scan via `PayloadTransactions::mark_invalid`;
     /// skipping those descendants across later jobs is Flashblocks-only.
     pub rejection_cache: RejectionCache,
+    /// Whether to record per-call state fetch latency for the build loop.
+    ///
+    /// Mirrors the Flashblocks builder: wraps the payload builder's state provider so account,
+    /// storage, and code reads are timed under `sync.state_provider` with a `builder` source
+    /// label. Adds overhead to every state read, so it follows reth's
+    /// `--engine.state-provider-metrics` and stays off by default.
+    pub state_provider_metrics: bool,
 }
 
 impl Default for BaseBuilderConfig {
@@ -49,6 +62,7 @@ impl Default for BaseBuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            state_provider_metrics: false,
         }
     }
 }
@@ -67,7 +81,15 @@ impl BaseBuilderConfig {
             predicate_eval_hard_cutoff: Duration::from_millis(10),
             resource_metering: ResourceMeteringConfig::default(),
             rejection_cache: RejectionCache::default(),
+            state_provider_metrics: false,
         }
+    }
+
+    /// Sets whether build-loop state reads are timed.
+    #[must_use]
+    pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
+        self.state_provider_metrics = enabled;
+        self
     }
 
     /// Sets resource-unit metering used to throttle transactions in the native
@@ -406,6 +428,70 @@ impl GasLimitConfig {
     /// Sets the gas limit for a transaction. 0 means use the default gas limit.
     pub fn set_gas_limit(&self, gas_limit: u64) {
         self.gas_limit.store(gas_limit, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// The state provider a payload builder reads through, plus the handles needed to observe it.
+///
+/// Both Base payload builders compose the same stack, so it is constructed here to keep them
+/// from drifting apart.
+pub struct BuilderStateProvider {
+    provider: StateProviderBox,
+    stats: Option<Arc<StateProviderStats>>,
+}
+
+impl fmt::Debug for BuilderStateProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuilderStateProvider")
+            .field("instrumented", &self.stats.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl BuilderStateProvider {
+    /// Composes the decorators over `state_provider`.
+    pub fn new<S>(
+        state_provider: S,
+        execution_cache: Option<ExecutionCache>,
+        instrument: bool,
+    ) -> Self
+    where
+        S: StateProvider + Send + 'static,
+    {
+        let mut provider: StateProviderBox = Box::new(state_provider);
+        if let Some(cache) = execution_cache {
+            provider = Box::new(CachedStateProvider::new(
+                provider,
+                cache,
+                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
+            ));
+        }
+
+        // `InstrumentedStateProvider` must stay outside `CachedStateProvider` so cache hits are
+        // timed as well as read-throughs, otherwise a warm cache would look like no improvement.
+        let mut stats = None;
+        if instrument {
+            let instrumented = InstrumentedStateProvider::new(provider, "builder");
+            stats = Some(instrumented.stats());
+            provider = Box::new(instrumented);
+        }
+
+        Self { provider, stats }
+    }
+
+    /// Accumulated read counts and latencies, present only when instrumentation is enabled.
+    pub const fn stats(&self) -> Option<&Arc<StateProviderStats>> {
+        self.stats.as_ref()
+    }
+
+    /// Borrows the composed provider.
+    pub fn provider(&self) -> &dyn StateProvider {
+        self.provider.as_ref()
+    }
+
+    /// Consumes the wrapper, yielding the composed provider.
+    pub fn into_provider(self) -> StateProviderBox {
+        self.provider
     }
 }
 
