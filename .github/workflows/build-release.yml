@@ -169,7 +169,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag }}"
+          shopt -s nullglob
           files=("${{ matrix.binary }}-${TAG}-${{ matrix.target.triple }}.tar.gz"*)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "::error::No binary artifacts found for ${{ matrix.binary }}-${TAG}-${{ matrix.target.triple }}"
+            exit 1
+          fi
           gh release upload --clobber "$TAG" "${files[@]}"
 
   # Build multi-arch Docker images
