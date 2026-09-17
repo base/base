@@ -153,6 +153,25 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Create or reuse GitHub Release
+        if: inputs.is_final
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "" --draft || gh release view "$TAG" > /dev/null
+          fi
+
+      - name: Upload binary to GitHub Release
+        if: inputs.is_final
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          files=("${{ matrix.binary }}-${TAG}-${{ matrix.target.triple }}.tar.gz"*)
+          gh release upload --clobber "$TAG" "${files[@]}"
+
   # Build multi-arch Docker images
   build-and-push:
     strategy:
@@ -236,14 +255,13 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Check which release artifacts exist after partial matrix failures
-  find-release-artifacts:
-    needs: [build-and-push, build-binaries]
+  # Check which Docker artifacts exist after partial matrix failures
+  find-docker-artifacts:
+    needs: [build-and-push]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     outputs:
       has_digests: ${{ steps.artifacts.outputs.has_digests }}
-      has_binaries: ${{ steps.artifacts.outputs.has_binaries }}
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -251,7 +269,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Find release artifacts
+      - name: Find Docker artifacts
         id: artifacts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -263,22 +281,19 @@ jobs:
           artifact_names=$(gh api "repos/$GH_REPO/actions/runs/$GH_RUN_ID/artifacts" --paginate --jq '.artifacts[].name')
 
           has_digests=false
-          has_binaries=false
 
           while IFS= read -r name; do
-            case "$name" in
-              digests-*) has_digests=true ;;
-              binaries-*) has_binaries=true ;;
-            esac
+            if [[ "$name" == digests-* ]]; then
+              has_digests=true
+            fi
           done <<< "$artifact_names"
 
           echo "has_digests=$has_digests" >> "$GITHUB_OUTPUT"
-          echo "has_binaries=$has_binaries" >> "$GITHUB_OUTPUT"
 
   # Merge Docker manifests and publish
   publish:
-    needs: [find-release-artifacts]
-    if: ${{ !cancelled() && (needs.find-release-artifacts.outputs.has_digests == 'true' || (inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true')) }}
+    needs: [find-docker-artifacts]
+    if: ${{ !cancelled() && needs.find-docker-artifacts.outputs.has_digests == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -295,7 +310,6 @@ jobs:
           fetch-tags: true
 
       - name: Download digests
-        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/digests-base
@@ -303,7 +317,6 @@ jobs:
           merge-multiple: true
 
       - name: Login to GHCR
-        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
@@ -311,11 +324,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Create manifest lists and push
-        if: needs.find-release-artifacts.outputs.has_digests == 'true'
         id: create-manifest
         run: |
           set -euo pipefail
@@ -369,40 +380,14 @@ jobs:
           fi
           echo "pushed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        if: inputs.is_final && (steps.create-manifest.outputs.pushed == 'true' || needs.find-release-artifacts.outputs.has_binaries == 'true')
+      - name: Create or reuse GitHub Release
+        if: inputs.is_final && steps.create-manifest.outputs.pushed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag }}"
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "GitHub Release $TAG already exists, skipping creation"
-          else
-            gh release create "$TAG" --title "$TAG" --notes "" --draft
-          fi
-
-      - name: Download binary artifacts
-        if: inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: ${{ runner.temp }}/binaries
-          pattern: binaries-*
-          merge-multiple: true
-
-      - name: Upload binaries to GitHub Release
-        if: inputs.is_final && needs.find-release-artifacts.outputs.has_binaries == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ inputs.tag }}"
-          BINARY_DIR="${{ runner.temp }}/binaries"
-          mkdir -p "$BINARY_DIR"
-          shopt -s nullglob
-          files=("$BINARY_DIR"/*.tar.gz "$BINARY_DIR"/*.tar.gz.sha256 "$BINARY_DIR"/*.tar.gz.asc)
-          if [[ ${#files[@]} -eq 0 ]]; then
-            echo "::warning::No binary artifacts found — all binary builds may have failed, skipping upload"
-          else
-            gh release upload --clobber "$TAG" "${files[@]}"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "" --draft || gh release view "$TAG" > /dev/null
           fi
 
       - name: Summary
