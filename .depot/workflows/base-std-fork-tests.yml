@@ -112,10 +112,26 @@ jobs:
 
           cd "$BASE_ANVIL_DIR"
           rustup show active-toolchain
-          cargo \
-            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\"" \
-            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\"" \
-            build --release --no-default-features --features anvil/cli -p anvil -p forge
+
+          # anvil's lockfile pins these crates at 0.0.0 from a stale git rev. A
+          # release-version-sync PR bumps workspace.package.version, and cargo
+          # then ignores the path patch unless the lock is updated to the new
+          # version. Without this, Cobalt fork tests run pre-gating precompiles.
+          patch_args=(
+            --config "patch.\"https://github.com/base/base.git\".base-common-precompiles.path=\"$GITHUB_WORKSPACE/crates/common/precompiles\""
+            --config "patch.\"https://github.com/base/base.git\".base-common-chains.path=\"$GITHUB_WORKSPACE/crates/common/chains\""
+          )
+          cargo "${patch_args[@]}" update \
+            -p base-common-precompiles \
+            -p base-common-chains
+
+          build_log="$RUNNER_TEMP/anvil-patch-build.log"
+          cargo "${patch_args[@]}" build --release --no-default-features \
+            --features anvil/cli -p anvil -p forge 2>&1 | tee "$build_log"
+          if grep -E 'Patch `base-common-(precompiles|chains).+was not used' "$build_log"; then
+            echo "::error::base-common path patch was not applied; fork tests would use stale git precompiles"
+            exit 1
+          fi
 
           "$BASE_ANVIL_DIR/target/release/anvil" --version
           "$BASE_ANVIL_DIR/target/release/forge" --version
