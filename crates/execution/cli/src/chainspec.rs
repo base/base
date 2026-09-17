@@ -34,24 +34,31 @@ pub fn chain_value_parser(s: &str) -> eyre::Result<Arc<BaseChainSpec>, eyre::Err
 #[cfg(test)]
 mod tests {
     use reth_chainspec::EthChainSpec;
+    use rstest::rstest;
 
     use super::*;
 
     #[test]
-    fn parses_chain_names_to_expected_ids() {
-        for (chain, expected_id) in [
-            ("mainnet", 8453),
-            ("base", 8453),
-            ("sepolia", 84532),
-            ("base-sepolia", 84532),
-            ("base_sepolia", 84532),
-            ("zeronet", 763360),
-            ("base-zeronet", 763360),
-            ("dev", 84538453),
-        ] {
-            let spec = <BaseChainSpecParser as ChainSpecParser>::parse(chain)
-                .unwrap_or_else(|error| panic!("failed to parse {chain}: {error}"));
-            assert_eq!(spec.chain().id(), expected_id, "unexpected chain ID for {chain}");
+    fn parse_known_chain_spec() {
+        for &chain in BaseChainSpecParser::SUPPORTED_CHAINS {
+            assert!(
+                <BaseChainSpecParser as ChainSpecParser>::parse(chain).is_ok(),
+                "Failed to parse {chain}"
+            );
         }
+    }
+
+    #[rstest]
+    #[case("mainnet", 8453)]
+    #[case("base", 8453)]
+    #[case("sepolia", 84532)]
+    #[case("base-sepolia", 84532)]
+    #[case("base_sepolia", 84532)]
+    #[case("zeronet", 763360)]
+    #[case("base-zeronet", 763360)]
+    #[case("dev", 84538453)]
+    fn parse_chain_id(#[case] chain: &str, #[case] expected_id: u64) {
+        let spec = BaseChainSpecParser::parse(chain).unwrap();
+        assert_eq!(spec.chain().id(), expected_id);
     }
 }
