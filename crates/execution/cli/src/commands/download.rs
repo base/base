@@ -1086,6 +1086,53 @@ mod tests {
     }
 
     #[derive(Clone)]
+    struct RecordingRangeState {
+        data: Vec<u8>,
+        requests: Arc<Mutex<Vec<(u64, u64)>>>,
+    }
+
+    /// Serves Range GETs and records each inclusive byte range that was asked for.
+    async fn start_recording_range_server(
+        archive_bytes: Vec<u8>,
+    ) -> (String, Arc<Mutex<Vec<(u64, u64)>>>, tokio::task::JoinHandle<()>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new().route("/proofs.tar.zst", get(handle_recording_range)).with_state(
+            RecordingRangeState { data: archive_bytes, requests: Arc::clone(&requests) },
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.ok();
+        });
+
+        (base_url, requests, handle)
+    }
+
+    async fn handle_recording_range(
+        State(state): State<RecordingRangeState>,
+        headers: HeaderMap,
+    ) -> impl IntoResponse {
+        if let Some((start, end)) = parse_byte_range(&headers, state.data.len()) {
+            state.requests.lock().await.push((start as u64, end as u64));
+            return (
+                StatusCode::PARTIAL_CONTENT,
+                [(
+                    axum::http::header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{}", state.data.len()),
+                )],
+                state.data[start..=end].to_vec(),
+            )
+                .into_response();
+        }
+
+        state.requests.lock().await.push((0, state.data.len().saturating_sub(1) as u64));
+        (StatusCode::OK, state.data).into_response()
+    }
+
+    #[derive(Clone)]
     struct DropThenRangeState {
         data: Vec<u8>,
         requests: Arc<AtomicUsize>,
@@ -1828,6 +1875,97 @@ mod tests {
             Some(vec![25, 25, 25, 25]),
             "sidecar should be trusted only when .part is the declared size"
         );
+    }
+
+    /// Verifies a crash-restart with a trusted sidecar only fetches unfinished ranges.
+    #[tokio::test]
+    async fn download_archive_parallel_resumes_from_trusted_sidecar() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"resume-two-of-four-ranges")]);
+        let ranges = split_byte_ranges(archive.len() as u64, 4);
+        assert_eq!(ranges.len(), 4, "archive must split into four ranges");
+
+        let mut part = vec![0u8; archive.len()];
+        for range in &ranges[..2] {
+            let start = range.start as usize;
+            let end = range.end as usize;
+            part[start..end].copy_from_slice(&archive[start..end]);
+        }
+
+        let (base_url, requests, handle) = start_recording_range_server(archive.clone()).await;
+        let cache_dir = tempfile::tempdir().unwrap();
+        let part_path = cache_dir.path().join("proofs.tar.zst.part");
+        std::fs::write(&part_path, &part).unwrap();
+        write_test_sidecar(
+            &cache_dir.path().join("proofs.tar.zst.part.ranges"),
+            4,
+            archive.len() as u64,
+            &[ranges[0].end - ranges[0].start, ranges[1].end - ranges[1].start, 0, 0],
+        );
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("trusted sidecar resume should finish the remaining ranges");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "resumed ranges plus already-written ranges should match the archive"
+        );
+
+        let mut got = requests.lock().await.clone();
+        got.sort_unstable();
+        assert_eq!(
+            got,
+            vec![(ranges[2].start, ranges[2].end - 1), (ranges[3].start, ranges[3].end - 1),],
+            "only the two incomplete ranges should be fetched"
+        );
+
+        handle.abort();
+    }
+
+    /// Verifies an in-flight sequential `.part` is finished as one stream, not `set_len`.
+    #[tokio::test]
+    async fn download_archive_finishes_sequential_leftover_before_parallel() {
+        let archive = create_proofs_archive(&[("proofs/data.mdb", b"finish-sequential-leftover")]);
+        let half = archive.len() / 2;
+        assert!(half > 0 && half < archive.len(), "archive must have a sequential midpoint");
+
+        let (base_url, requests, handle) = start_recording_range_server(archive.clone()).await;
+        let cache_dir = tempfile::tempdir().unwrap();
+        std::fs::write(cache_dir.path().join("proofs.tar.zst.part"), &archive[..half]).unwrap();
+
+        let entry = ProofsManifestEntry {
+            file_name: "proofs.tar.zst".to_string(),
+            expected_size: archive.len() as u64,
+            archive_url: format!("{base_url}/proofs.tar.zst"),
+        };
+
+        let dest = ProofsDownloader::download_archive(&entry, cache_dir.path(), 4)
+            .await
+            .expect("sequential leftover should finish as one stream");
+
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            archive,
+            "sequential leftover resume should yield the full archive"
+        );
+        assert_eq!(
+            requests.lock().await.clone(),
+            vec![(half as u64, archive.len() as u64 - 1)],
+            "existing sequential .part must resume with one open-ended Range, not parallel splits"
+        );
+        assert!(
+            !cache_dir.path().join("proofs.tar.zst.part.ranges").exists(),
+            "sequential leftover must not write a parallel sidecar"
+        );
+
+        handle.abort();
     }
 
     #[tokio::test]
