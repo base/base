@@ -125,9 +125,9 @@ fn json_u64(value: Option<&serde_json::Value>) -> Option<u64> {
 /// Discovers the latest modular snapshot manifest URL for `chain_id`.
 ///
 /// Reth's download pipeline queries the snapshot API (`metadataUrl`) rather than
-/// concatenating `{default_base_url}/{chain_id}/manifest.json`. `default_base_url`
-/// is already chain-specific (`https://chain.base.org/8453`), so appending another
-/// chain ID produced 404s such as `https://chain.base.org/8453/763360/manifest.json`.
+/// concatenating `{default_base_url}/{chain_id}/manifest.json`. Each chain publishes
+/// manifests under its own bucket (`https://zeronet-v2-snapshots.base.org/...`), so
+/// deriving a URL from the snapshot root instead produces 404s.
 async fn discover_latest_manifest_url(api_url: &str, chain_id: u64) -> Result<String> {
     info!(
         target: "reth::cli",
