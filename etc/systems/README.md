@@ -168,8 +168,9 @@ results/fresh-devnet/
 `metadata.json` and the load-test sidecars are directly consumable by the
 static visualizer in `base/benchmark`; link this output directory to that
 repository's ignored `output/` directory and run its normal production build.
-The Depot PR workflow does this automatically, uploads both the raw sidecars
-and static visualizer, and updates one PR comment with the workload summaries.
+The Depot PR workflow does this automatically when a same-repository PR has the
+`bench:tps` label, uploads both the raw sidecars and static visualizer, and
+updates one PR comment with the workload summaries.
 
 Swap workloads can opt into fresh-devnet contract provisioning with
 `deploy_devnet_swap_harness: true` on a workload entry. That mode deploys a

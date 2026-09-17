@@ -2,14 +2,9 @@ name: Fresh devnet benchmarks (advisory)
 
 on:
   pull_request:
-    paths:
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "crates/**"
-      - "etc/benchmarks/fresh-devnet.yml"
-      - "etc/scripts/ci/render_fresh_devnet_bench.py"
-      - "etc/systems/**"
-      - ".depot/workflows/bench-fresh-devnet.yml"
+    # `labeled` starts the opt-in suite and `unlabeled` cancels an in-progress
+    # suite when its opt-in label is removed.
+    types: [opened, reopened, synchronize, labeled, unlabeled]
   workflow_dispatch:
 
 concurrency:
@@ -29,10 +24,13 @@ permissions:
 jobs:
   benchmark:
     name: Fresh devnet workload suite
-    # The suite starts services and executes the checked-out branch. Keep its write-capable token
-    # away from untrusted fork code; contributors can still run it from a trusted base/base branch.
+    # The suite is deliberately opt-in: it is expensive and starts services. Keep its write-capable
+    # token away from untrusted fork code; contributors can run it from a trusted base/base branch
+    # after applying the `bench:tps` label.
     if: >
-      github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'bench:tps'))
     # Depot's largest x86 runner: 64 vCPUs, 256 GB memory, and a 32 GB RAM disk accelerator.
     runs-on: depot-ubuntu-24.04-64
     timeout-minutes: 90
