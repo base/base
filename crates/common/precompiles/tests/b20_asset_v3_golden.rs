@@ -1,12 +1,12 @@
 //! Golden tests pinning Asset **V3** behavior of the B-20 precompile.
 //!
-//! V3 is activated at Denim as a behavior-preserving copy of V2 (a scaffold seam for future
-//! Denim-era changes). Its logic and storage layout are identical to V2, so this suite pins its
-//! own roots to lock V3's behavior independently: a future edit that alters V3 must re-bless these
-//! roots. These goldens run production Cobalt storage features (Denim inherits them via
-//! `upgrade >= Cobalt`) while the V1 suite runs Legacy, so a root matches V2's only when the op
-//! does not diverge; ops that write shrinking dynamic values can legitimately diverge from V1's
-//! Legacy pin.
+//! V3 activates at Denim and enforces `TRANSFER_EXECUTOR_POLICY` on every transfer path.
+//! The rest of the logic and the storage layout carry V2 forward, so this suite pins its own roots
+//! to lock V3's behavior independently: a future edit that alters V3 must re-bless these roots.
+//! These goldens run production Cobalt storage features (Denim inherits them via `upgrade >=
+//! Cobalt`) while the V1 suite runs Legacy, so a root matches V2's only when the operation does
+//! not diverge; ops that write shrinking dynamic values can legitimately diverge from V1's Legacy
+//! pin.
 //!
 //! Every op is driven through the **version-resolver-gated** dispatch path
 //! (`BaseUpgrade::Denim` -> `AssetVersion::V3`) against the real EVM-backed `B20AssetStorage`
@@ -382,7 +382,7 @@ fn golden_dispatch_no_observer_wrapper_reverts_uninitialized() {
 }
 
 // ============================================================================
-// transfer (behavior-preserving: V1 roots reused)
+// transfer
 // ============================================================================
 
 #[test]
@@ -447,6 +447,29 @@ fn golden_transfer_unprivileged_blocked_sender_reverts() {
         err,
         BasePrecompileError::revert(IB20::PolicyForbids {
             policyScope: B20PolicyType::TransferSender.id(),
+            policyId: POLICY_ID,
+        })
+    );
+}
+
+#[test]
+fn golden_transfer_unprivileged_enforces_executor_policy() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_policy_id(B20PolicyType::TransferExecutor.id(), POLICY_ID).unwrap();
+    });
+    let err = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferCall { to: BOB, amount: u(10) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::PolicyForbids {
+            policyScope: B20PolicyType::TransferExecutor.id(),
             policyId: POLICY_ID,
         })
     );
@@ -545,8 +568,31 @@ fn golden_transfer_with_memo_emits_transfer_then_memo() {
     assert_root("transfer_with_memo", s, ROOT_TRANSFER_WITH_MEMO);
 }
 
+#[test]
+fn golden_transfer_with_memo_unprivileged_enforces_executor_policy() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_policy_id(B20PolicyType::TransferExecutor.id(), POLICY_ID).unwrap();
+    });
+    let err = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferWithMemoCall { to: BOB, amount: u(10), memo: MEMO }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::PolicyForbids {
+            policyScope: B20PolicyType::TransferExecutor.id(),
+            policyId: POLICY_ID,
+        })
+    );
+}
+
 // ============================================================================
-// transferFrom (behavior-preserving: V1 roots reused)
+// transferFrom
 // ============================================================================
 
 #[test]
@@ -643,6 +689,30 @@ fn golden_transfer_from_unprivileged_enforces_executor_policy() {
 }
 
 #[test]
+fn golden_transfer_from_self_unprivileged_enforces_executor_policy() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_allowance(ALICE, ALICE, u(10)).unwrap();
+        t.set_policy_id(B20PolicyType::TransferExecutor.id(), POLICY_ID).unwrap();
+    });
+    let err = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferFromCall { from: ALICE, to: BOB, amount: u(10) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::PolicyForbids {
+            policyScope: B20PolicyType::TransferExecutor.id(),
+            policyId: POLICY_ID,
+        })
+    );
+}
+
+#[test]
 fn golden_transfer_from_with_memo() {
     let mut s = fresh();
     seed(&mut s, |t| {
@@ -663,6 +733,31 @@ fn golden_transfer_from_with_memo() {
     assert_eq!(events[events.len() - 2].topics()[0], IB20::Transfer::SIGNATURE_HASH);
     assert_eq!(events[events.len() - 1].topics()[0], IB20::Memo::SIGNATURE_HASH);
     assert_root("transfer_from_with_memo", s, ROOT_TRANSFER_FROM_WITH_MEMO);
+}
+
+#[test]
+fn golden_transfer_from_with_memo_self_unprivileged_enforces_executor_policy() {
+    let mut s = fresh();
+    seed(&mut s, |t| {
+        fund(t, ALICE, u(100));
+        t.set_allowance(ALICE, ALICE, u(10)).unwrap();
+        t.set_policy_id(B20PolicyType::TransferExecutor.id(), POLICY_ID).unwrap();
+    });
+    let err = op(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferFromWithMemoCall { from: ALICE, to: BOB, amount: u(10), memo: MEMO }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(
+        err,
+        BasePrecompileError::revert(IB20::PolicyForbids {
+            policyScope: B20PolicyType::TransferExecutor.id(),
+            policyId: POLICY_ID,
+        })
+    );
 }
 
 #[test]
@@ -3580,6 +3675,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_transfer_privileged,
             golden_transfer_unprivileged_allowed,
             golden_transfer_unprivileged_blocked_sender_reverts,
+            golden_transfer_unprivileged_enforces_executor_policy,
             golden_transfer_reverts_zero_receiver,
             golden_transfer_unprivileged_zero_receiver_storage_access,
             golden_transfer_reverts_insufficient_balance,
@@ -3591,6 +3687,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_transfer_from_infinite_allowance_not_decremented,
             golden_transfer_from_reverts_insufficient_allowance,
             golden_transfer_from_unprivileged_enforces_executor_policy,
+            golden_transfer_from_self_unprivileged_enforces_executor_policy,
             golden_transfer_from_reverts_zero_receiver,
             golden_transfer_from_reverts_zero_sender,
         ]),
@@ -3599,8 +3696,14 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Asset::IB20AssetCall
             golden_approve_reverts_zero_spender,
             golden_approve_reverts_zero_approver,
         ]),
-        C::transferWithMemo(_) => covered(&[golden_transfer_with_memo_emits_transfer_then_memo]),
-        C::transferFromWithMemo(_) => covered(&[golden_transfer_from_with_memo]),
+        C::transferWithMemo(_) => covered(&[
+            golden_transfer_with_memo_emits_transfer_then_memo,
+            golden_transfer_with_memo_unprivileged_enforces_executor_policy,
+        ]),
+        C::transferFromWithMemo(_) => covered(&[
+            golden_transfer_from_with_memo,
+            golden_transfer_from_with_memo_self_unprivileged_enforces_executor_policy,
+        ]),
 
         // mint / burn
         C::mint(_) => covered(&[
