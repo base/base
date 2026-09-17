@@ -8,6 +8,16 @@ use crate::{
     SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchTransactions, SpanDecodingError,
 };
 
+#[inline]
+fn decode_vec_capacity(
+    claimed_count: u64,
+    remaining_len: usize,
+    min_item_wire_size: usize,
+) -> usize {
+    debug_assert!(min_item_wire_size > 0);
+    claimed_count.min((remaining_len / min_item_wire_size) as u64) as usize
+}
+
 /// Span Batch Payload
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SpanBatchPayload {
@@ -70,9 +80,9 @@ impl SpanBatchPayload {
 
     /// Decode block transaction counts from a reader.
     pub fn decode_block_tx_counts(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        // Initially allocate the vec with the block count, to reduce re-allocations in the first
-        // few blocks.
-        let mut block_tx_counts = Vec::with_capacity(self.block_count as usize);
+        // u64 varints are at least 1 byte on-wire, so clamp by remaining bytes.
+        let mut block_tx_counts =
+            Vec::with_capacity(decode_vec_capacity(self.block_count, r.len(), 1));
 
         for _ in 0..self.block_count {
             let (block_tx_count, remaining) = unsigned_varint::decode::u64(r)
@@ -197,5 +207,11 @@ mod tests {
         }
         payload.decode_block_tx_counts(&mut r.as_slice()).unwrap();
         assert_eq!(payload.block_tx_counts, vec![2, 2]);
+    }
+
+    #[test]
+    fn test_decode_vec_capacity_clamps_to_remaining_bytes() {
+        assert_eq!(decode_vec_capacity(10, 3, 1), 3);
+        assert_eq!(decode_vec_capacity(2, 32, 1), 2);
     }
 }

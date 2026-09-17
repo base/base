@@ -14,6 +14,16 @@ use crate::{
     SpanBatchTransactionData, SpanDecodingError, read_tx_data,
 };
 
+#[inline]
+fn decode_vec_capacity(
+    claimed_count: u64,
+    remaining_len: usize,
+    min_item_wire_size: usize,
+) -> usize {
+    debug_assert!(min_item_wire_size > 0);
+    claimed_count.min((remaining_len / min_item_wire_size) as u64) as usize
+}
+
 /// This struct contains the decoded information for transactions in a span batch.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SpanBatchTransactions {
@@ -175,7 +185,9 @@ impl SpanBatchTransactions {
     /// Decode the transaction signatures from a reader (excluding `v` field).
     pub fn decode_tx_sigs(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
         let y_parity_bits = SpanBatchBits::decode(r, self.total_block_tx_count as usize)?;
-        let mut sigs = Vec::with_capacity(self.total_block_tx_count as usize);
+        // Signature entries are fixed-width (r + s = 64 bytes), so clamp by remaining bytes.
+        let mut sigs =
+            Vec::with_capacity(decode_vec_capacity(self.total_block_tx_count, r.len(), 64));
         for i in 0..self.total_block_tx_count {
             let y_parity = y_parity_bits.get_bit(i as usize).expect("same length");
             if r.len() < 64 {
@@ -192,7 +204,9 @@ impl SpanBatchTransactions {
 
     /// Decode the transaction nonces from a reader.
     pub fn decode_tx_nonces(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        let mut nonces = Vec::with_capacity(self.total_block_tx_count as usize);
+        // u64 varints are at least 1 byte on-wire, so clamp by remaining bytes.
+        let mut nonces =
+            Vec::with_capacity(decode_vec_capacity(self.total_block_tx_count, r.len(), 1));
         for _ in 0..self.total_block_tx_count {
             let (nonce, remaining) = unsigned_varint::decode::u64(r)
                 .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::TxNonces))?;
@@ -205,7 +219,9 @@ impl SpanBatchTransactions {
 
     /// Decode the transaction gas limits from a reader.
     pub fn decode_tx_gases(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        let mut gases = Vec::with_capacity(self.total_block_tx_count as usize);
+        // u64 varints are at least 1 byte on-wire, so clamp by remaining bytes.
+        let mut gases =
+            Vec::with_capacity(decode_vec_capacity(self.total_block_tx_count, r.len(), 1));
         for _ in 0..self.total_block_tx_count {
             let (gas, remaining) = unsigned_varint::decode::u64(r)
                 .map_err(|_| SpanBatchError::Decoding(SpanDecodingError::TxNonces))?;
@@ -218,9 +234,12 @@ impl SpanBatchTransactions {
 
     /// Decode the `to` addresses of the transactions from a reader.
     pub fn decode_tx_tos(&mut self, r: &mut &[u8]) -> Result<(), SpanBatchError> {
-        let mut tos = Vec::with_capacity(self.total_block_tx_count as usize);
         let contract_creation_count = self.contract_creation_count();
-        for _ in 0..(self.total_block_tx_count - contract_creation_count) {
+        let non_contract_creation_count = self.total_block_tx_count - contract_creation_count;
+        // Address entries are fixed-width (20 bytes), so clamp by remaining bytes.
+        let mut tos =
+            Vec::with_capacity(decode_vec_capacity(non_contract_creation_count, r.len(), 20));
+        for _ in 0..non_contract_creation_count {
             if r.len() < 20 {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
             }
@@ -480,6 +499,12 @@ mod tests {
     use super::*;
 
     const EIP8130_CHAIN_ID: u64 = 8453;
+
+    #[test]
+    fn test_decode_vec_capacity_clamps_to_remaining_bytes() {
+        assert_eq!(decode_vec_capacity(10, 128, 64), 2);
+        assert_eq!(decode_vec_capacity(2, 128, 64), 2);
+    }
 
     /// Regression: truncated input to `decode_tx_sigs` must return an error, not panic.
     /// A dishonest batcher can craft a span batch with fewer bytes than the declared tx count
