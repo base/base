@@ -1,10 +1,81 @@
 //! Action tests for L2 unsafe-head gossip simulation.
 
+use std::time::SystemTime;
+
+use alloy_signer_local::PrivateKeySigner;
 use base_action_harness::{
     ActionL2Source, ActionTestHarness, Batcher, BatcherConfig, L1MinerConfig, SharedL1Chain,
-    TestRollupConfigBuilder,
+    TestGossipTransport, TestRollupConfigBuilder,
 };
 use base_batcher_encoder::{DaType, EncoderConfig};
+use base_consensus_gossip::{BlockHandler, Handler};
+use libp2p::gossipsub::{Message, MessageAcceptance};
+use tokio::sync::watch;
+
+/// Unlike the channel-only tests below, route signed sequencer payloads through
+/// the production codec and handler before delivering them to the verifier.
+#[tokio::test]
+async fn retired_topics_do_not_advance_unsafe_head_but_v4_does() {
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+    let mut config =
+        TestRollupConfigBuilder::base_mainnet(&BatcherConfig::default()).through_isthmus().build();
+    // Keep all three generated blocks inside the real gossip timestamp window.
+    config.genesis.l2_time = now - 10;
+    let h = ActionTestHarness::new(
+        L1MinerConfig { genesis_timestamp: now - 10, ..Default::default() },
+        config,
+    );
+    let chain = SharedL1Chain::from_blocks(h.l1.chain().to_vec());
+    let key = PrivateKeySigner::random();
+    let mut seq = h.create_l2_sequencer(chain.clone());
+    let mut sequencer_output = h.create_signing_p2p(&mut seq, key.clone());
+    let (verifier_input, transport) = TestGossipTransport::channel();
+    let mut node = h.create_test_rollup_node(&seq, chain, transport);
+    node.initialize().await;
+    let (_signer, receiver) = watch::channel(key.address());
+    let mut handler = BlockHandler::new(h.rollup_config.clone(), receiver);
+
+    for number in 1..=3 {
+        let block = seq.build_next_block_with_single_transaction().await;
+        seq.broadcast_unsafe_block(&block);
+        let envelope = sequencer_output.try_next_unsafe_block().expect("signed sequencer block");
+
+        // Simulate queued traffic on each retired topic. Even malformed bytes
+        // must be ignored before decoding, never reaching the verifier.
+        for topic in [
+            handler.blocks_v1_topic.hash(),
+            handler.blocks_v2_topic.hash(),
+            handler.blocks_v3_topic.hash(),
+        ] {
+            let (status, payload) = handler.handle(Message {
+                source: None,
+                sequence_number: None,
+                topic,
+                data: vec![0xff],
+            });
+            if let Some(payload) = payload {
+                verifier_input.send(payload);
+            }
+            assert!(matches!(status, MessageAcceptance::Ignore));
+        }
+        node.run_until_idle().await;
+        assert_eq!(node.l2_unsafe_number(), number - 1);
+
+        let topic = handler.blocks_v4_topic.clone();
+        let data = handler.encode(topic.clone(), envelope).unwrap();
+        let (status, payload) = handler.handle(Message {
+            source: None,
+            sequence_number: None,
+            topic: topic.hash(),
+            data,
+        });
+        assert!(matches!(status, MessageAcceptance::Accept));
+        verifier_input.send(payload.expect("validated V4 payload"));
+        node.run_until_idle().await;
+        assert_eq!(node.l2_unsafe_number(), number);
+        assert_eq!(node.l2_safe_number(), 0, "no batches were submitted");
+    }
+}
 
 /// Simulates the P2P gossip pattern:
 ///

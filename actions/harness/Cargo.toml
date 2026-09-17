@@ -83,6 +83,9 @@ serde_json.workspace = true
 miniz_oxide.workspace = true
 
 [dev-dependencies]
+# networking
+libp2p = { workspace = true, features = ["gossipsub"] }
+
 # alloy
 alloy-sol-types = { workspace = true, features = ["std"] }
 

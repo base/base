@@ -124,7 +124,7 @@ impl From<Infallible> for Event {
 mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::Address;
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use libp2p::gossipsub::{IdentTopic, TopicHash};
 
     use super::*;
@@ -145,6 +145,24 @@ mod tests {
         let cfg = config::default_config();
         let handlers = vec![];
         let _ = Behaviour::new(key.public(), cfg, &handlers).unwrap();
+    }
+
+    #[test]
+    fn startup_after_isthmus_only_subscribes_to_v4() {
+        let key = libp2p::identity::Keypair::generate_secp256k1();
+        let (_, recv) = tokio::sync::watch::channel(Address::ZERO);
+        let handler = BlockHandler::new(
+            RollupConfig {
+                l2_chain_id: Chain::base_mainnet(),
+                upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            recv,
+        );
+        let expected = handler.blocks_v4_topic.hash();
+        let behaviour =
+            Behaviour::new(key.public(), config::default_config(), &[Box::new(handler)]).unwrap();
+        assert_eq!(behaviour.gossipsub.topics().cloned().collect::<Vec<_>>(), [expected]);
     }
 
     #[test]
