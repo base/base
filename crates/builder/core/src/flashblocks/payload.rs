@@ -27,7 +27,7 @@ use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BaseBuiltPayload, BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics,
-    PrewarmScheduler, PrewarmWorkerPool, PrewarmingBestTransactions, ValidityMetrics,
+    PrewarmScheduler, PrewarmWorkerPool, PrewarmingBestTransactions, SimSetup, ValidityMetrics,
 };
 use base_execution_txpool::AccountStateDiff;
 use base_observability_events::{GlobalTransactionEventWriter, TransactionEventType};
@@ -449,6 +449,11 @@ where
         // Create best_transaction iterator
         let best_txs_attributes = ctx.best_transaction_attributes();
         let prewarm_scheduler = prewarm.as_ref().map(|job| Arc::clone(&job.scheduler));
+        // Transaction-simulation warming rides the same lookahead cursor and worker pool as
+        // predicate warming, so it only runs where predicate warming is already active.
+        // `None` unless `prewarm.simulate` is set, in which case every flashblock's
+        // iterator carries the same setup (the lookahead bound is per-iterator state).
+        let sim_setup = prewarm.as_ref().and_then(|_| ctx.simulation_setup());
         let mut best_txs = BestFlashblocksTxs::new(
             PrewarmingBestTransactions::new(
                 ParkableBestPayloadTransactions::new(
@@ -457,6 +462,7 @@ where
                 self.pool.clone(),
                 best_txs_attributes,
                 prewarm_scheduler.clone(),
+                sim_setup.clone(),
             ),
             self.config.rejection_cache.clone(),
         );
@@ -539,6 +545,7 @@ where
                     &fb_span,
                     &mut executed_sender_nonces,
                     prewarm_scheduler.as_ref(),
+                    sim_setup.clone(),
                 )
                 .await
             {
@@ -598,6 +605,7 @@ where
         span: &tracing::Span,
         executed_sender_nonces: &mut HashMap<Address, u64>,
         prewarm_scheduler: Option<&Arc<PrewarmScheduler>>,
+        sim_setup: Option<SimSetup<Pool::Transaction>>,
     ) -> eyre::Result<Option<FlashblocksExtraCtx>> {
         let flashblock_index = ctx.flashblock_index();
         let payload_id = ctx.payload_id().to_string();
@@ -665,6 +673,9 @@ where
             self.pool.clone(),
             best_txs_attributes,
             prewarm_scheduler.cloned(),
+            // The caller hands this sub-block its own clone of the block's setup, sharing the
+            // one simulation factory; the refreshed iterator applies the lookahead bound.
+            sim_setup,
         ));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);

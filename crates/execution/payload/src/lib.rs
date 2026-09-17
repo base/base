@@ -12,7 +12,7 @@ extern crate alloc;
 mod affordability;
 pub use affordability::CoinbaseTipAffordability;
 pub mod builder;
-pub use builder::BasePayloadBuilder;
+pub use builder::{BasePayloadBuilder, simulation_setup_for_env};
 pub mod config;
 pub use config::{BuilderStateProvider, ResourceMeteringConfig};
 mod rejection_cache;
@@ -49,7 +49,8 @@ pub use predicate_loads::{PredicateLoadTracker, PredicateReadRecorder};
 mod prewarm;
 pub use prewarm::{
     JobCompletion, KeyQueue, KeyQueueState, PrewarmConfig, PrewarmJob, PrewarmScheduler,
-    PrewarmWorkerPool, PrewarmingBestTransactions, WarmJob, WarmKey, WorkerJob, WorkerLease,
+    PrewarmWorkerPool, PrewarmingBestTransactions, SimJob, SimJobFactory, SimSchedulerState,
+    SimSetup, SimulateFn, WarmJob, WarmKey, WorkerJob, WorkerLease,
 };
 
 mod traits;

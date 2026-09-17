@@ -16,9 +16,35 @@
 //!   waiting for worker IO.
 //! * [`PrewarmScheduler`] — extracts, deduplicates, and caps the distinct state keys
 //!   scheduled per build and owns the bounded work queue.
-//! * [`WarmJob`] — the unit of work dispatched to workers. Currently only
-//!   [`WarmJob::Key`]; future warming modes (e.g. transaction simulation) extend this
-//!   enum and the worker loop without changing queueing, scheduling, or cancellation.
+//! * [`WarmJob`] — the unit of work dispatched to workers: [`WarmJob::Key`] warms one
+//!   declared predicate key, and [`WarmJob::Simulate`] warms a transaction's entire EVM
+//!   read set by simulating it. Further warming modes extend this enum and the worker
+//!   loop without changing queueing, scheduling, or cancellation.
+//!
+//! # Transaction-simulation warming
+//!
+//! [`WarmJob::Simulate`] runs the full EVM for a lookahead transaction against the
+//! build's parent state, so accounts, storage slots, and bytecode the transaction touches
+//! — not just its declared predicate keys — are pulled into the shared cache. It is a
+//! strict opt-in on top of prewarming ([`PrewarmConfig::simulate`]).
+//!
+//! Simulation is **cache-warming only**. Results are discarded and the build loop always
+//! re-executes every transaction: simulation never feeds inclusion, ordering, gas
+//! accounting, or the payload. Safety rests on two properties:
+//!
+//! * Each simulation runs on a throwaway state overlay layered over the worker's
+//!   cache-filling provider, so simulated writes are dropped with the overlay and never
+//!   reach the canonical database. Only *reads* leak, into a read-through cache of
+//!   committed parent state, so a cache hit returns exactly what the build's own read
+//!   would have fetched.
+//! * Sender-side gating (nonce, balance, base fee) is relaxed so a stale-nonce or
+//!   underfunded lookahead transaction still exercises its call path and warms its reads.
+//!   Because output is discarded, relaxation cannot affect the built block.
+//!
+//! Simulations run against a fixed parent snapshot, so a transaction whose relevant state
+//! is changed by an earlier committed transaction may take a different path than the build
+//! loop eventually takes and warm a different read set. That costs warming yield, never
+//! correctness; `canonical_overtook_sim_total` and cache hit rate measure it.
 //! * [`PrewarmingBestTransactions`] — a [`ParkablePayloadTransactions`] adapter owning
 //!   the build's main transaction iterator untouched, plus an independent read-only
 //!   lookahead cursor opened with the same attributes. It schedules at most an initial
@@ -54,732 +80,143 @@
 //! `--builder.prewarm-workers` budgets an additional pool; account for the engine's
 //! existing prewarming workers when sizing total database read concurrency.
 
-use std::{
-    collections::VecDeque,
-    sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
-    },
-    thread,
-};
+use std::sync::Arc;
 
-use alloy_primitives::{Address, StorageKey, TxHash, U256, map::HashSet};
-use base_execution_txpool::{BasePooledTx, ValidityPredicate};
-use reth_execution_cache::{CachedStateProvider, ExecutionCache};
-use reth_payload_util::PayloadTransactions;
-use reth_storage_api::{AccountReader, StateProvider, StateProviderBox, errors::ProviderResult};
-use reth_transaction_pool::{
-    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
-    ValidPoolTransaction,
-};
-use tracing::warn;
+mod config;
+pub use config::PrewarmConfig;
 
-use crate::{ParkablePayloadTransactions, metrics::PrewarmMetrics};
+mod keys;
+pub use keys::{KeyQueue, KeyQueueState, WarmKey};
+
+mod sim;
+pub use sim::{SimJob, SimJobFactory, SimSchedulerState, SimSetup, SimulateFn};
+
+mod scheduler;
+pub use scheduler::{JobCompletion, PrewarmScheduler};
+
+mod pool;
+pub use pool::{PrewarmJob, PrewarmWorkerPool, WorkerJob, WorkerLease};
+
+mod cursor;
+pub use cursor::PrewarmingBestTransactions;
 
 /// Where prewarm workers log and count.
 const TARGET: &str = "payload_builder::prewarm";
 
-/// Configuration for predicate-state prewarming.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PrewarmConfig {
-    /// Whether prewarming runs at all. Disabled by default.
-    pub enabled: bool,
-    /// Number of IO worker threads in the shared pool. Each worker owns its own
-    /// [`CachedStateProvider`] and cache handle for the duration of one job.
-    pub worker_count: usize,
-    /// Bounded lookahead: transactions scanned ahead of the build loop (the initial
-    /// scheduling burst, with one further advance per consumed candidate).
-    pub lookahead: usize,
-    /// Maximum distinct state keys scheduled per build; once reached the scheduler
-    /// saturates and stops advancing the lookahead cursor.
-    pub key_cap: usize,
-}
-
-impl Default for PrewarmConfig {
-    fn default() -> Self {
-        Self { enabled: false, worker_count: 2, lookahead: 64, key_cap: 4096 }
-    }
-}
-
-/// A warmable state location read by a declared validity predicate.
-///
-/// Context predicates ([`ValidityPredicate::BlockNumber`],
-/// [`ValidityPredicate::FlashblockIndex`]) read no state and produce no keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WarmKey {
-    /// Account balance.
-    Balance(Address),
-    /// Contract storage slot.
-    Storage(Address, U256),
-}
-
-impl WarmKey {
-    /// Returns the warmable state location of a predicate, if it reads state.
-    pub const fn from_predicate(predicate: &ValidityPredicate) -> Option<Self> {
-        match predicate {
-            ValidityPredicate::Balance { address, .. } => Some(Self::Balance(*address)),
-            ValidityPredicate::Storage { address, slot, .. } => {
-                Some(Self::Storage(*address, *slot))
-            }
-            ValidityPredicate::BlockNumber { .. } | ValidityPredicate::FlashblockIndex { .. } => {
-                None
-            }
-        }
-    }
-
-    /// Returns the warmable state locations read by a predicate batch, in declaration order.
-    pub fn for_predicates(predicates: &[ValidityPredicate]) -> impl Iterator<Item = Self> + '_ {
-        predicates.iter().filter_map(Self::from_predicate)
-    }
-
-    /// Warms this key through a cache-filling provider.
-    ///
-    /// The storage slot is keyed exactly like the build loop's revm read
-    /// (`B256::new(slot.to_be_bytes())`), so warmed entries convert the build's
-    /// first-touch reads into shared-cache hits. Read errors are logged and counted;
-    /// they never fail the build, and warm results are never used for correctness
-    /// decisions.
-    pub fn warm<S: StateProvider>(&self, provider: &CachedStateProvider<S>) {
-        match self {
-            Self::Balance(address) => {
-                PrewarmMetrics::reads_total("balance").increment(1);
-                if let Err(error) = provider.basic_account(address) {
-                    PrewarmMetrics::warm_errors_total().increment(1);
-                    warn!(target: TARGET, error = %error, address = %address, "prewarm account read failed");
-                }
-            }
-            Self::Storage(address, slot) => {
-                PrewarmMetrics::reads_total("storage").increment(1);
-                let storage_key = StorageKey::new(slot.to_be_bytes());
-                if let Err(error) = provider.storage(*address, storage_key) {
-                    PrewarmMetrics::warm_errors_total().increment(1);
-                    warn!(target: TARGET, error = %error, address = %address, slot = ?slot, "prewarm storage read failed");
-                }
-            }
-        }
-    }
-}
-
 /// A unit of prewarm work dispatched to an IO worker.
 ///
-/// This is the extension seam for future warming modes: new variants (for example full
-/// transaction simulation) slot into the same bounded queue and worker loop without
-/// changing the scheduling, cancellation, or cache-release structure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// This is the extension seam for warming modes: variants slot into the same bounded
+/// queue and worker loop without changing the scheduling, cancellation, or cache-release
+/// structure.
+#[derive(Debug)]
 pub enum WarmJob {
     /// Warm the state read by one declared predicate key.
     Key(WarmKey),
-}
-
-/// Bounded work queue shared between the build-thread scheduler and prewarm workers.
-///
-/// Pushes never block on IO; they take a short, bounded mutex critical section and drop
-/// the job when the queue is full or closed. Popping blocks until a job is available or
-/// the queue is closed; closing cancels every queued job so workers release their cache
-/// handles promptly.
-#[derive(Debug)]
-pub struct KeyQueue {
-    state: Mutex<KeyQueueState>,
-    available: Condvar,
-}
-
-/// Guarded state of a [`KeyQueue`].
-#[derive(Debug)]
-pub struct KeyQueueState {
-    /// Queued jobs awaiting a worker.
-    pub jobs: VecDeque<WarmJob>,
-    /// Maximum queued jobs.
-    pub capacity: usize,
-    /// Set once the queue is closed; closed queues accept and yield nothing.
-    pub closed: bool,
-}
-
-impl KeyQueue {
-    /// Creates a queue that buffers at most `capacity` jobs.
-    pub const fn new(capacity: usize) -> Self {
-        Self {
-            state: Mutex::new(KeyQueueState { jobs: VecDeque::new(), capacity, closed: false }),
-            available: Condvar::new(),
-        }
-    }
-
-    /// Enqueues a job without blocking. Returns `false` when the queue is full or closed.
-    pub fn push(&self, job: WarmJob) -> bool {
-        let mut state = self.state.lock().expect("prewarm queue mutex poisoned");
-        if state.closed || state.jobs.len() >= state.capacity {
-            return false;
-        }
-        state.jobs.push_back(job);
-        drop(state);
-        self.available.notify_one();
-        true
-    }
-
-    /// Waits for the next job. Returns `None` once the queue is closed; queued jobs are
-    /// dropped on close, so a closed queue yields nothing further.
-    pub fn pop(&self) -> Option<WarmJob> {
-        let mut state = self.state.lock().expect("prewarm queue mutex poisoned");
-        loop {
-            if let Some(job) = state.jobs.pop_front() {
-                return Some(job);
-            }
-            if state.closed {
-                return None;
-            }
-            state = self.available.wait(state).expect("prewarm queue mutex poisoned");
-        }
-    }
-
-    /// Closes the queue, dropping all queued work and waking every waiting worker.
-    /// Idempotent.
-    pub fn close(&self) {
-        let mut state = self.state.lock().expect("prewarm queue mutex poisoned");
-        state.closed = true;
-        state.jobs.clear();
-        drop(state);
-        self.available.notify_all();
-    }
-
-    /// Returns whether the queue is closed.
-    pub fn is_closed(&self) -> bool {
-        self.state.lock().expect("prewarm queue mutex poisoned").closed
-    }
-
-    /// Returns the number of jobs queued and not yet taken by a worker.
-    pub fn len(&self) -> usize {
-        self.state.lock().expect("prewarm queue mutex poisoned").jobs.len()
-    }
-
-    /// Returns whether no work is queued.
-    pub fn is_empty(&self) -> bool {
-        self.state.lock().expect("prewarm queue mutex poisoned").jobs.is_empty()
-    }
-}
-
-/// Per-build scheduler: extracts, deduplicates, and caps the predicate-state keys
-/// dispatched to prewarm workers.
-pub struct PrewarmScheduler {
-    /// Bounded work queue consumed by workers.
-    pub queue: KeyQueue,
-    /// Distinct keys already scheduled for this build.
-    pub scheduled: Mutex<HashSet<WarmKey>>,
-    /// Bounded lookahead in transactions (the initial burst size).
-    pub lookahead: usize,
-    /// Maximum distinct keys per build.
-    pub key_cap: usize,
-    /// Set when the key cap is reached or the queue refuses work; stops cursor advances.
-    pub saturated: AtomicBool,
-}
-
-impl std::fmt::Debug for PrewarmScheduler {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PrewarmScheduler")
-            .field("lookahead", &self.lookahead)
-            .field("key_cap", &self.key_cap)
-            .field("saturated", &self.saturated.load(Ordering::Relaxed))
-            .finish_non_exhaustive()
-    }
-}
-
-impl PrewarmScheduler {
-    /// Creates a scheduler for one build.
-    pub fn new(config: &PrewarmConfig) -> Self {
-        // The queue buffer is bounded by the per-build distinct-key budget: the scheduler
-        // never schedules more than `key_cap` keys, so the outstanding set is bounded the
-        // same way.
-        Self {
-            queue: KeyQueue::new(config.key_cap.max(1)),
-            scheduled: Mutex::new(HashSet::default()),
-            lookahead: config.lookahead,
-            key_cap: config.key_cap,
-            saturated: AtomicBool::new(false),
-        }
-    }
-
-    /// Returns the bounded lookahead in transactions.
-    pub const fn lookahead(&self) -> usize {
-        self.lookahead
-    }
-
-    /// Returns whether no further work will be accepted for this build.
-    pub fn is_saturated(&self) -> bool {
-        self.saturated.load(Ordering::Relaxed) || self.queue.is_closed()
-    }
-
-    /// Returns the number of keys queued and not yet taken by a worker.
-    pub fn queued_len(&self) -> usize {
-        self.queue.len()
-    }
-
-    /// Closes the queue, cancelling queued work. Called when the build's [`PrewarmJob`]
-    /// is dropped.
-    pub fn close(&self) {
-        self.queue.close();
-    }
-
-    /// Schedules one warmable key, deduplicating against keys already scheduled for this
-    /// build.
-    ///
-    /// Returns `true` when the key is accounted as scheduled — including duplicates,
-    /// which are counted as deduplicated. Returns `false` when the key was not scheduled
-    /// (the queue refused it, or the scheduler is saturated). Never blocks.
-    pub fn schedule_key(&self, key: WarmKey) -> bool {
-        if self.is_saturated() {
-            return false;
-        }
-        let mut scheduled = self.scheduled.lock().expect("prewarm scheduler mutex poisoned");
-        if scheduled.len() >= self.key_cap {
-            self.saturated.store(true, Ordering::Relaxed);
-            PrewarmMetrics::keys_dropped_key_cap_total().increment(1);
-            return false;
-        }
-        if !scheduled.insert(key) {
-            drop(scheduled);
-            PrewarmMetrics::keys_deduped_total().increment(1);
-            return true;
-        }
-        drop(scheduled);
-        if self.queue.push(WarmJob::Key(key)) {
-            PrewarmMetrics::keys_scheduled_total().increment(1);
-            true
-        } else {
-            // Queue closed or full: drop the key and stop advancing the cursor for this
-            // build. Never block the build loop.
-            self.scheduled.lock().expect("prewarm scheduler mutex poisoned").remove(&key);
-            self.saturated.store(true, Ordering::Relaxed);
-            PrewarmMetrics::keys_dropped_full_total().increment(1);
-            false
-        }
-    }
-
-    /// Schedules the declared predicate state of one lookahead transaction.
-    ///
-    /// Stops at the first refused key; balance and storage keys are deduplicated per
-    /// build, and context predicates (block number, flashblock index) read no state.
-    pub fn schedule_transaction<T: BasePooledTx>(&self, transaction: &T) {
-        PrewarmMetrics::transactions_scanned_total().increment(1);
-        for key in WarmKey::for_predicates(transaction.validity_predicates()) {
-            if !self.schedule_key(key) {
-                return;
-            }
-        }
-    }
-}
-
-/// Signal that every dispatched worker of one [`PrewarmJob`] has exited the job.
-#[derive(Debug, Default)]
-pub struct JobCompletion {
-    /// Workers still working on the job.
-    pub remaining: Mutex<usize>,
-    /// Woken whenever a worker exits the job.
-    pub done: Condvar,
-}
-
-impl JobCompletion {
-    /// Creates a completion signal for `workers` dispatched workers.
-    pub const fn new(workers: usize) -> Self {
-        Self { remaining: Mutex::new(workers), done: Condvar::new() }
-    }
-
-    /// Records that one worker exited the job.
-    pub fn finish_one(&self) {
-        let mut remaining = self.remaining.lock().expect("prewarm completion mutex poisoned");
-        *remaining = remaining.saturating_sub(1);
-        drop(remaining);
-        self.done.notify_all();
-    }
-
-    /// Waits until every dispatched worker exited the job.
-    pub fn wait(&self) {
-        let mut remaining = self.remaining.lock().expect("prewarm completion mutex poisoned");
-        while *remaining > 0 {
-            remaining = self.done.wait(remaining).expect("prewarm completion mutex poisoned");
-        }
-    }
-}
-
-/// Releases a worker reservation and signals completion, including on unwind.
-#[derive(Debug)]
-pub struct WorkerLease {
-    /// Whether this worker is reserved by a build.
-    pub busy: Arc<AtomicBool>,
-    /// Completion accounting for that build.
-    pub completion: Arc<JobCompletion>,
-}
-
-impl Drop for WorkerLease {
-    fn drop(&mut self) {
-        self.busy.store(false, Ordering::Release);
-        self.completion.finish_one();
-    }
-}
-
-/// One job executed by one pool worker.
-///
-/// Workers construct their own provider from `provider_factory` inside their thread (it
-/// is `!Sync`, so providers are never shared), warm the job's queued keys through the
-/// job's exact `cache`, and drop both before taking the next job so the engine's
-/// cache-advancement gating (`usage_count == 1`) is not blocked between builds.
-pub struct WorkerJob {
-    /// Opens the state provider for the job's exact parent state. One boxed factory per
-    /// worker job.
-    pub provider_factory: Box<dyn Fn() -> ProviderResult<StateProviderBox> + Send>,
-    /// The build's shared execution cache handle for this worker.
-    pub cache: ExecutionCache,
-    /// The job's scheduler queue.
-    pub scheduler: Arc<PrewarmScheduler>,
-    /// Released after the job's provider and cache are dropped.
-    pub lease: WorkerLease,
-}
-
-impl std::fmt::Debug for WorkerJob {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WorkerJob").field("scheduler", &self.scheduler).finish_non_exhaustive()
-    }
-}
-
-impl WorkerJob {
-    /// Runs the job to completion: opens the provider, warms queued keys until the queue
-    /// closes, then releases the provider and cache handle.
-    pub fn run(self) {
-        if self.scheduler.queue.is_closed() {
-            return;
-        }
-        let provider = match (self.provider_factory)() {
-            Ok(state_provider) => CachedStateProvider::new_prewarm(state_provider, self.cache),
-            Err(error) => {
-                PrewarmMetrics::provider_open_errors_total().increment(1);
-                warn!(target: TARGET, error = %error, "failed to open parent state provider for prewarm worker");
-                return;
-            }
-        };
-        while let Some(job) = self.scheduler.queue.pop() {
-            match job {
-                WarmJob::Key(key) => key.warm(&provider),
-            }
-        }
-        // Dropping the provider releases this worker's shared-cache handle before the
-        // worker waits for its next job.
-        drop(provider);
-    }
-}
-
-/// Builder-owned pool of bounded prewarm IO workers, shared across all of the builder's
-/// builds.
-///
-/// Threads are spawned once at pool creation (off the hot path) and reused across
-/// builds, so concurrent or rapidly cancelled builds cannot accumulate threads: the
-/// total is fixed at `worker_count`. Workers hold no cache handles between jobs. When a
-/// worker is busy with an earlier build, a new job is dispatched to the remaining
-/// workers; a build whose dispatch finds no idle worker skips prewarming (bounded
-/// degradation, counted). Dropping the pool detaches its workers without waiting for
-/// IO; they exit after finishing any in-flight read.
-pub struct PrewarmWorkerPool {
-    /// Configuration the pool and its schedulers are sized from.
-    pub config: PrewarmConfig,
-    /// One bounded mailbox per worker; `try_send` dispatch is nonblocking.
-    pub workers: Vec<(SyncSender<WorkerJob>, Arc<AtomicBool>)>,
-}
-
-impl std::fmt::Debug for PrewarmWorkerPool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PrewarmWorkerPool")
-            .field("config", &self.config)
-            .field("workers", &self.workers.len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl PrewarmWorkerPool {
-    /// Creates the pool, spawning `config.worker_count` worker threads once. Disabled
-    /// configurations spawn nothing.
-    pub fn new(config: &PrewarmConfig) -> Self {
-        let mut workers = Vec::new();
-        if config.enabled {
-            for index in 0..config.worker_count {
-                // Bounded mailbox: dispatch is nonblocking (`try_send`), so a busy
-                // worker never blocks the build thread.
-                let (sender, receiver) = sync_channel(1);
-                match thread::Builder::new()
-                    .name(format!("prewarm-worker-{index}"))
-                    .spawn(move || Self::worker_loop(receiver))
-                {
-                    Ok(handle) => {
-                        // Dropping the handle detaches the worker: pool shutdown never
-                        // waits for IO. Workers exit on their own once the pool (and its
-                        // mailbox sender) is dropped.
-                        drop(handle);
-                        workers.push((sender, Arc::new(AtomicBool::new(false))));
-                    }
-                    Err(error) => {
-                        PrewarmMetrics::worker_spawn_errors_total().increment(1);
-                        warn!(target: TARGET, error = %error, worker = index, "failed to spawn prewarm worker");
-                    }
-                }
-            }
-        }
-        Self { config: *config, workers }
-    }
-
-    /// Returns the number of IO workers in the pool.
-    pub const fn worker_count(&self) -> usize {
-        self.workers.len()
-    }
-
-    /// Starts a prewarm job for one build, or returns `None` when prewarming is
-    /// disabled or no worker took the job.
-    ///
-    /// The factory is cloned per dispatched worker and invoked inside that worker's
-    /// thread to open the state provider for the job's exact parent state.
-    pub fn try_start_job<F>(&self, provider_factory: F, cache: ExecutionCache) -> Option<PrewarmJob>
-    where
-        F: Fn() -> ProviderResult<StateProviderBox> + Clone + Send + 'static,
-    {
-        if self.workers.is_empty() {
-            return None;
-        }
-        PrewarmMetrics::jobs_total().increment(1);
-        let scheduler = Arc::new(PrewarmScheduler::new(&self.config));
-        let completion = Arc::new(JobCompletion::new(self.workers.len()));
-        let mut dispatched = 0;
-        for (worker, busy) in &self.workers {
-            if busy.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-                completion.finish_one();
-                PrewarmMetrics::worker_busy_skips_total().increment(1);
-                continue;
-            }
-            let job = WorkerJob {
-                provider_factory: Box::new(provider_factory.clone()),
-                cache: cache.clone(),
-                scheduler: Arc::clone(&scheduler),
-                lease: WorkerLease { busy: Arc::clone(busy), completion: Arc::clone(&completion) },
-            };
-            match worker.try_send(job) {
-                Ok(()) => dispatched += 1,
-                Err(TrySendError::Full(_)) => {
-                    PrewarmMetrics::worker_busy_skips_total().increment(1);
-                }
-                Err(TrySendError::Disconnected(_)) => {
-                    // A terminated worker is unavailable, not temporarily busy.
-                    PrewarmMetrics::worker_disconnected_total().increment(1);
-                }
-            }
-        }
-        if dispatched == 0 {
-            PrewarmMetrics::jobs_skipped_busy_total().increment(1);
-            return None;
-        }
-        Some(PrewarmJob { scheduler, completion })
-    }
-
-    /// Worker body: takes jobs from its mailbox, runs each to completion, and exits when
-    /// the pool is dropped (its mailbox sender is gone).
-    pub fn worker_loop(jobs: Receiver<WorkerJob>) {
-        while let Ok(job) = jobs.recv() {
-            job.run();
-        }
-    }
-}
-
-/// One payload build's prewarm job.
-///
-/// Dropping the job closes the scheduler queue — cancelling queued work and waking
-/// workers — without waiting for worker IO. Each worker finishes at most one in-flight
-/// blocking read and then releases its cache handle; [`JobCompletion`] tracks when every
-/// dispatched worker exited.
-pub struct PrewarmJob {
-    /// The build's scheduler, shared with the build's lookahead adapters.
-    pub scheduler: Arc<PrewarmScheduler>,
-    /// Completion signal for the dispatched workers.
-    pub completion: Arc<JobCompletion>,
-}
-
-impl std::fmt::Debug for PrewarmJob {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PrewarmJob").field("scheduler", &self.scheduler).finish_non_exhaustive()
-    }
-}
-
-impl PrewarmJob {
-    /// Returns the scheduler that build-side lookahead adapters schedule keys through.
-    pub const fn scheduler(&self) -> &Arc<PrewarmScheduler> {
-        &self.scheduler
-    }
-
-    /// Cancels remaining queued work and waits for all dispatched workers to exit the
-    /// job. Never called on the build path; used by tests and graceful shutdown.
-    pub fn join(self) {
-        self.scheduler.close();
-        self.completion.wait();
-    }
-}
-
-impl Drop for PrewarmJob {
-    fn drop(&mut self) {
-        // Cancels queued work and wakes workers; never blocks the build thread. Workers
-        // finish at most one in-flight read and then release their cache handles.
-        self.scheduler.close();
-    }
-}
-
-/// Payload-transaction adapter that schedules bounded lookahead predicate-state warming
-/// while the build loop consumes candidates.
-///
-/// The main transaction iterator is owned and delegated to untouched, so the build's
-/// parking lifecycle and dynamic-inclusion semantics are exactly those of the inner
-/// adapter. The independent lookahead cursor is opened with the same attributes as the
-/// main iterator and is only ever advanced (read-only).
-pub struct PrewarmingBestTransactions<I, T>
-where
-    I: ParkablePayloadTransactions<Transaction = T>,
-    T: PoolTransaction + BasePooledTx,
-{
-    /// The build's main transaction iterator, delegated to unchanged.
-    pub inner: I,
-    /// Independent read-only lookahead cursor over the same pool attributes. `None` when
-    /// prewarming is inactive or the cursor is exhausted/saturated.
-    pub cursor: Option<Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>>,
-    /// The build's prewarm scheduler. `None` when prewarming is inactive.
-    pub prewarm: Option<Arc<PrewarmScheduler>>,
-}
-
-impl<I, T> std::fmt::Debug for PrewarmingBestTransactions<I, T>
-where
-    I: ParkablePayloadTransactions<Transaction = T>,
-    T: PoolTransaction + BasePooledTx,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PrewarmingBestTransactions")
-            .field("has_cursor", &self.cursor.is_some())
-            .field("has_scheduler", &self.prewarm.is_some())
-            .finish_non_exhaustive()
-    }
-}
-
-impl<I, T> PrewarmingBestTransactions<I, T>
-where
-    I: ParkablePayloadTransactions<Transaction = T>,
-    T: PoolTransaction + BasePooledTx,
-{
-    /// Wraps the build's transaction iterator with prewarm lookahead scheduling.
-    ///
-    /// When `prewarm` is active, opens an independent read-only lookahead cursor from
-    /// `pool` with the same `attributes` as the main iterator and schedules the initial
-    /// bounded burst. When inactive, the adapter is a pure pass-through.
-    pub fn new<P>(
-        inner: I,
-        pool: P,
-        attributes: BestTransactionsAttributes,
-        prewarm: Option<Arc<PrewarmScheduler>>,
-    ) -> Self
-    where
-        P: TransactionPool<Transaction = T>,
-    {
-        let cursor = prewarm
-            .as_ref()
-            .filter(|scheduler| !scheduler.is_saturated())
-            .map(|_| pool.best_transactions_with_attributes(attributes));
-        Self::with_cursor(inner, cursor, prewarm)
-    }
-
-    /// Wraps an existing lookahead cursor. Schedules the initial bounded burst.
-    pub fn with_cursor(
-        inner: I,
-        cursor: Option<Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<T>>>>>,
-        prewarm: Option<Arc<PrewarmScheduler>>,
-    ) -> Self {
-        let mut adapter = Self { inner, cursor, prewarm };
-        let initial = adapter.prewarm.as_ref().map_or(0, |scheduler| scheduler.lookahead());
-        adapter.advance_lookahead(initial);
-        adapter
-    }
-
-    /// Advances the lookahead cursor by at most `budget` transactions, scheduling each
-    /// transaction's declared predicate state. Stops when the scheduler saturates or the
-    /// cursor is exhausted. Never blocks.
-    pub fn advance_lookahead(&mut self, budget: usize) {
-        let Some(scheduler) = self.prewarm.as_ref() else { return };
-        for _ in 0..budget {
-            if scheduler.is_saturated() {
-                self.cursor = None;
-                return;
-            }
-            let Some(transaction) = self.cursor.as_mut().and_then(Iterator::next) else {
-                self.cursor = None;
-                return;
-            };
-            scheduler.schedule_transaction(&transaction.transaction);
-        }
-    }
-}
-
-impl<I, T> PayloadTransactions for PrewarmingBestTransactions<I, T>
-where
-    I: ParkablePayloadTransactions<Transaction = T>,
-    T: PoolTransaction + BasePooledTx,
-{
-    type Transaction = T;
-
-    fn next(&mut self, ctx: ()) -> Option<Self::Transaction> {
-        let transaction = self.inner.next(ctx)?;
-        // One lookahead advance per consumed candidate keeps the schedule bounded.
-        self.advance_lookahead(1);
-        Some(transaction)
-    }
-
-    fn mark_invalid(&mut self, sender: Address, nonce: u64) {
-        self.inner.mark_invalid(sender, nonce);
-    }
-}
-
-impl<I, T> ParkablePayloadTransactions for PrewarmingBestTransactions<I, T>
-where
-    I: ParkablePayloadTransactions<Transaction = T>,
-    T: PoolTransaction + BasePooledTx,
-{
-    fn park_current(&mut self) -> bool {
-        self.inner.park_current()
-    }
-
-    fn mark_current_committed(&mut self) {
-        self.inner.mark_current_committed();
-    }
-
-    fn promote(&mut self, transaction_hash: TxHash) -> bool {
-        self.inner.promote(transaction_hash)
-    }
-
-    fn discard_parked(&mut self, transaction_hash: TxHash) -> bool {
-        self.inner.discard_parked(transaction_hash)
-    }
+    /// Warm a transaction's full read set by simulating it.
+    Simulate(Arc<SimJob>),
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::atomic::AtomicUsize,
+        collections::VecDeque,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc::sync_channel,
+        },
+        thread,
         time::{Duration, Instant},
     };
 
     use alloy_consensus::{SignableTransaction, Transaction, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bytes, Signature, StorageKey, TxHash, TxKind, U256};
     use base_common_consensus::BasePooledTransaction as ConsensusPooledTransaction;
-    use base_execution_txpool::{BasePooledTransaction, ValidityOperator};
+    use base_execution_txpool::{BasePooledTransaction, ValidityOperator, ValidityPredicate};
     #[cfg(feature = "metrics")]
     use metrics_exporter_prometheus::PrometheusBuilder;
+    use reth_execution_cache::{CachedStateProvider, ExecutionCache};
+    use reth_payload_util::PayloadTransactions;
     use reth_primitives_traits::Recovered;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_storage_api::BlockHashReader;
+    use reth_storage_api::{
+        AccountReader, BlockHashReader, StateProvider, StateProviderBox, errors::ProviderResult,
+    };
     use reth_transaction_pool::{
-        TransactionOrigin, error::InvalidPoolTransactionError, identifier::TransactionId,
+        BestTransactions, PoolTransaction, TransactionOrigin, ValidPoolTransaction,
+        error::InvalidPoolTransactionError, identifier::TransactionId,
     };
 
     use super::*;
+    use crate::ParkablePayloadTransactions;
 
     fn enabled_config(workers: usize, lookahead: usize, key_cap: usize) -> PrewarmConfig {
-        PrewarmConfig { enabled: true, worker_count: workers, lookahead, key_cap }
+        PrewarmConfig {
+            enabled: true,
+            worker_count: workers,
+            lookahead,
+            key_cap,
+            ..PrewarmConfig::default()
+        }
+    }
+
+    fn sim_config(workers: usize, lookahead: usize, sim_lookahead: usize) -> PrewarmConfig {
+        PrewarmConfig {
+            enabled: true,
+            worker_count: workers,
+            lookahead,
+            key_cap: 64,
+            simulate: true,
+            sim_lookahead,
+        }
+    }
+
+    /// A simulation job standing in for the builder-supplied EVM closure: it performs the
+    /// account, storage, and bytecode reads a real `transact` would issue through the
+    /// worker's cache-filling provider.
+    fn reading_sim_job(
+        tx_hash: TxHash,
+        address: Address,
+        slot: U256,
+    ) -> (SimJob, Arc<AtomicUsize>) {
+        let runs = Arc::new(AtomicUsize::new(0));
+        let job = SimJob {
+            tx_hash,
+            simulate: {
+                let runs = Arc::clone(&runs);
+                Box::new(move |provider| {
+                    runs.fetch_add(1, Ordering::Relaxed);
+                    let _ = provider.basic_account(&address);
+                    let _ = provider.storage(address, StorageKey::new(slot.to_be_bytes()));
+                })
+            },
+        };
+        (job, runs)
+    }
+
+    /// A no-op simulation job, for scheduling-only assertions.
+    fn noop_sim_job(tx_hash: TxHash) -> SimJob {
+        SimJob { tx_hash, simulate: Box::new(|_| {}) }
+    }
+
+    /// A simulation setup recording every transaction the adapter asks it to simulate.
+    fn recording_sim_setup(
+        lookahead: usize,
+    ) -> (SimSetup<BasePooledTransaction>, Arc<Mutex<Vec<TxHash>>>) {
+        let requested = Arc::new(Mutex::new(Vec::new()));
+        let setup = SimSetup {
+            lookahead,
+            factory: {
+                let requested = Arc::clone(&requested);
+                Arc::new(move |transaction: &BasePooledTransaction| {
+                    let tx_hash = *transaction.hash();
+                    requested.lock().unwrap().push(tx_hash);
+                    Some(noop_sim_job(tx_hash))
+                })
+            },
+        };
+        (setup, requested)
     }
 
     fn balance_predicate(address: Address) -> ValidityPredicate {
@@ -1110,7 +547,7 @@ mod tests {
         handle.join().expect("blocked pop must wake on close");
 
         assert_eq!(popped.lock().unwrap().len(), 2);
-        assert_eq!(queue.pop(), None);
+        assert!(queue.pop().is_none());
     }
 
     #[test]
@@ -1470,6 +907,7 @@ mod tests {
                 SpyInner::new(transactions.clone()),
                 Some(Box::new(StaticCursor::new(transactions))),
                 Some(Arc::clone(&scheduler)),
+                None,
             );
 
         // Initial bounded burst: lookahead transactions' keys are queued before the loop.
@@ -1504,5 +942,167 @@ mod tests {
 
         adapter.mark_invalid(second.sender(), second.nonce());
         assert_eq!(adapter.inner.invalidated, 1);
+    }
+
+    #[test]
+    fn simulation_job_warms_its_reads_into_the_shared_cache() {
+        let mock = MockEthProvider::default();
+        let address = Address::with_last_byte(11);
+        warmable_account(&mock, address);
+
+        let config = sim_config(1, 8, 4);
+        let (pool, cache, factory, _account_reads, _storage_reads) =
+            test_pool(&config, &mock, Duration::ZERO);
+        let job = pool.try_start_job(factory, cache.clone()).expect("worker must take the job");
+
+        let tx_hash = TxHash::with_last_byte(1);
+        let (sim, runs) = reading_sim_job(tx_hash, address, U256::from(7));
+        assert!(job.scheduler().schedule_simulation(sim));
+        // The simulation is in flight until a worker finishes it.
+        assert!(
+            wait_until(
+                || runs.load(Ordering::Relaxed) == 1
+                    && !job.scheduler().simulation_pending(&tx_hash),
+                Duration::from_secs(5)
+            ),
+            "the worker must run the simulation and then mark it finished"
+        );
+        job.join();
+
+        // The simulated reads are in the shared cache: a build-side provider over an empty
+        // backend is served entirely from it, exactly as for predicate-key warming.
+        let build_backend = DelayStateProvider::new(MockEthProvider::default(), Duration::ZERO);
+        let build_provider =
+            CachedStateProvider::new(Box::new(build_backend.clone()), cache.clone(), None);
+        let mut db = reth_revm::database::StateProviderDatabase::new(build_provider);
+        let account = revm::Database::basic(&mut db, address).unwrap().expect("warmed account");
+        assert_eq!(account.balance, U256::from(100));
+        assert_eq!(
+            revm::Database::storage(&mut db, address, U256::from(7)).unwrap(),
+            U256::from(42)
+        );
+        assert_eq!(build_backend.account_reads(), 0, "warmed account must not hit the backend");
+        assert_eq!(build_backend.storage_reads(), 0, "warmed slot must not hit the backend");
+
+        drop(db);
+        let saved = reth_execution_cache::SavedCache::new(B256::ZERO, cache);
+        assert!(saved.is_available(), "the worker must release its cache handle");
+    }
+
+    #[test]
+    fn sim_scheduler_dedups_simulations() {
+        let scheduler = PrewarmScheduler::new(&sim_config(1, 8, 4));
+        let first = TxHash::with_last_byte(1);
+
+        assert!(scheduler.schedule_simulation(noop_sim_job(first)));
+        assert!(
+            scheduler.schedule_simulation(noop_sim_job(first)),
+            "duplicates count as scheduled"
+        );
+        assert_eq!(scheduler.queued_len(), 1, "a duplicate must not be queued twice");
+
+        assert!(scheduler.schedule_simulation(noop_sim_job(TxHash::with_last_byte(2))));
+        assert_eq!(scheduler.queued_len(), 2, "distinct simulations are each queued once");
+
+        // Predicate-key warming has its own budget and is unaffected.
+        assert!(!scheduler.is_saturated());
+        assert!(scheduler.schedule_key(WarmKey::Balance(Address::with_last_byte(1))));
+    }
+
+    #[test]
+    fn simulation_is_refused_unless_configured() {
+        let scheduler = PrewarmScheduler::new(&enabled_config(1, 8, 64));
+        assert!(scheduler.is_sim_saturated(), "simulation is off by default");
+        assert!(!scheduler.schedule_simulation(noop_sim_job(TxHash::with_last_byte(1))));
+        assert_eq!(scheduler.queued_len(), 0);
+        // A closed queue refuses simulation jobs too.
+        let scheduler = PrewarmScheduler::new(&sim_config(1, 8, 4));
+        scheduler.close();
+        assert!(!scheduler.schedule_simulation(noop_sim_job(TxHash::with_last_byte(1))));
+    }
+
+    #[test]
+    fn adapter_simulates_only_non_predicated_transactions_in_a_bounded_window() {
+        let predicated = Address::with_last_byte(1);
+        let transactions = vec![
+            // Predicated: warmed by declared keys, never simulated.
+            validity_transaction(predicated, vec![balance_predicate(predicated)]),
+            validity_transaction(Address::with_last_byte(2), vec![]),
+            validity_transaction(Address::with_last_byte(3), vec![]),
+            validity_transaction(Address::with_last_byte(4), vec![]),
+        ];
+        let expected_first = *transactions[1].transaction.hash();
+        let expected_second = *transactions[2].transaction.hash();
+        let expected_third = *transactions[3].transaction.hash();
+
+        // A simulation window of one: only one simulation may be outstanding, so the rest
+        // wait for a worker to finish rather than being lost to the shared cursor.
+        let scheduler = Arc::new(PrewarmScheduler::new(&sim_config(1, 4, 1)));
+        let (sim, requested) = recording_sim_setup(1);
+        let mut adapter =
+            PrewarmingBestTransactions::<SpyInner, BasePooledTransaction>::with_cursor(
+                SpyInner::new(transactions.clone()),
+                Some(Box::new(StaticCursor::new(transactions))),
+                Some(Arc::clone(&scheduler)),
+                Some(sim),
+            );
+
+        // The predicated transaction is skipped; the window admits exactly one simulation.
+        assert_eq!(
+            requested.lock().unwrap().as_slice(),
+            &[expected_first],
+            "only the first non-predicated transaction is simulated"
+        );
+        assert_eq!(
+            adapter.sim_deferred.len(),
+            2,
+            "the cursor ran ahead of the window; the rest wait instead of being dropped"
+        );
+
+        // No worker is running here, so the window only reopens as simulations finish.
+        scheduler.finish_simulation(&expected_first);
+        adapter.next(()).expect("candidate");
+        assert_eq!(requested.lock().unwrap().len(), 2);
+        assert_eq!(requested.lock().unwrap()[1], expected_second, "nearest the build loop first");
+
+        scheduler.finish_simulation(&expected_second);
+        adapter.next(()).expect("candidate");
+        assert_eq!(requested.lock().unwrap().len(), 3);
+        assert_eq!(requested.lock().unwrap()[2], expected_third);
+        assert!(adapter.sim_deferred.is_empty(), "every eligible transaction was simulated");
+
+        // The predicated transaction still had its declared key warmed.
+        assert!(scheduler.queued_len() >= 1);
+    }
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn build_loop_overtaking_an_unfinished_simulation_is_counted() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let transactions = vec![validity_transaction(Address::with_last_byte(2), vec![])];
+
+        let scheduler = Arc::new(PrewarmScheduler::new(&sim_config(1, 4, 4)));
+        let (sim, _requested) = recording_sim_setup(4);
+        metrics::with_local_recorder(&recorder, || {
+            let mut adapter =
+                PrewarmingBestTransactions::<SpyInner, BasePooledTransaction>::with_cursor(
+                    SpyInner::new(transactions.clone()),
+                    Some(Box::new(StaticCursor::new(transactions))),
+                    Some(Arc::clone(&scheduler)),
+                    Some(sim),
+                );
+            // No worker is running, so the scheduled simulation is still pending when the
+            // build loop reaches the same transaction.
+            adapter.next(()).expect("candidate");
+        });
+
+        assert!(
+            handle
+                .render()
+                .lines()
+                .any(|line| line == "base_payload_prewarm_canonical_overtook_sim_total 1"),
+            "reaching a transaction whose simulation is still pending must be counted"
+        );
     }
 }

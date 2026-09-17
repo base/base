@@ -22,7 +22,7 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    SimSetup, ValidityMetrics, error::BasePayloadBuilderError, simulation_setup_for_env,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -383,6 +383,25 @@ impl BasePayloadBuilderCtx {
         } else {
             Ok(Default::default())
         }
+    }
+
+    /// Builds the transaction-simulation warming setup for this build, or `None` when
+    /// simulation warming is off.
+    ///
+    /// Mirrors the standard payload builder by delegating to the shared
+    /// [`simulation_setup_for_env`] helper, so both paths get identical warming semantics:
+    /// a throwaway state overlay per simulation, relaxed sender-side gating, and discarded
+    /// output. `self.evm_env` is this build's next-block environment — the same
+    /// `next_evm_env(parent, block_env_attributes)` the flashblock loop executes against —
+    /// and is cloned so relaxation never touches the build's own environment.
+    pub fn simulation_setup<T>(&self) -> Option<SimSetup<T>>
+    where
+        T: PoolTransaction<Consensus = BaseTransactionSigned> + BasePooledTx + 'static,
+    {
+        let prewarm = &self.builder_config.prewarm;
+        prewarm.simulate.then(|| {
+            simulation_setup_for_env(&self.evm_config, self.evm_env.clone(), prewarm.sim_lookahead)
+        })
     }
 
     /// Returns the current fee settings for transactions from the mempool
