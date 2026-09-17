@@ -6,6 +6,7 @@ use std::{
     io::Write as _,
     num::NonZeroU64,
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -14,6 +15,7 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
@@ -80,6 +82,9 @@ pub struct LocalBenchmarkWorkload {
     pub workload: String,
     /// Human-readable payload label for the visualizer.
     pub transaction_payload: String,
+    /// Deploy a fresh devnet WETH/USDC swap harness and auto-wire swap addresses.
+    #[serde(default)]
+    pub deploy_devnet_swap_harness: bool,
     /// Load-test settings for this workload.
     #[serde(flatten)]
     pub test_config: TestConfig,
@@ -194,6 +199,15 @@ const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
 const FRESH_DEVNET_BERYL_ACTIVATION_BLOCK: u64 = 3;
 const FRESH_DEVNET_BERYL_READY_BLOCK: u64 = FRESH_DEVNET_BERYL_ACTIVATION_BLOCK + 1;
 const FRESH_DEVNET_BERYL_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const DEVNET_WETH_ADDRESS: &str = "0x4200000000000000000000000000000000000006";
+const DEVNET_SWAP_CONTRACTS_DIR: &str = "../../crates/utilities/test-utils/contracts";
+
+#[derive(Debug, Clone, Copy)]
+struct DevnetSwapHarnessAddresses {
+    usdc: Address,
+    uniswap_router: Address,
+    aerodrome_router: Address,
+}
 
 impl BenchmarkCli {
     /// Runs the selected benchmark case.
@@ -225,7 +239,7 @@ impl LocalBenchmarkArgs {
             .transpose()
             .wrap_err("failed to load fresh-devnet benchmark configuration")?
             .unwrap_or_default();
-        let result = self.run_one(test_config).await?;
+        let result = self.run_one(test_config, false).await?;
         if let Some(error) = result.error {
             eyre::bail!(error)
         }
@@ -237,7 +251,11 @@ impl LocalBenchmarkArgs {
     /// The configuration's RPC endpoints are deliberately ignored: every run targets the dynamic
     /// endpoints assigned to its newly created devnet. A B-20 workload schedules Azul and Beryl,
     /// then activates the B-20 asset feature before creating its token fixtures.
-    pub async fn run_one(&self, mut test_config: TestConfig) -> Result<LocalBenchmarkResult> {
+    pub async fn run_one(
+        &self,
+        mut test_config: TestConfig,
+        deploy_devnet_swap_harness: bool,
+    ) -> Result<LocalBenchmarkResult> {
         let devnet = DevnetConfig::standard();
         let chain_id = devnet.l2_chain_id;
         let funder_key = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
@@ -265,11 +283,17 @@ impl LocalBenchmarkArgs {
                 .flashblocks_url()
                 .parse()
                 .wrap_err("invalid fresh-devnet Flashblocks URL")?;
-            test_config.transaction_submission_rpcs = vec![builder_rpc];
+            test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
             test_config.query_rpc = Some(client_rpc);
             test_config.txpool_nodes.clear();
             test_config.flashblocks_ws = Some(flashblocks_ws);
             test_config.chain_id = Some(chain_id);
+
+            if deploy_devnet_swap_harness {
+                println!("deploying fresh devnet swap harness");
+                let harness = Self::deploy_devnet_swap_harness(&builder_rpc)?;
+                Self::apply_devnet_swap_harness(&mut test_config, harness)?;
+            }
 
             let load_config = test_config.to_load_config(None)?;
             eyre::ensure!(
@@ -341,7 +365,7 @@ impl LocalBenchmarkArgs {
             let output_dir_name = format!("fresh-devnet-{}", workload.workload);
             let workload_output_dir = Self::workload_output_dir(output_dir, &output_dir_name)?;
             let result = Self { output_dir: Some(workload_output_dir), ..Self::default() }
-                .run_one(workload.test_config)
+                .run_one(workload.test_config, workload.deploy_devnet_swap_harness)
                 .await;
 
             let (summary, success, error) = match result {
@@ -425,6 +449,151 @@ impl LocalBenchmarkArgs {
 
         let failed = suite_results.runs.iter().filter(|run| !run.success).count();
         eyre::ensure!(failed == 0, "{failed} fresh-devnet benchmark workload(s) failed");
+        Ok(())
+    }
+
+    fn deploy_devnet_swap_harness(builder_rpc: &url::Url) -> Result<DevnetSwapHarnessAddresses> {
+        let contracts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEVNET_SWAP_CONTRACTS_DIR);
+        eyre::ensure!(
+            contracts_dir.is_dir(),
+            "devnet swap harness contracts directory not found: {}",
+            contracts_dir.display()
+        );
+
+        let install_output = Command::new("forge")
+            .args(["soldeer", "install"])
+            .current_dir(&contracts_dir)
+            .output()
+            .wrap_err("failed to execute forge soldeer install for devnet swap harness")?;
+        if !install_output.status.success() {
+            eyre::bail!(
+                "forge soldeer install failed for devnet swap harness: {}",
+                String::from_utf8_lossy(&install_output.stderr)
+            );
+        }
+
+        let deploy_private_key = format!("{:#x}", ANVIL_ACCOUNT_1.private_key);
+        let deploy_output = Command::new("forge")
+            .arg("script")
+            .arg("script/DeployRealTokenSwapDevnet.s.sol:DeployRealTokenSwapDevnet")
+            .arg("--rpc-url")
+            .arg(builder_rpc.as_str())
+            .arg("--private-key")
+            .arg(&deploy_private_key)
+            .arg("--broadcast")
+            .current_dir(&contracts_dir)
+            .output()
+            .wrap_err("failed to execute devnet swap harness deployment")?;
+        let deploy_logs = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&deploy_output.stdout),
+            String::from_utf8_lossy(&deploy_output.stderr)
+        );
+        if !deploy_output.status.success() {
+            eyre::bail!("devnet swap harness deployment failed:\n{deploy_logs}");
+        }
+
+        let mut usdc = None;
+        let mut uniswap_router = None;
+        let mut aerodrome_router = None;
+        for line in deploy_logs.lines() {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            if fields.len() >= 2 && fields[0] == "USDC:" {
+                usdc = Some(fields[1].parse::<Address>().wrap_err_with(|| {
+                    format!("failed to parse deployed USDC address from line: {line}")
+                })?);
+                continue;
+            }
+            if fields.len() >= 4
+                && fields[0] == "Uniswap"
+                && fields[1] == "router"
+                && fields[2] == "shim:"
+            {
+                uniswap_router = Some(fields[3].parse::<Address>().wrap_err_with(|| {
+                    format!("failed to parse deployed Uniswap router address from line: {line}")
+                })?);
+                continue;
+            }
+            if fields.len() >= 4
+                && fields[0] == "Aerodrome"
+                && fields[1] == "router"
+                && fields[2] == "shim:"
+            {
+                aerodrome_router = Some(fields[3].parse::<Address>().wrap_err_with(|| {
+                    format!("failed to parse deployed Aerodrome router address from line: {line}")
+                })?);
+            }
+        }
+
+        let usdc = usdc
+            .ok_or_else(|| eyre::eyre!("missing USDC address in devnet swap harness deployment"))?;
+        let uniswap_router = uniswap_router.ok_or_else(|| {
+            eyre::eyre!("missing Uniswap router address in devnet swap harness deployment")
+        })?;
+        let aerodrome_router = aerodrome_router.ok_or_else(|| {
+            eyre::eyre!("missing Aerodrome router address in devnet swap harness deployment")
+        })?;
+
+        Ok(DevnetSwapHarnessAddresses { usdc, uniswap_router, aerodrome_router })
+    }
+
+    fn apply_devnet_swap_harness(
+        test_config: &mut TestConfig,
+        harness: DevnetSwapHarnessAddresses,
+    ) -> Result<()> {
+        let weth = DEVNET_WETH_ADDRESS
+            .parse::<Address>()
+            .expect("valid devnet WETH predeploy address literal");
+        let setup = test_config.real_token_setup.as_mut().ok_or_else(|| {
+            eyre::eyre!("deploy_devnet_swap_harness requires real_token_setup with enabled: true")
+        })?;
+        eyre::ensure!(
+            setup.enabled,
+            "deploy_devnet_swap_harness requires real_token_setup with enabled: true"
+        );
+
+        setup.weth = Some(weth);
+        setup.pair_token.token = Some(harness.usdc);
+        match &mut setup.pair_token.acquisition {
+            base_load_tests::RealTokenAcquisitionConfig::UniswapV3ExactInput { router, .. } => {
+                *router = Some(harness.uniswap_router);
+            }
+            base_load_tests::RealTokenAcquisitionConfig::AerodromeClExactInput {
+                router, ..
+            } => {
+                *router = Some(harness.aerodrome_router);
+            }
+        }
+
+        let mut saw_swap = false;
+        for transaction in &mut test_config.transactions {
+            match &mut transaction.tx_type {
+                TxTypeConfig::UniswapV3 { router, token_in, token_out, .. } => {
+                    *router = Some(harness.uniswap_router);
+                    *token_in = Some(weth);
+                    *token_out = Some(harness.usdc);
+                    saw_swap = true;
+                }
+                TxTypeConfig::AerodromeCl { router, token_in, token_out, .. } => {
+                    *router = Some(harness.aerodrome_router);
+                    *token_in = Some(weth);
+                    *token_out = Some(harness.usdc);
+                    saw_swap = true;
+                }
+                TxTypeConfig::Transfer
+                | TxTypeConfig::Calldata { .. }
+                | TxTypeConfig::Erc20 { .. }
+                | TxTypeConfig::Storage { .. }
+                | TxTypeConfig::DoubleCounter { .. }
+                | TxTypeConfig::Precompile { .. }
+                | TxTypeConfig::Osaka { .. }
+                | TxTypeConfig::B20 => {}
+            }
+        }
+        eyre::ensure!(
+            saw_swap,
+            "deploy_devnet_swap_harness requires at least one uniswap_v3 or aerodrome_cl transaction"
+        );
         Ok(())
     }
 
@@ -947,12 +1116,13 @@ impl SnapshotBenchmarkArgs {
 mod tests {
     use std::{fs, num::NonZeroU64};
 
+    use alloy_primitives::Address;
     use base_load_tests::MetricsSummary;
     use clap::Parser;
 
     use super::{
-        AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
-        LocalBenchmarkWorkloadConfig, SnapshotBenchmarkArgs,
+        AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, DevnetSwapHarnessAddresses,
+        LocalBenchmarkArgs, LocalBenchmarkWorkloadConfig, SnapshotBenchmarkArgs,
     };
 
     #[test]
@@ -1150,12 +1320,125 @@ mod tests {
         assert_eq!(config.benchmark_workloads.len(), 4);
         assert_eq!(config.benchmark_workloads[0].workload, "b20-transfer");
         assert_eq!(config.benchmark_workloads[0].transaction_payload, "b20-transfer-existing");
+        assert!(!config.benchmark_workloads[0].deploy_devnet_swap_harness);
         assert_eq!(config.benchmark_workloads[0].test_config.sender_count, 400);
         assert_eq!(config.benchmark_workloads[0].test_config.funding_amount, "100000000000000000");
         assert_eq!(config.benchmark_workloads[1].workload, "eth-new");
         assert_eq!(config.benchmark_workloads[1].test_config.sender_count, 1000);
         assert_eq!(config.benchmark_workloads[2].workload, "eth-existing");
         assert_eq!(config.benchmark_workloads[3].workload, "blake2f-50000");
+    }
+
+    #[test]
+    fn parses_devnet_swap_harness_workload_without_contract_addresses() {
+        let yaml = r#"
+benchmark_workloads:
+  - workload: uniswap-swap
+    transaction_payload: uniswap_v3-devnet-harness
+    deploy_devnet_swap_harness: true
+    transaction_submission_rpcs: http://localhost:8545
+    query_rpc: http://localhost:8545
+    txpool_nodes: []
+    flashblocks_ws: ws://localhost:7111
+    sender_count: 10
+    in_flight_per_sender: 16
+    transactions:
+      - weight: 100
+        type: uniswap_v3
+        fee: 500
+    real_token_setup:
+      enabled: true
+      weth_amount_per_sender: "50000000000000000"
+      pair_token:
+        amount_per_sender: "10000000"
+        acquisition:
+          type: uniswap_v3_exact_input
+          fee: 500
+          amount_in: "10000000000000000"
+"#;
+
+        let config: LocalBenchmarkWorkloadConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.benchmark_workloads.len(), 1);
+        assert!(config.benchmark_workloads[0].deploy_devnet_swap_harness);
+    }
+
+    #[test]
+    fn apply_devnet_swap_harness_wires_swap_and_setup_addresses() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+query_rpc: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 50
+    type: uniswap_v3
+    fee: 500
+  - weight: 50
+    type: aerodrome_cl
+    tick_spacing: 100
+real_token_setup:
+  enabled: true
+  weth_amount_per_sender: "50000000000000000"
+  pair_token:
+    amount_per_sender: "10000000"
+    acquisition:
+      type: uniswap_v3_exact_input
+      fee: 500
+      amount_in: "10000000000000000"
+"#;
+
+        let mut config = base_load_tests::TestConfig::from_yaml(yaml).unwrap();
+        let harness = DevnetSwapHarnessAddresses {
+            usdc: Address::repeat_byte(0x11),
+            uniswap_router: Address::repeat_byte(0x22),
+            aerodrome_router: Address::repeat_byte(0x33),
+        };
+
+        LocalBenchmarkArgs::apply_devnet_swap_harness(&mut config, harness).unwrap();
+
+        let setup = config.real_token_setup.expect("setup should be configured");
+        assert_eq!(
+            setup.weth,
+            Some("0x4200000000000000000000000000000000000006".parse().unwrap())
+        );
+        assert_eq!(setup.pair_token.token, Some(harness.usdc));
+        match setup.pair_token.acquisition {
+            base_load_tests::RealTokenAcquisitionConfig::UniswapV3ExactInput { router, .. } => {
+                assert_eq!(router, Some(harness.uniswap_router));
+            }
+            _ => panic!("expected uniswap acquisition route"),
+        }
+
+        for transaction in config.transactions {
+            match transaction.tx_type {
+                base_load_tests::TxTypeConfig::UniswapV3 {
+                    router,
+                    token_in,
+                    token_out,
+                    ..
+                } => {
+                    assert_eq!(router, Some(harness.uniswap_router));
+                    assert_eq!(token_out, Some(harness.usdc));
+                    assert_eq!(
+                        token_in,
+                        Some("0x4200000000000000000000000000000000000006".parse().unwrap())
+                    );
+                }
+                base_load_tests::TxTypeConfig::AerodromeCl {
+                    router,
+                    token_in,
+                    token_out,
+                    ..
+                } => {
+                    assert_eq!(router, Some(harness.aerodrome_router));
+                    assert_eq!(token_out, Some(harness.usdc));
+                    assert_eq!(
+                        token_in,
+                        Some("0x4200000000000000000000000000000000000006".parse().unwrap())
+                    );
+                }
+                _ => panic!("expected swap tx type"),
+            }
+        }
     }
 
     #[test]
