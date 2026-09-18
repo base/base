@@ -1,0 +1,19 @@
+{
+  "qualification": "candidate; requires a recorded live fork transition and post-fork finality",
+  "setup": {
+    "source_revision": "0066b17c3fe0cbb5ea935de6d5b18d4fc86dc439",
+    "image": "devnet-setup:glamsterdam-v1",
+    "patch_sha256": "38cdf5fa75a6de0d9b318d4ce31a235c887ae2d6a482a2c929d79026eee7c031",
+    "validator_count": 64
+  },
+  "reth": {
+    "source_revision": "73a3a00862a8f14f89e30da8de001456f18cfae0",
+    "release": "v2.6.0",
+    "image": "ghcr.io/paradigmxyz/reth@sha256:8ce703acf113b2a20705b6e76adebed20f74ba8591bc7c9407203b2968aca70d"
+  },
+  "lighthouse": {
+    "source_revision": "e423a66763bb1bd780492d635123f208d80c3538",
+    "release": "v8.2.2",
+    "image": "sigp/lighthouse@sha256:9a62bb8705455136e1cf96613460960f80dc2faa9d75b5c16a3bfcc9210dcdd1"
+  }
+}

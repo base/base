@@ -27,6 +27,10 @@ FROM public.ecr.aws/docker/library/golang:1.26-alpine AS base-devnet-builder
 RUN apk add --no-cache git ca-certificates
 ADD https://github.com/base/optimism.git#0066b17c3fe0cbb5ea935de6d5b18d4fc86dc439 /op-deployer
 WORKDIR /op-deployer
+# The acceptance fixture needs nonempty per-slot Gloas PTC candidate committees.
+# Existing callers retain the upstream single-validator default.
+COPY etc/scripts/devnet/glamsterdam-genesis.patch /tmp/glamsterdam-genesis.patch
+RUN git apply --check /tmp/glamsterdam-genesis.patch && git apply /tmp/glamsterdam-genesis.patch
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -o /out/op-deployer ./op-deployer/cmd/op-deployer && \
@@ -36,6 +40,8 @@ RUN /out/extract-artifacts /contract-artifacts && \
     mv /contract-artifacts/bundle-*/forge-artifacts /artifacts
 
 FROM public.ecr.aws/docker/library/alpine:3.21.3
+
+LABEL org.base.devnet.setup.validator-count="1"
 
 RUN apk add --no-cache bash jq curl
 

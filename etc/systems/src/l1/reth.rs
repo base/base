@@ -69,16 +69,21 @@ impl RethContainer {
     ) -> Result<Self> {
         let config = config.unwrap_or_default();
 
-        if let Some(ref net) = config.network_name {
-            ensure_network_exists_with_name(net)?;
-        } else {
-            ensure_network_exists()?;
+        if !config.auto_remove_network {
+            if let Some(ref net) = config.network_name {
+                ensure_network_exists_with_name(net)?;
+            } else {
+                ensure_network_exists()?;
+            }
         }
 
         let (image_name, image_tag) =
             RETH_IMAGE.split_once(':').ok_or_else(|| eyre!("Reth image tag is missing"))?;
 
-        let image = GenericImage::new(image_name, image_tag)
+        let image = config
+            .reth_image
+            .as_ref()
+            .map_or_else(|| GenericImage::new(image_name, image_tag), super::L1Image::image)
             .with_exposed_port(HTTP_PORT.tcp())
             .with_exposed_port(ENGINE_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("RPC HTTP server started"));
@@ -101,7 +106,7 @@ impl RethContainer {
         } else {
             unique_name(L1_RETH_NAME)
         };
-        let network = config.network_name.unwrap_or_else(|| network_name().to_string());
+        let network = config.network_name.clone().unwrap_or_else(|| network_name().to_string());
 
         let mut container_builder = image
             .with_container_name(&name)
@@ -124,10 +129,18 @@ impl RethContainer {
             container_builder = container_builder.with_mapped_port(port, ENGINE_PORT.tcp());
         }
 
-        let container =
-            container_builder.start().await.wrap_err("Failed to start Reth container")?;
+        let container = config
+            .capture_logs(container_builder, "reth")?
+            .start()
+            .await
+            .wrap_err("Failed to start Reth container")?;
 
         Ok(Self { container, name, reorg_control_enabled: config.enable_reorg_control })
+    }
+
+    /// Saves owned-container logs and identity before cleanup.
+    pub async fn capture_diagnostics(&self, directory: &std::path::Path) -> Result<()> {
+        super::L1Diagnostics::capture(self.container.id(), directory, "reth").await
     }
 
     /// Returns the public RPC URL of the container.

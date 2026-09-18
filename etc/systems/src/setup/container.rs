@@ -239,6 +239,7 @@ pub struct SetupContainer {
     chain_id: u64,
     l2_chain_id: u64,
     slot_duration: u64,
+    glamsterdam_setup: Option<crate::GlamsterdamSetup>,
     isthmus_activation_block: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
@@ -255,6 +256,7 @@ impl SetupContainer {
             chain_id: 1337,
             l2_chain_id: 84538453,
             slot_duration: 1,
+            glamsterdam_setup: None,
             isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,
@@ -262,6 +264,15 @@ impl SetupContainer {
             base_denim_activation_block: None,
             base_zenith_activation_block: None,
         }
+    }
+
+    /// Selects the prebuilt fixture generator and its validator population.
+    ///
+    /// The caller must validate/prebuild this image before genesis time is resolved.
+    /// Ordinary system tests retain their existing image and single-validator behavior.
+    pub fn with_glamsterdam_setup(mut self, setup: crate::GlamsterdamSetup) -> Self {
+        self.glamsterdam_setup = Some(setup);
+        self
     }
 
     /// Sets the L1 chain ID.
@@ -320,13 +331,24 @@ impl SetupContainer {
 
     /// Generates both chains before starting L1, with deployed contracts in genesis.
     pub fn generate_genesis(&self) -> Result<(L1GenesisOutput, L2DeploymentOutput)> {
-        SetupImage::ensure_built()?;
+        if self.glamsterdam_setup.is_none() {
+            SetupImage::ensure_built()?;
+        }
         fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
         let output_dir =
             self.output_dir.canonicalize().wrap_err("Failed to canonicalize output directory")?;
         let output_mount = output_dir.to_string_lossy().to_string();
 
-        let mut container = SetupImage::request()
+        let image = if let Some(setup) = &self.glamsterdam_setup {
+            let (name, tag) = setup
+                .image
+                .rsplit_once(':')
+                .ok_or_else(|| eyre::eyre!("fixture setup image tag missing"))?;
+            GenericImage::new(name, tag)
+        } else {
+            SetupImage::request()
+        };
+        let mut container = image
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
             .with_network("none")
@@ -350,6 +372,12 @@ impl SetupContainer {
             .with_env_var("L2_EL_BOOTNODE_ENODE", EL_BOOTNODE_ENODE)
             .with_env_var("L2_CL_BOOTNODE_P2P_KEY", CL_BOOTNODE_P2P_KEY)
             .with_env_var("L2_CL_BOOTNODE_ENR_PATH", CL_BOOTNODE_ENR_PATH);
+
+        if let Some(setup) = &self.glamsterdam_setup {
+            ensure!(setup.validator_count >= 8, "Gloas fixture needs nonempty per-slot committees");
+            container = container
+                .with_env_var("BASE_DEVNET_VALIDATOR_COUNT", setup.validator_count.to_string());
+        }
 
         if let Some(block) = self.isthmus_activation_block {
             container = container.with_env_var("L2_ISTHMUS_BLOCK", block.to_string());

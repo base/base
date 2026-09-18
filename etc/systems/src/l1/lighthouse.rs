@@ -42,14 +42,20 @@ impl LighthouseBeaconContainer {
     ) -> Result<Self> {
         let config = config.unwrap_or_default();
 
-        if let Some(ref net) = config.network_name {
-            ensure_network_exists_with_name(net)?;
-        } else {
-            ensure_network_exists()?;
+        if !config.auto_remove_network {
+            if let Some(ref net) = config.network_name {
+                ensure_network_exists_with_name(net)?;
+            } else {
+                ensure_network_exists()?;
+            }
         }
 
         let command = beacon_command(execution_endpoint.as_ref());
-        let image = lighthouse_image()
+        let image = config
+            .lighthouse_image
+            .as_ref()
+            .map_or_else(lighthouse_image, super::L1Image::image)
+            .with_entrypoint("lighthouse")
             .with_exposed_port(LIGHTHOUSE_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("HTTP API started"));
 
@@ -58,7 +64,7 @@ impl LighthouseBeaconContainer {
         } else {
             unique_name(L1_BEACON_NAME)
         };
-        let network = config.network_name.unwrap_or_else(|| network_name().to_string());
+        let network = config.network_name.clone().unwrap_or_else(|| network_name().to_string());
 
         let mut container_builder = image
             .with_container_name(&name)
@@ -81,9 +87,14 @@ impl LighthouseBeaconContainer {
                 container_builder.with_mapped_port(port, LIGHTHOUSE_HTTP_PORT.tcp());
         }
 
-        let container = container_builder.start().await?;
+        let container = config.capture_logs(container_builder, "beacon")?.start().await?;
 
         Ok(Self { container, name })
+    }
+
+    /// Saves owned-container logs and identity before cleanup.
+    pub async fn capture_diagnostics(&self, directory: &Path) -> Result<()> {
+        super::L1Diagnostics::capture(self.container.id(), directory, "beacon").await
     }
 
     /// Returns the beacon API URL (host-accessible).
@@ -121,14 +132,20 @@ impl LighthouseValidatorContainer {
     ) -> Result<Self> {
         let config = config.unwrap_or_default();
 
-        if let Some(ref net) = config.network_name {
-            ensure_network_exists_with_name(net)?;
-        } else {
-            ensure_network_exists()?;
+        if !config.auto_remove_network {
+            if let Some(ref net) = config.network_name {
+                ensure_network_exists_with_name(net)?;
+            } else {
+                ensure_network_exists()?;
+            }
         }
 
         let command = validator_command(beacon_endpoint.as_ref());
-        let image = lighthouse_image()
+        let image = config
+            .lighthouse_image
+            .as_ref()
+            .map_or_else(lighthouse_image, super::L1Image::image)
+            .with_entrypoint("lighthouse")
             .with_wait_for(WaitFor::message_on_stdout("Block production service started"));
 
         let name = if config.use_stable_names {
@@ -136,24 +153,33 @@ impl LighthouseValidatorContainer {
         } else {
             unique_name(L1_VALIDATOR_NAME)
         };
-        let network = config.network_name.unwrap_or_else(|| network_name().to_string());
+        let network = config.network_name.clone().unwrap_or_else(|| network_name().to_string());
 
-        let container = image
-            .with_container_name(&name)
-            .with_network(&network)
-            .with_mount(Mount::bind_mount(
-                path_for_mount(testnet_dir.as_ref()),
-                LIGHTHOUSE_TESTNET_DIR,
-            ))
-            .with_mount(Mount::bind_mount(
-                path_for_mount(validator_keystores.as_ref()),
-                LIGHTHOUSE_VALIDATOR_DATA_DIR,
-            ))
-            .with_cmd(command)
+        let container = config
+            .capture_logs(
+                image
+                    .with_container_name(&name)
+                    .with_network(&network)
+                    .with_mount(Mount::bind_mount(
+                        path_for_mount(testnet_dir.as_ref()),
+                        LIGHTHOUSE_TESTNET_DIR,
+                    ))
+                    .with_mount(Mount::bind_mount(
+                        path_for_mount(validator_keystores.as_ref()),
+                        LIGHTHOUSE_VALIDATOR_DATA_DIR,
+                    ))
+                    .with_cmd(command),
+                "validator",
+            )?
             .start()
             .await?;
 
         Ok(Self { container })
+    }
+
+    /// Saves owned-container logs and identity before cleanup.
+    pub async fn capture_diagnostics(&self, directory: &Path) -> Result<()> {
+        super::L1Diagnostics::capture(self.container.id(), directory, "validator").await
     }
 
     /// Stops the validator before its beacon node is stopped for fault injection.

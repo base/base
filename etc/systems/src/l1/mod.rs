@@ -1,8 +1,16 @@
 //! L1 (Ethereum) infrastructure containers.
 
+mod diagnostics;
+pub use diagnostics::L1Diagnostics;
+
+mod glamsterdam;
+pub use glamsterdam::{
+    GlamsterdamClient, GlamsterdamClients, GlamsterdamConfig, GlamsterdamSchedule, GlamsterdamSetup,
+};
+
 /// Stable container configuration.
 mod config;
-pub use config::L1ContainerConfig;
+pub use config::{L1ContainerConfig, L1Image};
 
 /// Lighthouse beacon and validator containers.
 mod lighthouse;

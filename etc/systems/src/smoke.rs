@@ -32,7 +32,8 @@ use url::Url;
 #[cfg(feature = "upgrade-signal")]
 use crate::upgrade_signal::{MockProtocolVersionsClient, UpgradeSignalStackOptions};
 use crate::{
-    BATCHER, BUILDER, DEPLOYER, DeployerContainer, RoleAddresses, SEQUENCER, SharedL1Runtime,
+    BATCHER, BUILDER, DEPLOYER, DeployerContainer, GlamsterdamClients, GlamsterdamConfig,
+    RoleAddresses, SEQUENCER, SharedL1Runtime,
     l1::{L1ContainerConfig, L1Execution, L1RpcProxy, L1Stack, L1StackConfig},
     l2::{
         L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencersConfig,
@@ -404,6 +405,7 @@ pub struct SystemTestStackBuilder {
     tmpfs_datadirs: bool,
     l1_fault_injection: bool,
     shared_l1: Option<SharedL1Runtime>,
+    l1_glamsterdam: Option<GlamsterdamConfig>,
     extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
     extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
@@ -440,6 +442,16 @@ impl SystemTestStackBuilder {
     /// Creates a new `SystemTestStackBuilder` with default configuration.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Selects a fresh, real Reth/Lighthouse L1 with scheduled Amsterdam/Gloas.
+    ///
+    /// Requires prebuilt fixture images and `BASE_GLAMSTERDAM_ARTIFACTS` for retained
+    /// startup diagnostics. Does not change any Base L2 fork configuration.
+    pub fn with_l1_glamsterdam(mut self, config: GlamsterdamConfig) -> Self {
+        self.devnet_config.l1_slot_duration = config.slot_duration;
+        self.l1_glamsterdam = Some(config);
+        self
     }
 
     /// Sets the canonical devnet configuration.
@@ -685,6 +697,7 @@ impl SystemTestStackBuilder {
         Self::initialize_test_tracing();
 
         if self.shared_l1.is_none()
+            && self.l1_glamsterdam.is_none()
             && !self.l1_fault_injection
             && !self.has_custom_fork_activation()
         {
@@ -711,6 +724,34 @@ impl SystemTestStackBuilder {
             );
         }
 
+        let glamsterdam_clients = if self.l1_glamsterdam.is_some() {
+            eyre::ensure!(
+                self.shared_l1.is_none()
+                    && !self.devnet_config.use_stable_ports
+                    && !self.l1_fault_injection,
+                "scheduled Glamsterdam requires a fresh, uniquely named, exclusive L1"
+            );
+            eyre::ensure!(
+                !self.has_custom_fork_activation(),
+                "Glamsterdam acceptance must leave L2 fork rules unchanged"
+            );
+            let clients = GlamsterdamClients::pinned()?;
+            let preflight = clients.clone();
+            tokio::task::spawn_blocking(move || preflight.require_local()).await??;
+            Some(clients)
+        } else {
+            None
+        };
+        let glamsterdam_artifacts = self
+            .l1_glamsterdam
+            .as_ref()
+            .map(|_| {
+                std::env::var_os("BASE_GLAMSTERDAM_ARTIFACTS").map(PathBuf::from).ok_or_else(|| {
+                    eyre::eyre!("set BASE_GLAMSTERDAM_ARTIFACTS to retain fixture diagnostics")
+                })
+            })
+            .transpose()?;
+
         let l1_chain_id = self.devnet_config.l1_chain_id;
         let l2_chain_id = self.devnet_config.l2_chain_id;
         let slot_duration = self.devnet_config.l1_slot_duration;
@@ -736,6 +777,9 @@ impl SystemTestStackBuilder {
             .with_chain_id(l1_chain_id)
             .with_l2_chain_id(l2_chain_id)
             .with_slot_duration(slot_duration);
+        if let Some(clients) = &glamsterdam_clients {
+            setup = setup.with_glamsterdam_setup(clients.setup.clone());
+        }
 
         if let Some(block) = self.isthmus_activation_block {
             setup = setup.with_isthmus_activation_block(block);
@@ -782,6 +826,9 @@ impl SystemTestStackBuilder {
                 (l1_genesis, l2_deployment, None)
             };
 
+        let glamsterdam_schedule =
+            self.l1_glamsterdam.as_ref().map(|config| config.apply(&l1_genesis)).transpose()?;
+
         let (l1_container_config, l2_container_config) = if self.devnet_config.use_stable_ports {
             let config = &self.devnet_config.stable;
             let l1_config = L1ContainerConfig {
@@ -793,6 +840,7 @@ impl SystemTestStackBuilder {
                 beacon_p2p_port: Some(config.ports.l1_cl_p2p),
                 tmpfs_datadir: self.tmpfs_datadirs,
                 enable_reorg_control: self.l1_fault_injection,
+                ..Default::default()
             };
             let l2_config = L2ContainerConfig {
                 use_stable_names: true,
@@ -826,6 +874,12 @@ impl SystemTestStackBuilder {
                 ..Default::default()
             })
         });
+
+        let l1_container_config = if let Some(clients) = &glamsterdam_clients {
+            Some(clients.container_config(glamsterdam_artifacts.as_deref())?)
+        } else {
+            l1_container_config
+        };
 
         let l1_stack = if let Some(shared_l1) = shared_l1 {
             L1StackHandle::Shared(shared_l1)
@@ -946,7 +1000,7 @@ impl SystemTestStackBuilder {
         drop(shared_l1_bootstrap_lock);
         let l2_stack = l2_stack_result.wrap_err("Failed to start L2 stack")?;
 
-        Ok(SystemTestStack {
+        let system = SystemTestStack {
             _temp_dir: temp_dir,
             #[cfg(feature = "upgrade-signal")]
             l2_chain_id,
@@ -959,6 +1013,19 @@ impl SystemTestStackBuilder {
             upgrade_signal,
             #[cfg(feature = "upgrade-signal")]
             _runtime_upgrade_signal_guard: runtime_upgrade_signal_guard,
-        })
+        };
+        if let Some(schedule) = glamsterdam_schedule {
+            if let Err(error) = schedule.ensure_pre_fork() {
+                if let Some(directory) = glamsterdam_artifacts {
+                    let diagnostics = system.l1_stack().capture_diagnostics(&directory).await;
+                    if let Err(diagnostic_error) = diagnostics {
+                        tracing::error!(%diagnostic_error, "failed to capture late-start diagnostics");
+                    }
+                }
+                system.shutdown().await?;
+                return Err(error);
+            }
+        }
+        Ok(system)
     }
 }
