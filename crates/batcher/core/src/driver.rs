@@ -16,8 +16,9 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    AdminCommand, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle, DerivationStatus,
-    SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
+    AdminCommand, AdminError, AdminResult, BatchDriverConfig, BatchDriverError, BatcherStatus,
+    DaThrottle, DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController,
+    event::DriverEvent,
 };
 
 /// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
@@ -104,6 +105,10 @@ where
     /// Acknowledgements for in-progress flushes, fired once encoding and submission both
     /// report no further ready work for the current channel (see [`Self::run`]).
     pending_flush_acks: Vec<oneshot::Sender<()>>,
+    /// Admin stop requests waiting for in-flight submissions to settle.
+    pending_stop_replies: Vec<oneshot::Sender<AdminResult<()>>>,
+    /// When the waiting stop requests give up; set while `pending_stop_replies` is not empty.
+    stop_deadline: Option<Duration>,
 }
 
 impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
@@ -155,6 +160,8 @@ where
             admin_rx: None,
             force_blobs_when_throttling: config.force_blobs_when_throttling,
             pending_flush_acks: Vec::new(),
+            pending_stop_replies: Vec::new(),
+            stop_deadline: None,
         }
     }
 
@@ -264,6 +271,7 @@ where
                     let _ = ack.send(());
                 }
             }
+            self.settle_stop();
 
             if shutting_down {
                 self.submissions
@@ -296,6 +304,16 @@ where
                         self.pending_flush_acks.push(ack);
                     }
                     debug!("flush signal received, released channel artifacts");
+                }
+                DriverEvent::AdminFlush(reply) => {
+                    // A flush failure is fatal: answer the caller before the driver exits.
+                    let result = self.pipeline.flush();
+                    let _ = reply.send(match &result {
+                        Ok(()) => Ok(()),
+                        Err(error) => Err(AdminError::FlushFailed(error.to_string())),
+                    });
+                    result?;
+                    debug!("admin flush applied, released channel artifacts");
                 }
                 DriverEvent::Reorg => {
                     warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
@@ -465,6 +483,21 @@ where
         self.pending_flush_acks.clear();
     }
 
+    /// Answer the pending stop requests once no submission is in flight.
+    fn settle_stop(&mut self) {
+        if !self.pending_stop_replies.is_empty() && self.submissions.in_flight_count() == 0 {
+            self.answer_stop_requests(Ok(()));
+        }
+    }
+
+    /// Answer every pending stop request with `result`.
+    fn answer_stop_requests(&mut self, result: AdminResult<()>) {
+        self.stop_deadline = None;
+        for reply in self.pending_stop_replies.drain(..) {
+            let _ = reply.send(result.clone());
+        }
+    }
+
     /// Block on the next external event using a biased `tokio::select!`.
     ///
     /// Admin commands are handled inline in the loop — only non-admin events
@@ -476,14 +509,20 @@ where
     ///
     /// [`AdminCommand::Stop`] immediately resets the pipeline, then drops
     /// `Block` and `Flush` source events until [`AdminCommand::Start`] is
-    /// received. Reorg events propagate regardless of the stopped state. On
-    /// start the source is reset to catch up sequentially from the last known
-    /// safe L2 head.
+    /// received. It is answered once no submission is in flight, or with
+    /// [`AdminError::StopTimeout`] after `drain_timeout`; the wait never
+    /// blocks the loop. Reorg events propagate regardless of the stopped state. On
+    /// start the source is reset to catch up sequentially from the last
+    /// known safe L2 head; starting a running batcher does nothing.
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
+            let stop_timeout = self
+                .stop_deadline
+                .map(|deadline| self.runtime.sleep(deadline.saturating_sub(self.runtime.now())));
+
             let event = tokio::select! {
                 biased;
 
@@ -491,24 +530,39 @@ where
 
                 cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
                     match cmd {
-                        AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
-                        AdminCommand::Stop => {
-                            self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
-                            self.stopped = true;
-                            info!(stopped = true, "batcher stopped via admin");
+                        AdminCommand::Flush { reply } if self.stopped => {
+                            let _ = reply.send(Err(AdminError::Stopped));
                         }
-                        AdminCommand::Start => {
-                            if let Some(safe_head) = self.safe_head {
-                                self.source.reset_catchup(safe_head);
-                                info!(
-                                    stopped = false,
-                                    safe_l2 = %safe_head.number,
-                                    "batcher started via admin, catching up from safe head"
-                                );
-                            } else {
-                                info!(stopped = false, "batcher started via admin");
+                        AdminCommand::Flush { reply } => {
+                            return Ok(DriverEvent::AdminFlush(reply));
+                        }
+                        AdminCommand::Stop { reply } => {
+                            if !self.stopped {
+                                self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
+                                self.stopped = true;
+                                info!(stopped = true, "batcher stopped via admin");
                             }
-                            self.stopped = false;
+                            self.pending_stop_replies.push(reply);
+                            self.stop_deadline
+                                .get_or_insert_with(|| self.runtime.now() + self.drain_timeout);
+                            self.settle_stop();
+                        }
+                        AdminCommand::Start { reply } => {
+                            if self.stopped {
+                                self.answer_stop_requests(Err(AdminError::StopSuperseded));
+                                if let Some(safe_head) = self.safe_head {
+                                    self.source.reset_catchup(safe_head);
+                                    info!(
+                                        stopped = false,
+                                        safe_l2 = %safe_head.number,
+                                        "batcher started via admin, catching up from safe head"
+                                    );
+                                } else {
+                                    info!(stopped = false, "batcher started via admin");
+                                }
+                                self.stopped = false;
+                            }
+                            let _ = reply.send(Ok(()));
                         }
                         AdminCommand::SetThrottle { strategy, config } => {
                             self.throttle.set_controller(
@@ -534,6 +588,18 @@ where
                         }
                     }
                     // All commands except Flush loop to await the next real event.
+                    continue;
+                }
+
+                _ = async {
+                    match stop_timeout {
+                        Some(timeout) => timeout.await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let in_flight = self.submissions.in_flight_count();
+                    warn!(in_flight = %in_flight, "stop timed out waiting for in-flight submissions");
+                    self.answer_stop_requests(Err(AdminError::StopTimeout { in_flight }));
                     continue;
                 }
 
@@ -806,6 +872,37 @@ mod tests {
         )
     }
 
+    /// Build a driver whose source delivers a single acknowledged flush.
+    fn driver_with_flush_ack<R: base_runtime::Runtime, TM: TxManager>(
+        runtime: R,
+        pipeline: TrackingPipeline,
+        tx_manager: TM,
+        max_pending_transactions: usize,
+        ack: oneshot::Sender<()>,
+    ) -> BatchDriver<
+        R,
+        TrackingPipeline,
+        QueuedSource,
+        TM,
+        Arc<NoopThrottleClient>,
+        QueuedL1HeadSource,
+    > {
+        BatchDriver::new_without_derivation_status(
+            runtime,
+            pipeline,
+            QueuedSource::new([Ok(L2BlockEvent::Flush { ack: Some(ack) })]),
+            tx_manager,
+            BatchDriverConfig {
+                inbox: Address::ZERO,
+                max_pending_transactions,
+                drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
+            },
+            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            QueuedL1HeadSource::new(std::iter::empty()),
+        )
+    }
+
     #[derive(Debug, Default)]
     struct TxpoolBlockedState {
         sends: AtomicU64,
@@ -893,8 +990,9 @@ mod tests {
     fn next_event_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (admin_tx, admin_rx) = mpsc::channel(1);
+            let (reply, _reply_rx) = oneshot::channel();
             admin_tx
-                .send(AdminCommand::Flush { ack: None })
+                .send(AdminCommand::Flush { reply })
                 .await
                 .expect("admin receiver should be open");
 
@@ -917,8 +1015,9 @@ mod tests {
     fn next_event_prioritizes_admin_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
             let (admin_tx, admin_rx) = mpsc::channel(1);
+            let (reply, _reply_rx) = oneshot::channel();
             admin_tx
-                .send(AdminCommand::Flush { ack: None })
+                .send(AdminCommand::Flush { reply })
                 .await
                 .expect("admin receiver should be open");
 
@@ -931,7 +1030,7 @@ mod tests {
             .with_admin_rx(admin_rx);
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush(_)));
+            assert!(matches!(event, DriverEvent::AdminFlush(_)));
         });
     }
 
@@ -1318,21 +1417,15 @@ mod tests {
             pipeline.submissions.push_back(SubmissionStub::with_id(0));
             pipeline.submissions.push_back(SubmissionStub::with_id(1));
 
-            let (admin_tx, admin_rx) = mpsc::channel(1);
             let (ack_tx, ack_rx) = oneshot::channel();
-            admin_tx
-                .send(AdminCommand::Flush { ack: Some(ack_tx) })
-                .await
-                .expect("admin receiver should be open");
-
             let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
+                driver_with_flush_ack(
                     ctx.clone(),
                     pipeline,
                     ImmediateConfirmTxManager { l1_block: 1 },
                     2,
+                    ack_tx,
                 )
-                .with_admin_rx(admin_rx)
                 .run(),
             );
 
@@ -1359,22 +1452,10 @@ mod tests {
             pipeline.submissions.push_back(SubmissionStub::with_id(0));
             pipeline.submissions.push_back(SubmissionStub::with_id(1));
 
-            let (admin_tx, admin_rx) = mpsc::channel(1);
             let (ack_tx, mut ack_rx) = oneshot::channel();
-            admin_tx
-                .send(AdminCommand::Flush { ack: Some(ack_tx) })
-                .await
-                .expect("admin receiver should be open");
-
             let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    NeverConfirmTxManager,
-                    1,
-                )
-                .with_admin_rx(admin_rx)
-                .run(),
+                driver_with_flush_ack(ctx.clone(), pipeline, NeverConfirmTxManager, 1, ack_tx)
+                    .run(),
             );
 
             ctx.sleep(Duration::from_millis(50)).await;

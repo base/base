@@ -24,7 +24,7 @@ pub struct BatcherStatus {
 }
 
 /// Errors produced by admin operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum AdminError {
     /// The driver task has exited and the command channel is closed.
     #[error("admin channel closed: driver has shut down")]
@@ -32,6 +32,23 @@ pub enum AdminError {
     /// The requested operation is not yet supported.
     #[error("not yet supported: {0}")]
     NotSupported(&'static str),
+    /// The operation needs a running batcher, but it is stopped.
+    #[error("batcher is stopped")]
+    Stopped,
+    /// The batcher stopped, but submissions were still in flight after the drain timeout.
+    #[error(
+        "batcher stopped, but {in_flight} submissions were still in flight after the drain timeout"
+    )]
+    StopTimeout {
+        /// Number of submissions still in flight when the wait ended.
+        in_flight: usize,
+    },
+    /// A start arrived while the stop was still waiting for in-flight submissions.
+    #[error("stop superseded by a start")]
+    StopSuperseded,
+    /// The pipeline failed to flush. The driver exits with the same error.
+    #[error("flush failed: {0}")]
+    FlushFailed(String),
 }
 
 /// Result type alias for admin operations.
@@ -41,16 +58,22 @@ pub type AdminResult<T> = Result<T, AdminError>;
 #[derive(derive_more::Debug)]
 pub enum AdminCommand {
     /// Start block ingestion again after a [`Stop`](Self::Stop).
-    Start,
+    Start {
+        /// Answered once the driver has applied the command.
+        #[debug(skip)]
+        reply: oneshot::Sender<AdminResult<()>>,
+    },
     /// Stop block ingestion; the driver task keeps running.
-    Stop,
+    Stop {
+        /// Answered once no submission is in flight, or with an error after the drain timeout.
+        #[debug(skip)]
+        reply: oneshot::Sender<AdminResult<()>>,
+    },
     /// Flush the current encoding channel.
     Flush {
-        /// Fired once the driver's encoding and submission are both fully drained (not just
-        /// after the first frame) — see [`AdminHandle::flush_and_wait`] for the precise
-        /// "whole pipeline idle, not just this flush" caveat.
+        /// Answered with the outcome of the pipeline flush.
         #[debug(skip)]
-        ack: Option<oneshot::Sender<()>>,
+        reply: oneshot::Sender<AdminResult<()>>,
     },
     /// Replace the throttle strategy and configuration.
     SetThrottle {
@@ -92,45 +115,24 @@ impl AdminHandle {
         (Self { tx }, rx)
     }
 
-    /// Start block ingestion again if currently stopped.
+    /// Start block ingestion again. Does nothing if the batcher is already running.
     pub async fn start(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Start).await
+        self.request(|reply| AdminCommand::Start { reply }).await
     }
 
     /// Stop block ingestion; the driver task keeps running.
     ///
-    /// In-flight submissions continue to resolve; no new blocks are ingested
-    /// until [`start`](Self::start) is called.
+    /// Returns once no submission is in flight. If some are still in flight after the
+    /// driver's drain timeout, returns [`AdminError::StopTimeout`]; the batcher stays stopped.
     pub async fn stop(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Stop).await
+        self.request(|reply| AdminCommand::Stop { reply }).await
     }
 
-    /// Flush the current encoding channel, submitting any buffered frames.
+    /// Flush the current encoding channel, making its frames eligible for submission.
     ///
-    /// Returns once the command is queued — use
-    /// [`flush_and_wait`](Self::flush_and_wait) if the caller needs to know when the
-    /// resulting frames have actually been handed to the tx manager.
+    /// Returns the outcome of the pipeline flush. It does not wait for L1 inclusion.
     pub async fn flush(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Flush { ack: None }).await
-    }
-
-    /// Flush the current encoding channel and wait until every resulting frame has
-    /// been encoded and handed to the tx manager.
-    ///
-    /// Unlike [`flush`](Self::flush), which only guarantees the command was queued, this
-    /// waits for the driver to report that encoding and submission are both fully drained.
-    /// At that point every frame produced by this flush has been handed to the tx manager.
-    ///
-    /// The wait is for the *whole pipeline* going idle, not specifically for this flush's own
-    /// frames: if new blocks keep arriving and producing fresh encoding/submission work while
-    /// this call is outstanding, the ack is delayed until that work drains too, and under
-    /// sustained continuous ingestion it may not fire at all. This call therefore gives a
-    /// precise, meaningful guarantee only when the source is otherwise quiesced (as in the
-    /// action-test harness, which never calls this while blocks are still streaming in).
-    pub async fn flush_and_wait(&self) -> AdminResult<()> {
-        let (tx, rx) = oneshot::channel();
-        self.send(AdminCommand::Flush { ack: Some(tx) }).await?;
-        rx.await.map_err(|_| AdminError::ChannelClosed)
+        self.request(|reply| AdminCommand::Flush { reply }).await
     }
 
     /// Replace the throttle strategy and configuration.
@@ -179,6 +181,16 @@ impl AdminHandle {
 
     async fn send(&self, cmd: AdminCommand) -> AdminResult<()> {
         self.tx.send(cmd).await.map_err(|_| AdminError::ChannelClosed)
+    }
+
+    /// Send a command carrying a reply channel and wait for the driver's answer.
+    async fn request(
+        &self,
+        command: impl FnOnce(oneshot::Sender<AdminResult<()>>) -> AdminCommand,
+    ) -> AdminResult<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send(command(reply)).await?;
+        rx.await.map_err(|_| AdminError::ChannelClosed)?
     }
 }
 
