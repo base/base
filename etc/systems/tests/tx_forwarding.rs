@@ -190,8 +190,8 @@ async fn test_insert_validated_transaction_single() -> Result<()> {
         create_signed_eip1559_tx(&signer, L2_CHAIN_ID, nonce, recipient)?;
 
     // Create the ValidatedTransaction payload
-    let validated_tx = ValidatedTransaction { sender, raw: raw_tx, extensions: NoExtensions {} };
-
+    let validated_tx =
+        ValidatedTransaction { sender, raw: raw_tx, metering: None, extensions: NoExtensions {} };
     // Create RPC client for the builder
     let builder_rpc_url = system.l2_rpc_url()?;
     let rpc_client = RpcClient::builder().http(builder_rpc_url);
