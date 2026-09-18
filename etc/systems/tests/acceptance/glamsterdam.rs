@@ -33,7 +33,10 @@ pub async fn run(da: DaType, case: &str) -> Result<()> {
     let rpc = Rpc::new()?;
     let system = match SystemTestStackBuilder::new()
         .with_output_dir(evidence.directory.join("runtime"))
-        .with_l1_glamsterdam(GlamsterdamConfig::default())
+        // The real origin selector prepares successors asynchronously, requiring two L2
+        // ticks per origin. Six-second L1 slots leave headroom over unchanged 2s L2 blocks;
+        // eight minimal epochs retain the original 384-second pre-fork window.
+        .with_l1_glamsterdam(GlamsterdamConfig { activation_epoch: 8, slot_duration: 6 })
         .with_batcher_da_type(da)
         .build()
         .await

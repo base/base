@@ -128,8 +128,15 @@ impl Schedule {
 
     /// Requires a finalized Gloas beacon block and a real finalized post-Amsterdam EL block.
     pub async fn wait_for_finality(&self, rpc: &Rpc, l1: &str, beacon: &str) -> Result<Value> {
+        // Finality is epoch-paced. Allow four real CL epochs, including one epoch of
+        // scheduling headroom, rather than assuming the fixture always uses 2s slots.
+        let finality_window = self
+            .seconds_per_slot
+            .checked_mul(self.slots_per_epoch)
+            .and_then(|epoch| epoch.checked_mul(4))
+            .ok_or_else(|| eyre::eyre!("finality window overflow"))?;
         let mut last = Value::Null;
-        let result = timeout(Duration::from_secs(120), async {
+        let result = timeout(Duration::from_secs(finality_window), async {
             loop {
                 let fork = rpc.beacon(beacon, "/eth/v1/beacon/states/head/fork").await?;
                 let checkpoints = rpc.beacon(beacon, "/eth/v1/beacon/states/head/finality_checkpoints").await?;
