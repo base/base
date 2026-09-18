@@ -6,7 +6,7 @@
 
 use std::{
     ffi::OsString,
-    io::SeekFrom,
+    io::{Read, SeekFrom},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -108,6 +108,9 @@ fn resolve_datadir_args(args: impl IntoIterator<Item = OsString>) -> DatadirArgs
 /// Matches reth's `--download-concurrency` default.
 const DEFAULT_DOWNLOAD_CONCURRENCY: usize = 8;
 
+/// Interval between proofs download and extraction progress logs.
+const PROOFS_PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(3);
+
 /// Extracts `--download-concurrency` so proofs use the same parallel budget as reth.
 fn resolve_download_concurrency_arg(args: impl IntoIterator<Item = OsString>) -> usize {
     let mut concurrency = DEFAULT_DOWNLOAD_CONCURRENCY;
@@ -201,6 +204,47 @@ fn log_proofs_download_progress(downloaded: u64, expected: u64, started: Instant
         elapsed = %ProgressDisplay::duration(elapsed),
         "Proofs download progress"
     );
+}
+
+/// Reports extraction progress as compressed archive bytes are consumed.
+struct ExtractionProgress<R> {
+    inner: R,
+    processed: u64,
+    total: u64,
+    started: Instant,
+    last_log: Instant,
+}
+
+impl<R> ExtractionProgress<R> {
+    fn new(inner: R, total: u64) -> Self {
+        let now = Instant::now();
+        Self { inner, processed: 0, total, started: now, last_log: now }
+    }
+}
+
+impl<R: Read> Read for ExtractionProgress<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.processed = self.processed.saturating_add(read as u64).min(self.total);
+
+        if read > 0 && self.last_log.elapsed() >= PROOFS_PROGRESS_LOG_INTERVAL {
+            let elapsed = self.started.elapsed();
+            let speed = self.processed as f64 / elapsed.as_secs_f64();
+            let eta = ProgressDisplay::eta(self.processed, self.total, elapsed)
+                .map_or_else(|| "unknown".to_string(), |eta| eta.to_string());
+            info!(
+                target: "reth::cli",
+                progress = %ProgressDisplay::human_byte_progress(self.processed, self.total),
+                speed = %ProgressDisplay::speed(speed),
+                eta = %eta,
+                elapsed = %ProgressDisplay::duration(elapsed),
+                "Proofs extraction progress"
+            );
+            self.last_log = Instant::now();
+        }
+
+        Ok(read)
+    }
 }
 
 /// Loads parallel-range resume state when it matches this download.
@@ -621,7 +665,7 @@ impl ProofsDownloader {
                     Ok(chunk) => {
                         file.write_all(&chunk).await?;
                         downloaded += chunk.len() as u64;
-                        if last_log.elapsed() >= Duration::from_secs(30) {
+                        if last_log.elapsed() >= PROOFS_PROGRESS_LOG_INTERVAL {
                             log_proofs_download_progress(
                                 downloaded,
                                 entry.expected_size,
@@ -769,7 +813,7 @@ impl ProofsDownloader {
             let expected_size = entry.expected_size;
             let started = Instant::now();
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                let mut interval = tokio::time::interval(PROOFS_PROGRESS_LOG_INTERVAL);
                 interval.tick().await;
                 loop {
                     interval.tick().await;
@@ -974,7 +1018,9 @@ impl ProofsDownloader {
     fn extract_tar_zst(archive_path: &Path, target_dir: &Path) -> Result<()> {
         let file = std::fs::File::open(archive_path)
             .map_err(|e| eyre::eyre!("failed to open {}: {e}", archive_path.display()))?;
-        let decoder = zstd::Decoder::new(file)?;
+        let archive_size = file.metadata()?.len();
+        let progress = ExtractionProgress::new(file, archive_size);
+        let decoder = zstd::Decoder::new(progress)?;
         let mut archive = tar::Archive::new(decoder);
         archive.unpack(target_dir)?;
         Ok(())
