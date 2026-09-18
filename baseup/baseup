@@ -5,7 +5,7 @@ set -e
 # Downloads release binaries from GitHub releases and installs them locally.
 
 # NOTE: If you change this script, increment the version below.
-BASEUP_INSTALLER_VERSION="0.1.9"
+BASEUP_INSTALLER_VERSION="0.1.10"
 
 BASEUP_REPO="${BASEUP_REPO:-base/base}"
 BASEUP_REPO_REF="${BASEUP_REPO_REF:-main}"
@@ -663,8 +663,7 @@ detect_arch() {
             echo "arm64"
             ;;
         *)
-            warn "Unknown architecture: $arch, defaulting to amd64"
-            echo "amd64"
+            error "Unsupported architecture: $arch" >&2
             ;;
     esac
 }
@@ -1126,4 +1125,6 @@ main() {
     fi
 }
 
-main
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
