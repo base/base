@@ -58,8 +58,17 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: glamsterdam-acceptance-${{ github.run_attempt }}
+          # Export configs and captured diagnostics, not root-owned validator runtime state.
           path: |
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/*.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/*.log
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/networks
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/diagnostics/*.log
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/el/*.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/l2/*.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/cl/config.yaml
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/cl/glamsterdam-schedule.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/cl/genesis.ssz
             target/nextest/acceptance/test-results.xml
           if-no-files-found: warn
           retention-days: 14
