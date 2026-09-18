@@ -262,6 +262,25 @@ tests: _install-nextest _build-contracts
 tests-ci: _install-nextest _build-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
+# Run the real-client calldata candidate (build/pull before starting the fork clock)
+glamsterdam-calldata: _install-nextest
+    bash etc/scripts/acceptance/run.sh calldata
+
+# Run the same acceptance scenario with blob DA
+glamsterdam-blob: _install-nextest
+    bash etc/scripts/acceptance/run.sh blob
+
+# Validate one Glamsterdam artifact bundle; missing/skipped/retried cases fail
+# This checks result completeness, not client compatibility.
+glamsterdam-check-results mode artifacts:
+    python3 etc/scripts/acceptance/validate-results.py {{ quote(mode) }} {{ quote(artifacts) }}
+
+# Test Glamsterdam result validation without starting Docker or the fork clock
+glamsterdam-check-tools:
+    python3 etc/scripts/acceptance/validate-results.py test
+    python3 etc/scripts/acceptance/capture-provenance.py test
+    python3 etc/scripts/acceptance/cleanup.py test
+
 # Builds base-bench in release mode and runs a benchmark
 bench *args:
     cargo run --release -p base-system-tests --bin base-bench -- {{ args }}

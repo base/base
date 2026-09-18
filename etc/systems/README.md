@@ -4,6 +4,9 @@ System-test and development-network infrastructure for Base nodes. In addition t
 L1/L2 stack used by system tests, this crate can continue a Base mainnet execution snapshot with
 real builder and client execution and consensus components in one managed launcher process.
 
+For the real-client Glamsterdam acceptance contract, qualification status and
+artifact tooling, see [GLAMSTERDAM.md](GLAMSTERDAM.md).
+
 ## Snapshot devnet topology
 
 The snapshot mode starts these real local network roles inside one managed launcher process:

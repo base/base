@@ -1,0 +1,62 @@
+# Explicit qualification only: not a pull-request or merge-queue gate.
+name: Glamsterdam Acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      da:
+        description: Data availability case to run independently
+        type: choice
+        required: true
+        default: both
+        options:
+          - both
+          - calldata
+          - blob
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.da }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: sccache
+jobs:
+  acceptance:
+    name: Glamsterdam (${{ matrix.da }})
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        da: ${{ fromJSON(inputs.da == 'both' && '["calldata","blob"]' || format('["{0}"]', inputs.da)) }}
+    env:
+      DA_MODE: ${{ matrix.da }}
+    steps:
+      - name: Select a fresh case artifact path
+        run: echo "BASE_GLAMSTERDAM_ARTIFACTS=$RUNNER_TEMP/glamsterdam-$DA_MODE-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Harden the runner (audit outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          tools: cargo-nextest
+      - name: Check artifact tooling
+        run: just devnet glamsterdam-check-tools
+      - name: Build and run the selected real-client scenario (no retries)
+        run: bash etc/scripts/acceptance/run.sh "$DA_MODE"
+      - name: Require one executed case and complete evidence
+        if: always()
+        run: python3 etc/scripts/acceptance/validate-results.py "$DA_MODE" "$BASE_GLAMSTERDAM_ARTIFACTS"
+      - name: Upload JUnit, full logs, configs, provenance and scenario evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: glamsterdam-${{ matrix.da }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BASE_GLAMSTERDAM_ARTIFACTS }}
+          if-no-files-found: error
+          retention-days: 14

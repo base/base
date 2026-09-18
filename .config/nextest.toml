@@ -14,6 +14,22 @@ max-threads = 6
 junit = { path = "test-results.xml" }
 retries = 1
 
+# Explicit opt-in real-client acceptance runs. Never hide failures with retries.
+[profile.glamsterdam]
+retries = 0
+test-threads = 1
+success-output = "final"
+failure-output = "final"
+junit = { path = "test-results.xml", store-success-output = true, store-failure-output = true }
+
+# Override the generic six-minute system-test kill: activation alone is scheduled
+# 384s after genesis. Twenty minutes bounds the sum of setup, phase deadlines,
+# four CL epochs for finality, diagnostics and cleanup; no assertion wait is retried.
+[[profile.glamsterdam.overrides]]
+filter = 'package(base-system-tests) & binary(acceptance)'
+retries = 0
+slow-timeout = { period = "2m", terminate-after = 10 }
+
 # Action tests use a full EVM stack; the slowest tests can take 30-45 s.
 # Flag anything that runs longer than 90 s as slow and kill it after 2 periods.
 [[profile.ci.overrides]]
