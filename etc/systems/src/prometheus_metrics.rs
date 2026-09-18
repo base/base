@@ -14,6 +14,57 @@ use prometheus_scraper::{
 use tokio::{sync::watch, task::JoinHandle};
 use url::Url;
 
+/// Prometheus metrics rendered by the snapshot benchmark visualizer.
+const VISUALIZER_METRICS: &[&str] = &[
+    "reth_base_builder_flashblock_build_duration_avg",
+    "reth_base_builder_flashblock_count",
+    "reth_base_builder_payload_num_tx_gauge",
+    "reth_base_builder_payload_transaction_simulation_duration_avg",
+    "reth_base_builder_sequencer_tx_duration_avg",
+    "reth_base_builder_state_root_calculation_duration_avg",
+    "reth_base_builder_total_block_built_duration_avg",
+    "reth_base_builder_tx_simulation_duration_avg",
+    "reth_consensus_engine_beacon_backpressure_active",
+    "reth_consensus_engine_beacon_block_insert_total_duration_avg",
+    "reth_consensus_engine_beacon_new_payload_latency_avg",
+    "reth_consensus_engine_persistence_save_blocks_batch_size_avg",
+    "reth_consensus_engine_persistence_save_blocks_duration_seconds_avg",
+    "reth_db_freelist",
+    "reth_op_rbuilder_flashblock_build_duration",
+    "reth_op_rbuilder_flashblock_count",
+    "reth_op_rbuilder_payload_tx_simulation_duration",
+    "reth_op_rbuilder_sequencer_tx_duration",
+    "reth_op_rbuilder_state_root_calculation_duration",
+    "reth_op_rbuilder_total_block_built_duration",
+    "reth_sync_block_validation_deferred_trie_compute_duration_avg",
+    "reth_sync_block_validation_hashed_post_state_size_avg",
+    "reth_sync_block_validation_state_root_duration",
+    "reth_sync_block_validation_state_root_duration_avg",
+    "reth_sync_block_validation_total_duration_avg",
+    "reth_sync_block_validation_trie_updates_sorted_size_avg",
+    "reth_sync_execution_accounts_updated_histogram_avg",
+    "reth_sync_execution_execution_duration",
+    "reth_sync_execution_execution_duration_avg",
+    "reth_sync_execution_storage_slots_updated_histogram_avg",
+    "reth_sync_execution_transaction_execution_histogram_avg",
+    "reth_sync_execution_transaction_wait_histogram_avg",
+    "reth_sync_state_provider_total_account_fetch_latency",
+    "reth_sync_state_provider_total_account_fetch_latency_avg",
+    "reth_sync_state_provider_total_code_fetch_latency",
+    "reth_sync_state_provider_total_code_fetch_latency_avg",
+    "reth_sync_state_provider_total_storage_fetch_latency",
+    "reth_sync_state_provider_total_storage_fetch_latency_avg",
+    "reth_transaction_pool_pending_pool_transactions",
+    "reth_transaction_pool_total_transactions",
+    "reth_tree_root_sparse_trie_cache_wait_duration_histogram_avg",
+    "reth_tree_root_sparse_trie_channel_wait_duration_histogram_avg",
+    "reth_tree_root_sparse_trie_final_update_duration_histogram",
+    "reth_tree_root_sparse_trie_final_update_duration_histogram_avg",
+    "reth_tree_root_sparse_trie_reveal_multiproof_duration_histogram_avg",
+    "reth_tree_root_sparse_trie_total_duration_histogram",
+    "reth_tree_root_sparse_trie_total_duration_histogram_avg",
+];
+
 #[derive(Debug, Clone, Copy)]
 enum ScalarSample {
     Counter(f64),
@@ -219,7 +270,7 @@ impl PrometheusBlockCollector {
                     let current = Self::scrape(&client, &metrics_url).await?;
                     let block_count = head - last_head;
                     let mut metrics = current.delta_for_blocks(&previous, block_count);
-                    metrics.retain(|name, _| Self::is_diagnostic_metric(name));
+                    metrics.retain(|name, _| Self::is_visualizer_metric(name));
                     metrics.insert(
                         "benchmark/prometheus_blocks_per_scrape".to_string(),
                         block_count as f64,
@@ -269,32 +320,14 @@ impl PrometheusBlockCollector {
         Ok(PrometheusSnapshot::parse(&response.text().await?))
     }
 
-    /// Returns whether a flattened metric belongs to the stable benchmark diagnostic set.
-    pub fn is_diagnostic_metric(name: &str) -> bool {
-        [
-            "reth_base_builder_",
-            "reth_sync_execution_",
-            "reth_sync_block_validation_",
-            "reth_sync_state_provider_",
-            "reth_consensus_engine_beacon_block_insert_",
-            "reth_consensus_engine_beacon_new_payload_",
-            "reth_consensus_engine_beacon_backpressure_",
-            "reth_consensus_engine_beacon_failed_",
-            "reth_consensus_engine_persistence_save_blocks_",
-            "reth_storage_providers_database_save_blocks_",
-            "reth_tree_root_sparse_trie_",
-            "reth_parallel_sparse_trie_",
-            "reth_trie_proof_task_",
-            "reth_trie_cursor_overall_duration",
-            "reth_trie_hashed_cursor_overall_duration",
-            "reth_trie_leaves_added",
-            "reth_trie_branches_added",
-            "reth_transaction_pool_pending_pool_transactions",
-            "reth_transaction_pool_total_transactions",
-            "reth_db_freelist",
-        ]
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
+    /// Returns whether a flattened metric is rendered by the benchmark visualizer.
+    ///
+    /// This intentionally uses exact metric names rather than broad metric-family prefixes. The
+    /// latter pull in one sample for every flashblock, gas bucket, and label combination, even
+    /// though the report UI cannot display them. Keep this list in sync with the metrics rendered
+    /// by `base/benchmark`'s `ChartGrid`, including its compatibility aliases.
+    pub fn is_visualizer_metric(name: &str) -> bool {
+        VISUALIZER_METRICS.contains(&name)
     }
 }
 
@@ -364,20 +397,29 @@ build_duration_count{stage="execution"} 4
     }
 
     #[test]
-    fn selects_only_report_diagnostic_families() {
-        assert!(PrometheusBlockCollector::is_diagnostic_metric(
+    fn selects_only_metrics_rendered_by_the_visualizer() {
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
             "reth_base_builder_total_block_built_duration_avg"
         ));
-        assert!(PrometheusBlockCollector::is_diagnostic_metric(
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
             "reth_sync_execution_execution_duration"
         ));
-        assert!(PrometheusBlockCollector::is_diagnostic_metric(
-            "reth_consensus_engine_beacon_backpressure_stall_duration_avg"
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
+            "reth_consensus_engine_beacon_new_payload_latency_avg"
         ));
-        assert!(PrometheusBlockCollector::is_diagnostic_metric(
-            "reth_consensus_engine_beacon_failed_new_payload_response_deliveries"
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
+            "reth_tree_root_sparse_trie_final_update_duration_histogram"
         ));
-        assert!(!PrometheusBlockCollector::is_diagnostic_metric(
+        assert!(PrometheusBlockCollector::is_visualizer_metric(
+            "reth_op_rbuilder_flashblock_count"
+        ));
+        assert!(!PrometheusBlockCollector::is_visualizer_metric(
+            "reth_base_builder_flashblock_gas_headroom_flashblock_index_1_avg"
+        ));
+        assert!(!PrometheusBlockCollector::is_visualizer_metric(
+            "reth_consensus_engine_beacon_new_payload_thread_user_cpu_seconds_avg"
+        ));
+        assert!(!PrometheusBlockCollector::is_visualizer_metric(
             "reth_rpc_server_calls_started_total_method_eth_call"
         ));
     }
