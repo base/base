@@ -56,6 +56,8 @@ impl Default for GlamsterdamConfig {
 impl GlamsterdamFixture {
     /// Generates fixture artifacts and returns a stack builder which consumes that prepared L1.
     pub async fn builder(artifacts: &Path) -> Result<SystemTestStackBuilder> {
+        // Use the same resolved host path for setup and every subsequent bind mount.
+        let artifacts = artifacts.canonicalize().wrap_err("resolve fixture artifact directory")?;
         for artifact in ["el/genesis.json", "cl/genesis.ssz", "cl/config.yaml", "l2/genesis.json"] {
             ensure!(
                 !artifacts.join(artifact).exists(),
@@ -195,8 +197,17 @@ mod tests {
     use serde_json::Value;
     use tempfile::TempDir;
 
-    use super::GlamsterdamConfig;
+    use super::{GlamsterdamConfig, GlamsterdamFixture};
     use crate::L1GenesisOutput;
+
+    #[tokio::test]
+    async fn rejects_stale_artifacts_before_starting_setup() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("el")).unwrap();
+        fs::write(directory.path().join("el/genesis.json"), "stale").unwrap();
+        let error = GlamsterdamFixture::builder(directory.path()).await.unwrap_err();
+        assert!(error.to_string().contains("requires fresh generated state"));
+    }
 
     fn fixture(el_config: &str, cl_extra: &str) -> (TempDir, L1GenesisOutput, String) {
         let directory = tempfile::tempdir().unwrap();

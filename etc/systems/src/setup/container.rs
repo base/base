@@ -457,19 +457,3 @@ impl SetupContainer {
         Ok(count)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use super::SetupContainer;
-
-    #[test]
-    fn rejects_stale_artifacts_before_starting_setup() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::create_dir_all(directory.path().join("el")).unwrap();
-        fs::write(directory.path().join("el/genesis.json"), "stale").unwrap();
-        let error = SetupContainer::new(directory.path()).generate_genesis().unwrap_err();
-        assert!(error.to_string().contains("fresh output directory"));
-    }
-}
