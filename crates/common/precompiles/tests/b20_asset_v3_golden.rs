@@ -28,9 +28,9 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     Asset, AssetAccounting, AssetV3, AssetVersion, AssetVersions, B20_MAX_SUPPLY_CAP, B20AssetInit,
-    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, B20Variant,
-    ERC165_INTERFACE_ID, ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset,
-    NoopPrecompileCallObserver, PolicyVersion, TokenAccounting, UpgradeGatedStorageFeatures,
+    B20AssetStorage, B20AssetToken, B20PolicyType, B20TokenRole, B20Variant, ERC165_INTERFACE_ID,
+    ERC8056_INTERFACE_IDS, FakePolicyAccounting, IB20, IB20Asset, NoopPrecompileCallObserver,
+    PolicyVersion, TokenAccounting, UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, Handler, HashMapStorageProvider, StorageCtx};
 

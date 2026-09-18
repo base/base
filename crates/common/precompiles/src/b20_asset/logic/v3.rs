@@ -15,10 +15,9 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
-    B20CreditRecipient, B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole,
-    Eip712Domain, IB20, IB20Asset, NonZeroAddress, PermitArgs, PolicyAccounting, Token,
-    TransferPolicyIds,
+    Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20CreditRecipient,
+    B20Guards, B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset,
+    NonZeroAddress, PermitArgs, PolicyAccounting, Token, TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`

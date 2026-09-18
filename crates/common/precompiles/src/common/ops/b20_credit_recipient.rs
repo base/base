@@ -51,8 +51,12 @@ mod tests {
 
     #[test]
     fn new_rejects_an_uninitialized_b20_prefix_address() {
-        let address =
-            B20Variant::compute_address_for_discriminant(Address::repeat_byte(0x11), u8::MAX, B256::ZERO).0;
+        let address = B20Variant::compute_address_for_discriminant(
+            Address::repeat_byte(0x11),
+            u8::MAX,
+            B256::ZERO,
+        )
+        .0;
         assert_eq!(B20CreditRecipient::new(address), Err(B20CreditRecipientError));
     }
 }
