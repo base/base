@@ -1,0 +1,8 @@
+{
+  "reth": {
+    "image": "ghcr.io/paradigmxyz/reth@sha256:8ce703acf113b2a20705b6e76adebed20f74ba8591bc7c9407203b2968aca70d"
+  },
+  "lighthouse": {
+    "image": "sigp/lighthouse@sha256:c0a6cf874d0a0596bf6c5c4e485103ac57af7ffd7b60272b4a26a9ebd05368f9"
+  }
+}

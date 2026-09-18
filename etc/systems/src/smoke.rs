@@ -404,6 +404,7 @@ pub struct SystemTestStackBuilder {
     tmpfs_datadirs: bool,
     l1_fault_injection: bool,
     shared_l1: Option<SharedL1Runtime>,
+    prepared_l1: Option<(L1GenesisOutput, L2DeploymentOutput, L1ContainerConfig)>,
     extra_builder_extensions: Vec<Box<dyn BaseNodeExtension>>,
     extra_client_extensions: Vec<Box<dyn BaseNodeExtension>>,
     #[cfg(feature = "upgrade-signal")]
@@ -561,6 +562,20 @@ impl SystemTestStackBuilder {
         self
     }
 
+    /// Uses caller-prepared genesis, deployment, and dedicated L1 container configuration.
+    ///
+    /// The caller retains ownership of the artifact directory. This bypasses setup generation
+    /// and process-wide shared-L1 auto-attachment.
+    pub fn with_prepared_l1(
+        mut self,
+        genesis: L1GenesisOutput,
+        deployment: L2DeploymentOutput,
+        container_config: L1ContainerConfig,
+    ) -> Self {
+        self.prepared_l1 = Some((genesis, deployment, container_config));
+        self
+    }
+
     /// Sets the number of L1 blocks to keep distance from the L1 head for the
     /// client (validator) node's derivation pipeline.
     pub const fn with_verifier_l1_confs(mut self, confs: u64) -> Self {
@@ -684,7 +699,8 @@ impl SystemTestStackBuilder {
     pub async fn build(mut self) -> Result<SystemTestStack> {
         Self::initialize_test_tracing();
 
-        if self.shared_l1.is_none()
+        if self.prepared_l1.is_none()
+            && self.shared_l1.is_none()
             && !self.l1_fault_injection
             && !self.has_custom_fork_activation()
         {
@@ -708,6 +724,28 @@ impl SystemTestStackBuilder {
             eyre::ensure!(
                 !self.has_custom_fork_activation(),
                 "custom fork-activation tests must use a dedicated L1 stack"
+            );
+        }
+        eyre::ensure!(
+            self.prepared_l1.is_none() || self.shared_l1.is_none(),
+            "prepared and shared L1 inputs are mutually exclusive"
+        );
+        if self.prepared_l1.is_some() {
+            eyre::ensure!(
+                !self.has_custom_fork_activation(),
+                "prepared L1 artifacts already contain fork configuration; do not also set custom fork activation options"
+            );
+            eyre::ensure!(
+                !self.devnet_config.use_stable_ports,
+                "prepared L1 container configuration cannot be combined with stable names or ports"
+            );
+            eyre::ensure!(
+                !self.l1_fault_injection,
+                "prepared L1 cannot be combined with L1 fault injection; enable reorg control in its L1ContainerConfig"
+            );
+            eyre::ensure!(
+                !self.tmpfs_datadirs,
+                "prepared L1 cannot be combined with with_tmpfs_datadirs; enable tmpfs_datadir in its L1ContainerConfig"
             );
         }
 
@@ -761,9 +799,12 @@ impl SystemTestStackBuilder {
             setup = setup.with_base_zenith_activation_block(block);
         }
 
+        let prepared_l1 = self.prepared_l1.take();
         let shared_l1 = self.shared_l1.clone();
         let (l1_genesis, l2_deployment, shared_l1_bootstrap_lock) =
-            if let Some(shared_l1) = &shared_l1 {
+            if let Some((genesis, deployment, _)) = &prepared_l1 {
+                (genesis.clone(), deployment.clone(), None)
+            } else if let Some(shared_l1) = &shared_l1 {
                 let output_dir = output_dir.clone();
                 let shared_l1 = shared_l1.clone();
                 let (l1_genesis, l2_deployment, deployment_lock) =
@@ -793,6 +834,7 @@ impl SystemTestStackBuilder {
                 beacon_p2p_port: Some(config.ports.l1_cl_p2p),
                 tmpfs_datadir: self.tmpfs_datadirs,
                 enable_reorg_control: self.l1_fault_injection,
+                ..Default::default()
             };
             let l2_config = L2ContainerConfig {
                 use_stable_names: true,
@@ -819,13 +861,14 @@ impl SystemTestStackBuilder {
         };
 
         // Ensure the tmpfs-datadir request reaches the L1 containers even without a stable config.
-        let l1_container_config = l1_container_config.or_else(|| {
-            (self.tmpfs_datadirs || self.l1_fault_injection).then(|| L1ContainerConfig {
-                tmpfs_datadir: self.tmpfs_datadirs,
-                enable_reorg_control: self.l1_fault_injection,
-                ..Default::default()
-            })
-        });
+        let l1_container_config =
+            prepared_l1.map(|(_, _, config)| config).or(l1_container_config).or_else(|| {
+                (self.tmpfs_datadirs || self.l1_fault_injection).then(|| L1ContainerConfig {
+                    tmpfs_datadir: self.tmpfs_datadirs,
+                    enable_reorg_control: self.l1_fault_injection,
+                    ..Default::default()
+                })
+            });
 
         let l1_stack = if let Some(shared_l1) = shared_l1 {
             L1StackHandle::Shared(shared_l1)
