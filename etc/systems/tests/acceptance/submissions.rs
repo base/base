@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use alloy_consensus::proofs::calculate_transaction_root;
 use alloy_primitives::{B256, Bytes};
+use alloy_rpc_types_eth::Transaction;
 use base_common_genesis::RollupConfig;
-use base_common_rpc_types::Transaction;
 use base_protocol::BlockInfo;
 use base_system_tests::BATCHER;
 use eyre::{Result, WrapErr, ensure};
@@ -90,7 +90,7 @@ impl Submissions {
                         serde_json::from_value(raw["transactions"].clone())?;
                     let transactions = transactions
                         .into_iter()
-                        .map(|transaction| transaction.inner.inner)
+                        .map(|transaction| transaction.inner.into_inner())
                         .collect::<Vec<_>>();
                     ensure!(
                         calculate_transaction_root(&transactions)
