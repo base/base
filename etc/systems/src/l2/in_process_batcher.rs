@@ -78,6 +78,9 @@ impl InProcessBatcher {
             batcher_config.encoder_config.da_type = da_type;
             batcher_config.encoder_config.max_channel_duration = 2;
             batcher_config.encoder_config.sub_safety_margin = 0;
+            // Only the explicit acceptance DA configuration accelerates receipt polling.
+            // The normal 12s poll would lag the fixture's short-lived channels.
+            batcher_config.tx_manager.receipt_query_interval = Duration::from_secs(1);
         }
         let cancellation = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancellation.clone());
