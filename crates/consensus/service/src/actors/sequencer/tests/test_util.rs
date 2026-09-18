@@ -28,6 +28,8 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
     let rollup_config = Arc::new(RollupConfig::default());
     let recovery_mode = RecoveryModeGuard::new(false);
     let engine_client = Arc::new(MockSequencerEngineClient::new());
+    let mut unsafe_payload_gossip_client = MockUnsafePayloadGossipClient::new();
+    unsafe_payload_gossip_client.expect_seals_privately().return_const(false);
     SequencerActor {
         admin_api_rx,
         builder: PayloadBuilder {
@@ -46,7 +48,7 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
         recovery_mode,
         rollup_config,
         seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
-        unsafe_payload_gossip_client: MockUnsafePayloadGossipClient::new(),
+        unsafe_payload_gossip_client,
         sealer: None,
         pending_stop: None,
     }

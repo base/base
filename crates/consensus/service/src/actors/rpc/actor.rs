@@ -50,6 +50,8 @@ pub struct RpcContext {
     pub p2p_network: Option<mpsc::Sender<P2pRpcRequest>>,
     /// The network admin rpc sender.
     pub network_admin: Option<mpsc::Sender<NetworkAdminQuery>>,
+    /// Whether the node is an isolated sequencer without a network actor.
+    pub isolated_sequencer: bool,
     /// The l1 watcher queries sender.
     pub l1_watcher_queries: mpsc::Sender<L1WatcherQueries>,
     /// The cancellation token, shared between all tasks.
@@ -127,6 +129,7 @@ where
             p2p_network,
             l1_watcher_queries,
             network_admin,
+            isolated_sequencer,
         }: Self::StartData,
     ) -> Result<(), Self::Error> {
         let mut modules = RpcModule::new(());
@@ -139,17 +142,22 @@ where
         }
 
         // Build the admin rpc module, gated on the `--rpc.enable-admin` flag.
-        if self.config.admin_enabled()
-            && let Some(network_admin) = network_admin
-        {
-            modules.merge(
-                AdminRpc::new(
-                    self.sequencer_admin_rpc_client,
-                    AdminNetworkAccess::Enabled(network_admin),
-                )
-                .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
-                .into_rpc(),
-            )?;
+        if self.config.admin_enabled() {
+            let sequencer_admin_client = self.sequencer_admin_rpc_client.take();
+            let admin_rpc = if isolated_sequencer {
+                Some(AdminRpc::new_isolated(sequencer_admin_client))
+            } else {
+                network_admin.map(|sender| {
+                    AdminRpc::new(sequencer_admin_client, AdminNetworkAccess::Enabled(sender))
+                })
+            };
+            if let Some(admin_rpc) = admin_rpc {
+                modules.merge(
+                    admin_rpc
+                        .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
+                        .into_rpc(),
+                )?;
+            }
         }
 
         // Create context for communication between actors.

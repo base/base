@@ -474,12 +474,17 @@ impl RollupNode {
         let engine_conductor: Option<Arc<dyn Conductor>> =
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
+        let engine_derivation_client = if self.sequencer_config.derivation_enabled() {
+            QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone())
+        } else {
+            QueuedEngineDerivationClient::disabled()
+        };
         let (engine_actor, engine_rpc_processor, sequencer_engine_state_rx) = self
             .create_engine_actor(
                 engine_client,
                 cancellation.clone(),
                 engine_actor_request_rx,
-                QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
+                engine_derivation_client,
                 unsafe_head_tx,
                 engine_conductor,
                 checkpoint_client,
@@ -487,8 +492,11 @@ impl RollupNode {
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.
-        let derivation: ConfiguredDerivationActor<P> =
-            if let Some(provider) = self.derivation_delegate_provider.clone() {
+        let derivation: Option<ConfiguredDerivationActor<P>> = if self
+            .sequencer_config
+            .derivation_enabled()
+        {
+            Some(if let Some(provider) = self.derivation_delegate_provider.clone() {
                 // L1 Provider for sanity checking Derivation Delegation
                 let l1_provider = AlloyChainProvider::new(
                     self.l1_config.engine_provider.clone(),
@@ -515,24 +523,41 @@ impl RollupNode {
                     safe_head_listener,
                     derivation_origin_tx,
                 )))
-            };
+            })
+        } else {
+            None
+        };
 
         // Create the p2p actor.
-        let (
-            NetworkInboundData {
-                signer,
-                p2p_rpc: network_rpc,
-                gossip_payload_tx,
-                admin_rpc: net_admin_rpc,
-            },
-            network,
-        ) = NetworkActor::new(
-            QueuedNetworkEngineClient { engine_actor_request_tx: engine_actor_request_tx.clone() },
-            cancellation.clone(),
-            self.network_builder(),
-        )
-        .await
-        .map_err(|e| format!("Failed to start network actor: {e}"))?;
+        let (signer, network_rpc, gossip_payload_tx, net_admin_rpc, network) =
+            if self.sequencer_config.network_enabled() {
+                let (
+                    NetworkInboundData {
+                        signer,
+                        p2p_rpc: network_rpc,
+                        gossip_payload_tx,
+                        admin_rpc: net_admin_rpc,
+                    },
+                    network,
+                ) = NetworkActor::new(
+                    QueuedNetworkEngineClient {
+                        engine_actor_request_tx: engine_actor_request_tx.clone(),
+                    },
+                    cancellation.clone(),
+                    self.network_builder(),
+                )
+                .await
+                .map_err(|e| format!("Failed to start network actor: {e}"))?;
+                (
+                    Some(signer),
+                    Some(network_rpc),
+                    Some(gossip_payload_tx),
+                    Some(net_admin_rpc),
+                    Some(network),
+                )
+            } else {
+                (None, None, None, None, None)
+            };
 
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel(None);
 
@@ -557,8 +582,12 @@ impl RollupNode {
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
-            QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx),
-            Some(signer),
+            if self.sequencer_config.derivation_enabled() {
+                QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx)
+            } else {
+                QueuedL1WatcherDerivationClient::disabled()
+            },
+            signer,
             cancellation.clone(),
             head_stream,
             finalized_stream,
@@ -600,8 +629,10 @@ impl RollupNode {
 
             // Create the admin API channel
             let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
-            let queued_gossip_client =
-                QueuedUnsafePayloadGossipClient::new(gossip_payload_tx.clone());
+            let queued_gossip_client = gossip_payload_tx.map_or_else(
+                QueuedUnsafePayloadGossipClient::private,
+                QueuedUnsafePayloadGossipClient::new,
+            );
 
             let recovery_mode =
                 RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
@@ -666,17 +697,18 @@ impl RollupNode {
                     r,
                     RpcContext {
                         cancellation: cancellation.clone(),
-                        p2p_network: Some(network_rpc),
-                        network_admin: Some(net_admin_rpc),
+                        p2p_network: network_rpc,
+                        network_admin: net_admin_rpc,
+                        isolated_sequencer: self.sequencer_config.isolated,
                         l1_watcher_queries: l1_query_tx,
                     }
                 )),
                 sequencer_actor.map(|s| (s, ())),
-                Some((network, ())),
+                network.map(|network| (network, ())),
                 Some((l1_watcher, ())),
                 Some((l1_query_processor, ())),
                 upgrade_signal_metrics_actor.map(|actor| (actor, ())),
-                Some((derivation, ())),
+                derivation.map(|derivation| (derivation, ())),
                 Some((checkpoint_actor, cancellation.clone())),
                 Some((engine_actor, ())),
                 engine_rpc_actor,
