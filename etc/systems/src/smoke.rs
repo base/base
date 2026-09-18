@@ -446,8 +446,8 @@ impl SystemTestStackBuilder {
 
     /// Selects a fresh, real Reth/Lighthouse L1 with scheduled Amsterdam/Gloas.
     ///
-    /// Requires prebuilt fixture images and `BASE_GLAMSTERDAM_ARTIFACTS` for retained
-    /// startup diagnostics. Does not change any Base L2 fork configuration.
+    /// Requires prebuilt fixture images and a fresh caller-owned `with_output_dir` for
+    /// retained startup diagnostics. Does not change any Base L2 fork configuration.
     pub fn with_l1_glamsterdam(mut self, config: GlamsterdamConfig) -> Self {
         self.devnet_config.l1_slot_duration = config.slot_duration;
         self.l1_glamsterdam = Some(config);
@@ -735,6 +735,10 @@ impl SystemTestStackBuilder {
                 !self.has_custom_fork_activation(),
                 "Glamsterdam acceptance must leave L2 fork rules unchanged"
             );
+            eyre::ensure!(
+                self.output_dir.is_some(),
+                "scheduled Glamsterdam requires a fresh with_output_dir for retained diagnostics"
+            );
             let clients = GlamsterdamClients::pinned()?;
             let preflight = clients.clone();
             tokio::task::spawn_blocking(move || preflight.require_local()).await??;
@@ -742,15 +746,6 @@ impl SystemTestStackBuilder {
         } else {
             None
         };
-        let glamsterdam_artifacts = self
-            .l1_glamsterdam
-            .as_ref()
-            .map(|_| {
-                std::env::var_os("BASE_GLAMSTERDAM_ARTIFACTS").map(PathBuf::from).ok_or_else(|| {
-                    eyre::eyre!("set BASE_GLAMSTERDAM_ARTIFACTS to retain fixture diagnostics")
-                })
-            })
-            .transpose()?;
 
         let l1_chain_id = self.devnet_config.l1_chain_id;
         let l2_chain_id = self.devnet_config.l2_chain_id;
@@ -772,6 +767,14 @@ impl SystemTestStackBuilder {
 
         let temp_dir = TempDir::new().wrap_err("Failed to create temp directory")?;
         let output_dir = self.output_dir.unwrap_or_else(|| temp_dir.path().to_path_buf());
+        let glamsterdam_artifacts = self.l1_glamsterdam.as_ref().map(|_| output_dir.clone());
+        if glamsterdam_artifacts.is_some() {
+            eyre::ensure!(
+                !output_dir.exists(),
+                "Glamsterdam output directory must be fresh: {}",
+                output_dir.display()
+            );
+        }
 
         let mut setup = SetupContainer::new(&output_dir)
             .with_chain_id(l1_chain_id)
