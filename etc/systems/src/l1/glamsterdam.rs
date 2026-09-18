@@ -83,7 +83,7 @@ impl GlamsterdamFixture {
             ensure!(status.success(), "pinned L1 image is unavailable locally: {image}");
         }
 
-        let output = artifacts.to_path_buf();
+        let output = artifacts.clone();
         let setup_network = crate::unique_name("glamsterdam-setup");
         let l1_network = crate::unique_name("glamsterdam-l1");
         // Persist ownership before starting any container, including failed startup paths.
@@ -112,7 +112,7 @@ impl GlamsterdamFixture {
         };
         Ok(SystemTestStackBuilder::new()
             .with_slot_duration(SLOT_DURATION)
-            .with_output_dir(artifacts.to_path_buf())
+            .with_output_dir(artifacts)
             .with_prepared_l1(generated.0, generated.1, container_config))
     }
 }
