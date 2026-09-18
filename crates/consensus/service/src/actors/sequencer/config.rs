@@ -20,6 +20,8 @@ pub struct SequencerConfig {
     pub sequencer_stopped: bool,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
+    /// Whether the sequencer runs without canonical-chain ingress or payload publication.
+    pub isolated: bool,
     /// Number of private blocks to build per cycle when running as a shadow sequencer.
     ///
     /// When [`None`], the node runs as a normal sequencer.
@@ -60,6 +62,16 @@ impl SequencerConfig {
     pub const fn is_shadow_sequencer(&self) -> bool {
         self.shadow_blocks_per_cycle.is_some()
     }
+
+    /// Returns whether the consensus network actor should be constructed.
+    pub const fn network_enabled(&self) -> bool {
+        !self.isolated
+    }
+
+    /// Returns whether a derivation actor should be constructed.
+    pub const fn derivation_enabled(&self) -> bool {
+        !self.isolated
+    }
 }
 
 impl Default for SequencerConfig {
@@ -67,6 +79,7 @@ impl Default for SequencerConfig {
         Self {
             sequencer_stopped: false,
             sequencer_recovery_mode: false,
+            isolated: false,
             shadow_blocks_per_cycle: None,
             shadow_funding: None,
             conductor_rpc_url: None,
@@ -76,5 +89,18 @@ impl Default for SequencerConfig {
             l1_rpc_timeout: Self::DEFAULT_L1_RPC_TIMEOUT,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SequencerConfig;
+
+    #[test]
+    fn isolated_disables_network_and_derivation_actor_construction() {
+        let config = SequencerConfig { isolated: true, ..Default::default() };
+
+        assert!(!config.network_enabled());
+        assert!(!config.derivation_enabled());
     }
 }
