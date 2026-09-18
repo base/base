@@ -351,10 +351,6 @@ where
     }
 
     /// Drop buffered pipeline state, recording why it was dropped.
-    ///
-    /// In-flight submissions stay tracked: their L1 transactions are still live in the tx
-    /// manager, so they keep their permits until they settle. The reset pipeline ignores
-    /// their stale ids (see [`BatchPipeline::reset`]).
     fn reset_pipeline(&mut self, reason: &'static str) {
         BatcherMetrics::pipeline_reset_total(reason).increment(1);
         self.pipeline.reset();
@@ -480,9 +476,9 @@ where
     ///
     /// [`AdminCommand::Pause`] immediately resets the pipeline, then drops
     /// `Block` and `Flush` source events until [`AdminCommand::Resume`] is
-    /// received. In-flight submissions keep settling. Reorg events propagate regardless
-    /// of pause state. On resume the source is reset to catch up sequentially
-    /// from the last known safe L2 head.
+    /// received. Reorg events propagate regardless of pause state. On resume
+    /// the source is reset to catch up sequentially from the last known safe
+    /// L2 head.
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.

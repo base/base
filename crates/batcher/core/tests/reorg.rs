@@ -97,9 +97,8 @@ fn test_l2_reorg_event_resets_pipeline() {
     });
 }
 
-/// A pipeline reset must keep tracking submissions already handed to the tx manager. Their
-/// L1 transactions stay live, so dropping the receipt futures would only free permits the
-/// transactions still occupy and lose the receipts.
+/// A submission in flight when the pipeline resets must stay tracked and settle normally
+/// once its receipt arrives.
 #[test]
 fn test_reorg_keeps_tracking_in_flight_submissions() {
     Runner::start(Config::seeded(0), |ctx| async move {

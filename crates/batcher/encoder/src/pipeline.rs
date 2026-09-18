@@ -100,9 +100,8 @@ pub trait BatchPipeline: Send {
 
     /// Drop buffered encoding state.
     ///
-    /// Submissions handed out before the reset may still settle afterwards. [`SubmissionId`]s are
-    /// never reused, and [`confirm`](Self::confirm) or [`requeue`](Self::requeue) of an id issued
-    /// before the reset must be ignored.
+    /// Ids issued before the reset are never reused; a later [`confirm`](Self::confirm) or
+    /// [`requeue`](Self::requeue) of one is ignored.
     fn reset(&mut self);
 
     /// Prune blocks at or below `safe_l2`.
