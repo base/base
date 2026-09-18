@@ -163,30 +163,17 @@ impl Schedule {
                     ensure!(root != B256::ZERO, "finalized CL root is zero");
                     let block =
                         rpc.beacon(beacon, &format!("/eth/v2/beacon/blocks/{root}")).await?;
-                    ensure!(
-                        block["version"] == "gloas" && block["execution_optimistic"] == false,
-                        "finalized beacon block is not executed Gloas: {block}"
-                    );
-                    let slot = Self::decimal(&block["data"]["message"]["slot"])?;
-                    ensure!(
-                        slot / self.slots_per_epoch >= self.gloas_epoch,
-                        "finalized beacon block predates Gloas"
-                    );
-                    let bid_hash: B256 = serde_json::from_value(
-                        block["data"]["message"]["body"]["signed_execution_payload_bid"]["message"]
-                            ["block_hash"]
-                            .clone(),
-                    )?;
-                    let bid_header = AuthenticatedHeader::parse(
-                        rpc.call(l1, "eth_getBlockByHash", json!([bid_hash, false])).await?,
+                    let checkpoint_hash = self.execution_checkpoint(&block)?;
+                    let checkpoint = AuthenticatedHeader::parse(
+                        rpc.call(l1, "eth_getBlockByHash", json!([checkpoint_hash, false])).await?,
                     )?;
                     let canonical =
-                        rpc.header(l1, json!(format!("{:#x}", bid_header.header.number))).await?;
+                        rpc.header(l1, json!(format!("{:#x}", checkpoint.header.number))).await?;
                     ensure!(
-                        canonical.hash == bid_hash,
-                        "finalized Gloas payload bid is not on the canonical EL chain"
+                        canonical.hash == checkpoint_hash,
+                        "finalized Gloas execution checkpoint is not on the canonical EL chain"
                     );
-                    if finalized.header.number < bid_header.header.number {
+                    if finalized.header.number < checkpoint.header.number {
                         sleep(Duration::from_millis(500)).await;
                         continue;
                     }
@@ -214,6 +201,27 @@ impl Schedule {
         })?
     }
 
+    /// Returns the EL checkpoint committed by a finalized Gloas beacon block.
+    pub fn execution_checkpoint(&self, block: &Value) -> Result<B256> {
+        ensure!(
+            block["version"] == "gloas" && block["execution_optimistic"] == false,
+            "finalized beacon block is not executed Gloas: {block}"
+        );
+        let slot = Self::decimal(&block["data"]["message"]["slot"])?;
+        ensure!(
+            slot / self.slots_per_epoch >= self.gloas_epoch,
+            "finalized beacon block predates Gloas"
+        );
+        // Gloas notify_forkchoice_updated finalizes the bid's parent. The new payload in this
+        // bid is revealed after the beacon block and is not itself finalized by this checkpoint.
+        // https://github.com/ethereum/consensus-specs/blob/master/specs/gloas/fork-choice.md
+        Ok(serde_json::from_value(
+            block["data"]["message"]["body"]["signed_execution_payload_bid"]["message"]
+                ["parent_block_hash"]
+                .clone(),
+        )?)
+    }
+
     /// Waits until the finalized execution head covers every required inclusion block.
     pub async fn wait_for_finalized_height(
         &self,
@@ -237,5 +245,38 @@ impl Schedule {
         result.wrap_err_with(|| {
             format!("L1 finalized head {last} did not cover required block {required}")
         })?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::B256;
+    use serde_json::json;
+
+    use super::Schedule;
+
+    #[test]
+    fn gloas_finality_commits_the_parent_not_the_new_payload_bid() {
+        let schedule = Schedule {
+            genesis: 0,
+            activation: 384,
+            gloas_epoch: 8,
+            gloas_version: json!("0x80000000"),
+            seconds_per_slot: 6,
+            slots_per_epoch: 8,
+        };
+        let mut block = json!({
+            "version": "gloas",
+            "execution_optimistic": false,
+            "data": {"message": {"slot": "72", "body": {
+                "signed_execution_payload_bid": {"message": {
+                    "parent_block_hash": B256::repeat_byte(1),
+                    "block_hash": B256::repeat_byte(2),
+                }}
+            }}}
+        });
+        assert_eq!(schedule.execution_checkpoint(&block).unwrap(), B256::repeat_byte(1));
+        block["execution_optimistic"] = json!(true);
+        assert!(schedule.execution_checkpoint(&block).is_err());
     }
 }
