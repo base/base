@@ -477,7 +477,7 @@ impl RollupNode {
         let engine_derivation_client = if self.sequencer_config.derivation_enabled() {
             QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone())
         } else {
-            QueuedEngineDerivationClient::disabled(derivation_actor_request_tx.clone())
+            QueuedEngineDerivationClient::disabled()
         };
         let (engine_actor, engine_rpc_processor, sequencer_engine_state_rx) = self
             .create_engine_actor(
@@ -585,7 +585,7 @@ impl RollupNode {
             if self.sequencer_config.derivation_enabled() {
                 QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx)
             } else {
-                QueuedL1WatcherDerivationClient::disabled(derivation_actor_request_tx)
+                QueuedL1WatcherDerivationClient::disabled()
             },
             signer,
             cancellation.clone(),
