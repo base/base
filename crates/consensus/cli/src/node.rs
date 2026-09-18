@@ -358,16 +358,18 @@ impl ConsensusNodeArgs {
         Ok(config)
     }
 
-    /// Validates that a non-shadow sequencer has a signing key configured.
+    /// Validates the signing-key requirements for the configured sequencer mode.
     pub fn validate_sequencer_key(&self) -> eyre::Result<()> {
-        if self.config.node_mode.is_sequencer()
-            && !self.config.sequencer_flags.config().is_shadow_sequencer()
-        {
+        if self.config.node_mode.is_sequencer() {
+            let sequencer = self.config.sequencer_flags.config();
             let signer = &self.config.p2p_flags.signer;
-            if signer.sequencer_key.is_none()
-                && signer.sequencer_key_path.is_none()
-                && signer.endpoint.is_none()
-            {
+            let has_signing_key = signer.sequencer_key.is_some()
+                || signer.sequencer_key_path.is_some()
+                || signer.endpoint.is_some();
+            if sequencer.isolated && has_signing_key {
+                eyre::bail!("isolated sequencer must not configure a signing key");
+            }
+            if !sequencer.isolated && !sequencer.is_shadow_sequencer() && !has_signing_key {
                 eyre::bail!(
                     "sequencer mode requires a signing key; \
                      provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
@@ -992,6 +994,46 @@ mod tests {
         );
 
         assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[test]
+    fn isolated_sequencer_does_not_require_signing_key() {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
+                ..default_node_config_args()
+            },
+        );
+
+        assert!(args.validate_sequencer_key().is_ok());
+    }
+
+    #[rstest]
+    #[case::raw_key(SignerArgs { sequencer_key: Some(B256::ZERO), ..Default::default() })]
+    #[case::key_path(SignerArgs {
+        sequencer_key_path: Some(PathBuf::from("/tmp/key.hex")),
+        ..Default::default()
+    })]
+    #[case::remote_endpoint(SignerArgs {
+        endpoint: Some(Url::parse("http://localhost:8080").unwrap()),
+        ..Default::default()
+    })]
+    fn isolated_sequencer_rejects_signing_key(#[case] signer: SignerArgs) {
+        let args = ConsensusNodeArgs::new(
+            ConsensusChainArgs { l2_chain_id: Chain::from(8453_u64) },
+            ConsensusNodeConfigArgs {
+                node_mode: NodeMode::Sequencer,
+                p2p_flags: P2PArgs { signer, ..P2PArgs::default() },
+                sequencer_flags: SequencerArgs { isolated: true, ..SequencerArgs::default() },
+                ..default_node_config_args()
+            },
+        );
+
+        let error = args.validate_sequencer_key().unwrap_err();
+
+        assert_eq!(error.to_string(), "isolated sequencer must not configure a signing key");
     }
 
     #[test]
