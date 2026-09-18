@@ -98,7 +98,7 @@ impl<P, E> BuilderApiImpl<P, E> {
         }
     }
 
-    /// Writes inbound metering into the builder cache on insert.
+    /// Writes inbound metering into the builder cache after the pool accepts the tx.
     #[must_use]
     pub fn with_metering_cache(mut self, cache: Arc<dyn InsertMetering>) -> Self {
         self.metering_cache = Some(cache);
@@ -149,11 +149,9 @@ where
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
         let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
-        if let Some(metering) = tx.metering {
-            if let Some(cache) = &self.metering_cache {
-                cache.insert_metering(tx_hash, metering.clone());
-            }
-            pool_tx = pool_tx.with_metering(metering);
+        let metering = tx.metering;
+        if let Some(ref metering) = metering {
+            pool_tx = pool_tx.with_metering(metering.clone());
         }
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
@@ -174,6 +172,11 @@ where
 
         match result {
             Ok(_) => {
+                if let Some(metering) = metering
+                    && let Some(cache) = &self.metering_cache
+                {
+                    cache.insert_metering(tx_hash, metering);
+                }
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
                     tx_hash,
@@ -232,7 +235,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_consensus::TxEip1559;
-    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
     use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
@@ -427,29 +430,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn insert_writes_metering_to_the_builder_cache() {
+    async fn rejected_insert_does_not_write_metering_to_the_builder_cache() {
         let cache = Arc::new(RecordingMetering::default());
         let handler = handler().with_metering_cache(Arc::clone(&cache) as Arc<dyn InsertMetering>);
         let (sender, raw) = create_eip1559_tx();
-        let metering = MeterBundleResponse {
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse {
             total_gas_used: 21_000,
             total_execution_time_us: 500,
             ..MeterBundleResponse::default()
-        };
-        let expected_hash = *BaseTransactionSigned::decode_2718(&mut raw.as_ref()).unwrap().hash();
-        let mut tx = validated_transaction(sender, raw, NoExtensions {});
-        tx.metering = Some(metering.clone());
+        });
 
-        let _ = handler.insert_validated_transaction(tx).await;
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
 
-        let inserted = cache.inserted.lock().expect("recording lock");
-        assert_eq!(
-            inserted.len(),
-            1,
-            "insert should write metering even if the pool later rejects"
+        assert_eq!(err.code(), ErrorCode::InternalError.code());
+        assert!(
+            cache.inserted.lock().expect("recording lock").is_empty(),
+            "rejected pool inserts must not pollute the builder metering cache"
         );
-        assert_eq!(inserted[0].0, expected_hash);
-        assert_eq!(inserted[0].1, metering);
     }
 
     #[test]

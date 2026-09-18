@@ -72,21 +72,12 @@ impl Default for BuilderApiExtensionConfig {
 }
 
 /// Install arguments for [`BuilderApiExtension`].
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct BuilderApiExtensionArgs {
     /// Validity-extension RPC settings.
     pub config: BuilderApiExtensionConfig,
     /// Shared builder metering cache written on `insertValidatedTransaction`.
     pub metering_provider: SharedMeteringProvider,
-}
-
-impl core::fmt::Debug for BuilderApiExtensionArgs {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("BuilderApiExtensionArgs")
-            .field("config", &self.config)
-            .field("metering_provider", &self.metering_provider)
-            .finish()
-    }
 }
 
 /// Extension that registers the Builder API RPC module (`base_insertValidatedTransaction`).
