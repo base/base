@@ -1180,6 +1180,7 @@ where
                     resource_metering: self.resource_metering,
                     rejection_cache: self.rejection_cache,
                     state_provider_metrics: ctx.config().engine.state_provider_metrics,
+                    prewarm: Default::default(),
                 },
             )
             .with_transactions(self.best_transactions);
