@@ -9,19 +9,28 @@
 
 use std::{
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use audit_archiver_lib::{
-    MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
+    DEFAULT_TRANSACTION_EVENT_BATCH_PATH, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+    DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES, DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+    DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES, MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE,
+    PgTransactionEventSink, RejectedTransactionEventQuery, TransactionEventIngestConfig,
     TransactionEventRetentionConfig, TransactionEventSchemaReadinessError, TransactionEventSink,
+};
+use axum::{
+    body::{Body, to_bytes},
+    http::{Request, StatusCode},
 };
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{Value, json};
 use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, core::ExecCommand, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
+use tower::ServiceExt;
 
 /// Production RDS is Postgres 17. `testcontainers-modules` still defaults to
 /// Postgres 11, which lacks the partitioning features the schema relies on.
@@ -192,6 +201,71 @@ fn legacy_migrations_through(last_version: i64) -> anyhow::Result<PathBuf> {
         }
     }
     Ok(target)
+}
+
+fn default_ingest_config() -> TransactionEventIngestConfig {
+    TransactionEventIngestConfig {
+        path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
+        max_batch_size: DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+        max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+        max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+        max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
+    }
+}
+
+/// Builds an NDJSON batch of `count` valid events, each padded so the request
+/// approximates a full-size Vector payload.
+fn ndjson_batch(event_prefix: &str, count: usize, data_padding_len: usize) -> Vec<u8> {
+    let padding = "p".repeat(data_padding_len);
+    (0..count)
+        .map(|index| {
+            serde_json::to_string(&json!({
+                "schema_version": "transaction-event/v1",
+                "event_id": format!("{event_prefix}-{index}"),
+                "event_time": Utc::now(),
+                "producer": "base-builder",
+                "event_type": "BUILDER_ACCEPTED",
+                "network": "base-mainnet",
+                "tx_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+                "block_hash": null,
+                "block_number": 123,
+                "payload_id": "payload-1",
+                "request_id": "request-1",
+                "data": {
+                    "position": 1,
+                    "padding": padding,
+                }
+            }))
+            .unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
+}
+
+async fn post_batch(
+    sink: PgTransactionEventSink,
+    body: Vec<u8>,
+) -> anyhow::Result<(StatusCode, Value)> {
+    let app = default_ingest_config().into_router(Arc::new(sink));
+    let request = Request::builder()
+        .method("POST")
+        .uri(DEFAULT_TRANSACTION_EVENT_BATCH_PATH)
+        .header("content-type", "application/x-ndjson")
+        .body(Body::from(body))?;
+    let response = app.oneshot(request).await?;
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok((status, serde_json::from_slice(&body)?))
+}
+
+async fn count_events_with_prefix(pool: &PgPool, event_prefix: &str) -> anyhow::Result<i64> {
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
+            .bind(format!("{event_prefix}-%"))
+            .fetch_one(pool)
+            .await?;
+    Ok(count.0)
 }
 
 #[tokio::test]
@@ -540,6 +614,50 @@ async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
             .fetch_one(&pool)
             .await?;
     assert_eq!(count.0, i64::try_from(event_count)?);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_http_ingest_accepts_1000_event_batch() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 2).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    // ~1 KiB per event so the batch exercises a realistic ~1 MiB Vector payload.
+    let body = ndjson_batch(&event_prefix, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, 550);
+    assert!(body.len() > 512 * 1024, "expected a large batch, got {} bytes", body.len());
+
+    let (status, json) = post_batch(sink, body).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "accepted");
+    assert_eq!(json["accepted"], 1000);
+    assert_eq!(json["duplicate"], 0);
+    assert_eq!(json["rejected"], 0);
+    assert_eq!(count_events_with_prefix(&pool, &event_prefix).await?, 1000);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_http_ingest_rejects_1001_event_batch_without_writes() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 2).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let event_prefix = unique_event_id();
+
+    let body = ndjson_batch(&event_prefix, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE + 1, 0);
+
+    let (status, json) = post_batch(sink, body).await?;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["status"], "rejected");
+    assert_eq!(json["results"][0]["reason"], "batch size exceeds maximum 1000");
+    assert_eq!(count_events_with_prefix(&pool, &event_prefix).await?, 0);
 
     Ok(())
 }
