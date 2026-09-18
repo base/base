@@ -5,10 +5,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base_consensus_gossip::P2pRpcRequest;
 use base_consensus_rpc::{
-    AdminApiServer, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc, DevEngineApiServer,
-    DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc, L1WatcherQueries,
-    NetworkAdminQuery, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder, SequencerAdminAPIClient,
-    WsRPC, WsServer,
+    AdminApiServer, AdminNetworkAccess, AdminRpc, BaseApiServer, BaseP2PApiServer, BaseRpc,
+    DevEngineApiServer, DevEngineRpc, EngineRpcClient, HealthzApiServer, HealthzRpc,
+    L1WatcherQueries, NetworkAdminQuery, P2pRpc, RollupNodeApiServer, RollupRpc, RpcBuilder,
+    SequencerAdminAPIClient, WsRPC, WsServer,
 };
 use base_consensus_safedb::SafeDBReader;
 use base_health::EthHealthCheckLayer;
@@ -143,9 +143,12 @@ where
             && let Some(network_admin) = network_admin
         {
             modules.merge(
-                AdminRpc::new(self.sequencer_admin_rpc_client, network_admin)
-                    .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
-                    .into_rpc(),
+                AdminRpc::new(
+                    self.sequencer_admin_rpc_client,
+                    AdminNetworkAccess::Enabled(network_admin),
+                )
+                .with_upgrade_signal_refresher(self.upgrade_signal_refresher)
+                .into_rpc(),
             )?;
         }
 

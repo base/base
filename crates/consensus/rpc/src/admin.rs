@@ -31,17 +31,35 @@ pub enum NetworkAdminQuery {
     },
 }
 
-type NetworkAdminQuerySender = mpsc::Sender<NetworkAdminQuery>;
+/// Sender for network-backed admin RPC requests.
+pub type NetworkAdminQuerySender = mpsc::Sender<NetworkAdminQuery>;
+
+/// Access to network-backed admin RPC methods.
+#[derive(Debug)]
+pub enum AdminNetworkAccess {
+    /// Network-backed methods send requests through the network actor.
+    Enabled(NetworkAdminQuerySender),
+    /// Network-backed methods are unavailable because no network actor exists.
+    Disabled,
+}
+
+impl AdminNetworkAccess {
+    /// Returns the network sender or an isolated-mode RPC error.
+    pub fn sender(&self) -> RpcResult<&NetworkAdminQuerySender> {
+        match self {
+            Self::Enabled(sender) => Ok(sender),
+            Self::Disabled => Err(isolated_network_access_rejected()),
+        }
+    }
+}
 
 /// The admin rpc server.
 #[derive(Debug)]
 pub struct AdminRpc<SequencerAdminAPIClient> {
     /// The sequencer admin API client.
     pub sequencer_admin_client: Option<SequencerAdminAPIClient>,
-    /// The sender to the network actor.
-    pub network_sender: NetworkAdminQuerySender,
-    /// Whether the RPC belongs to an isolated sequencer.
-    pub isolated: bool,
+    /// Access to network-backed admin RPC methods.
+    pub network_access: AdminNetworkAccess,
     /// Runtime upgrade signal refresher.
     pub upgrade_signal_refresher: Option<UpgradeSignalRefresher>,
 }
@@ -50,38 +68,27 @@ impl<SequencerAdminAPIClient_> AdminRpc<SequencerAdminAPIClient_>
 where
     SequencerAdminAPIClient_: SequencerAdminAPIClient,
 {
-    /// Constructs a new [`AdminRpc`] given the sequencer sender and network sender.
+    /// Constructs a new [`AdminRpc`] with the supplied network capability.
     ///
     /// # Parameters
     ///
     /// - `sequencer_sender`: The [`SequencerAdminAPIClient`] used to fulfill sequencer admin
     ///   queries.
-    /// - `network_sender`: The sender to the network actor.
+    /// - `network_access`: Access to network-backed admin RPC methods.
     ///
     /// # Returns
     ///
     /// A new [`AdminRpc`] instance.
     pub const fn new(
         sequencer_admin_client: Option<SequencerAdminAPIClient_>,
-        network_sender: NetworkAdminQuerySender,
+        network_access: AdminNetworkAccess,
     ) -> Self {
-        Self {
-            sequencer_admin_client,
-            network_sender,
-            isolated: false,
-            upgrade_signal_refresher: None,
-        }
+        Self { sequencer_admin_client, network_access, upgrade_signal_refresher: None }
     }
 
     /// Constructs an admin RPC for an isolated sequencer without a network actor.
-    pub fn new_isolated(sequencer_admin_client: Option<SequencerAdminAPIClient_>) -> Self {
-        let (network_sender, _network_receiver) = mpsc::channel(1);
-        Self {
-            sequencer_admin_client,
-            network_sender,
-            isolated: true,
-            upgrade_signal_refresher: None,
-        }
+    pub const fn new_isolated(sequencer_admin_client: Option<SequencerAdminAPIClient_>) -> Self {
+        Self::new(sequencer_admin_client, AdminNetworkAccess::Disabled)
     }
 
     /// Sets the runtime upgrade signal refresher.
@@ -123,9 +130,13 @@ fn upgrade_signal_refresh_failed() -> ErrorObject<'static> {
     ErrorObject::owned(-32003, "failed to refresh upgrade signal", None::<()>)
 }
 
-/// Returns an RPC error indicating payload posting is disabled for an isolated sequencer.
-fn isolated_payload_rejected() -> ErrorObject<'static> {
-    ErrorObject::owned(-32005, "unsafe payload posting disabled on isolated sequencer", None::<()>)
+/// Returns an RPC error indicating network-backed methods are disabled for an isolated sequencer.
+fn isolated_network_access_rejected() -> ErrorObject<'static> {
+    ErrorObject::owned(
+        -32005,
+        "network-backed admin methods disabled on isolated sequencer",
+        None::<()>,
+    )
 }
 
 #[async_trait]
@@ -137,23 +148,22 @@ where
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> RpcResult<()> {
-        if self.isolated {
-            return Err(isolated_payload_rejected());
-        }
+        let network_sender = self.network_access.sender()?;
         // Note: intentionally no sequencer guard here. Posting an unsafe payload is a P2P/gossip
         // operation that is valid on both sequencer and validator nodes.
         Metrics::rpc_calls("admin_postUnsafePayload").increment(1.0);
-        self.network_sender
+        network_sender
             .send(NetworkAdminQuery::PostUnsafePayload { payload: Box::new(payload) })
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))
     }
 
     async fn admin_clear_pending_p2p_connections(&self) -> RpcResult<usize> {
+        let network_sender = self.network_access.sender()?;
         Metrics::rpc_calls("admin_clearPendingP2pConnections").increment(1.0);
 
         let (tx, rx) = oneshot::channel();
-        self.network_sender
+        network_sender
             .send(NetworkAdminQuery::ClearPendingP2pConnections { out: tx })
             .await
             .map_err(|_| ErrorObject::from(ErrorCode::InternalError))?;
@@ -313,6 +323,15 @@ mod tests {
         let rpc = AdminRpc::new_isolated(Some(MockSequencerAdminAPIClient::new()));
 
         let error = rpc.admin_post_unsafe_payload(payload()).await.unwrap_err();
+
+        assert_eq!(error.code(), -32005);
+    }
+
+    #[tokio::test]
+    async fn isolated_rejects_admin_clear_pending_p2p_connections() {
+        let rpc = AdminRpc::new_isolated(Some(MockSequencerAdminAPIClient::new()));
+
+        let error = rpc.admin_clear_pending_p2p_connections().await.unwrap_err();
 
         assert_eq!(error.code(), -32005);
     }
