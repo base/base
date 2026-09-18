@@ -19,6 +19,7 @@ use crate::{
 /// CLI inputs for the offline genesis workflow.
 #[cfg(feature = "genesis")]
 #[derive(Debug, Args)]
+#[group(id = "GenesisUpgradeArgs")]
 pub(crate) struct GenesisCommand {
     /// Genesis workflow inputs and generated network configuration.
     #[command(flatten)]
@@ -147,6 +148,16 @@ mod tests {
 
     use super::BaseCommand;
     use crate::{cli::BaseCli, config::ChainResolver};
+
+    #[cfg(feature = "genesis")]
+    #[test]
+    fn genesis_accepts_validator_count() {
+        let cli = BaseCli::try_parse_from(["base", "genesis", "--validator-count", "64"]).unwrap();
+        let BaseCommand::Genesis(command) = cli.command else {
+            panic!("expected genesis command");
+        };
+        assert_eq!(command.command.config.validator_count.get(), 64);
+    }
 
     #[cfg(feature = "genesis")]
     #[test]
