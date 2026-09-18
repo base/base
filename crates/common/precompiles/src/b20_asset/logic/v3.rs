@@ -16,8 +16,8 @@ use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
     Asset, AssetAccounting, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken, B20Guards,
-    B20PausableFeature, B20PolicyType, B20TokenRole, Eip712Domain, IB20, IB20Asset, NonZeroAddress,
-    PermitArgs, PolicyAccounting, Token, TransferPolicyIds,
+    B20PausableFeature, B20PolicyType, B20TokenRole, B20Variant, Eip712Domain, IB20, IB20Asset,
+    NonZeroAddress, PermitArgs, PolicyAccounting, Token, TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -34,10 +34,10 @@ pub struct AssetV3;
 
 /// One token movement: `caller` sends `amount` from `from` to `to`.
 ///
-/// `from` / `to` are [`NonZeroAddress`]: callers validate zero addresses (and choose the typed
-/// revert) before any policy SLOAD. `policies` carries all three transfer policy ids pre-read from
-/// their shared slot; `Some` enforces them (unprivileged path), `None` skips them (factory-privileged
-/// path).
+/// `from` / `to` are [`NonZeroAddress`]: callers validate their asymmetric sender/receiver rules
+/// (and choose the typed revert) before any policy SLOAD. `policies` carries all three transfer
+/// policy ids pre-read from their shared slot; `Some` enforces them (unprivileged path), `None`
+/// skips them (factory-privileged path).
 struct TokenTransfer<'a> {
     caller: Address,
     from: NonZeroAddress,
@@ -53,6 +53,19 @@ impl AssetV3 {
         IB20::PausableFeature::BURN,
         IB20::PausableFeature::SEIZE,
     ];
+
+    /// Returns `to` when it can safely receive a B-20 balance credit.
+    ///
+    /// B-20-prefix addresses are precompile addresses rather than externally controlled accounts,
+    /// so crediting one would strand the balance. The structural prefix check deliberately includes
+    /// uninitialized and future B-20 variants without reading factory storage.
+    pub fn valid_receiver(to: Address) -> Result<NonZeroAddress> {
+        if to == Address::ZERO || B20Variant::has_b20_prefix(to) {
+            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
+        }
+        NonZeroAddress::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))
+    }
 
     /// Role identifier for asset operators: `keccak256("OPERATOR_ROLE")`.
     ///
@@ -255,8 +268,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = NonZeroAddress::new(to)
-            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
+        let to = Self::valid_receiver(to)?;
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
         if privileged {
@@ -281,8 +293,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = NonZeroAddress::new(to)
-            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
+        let to = Self::valid_receiver(to)?;
         let from = NonZeroAddress::new(from)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
         let allowance = token.accounting().allowance(from.get(), caller)?;
@@ -350,9 +361,7 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        if to == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
+        Self::valid_receiver(to)?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting().total_supply()?;
         let cap = token.accounting().supply_cap()?;
@@ -411,11 +420,9 @@ impl<S: AssetAccounting, A: PolicyAccounting> Asset<S, A> for AssetV3 {
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
-        // `to != 0` guards against a disguised burn; `from != 0` guards against a disguised mint
-        // (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
-        if to == Address::ZERO {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
+        // A valid receiver guards against a disguised burn or a stranded B-20 balance; `from != 0`
+        // guards against a disguised mint (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
+        Self::valid_receiver(to)?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
@@ -1078,8 +1085,9 @@ mod tests {
 
     use crate::{
         Asset, AssetAccounting, AssetV3, B20_MAX_SUPPLY_CAP, B20AssetStorage, B20AssetToken,
-        B20PolicyType, B20TokenRole, IB20, IB20Asset, PackedPolicy, PermitArgs, PolicyAccounting,
-        PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting, TransferPolicyIds,
+        B20PolicyType, B20TokenRole, B20Variant, IB20, IB20Asset, PackedPolicy, PermitArgs,
+        PolicyAccounting, PolicyRegistryStorage, PolicyVersion, Token, TokenAccounting,
+        TransferPolicyIds,
     };
 
     // --- Self-contained in-memory fakes (no dependency on `common::test_utils`, so shared test
@@ -1450,6 +1458,11 @@ mod tests {
         tok.accounting_mut().set_total_supply(supply + amount).unwrap();
     }
 
+    /// Returns an uninitialized address in the structural B-20 range.
+    fn b20_prefix_address() -> Address {
+        B20Variant::compute_address_for_discriminant(ALICE, u8::MAX, B256::repeat_byte(0x42)).0
+    }
+
     fn last_event_sig(tok: &Tok) -> B256 {
         tok.accounting().events.last().unwrap().topics()[0]
     }
@@ -1526,6 +1539,18 @@ mod tests {
     }
 
     #[test]
+    fn transfer_reverts_on_b20_prefix_receiver() {
+        let mut tok = token();
+        let receiver = b20_prefix_address();
+        fund(&mut tok, ALICE, U256::from(10u64));
+
+        let err = LOGIC.transfer(&mut tok, ALICE, receiver, U256::from(1u64), true).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+        assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
     fn transfer_reverts_when_paused() {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(10u64));
@@ -1558,6 +1583,19 @@ mod tests {
         tok.accounting_mut().set_allowance(ALICE, BOB, U256::MAX).unwrap();
         LOGIC.transfer_from(&mut tok, BOB, ALICE, BOB, U256::from(30u64), true).unwrap();
         assert_eq!(tok.accounting().allowance(ALICE, BOB).unwrap(), U256::MAX);
+    }
+
+    #[test]
+    fn transfer_from_reverts_on_b20_prefix_receiver_before_allowance() {
+        let mut tok = token();
+        let receiver = b20_prefix_address();
+        fund(&mut tok, ALICE, U256::from(10u64));
+
+        let err = LOGIC
+            .transfer_from(&mut tok, BOB, ALICE, receiver, U256::from(1u64), true)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
     }
 
     // --- approve ---
@@ -1605,6 +1643,17 @@ mod tests {
                 neededRole: B20TokenRole::Mint.id(),
             })
         );
+    }
+
+    #[test]
+    fn mint_reverts_on_b20_prefix_receiver() {
+        let mut tok = token();
+        let receiver = b20_prefix_address();
+
+        let err = LOGIC.mint(&mut tok, ADMIN, receiver, U256::from(1u64), true).unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+        assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
     // --- burn ---
@@ -1701,6 +1750,33 @@ mod tests {
             err,
             BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO })
         );
+    }
+
+    #[test]
+    fn seize_reverts_on_b20_prefix_receiver_before_sender_validation() {
+        let mut tok = token();
+        let receiver = b20_prefix_address();
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        let err = LOGIC
+            .seize_with_memo(&mut tok, ADMIN, Address::ZERO, receiver, U256::from(1u64), MEMO)
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+    }
+
+    #[test]
+    fn seize_can_recover_a_balance_from_a_b20_prefix_address() {
+        let mut tok = token();
+        let source = b20_prefix_address();
+        fund(&mut tok, source, U256::from(10u64));
+        make_seizable(&mut tok);
+        grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
+
+        LOGIC.seize_with_memo(&mut tok, ADMIN, source, BOB, U256::from(10u64), MEMO).unwrap();
+
+        assert_eq!(tok.accounting().balance_of(source).unwrap(), U256::ZERO);
+        assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
     }
 
     #[test]
@@ -2150,6 +2226,25 @@ mod tests {
                 rightLen: U256::from(2u64),
             })
         );
+    }
+
+    #[test]
+    fn batch_mint_reverts_on_a_b20_prefix_recipient() {
+        let mut tok = token();
+        let receiver = b20_prefix_address();
+        grant(&mut tok, B20TokenRole::Mint.id(), ALICE);
+
+        let err = LOGIC
+            .batch_mint(
+                &mut tok,
+                ALICE,
+                vec![BOB, receiver],
+                vec![U256::from(1u64), U256::from(1u64)],
+                false,
+            )
+            .unwrap_err();
+
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
     }
 
     /// PAUSE fires before the role check.
