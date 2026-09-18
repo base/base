@@ -23,57 +23,82 @@ pub trait L1WatcherDerivationClient: Debug + Send + Sync {
 
 /// Client to use to send messages to the [`crate::DerivationActor`]'s inbound channel.
 #[derive(Debug)]
-pub struct QueuedL1WatcherDerivationClient {
-    /// A channel to use to send the [`DerivationActorRequest`]s to the [`crate::DerivationActor`].
-    pub derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
-    /// Whether requests should be sent to a derivation actor.
-    pub enabled: bool,
+pub enum QueuedL1WatcherDerivationClient {
+    /// Requests are sent to a derivation actor.
+    Enabled {
+        /// Channel used to send [`DerivationActorRequest`]s to the derivation actor.
+        derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+    },
+    /// Requests are accepted without a derivation actor.
+    Disabled,
 }
 
 impl QueuedL1WatcherDerivationClient {
     /// Creates an enabled derivation client.
     pub const fn new(derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>) -> Self {
-        Self { derivation_actor_request_tx, enabled: true }
+        Self::Enabled { derivation_actor_request_tx }
     }
 
     /// Creates a disabled derivation client for a node without a derivation actor.
-    pub const fn disabled(
-        derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
-    ) -> Self {
-        Self { derivation_actor_request_tx, enabled: false }
+    pub const fn disabled() -> Self {
+        Self::Disabled
     }
 }
 
 #[async_trait]
 impl L1WatcherDerivationClient for QueuedL1WatcherDerivationClient {
     async fn send_finalized_l1_block(&self, block: BlockInfo) -> DerivationClientResult<()> {
-        if !self.enabled {
-            return Ok(());
+        match self {
+            Self::Enabled { derivation_actor_request_tx } => {
+                trace!(target: "l1_watcher", ?block, "Sending finalized l1 block to derivation actor.");
+                derivation_actor_request_tx
+                    .send(DerivationActorRequest::ProcessFinalizedL1Block(Box::new(block)))
+                    .await
+                    .map_err(|_| {
+                        DerivationClientError::RequestError("request channel closed.".to_string())
+                    })
+            }
+            Self::Disabled => Ok(()),
         }
-        trace!(target: "l1_watcher", ?block, "Sending finalized l1 block to derivation actor.");
-        let _ = self
-            .derivation_actor_request_tx
-            .send(DerivationActorRequest::ProcessFinalizedL1Block(Box::new(block)))
-            .await
-            .map_err(|_| {
-                DerivationClientError::RequestError("request channel closed.".to_string())
-            })?;
-
-        Ok(())
     }
 
     async fn send_new_l1_head(&self, block: BlockInfo) -> DerivationClientResult<()> {
-        if !self.enabled {
-            return Ok(());
+        match self {
+            Self::Enabled { derivation_actor_request_tx } => {
+                trace!(target: "l1_watcher", ?block, "Sending new l1 head to derivation actor.");
+                derivation_actor_request_tx
+                    .send(DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::new(block)))
+                    .await
+                    .map_err(|_| {
+                        DerivationClientError::RequestError("request channel closed.".to_string())
+                    })
+            }
+            Self::Disabled => Ok(()),
         }
-        trace!(target: "l1_watcher", ?block, "Sending new l1 head to derivation actor.");
-        self.derivation_actor_request_tx
-            .send(DerivationActorRequest::ProcessL1HeadUpdateRequest(Box::new(block)))
-            .await
-            .map_err(|_| {
-                DerivationClientError::RequestError("request channel closed.".to_string())
-            })?;
+    }
+}
 
-        Ok(())
+#[cfg(test)]
+mod tests {
+    use base_protocol::BlockInfo;
+
+    use super::{L1WatcherDerivationClient, QueuedL1WatcherDerivationClient};
+
+    #[tokio::test]
+    async fn disabled_client_accepts_finalized_block_without_an_actor() {
+        let client = QueuedL1WatcherDerivationClient::Disabled;
+
+        let result = client.send_finalized_l1_block(BlockInfo::default()).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn disabled_client_accepts_new_head_without_an_actor() {
+        let client = QueuedL1WatcherDerivationClient::Disabled;
+
+        let result = client.send_new_l1_head(BlockInfo::default()).await;
+
+        assert!(result.is_ok());
     }
 }
