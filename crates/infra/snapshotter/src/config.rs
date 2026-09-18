@@ -142,10 +142,25 @@ pub struct SnapshotterConfig {
     #[arg(long, env = "SNAPSHOTTER_S3_SECRET_ACCESS_KEY")]
     pub s3_secret_access_key: Option<String>,
 
-    /// Package and upload the proofs database from `{source_datadir}/proofs`.
+    /// Package and upload the `RocksDB` proofs database from `{source_datadir}/proofs`.
     ///
     /// Temporary rollout gate while proofs snapshot behavior is validated in
-    /// production. Disabled by default.
+    /// production. Immutable SST tables are deduplicated in shared storage and
+    /// mutable database metadata is uploaded with each snapshot run. Disabled
+    /// by default.
     #[arg(long, env = "SNAPSHOTTER_UPLOAD_PROOFS", default_value_t = false)]
     pub upload_proofs: bool,
+
+    /// Emit complete legacy RocksDB archives alongside deduplicated SST artifacts.
+    ///
+    /// Enabled by default for the migration so current `base snapshot download`
+    /// clients can restore newly published snapshots. Set this to `false` only
+    /// after those clients have been retired.
+    #[arg(
+        long,
+        env = "SNAPSHOTTER_EMIT_LEGACY_ROCKSDB_ARCHIVES",
+        default_value_t = true,
+        action = clap::ArgAction::Set
+    )]
+    pub emit_legacy_rocksdb_archives: bool,
 }

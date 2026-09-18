@@ -9,8 +9,9 @@
 
 pub use base_reth_cli::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    ProgressDisplay, SingleArchive, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerator,
-    SnapshotManifest, SnapshotManifestExt,
+    ProgressDisplay, ProofsStaticManifest, RocksDbStaticManifest, RocksdbStaticManifest,
+    SingleArchive, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerationResult,
+    SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
 };
 
 mod config;

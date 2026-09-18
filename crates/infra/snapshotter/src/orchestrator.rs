@@ -180,6 +180,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         let remote_for_gen = remote_static_files.clone();
         let previous_manifest_for_gen = remote_manifest.clone();
         let upload_proofs = self.config.upload_proofs;
+        let emit_legacy_rocksdb_archives = self.config.emit_legacy_rocksdb_archives;
         let effective_block = block;
         let effective_blocks_per_file = blocks_per_file.unwrap_or(500_000);
         let latest_chunk_start = effective_block
@@ -196,6 +197,12 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 let key = match ChunkFilename::parse(archive_name) {
                     Some((_component, start, _end)) if start != latest_chunk_start => {
                         key_uploader.static_file_object_key(archive_name)
+                    }
+                    _ if archive_name.starts_with("proofs-sst-") => {
+                        key_uploader.static_file_object_key(&format!("proofs/{archive_name}"))
+                    }
+                    _ if archive_name.starts_with("rocksdb-sst-") => {
+                        key_uploader.static_file_object_key(&format!("rocksdb/{archive_name}"))
                     }
                     _ => key_uploader.run_object_key(run_timestamp, archive_name),
                 };
@@ -214,6 +221,7 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 remote_static_files: &remote_for_gen,
                 previous_manifest: previous_manifest_for_gen.as_ref(),
                 upload_proofs,
+                emit_legacy_rocksdb_archives,
             };
             SnapshotGenerator::generate_manifest_with_sink(&params, &sink)
         })

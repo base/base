@@ -52,6 +52,11 @@ pub struct SnapshotManifestCommand {
     /// Include the proofs database in the snapshot.
     #[arg(long)]
     proofs: bool,
+
+    /// Emit complete legacy RocksDB archives alongside static SST artifacts.
+    /// Disable only after current download clients have been retired.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    emit_legacy_rocksdb_archives: bool,
 }
 
 impl SnapshotManifestCommand {
@@ -83,6 +88,7 @@ impl SnapshotManifestCommand {
             remote_static_files: &remote_static_files,
             previous_manifest: previous_manifest.as_ref(),
             upload_proofs: self.proofs,
+            emit_legacy_rocksdb_archives: self.emit_legacy_rocksdb_archives,
         })
         .map_err(|error| eyre::eyre!("snapshot generation failed: {error:#}"))?;
         Ok(())
