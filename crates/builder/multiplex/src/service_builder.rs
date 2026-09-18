@@ -70,6 +70,9 @@ impl MultiplexingServiceBuilder {
             gas_limit_config: self.builder_config.gas_limit_config.clone(),
             manifest_precheck_enabled: self.builder_config.manifest_precheck_enabled,
             predicate_eval_hard_cutoff: self.builder_config.predicate_eval_hard_cutoff,
+            predicate_bucket_ordered_threshold: self
+                .builder_config
+                .predicate_bucket_ordered_threshold,
             resource_metering: ResourceMeteringConfig {
                 provider: Arc::clone(&self.builder_config.metering_provider),
                 ..ResourceMeteringConfig::default()
