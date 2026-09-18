@@ -33,6 +33,27 @@ base_metrics::define_metrics! {
     #[describe("Number of peers connected to the libp2p gossip Swarm")]
     gossip_peer_count: gauge,
 
+    #[describe("Whether the local node is subscribed to a block topic (0 or 1)")]
+    #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
+    block_topic_subscribed: gauge,
+
+    #[describe("Number of connected peers advertising a block topic")]
+    #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
+    block_topic_peers: gauge,
+
+    #[describe("Number of peers in the local block topic mesh")]
+    #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
+    block_topic_mesh_peers: gauge,
+
+    #[describe("Block topic subscriptions removed at runtime after their fork grace period")]
+    #[label(name = "version", default = ["v1", "v2", "v3"])]
+    block_topic_retirements_total: counter,
+
+    #[describe("Block messages blocked by topic retirement or a removed subscription")]
+    #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
+    #[label(name = "direction", default = ["inbound", "outbound"])]
+    block_topic_blocked_total: counter,
+
     #[describe("Number of peers dialed by the libp2p Swarm")]
     dial_peer: gauge,
 
@@ -126,7 +147,4 @@ base_metrics::define_metrics! {
     #[describe("Distribution of block versions")]
     #[label(name = "version", default = ["v1", "v2", "v3", "v4"])]
     block_version: counter,
-
-    #[describe("Sync protocol substream requests")]
-    sync_requests: counter,
 }

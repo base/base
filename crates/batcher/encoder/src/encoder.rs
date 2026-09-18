@@ -1078,7 +1078,7 @@ mod tests {
         let sub = encoder.next_submission().unwrap();
         let stale_id = sub.id; // ID 0, now in-flight
 
-        // Simulate a reorg: driver calls reset() after clearing in_flight.
+        // Simulate a reorg: driver calls reset() while the submission is still in flight.
         encoder.reset();
         assert_eq!(encoder.egress.pending_submission_count(), 0);
         // next_id is preserved across reset so post-reset IDs can never collide
@@ -1131,7 +1131,7 @@ mod tests {
         let pre_reorg_sub = encoder.next_submission().unwrap();
         assert_eq!(pre_reorg_sub.id.0, 0);
 
-        // Reorg: driver discards the future for pre_reorg_sub.id, then resets.
+        // Reorg: driver resets while pre_reorg_sub.id is still in flight.
         encoder.reset();
 
         // Post-reorg: next_id must NOT have been reset to 0.

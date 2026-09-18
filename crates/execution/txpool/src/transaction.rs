@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use alloy_consensus::{BlobTransactionValidationError, Typed2718, transaction::Recovered};
+use alloy_consensus::{
+    BlobTransactionValidationError, Transaction, Typed2718, transaction::Recovered,
+};
 use alloy_eips::{
     eip2718::{Encodable2718, WithEncoded},
     eip2930::AccessList,
@@ -12,11 +14,13 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use base_bundles::MeterBundleResponse;
 use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
     EthBlobTransactionSidecar, EthPoolTransaction, EthPooledTransaction, PoolTransaction,
+    PriceBumpConfig,
 };
 
 use crate::estimated_da_size::DataAvailabilitySized;
@@ -68,6 +72,13 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
+    /// In-process `meter_bundle` result, attached after sim and before pool insert.
+    ///
+    /// Behind [`Arc`] so [`Clone`] (payload-building `ParkableBestPayloadTransactions`)
+    /// stays a pointer bump once later PRs populate this. `None` on
+    /// sequencer/builder inserts and on mempool txs while inline simulation is
+    /// off. The later consumer only forwards `Some`.
+    metering: Option<Arc<MeterBundleResponse>>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -94,20 +105,38 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
+            metering: None,
         }
     }
 
-    /// Sets the state predicates required for this transaction's inclusion.
+    /// Attaches an in-process `meter_bundle` result to this transaction.
+    #[must_use]
+    pub fn with_metering(mut self, metering: MeterBundleResponse) -> Self {
+        self.metering = Some(Arc::new(metering));
+        self
+    }
+
+    /// Returns the attached `meter_bundle` result, if any.
+    pub fn metering(&self) -> Option<&MeterBundleResponse> {
+        self.metering.as_deref()
+    }
+
+    /// Sets the validity predicates required for this transaction's inclusion.
+    ///
+    /// Predicates are stored in canonical evaluation order (timing before
+    /// state) via [`crate::ValidityPredicate::sort_batch`], so every ingress
+    /// path yields transactions whose cheap timing predicates gate state reads.
     #[must_use]
     pub fn with_validity_predicates(
         mut self,
-        validity_predicates: Vec<crate::ValidityPredicate>,
+        mut validity_predicates: Vec<crate::ValidityPredicate>,
     ) -> Self {
+        crate::ValidityPredicate::sort_batch(&mut validity_predicates);
         self.validity_predicates = validity_predicates;
         self
     }
 
-    /// Returns the state predicates required for this transaction's inclusion.
+    /// Returns the validity predicates required for this transaction's inclusion.
     #[must_use]
     pub fn validity_predicates(&self) -> &[crate::ValidityPredicate] {
         &self.validity_predicates
@@ -145,6 +174,18 @@ where
     type TryFromConsensusError = <Pooled as TryFrom<BaseTransactionSigned>>::Error;
     type Consensus = BaseTransactionSigned;
     type Pooled = Pooled;
+
+    fn is_replacement_underpriced(
+        &self,
+        replacement: &Self,
+        price_bumps: &PriceBumpConfig,
+    ) -> bool {
+        if self.validity_predicates().is_empty() || replacement.validity_predicates().is_empty() {
+            return price_bumps.is_replacement_underpriced(self, replacement);
+        }
+
+        replacement.max_fee_per_gas() <= self.max_fee_per_gas()
+    }
 
     fn clone_into_consensus(&self) -> Recovered<Self::Consensus> {
         self.inner.transaction().clone()
@@ -208,6 +249,9 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
+        let metering_size = self.metering.as_ref().map_or(0, |metering| {
+            core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
+        });
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
@@ -217,6 +261,8 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
             + validity_predicates_size
+            + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
+            + metering_size
     }
 }
 
@@ -397,6 +443,11 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
 
+    /// Returns the attached `meter_bundle` result, if any.
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        None
+    }
+
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
@@ -464,6 +515,10 @@ where
     fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
     }
+
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        self.metering.as_deref()
+    }
 }
 
 /// Trait for transactions that expose their received-at timestamp.
@@ -491,6 +546,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
+    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
@@ -501,7 +557,7 @@ mod tests {
     use reth_primitives_traits::InMemorySize;
     use reth_provider::test_utils::MockEthProvider;
     use reth_transaction_pool::{
-        PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
+        PoolTransaction, PriceBumpConfig, TransactionOrigin, TransactionValidationOutcome,
         blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
     };
 
@@ -510,11 +566,41 @@ mod tests {
         ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
     };
 
+    fn meter_response(results: usize) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: (0..results)
+                .map(|_| TransactionResult {
+                    coinbase_diff: U256::ZERO,
+                    eth_sent_to_coinbase: U256::ZERO,
+                    from_address: Address::ZERO,
+                    gas_fees: U256::ZERO,
+                    gas_price: U256::ZERO,
+                    gas_used: 21_000,
+                    to_address: None,
+                    tx_hash: Default::default(),
+                    value: U256::ZERO,
+                    execution_time_us: 1,
+                    opcode_gas: Vec::new(),
+                })
+                .collect(),
+            total_gas_used: 21_000 * results as u64,
+            ..MeterBundleResponse::default()
+        }
+    }
+
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
     }
 
     fn eip8130_pooled(nonce_key: U256) -> BasePooledTransaction {
+        eip8130_pooled_with_fees(nonce_key, 0, 1)
+    }
+
+    fn eip8130_pooled_with_fees(
+        nonce_key: U256,
+        max_priority_fee_per_gas: u128,
+        max_fee_per_gas: u128,
+    ) -> BasePooledTransaction {
         let signer = signer();
         let tx = TxEip8130 {
             chain_id: ChainConfig::mainnet().chain_id,
@@ -523,8 +609,8 @@ mod tests {
             nonce_sequence: 0,
             valid_after: 0,
             valid_before: if nonce_key == Eip8130Constants::NONCE_KEY_MAX { 5 } else { 0 },
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 1,
+            max_priority_fee_per_gas,
+            max_fee_per_gas,
             gas_limit: 50_000,
             account_changes: Vec::new(),
             calls: Vec::new(),
@@ -584,6 +670,62 @@ mod tests {
     }
 
     #[test]
+    fn validity_replacement_only_requires_a_higher_max_fee() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100)
+            .with_validity_predicates(vec![predicate.clone()]);
+        let replacement = eip8130_pooled_with_fees(U256::ZERO, 0, 101)
+            .with_validity_predicates(vec![predicate.clone()]);
+
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+
+        let unchanged_max_fee = eip8130_pooled_with_fees(U256::ZERO, 100, 100)
+            .with_validity_predicates(vec![predicate]);
+        assert!(
+            existing.is_replacement_underpriced(&unchanged_max_fee, &PriceBumpConfig::default())
+        );
+    }
+
+    #[test]
+    fn validity_replacement_of_non_validity_transaction_uses_configured_price_bumps() {
+        let existing = eip8130_pooled_with_fees(U256::ZERO, 10, 100);
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let underpriced = eip8130_pooled_with_fees(U256::ZERO, 0, 109)
+            .with_validity_predicates(vec![predicate.clone()]);
+
+        assert!(existing.is_replacement_underpriced(&underpriced, &PriceBumpConfig::default()));
+
+        let replacement =
+            eip8130_pooled_with_fees(U256::ZERO, 0, 110).with_validity_predicates(vec![predicate]);
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+    }
+
+    #[test]
+    fn non_validity_replacement_uses_configured_price_bumps() {
+        let predicate = ValidityPredicate::Balance {
+            address: Address::ZERO,
+            op: ValidityOperator::Equal,
+            value: U256::ZERO,
+        };
+        let existing =
+            eip8130_pooled_with_fees(U256::ZERO, 10, 100).with_validity_predicates(vec![predicate]);
+        let underpriced = eip8130_pooled_with_fees(U256::ZERO, 10, 110);
+
+        assert!(existing.is_replacement_underpriced(&underpriced, &PriceBumpConfig::default()));
+
+        let replacement = eip8130_pooled_with_fees(U256::ZERO, 11, 110);
+        assert!(!existing.is_replacement_underpriced(&replacement, &PriceBumpConfig::default()));
+    }
+
+    #[test]
     fn in_memory_size_includes_watch_keys() {
         let transaction = eip8130_pooled(U256::ZERO);
         let size_without_keys = transaction.size();
@@ -619,6 +761,81 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn metering_defaults_to_none() {
+        let transaction = eip8130_pooled(U256::ZERO);
+
+        assert!(transaction.metering().is_none());
+    }
+
+    #[test]
+    fn retains_metering() {
+        let metering = meter_response(1);
+        let transaction = eip8130_pooled(U256::ZERO).with_metering(metering.clone());
+
+        assert_eq!(transaction.metering(), Some(&metering));
+    }
+
+    #[test]
+    fn clone_shares_metering_arc() {
+        let transaction = eip8130_pooled(U256::ZERO).with_metering(meter_response(1));
+        let cloned = transaction.clone();
+
+        assert!(
+            core::ptr::eq(
+                transaction.metering().expect("original should retain metering"),
+                cloned.metering().expect("clone should retain metering"),
+            ),
+            "payload-building clones should share the metering Arc, not deep-copy it"
+        );
+    }
+
+    #[test]
+    fn in_memory_size_includes_metering_results() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_metering = transaction.size();
+        let metering = meter_response(2);
+        let results_size = core::mem::size_of_val(metering.results.as_slice());
+
+        let transaction = transaction.with_metering(metering);
+
+        assert_eq!(
+            transaction.size(),
+            size_without_metering + core::mem::size_of::<MeterBundleResponse>() + results_size,
+            "attaching metering should add the Arc-allocated response plus the results slice"
+        );
+        assert!(transaction.metering().is_some(), "metering should stay attached");
+    }
+
+    #[test]
+    fn in_memory_size_includes_opcode_gas_heap() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_metering = transaction.size();
+        let opcode = OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: "SSTORE".to_string(),
+            count: 1,
+            gas_used: 20_000,
+        };
+        let mut metering = meter_response(1);
+        metering.results[0].opcode_gas = vec![opcode];
+        let results_size = core::mem::size_of_val(metering.results.as_slice());
+        let opcode_gas_size = core::mem::size_of_val(metering.results[0].opcode_gas.as_slice());
+        let opcode_name_size = "SSTORE".len();
+
+        let transaction = transaction.with_metering(metering);
+
+        assert_eq!(
+            transaction.size(),
+            size_without_metering
+                + core::mem::size_of::<MeterBundleResponse>()
+                + results_size
+                + opcode_gas_size
+                + opcode_name_size,
+            "pool size should include Arc-allocated response, opcode_gas entries, and opcode name bytes"
+        );
     }
 
     #[test]

@@ -1,9 +1,10 @@
-//! Command-line orchestration for snapshot-backed benchmarks.
+//! Command-line orchestration for fresh-devnet and snapshot-backed benchmarks.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write as _,
+    num::NonZeroU64,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -13,41 +14,119 @@ use std::{
     time::Duration,
 };
 
+use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use alloy_signer_local::PrivateKeySigner;
 use base_common_network::Base;
+use base_common_precompiles::ActivationFeature;
 use base_load_tests::{
     BaselineError, LoadTestDisplay, LoadTestExecutor, LoadTestRunHooks, LoadTestRunOptions,
-    MetricsSummary, TestConfig,
+    MetricsSummary, TestConfig, TxTypeConfig,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, PrometheusBlockCollector,
-    SnapshotBenchmarkReportConfig, SnapshotBenchmarkResult, SnapshotBlockMetrics,
-    SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder, VisualizerMetadata,
-    VisualizerRun,
+    ANVIL_ACCOUNT_1, ANVIL_ACCOUNT_5, B20PrecompileClient, DevnetBlockInterval, DevnetConfig,
+    DevnetL2State, DevnetPrefund, PrometheusBlockCollector, SnapshotBenchmarkReportConfig,
+    SnapshotBenchmarkResult, SnapshotBlockMetrics, SnapshotChainConfig, SnapshotL2Stack,
+    SystemTestStack, SystemTestStackBuilder, VisualizerMetadata, VisualizerRun,
+    VisualizerRunResult, VisualizerSequencerMetrics, VisualizerValidatorMetrics,
 };
 
 /// Base benchmark launcher.
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark a Base development network")]
 pub struct BenchmarkCli {
-    /// Benchmark target.
+    /// Benchmark target. Omitting it runs the default fresh-devnet transfer benchmark.
     #[command(subcommand)]
-    pub command: BenchmarkCommand,
+    pub command: Option<BenchmarkCommand>,
 }
 
 /// Supported benchmark targets.
 #[derive(Debug, Subcommand)]
 pub enum BenchmarkCommand {
+    /// Run one benchmark or a workload suite against fresh temporary local devnets.
+    Local(LocalBenchmarkArgs),
     /// Run one load test against a Base snapshot continuation.
-    Snapshot(SnapshotBenchmarkArgs),
+    Snapshot(Box<SnapshotBenchmarkArgs>),
     /// Aggregate selected snapshot run artifacts into one report metadata file.
     Aggregate(AggregateBenchmarkArgs),
+}
+
+/// Arguments for a fresh-devnet benchmark.
+#[derive(Debug, Args, Default)]
+pub struct LocalBenchmarkArgs {
+    /// Load-test YAML. Its endpoint fields are replaced with fresh-devnet endpoints.
+    #[arg(long, conflicts_with = "workload_config")]
+    pub load_test_config: Option<PathBuf>,
+    /// YAML workload suite. Each workload runs against its own empty temporary devnet.
+    #[arg(long, conflicts_with = "load_test_config")]
+    pub workload_config: Option<PathBuf>,
+    /// Directory for a single result or a workload-suite visualizer bundle.
+    #[arg(long)]
+    pub output_dir: Option<PathBuf>,
+    /// Stable client build label written into workload-suite visualizer metadata.
+    #[arg(long, env = "BASE_BENCH_CLIENT_VERSION")]
+    pub client_version: Option<String>,
+}
+
+/// One entry in a fresh-devnet workload suite.
+#[derive(Debug, Deserialize)]
+pub struct LocalBenchmarkWorkload {
+    /// Stable workload identifier and output-directory name.
+    pub workload: String,
+    /// Human-readable payload label for the visualizer.
+    pub transaction_payload: String,
+    /// Deploy a fresh devnet WETH/USDC swap harness and auto-wire swap addresses.
+    #[serde(default)]
+    pub deploy_devnet_swap_harness: bool,
+    /// Load-test settings for this workload.
+    #[serde(flatten)]
+    pub test_config: TestConfig,
+}
+
+/// YAML configuration for a fresh-devnet workload suite.
+#[derive(Debug, Deserialize)]
+pub struct LocalBenchmarkWorkloadConfig {
+    /// Workloads to run serially. Every workload receives a newly initialized devnet.
+    pub benchmark_workloads: Vec<LocalBenchmarkWorkload>,
+}
+
+/// Machine-readable outcome for one fresh-devnet workload.
+#[derive(Debug, Serialize)]
+pub struct LocalBenchmarkWorkloadResult {
+    /// Stable workload identifier.
+    pub workload: String,
+    /// Human-readable payload label.
+    pub transaction_payload: String,
+    /// Relative output directory when a load-test sidecar was written.
+    pub output_dir: String,
+    /// Whether the load test completed without a terminal error.
+    pub success: bool,
+    /// Terminal error, when startup or execution failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Machine-readable outcomes for a fresh-devnet workload suite.
+#[derive(Debug, Serialize)]
+pub struct LocalBenchmarkWorkloadResults {
+    /// Results in the same order as the workload configuration.
+    pub runs: Vec<LocalBenchmarkWorkloadResult>,
+}
+
+/// In-memory outcome from one local load-test invocation.
+#[derive(Debug)]
+pub struct LocalBenchmarkResult {
+    /// Native load-test metrics, written to `load-test-result.json` when requested.
+    pub summary: MetricsSummary,
+    /// A terminal load-test error preserved after its metrics were written.
+    pub error: Option<String>,
 }
 
 /// Arguments for aggregating self-contained snapshot benchmark artifacts.
@@ -98,24 +177,501 @@ pub struct SnapshotBenchmarkArgs {
     /// Stable build identifier for visualizer comparisons.
     #[arg(long, env = "BASE_BENCH_CLIENT_VERSION")]
     pub client_version: Option<String>,
-    /// Maximum time to wait for graceful in-process stack shutdown after result artifacts have
-    /// been written. Expiry terminates the process because snapshot datadirs are disposable.
-    #[arg(long, default_value_t = 10)]
+    /// Block gas limit for locally produced descendants. Defaults to 10 Ggas for 2s blocks and
+    /// 1 Ggas for 200ms blocks.
+    #[arg(long)]
+    pub block_gas_limit: Option<NonZeroU64>,
+    /// Maximum time to wait for graceful shutdown after writing results. Zero terminates the
+    /// process immediately because snapshot datadirs are disposable.
+    #[arg(long, default_value_t = 0)]
     pub shutdown_timeout_seconds: u64,
 }
 
 /// Wei minted to the benchmark's ephemeral funder in the first local descendant (1000 ETH).
 const PREFUND_AMOUNT_WEI: u128 = 1_000_000_000_000_000_000_000;
+/// Use the full block gas limit as the EIP-1559 target in snapshot benchmarks, so synthetic
+/// benchmark load cannot raise the base fee and strand already-submitted transaction nonce lanes.
+const SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY: u32 = 1;
 const RESULT_FILE_NAME: &str = "benchmark-result.json";
+const LOCAL_RESULT_FILE_NAME: &str = "load-test-result.json";
+const FRESH_DEVNET_BLOCK_TIME: Duration = Duration::from_secs(2);
+const FRESH_DEVNET_AZUL_ACTIVATION_BLOCK: u64 = 0;
+const FRESH_DEVNET_BERYL_ACTIVATION_BLOCK: u64 = 3;
+const FRESH_DEVNET_BERYL_READY_BLOCK: u64 = FRESH_DEVNET_BERYL_ACTIVATION_BLOCK + 1;
+const FRESH_DEVNET_BERYL_READY_TIMEOUT: Duration = Duration::from_secs(30);
+const DEVNET_WETH_ADDRESS: &str = "0x4200000000000000000000000000000000000006";
+const DEVNET_SWAP_CONTRACTS_DIR: &str = "../../crates/utilities/test-utils/contracts";
+
+#[derive(Debug, Clone, Copy)]
+struct DevnetSwapHarnessAddresses {
+    usdc: Address,
+    uniswap_router: Address,
+    aerodrome_router: Address,
+}
 
 impl BenchmarkCli {
     /// Runs the selected benchmark case.
     pub async fn run(self) -> Result<()> {
         let _progress = LoadTestDisplay::init_tracing();
         match self.command {
-            BenchmarkCommand::Snapshot(args) => args.run().await,
-            BenchmarkCommand::Aggregate(args) => args.run(),
+            None => LocalBenchmarkArgs::default().run().await,
+            Some(BenchmarkCommand::Local(args)) => args.run().await,
+            Some(BenchmarkCommand::Snapshot(args)) => args.run().await,
+            Some(BenchmarkCommand::Aggregate(args)) => args.run(),
         }
+    }
+}
+
+impl LocalBenchmarkArgs {
+    /// Runs either one configured local benchmark or a suite of isolated local benchmarks.
+    pub async fn run(self) -> Result<()> {
+        if let Some(workload_config) = &self.workload_config {
+            let output_dir = self.output_dir.as_deref().ok_or_else(|| {
+                eyre::eyre!("--output-dir is required when --workload-config is provided")
+            })?;
+            return self.run_workload_suite(workload_config, output_dir).await;
+        }
+
+        let test_config = self
+            .load_test_config
+            .as_ref()
+            .map(TestConfig::load)
+            .transpose()
+            .wrap_err("failed to load fresh-devnet benchmark configuration")?
+            .unwrap_or_default();
+        let result = self.run_one(test_config, false).await?;
+        if let Some(error) = result.error {
+            eyre::bail!(error)
+        }
+        Ok(())
+    }
+
+    /// Starts an isolated fresh devnet, executes one load-test configuration, and tears it down.
+    ///
+    /// The configuration's RPC endpoints are deliberately ignored: every run targets the dynamic
+    /// endpoints assigned to its newly created devnet. A B-20 workload schedules Azul and Beryl,
+    /// then activates the B-20 asset feature before creating its token fixtures.
+    pub async fn run_one(
+        &self,
+        mut test_config: TestConfig,
+        deploy_devnet_swap_harness: bool,
+    ) -> Result<LocalBenchmarkResult> {
+        let devnet = DevnetConfig::standard();
+        let chain_id = devnet.l2_chain_id;
+        let funder_key = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_1.private_key)
+            .wrap_err("failed to construct the fresh-devnet funder key")?;
+        let requires_b20_activation = Self::requires_beryl(&test_config);
+        let mut stack_builder = SystemTestStackBuilder::new().with_devnet_config(devnet);
+        if requires_b20_activation {
+            stack_builder = stack_builder
+                .with_base_azul_activation_block(FRESH_DEVNET_AZUL_ACTIVATION_BLOCK)
+                .with_base_beryl_activation_block(FRESH_DEVNET_BERYL_ACTIVATION_BLOCK);
+        }
+        let stack = stack_builder.build().await?;
+
+        if requires_b20_activation {
+            Self::activate_b20_asset_feature(&stack, chain_id).await?;
+        }
+
+        println!("running benchmark against a fresh temporary devnet");
+        let run_result: Result<LocalBenchmarkResult> = async {
+            let builder_rpc = stack.l2_rpc_url()?;
+            let client_rpc = stack.l2_client_rpc_url()?;
+            let flashblocks_ws = stack
+                .l2_stack()
+                .builder()
+                .flashblocks_url()
+                .parse()
+                .wrap_err("invalid fresh-devnet Flashblocks URL")?;
+            test_config.transaction_submission_rpcs = vec![builder_rpc.clone()];
+            test_config.query_rpc = Some(client_rpc);
+            test_config.txpool_nodes.clear();
+            test_config.flashblocks_ws = Some(flashblocks_ws);
+            test_config.chain_id = Some(chain_id);
+
+            if deploy_devnet_swap_harness {
+                println!("deploying fresh devnet swap harness");
+                let harness = Self::deploy_devnet_swap_harness(&builder_rpc).await?;
+                Self::apply_devnet_swap_harness(&mut test_config, harness)?;
+            }
+
+            let load_config = test_config.to_load_config(None)?;
+            eyre::ensure!(
+                load_config.block_time == FRESH_DEVNET_BLOCK_TIME,
+                "fresh devnet uses a 2s block time, but the workload requests {}",
+                test_config.block_time
+            );
+            let output = LoadTestExecutor::run_prepared(
+                test_config,
+                load_config,
+                funder_key,
+                LoadTestRunOptions {
+                    continuous: false,
+                    install_signal_handler: true,
+                    skip_drain: true,
+                },
+                LoadTestRunHooks {
+                    display: None,
+                    before_cleanup: (|_: &MetricsSummary| {}) as fn(&MetricsSummary),
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&output.summary)?);
+            self.write_result(&output.summary)?;
+            Ok(LocalBenchmarkResult {
+                summary: output.summary,
+                error: output.run_error.map(|error| error.to_string()),
+            })
+        }
+        .await;
+
+        let shutdown_result = stack.shutdown().await;
+        let result = run_result?;
+        shutdown_result?;
+        Ok(result)
+    }
+
+    /// Runs every workload in a YAML suite serially and writes a base/benchmark visualizer bundle.
+    pub async fn run_workload_suite(
+        &self,
+        workload_config_path: &Path,
+        output_dir: &Path,
+    ) -> Result<()> {
+        let workload_config = Self::load_workload_config(workload_config_path)?;
+        eyre::ensure!(
+            !workload_config.benchmark_workloads.is_empty(),
+            "fresh-devnet workload configuration contains no benchmark_workloads"
+        );
+        fs::create_dir_all(output_dir).wrap_err_with(|| {
+            format!(
+                "failed to create fresh-devnet benchmark output directory {}",
+                output_dir.display()
+            )
+        })?;
+
+        let client_version =
+            self.client_version.clone().unwrap_or_else(|| "base/unknown".to_string());
+        let chain_id = DevnetConfig::standard().l2_chain_id;
+        let mut result_runs = Vec::with_capacity(workload_config.benchmark_workloads.len());
+        let mut visualizer_runs = Vec::with_capacity(workload_config.benchmark_workloads.len());
+        let mut workload_names = BTreeSet::new();
+
+        for workload in workload_config.benchmark_workloads {
+            eyre::ensure!(
+                workload_names.insert(workload.workload.clone()),
+                "fresh-devnet workload configuration contains duplicate workload {:?}",
+                workload.workload
+            );
+            let output_dir_name = format!("fresh-devnet-{}", workload.workload);
+            let workload_output_dir = Self::workload_output_dir(output_dir, &output_dir_name)?;
+            let result = Self { output_dir: Some(workload_output_dir), ..Self::default() }
+                .run_one(workload.test_config, workload.deploy_devnet_swap_harness)
+                .await;
+
+            let (summary, success, error) = match result {
+                Ok(result) => {
+                    let success = result.error.is_none();
+                    (Some(result.summary), success, result.error)
+                }
+                Err(error) => (None, false, Some(format!("{error:?}"))),
+            };
+            let complete = summary.is_some();
+            let gas_per_second =
+                summary.as_ref().map(|summary| summary.throughput.gps).unwrap_or_default();
+
+            result_runs.push(LocalBenchmarkWorkloadResult {
+                workload: workload.workload.clone(),
+                transaction_payload: workload.transaction_payload.clone(),
+                output_dir: output_dir_name.clone(),
+                success,
+                error: error.clone(),
+            });
+            visualizer_runs.push(VisualizerRun {
+                id: format!("fresh-devnet-{}-{}", workload.workload, Utc::now().timestamp_millis()),
+                source_file: "base-fresh-devnet".to_string(),
+                output_dir: output_dir_name,
+                test_name: format!("Base fresh-devnet {}", workload.workload),
+                test_description: format!(
+                    "{} load test against a newly initialized empty Base devnet",
+                    workload.transaction_payload
+                ),
+                test_config: BTreeMap::from([
+                    (
+                        "BenchmarkRun".to_string(),
+                        serde_json::Value::String("fresh-devnet".to_string()),
+                    ),
+                    ("Scenario".to_string(), serde_json::Value::String(workload.workload)),
+                    ("ChainId".to_string(), chain_id.into()),
+                    ("BlockTimeMilliseconds".to_string(), 2_000.into()),
+                    ("NodeType".to_string(), serde_json::Value::String("fresh-devnet".to_string())),
+                    (
+                        "TransactionPayload".to_string(),
+                        serde_json::Value::String(workload.transaction_payload),
+                    ),
+                    (
+                        "ClientVersion".to_string(),
+                        serde_json::Value::String(client_version.clone()),
+                    ),
+                ]),
+                result: VisualizerRunResult {
+                    success,
+                    complete,
+                    client_version: client_version.clone(),
+                    // This is the end-to-end load-test GPS, not a per-node Prometheus scrape.
+                    // It fills the visualizer's headline field while the detailed load-test page
+                    // renders the native MetricsSummary sidecar.
+                    sequencer_metrics: VisualizerSequencerMetrics { gas_per_second },
+                    validator_metrics: VisualizerValidatorMetrics { gas_per_second },
+                    artifacts: if complete {
+                        BTreeMap::from([(
+                            "loadTestResult".to_string(),
+                            LOCAL_RESULT_FILE_NAME.to_string(),
+                        )])
+                    } else {
+                        BTreeMap::new()
+                    },
+                },
+                created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            });
+        }
+
+        let suite_results = LocalBenchmarkWorkloadResults { runs: result_runs };
+        Self::write_json(
+            &output_dir.join("suite-results.json"),
+            &suite_results,
+            "fresh-devnet workload results",
+        )?;
+        Self::write_json(
+            &output_dir.join("metadata.json"),
+            &VisualizerMetadata { runs: visualizer_runs },
+            "fresh-devnet visualizer metadata",
+        )?;
+
+        let failed = suite_results.runs.iter().filter(|run| !run.success).count();
+        eyre::ensure!(failed == 0, "{failed} fresh-devnet benchmark workload(s) failed");
+        Ok(())
+    }
+
+    async fn deploy_devnet_swap_harness(
+        builder_rpc: &url::Url,
+    ) -> Result<DevnetSwapHarnessAddresses> {
+        let contracts_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEVNET_SWAP_CONTRACTS_DIR);
+        eyre::ensure!(
+            contracts_dir.is_dir(),
+            "devnet swap harness contracts directory not found: {}",
+            contracts_dir.display()
+        );
+
+        let install_output = Command::new("forge")
+            .args(["soldeer", "install"])
+            .current_dir(&contracts_dir)
+            .output()
+            .await
+            .wrap_err("failed to execute forge soldeer install for devnet swap harness")?;
+        if !install_output.status.success() {
+            eyre::bail!(
+                "forge soldeer install failed for devnet swap harness: {}",
+                String::from_utf8_lossy(&install_output.stderr)
+            );
+        }
+
+        let deploy_private_key = format!("{:#x}", ANVIL_ACCOUNT_1.private_key);
+        let deploy_output = Command::new("forge")
+            .arg("script")
+            .arg("script/DeployRealTokenSwapDevnet.s.sol:DeployRealTokenSwapDevnet")
+            .arg("--rpc-url")
+            .arg(builder_rpc.as_str())
+            .arg("--private-key")
+            .arg(&deploy_private_key)
+            .arg("--broadcast")
+            .current_dir(&contracts_dir)
+            .output()
+            .await
+            .wrap_err("failed to execute devnet swap harness deployment")?;
+        let deploy_logs = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&deploy_output.stdout),
+            String::from_utf8_lossy(&deploy_output.stderr)
+        );
+        if !deploy_output.status.success() {
+            eyre::bail!("devnet swap harness deployment failed:\n{deploy_logs}");
+        }
+        Self::parse_devnet_swap_harness_addresses(&deploy_logs)
+    }
+
+    fn parse_devnet_swap_harness_addresses(
+        deploy_logs: &str,
+    ) -> Result<DevnetSwapHarnessAddresses> {
+        let usdc = Self::parse_deployed_address_from_logs(deploy_logs, "USDC:", "USDC")?;
+        let uniswap_router = Self::parse_deployed_address_from_logs(
+            deploy_logs,
+            "Uniswap router shim:",
+            "Uniswap router",
+        )?;
+        let aerodrome_router = Self::parse_deployed_address_from_logs(
+            deploy_logs,
+            "Aerodrome router shim:",
+            "Aerodrome router",
+        )?;
+        Ok(DevnetSwapHarnessAddresses { usdc, uniswap_router, aerodrome_router })
+    }
+
+    fn parse_deployed_address_from_logs(
+        deploy_logs: &str,
+        marker: &str,
+        deployment_name: &str,
+    ) -> Result<Address> {
+        for line in deploy_logs.lines() {
+            let Some((_, rest)) = line.split_once(marker) else {
+                continue;
+            };
+
+            for token in rest.split_whitespace() {
+                let token = token.trim_matches(|char| {
+                    matches!(char, ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '"')
+                });
+                if let Ok(address) = token.parse::<Address>() {
+                    return Ok(address);
+                }
+            }
+
+            eyre::bail!("failed to parse deployed {deployment_name} address from line: {line}");
+        }
+
+        eyre::bail!("missing {deployment_name} address in devnet swap harness deployment")
+    }
+
+    fn apply_devnet_swap_harness(
+        test_config: &mut TestConfig,
+        harness: DevnetSwapHarnessAddresses,
+    ) -> Result<()> {
+        let weth = DEVNET_WETH_ADDRESS
+            .parse::<Address>()
+            .expect("valid devnet WETH predeploy address literal");
+        let setup = test_config.real_token_setup.as_mut().ok_or_else(|| {
+            eyre::eyre!("deploy_devnet_swap_harness requires real_token_setup with enabled: true")
+        })?;
+        eyre::ensure!(
+            setup.enabled,
+            "deploy_devnet_swap_harness requires real_token_setup with enabled: true"
+        );
+
+        setup.weth = Some(weth);
+        setup.pair_token.token = Some(harness.usdc);
+        match &mut setup.pair_token.acquisition {
+            base_load_tests::RealTokenAcquisitionConfig::UniswapV3ExactInput { router, .. } => {
+                *router = Some(harness.uniswap_router);
+            }
+            base_load_tests::RealTokenAcquisitionConfig::AerodromeClExactInput {
+                router, ..
+            } => {
+                *router = Some(harness.aerodrome_router);
+            }
+        }
+
+        let mut saw_swap = false;
+        for transaction in &mut test_config.transactions {
+            match &mut transaction.tx_type {
+                TxTypeConfig::UniswapV3 { router, token_in, token_out, .. } => {
+                    *router = Some(harness.uniswap_router);
+                    *token_in = Some(weth);
+                    *token_out = Some(harness.usdc);
+                    saw_swap = true;
+                }
+                TxTypeConfig::AerodromeCl { router, token_in, token_out, .. } => {
+                    *router = Some(harness.aerodrome_router);
+                    *token_in = Some(weth);
+                    *token_out = Some(harness.usdc);
+                    saw_swap = true;
+                }
+                TxTypeConfig::Transfer
+                | TxTypeConfig::Calldata { .. }
+                | TxTypeConfig::Erc20 { .. }
+                | TxTypeConfig::Storage { .. }
+                | TxTypeConfig::DoubleCounter { .. }
+                | TxTypeConfig::Precompile { .. }
+                | TxTypeConfig::Osaka { .. }
+                | TxTypeConfig::B20 => {}
+            }
+        }
+        eyre::ensure!(
+            saw_swap,
+            "deploy_devnet_swap_harness requires at least one uniswap_v3 or aerodrome_cl transaction"
+        );
+        Ok(())
+    }
+
+    /// Writes a single load-test sidecar for a local benchmark when an output directory was set.
+    pub fn write_result(&self, summary: &MetricsSummary) -> Result<()> {
+        let Some(output_dir) = &self.output_dir else { return Ok(()) };
+        let result_path = output_dir.join(LOCAL_RESULT_FILE_NAME);
+        Self::write_json(&result_path, summary, "fresh-devnet load-test result")?;
+        println!("benchmark result: {}", result_path.display());
+        Ok(())
+    }
+
+    /// Loads a fresh-devnet workload suite from YAML.
+    pub fn load_workload_config(path: &Path) -> Result<LocalBenchmarkWorkloadConfig> {
+        let contents = fs::read_to_string(path).wrap_err_with(|| {
+            format!("failed to read workload configuration {}", path.display())
+        })?;
+        serde_yaml::from_str(&contents)
+            .wrap_err_with(|| format!("failed to parse workload configuration {}", path.display()))
+    }
+
+    /// Returns the output directory for one workload after validating that it cannot escape root.
+    pub fn workload_output_dir(root: &Path, workload: &str) -> Result<PathBuf> {
+        eyre::ensure!(
+            !workload.is_empty()
+                && workload != "."
+                && workload != ".."
+                && !workload.contains('/')
+                && !workload.contains('\\'),
+            "workload must be a single directory name: {workload:?}"
+        );
+        Ok(root.join(workload))
+    }
+
+    /// Writes one JSON artifact and ensures its parent directory exists.
+    pub fn write_json<T: Serialize>(path: &Path, value: &T, artifact: &str) -> Result<()> {
+        let parent = path.parent().ok_or_else(|| {
+            eyre::eyre!("{artifact} path has no parent directory: {}", path.display())
+        })?;
+        fs::create_dir_all(parent).wrap_err_with(|| {
+            format!("failed to create {artifact} directory {}", parent.display())
+        })?;
+        fs::write(path, serde_json::to_vec_pretty(value)?)
+            .wrap_err_with(|| format!("failed to write {artifact} {}", path.display()))
+    }
+
+    /// Returns whether a workload needs Base Beryl enabled in its empty devnet.
+    pub fn requires_beryl(test_config: &TestConfig) -> bool {
+        test_config
+            .transactions
+            .iter()
+            .any(|transaction| matches!(transaction.tx_type, TxTypeConfig::B20))
+    }
+
+    /// Waits for Beryl and activates the B-20 asset feature with the devnet sequencer account.
+    pub async fn activate_b20_asset_feature(stack: &SystemTestStack, chain_id: u64) -> Result<()> {
+        let provider = stack.l2_builder_provider()?;
+        tokio::time::timeout(FRESH_DEVNET_BERYL_READY_TIMEOUT, async {
+            loop {
+                if provider.get_block_number().await? >= FRESH_DEVNET_BERYL_READY_BLOCK {
+                    return Ok::<_, eyre::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .wrap_err("timed out waiting for Beryl to activate on the fresh devnet")??;
+
+        let activation_admin = PrivateKeySigner::from_bytes(&ANVIL_ACCOUNT_5.private_key)
+            .wrap_err("failed to construct the fresh-devnet Beryl activation-admin key")?;
+        B20PrecompileClient::new(&provider, &activation_admin, chain_id)
+            .activate_feature(ActivationFeature::B20Asset.id())
+            .await
+            .wrap_err("failed to activate the B-20 asset feature on the fresh devnet")
     }
 }
 
@@ -265,6 +821,8 @@ impl SnapshotBenchmarkArgs {
             unreachable!("snapshot constructor must create snapshot state")
         };
         snapshot.block_interval = block_interval;
+        snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
+        snapshot.eip1559_elasticity_override = Some(SNAPSHOT_BENCHMARK_EIP1559_ELASTICITY);
         snapshot.prefund =
             Some(DevnetPrefund { address: funder_key.address(), amount: PREFUND_AMOUNT_WEI });
 
@@ -282,10 +840,6 @@ impl SnapshotBenchmarkArgs {
             client_version,
         );
 
-        eyre::ensure!(
-            self.shutdown_timeout_seconds > 0,
-            "shutdown timeout must be greater than zero"
-        );
         let mut stack = SystemTestStackBuilder::new()
             .with_devnet_config(devnet)
             .build_snapshot_sequencer()
@@ -336,6 +890,14 @@ impl SnapshotBenchmarkArgs {
             eprintln!("benchmark result processing failed before shutdown: {error:?}");
             let _ = std::io::stderr().flush();
         }
+
+        if self.shutdown_timeout_seconds == 0 {
+            // The benchmark artifacts or error diagnostics are complete and flushed. Exit from
+            // inside the async entrypoint so neither the stack nor the outer Tokio runtime runs
+            // destructors that can wait for non-cancellable Reth work or database cleanup.
+            std::process::exit(if output_result.is_ok() { 0 } else { 1 });
+        }
+
         let shutdown_result =
             Self::shutdown_with_deadline(stack, self.shutdown_timeout_seconds).await;
         output_result?;
@@ -386,7 +948,8 @@ impl SnapshotBenchmarkArgs {
             .then(|| stack.builder_flashblocks_url())
             .transpose()?;
         test_config.chain_id = Some(stack.chain_id());
-        let load_config = test_config.to_load_config(None)?;
+        let mut load_config = test_config.to_load_config(None)?;
+        load_config.canonical_heads_ws = Some(stack.builder_ws_url()?);
         let funder_address = funder_key.address();
         let sequencer_metrics =
             PrometheusBlockCollector::start(builder_rpc.clone(), stack.builder_metrics_url()?)
@@ -555,11 +1118,16 @@ impl SnapshotBenchmarkArgs {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, num::NonZeroU64};
 
+    use alloy_primitives::Address;
+    use base_load_tests::MetricsSummary;
     use clap::Parser;
 
-    use super::{AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs};
+    use super::{
+        AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, DevnetSwapHarnessAddresses,
+        LocalBenchmarkArgs, LocalBenchmarkWorkloadConfig, SnapshotBenchmarkArgs,
+    };
 
     #[test]
     fn parses_snapshot_benchmark_defaults() {
@@ -580,7 +1148,7 @@ mod tests {
             "example-scenario",
         ]);
 
-        let BenchmarkCommand::Snapshot(args) = cli.command else {
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
             panic!("expected snapshot benchmark command");
         };
         assert_eq!(args.chain, "sepolia");
@@ -589,7 +1157,8 @@ mod tests {
         assert_eq!(args.benchmark_run, "snapshot-throughput");
         assert!(args.run_id.is_none());
         assert!(args.client_version.is_none());
-        assert_eq!(args.shutdown_timeout_seconds, 10);
+        assert!(args.block_gas_limit.is_none());
+        assert_eq!(args.shutdown_timeout_seconds, 0);
     }
 
     #[test]
@@ -613,13 +1182,16 @@ mod tests {
             "manual-run-id",
             "--shutdown-timeout-seconds",
             "30",
+            "--block-gas-limit",
+            "12000000000",
         ]);
 
-        let BenchmarkCommand::Snapshot(args) = cli.command else {
+        let Some(BenchmarkCommand::Snapshot(args)) = cli.command else {
             panic!("expected snapshot benchmark command");
         };
         assert_eq!(args.output_dir.to_string_lossy(), "result-dir");
         assert_eq!(args.run_id.as_deref(), Some("manual-run-id"));
+        assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
         assert_eq!(args.shutdown_timeout_seconds, 30);
     }
 
@@ -694,11 +1266,224 @@ mod tests {
             "results",
             "results/run-a",
         ]);
-        let BenchmarkCommand::Aggregate(args) = cli.command else {
+        let Some(BenchmarkCommand::Aggregate(args)) = cli.command else {
             panic!("expected aggregate benchmark command");
         };
         assert_eq!(args.output_dir, std::path::PathBuf::from("results"));
         assert_eq!(args.run_output_dirs, vec![std::path::PathBuf::from("results/run-a")]);
+    }
+
+    #[test]
+    fn defaults_to_fresh_local_benchmark_without_arguments() {
+        let cli = BenchmarkCli::parse_from(["base-bench"]);
+
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_explicit_fresh_local_benchmark() {
+        let cli = BenchmarkCli::parse_from(["base-bench", "local"]);
+
+        let Some(BenchmarkCommand::Local(args)) = cli.command else {
+            panic!("expected local benchmark command");
+        };
+        assert!(args.load_test_config.is_none());
+        assert!(args.workload_config.is_none());
+        assert!(args.output_dir.is_none());
+    }
+
+    #[test]
+    fn parses_fresh_devnet_workload_suite() {
+        let cli = BenchmarkCli::parse_from([
+            "base-bench",
+            "local",
+            "--workload-config",
+            "etc/benchmarks/fresh-devnet.yml",
+            "--output-dir",
+            "results/fresh-devnet",
+            "--client-version",
+            "base/test",
+        ]);
+
+        let Some(BenchmarkCommand::Local(args)) = cli.command else {
+            panic!("expected local benchmark command");
+        };
+        assert_eq!(
+            args.workload_config,
+            Some(std::path::PathBuf::from("etc/benchmarks/fresh-devnet.yml"))
+        );
+        assert_eq!(args.output_dir, Some(std::path::PathBuf::from("results/fresh-devnet")));
+        assert_eq!(args.client_version.as_deref(), Some("base/test"));
+    }
+
+    #[test]
+    fn parses_checked_in_fresh_devnet_workload_configuration() {
+        let config: LocalBenchmarkWorkloadConfig =
+            serde_yaml::from_str(include_str!("../../benchmarks/fresh-devnet.yml")).unwrap();
+
+        assert_eq!(config.benchmark_workloads.len(), 4);
+        assert_eq!(config.benchmark_workloads[0].workload, "b20-transfer");
+        assert_eq!(config.benchmark_workloads[0].transaction_payload, "b20-transfer-existing");
+        assert!(!config.benchmark_workloads[0].deploy_devnet_swap_harness);
+        assert_eq!(config.benchmark_workloads[0].test_config.sender_count, 400);
+        assert_eq!(config.benchmark_workloads[0].test_config.funding_amount, "100000000000000000");
+        assert_eq!(config.benchmark_workloads[1].workload, "eth-new");
+        assert_eq!(config.benchmark_workloads[1].test_config.sender_count, 1000);
+        assert_eq!(config.benchmark_workloads[2].workload, "eth-existing");
+        assert_eq!(config.benchmark_workloads[3].workload, "blake2f-50000");
+    }
+
+    #[test]
+    fn parses_devnet_swap_harness_workload_without_contract_addresses() {
+        let yaml = r#"
+benchmark_workloads:
+  - workload: uniswap-swap
+    transaction_payload: uniswap_v3-devnet-harness
+    deploy_devnet_swap_harness: true
+    transaction_submission_rpcs: http://localhost:8545
+    query_rpc: http://localhost:8545
+    txpool_nodes: []
+    flashblocks_ws: ws://localhost:7111
+    sender_count: 10
+    in_flight_per_sender: 16
+    transactions:
+      - weight: 100
+        type: uniswap_v3
+        fee: 500
+    real_token_setup:
+      enabled: true
+      weth_amount_per_sender: "50000000000000000"
+      pair_token:
+        amount_per_sender: "10000000"
+        acquisition:
+          type: uniswap_v3_exact_input
+          fee: 500
+          amount_in: "10000000000000000"
+"#;
+
+        let config: LocalBenchmarkWorkloadConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.benchmark_workloads.len(), 1);
+        assert!(config.benchmark_workloads[0].deploy_devnet_swap_harness);
+    }
+
+    #[test]
+    fn parses_devnet_swap_harness_deployment_logs() {
+        let usdc = Address::repeat_byte(0x11);
+        let uniswap_router = Address::repeat_byte(0x22);
+        let aerodrome_router = Address::repeat_byte(0x33);
+        let logs = format!(
+            "compiling contracts\nUSDC: [{usdc}]\nUniswap router shim: ({uniswap_router})\nAerodrome router shim: {aerodrome_router};\ndeployment complete"
+        );
+
+        let parsed = LocalBenchmarkArgs::parse_devnet_swap_harness_addresses(&logs).unwrap();
+
+        assert_eq!(parsed.usdc, usdc);
+        assert_eq!(parsed.uniswap_router, uniswap_router);
+        assert_eq!(parsed.aerodrome_router, aerodrome_router);
+    }
+
+    #[test]
+    fn devnet_swap_harness_log_parsing_requires_all_addresses() {
+        let logs = format!("USDC: {}", Address::repeat_byte(0x11));
+
+        let err = LocalBenchmarkArgs::parse_devnet_swap_harness_addresses(&logs).unwrap_err();
+
+        assert!(err.to_string().contains("missing Uniswap router address"));
+    }
+
+    #[test]
+    fn apply_devnet_swap_harness_wires_swap_and_setup_addresses() {
+        let yaml = r#"
+transaction_submission_rpcs: http://localhost:8545
+query_rpc: http://localhost:8545
+flashblocks_ws: ws://localhost:7111
+transactions:
+  - weight: 50
+    type: uniswap_v3
+    fee: 500
+  - weight: 50
+    type: aerodrome_cl
+    tick_spacing: 100
+real_token_setup:
+  enabled: true
+  weth_amount_per_sender: "50000000000000000"
+  pair_token:
+    amount_per_sender: "10000000"
+    acquisition:
+      type: uniswap_v3_exact_input
+      fee: 500
+      amount_in: "10000000000000000"
+"#;
+
+        let mut config = base_load_tests::TestConfig::from_yaml(yaml).unwrap();
+        let harness = DevnetSwapHarnessAddresses {
+            usdc: Address::repeat_byte(0x11),
+            uniswap_router: Address::repeat_byte(0x22),
+            aerodrome_router: Address::repeat_byte(0x33),
+        };
+
+        LocalBenchmarkArgs::apply_devnet_swap_harness(&mut config, harness).unwrap();
+
+        let setup = config.real_token_setup.expect("setup should be configured");
+        assert_eq!(setup.weth, Some("0x4200000000000000000000000000000000000006".parse().unwrap()));
+        assert_eq!(setup.pair_token.token, Some(harness.usdc));
+        match setup.pair_token.acquisition {
+            base_load_tests::RealTokenAcquisitionConfig::UniswapV3ExactInput { router, .. } => {
+                assert_eq!(router, Some(harness.uniswap_router));
+            }
+            _ => panic!("expected uniswap acquisition route"),
+        }
+
+        for transaction in config.transactions {
+            match transaction.tx_type {
+                base_load_tests::TxTypeConfig::UniswapV3 {
+                    router, token_in, token_out, ..
+                } => {
+                    assert_eq!(router, Some(harness.uniswap_router));
+                    assert_eq!(token_out, Some(harness.usdc));
+                    assert_eq!(
+                        token_in,
+                        Some("0x4200000000000000000000000000000000000006".parse().unwrap())
+                    );
+                }
+                base_load_tests::TxTypeConfig::AerodromeCl {
+                    router, token_in, token_out, ..
+                } => {
+                    assert_eq!(router, Some(harness.aerodrome_router));
+                    assert_eq!(token_out, Some(harness.usdc));
+                    assert_eq!(
+                        token_in,
+                        Some("0x4200000000000000000000000000000000000006".parse().unwrap())
+                    );
+                }
+                _ => panic!("expected swap tx type"),
+            }
+        }
+    }
+
+    #[test]
+    fn writes_local_load_test_sidecar_when_output_is_requested() {
+        let output = tempfile::tempdir().unwrap();
+        let args = LocalBenchmarkArgs {
+            output_dir: Some(output.path().to_path_buf()),
+            ..Default::default()
+        };
+        let summary = MetricsSummary { measurement_block_count: 10, ..Default::default() };
+
+        args.write_result(&summary).unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.path().join("load-test-result.json")).unwrap())
+                .unwrap();
+        assert_eq!(written["measurement_block_count"], 10);
+    }
+
+    #[test]
+    fn rejects_workload_names_that_escape_the_result_root() {
+        let root = tempfile::tempdir().unwrap();
+
+        assert!(LocalBenchmarkArgs::workload_output_dir(root.path(), "../escape").is_err());
+        assert!(LocalBenchmarkArgs::workload_output_dir(root.path(), "b20-transfer").is_ok());
     }
 
     #[test]

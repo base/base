@@ -23,8 +23,8 @@ blobs or calldata depending on the `DaType`, and hands the resulting `TxCandidat
 TxOutcome)` pair when the transaction settles. Confirmed receipts call `pipeline.confirm` and
 `pipeline.advance_l1_head`. Failed submissions are requeued. A `TxpoolBlocked` outcome sets a
 sticky flag that prevents further submissions until `recover_txpool` successfully cancels the
-stuck transaction. On reorg, `SubmissionQueue::discard` drops all in-flight futures and releases
-their permits so the freshly reset pipeline is not corrupted by stale completions.
+stuck transaction. In-flight futures survive a pipeline reset and keep their permits until they
+settle; the reset pipeline ignores the stale ids they report.
 
 `TxOutcome` represents the three terminal states of an L1 submission: `Confirmed { l1_block }`,
 `Failed`, and `TxpoolBlocked`. During normal operation, failed frames are requeued for retry;

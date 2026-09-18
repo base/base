@@ -48,11 +48,7 @@ pub(crate) struct FollowCommand {
 
 impl FollowCommand {
     /// Runs the `follow` flavor.
-    pub(crate) fn run(
-        self,
-        resolved_chain: ResolvedChainConfig,
-        metrics_enabled: bool,
-    ) -> eyre::Result<()> {
+    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let Self { execution_chain, execution, follow } = self;
         let mut execution_chain = match execution_chain {
             Some(chain) => chain,
@@ -83,12 +79,6 @@ impl FollowCommand {
                 )
                 .await?;
 
-            if metrics_enabled {
-                CliMetrics::init_rollup_config(&rollup_config);
-            }
-            let _upgrade_countdown_metrics = metrics_enabled
-                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
-
             let execution = execution
                 .into_launch_config(execution_chain)
                 .with_unified_auth_endpoint()
@@ -96,6 +86,12 @@ impl FollowCommand {
             let l2_engine_rpc = engine_ipc_url(execution.auth_ipc_path())?;
             let task_executor = ctx.task_executor.clone();
             let launched = execution.launch_default(ctx).await?;
+            // Execution launch installs the shared reth recorder. The standalone metrics flag
+            // controls a separate endpoint, not emission into this recorder.
+            CliMetrics::init_rollup_config(&rollup_config);
+            let _upgrade_countdown_metrics =
+                CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
+
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;

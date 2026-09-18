@@ -1,6 +1,6 @@
 //! Command-line launcher for development networks.
 
-use std::path::PathBuf;
+use std::{num::NonZeroU64, path::PathBuf};
 
 use alloy_primitives::{Address, B256};
 use clap::{Args, Parser, Subcommand};
@@ -8,7 +8,7 @@ use eyre::{Result, WrapErr};
 use serde::Serialize;
 
 use crate::{
-    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead,
+    DevnetBlockInterval, DevnetConfig, DevnetL2State, DevnetPrefund, DevnetSnapshotHead, SharedL1,
     SnapshotChainConfig, SnapshotL2Stack, SystemTestStackBuilder,
 };
 
@@ -26,6 +26,19 @@ pub struct DevnetCli {
 pub enum DevnetCommand {
     /// Continue Base snapshot datadirs without an L1.
     Snapshot(SnapshotArgs),
+    /// Start a CI-scoped shared L1 and write its runtime manifest.
+    SharedL1(SharedL1Args),
+}
+
+/// Arguments for a CI-scoped shared L1 fixture.
+#[derive(Debug, Args)]
+pub struct SharedL1Args {
+    /// File written after the shared L1 is ready for consumers.
+    #[arg(long)]
+    pub runtime_file: PathBuf,
+    /// Docker network shared with live L2 deployments.
+    #[arg(long)]
+    pub network_name: String,
 }
 
 /// Arguments for an L1-free Base snapshot network.
@@ -49,6 +62,10 @@ pub struct SnapshotArgs {
     /// Interval between locally produced blocks.
     #[arg(long, value_enum, default_value_t)]
     pub block_interval: DevnetBlockInterval,
+    /// Block gas limit for locally produced descendants. Defaults to 10 Ggas for 2s blocks and
+    /// 1 Ggas for 200ms blocks.
+    #[arg(long)]
+    pub block_gas_limit: Option<NonZeroU64>,
     /// Account to mint ETH to in the first local descendant block.
     #[arg(long)]
     pub prefund_address: Option<Address>,
@@ -82,6 +99,8 @@ pub struct SnapshotRuntime {
     pub boundary_hash: B256,
     /// Configured interval between local blocks, in milliseconds.
     pub block_interval_ms: u64,
+    /// Configured block gas limit for local descendants.
+    pub block_gas_limit: u64,
     /// Builder execution JSON-RPC URL.
     pub builder_rpc_url: String,
     /// Builder Flashblocks WebSocket URL.
@@ -95,7 +114,19 @@ impl DevnetCli {
     pub async fn run(self) -> Result<()> {
         match self.command {
             DevnetCommand::Snapshot(args) => args.run().await,
+            DevnetCommand::SharedL1(args) => args.run().await,
         }
+    }
+}
+
+impl SharedL1Args {
+    /// Starts the fixture, publishes its manifest, and waits for shutdown.
+    pub async fn run(self) -> Result<()> {
+        let stack = SharedL1::start(self.network_name).await?;
+        stack.runtime().write(&self.runtime_file)?;
+        println!("shared L1 ready: {}", self.runtime_file.display());
+        tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
+        stack.shutdown().await
     }
 }
 
@@ -124,6 +155,7 @@ impl SnapshotArgs {
         };
         snapshot.expected_head = expected_head;
         snapshot.block_interval = self.block_interval;
+        snapshot.block_gas_limit = self.block_gas_limit.map(NonZeroU64::get);
         snapshot.prefund = self
             .prefund_address
             .map(|address| DevnetPrefund { address, amount: self.prefund_amount });
@@ -140,6 +172,7 @@ impl SnapshotArgs {
         println!("snapshot devnet ready");
         println!("builder RPC: {}", runtime.builder_rpc_url);
         println!("client RPC:  {}", runtime.client_rpc_url);
+        println!("block gas:   {}", runtime.block_gas_limit);
         println!("runtime:     {}", self.runtime_file.display());
         println!("press Ctrl-C to stop");
         tokio::signal::ctrl_c().await.wrap_err("failed to listen for Ctrl-C")?;
@@ -158,6 +191,7 @@ impl SnapshotRuntime {
             boundary_number: boundary.head.number,
             boundary_hash: boundary.head.hash,
             block_interval_ms: stack.block_interval().duration().as_millis() as u64,
+            block_gas_limit: stack.block_gas_limit(),
             builder_rpc_url: stack.builder_rpc_url()?.to_string(),
             builder_flashblocks_url: stack.builder_flashblocks_url()?.to_string(),
             client_rpc_url: stack.client_rpc_url()?.to_string(),
@@ -167,6 +201,8 @@ impl SnapshotRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use clap::Parser;
 
     use super::{DevnetCli, DevnetCommand};
@@ -190,10 +226,33 @@ mod tests {
         ])
         .unwrap();
 
-        let DevnetCommand::Snapshot(args) = cli.command;
+        let DevnetCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot command")
+        };
         assert_eq!(args.chain, "sepolia");
         assert_eq!(args.builder_datadir.to_str(), Some("/tmp/builder"));
         assert!(args.prefund_address.is_some());
         assert_eq!(args.block_interval, DevnetBlockInterval::TwoHundredMilliseconds);
+        assert!(args.block_gas_limit.is_none());
+    }
+
+    #[test]
+    fn parses_snapshot_block_gas_limit() {
+        let cli = DevnetCli::try_parse_from([
+            "base-devnet",
+            "snapshot",
+            "--builder-datadir",
+            "/tmp/builder",
+            "--client-datadir",
+            "/tmp/client",
+            "--block-gas-limit",
+            "12000000000",
+        ])
+        .unwrap();
+
+        let DevnetCommand::Snapshot(args) = cli.command else {
+            panic!("expected snapshot command")
+        };
+        assert_eq!(args.block_gas_limit.map(NonZeroU64::get), Some(12_000_000_000));
     }
 }

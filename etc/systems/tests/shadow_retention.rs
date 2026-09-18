@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use base_shadow_indexer_db::{
     PgConnectionParams, SHADOW_RETENTION_LOCK_KEY, ShadowBlockPayload, ShadowBlockRepo,
-    ShadowBlockRow, ShadowDbConfig, ShadowRetentionRepo, ShadowWrite,
+    ShadowBlockRow, ShadowDbConfig, ShadowHash, ShadowRetentionRepo, ShadowWrite,
 };
 use chrono::Utc;
 use reth_primitives_traits::RecoveredBlock;
@@ -93,10 +93,12 @@ impl TestDatabase {
 
 fn shadow_row(number: i64) -> ShadowBlockRow {
     let now = Utc::now();
+    let mut hash = vec![0; 32];
+    hash[24..].copy_from_slice(&number.to_be_bytes());
 
     ShadowBlockRow {
         number,
-        hash: number.to_be_bytes().to_vec(),
+        hash: ShadowHash::encode(&hash),
         canonical_hash: None,
         created_at: now,
         updated_at: now,

@@ -141,14 +141,38 @@ load_rollup_config() {
     echo "ERROR: generated rollup config not found: $GENERATED_ROLLUP_CONFIG" >&2
     exit 1
   fi
-  cp "$GENERATED_ROLLUP_CONFIG" "$ROLLUP_CONFIG"
 
-  local rollup_l1_chain_id
-  rollup_l1_chain_id=$(jq -r '.l1_chain_id' "$ROLLUP_CONFIG")
+  local rollup_l1_chain_id genesis_number genesis_number_hex l1_block l1_hash l1_number temp
+  rollup_l1_chain_id=$(jq -r '.l1_chain_id' "$GENERATED_ROLLUP_CONFIG")
   if [ "$rollup_l1_chain_id" != "$L1_CHAIN_ID_VALUE" ]; then
     echo "ERROR: rollup L1 chain ID is $rollup_l1_chain_id, expected $L1_CHAIN_ID_VALUE" >&2
     exit 1
   fi
+
+  # Anvil loads the genesis alloc but builds its own header, so the offline
+  # generator's L1 hash is not canonical. Keep the configured origin height.
+  genesis_number=$(jq -er '.genesis.l1.number | select(type == "number" and . >= 0 and floor == .)' \
+    "$GENERATED_ROLLUP_CONFIG")
+  printf -v genesis_number_hex '0x%x' "$genesis_number"
+  l1_block=$(cast rpc --rpc-url "$L1_RPC" eth_getBlockByNumber "$genesis_number_hex" false)
+  l1_hash=$(jq -er '.hash | select(type == "string" and test("^0x[0-9a-fA-F]{64}$"))' \
+    <<<"$l1_block")
+  l1_number=$(jq -er '.number | select(type == "string" and test("^0x[0-9a-fA-F]+$"))' \
+    <<<"$l1_block")
+  if [ "$((l1_number))" -ne "$genesis_number" ]; then
+    echo "ERROR: L1 RPC returned block $l1_number for genesis block $genesis_number_hex" >&2
+    exit 1
+  fi
+
+  temp=$(mktemp "$L2_CONFIG_DIR/rollup.json.XXXXXX")
+  if ! jq --arg hash "$l1_hash" '.genesis.l1.hash = $hash' \
+    "$GENERATED_ROLLUP_CONFIG" >"$temp"; then
+    rm -f "$temp"
+    exit 1
+  fi
+  chmod --reference="$GENERATED_ROLLUP_CONFIG" "$temp"
+  mv "$temp" "$GENERATED_ROLLUP_CONFIG"
+  cp "$GENERATED_ROLLUP_CONFIG" "$ROLLUP_CONFIG"
 }
 
 genesis_output_root() {

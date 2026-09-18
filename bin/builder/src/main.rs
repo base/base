@@ -13,7 +13,10 @@ use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
 use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
-use base_txpool_rpc::{SendRawTransactionValidityExtension, TxPoolRpcConfig, TxPoolRpcExtension};
+use base_txpool_rpc::{
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    TxPoolRpcExtension,
+};
 
 type BuilderCli = Cli<Args>;
 
@@ -63,12 +66,17 @@ fn main() {
                     .with_cutover_enabled(payload_builder_cutover)
                     .with_basic_only(basic_payload_builder),
             );
-        runner.install_ext::<MeteringStoreExtension>(metering_provider);
+        runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
         runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-        runner.install_ext::<BuilderApiExtension>(builder_api_config);
+        runner.install_ext::<BuilderApiExtension>(
+            builder_api_config.with_metering_provider(metering_provider),
+        );
         if builder_api_config.accept_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
-                builder_api_config.max_validity_predicates,
+                SendRawTransactionValidityConfig {
+                    max_validity_predicates: builder_api_config.max_validity_predicates,
+                    ..Default::default()
+                },
             );
         }
         runner.install_ext::<ShadowIndexerExtension>(shadow_indexer_config);

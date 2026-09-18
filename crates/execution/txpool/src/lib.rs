@@ -29,8 +29,9 @@ mod best;
 
 mod validity;
 pub use validity::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX, PredicateContext,
-    TransactionValidity, ValidityOperator, ValidityPredicate, ValidityPredicateError,
+    DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX,
+    PredicateContext, TransactionValidity, ValidityOperator, ValidityPredicate,
+    ValidityPredicateError, deserialize_bounded_predicates,
 };
 
 mod block_expiry;
@@ -65,7 +66,7 @@ mod pool_error_label;
 pub use pool_error_label::PoolRejectionLabel;
 
 mod builder;
-pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer};
+pub use builder::{BuilderApiImpl, BuilderApiMetrics, BuilderApiServer, InsertMetering};
 
 mod wire;
 pub use wire::{

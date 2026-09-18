@@ -416,22 +416,22 @@ impl MetricsCollector {
         }
     }
 
-    /// Returns the rolling 30s TPS.
+    /// Returns the rolling 10-second TPS.
     pub fn rolling_tps(&mut self) -> f64 {
         self.rolling.tps()
     }
 
-    /// Returns the rolling 30s GPS.
+    /// Returns the rolling 10-second GPS.
     pub fn rolling_gps(&mut self) -> f64 {
         self.rolling.gps()
     }
 
-    /// Returns the rolling 30s (p50, p99) latency percentiles.
+    /// Returns the rolling 10-second (p50, p99) latency percentiles.
     pub fn rolling_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.rolling.p50_p99()
     }
 
-    /// Rolling 30s flashblocks (p50, p99).
+    /// Rolling 10-second flashblocks (p50, p99).
     pub fn rolling_flashblocks_p50_p99(&mut self) -> (std::time::Duration, std::time::Duration) {
         self.flashblocks_rolling.p50_p99()
     }

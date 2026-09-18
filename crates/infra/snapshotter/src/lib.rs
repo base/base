@@ -9,11 +9,15 @@
 
 pub use base_reth_cli::{
     ChunkFilename, ChunkedArchive, ComponentManifest, ManifestGenerationParams, OutputFileChecksum,
-    ProgressDisplay, SingleArchive, SnapshotGenerator, SnapshotManifest, SnapshotManifestExt,
+    ProgressDisplay, SingleArchive, SnapshotArchiveSink, SnapshotArchiveWriter, SnapshotGenerator,
+    SnapshotManifest, SnapshotManifestExt,
 };
 
 mod config;
-pub use config::{DEFAULT_TIP_THRESHOLD_SECS, S3ConfigType, SnapshotterConfig};
+pub use config::{
+    DEFAULT_MAX_STREAMING_ARCHIVES, DEFAULT_MAX_STREAMING_PART_UPLOADS, DEFAULT_TIP_THRESHOLD_SECS,
+    S3ConfigType, SnapshotterConfig,
+};
 
 mod progress;
 pub use progress::UploadProgress;
@@ -26,7 +30,8 @@ pub use tip::{RpcTipChecker, TipChecker, TipStatus};
 
 mod upload;
 pub use upload::{
-    SnapshotRun, SnapshotUploadParams, SnapshotUploader, StreamingMultipartUpload, UploadStrategy,
+    SnapshotRun, SnapshotUploadParams, SnapshotUploader, StreamingMultipartUpload,
+    StreamingS3ArchiveSink, UploadStrategy,
 };
 
 mod orchestrator;

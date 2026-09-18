@@ -1,27 +1,24 @@
 //! Orchestrates the full snapshot lifecycle with a restart safety guard.
 
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use base_reth_cli::{ManifestGenerationParams, SnapshotGenerator, SnapshotManifest};
+use base_reth_cli::{ChunkFilename, ManifestGenerationParams, SnapshotGenerator};
 use tracing::{error, info, warn};
 
 use crate::{
     SnapshotterConfig,
     container::ContainerManager,
     tip::TipChecker,
-    upload::{SnapshotUploadParams, SnapshotUploader},
+    upload::{SnapshotUploader, StreamingS3ArchiveSink},
 };
 
-/// Orchestrates the full snapshot flow: stop CL and EL → generate → upload → restart EL and CL.
+/// Orchestrates the full snapshot flow: optionally stop CL, stop EL → generate →
+/// upload → restart EL, then optionally restart CL.
 ///
-/// Both containers are always restarted, even if snapshot generation or upload
-/// fails. This prevents leaving the node in a stopped state on errors and ensures
-/// the CL reconnects to the EL after the snapshot.
+/// The EL is always restarted, even if snapshot generation or upload fails. When a
+/// CL container is configured, it is stopped first and restarted last so it can
+/// reconnect to the EL. This prevents leaving the node in a stopped state on errors.
 pub struct Snapshotter<C: ContainerManager, T: TipChecker> {
     container_manager: C,
     tip_checker: T,
@@ -50,21 +47,13 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     /// Executes the full snapshot lifecycle.
     ///
     /// 0. Captures the EL's latest block and verifies it is at chain tip; skips the run if it is not
-    /// 1. Stops the CL and EL containers
-    /// 2. Verifies both containers are stopped
+    /// 1. Stops the CL (when configured) then the EL
+    /// 2. Verifies stopped containers are no longer running
     /// 3. Generates snapshot archives
     /// 4. Uploads to S3/R2
     /// 5. Clears reth's persisted peer list (best effort)
-    /// 6. Restarts the EL and then the CL (always, even on failure)
-    ///
-    /// When `upload_existing_run_timestamp` is set, the snapshotter skips the
-    /// container lifecycle entirely and uploads the existing `run-<timestamp>`
-    /// directory from `output_dir`.
+    /// 6. Restarts the EL and then the CL when configured (always, even on failure)
     pub async fn run(&self) -> Result<()> {
-        if let Some(run_timestamp) = self.config.upload_existing_run_timestamp {
-            return self.upload_existing_run(run_timestamp).await;
-        }
-
         // Only snapshot when the EL is caught up to tip. Snapshotting a lagging
         // node would publish stale data and pause a node that is still syncing.
         //
@@ -86,10 +75,14 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             return Ok(());
         }
 
-        // Stop the dependent CL first, then the EL. Restarting in the reverse
-        // order below ensures the EL is available when the CL reconnects.
-        let cl_stop_result =
-            self.container_manager.stop(&self.config.consensus_container_name).await;
+        // Stop the dependent CL first when configured, then the EL. Restarting
+        // in the reverse order below ensures the EL is available when the CL
+        // reconnects.
+        let cl_stop_result = if let Some(ref cl_name) = self.config.consensus_container_name {
+            self.container_manager.stop(cl_name).await
+        } else {
+            Ok(())
+        };
         let result = match cl_stop_result {
             Ok(()) => match self.container_manager.stop(&self.config.container_name).await {
                 Ok(()) => self.generate_and_upload(tip.block_number).await,
@@ -114,16 +107,19 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             );
         }
 
-        let cl_restart_result =
-            self.container_manager.start(&self.config.consensus_container_name).await;
-
-        if let Err(ref restart_err) = cl_restart_result {
-            error!(
-                error = %restart_err,
-                container = %self.config.consensus_container_name,
-                "CRITICAL: failed to restart CL container after snapshot"
-            );
-        }
+        let cl_restart_result = if let Some(ref cl_name) = self.config.consensus_container_name {
+            let cl_restart_result = self.container_manager.start(cl_name).await;
+            if let Err(ref restart_err) = cl_restart_result {
+                error!(
+                    error = %restart_err,
+                    container = %cl_name,
+                    "CRITICAL: failed to restart CL container after snapshot"
+                );
+            }
+            cl_restart_result
+        } else {
+            Ok(())
+        };
 
         let restart_result = match (el_restart_result, cl_restart_result) {
             (Ok(()), Ok(())) => Ok(()),
@@ -140,7 +136,12 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
                 Ok(())
             }
             (Err(snapshot_err), Ok(())) => {
-                Err(snapshot_err).context("snapshot failed but EL and CL containers were restarted")
+                let restarted = if self.config.consensus_container_name.is_some() {
+                    "snapshot failed but EL and CL containers were restarted"
+                } else {
+                    "snapshot failed but EL container was restarted"
+                };
+                Err(snapshot_err).context(restarted)
             }
             (Ok(()), Err(restart_err)) => {
                 bail!(
@@ -162,8 +163,6 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
     async fn generate_and_upload(&self, latest_block: u64) -> Result<()> {
         let run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        let run_output_dir = create_run_output_dir(&self.config.output_dir, run_timestamp)?;
-
         let remote_static_files = self.uploader.list_remote_static_files().await?;
 
         info!(remote_files = remote_static_files.len(), "fetched remote static file listing");
@@ -175,117 +174,60 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
         );
 
         let source_datadir = self.config.source_datadir.clone();
-        let output_dir_for_gen = run_output_dir.clone();
         let chain_id = self.config.chain_id;
-        let block = Some(self.config.block.unwrap_or(latest_block));
+        let block = self.config.block.unwrap_or(latest_block);
         let blocks_per_file = self.config.blocks_per_file;
         let remote_for_gen = remote_static_files.clone();
         let previous_manifest_for_gen = remote_manifest.clone();
         let upload_proofs = self.config.upload_proofs;
+        let effective_block = block;
+        let effective_blocks_per_file = blocks_per_file.unwrap_or(500_000);
+        let latest_chunk_start = effective_block
+            .saturating_sub(1)
+            .checked_div(effective_blocks_per_file)
+            .and_then(|index| index.checked_mul(effective_blocks_per_file))
+            .context("latest static-file chunk range overflow")?;
+        let key_uploader = self.uploader.clone();
+        let sink = StreamingS3ArchiveSink::new(
+            self.uploader.clone(),
+            tokio::runtime::Handle::current(),
+            self.config.max_streaming_archives.get(),
+            move |archive_name| {
+                let key = match ChunkFilename::parse(archive_name) {
+                    Some((_component, start, _end)) if start != latest_chunk_start => {
+                        key_uploader.static_file_object_key(archive_name)
+                    }
+                    _ => key_uploader.run_object_key(run_timestamp, archive_name),
+                };
+                Ok(key)
+            },
+        )?;
 
-        let files = tokio::task::spawn_blocking(move || {
+        let manifest = tokio::task::spawn_blocking(move || {
             let params = ManifestGenerationParams {
                 source_datadir: &source_datadir,
-                output_dir: &output_dir_for_gen,
+                output_dir: None,
                 chain_id,
                 base_url: None,
-                block,
+                block: Some(block),
                 blocks_per_file,
                 remote_static_files: &remote_for_gen,
                 previous_manifest: previous_manifest_for_gen.as_ref(),
                 upload_proofs,
             };
-            SnapshotGenerator::generate_manifest(&params)
+            SnapshotGenerator::generate_manifest_with_sink(&params, &sink)
         })
         .await
         .context("snapshot generation task panicked")?
         .context("snapshot generation failed")?;
 
-        if files.is_empty() {
-            bail!("snapshot generation produced no files");
-        }
-
-        self.upload_run_directory(
-            &run_output_dir,
-            run_timestamp,
-            files,
-            remote_manifest.as_ref(),
-            &remote_static_files,
-        )
-        .await?;
-
-        info!(output_dir = %run_output_dir.display(), "cleaning up local artifacts");
-        if let Err(e) = tokio::fs::remove_dir_all(&run_output_dir).await {
-            error!(error = %e, "failed to clean up output directory");
-        }
-
-        Ok(())
-    }
-
-    /// Uploads an existing `run-<timestamp>` directory without regenerating artifacts
-    /// or touching the EL container lifecycle.
-    async fn upload_existing_run(&self, run_timestamp: u64) -> Result<()> {
-        let run_output_dir = existing_run_output_dir(&self.config.output_dir, run_timestamp)?;
-        info!(
-            run_timestamp,
-            output_dir = %run_output_dir.display(),
-            "uploading existing snapshot run"
-        );
-
-        let files = SnapshotGenerator::collect_output_files(&run_output_dir)?;
-        let remote_static_files = self.uploader.list_remote_static_files().await?;
-        let remote_manifest = self.uploader.fetch_previous_manifest().await?;
-        info!(
-            has_remote_manifest = remote_manifest.is_some(),
-            "fetched previous manifest for blake3 diff"
-        );
-        self.upload_run_directory(
-            &run_output_dir,
-            run_timestamp,
-            files,
-            remote_manifest.as_ref(),
-            &remote_static_files,
-        )
-        .await
-    }
-
-    /// Uploads one prepared run directory after generation or from upload-only mode.
-    async fn upload_run_directory(
-        &self,
-        run_output_dir: &Path,
-        run_timestamp: u64,
-        files: Vec<PathBuf>,
-        remote_manifest: Option<&SnapshotManifest>,
-        remote_static_files: &HashMap<String, u64>,
-    ) -> Result<()> {
-        if files.is_empty() {
-            bail!("snapshot run directory produced no files")
-        }
-
-        let manifest_bytes = tokio::fs::read(run_output_dir.join("manifest.json"))
-            .await
-            .context("failed to read run manifest.json")?;
-        let local_manifest: SnapshotManifest =
-            serde_json::from_slice(&manifest_bytes).context("failed to parse run manifest.json")?;
-
         self.uploader
-            .upload(SnapshotUploadParams {
-                output_dir: run_output_dir,
-                files: &files,
-                timestamp: run_timestamp,
-                retain_runs: self.config.retain_runs.get(),
-                local_manifest: &local_manifest,
-                remote_manifest,
-                remote_static_files,
-            })
+            .publish_streamed_manifest(&manifest, run_timestamp, self.config.retain_runs.get())
             .await
             .with_context(|| {
-                format!(
-                    "snapshot upload failed for run_timestamp={} output_dir={}",
-                    run_timestamp,
-                    run_output_dir.display()
-                )
+                format!("failed to publish streamed snapshot manifest for {run_timestamp}")
             })?;
+
         Ok(())
     }
 
@@ -305,23 +247,4 @@ impl<C: ContainerManager, T: TipChecker> Snapshotter<C, T> {
             }
         }
     }
-}
-
-/// Creates a unique run output directory using the provided timestamp.
-fn create_run_output_dir(base: &std::path::Path, timestamp: u64) -> Result<PathBuf> {
-    let run_dir = base.join(format!("run-{timestamp}"));
-    std::fs::create_dir_all(&run_dir)
-        .with_context(|| format!("failed to create run dir {}", run_dir.display()))?;
-    Ok(run_dir)
-}
-
-/// Resolves an existing `run-<timestamp>` directory for upload-only mode.
-fn existing_run_output_dir(base: &Path, timestamp: u64) -> Result<PathBuf> {
-    let run_dir = base.join(format!("run-{timestamp}"));
-    let metadata = std::fs::metadata(&run_dir)
-        .with_context(|| format!("failed to stat existing run dir {}", run_dir.display()))?;
-    if !metadata.is_dir() {
-        bail!("existing run path is not a directory: {}", run_dir.display());
-    }
-    Ok(run_dir)
 }

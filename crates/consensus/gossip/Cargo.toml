@@ -33,7 +33,6 @@ base-common-rpc-types-engine = { workspace = true, features = ["std", "serde"] }
 # Networking
 snap.workspace = true
 futures.workspace = true
-libp2p-stream.workspace = true
 ipnet = { workspace = true, features = ["serde"] }
 discv5 = { workspace = true, features = ["libp2p"] }
 libp2p-identity = { workspace = true, features = ["secp256k1"] }
@@ -55,9 +54,11 @@ metrics = { workspace = true, optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 multihash.workspace = true
+metrics-exporter-prometheus.workspace = true
 alloy-rlp = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 rand = { workspace = true, features = ["thread_rng"] }
+tokio = { workspace = true, features = ["test-util"] }
 alloy-chains = { workspace = true, features = ["std"] }
 arbitrary = { workspace = true, features = ["derive"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }

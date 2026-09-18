@@ -22,6 +22,7 @@ use base_consensus_providers::{
 use base_consensus_rpc::{BaseRpc, RpcBuilder};
 use base_consensus_safedb::{DisabledSafeDB, SafeDB, SafeDBReader, SafeHeadListener};
 use base_protocol::L2BlockInfo;
+use base_upgrade_signal::{UpgradeSignalMetricLayer, UpgradeSignalMetrics};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -407,6 +408,11 @@ impl RollupNode {
         DerivationActor<QueuedDerivationEngineClient, P>:
             NodeActor<StartData = (), Error = DerivationError>,
     {
+        UpgradeSignalMetrics::record_mode(
+            UpgradeSignalMetricLayer::Consensus,
+            self.upgrade_signal_config.as_ref().map(|config| config.config.mode),
+        );
+
         // Build the safe head DB pair. Both actors share the same underlying DB via Arc.
         //
         // In delegate mode the local derivation actor is replaced by a `DelegateDerivationActor`

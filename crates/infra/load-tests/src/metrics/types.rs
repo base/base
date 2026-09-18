@@ -185,9 +185,9 @@ pub struct GasMetrics {
 pub struct ThroughputSample {
     /// Elapsed time since the test started, in seconds.
     pub elapsed_secs: f64,
-    /// Rolling 30s transactions-per-second at this point.
+    /// Rolling 10-second transactions-per-second at this point.
     pub tps: f64,
-    /// Rolling 30s gas-per-second at this point.
+    /// Rolling 10-second gas-per-second at this point.
     pub gps: f64,
 }
 

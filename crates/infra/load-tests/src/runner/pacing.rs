@@ -25,10 +25,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{
-    BlockWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer, InclusionPulse, InclusionSource,
-    LoadRunner, LoadTestDisplay, LoadTestStage, PipelineStartConfig, PreparedTransaction,
-    PresignBuffer, QueuedSubmitFailures, ResultsTracker, SignedBatch, SignedTransaction,
-    SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
+    BlockPulse, BlockWatcher, CanonicalHeadWatcher, DisplaySnapshot, FlashblockWatcher, GasPricer,
+    InclusionPulse, InclusionSource, LoadRunner, LoadTestDisplay, LoadTestStage,
+    PipelineStartConfig, PreparedTransaction, PresignBuffer, QueuedSubmitFailures, ResultsTracker,
+    SignedBatch, SignedTransaction, SubmissionPipeline, SubmitEvent, TxType, ValidityRouter,
 };
 use crate::{
     BaselineError, Result,
@@ -466,6 +466,10 @@ impl LoadRunner {
             )
             .start(),
         );
+        let canonical_head_watcher_task = self.config.canonical_heads_ws.clone().map(|ws_url| {
+            CanonicalHeadWatcher::new(ws_url, results_tracker.clone(), watcher_cancel.clone())
+                .start()
+        });
         let flashblock_watcher_task = self.config.flashblocks_ws.clone().map(|ws_url| {
             FlashblockWatcher::new(
                 ws_url,
@@ -1123,6 +1127,14 @@ impl LoadRunner {
                 _ => {}
             }
         }
+        if let Some(task) = canonical_head_watcher_task {
+            match tokio::time::timeout(Duration::from_secs(2), task).await {
+                Ok(Err(error)) if error.is_panic() => {
+                    warn!(error = %error, "canonical head watcher panicked");
+                }
+                _ => {}
+            }
+        }
         if let Some(task) = flashblock_watcher_task {
             match tokio::time::timeout(Duration::from_secs(2), task).await {
                 Ok(Err(error)) if error.is_panic() => {
@@ -1264,11 +1276,15 @@ impl LoadRunner {
         }
         let mut sender_jobs = Vec::with_capacity(sender_count);
         for (sender_index, from) in config.sender_addresses.iter().copied().enumerate() {
-            let sender_pool_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
+            let ring_recipient = config.sender_addresses[(sender_index + 1) % sender_count];
+            let pair_index = Self::b20_partner_index(sender_index, sender_count);
+            let pair_recipient = config.sender_addresses[pair_index];
             let cohort = config.validity_router.cohort_for_sender(from);
             let mut prepared_txs = Vec::with_capacity(txs_per_sender);
             for _ in 0..txs_per_sender {
                 let payload = generator.select_payload()?;
+                let sender_pool_recipient =
+                    if payload.uses_pair_recipient() { pair_recipient } else { ring_recipient };
                 let to = if payload.uses_runner_recipient() {
                     Self::select_recipient(
                         recipient_keys,
@@ -1607,14 +1623,36 @@ impl LoadRunner {
         let fallback_refill_interval = safety_interval;
         let mut last_pulse_at =
             Instant::now().checked_sub(fallback_refill_interval).unwrap_or_else(Instant::now);
+        let measurement_window = drain_state.results_tracker.measurement_window();
+        let measurement_end_block = measurement_window.end_block;
+        let mut last_recorded_canonical_block = measurement_window.start_block;
 
         loop {
             drain_state.drain_run_events();
             if stop_flag.load(Ordering::SeqCst)
                 || config.deadline.is_some_and(|deadline| Instant::now() >= deadline)
-                || drain_state.results_tracker.measurement_finished()
             {
                 return Ok(());
+            }
+
+            if drain_state.results_tracker.measurement_finished() {
+                if last_recorded_canonical_block
+                    .zip(measurement_end_block)
+                    .is_some_and(|(recorded, end)| recorded >= end)
+                {
+                    return Ok(());
+                }
+
+                let Some(pulse) = inclusion_pulse_rx.recv().await else {
+                    return Ok(());
+                };
+                let Some(canonical) = pulse.canonical else {
+                    continue;
+                };
+                enqueue_state.base_fee_tx.send_replace(canonical.base_fee);
+                Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
+                last_recorded_canonical_block = Some(canonical.number);
+                continue;
             }
 
             tokio::select! {
@@ -1629,8 +1667,13 @@ impl LoadRunner {
                     }
                     last_pulse_at = pulse.observed_at;
                     if drain_state.results_tracker.measurement_finished() {
-                        return Ok(());
+                        if let Some(canonical) = pulse.canonical {
+                            Self::record_terminal_canonical_cycle(canonical, &config, drain_state);
+                            last_recorded_canonical_block = Some(canonical.number);
+                        }
+                        continue;
                     }
+                    let canonical_block = pulse.canonical.map(|block| block.number);
                     Self::run_refill_cycle(
                         enqueue_state,
                         pulse,
@@ -1639,6 +1682,9 @@ impl LoadRunner {
                         drain_state,
                     )
                     .await?;
+                    if canonical_block.is_some() {
+                        last_recorded_canonical_block = canonical_block;
+                    }
                 }
                 _ = safety_tick.tick() => {
                     if last_pulse_at.elapsed() >= fallback_refill_interval {
@@ -1666,6 +1712,49 @@ impl LoadRunner {
                 }
             }
         }
+    }
+
+    /// Records the canonical block that closes a block-count measurement without refilling the
+    /// submission pipeline after the measurement window has ended.
+    fn record_terminal_canonical_cycle(
+        canonical: BlockPulse,
+        config: &BlockAlignedEnqueueConfig,
+        drain_state: &mut EnqueueDrainState<'_>,
+    ) {
+        let plan_started = Instant::now();
+        let depth_gas = drain_state.mempool_depth_gas();
+        let plan = config.controller.plan(
+            canonical.observed_at,
+            canonical.gas_limit,
+            depth_gas,
+            drain_state.results_tracker.confirmed_gas(),
+            0,
+        );
+        let plan_time = plan_started.elapsed();
+        drain_state.collector.record_pacing_cycle(PacingCycleObservation {
+            elapsed: canonical
+                .observed_at
+                .saturating_duration_since(config.controller.measurement_started_at),
+            source: PacingCycleSource::Canonical,
+            block_observed: true,
+            block_gas_used: canonical.gas_used,
+            block_gas_limit: canonical.gas_limit,
+            our_included_gas: canonical.our_included_gas,
+            pre_refill_depth_gas: depth_gas,
+            post_refill_depth_gas: depth_gas,
+            queued_gas: *drain_state.queued_gas,
+            floor_gas: plan.floor_gas,
+            offered_gas: 0,
+            capacity_limited: false,
+            chain_bound: depth_gas >= plan.ceiling_gas,
+            presign_starved: false,
+            availability_lag: Some(
+                canonical.observed_at.saturating_duration_since(canonical.expected_boundary),
+            ),
+            plan_time,
+            submit_time: None,
+            refill_lag: None,
+        });
     }
 
     fn buffer_presigned_chunk(
@@ -2454,7 +2543,8 @@ mod tests {
         run_result.expect("enqueue loop should exit cleanly");
 
         let summary = collector.summarize(Duration::from_secs(1), None);
-        assert_eq!(summary.pacing.canonical_cycles, 1);
+        assert_eq!(summary.pacing.canonical_cycles, 2);
+        assert_eq!(summary.pacing.blocks_observed, 2);
         assert!(results_tracker.measurement_finished());
     }
 

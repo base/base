@@ -17,11 +17,11 @@ use base_execution_txpool::{
 };
 use base_node_core::{args::RollupArgs, node::BasePoolBuilder};
 use base_node_runner::{BaseNode, BaseNodeExtension, FromExtensionConfig, NodeHooks};
-use base_txpool_rpc::SendRawTransactionValidityExtension;
+use base_txpool_rpc::{SendRawTransactionValidityConfig, SendRawTransactionValidityExtension};
 use eyre::{Result, WrapErr, eyre};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    mdbx::{DatabaseArguments, GIGABYTE, KILOBYTE, MaxReadTransactionDuration},
 };
 use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle};
 use reth_node_core::{
@@ -29,16 +29,19 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
     exit::NodeExitFuture,
 };
-use reth_tasks::{Runtime, RuntimeBuilder, RuntimeConfig, TokioConfig};
+use reth_tasks::{Runtime, RuntimeBuilder, TokioConfig};
 use tempfile::TempDir;
 use tracing::warn;
 use url::Url;
 
+use super::InProcessNodeRuntime;
 use crate::{config::BUILDER, setup::BUILDER_ENODE_ID};
 
 /// Configuration for starting an in-process builder.
 #[derive(Debug)]
 pub struct InProcessBuilderConfig {
+    /// Runtime sizing policy for the execution node.
+    pub runtime: InProcessNodeRuntime,
     /// Pre-built chain specification.
     pub chain_spec: Arc<BaseChainSpec>,
     /// Existing caller-owned datadir. A temporary datadir is created when omitted.
@@ -136,7 +139,9 @@ impl InProcessBuilder {
             .wrap_err("Failed to write JWT secret")?;
 
         let runtime = RuntimeBuilder::new(
-            RuntimeConfig::default()
+            config
+                .runtime
+                .config()
                 .with_tokio(TokioConfig::existing_handle(tokio::runtime::Handle::current())),
         )
         .build()?;
@@ -177,6 +182,11 @@ impl InProcessBuilder {
 
         let mut node_config = create_node_config(chain_spec, &data_path, &jwt_path, &config)?;
         node_config.metrics = MetricArgs { prometheus: Some(metrics_addr), ..Default::default() };
+        // In-process system-test datadirs are disposable and may be restored from snapshots.
+        // Never reinsert a transaction journal captured in the source snapshot or write a new
+        // journal that can contaminate a later benchmark clone.
+        node_config.txpool.disable_transactions_backup = true;
+        node_config.txpool.transactions_backup_path = None;
         let db_path = node_config.datadir().db();
         let db = if config.datadir.is_some() {
             init_db(db_path, node_config.db.database_args())
@@ -191,7 +201,7 @@ impl InProcessBuilder {
         let mut hooks = NodeHooks::new();
         if accept_validity_transactions {
             hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                DEFAULT_MAX_VALIDITY_PREDICATES,
+                SendRawTransactionValidityConfig::default(),
             ))
             .apply(hooks);
         }
@@ -484,7 +494,10 @@ fn create_test_db(db_path: &std::path::Path) -> Result<DatabaseEnv> {
         db_path,
         DatabaseArguments::new(ClientVersion::default())
             .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
-            .with_geometry_max_size(Some(4 * MEGABYTE))
+            // This is a virtual MDBX map limit rather than an eagerly allocated file. A 4 MiB
+            // map can overflow during the high-concurrency fresh-devnet benchmarks before their
+            // duration elapses, killing the Engine API and leaving the consensus task retrying.
+            .with_geometry_max_size(Some(4 * GIGABYTE))
             .with_growth_step(Some(4 * KILOBYTE)),
     )
     .wrap_err("Failed to initialize database")?;

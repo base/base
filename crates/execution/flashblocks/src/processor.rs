@@ -122,21 +122,16 @@ where
         self.canonical_tip().map_or(notified, |best| notified.max(best))
     }
 
-    /// Returns `true` when `pending_blocks` is anchored within `max_depth` blocks of canonical
-    /// height `best`.
+    /// Returns `true` when `pending_blocks`' tip is within `max_depth` of canonical height `best`.
     ///
-    /// Consumers execute against [`PendingBlocks::canonical_block_number`], so an overlay
-    /// anchored far behind the tip makes them walk historical state. The distance is measured
-    /// from the earliest pending block so that this bound is the one
-    /// [`CanonicalBlockReconciler`] already applies, which means the reconciler never builds a
-    /// snapshot that this check then throws away. The anchor itself is the block below that, so
-    /// it may sit up to `max_depth + 1` blocks behind `best`.
-    fn is_anchored_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
-        best.saturating_sub(pending_blocks.earliest_block_number()) <= self.max_depth
+    /// Measured from latest, not earliest. [`PendingBlocksBuilder::from_previous`] freezes the
+    /// earliest header, so `best - earliest` is snapshot width; the reconciler rebuilds that.
+    fn is_tip_near(&self, pending_blocks: &PendingBlocks, best: BlockNumber) -> bool {
+        best.saturating_sub(pending_blocks.latest_block_number()) <= self.max_depth
     }
 
-    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning it is
-    /// anchored near the tip and still extends past it.
+    /// Returns `true` when `pending_blocks` is usable as live pending state, meaning its tip
+    /// is still near the canonical tip and still extends past it.
     ///
     /// This deliberately compares heights only. Detecting that the anchor itself was reorged
     /// out means comparing its hash against canonical history, which is a statement about
@@ -148,11 +143,11 @@ where
     fn extends_canonical_tip(&self, pending_blocks: &PendingBlocks) -> bool {
         let Some(best) = self.canonical_tip() else { return true };
 
-        if !self.is_anchored_near(pending_blocks, best) {
+        if !self.is_tip_near(pending_blocks, best) {
             debug!(
-                message = "pending snapshot anchored too far behind canonical tip, dropping",
+                message = "pending snapshot tip too far behind canonical tip, dropping",
                 canonical_tip = best,
-                earliest_pending_block = pending_blocks.earliest_block_number(),
+                latest_pending_block = pending_blocks.latest_block_number(),
                 max_depth = self.max_depth,
             );
             return false;
@@ -170,7 +165,7 @@ where
         true
     }
 
-    /// Returns the published snapshot, dropping it first if it is stranded too far behind the
+    /// Returns the published snapshot, dropping it first if its tip is too far behind the
     /// canonical tip to become usable again.
     ///
     /// `FlashblocksState` drops stranded overlays as canonical notifications arrive, which is
@@ -184,14 +179,13 @@ where
         let pending_blocks = self.pending_blocks.load_full()?;
 
         let Some(best) = self.canonical_tip() else { return Some(pending_blocks) };
-        if self.is_anchored_near(&pending_blocks, best) {
+        if self.is_tip_near(&pending_blocks, best) {
             return Some(pending_blocks);
         }
 
         debug!(
-            message = "pending snapshot anchored too far behind canonical tip, dropping",
+            message = "pending snapshot tip too far behind canonical tip, dropping",
             canonical_tip = best,
-            earliest_pending_block = pending_blocks.earliest_block_number(),
             latest_pending_block = pending_blocks.latest_block_number(),
             max_depth = self.max_depth,
         );

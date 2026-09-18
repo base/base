@@ -149,8 +149,8 @@ impl BatchPipeline for TrackingPipeline {
 
 /// [`BatchPipeline`] that always returns [`ReorgError`] from `add_block`.
 ///
-/// Used to verify the driver's reorg-on-add path: it must reset the pipeline and
-/// discard in-flight submissions rather than propagating a fatal error.
+/// Used to verify the driver's reorg-on-add path: it must reset the pipeline
+/// rather than propagating a fatal error.
 #[derive(Debug)]
 pub struct ReorgPipeline {
     /// Shared recording state (only `resets` is incremented).

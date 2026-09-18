@@ -1,6 +1,6 @@
 //! Common test harness for audit integration tests with S3 fixtures.
 
-use testcontainers::runners::AsyncRunner;
+use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::minio::MinIO;
 use uuid::Uuid;
 
@@ -12,7 +12,9 @@ pub(crate) struct TestHarness {
 
 impl TestHarness {
     pub(crate) async fn new() -> anyhow::Result<Self> {
-        let minio_container = MinIO::default().start().await?;
+        // MinIO removed the `minio/minio` image from Docker Hub, so pull the
+        // same tag from quay.io (their current official registry) instead.
+        let minio_container = MinIO::default().with_name("quay.io/minio/minio").start().await?;
         let s3_port = minio_container.get_host_port_ipv4(9000).await?;
         let s3_endpoint = format!("http://127.0.0.1:{s3_port}");
 

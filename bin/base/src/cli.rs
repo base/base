@@ -50,10 +50,11 @@ impl BaseCli {
 
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)
-            .init_with(|| {
-                base_cli_utils::register_version_metrics!();
-            })
+            .init_with_builder(base_batcher_cli::configure_prometheus)
             .wrap_err("failed to install Prometheus recorder")?;
+        if metrics_enabled {
+            base_cli_utils::register_version_metrics!();
+        }
 
         self.command.run(ChainResolver::new(self.chain), metrics_enabled)
     }

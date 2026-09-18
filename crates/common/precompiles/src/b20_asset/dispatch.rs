@@ -572,12 +572,14 @@ impl<'a> DecodedAnnounce<'a> {
                 // V1/Beryl: revert bytes are already consensus-frozen — keep falling through to
                 // the owned decoder's diagnostic, however expensive, unchanged.
                 AssetVersion::V1 => None,
-                // V2/Cobalt: not scheduled on any network yet, so this can short-circuit cheaply
-                // without touching any live consensus bytes.
-                AssetVersion::V2 => Some(Err(BasePrecompileError::AbiDecodeFailed {
-                    selector,
-                    error: String::from("announce: malformed bytes[] payload"),
-                })),
+                // V2/Cobalt and V3/Denim: not scheduled on any network yet, so this can
+                // short-circuit cheaply without touching any live consensus bytes.
+                AssetVersion::V2 | AssetVersion::V3 => {
+                    Some(Err(BasePrecompileError::AbiDecodeFailed {
+                        selector,
+                        error: String::from("announce: malformed bytes[] payload"),
+                    }))
+                }
             };
         }
         // Field `.0` of `PackedSeqToken<'a>` is `&'a [u8]`, so each iter yields a slice with the
@@ -1169,7 +1171,7 @@ mod tests {
                 "row `{name}`: oracle disagrees; refresh the test if the payload changed"
             );
 
-            for version in [AssetVersion::V1, AssetVersion::V2] {
+            for version in [AssetVersion::V1, AssetVersion::V2, AssetVersion::V3] {
                 let mut token = make_token();
                 token.accounting_mut().roles.insert((AssetV1::OPERATOR_ROLE, ALICE), true);
                 let mut storage = storage_with_caller(ALICE);
@@ -1185,7 +1187,9 @@ mod tests {
 
                 if let Err(err) = outcome {
                     let control = version.abi().decode(&calldata).unwrap_err();
-                    if rejects_via_valid_token && version == AssetVersion::V2 {
+                    if rejects_via_valid_token
+                        && matches!(version, AssetVersion::V2 | AssetVersion::V3)
+                    {
                         assert_ne!(
                             err, control,
                             "row `{name}` at {version:?}: expected the bounded V2 short-circuit \

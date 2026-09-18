@@ -17,7 +17,9 @@ pub use b20::{B20CreateConfig, B20PrecompileClient};
 
 mod benchmark_cli;
 pub use benchmark_cli::{
-    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs,
+    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
+    LocalBenchmarkResult, LocalBenchmarkWorkload, LocalBenchmarkWorkloadConfig,
+    LocalBenchmarkWorkloadResult, LocalBenchmarkWorkloadResults, SnapshotBenchmarkArgs,
 };
 
 mod benchmark_report;
@@ -48,7 +50,7 @@ pub use docker::{
 };
 
 mod devnet_cli;
-pub use devnet_cli::{DevnetCli, DevnetCommand, SnapshotArgs, SnapshotRuntime};
+pub use devnet_cli::{DevnetCli, DevnetCommand, SharedL1Args, SnapshotArgs, SnapshotRuntime};
 
 mod host;
 pub use host::{host_address, with_host_port_if_needed};
@@ -67,10 +69,10 @@ pub use l2::{
     ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ClientConsensus,
-    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack,
-    SnapshotL2StackConfig,
+    InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
+    L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
+    ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary,
+    SnapshotL2Stack, SnapshotL2StackConfig, TestNodeRuntime,
 };
 
 mod network;
@@ -91,6 +93,9 @@ pub use setup::{
     EL_BOOTNODE_ENODE_ID, EL_BOOTNODE_P2P_KEY, L1GenesisOutput, L2DeploymentOutput, SetupContainer,
     SetupImage,
 };
+
+mod shared_l1;
+pub use shared_l1::{SHARED_L1_RUNTIME_ENV, SharedL1, SharedL1Runtime};
 
 mod smoke;
 #[cfg(feature = "upgrade-signal")]
