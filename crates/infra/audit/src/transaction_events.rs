@@ -36,7 +36,11 @@ use crate::Metrics;
 pub const DEFAULT_TRANSACTION_EVENT_BATCH_PATH: &str = "/v1/transaction-events/batch";
 
 /// Default maximum number of events accepted in one HTTP request.
-pub const DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE: usize = 500;
+///
+/// Matches Vector's `max_events: 1000` (`etc/docker/transaction-events-vector.yaml`)
+/// so a full Vector batch is accepted instead of rejected with HTTP 400 and
+/// permanently dropped.
+pub const DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE: usize = 1000;
 
 /// Default maximum serialized JSON bytes for a single event.
 pub const DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES: usize = 256 * 1024;
@@ -50,7 +54,8 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum events inserted in one Postgres statement.
 ///
 /// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
-/// parameter limit with room for future columns.
+/// parameter limit with room for future columns. A full 1,000-event HTTP batch
+/// inserts in a single statement (12,000 parameters).
 pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
 
 /// Session `lock_timeout` applied to each persist INSERT.
@@ -1672,9 +1677,14 @@ fn response_from_results(
 mod tests {
     use std::sync::Mutex;
 
-    use axum::http::StatusCode;
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+    };
     use chrono::Utc;
     use serde_json::{Map, json};
+    use tower::ServiceExt;
 
     use super::*;
 
@@ -1701,6 +1711,20 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct FailingSink;
+
+    #[async_trait]
+    impl TransactionEventSink for FailingSink {
+        async fn insert_events(
+            &self,
+            _events: &[TransactionEvent],
+        ) -> std::result::Result<TransactionEventInsertOutcome, TransactionEventStorageError>
+        {
+            Err(TransactionEventStorageError::new(anyhow::anyhow!("database unavailable")))
+        }
+    }
+
     fn config() -> TransactionEventIngestConfig {
         TransactionEventIngestConfig {
             path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
@@ -1708,6 +1732,16 @@ mod tests {
             max_event_bytes: 4096,
             max_data_bytes: 1024,
             max_request_bytes: 16 * 1024,
+        }
+    }
+
+    fn default_config() -> TransactionEventIngestConfig {
+        TransactionEventIngestConfig {
+            path: DEFAULT_TRANSACTION_EVENT_BATCH_PATH.to_string(),
+            max_batch_size: DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE,
+            max_event_bytes: DEFAULT_TRANSACTION_EVENT_MAX_EVENT_BYTES,
+            max_data_bytes: DEFAULT_TRANSACTION_EVENT_MAX_DATA_BYTES,
+            max_request_bytes: DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES,
         }
     }
 
@@ -1741,6 +1775,23 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         Bytes::from(body)
+    }
+
+    fn boundary_events(prefix: &str, count: usize) -> Bytes {
+        ndjson((0..count).map(|index| event(&format!("{prefix}-{index}"))).collect::<Vec<_>>())
+    }
+
+    async fn post_ndjson(app: Router, body: Bytes) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method("POST")
+            .uri(DEFAULT_TRANSACTION_EVENT_BATCH_PATH)
+            .header("content-type", "application/x-ndjson")
+            .body(Body::from(body))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
     }
 
     fn raw_event(value: Value) -> RawTransactionEvent {
@@ -2078,5 +2129,112 @@ mod tests {
     fn hex_lookup_keys_keep_non_hex_input_as_exact_match() {
         assert_eq!(hex_lookup_keys("not-a-hash"), vec!["not-a-hash".to_string()]);
         assert!(hex_lookup_keys("   ").is_empty());
+    }
+
+    #[test]
+    fn default_batch_matches_vector_max_events() {
+        // Vector's HTTP sink is configured with `max_events: 1000`; the endpoint
+        // default must accept a full Vector batch instead of rejecting it with
+        // HTTP 400 (which Vector permanently drops).
+        assert_eq!(DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE, 1000);
+    }
+
+    #[test]
+    fn default_batch_fits_in_single_insert_statement() {
+        // Each row binds 12 parameters and Postgres allows 65,535 per statement,
+        // so a full HTTP batch inserts in one statement without chunking.
+        const {
+            assert!(DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE * 12 <= 65_535);
+            assert!(
+                DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE <= MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_exactly_default_max_batch_events() {
+        let sink = Arc::new(FakeSink::default());
+        let state_sink: Arc<dyn TransactionEventSink> = Arc::<FakeSink>::clone(&sink);
+        let state = TransactionEventIngestState { sink: state_sink, config: default_config() };
+
+        let (status, Json(response)) = ingest_transaction_event_batch(
+            &state,
+            boundary_events("boundary", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response.status, TransactionEventBatchStatus::Accepted);
+        assert_eq!(response.accepted, DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE);
+        assert_eq!(response.duplicate, 0);
+        assert_eq!(response.rejected, 0);
+        assert_eq!(sink.inserted.lock().unwrap().len(), DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE);
+    }
+
+    #[tokio::test]
+    async fn rejects_one_event_over_default_max_batch() {
+        let sink = Arc::new(FakeSink::default());
+        let state_sink: Arc<dyn TransactionEventSink> = Arc::<FakeSink>::clone(&sink);
+        let state = TransactionEventIngestState { sink: state_sink, config: default_config() };
+
+        let (status, Json(response)) = ingest_transaction_event_batch(
+            &state,
+            boundary_events("overflow", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE + 1),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert_eq!(response.results[0].reason.as_deref(), Some("batch size exceeds maximum 1000"));
+        assert!(sink.inserted.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn endpoint_accepts_1000_events() {
+        let app = default_config().into_router(Arc::new(FakeSink::default()));
+
+        let (status, json) =
+            post_ndjson(app, boundary_events("endpoint", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE))
+                .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["status"], "accepted");
+        assert_eq!(json["accepted"], 1000);
+        assert_eq!(json["duplicate"], 0);
+        assert_eq!(json["rejected"], 0);
+    }
+
+    #[tokio::test]
+    async fn endpoint_rejects_1001_events() {
+        let app = default_config().into_router(Arc::new(FakeSink::default()));
+
+        let (status, json) = post_ndjson(
+            app,
+            boundary_events("endpoint-overflow", DEFAULT_TRANSACTION_EVENT_MAX_BATCH_SIZE + 1),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(json["status"], "rejected");
+        assert_eq!(json["results"][0]["reason"], "batch size exceeds maximum 1000");
+    }
+
+    #[tokio::test]
+    async fn database_failure_returns_retryable_503() {
+        let state =
+            TransactionEventIngestState { sink: Arc::new(FailingSink), config: default_config() };
+
+        let (status, Json(response)) =
+            ingest_transaction_event_batch(&state, boundary_events("db-failure", 3)).await;
+
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.status, TransactionEventBatchStatus::Rejected);
+        assert_eq!(response.accepted, 0);
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.results[0].status, TransactionEventItemStatus::Rejected);
+        assert_eq!(
+            response.results[0].reason.as_deref(),
+            Some("database unavailable; retry batch")
+        );
     }
 }
