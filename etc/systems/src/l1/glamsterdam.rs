@@ -150,8 +150,8 @@ impl GlamsterdamConfig {
         let activation_timestamp = self.activation_timestamp(genesis_timestamp)?;
         ensure!(el["config"]["amsterdamTime"].is_null(), "Amsterdam is already configured");
         ensure!(el["config"]["osakaTime"] == json!(0), "fixture requires pre-fork Osaka genesis");
-        let mut cl: serde_yaml::Value =
-            serde_yaml::from_str(&std::fs::read_to_string(genesis.cl_config_path())?)?;
+        let cl_yaml = std::fs::read_to_string(genesis.cl_config_path())?;
+        let cl: serde_yaml::Value = serde_yaml::from_str(&cl_yaml)?;
         ensure!(
             cl["PRESET_BASE"].as_str() == Some("minimal"),
             "Glamsterdam fixture requires the eight-slot minimal preset"
@@ -165,8 +165,7 @@ impl GlamsterdamConfig {
             "fixture requires pre-fork Fulu genesis"
         );
         ensure!(cl["GLOAS_FORK_EPOCH"].is_null(), "Gloas is already configured");
-        cl["GLOAS_FORK_EPOCH"] = serde_yaml::to_value(self.activation_epoch)?;
-        cl["GLOAS_FORK_VERSION"] = serde_yaml::Value::String("0x80000000".to_owned());
+        ensure!(cl["GLOAS_FORK_VERSION"].is_null(), "Gloas version is already configured");
         el["config"]["amsterdamTime"] = json!(activation_timestamp);
         let blob_parameters = el["config"]["blobSchedule"]["bpo2"].clone();
         ensure!(blob_parameters.is_object(), "missing pre-fork blob parameters");
@@ -180,7 +179,15 @@ impl GlamsterdamConfig {
         };
         schedule.ensure_pre_fork()?;
         std::fs::write(genesis.el_genesis_path(), serde_json::to_vec_pretty(&el)?)?;
-        std::fs::write(genesis.cl_config_path(), serde_yaml::to_string(&cl)?)?;
+        // Preserve existing hex fork-version scalars: a generic YAML round trip converts
+        // them into decimal integers, which is not Lighthouse's configuration format.
+        std::fs::write(
+            genesis.cl_config_path(),
+            format!(
+                "{cl_yaml}\nGLOAS_FORK_VERSION: 0x80000000\nGLOAS_FORK_EPOCH: {}\n",
+                self.activation_epoch
+            ),
+        )?;
         std::fs::write(
             genesis.testnet_dir().join("glamsterdam-schedule.json"),
             serde_json::to_vec_pretty(&schedule)?,
