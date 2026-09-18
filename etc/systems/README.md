@@ -301,18 +301,84 @@ cargo run -p base-system-tests --bin base-devnet -- snapshot --help
 cargo run -p base-system-tests --bin base-bench -- snapshot --help
 ```
 
-## Glamsterdam acceptance qualification
+## Native acceptance tests
 
-Run `just devnet acceptance` to execute the ignored, serial acceptance suite using the digest-pinned
-Reth and Lighthouse images in `fixtures/glamsterdam.json`. The runner builds
-`devnet-setup:local-v2` first, then starts real containerized L1 execution and consensus nodes with
-the production Base L2 running in-process. An observed safe L2 head is not a finalized L2 head.
+The acceptance suite uses ordinary Rust tests and nextest, not a separate scenario registry or
+runner. Real containerized L1 execution and consensus clients feed production Base L2 services
+running in-process. The current scenarios qualify blob safe derivation and the Amsterdam/Gloas
+transition. An observed safe L2 head is not a finalized L2 head.
 
-Docker, Rust, `cargo-nextest`, and `jq` are required; no local Python installation is required. Set
-`BASE_ACCEPTANCE_ARTIFACTS` to a fresh path to retain generated configurations and logs (otherwise a
-unique temporary directory outside the checkout is used). Normal exit removes owned containers;
-the command's exit trap and CI's always-run cleanup also remove containers on the fixture's recorded,
-uniquely named networks after a test-process timeout. If the entire runner is killed or Docker is
-unavailable, cleanup is not guaranteed. Recover using
-`just --justfile etc/docker/Justfile _cleanup-acceptance <artifact-directory>`; this never prunes
-unrelated containers or networks.
+### Discover and run
+
+```bash
+# Compile and list all tests without starting Docker containers or pulling images.
+just devnet acceptance-list
+
+# Qualify all helper tests and real-client scenarios in one JUnit report.
+just devnet acceptance
+
+# List or run one scenario using the same native nextest filter.
+just devnet acceptance-list -E 'test(=blob_derivation::blob_transfer_is_safely_derived)'
+just devnet acceptance -E 'test(=blob_derivation::blob_transfer_is_safely_derived)'
+
+# Run only fast helper tests, without provisioning images or containers.
+RUST_MIN_STACK=33554432 cargo nextest run --locked --profile acceptance \
+  -p base-system-tests --no-default-features --test acceptance
+```
+
+The full command requires Docker, Rust, `cargo-nextest`, and `jq`, but no local Python. It builds
+`devnet-setup:local-v2` and pulls the digest-pinned Reth/Lighthouse images declared in `fixtures/*.json`.
+Listing still needs the repository's native compilation dependencies. A filter that matches no tests
+fails the run. Scenarios are ignored by ordinary `cargo test`/nextest runs, but the acceptance command
+includes both ignored scenarios and non-ignored helper tests. Tests run serially with zero retries and
+a 15-minute per-test ceiling. CI also has a 95-minute aggregate command limit, so suite growth must
+account for total runtime rather than assuming every test receives its full individual allowance.
+
+### Add a scenario
+
+1. Add a file under `tests/acceptance/` and declare its module in `tests/acceptance/main.rs`.
+   Cargo already discovers that integration-test binary; no manifest or registry entry is needed.
+2. Write a `#[tokio::test(flavor = "multi_thread", worker_threads = 4)]` with an explanatory
+   `#[ignore = "requires ... and Docker"]` attribute.
+3. Call `Acceptance::run` with a unique descriptive name, a fixture factory such as
+   `GlamsterdamFixture::builder`, and an async closure receiving `rpc` and `system`.
+4. Put actions and behavior-specific assertions inside that closure. Reuse `Transfer`, `Submissions`,
+   and the bounded RPC helpers where their contracts fit. Keep hardfork-specific policy in its own
+   scenario, not in the lifecycle harness.
+
+[The blob smoke test](tests/acceptance/blob_derivation.rs) is a complete authoring example.
+[The fork qualification](tests/acceptance/glamsterdam.rs) demonstrates the same lifecycle with
+additional boundary and finality assertions. Both currently choose the pinned Glamsterdam fixture;
+the smoke test does not wait for its scheduled fork. Each test gets a fresh stack and artifact
+directory; there is no shared running network between scenarios.
+
+The harness catches setup/scenario/diagnostic/shutdown panics, collects independent failures, and
+retains the artifact location in errors. It captures diagnostics before shutdown. Component shutdown
+deadlines apply without a shorter test-level drain timeout. Dropping or killing an in-flight test
+cannot perform async graceful shutdown; ownership-based drop and the command's cleanup are fallbacks.
+
+A new hardfork should provide a dedicated-L1 fixture factory returning `SystemTestStackBuilder`,
+using `with_prepared_l1` for its generated artifacts and client configuration. Fixture factories must
+preserve startup logs, including when setup fails. Add immutable client pins to `fixtures/` using the
+existing `reth.image` and `lighthouse.image` structure. Do not add a DA-mode matrix or a custom runner.
+
+### Artifacts, cleanup, and CI
+
+Set `BASE_ACCEPTANCE_ARTIFACTS` to a fresh path, or let the command allocate a temporary directory.
+Each scenario writes `acceptance-<scenario>-<unique>/` beneath it. The fixture records only its own
+uniquely named `acceptance-setup-*` and `acceptance-l1-*` networks in `networks` **before** starting
+containers. Startup logs, final Docker logs, and inspect output belong in `diagnostics/` and must be
+host-readable. Generated configs use `el/*.json`, `l2/*.json`, and `cl/{config.yaml,*.json,genesis.ssz}`.
+CI exports these and `target/nextest/acceptance/test-results.xml`, not root-owned validator runtime data.
+
+Normal exit removes owned containers. The command's exit trap and CI's always-run cleanup also remove
+running or stopped containers on recorded networks after test failure or timeout. If the entire runner
+is killed or Docker is unavailable, cleanup is not guaranteed. Recover with
+`just --justfile etc/docker/Justfile _cleanup-acceptance <artifact-directory>`. Cleanup removes only
+containers attached to the validated acceptance network names recorded there, not a global Docker
+prune. Treat these manifests as ownership records and do not attach unrelated workloads to those networks.
+
+The advisory workflow runs on acceptance/system-harness, fixture, runner, toolchain, workspace
+manifest/lockfile, and workflow/setup changes. It also supports manual dispatch. It is not a required
+merge gate and does not automatically qualify every production Rust change; manually dispatch it when
+a change outside those paths warrants real-client acceptance coverage.

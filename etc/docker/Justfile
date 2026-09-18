@@ -262,15 +262,25 @@ tests: _install-nextest _build-contracts
 tests-ci: _install-nextest _build-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
-# Runs the pinned, serial Glamsterdam acceptance qualification (requires Docker and jq)
-acceptance: _install-nextest _build-setup-image
+# Lists acceptance tests without starting or pulling containers; accepts nextest filters
+[positional-arguments]
+acceptance-list *args: _install-nextest
     #!/usr/bin/env bash
     set -euo pipefail
-    manifest=etc/systems/fixtures/glamsterdam.json
+    RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest list --locked \
+      -p base-system-tests --no-default-features --test acceptance --run-ignored all "$@"
+
+# Runs helper tests and serial real-client scenarios; accepts nextest filters (requires Docker and jq)
+[positional-arguments]
+acceptance *args: _install-nextest _build-setup-image
+    #!/usr/bin/env bash
+    set -euo pipefail
     command -v jq >/dev/null 2>&1 || { echo "ERROR: acceptance requires jq" >&2; exit 1; }
+    # These are client-image manifests, not a registry of scenarios. Cargo discovers tests.
+    images=$(jq -er '.reth.image, .lighthouse.image' etc/systems/fixtures/*.json)
     while IFS= read -r image; do
       docker pull "$image"
-    done < <(jq -er '.reth.image, .lighthouse.image' "$manifest")
+    done <<< "$images"
 
     if [ -n "${BASE_ACCEPTANCE_ARTIFACTS:-}" ]; then
       [ ! -e "$BASE_ACCEPTANCE_ARTIFACTS" ] || {
@@ -285,24 +295,26 @@ acceptance: _install-nextest _build-setup-image
     export RUST_MIN_STACK={{ system_test_min_stack }}
     export RUST_LOG="${RUST_LOG:-info,base_system_tests=debug}"
     echo "Acceptance artifacts: $BASE_ACCEPTANCE_ARTIFACTS"
-    trap 'just --justfile {{ source_file() }} _cleanup-acceptance "$BASE_ACCEPTANCE_ARTIFACTS"' EXIT
+    justfile={{ quote(source_file()) }}
+    trap 'result=$?; just --justfile "$justfile" _cleanup-acceptance "$BASE_ACCEPTANCE_ARTIFACTS" || exit $?; exit "$result"' EXIT
     cargo nextest run --locked --profile acceptance \
       -p base-system-tests --no-default-features --test acceptance \
-      --run-ignored only --no-tests fail --retries 0 --no-fail-fast
+      --run-ignored all --no-tests fail --retries 0 --no-fail-fast "$@"
 
 [private]
 _cleanup-acceptance artifacts:
     #!/usr/bin/env bash
     set -euo pipefail
     shopt -s nullglob
-    for manifest in {{ quote(artifacts) }}/glamsterdam-blob-*/networks; do
+    for manifest in {{ quote(artifacts) }}/acceptance-*/networks; do
+      mkdir -p "${manifest%/*}/diagnostics"
       while IFS= read -r network; do
-        [[ "$network" =~ ^glamsterdam-(setup|l1)-[a-zA-Z0-9_-]+$ ]] || exit 1
+        [[ "$network" =~ ^acceptance-(setup|l1)-[a-zA-Z0-9_-]+$ ]] || exit 1
         docker network inspect "$network" >/dev/null 2>&1 || continue
         ids=$(docker ps -aq --filter "network=$network")
         for id in $ids; do
-          docker logs "$id" > "${manifest%/*}/$id.log" 2>&1 || true
-          docker inspect "$id" > "${manifest%/*}/$id.json"
+          docker logs "$id" > "${manifest%/*}/diagnostics/$id.log" 2>&1 || true
+          docker inspect "$id" > "${manifest%/*}/diagnostics/$id.json"
           docker rm -f "$id"
         done
         docker network rm "$network"

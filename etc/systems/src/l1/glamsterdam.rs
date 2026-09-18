@@ -85,8 +85,8 @@ impl GlamsterdamFixture {
         }
 
         let output = artifacts.clone();
-        let setup_network = crate::unique_name("glamsterdam-setup");
-        let l1_network = crate::unique_name("glamsterdam-l1");
+        let setup_network = crate::unique_name("acceptance-setup");
+        let l1_network = crate::unique_name("acceptance-l1");
         // Persist ownership before starting any container, including failed startup paths.
         // The command runner can clean these exact networks if the test process is killed.
         std::fs::write(artifacts.join("networks"), format!("{setup_network}\n{l1_network}\n"))?;
