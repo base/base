@@ -299,7 +299,7 @@ _cleanup-acceptance artifacts:
       while IFS= read -r network; do
         [[ "$network" =~ ^glamsterdam-(setup|l1)-[a-zA-Z0-9_-]+$ ]] || exit 1
         docker network inspect "$network" >/dev/null 2>&1 || continue
-        ids=$(docker network inspect "$network" | jq -r '.[0].Containers // {} | keys[]')
+        ids=$(docker ps -aq --filter "network=$network")
         for id in $ids; do
           docker logs "$id" > "${manifest%/*}/$id.log" 2>&1 || true
           docker inspect "$id" > "${manifest%/*}/$id.json"
