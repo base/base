@@ -8,6 +8,7 @@ use sqlx::{
     PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
+use tokio::time::sleep;
 use tracing::{error, info};
 
 /// Default Postgres port.
@@ -105,10 +106,39 @@ impl ShadowDbConfig {
         // from a connection failure without attaching to the database, and can see how long the
         // run took before it succeeded or gave up.
         let started = Instant::now();
-        let migrator = sqlx::migrate!("./migrations");
+        let mut migrator = sqlx::migrate!("./migrations");
         let migrations = migrator.iter().count();
 
-        match migrator.run(&pool).await {
+        let result = async {
+            let mut conn = pool.acquire().await?;
+            // The lock belongs to this session. Never return it to the pool with the lock held,
+            // including when startup fails or this future is cancelled.
+            conn.close_on_drop();
+
+            // Match SQLx 0.8's PostgreSQL migration lock, including its database-name checksum,
+            // so we still serialize with other SQLx migrators. A blocking pg_advisory_lock query
+            // retains a snapshot while waiting. CREATE INDEX CONCURRENTLY can wait for that
+            // snapshot while holding the lock the waiter needs, deadlocking startup. Poll outside SQL.
+            let database: String =
+                sqlx::query_scalar("SELECT current_database()").fetch_one(&mut *conn).await?;
+            let lock_id = 0x3d32ad9e_i64
+                * i64::from(
+                    crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(database.as_bytes()),
+                );
+            while !sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
+                .bind(lock_id)
+                .fetch_one(&mut *conn)
+                .await?
+            {
+                sleep(Duration::from_millis(100)).await;
+            }
+
+            migrator.set_locking(false);
+            migrator.run_direct(&mut *conn).await
+        }
+        .await;
+
+        match result {
             Ok(()) => {
                 info!(
                     target: "base::shadow-indexer",

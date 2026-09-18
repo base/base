@@ -6144,6 +6144,7 @@ dependencies = [
  "anyhow",
  "base-common-consensus",
  "chrono",
+ "crc",
  "reth-primitives-traits",
  "serde",
  "serde_json",
