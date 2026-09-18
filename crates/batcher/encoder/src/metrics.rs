@@ -96,7 +96,7 @@ impl BatcherMetrics {
     /// The rollup node passed a fully confirmed channel without deriving it.
     pub const RESET_STALLED_CHANNEL: &'static str = "stalled_channel";
 
-    /// The batcher was paused through the admin API.
+    /// The batcher was stopped through the admin API.
     pub const RESET_ADMIN_PAUSE: &'static str = "admin_pause";
 
     /// Submission accepted and handed to the tx manager.
