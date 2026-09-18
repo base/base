@@ -3,9 +3,10 @@
 use std::{
     path::Path,
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use base_batcher_service::BatcherConfig;
 use eyre::{Result, WrapErr, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -110,9 +111,16 @@ impl GlamsterdamFixture {
             tmpfs_datadir: true,
             ..Default::default()
         };
+        // Keep blob channels short enough for independently bounded acceptance observations.
+        // The production blob DA default is unchanged.
+        let mut batcher = BatcherConfig::default();
+        batcher.encoder_config.max_channel_duration = 2;
+        batcher.encoder_config.sub_safety_margin = 0;
+        batcher.tx_manager.receipt_query_interval = Duration::from_secs(1);
         Ok(SystemTestStackBuilder::new()
             .with_slot_duration(SLOT_DURATION)
             .with_output_dir(artifacts)
+            .with_batcher_config(batcher)
             .with_prepared_l1(generated.0, generated.1, container_config))
     }
 }

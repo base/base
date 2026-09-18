@@ -1,23 +1,17 @@
 //! Base continues producing and safely deriving real transfers across L1 Glamsterdam.
 
-use std::{
-    panic::AssertUnwindSafe,
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
-use base_batcher_service::BatcherConfig;
 use base_common_genesis::RollupConfig;
 use base_system_tests::{GlamsterdamFixture, SystemTestStack};
-use eyre::{Result, WrapErr, ensure};
-use futures::FutureExt;
+use eyre::{Result, ensure};
 use jsonrpsee::http_client::HttpClientBuilder;
 use serde_json::{Value, json};
-use tokio::time::timeout;
 use tracing::info;
 
 use super::{
+    Acceptance,
     activation::Schedule,
     rpc::Rpc,
     submissions::Submissions,
@@ -27,53 +21,10 @@ use super::{
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the pinned real-client Glamsterdam fixture and Docker"]
 async fn blob_transfers_remain_safe_across_glamsterdam() -> Result<()> {
-    let artifacts = GlamsterdamScenario::artifact_directory()?;
-    // Construct all fallible test-side infrastructure before starting processes that need cleanup.
-    let rpc = Rpc::new()?;
-    // Short channels make pre/post attribution bounded; the production blob DA default is unchanged.
-    let mut batcher = BatcherConfig::default();
-    batcher.encoder_config.max_channel_duration = 2;
-    batcher.encoder_config.sub_safety_margin = 0;
-    batcher.tx_manager.receipt_query_interval = Duration::from_secs(1);
-    let system =
-        GlamsterdamFixture::builder(&artifacts).await?.with_batcher_config(batcher).build().await?;
-    let result =
-        AssertUnwindSafe(GlamsterdamScenario::new(&rpc, &system).run()).catch_unwind().await;
-    let diagnostics = system.l1_stack().capture_diagnostics(&artifacts).await;
-    let shutdown = timeout(Duration::from_secs(60), system.shutdown())
-        .await
-        .wrap_err("system shutdown timed out")
-        .and_then(|result| result);
-    let scenario = match result {
-        Ok(result) => result,
-        Err(panic) => {
-            let message = panic
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| panic.downcast_ref::<&str>().copied())
-                .unwrap_or("non-string panic");
-            Err(eyre::eyre!("scenario panicked: {message}"))
-        }
-    };
-    info!(
-        artifacts = %artifacts.display(),
-        scenario_ok = scenario.is_ok(),
-        diagnostics_ok = diagnostics.is_ok(),
-        shutdown_ok = shutdown.is_ok(),
-        "Glamsterdam blob acceptance summary"
-    );
-    let mut failures = Vec::new();
-    if let Err(error) = scenario {
-        failures.push(format!("scenario: {error:#}"));
-    }
-    if let Err(error) = diagnostics {
-        failures.push(format!("diagnostics: {error:#}"));
-    }
-    if let Err(error) = shutdown {
-        failures.push(format!("shutdown: {error:#}"));
-    }
-    ensure!(failures.is_empty(), "{}", failures.join("\n"));
-    Ok(())
+    Acceptance::run("glamsterdam-boundary", GlamsterdamFixture::builder, async |rpc, system| {
+        GlamsterdamScenario::new(rpc, system).run().await
+    })
+    .await
 }
 
 /// Acceptance workflow over one running real-client fixture.
@@ -89,18 +40,6 @@ impl<'a> GlamsterdamScenario<'a> {
     /// Binds the explicit test client and already-running system.
     pub const fn new(rpc: &'a Rpc, system: &'a SystemTestStack) -> Self {
         Self { rpc, system }
-    }
-
-    /// Creates a unique fixture directory for generated config and bounded diagnostics.
-    pub fn artifact_directory() -> Result<PathBuf> {
-        let parent = std::env::var_os("BASE_ACCEPTANCE_ARTIFACTS")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        std::fs::create_dir_all(&parent)?;
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let path = parent.join(format!("glamsterdam-blob-{}-{nanos}", std::process::id()));
-        std::fs::create_dir(&path)?;
-        Ok(path)
     }
 
     /// Runs setup, both explicitly configured transfer phases, boundary checks, and finality.

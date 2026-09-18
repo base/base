@@ -203,6 +203,16 @@ impl SystemTestStack {
         self.l1_stack.stack()
     }
 
+    /// Captures owned L1 client diagnostics, rejecting shared fixtures without exclusive control.
+    pub async fn capture_diagnostics(&self, directory: &std::path::Path) -> Result<()> {
+        match &self.l1_stack {
+            L1StackHandle::Dedicated(stack) => stack.capture_diagnostics(directory).await,
+            L1StackHandle::Shared(_) => {
+                Err(eyre::eyre!("client diagnostics require a dedicated L1 fixture"))
+            }
+        }
+    }
+
     /// Returns a reference to the L2 stack.
     pub const fn l2_stack(&self) -> &L2Stack {
         &self.l2_stack
