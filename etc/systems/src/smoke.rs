@@ -18,6 +18,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
+use base_batcher_encoder::DaType;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
@@ -398,6 +399,7 @@ pub struct SystemTestStackBuilder {
     payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
+    batcher_da_type: Option<DaType>,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
@@ -451,6 +453,13 @@ impl SystemTestStackBuilder {
     pub const fn with_l1_glamsterdam(mut self, config: GlamsterdamConfig) -> Self {
         self.devnet_config.l1_slot_duration = config.slot_duration;
         self.l1_glamsterdam = Some(config);
+        self
+    }
+
+    /// Selects the acceptance fixture's explicit DA mode and short-lived batch channels.
+    /// Existing system tests retain their batcher defaults when this is not called.
+    pub const fn with_batcher_da_type(mut self, da_type: DaType) -> Self {
+        self.batcher_da_type = Some(da_type);
         self
     }
 
@@ -988,6 +997,7 @@ impl SystemTestStackBuilder {
             payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
+            batcher_da_type: self.batcher_da_type,
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,

@@ -139,6 +139,7 @@ base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }
 
 # alloy
+alloy-rlp.workspace = true
 alloy-json-rpc.workspace = true
 
 # base-alloy
@@ -163,6 +164,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 anyhow.workspace = true
 futures.workspace = true
 indicatif.workspace = true
+miniz_oxide.workspace = true
 tokio-tungstenite.workspace = true
 
 [[bench]]

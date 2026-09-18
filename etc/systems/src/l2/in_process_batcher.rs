@@ -37,6 +37,8 @@ pub struct InProcessBatcherConfig {
     pub batcher_key: B256,
     /// Whether to use short-lived calldata channels for deterministic tests.
     pub force_batch_submission: bool,
+    /// Explicit fixture DA mode with short-lived channels; takes precedence over forced calldata.
+    pub da_type: Option<DaType>,
 }
 
 /// A running in-process batcher.
@@ -71,6 +73,11 @@ impl InProcessBatcher {
         };
         if config.force_batch_submission {
             batcher_config.encoder_config.da_type = DaType::Calldata;
+        }
+        if let Some(da_type) = config.da_type {
+            batcher_config.encoder_config.da_type = da_type;
+            batcher_config.encoder_config.max_channel_duration = 2;
+            batcher_config.encoder_config.sub_safety_margin = 0;
         }
         let cancellation = CancellationToken::new();
         let runtime = TokioRuntime::with_token(cancellation.clone());
