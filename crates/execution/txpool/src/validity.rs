@@ -4,10 +4,11 @@ use std::fmt;
 
 use alloy_primitives::{Address, U256};
 use reth_transaction_pool::ValidPoolTransaction;
-use revm::Database;
 use serde::{Deserializer, de};
 
-use crate::{BasePooledTransaction, ExtensionError, ValidatedTransactionExtensions};
+use crate::{
+    BasePooledTransaction, ExtensionError, PredicateDatabase, ValidatedTransactionExtensions,
+};
 
 /// Default maximum number of experimental validity predicates carried by one transaction.
 pub const DEFAULT_MAX_VALIDITY_PREDICATES: usize = 64;
@@ -359,14 +360,14 @@ impl ValidityPredicate {
     /// a zero balance. Storage values are masked before comparison. Callers must
     /// treat database errors as an inability to verify the predicate rather than
     /// as a successful match.
-    pub fn matches<DB: Database>(
+    pub fn matches<DB: PredicateDatabase>(
         &self,
         db: &mut DB,
         context: &PredicateContext,
     ) -> Result<bool, DB::Error> {
         match self {
             Self::Balance { address, op, value } => {
-                let balance = db.basic(*address)?.map_or(U256::ZERO, |account| account.balance);
+                let balance = db.balance(*address)?;
                 Ok(op.matches(balance, *value))
             }
             Self::Storage { address, slot, mask, op, value } => {

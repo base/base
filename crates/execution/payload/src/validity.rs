@@ -4,8 +4,8 @@ use alloy_primitives::{
     Address, TxHash, U256,
     map::{HashMap, HashSet},
 };
-use base_execution_txpool::{PredicateContext, ValidityPredicate};
-use revm::{Database, state::EvmState};
+use base_execution_txpool::{PredicateContext, PredicateDatabase, ValidityPredicate};
+use revm::state::EvmState;
 
 /// Location that currently blocks a parked validity predicate.
 ///
@@ -40,7 +40,7 @@ impl ValidityPredicateKey {
     ///
     /// `Ok(None)` means every predicate matches. `Err` means a predicate's state could not be
     /// read; callers must treat that as an inability to verify rather than a successful match.
-    pub fn first_unsatisfied<DB: Database>(
+    pub fn first_unsatisfied<DB: PredicateDatabase>(
         predicates: &[ValidityPredicate],
         db: &mut DB,
         context: &PredicateContext,
@@ -74,7 +74,7 @@ impl ValidityPredicateEvaluation {
     /// Evaluates predicates against the current state and build position.
     ///
     /// Returns a database error when a state-reading predicate cannot be verified.
-    pub fn evaluate<DB: Database>(
+    pub fn evaluate<DB: PredicateDatabase>(
         predicates: &[ValidityPredicate],
         db: &mut DB,
         context: &PredicateContext,

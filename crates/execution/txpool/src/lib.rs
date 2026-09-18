@@ -27,6 +27,9 @@ pub use validator::{BaseL1BlockInfo, BaseTransactionValidator, BaseTxPoolError, 
 
 mod best;
 
+mod predicate_database;
+pub use predicate_database::PredicateDatabase;
+
 mod validity;
 pub use validity::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES, FIRST_POOL_FLASHBLOCK_INDEX,
