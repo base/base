@@ -13,7 +13,8 @@ pub use core_storage::B20CoreStorage;
 
 mod ops;
 pub use ops::{
-    B20Guards, B20TokenRole, Eip712Domain, NonZeroAddress, PermitArgs, ZeroAddressError,
+    B20CreditRecipient, B20CreditRecipientError, B20Guards, B20TokenRole, Eip712Domain,
+    NonZeroAddress, PermitArgs, ZeroAddressError,
 };
 
 mod pausable_feature;

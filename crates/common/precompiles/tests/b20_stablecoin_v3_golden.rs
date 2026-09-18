@@ -28,9 +28,9 @@ use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
 use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
-    B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,
-    PolicyVersion, Stablecoin, StablecoinV3, StablecoinVersion, StablecoinVersions,
-    TokenAccounting, UpgradeGatedStorageFeatures,
+    B20TokenRole, B20Variant, FakePolicyAccounting, IB20, IB20Stablecoin,
+    NoopPrecompileCallObserver, PolicyVersion, Stablecoin, StablecoinV3, StablecoinVersion,
+    StablecoinVersions, TokenAccounting, UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
@@ -220,6 +220,11 @@ fn fund(token: &mut B20StablecoinStorage<'_>, who: Address, amount: U256) {
     token.set_balance(who, balance + amount).unwrap();
     let supply = token.total_supply().unwrap();
     token.set_total_supply(supply + amount).unwrap();
+}
+
+/// Returns an uninitialized Asset address in the structural B-20 range.
+fn b20_prefix_address() -> Address {
+    B20Variant::Asset.compute_address(ALICE, B256::repeat_byte(0x42)).0
 }
 
 /// The V2 EIP-712 domain separator for the token at [`TOKEN`] on [`CHAIN_ID`].
@@ -457,6 +462,22 @@ fn golden_transfer_reverts_zero_receiver() {
     )
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+}
+
+#[test]
+fn golden_transfer_reverts_b20_prefix_receiver() {
+    let mut s = fresh();
+    let receiver = b20_prefix_address();
+    seed(&mut s, |t| fund(t, ALICE, u(10)));
+    let err = op_privileged(
+        &mut s,
+        ALICE,
+        FakePolicyAccounting::new(),
+        IB20::transferCall { to: receiver, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+    read(&mut s, |t| assert_eq!(t.balance_of(ALICE).unwrap(), u(10)));
 }
 
 #[test]
@@ -744,6 +765,20 @@ fn golden_transfer_from_reverts_zero_receiver() {
 }
 
 #[test]
+fn golden_transfer_from_reverts_b20_prefix_receiver_before_sender_validation() {
+    let mut s = fresh();
+    let receiver = b20_prefix_address();
+    let err = op_privileged(
+        &mut s,
+        BOB,
+        FakePolicyAccounting::new(),
+        IB20::transferFromCall { from: Address::ZERO, to: receiver, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+}
+
+#[test]
 fn golden_transfer_from_reverts_zero_sender() {
     let mut s = fresh();
     let err = op_privileged(
@@ -885,6 +920,20 @@ fn golden_mint_reverts_zero_receiver() {
     )
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+}
+
+#[test]
+fn golden_mint_reverts_b20_prefix_receiver() {
+    let mut s = fresh();
+    let receiver = b20_prefix_address();
+    let err = op_privileged(
+        &mut s,
+        ADMIN,
+        FakePolicyAccounting::new(),
+        IB20::mintCall { to: receiver, amount: u(1) }.abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
 }
 
 #[test]
@@ -1131,6 +1180,44 @@ fn golden_seize_reverts_zero_receiver() {
     )
     .unwrap_err();
     assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: Address::ZERO }));
+}
+
+#[test]
+fn golden_seize_reverts_b20_prefix_receiver_before_sender_validation() {
+    let mut s = fresh();
+    let receiver = b20_prefix_address();
+    seed(&mut s, |t| give_role(t, B20TokenRole::Seize.id(), ADMIN));
+    let err = op(
+        &mut s,
+        ADMIN,
+        FakePolicyAccounting::new(),
+        IB20::seizeWithMemoCall { from: Address::ZERO, to: receiver, amount: u(1), memo: MEMO }
+            .abi_encode(),
+    )
+    .unwrap_err();
+    assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+}
+
+#[test]
+fn golden_seize_recovers_a_balance_from_b20_prefix_source() {
+    let mut s = fresh();
+    let source = b20_prefix_address();
+    seed(&mut s, |t| {
+        fund(t, source, u(10));
+        give_role(t, B20TokenRole::Seize.id(), ADMIN);
+        make_seizable(t);
+    });
+    op(
+        &mut s,
+        ADMIN,
+        seize_receiver_policy(BOB),
+        IB20::seizeWithMemoCall { from: source, to: BOB, amount: u(10), memo: MEMO }.abi_encode(),
+    )
+    .unwrap();
+    read(&mut s, |t| {
+        assert_eq!(t.balance_of(source).unwrap(), U256::ZERO);
+        assert_eq!(t.balance_of(BOB).unwrap(), u(10));
+    });
 }
 
 #[test]
@@ -2539,6 +2626,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_transfer_unprivileged_blocked_sender_reverts,
             golden_transfer_unprivileged_enforces_executor_policy,
             golden_transfer_reverts_zero_receiver,
+            golden_transfer_reverts_b20_prefix_receiver,
             golden_transfer_unprivileged_zero_receiver_storage_access,
             golden_transfer_reverts_insufficient_balance,
             golden_transfer_reverts_when_paused,
@@ -2551,6 +2639,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_transfer_from_unprivileged_enforces_executor_policy,
             golden_transfer_from_self_unprivileged_enforces_executor_policy,
             golden_transfer_from_reverts_zero_receiver,
+            golden_transfer_from_reverts_b20_prefix_receiver_before_sender_validation,
             golden_transfer_from_reverts_zero_sender,
         ]),
         C::approve(_) => covered(&[
@@ -2573,6 +2662,7 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_mint_unprivileged_requires_role_and_policy,
             golden_mint_reverts_over_supply_cap,
             golden_mint_reverts_zero_receiver,
+            golden_mint_reverts_b20_prefix_receiver,
         ]),
         C::mintWithMemo(_) => covered(&[golden_mint_with_memo]),
         C::burn(_) => covered(&[
@@ -2591,6 +2681,8 @@ fn v2_op_coverage_checklist(call: IB20::IB20Calls, ext: IB20Stablecoin::IB20Stab
             golden_seize_moves_balance_emits_transfer_memo_seized,
             golden_seize_reverts_missing_role,
             golden_seize_reverts_zero_receiver,
+            golden_seize_reverts_b20_prefix_receiver_before_sender_validation,
+            golden_seize_recovers_a_balance_from_b20_prefix_source,
             golden_seize_reverts_account_not_seizable,
             golden_seize_reverts_insufficient_balance,
             golden_seize_reverts_when_paused,
