@@ -11,9 +11,9 @@ use alloy_sol_types::{SolEvent, SolValue};
 use base_precompile_storage::{BasePrecompileError, Result};
 
 use crate::{
-    B20_MAX_SUPPLY_CAP, B20Guards, B20PausableFeature, B20PolicyType, B20StablecoinToken,
-    B20TokenRole, B20Variant, Eip712Domain, IB20, NonZeroAddress, PermitArgs, PolicyAccounting,
-    Stablecoin, StablecoinAccounting, Token, TransferPolicyIds,
+    B20_MAX_SUPPLY_CAP, B20CreditRecipient, B20Guards, B20PausableFeature, B20PolicyType,
+    B20StablecoinToken, B20TokenRole, Eip712Domain, IB20, NonZeroAddress, PermitArgs,
+    PolicyAccounting, Stablecoin, StablecoinAccounting, Token, TransferPolicyIds,
 };
 
 /// `keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")`
@@ -30,14 +30,14 @@ pub struct StablecoinV3;
 
 /// One token movement: `caller` sends `amount` from `from` to `to`.
 ///
-/// `from` / `to` are [`NonZeroAddress`]: callers validate their asymmetric sender/receiver rules
-/// (and choose the typed revert) before any policy SLOAD. `policies` carries all three transfer
-/// policy ids pre-read from their shared slot; `Some` enforces them (unprivileged path), `None`
-/// skips them (factory-privileged path).
+/// `from` is [`NonZeroAddress`] and `to` is [`B20CreditRecipient`], so callers validate their
+/// asymmetric sender/receiver rules (and choose the typed revert) before any policy SLOAD.
+/// `policies` carries all three transfer policy ids pre-read from their shared slot; `Some`
+/// enforces them (unprivileged path), `None` skips them (factory-privileged path).
 struct TokenTransfer<'a> {
     caller: Address,
     from: NonZeroAddress,
-    to: NonZeroAddress,
+    to: B20CreditRecipient,
     amount: U256,
     policies: Option<&'a TransferPolicyIds>,
 }
@@ -49,19 +49,6 @@ impl StablecoinV3 {
         IB20::PausableFeature::BURN,
         IB20::PausableFeature::SEIZE,
     ];
-
-    /// Returns `to` when it can safely receive a B-20 balance credit.
-    ///
-    /// B-20-prefix addresses are precompile addresses rather than externally controlled accounts,
-    /// so crediting one would strand the balance. The structural prefix check deliberately includes
-    /// uninitialized and future B-20 variants without reading factory storage.
-    pub fn valid_receiver(to: Address) -> Result<NonZeroAddress> {
-        if to == Address::ZERO || B20Variant::has_b20_prefix(to) {
-            return Err(BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }));
-        }
-        NonZeroAddress::new(to)
-            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))
-    }
 
     /// Balance-moving core of `transfer`/`transferFrom`, without the pause check.
     fn transfer_inner<S: StablecoinAccounting, A: PolicyAccounting>(
@@ -225,7 +212,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = Self::valid_receiver(to)?;
+        let to = B20CreditRecipient::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
         if privileged {
@@ -250,7 +238,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = Self::valid_receiver(to)?;
+        let to = B20CreditRecipient::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(from)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
         let allowance = token.accounting().allowance(from.get(), caller)?;
@@ -318,7 +307,8 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        Self::valid_receiver(to)?;
+        B20CreditRecipient::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting().total_supply()?;
         let cap = token.accounting().supply_cap()?;
@@ -382,9 +372,10 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
-        // A valid receiver guards against a disguised burn or a stranded B-20 balance; `from != 0`
+        // A valid recipient guards against a disguised burn or a stranded B-20 balance; `from != 0`
         // guards against a disguised mint (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
-        Self::valid_receiver(to)?;
+        B20CreditRecipient::new(to)
+            .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
         }
