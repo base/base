@@ -495,7 +495,7 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.rollup_config = rollup_config;
     actor.shadow_blocks_per_cycle = NonZeroU64::new(1);
-    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope()));
+    actor.sealer = Some(PayloadSealer::new_private(dummy_envelope(), "shadow"));
 
     actor.start(()).await.unwrap();
 }
@@ -925,7 +925,7 @@ async fn test_private_sealer_only_inserts() {
     let mut engine = MockSequencerEngineClient::new();
     engine.expect_insert_unsafe_payload().times(1).return_once(|_| Ok(L2BlockInfo::default()));
 
-    let mut sealer = PayloadSealer::new_private(envelope);
+    let mut sealer = PayloadSealer::new_private(envelope, "shadow");
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
 
     assert_eq!(result.unwrap(), SealStepOutcome::Inserted(L2BlockInfo::default()));
@@ -948,7 +948,7 @@ async fn test_private_sealer_insert_failure_stays_private() {
         .times(1)
         .return_once(|_| Err(EngineClientError::RequestError("channel closed".to_string())));
 
-    let mut sealer = PayloadSealer::new_private(envelope);
+    let mut sealer = PayloadSealer::new_private(envelope, "shadow");
     let result = sealer.step(&Some(conductor), &gossip, &engine).await;
 
     assert!(matches!(result.unwrap_err(), SealStepError::Insert(_)));

@@ -136,8 +136,10 @@ where
         Metrics::sequencer_total_transactions_sequenced()
             .increment(handle.attributes_with_parent.count_transactions());
 
-        if self.is_shadow_sequencer() || self.unsafe_payload_gossip_client.seals_privately() {
-            Ok(PayloadSealer::new_private(envelope))
+        if self.is_shadow_sequencer() {
+            Ok(PayloadSealer::new_private(envelope, "shadow"))
+        } else if self.unsafe_payload_gossip_client.seals_privately() {
+            Ok(PayloadSealer::new_private(envelope, "isolated"))
         } else {
             Ok(PayloadSealer::new(envelope))
         }
