@@ -23,7 +23,9 @@ use url::Url;
 
 const INITIAL_SAFE_L2_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 const INITIAL_SAFE_L2_HEAD_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+// The production batcher allows a 96-second drain with its default transaction settings.
+// Keep its L1 and rollup dependencies alive until that drain can finish.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Configuration for starting an in-process batcher.
 #[derive(Debug, Clone)]
@@ -259,6 +261,22 @@ mod tests {
 
         batcher.stop();
         batcher.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_in_flight_receipts_after_cancellation() {
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let (_failure_tx, failure_rx) = watch::channel(None);
+        let (drained_tx, drained_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            task_cancellation.cancelled().await;
+            // A receipt can arrive after the old five-second shutdown deadline.
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            drained_tx.send(()).unwrap();
+        });
+        batcher(cancellation, failure_rx, handle).shutdown().await.unwrap();
+        drained_rx.await.unwrap();
     }
 
     #[tokio::test]
