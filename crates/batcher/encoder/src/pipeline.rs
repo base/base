@@ -98,7 +98,11 @@ pub trait BatchPipeline: Send {
     /// Does not advance the tracked L1 head.
     fn flush(&mut self) -> Result<(), StepError>;
 
-    /// Drop buffered encoding state. Discard in-flight tracking first.
+    /// Drop buffered encoding state.
+    ///
+    /// Submissions handed out before the reset may still settle afterwards. [`SubmissionId`]s are
+    /// never reused, and [`confirm`](Self::confirm) or [`requeue`](Self::requeue) of an id issued
+    /// before the reset must be ignored.
     fn reset(&mut self);
 
     /// Prune blocks at or below `safe_l2`.

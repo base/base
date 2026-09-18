@@ -27,9 +27,9 @@ use base_runtime::{
 };
 use tokio::sync::mpsc;
 
-/// `AdminCommand::Pause` must immediately reset the pipeline and discard
-/// in-flight submissions. This is verified by checking that `pipeline.reset()`
-/// is called exactly once after the pause command is processed.
+/// `AdminCommand::Pause` must immediately reset the pipeline. This is verified
+/// by checking that `pipeline.reset()` is called exactly once after the pause
+/// command is processed.
 #[test]
 fn test_pause_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {

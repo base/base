@@ -19,4 +19,7 @@ pub use builder::{DriverFixture, SubmissionStub};
 #[cfg(any(test, feature = "test-utils"))]
 mod tx_manager;
 #[cfg(any(test, feature = "test-utils"))]
-pub use tx_manager::{ImmediateConfirmTxManager, ImmediateFailTxManager, NeverConfirmTxManager};
+pub use tx_manager::{
+    ImmediateConfirmTxManager, ImmediateFailTxManager, ManualConfirmTxManager,
+    NeverConfirmTxManager,
+};

@@ -206,8 +206,7 @@ where
     /// [`AdminCommand::Resume`] is received via the admin API.
     ///
     /// Equivalent to the batcher starting normally and immediately receiving
-    /// a pause command, but without discarding any in-flight submissions.
-    /// Use this when the `--stopped` flag is set at startup.
+    /// a pause command. Use this when the `--stopped` flag is set at startup.
     pub const fn with_stopped(mut self, stopped: bool) -> Self {
         self.stopped = stopped;
         self
@@ -352,9 +351,12 @@ where
     }
 
     /// Drop buffered pipeline state, recording why it was dropped.
+    ///
+    /// In-flight submissions stay tracked: their L1 transactions are still live in the tx
+    /// manager, so they keep their permits until they settle. The reset pipeline ignores
+    /// their stale ids (see [`BatchPipeline::reset`]).
     fn reset_pipeline(&mut self, reason: &'static str) {
         BatcherMetrics::pipeline_reset_total(reason).increment(1);
-        self.submissions.discard();
         self.pipeline.reset();
         self.discard_pending_flush_acks();
     }
@@ -435,9 +437,8 @@ where
     /// Ingest a new L2 block into the pipeline.
     ///
     /// If the pipeline signals a reorg via `add_block` (parent-hash mismatch),
-    /// discards in-flight submissions, resets the pipeline, and restarts
-    /// sequential catchup from `safe_head + 1`. The triggering block will be
-    /// re-delivered by the sequential poller.
+    /// resets the pipeline and restarts sequential catchup from `safe_head + 1`.
+    /// The triggering block will be re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
         if self.safe_head.is_some_and(|safe_head| number <= safe_head.number) {
@@ -477,9 +478,9 @@ where
     /// Derivation-status changes are also handled before unsafe blocks so pruning and
     /// recovery cannot be starved by sequential catchup.
     ///
-    /// [`AdminCommand::Pause`] immediately discards in-flight submissions and
-    /// resets the pipeline, then drops `Block` and `Flush` source events until
-    /// [`AdminCommand::Resume`] is received. Reorg events propagate regardless
+    /// [`AdminCommand::Pause`] immediately resets the pipeline, then drops
+    /// `Block` and `Flush` source events until [`AdminCommand::Resume`] is
+    /// received. In-flight submissions keep settling. Reorg events propagate regardless
     /// of pause state. On resume the source is reset to catch up sequentially
     /// from the last known safe L2 head.
     ///
