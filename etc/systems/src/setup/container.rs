@@ -348,10 +348,18 @@ impl SetupContainer {
         } else {
             SetupImage::request()
         };
+        // Podman's Docker API has no inspectable built-in `none` network. Let testcontainers
+        // own a unique bridge for this fixture instead; the offline generator does not make
+        // network requests. Ordinary system tests retain their existing network configuration.
+        let network = if self.glamsterdam_setup.is_some() {
+            crate::unique_name("glamsterdam-setup")
+        } else {
+            "none".to_owned()
+        };
         let mut container = image
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
-            .with_network("none")
+            .with_network(network)
             .with_env_var("OUTPUT_DIR", "/output")
             .with_env_var("L2_OUTPUT_DIR", "/output/l2")
             .with_env_var("SHARED_DIR", "/output/shared")
@@ -403,11 +411,24 @@ impl SetupContainer {
             container = container.with_env_var("L2_BASE_ZENITH_BLOCK", block.to_string());
         }
 
-        let _container = container
+        let request = container
             .with_mount(Mount::bind_mount(output_mount, "/output"))
-            .with_cmd(["op-deployer"])
-            .start()
-            .wrap_err("Failed to generate devnet genesis with op-deployer")?;
+            .with_cmd(["op-deployer"]);
+        let request = if let Some(setup) = &self.glamsterdam_setup {
+            let identity =
+                Command::new("docker").args(["image", "inspect", &setup.image]).output()?;
+            ensure!(identity.status.success(), "fixture setup image disappeared before launch");
+            fs::write(self.output_dir.join("setup-image.json"), identity.stdout)?;
+            crate::L1ContainerConfig {
+                diagnostics_dir: Some(self.output_dir.clone()),
+                ..Default::default()
+            }
+            .capture_logs(request, "setup")?
+        } else {
+            request
+        };
+        let _container =
+            request.start().wrap_err("Failed to generate devnet genesis with op-deployer")?;
 
         ensure!(self.output_dir.join("cl/genesis.ssz").exists(), "genesis.ssz was not generated");
         ensure!(
