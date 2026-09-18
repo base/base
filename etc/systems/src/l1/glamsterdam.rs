@@ -82,11 +82,16 @@ impl GlamsterdamFixture {
         }
 
         let output = artifacts.to_path_buf();
+        let setup_network = crate::unique_name("glamsterdam-setup");
+        let l1_network = crate::unique_name("glamsterdam-l1");
+        // Persist ownership before starting any container, including failed startup paths.
+        // The command runner can clean these exact networks if the test process is killed.
+        std::fs::write(artifacts.join("networks"), format!("{setup_network}\n{l1_network}\n"))?;
         let generated = tokio::task::spawn_blocking(move || {
             SetupContainer::new(&output)
                 .with_slot_duration(SLOT_DURATION)
                 .with_validator_count(VALIDATOR_COUNT)
-                .with_owned_network(crate::unique_name("glamsterdam-setup"))
+                .with_owned_network(setup_network)
                 .with_diagnostics_dir(output.join("diagnostics"))
                 .generate_genesis()
         })
@@ -98,7 +103,7 @@ impl GlamsterdamFixture {
             reth_image: Some(L1Image::new(reth)?),
             lighthouse_image: Some(L1Image::new(lighthouse)?),
             diagnostics_dir: Some(artifacts.join("diagnostics")),
-            network_name: Some(crate::unique_name("glamsterdam-l1")),
+            network_name: Some(l1_network),
             auto_remove_network: true,
             tmpfs_datadir: true,
             ..Default::default()

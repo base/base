@@ -1,7 +1,6 @@
 use std::{
     fs::{self, OpenOptions},
-    io::ErrorKind,
-    io::Write,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
