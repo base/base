@@ -220,6 +220,8 @@ mod tests {
         Command::new("bash")
             .arg(root.join("etc/genesis/generate.sh"))
             .env("BASE_GENESIS_BIN", root.join("target/debug/base"))
+            // Compose supplies empty values for unscheduled optional upgrades.
+            .env("L2_BASE_ZENITH_BLOCK", "")
             .args([
                 "--artifacts-dir",
                 root.join("build/genesis").to_str().unwrap(),

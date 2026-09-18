@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Orchestrate Forge exports; Rust only prepares inputs, hashes state, and assembles files.
 set -euo pipefail
+# Compose represents unscheduled upgrades as empty environment values. Clap's
+# optional integer arguments require those values to be absent instead.
+for variable in L2_ISTHMUS_BLOCK L2_BASE_AZUL_BLOCK L2_BASE_BERYL_BLOCK \
+  L2_BASE_COBALT_BLOCK L2_BASE_DENIM_BLOCK L2_BASE_ZENITH_BLOCK; do
+  if [[ -z "${!variable:-}" ]]; then
+    unset "$variable"
+  fi
+done
 base="${BASE_GENESIS_BIN:-base}"
 artifacts="${BASE_DEVNET_ARTIFACTS:-build/genesis}"
 output="${OUTPUT_DIR-.devnet/genesis}"
