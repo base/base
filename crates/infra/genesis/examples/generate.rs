@@ -1,7 +1,7 @@
 //! Run the library independently of the full node binary.
 
 use base_genesis::{GenesisBuilder, GenesisCommand};
-use clap::{Args, Parser};
+use clap::Parser;
 
 #[derive(Debug, Parser)]
 struct Command {

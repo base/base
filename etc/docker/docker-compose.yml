@@ -50,6 +50,7 @@ services:
       - L2_BASE_ZENITH_BLOCK=${L2_BASE_ZENITH_BLOCK-}
       - CHAIN_ID=${L1_CHAIN_ID}
       - SLOT_DURATION=${L1_SLOT_DURATION_OVERRIDE:-12}
+      - BASE_DEVNET_VALIDATOR_COUNT=${BASE_DEVNET_VALIDATOR_COUNT:-1}
       - OUTPUT_DIR=/output
     entrypoint: ["/usr/local/bin/base-genesis"]
 

@@ -262,6 +262,8 @@ mod tests {
         let again = workflow(directory.path(), &[]);
         assert!(again.status.success(), "{}", String::from_utf8_lossy(&again.stderr));
         assert_eq!(manifest, fs::read(&manifest_path).unwrap());
+        assert!(!workflow(directory.path(), &["--validator-count", "2"]).status.success());
+        assert_eq!(manifest, fs::read(&manifest_path).unwrap());
         assert!(output.files.contains_key(&directory.path().join("l2/rollup.json")));
         fs::write(directory.path().join("l2/rollup.json"), b"corrupt").unwrap();
         assert!(!workflow(directory.path(), &[]).status.success());

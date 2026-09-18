@@ -37,6 +37,8 @@ system tests that deploy their own mock. The minimum version defaults to `429496
 and honors `UPGRADE_SIGNAL_MIN_PROTOCOL_VERSION`.
 
 Completed setup is reused only when inputs, artifacts, and output file hashes match.
+`BASE_DEVNET_VALIDATOR_COUNT=64 just devnet up` generates 64 beacon validators and
+their matching keystores. The default is one; zero and invalid counts are rejected.
 Changing chain settings requires a fresh directory (`just devnet down` removes the
 existing development data). Partial generations do not write completion markers.
 For standalone usage and updating contracts, see

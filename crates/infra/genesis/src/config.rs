@@ -1,6 +1,7 @@
 //! Inputs to offline genesis generation.
 
 use std::{
+    num::NonZeroU32,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -54,6 +55,9 @@ pub struct GenesisConfig {
     /// Beacon slot duration in seconds.
     #[arg(long, env = "SLOT_DURATION", default_value_t = 12)]
     pub slot_duration: u64,
+    /// Number of mnemonic-derived beacon validators and matching keystores.
+    #[arg(long, env = "BASE_DEVNET_VALIDATOR_COUNT", default_value = "1", value_parser = Self::parse_validator_count)]
+    pub validator_count: NonZeroU32,
     /// Genesis Unix timestamp (defaults to the current time on first generation).
     #[arg(long, env = "BASE_DEVNET_TIMESTAMP")]
     pub timestamp: Option<u64>,
@@ -90,6 +94,18 @@ pub struct GenesisConfig {
 }
 
 impl GenesisConfig {
+    /// Parse a positive decimal count within the validator derivation index range.
+    /// An empty environment override retains the default of one validator.
+    pub fn parse_validator_count(value: &str) -> Result<NonZeroU32, String> {
+        let value = if value.is_empty() { "1" } else { value };
+        if value.bytes().all(|byte| byte.is_ascii_digit())
+            && let Ok(count) = value.parse::<NonZeroU32>()
+        {
+            return Ok(count);
+        }
+        Err("BASE_DEVNET_VALIDATOR_COUNT must be a positive decimal integer no greater than 4294967295".into())
+    }
+
     /// Resolve fresh timestamp/salt inputs and validate the configuration.
     pub fn resolve(mut self) -> Result<Self> {
         self.timestamp =
@@ -123,5 +139,98 @@ impl GenesisConfig {
             "minimum protocol version must fit a nonzero uint128"
         );
         Ok(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{env, process::Command as ProcessCommand};
+
+    use clap::{Args, Command, FromArgMatches};
+
+    use crate::GenesisCommand;
+
+    #[test]
+    fn validator_count_accepts_positive_decimal_overrides() {
+        for (value, expected) in [("1", 1), ("64", 64), ("008", 8)] {
+            let matches = GenesisCommand::augment_args(Command::new("genesis"))
+                .try_get_matches_from(["genesis", "--validator-count", value])
+                .unwrap();
+            let command = GenesisCommand::from_arg_matches(&matches).unwrap();
+            assert_eq!(command.config.validator_count.get(), expected);
+        }
+    }
+
+    #[test]
+    fn validator_count_rejects_invalid_overrides() {
+        for value in [
+            "0",
+            "-1",
+            "+1",
+            "abc",
+            "1.5",
+            " 1",
+            "1 ",
+            "0x10",
+            "4294967296",
+            "18446744073709551616",
+        ] {
+            assert!(
+                GenesisCommand::augment_args(Command::new("genesis"))
+                    .try_get_matches_from(["genesis", &format!("--validator-count={value}")])
+                    .is_err(),
+                "accepted {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn validator_count_from_environment() {
+        // Parse in child processes so environment overrides cannot race other tests.
+        if let Ok(expected) = env::var("BASE_GENESIS_TEST_VALIDATOR_COUNT") {
+            let result = GenesisCommand::augment_args(Command::new("genesis"))
+                .try_get_matches_from(["genesis"]);
+            if expected == "invalid" {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains("BASE_DEVNET_VALIDATOR_COUNT"), "{error}");
+            } else {
+                assert_eq!(
+                    GenesisCommand::from_arg_matches(&result.unwrap())
+                        .unwrap()
+                        .config
+                        .validator_count
+                        .get(),
+                    expected.parse::<u32>().unwrap()
+                );
+            }
+            return;
+        }
+        for (value, expected) in [
+            (None, "1"),
+            (Some(""), "1"),
+            (Some("64"), "64"),
+            (Some("008"), "8"),
+            (Some("0"), "invalid"),
+            (Some("-1"), "invalid"),
+            (Some("abc"), "invalid"),
+            (Some("1.5"), "invalid"),
+            (Some("18446744073709551616"), "invalid"),
+        ] {
+            let mut child = ProcessCommand::new(env::current_exe().unwrap());
+            child
+                .args(["--exact", "config::tests::validator_count_from_environment"])
+                .env("BASE_GENESIS_TEST_VALIDATOR_COUNT", expected)
+                .env_remove("BASE_DEVNET_VALIDATOR_COUNT");
+            if let Some(value) = value {
+                child.env("BASE_DEVNET_VALIDATOR_COUNT", value);
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{value:?}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 }
