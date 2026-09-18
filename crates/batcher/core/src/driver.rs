@@ -93,7 +93,7 @@ where
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
-    /// Whether block ingestion is currently stopped (paused via admin or `--stopped` flag).
+    /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     stopped: bool,
     /// Admin command channel, wired in via [`Self::with_admin_rx`].
     admin_rx: Option<mpsc::Receiver<AdminCommand>>,
@@ -203,10 +203,10 @@ where
     }
 
     /// Start the driver in a stopped state, deferring block ingestion until
-    /// [`AdminCommand::Resume`] is received via the admin API.
+    /// [`AdminCommand::Start`] is received via the admin API.
     ///
     /// Equivalent to the batcher starting normally and immediately receiving
-    /// a pause command. Use this when the `--stopped` flag is set at startup.
+    /// a stop command. Use this when the `--stopped` flag is set at startup.
     pub const fn with_stopped(mut self, stopped: bool) -> Self {
         self.stopped = stopped;
         self
@@ -469,16 +469,16 @@ where
     ///
     /// Admin commands are handled inline in the loop — only non-admin events
     /// are returned to the caller. Admin commands are placed before the source
-    /// arm so control-plane operations (pause, resume, flush) are never starved
+    /// arm so control-plane operations (stop, start, flush) are never starved
     /// by sustained block throughput.
     /// Derivation-status changes are also handled before unsafe blocks so pruning and
     /// recovery cannot be starved by sequential catchup.
     ///
-    /// [`AdminCommand::Pause`] immediately resets the pipeline, then drops
-    /// `Block` and `Flush` source events until [`AdminCommand::Resume`] is
-    /// received. Reorg events propagate regardless of pause state. On resume
-    /// the source is reset to catch up sequentially from the last known safe
-    /// L2 head.
+    /// [`AdminCommand::Stop`] immediately resets the pipeline, then drops
+    /// `Block` and `Flush` source events until [`AdminCommand::Start`] is
+    /// received. Reorg events propagate regardless of the stopped state. On
+    /// start the source is reset to catch up sequentially from the last known
+    /// safe L2 head.
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
@@ -492,21 +492,21 @@ where
                 cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
                     match cmd {
                         AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
-                        AdminCommand::Pause => {
+                        AdminCommand::Stop => {
                             self.reset_pipeline(BatcherMetrics::RESET_ADMIN_PAUSE);
                             self.stopped = true;
-                            info!(stopped = true, "batcher paused via admin");
+                            info!(stopped = true, "batcher stopped via admin");
                         }
-                        AdminCommand::Resume => {
+                        AdminCommand::Start => {
                             if let Some(safe_head) = self.safe_head {
                                 self.source.reset_catchup(safe_head);
                                 info!(
                                     stopped = false,
                                     safe_l2 = %safe_head.number,
-                                    "batcher resumed via admin, catching up from safe head"
+                                    "batcher started via admin, catching up from safe head"
                                 );
                             } else {
-                                info!(stopped = false, "batcher resumed via admin");
+                                info!(stopped = false, "batcher started via admin");
                             }
                             self.stopped = false;
                         }
@@ -555,7 +555,7 @@ where
                         continue;
                     }
                     Ok(L2BlockEvent::Flush { ack }) if self.stopped => {
-                        // Drop (rather than fire) any ack: the batcher is paused, so this
+                        // Drop (rather than fire) any ack: the batcher is stopped, so this
                         // flush produces no frames and firing would falsely report
                         // settlement. The waiter observes a closed-channel error instead of
                         // a silent, indefinite-looking drop.
