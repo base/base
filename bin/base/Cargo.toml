@@ -31,10 +31,11 @@ base-execution-cli.workspace = true
 base-execution-evm.workspace = true
 base-upgrade-signal.workspace = true
 base-builder-metering.workspace = true
+base-shadow-indexer.workspace = true
 base-builder-multiplex.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
-base-shadow-indexer.workspace = true
+base-execution-profiling.workspace = true
 
 # alloy
 alloy-chains = { workspace = true, features = ["std"] }

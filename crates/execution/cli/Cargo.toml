@@ -56,6 +56,7 @@ base-execution-payload-builder.workspace = true
 base-proofs-extension.workspace = true
 base-shadow-indexer.workspace = true
 base-shadow-indexer-db.workspace = true
+base-execution-profiling.workspace = true
 base-execution-chainspec.workspace = true
 base-execution-consensus.workspace = true
 base-upgrade-signal = { workspace = true, features = ["metrics"] }

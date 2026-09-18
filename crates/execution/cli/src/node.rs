@@ -22,7 +22,9 @@ use reth_rpc_server_types::{
 };
 use tracing::info;
 
-use crate::{MeteringArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs};
+use crate::{
+    MeteringArgs, ProfilingArgs, RpcStandardNodeArgs, ShadowIndexerArgs, StandardNodeArgs,
+};
 
 const DEFAULT_BASE_MAX_INBOUND_EL_PEERS: usize = 80;
 const DEFAULT_BASE_MAX_OUTBOUND_EL_PEERS: usize = 80;
@@ -178,6 +180,10 @@ pub struct ExecutionNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Opt-in CPU profiling HTTP server arguments.
+    #[command(flatten)]
+    pub profiling: ProfilingArgs,
 }
 
 impl ExecutionNodeArgs {
@@ -188,7 +194,8 @@ impl ExecutionNodeArgs {
             node_config: runtime.node_config,
             standard: StandardNodeArgs::from(self.standard)
                 .with_metering(self.metering)
-                .with_shadow_indexer(self.shadow_indexer),
+                .with_shadow_indexer(self.shadow_indexer)
+                .with_profiling(self.profiling),
             with_unused_ports: runtime.with_unused_ports,
             upgrade_signal_startup: runtime.upgrade_signal_startup,
         }

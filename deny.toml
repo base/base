@@ -107,6 +107,9 @@ skip = [
     "lru",
 
     # System/platform crates
+    # Transitive duplicates introduced by pprof; upstream, cannot unify without patching pprof
+    "rustix",
+    "linux-raw-sys",
     "socket2",
     "bitflags",
     "redox_users",

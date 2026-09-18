@@ -11,6 +11,7 @@ use base_execution_payload_builder::{
     NoopMeteringProvider, REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache,
     ResourceMeteringConfig, SharedMeteringProvider,
 };
+use base_execution_profiling::{ProfilingConfig, ProfilingExtension};
 use base_flashblocks::FlashblocksConfig;
 use base_flashblocks_node::FlashblocksExtension;
 use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
@@ -270,6 +271,10 @@ pub struct StandardNodeArgs {
     /// Shadow indexer `ExEx` arguments.
     #[command(flatten)]
     pub shadow_indexer: ShadowIndexerArgs,
+
+    /// Opt-in CPU profiling HTTP server arguments.
+    #[command(flatten)]
+    pub profiling: ProfilingArgs,
 }
 
 /// CLI arguments for a Base execution node embedded by the unified RPC command.
@@ -458,6 +463,7 @@ impl From<RpcStandardNodeArgs> for StandardNodeArgs {
             rpc: args,
             metering: MeteringArgs::default(),
             shadow_indexer: ShadowIndexerArgs::default(),
+            profiling: ProfilingArgs::default(),
         }
     }
 }
@@ -472,6 +478,12 @@ impl StandardNodeArgs {
     /// Sets the shadow indexer arguments on this standard node configuration.
     pub fn with_shadow_indexer(mut self, shadow_indexer: ShadowIndexerArgs) -> Self {
         self.shadow_indexer = shadow_indexer;
+        self
+    }
+
+    /// Sets the profiling arguments on this standard node configuration.
+    pub const fn with_profiling(mut self, profiling: ProfilingArgs) -> Self {
+        self.profiling = profiling;
         self
     }
 }
@@ -536,6 +548,71 @@ impl TryFrom<&ShadowIndexerArgs> for ShadowIndexerConfig {
                 interval: args.shadow_indexer_retention_interval,
             },
         })
+    }
+}
+
+const DEFAULT_PROFILING_PORT: u16 = 6061;
+
+/// CLI arguments for a node's opt-in CPU profiling HTTP server.
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct ProfilingArgs {
+    /// Enable the CPU profiling HTTP server.
+    #[arg(long = "enable-profiling", env = "ENABLE_PROFILING")]
+    pub enable_profiling: bool,
+
+    /// TCP port used by the CPU profiling HTTP server.
+    ///
+    /// Port 6061 avoids the builder's WS (8546), RPC (8545), auth RPC (8551), metrics (6060),
+    /// discovery and P2P (30303), and discovery v5 (9200) listeners.
+    #[arg(
+        id = "profiling_port",
+        long = "profiling.port",
+        env = "PROFILING_PORT",
+        default_value_t = DEFAULT_PROFILING_PORT,
+        requires = "enable_profiling"
+    )]
+    pub port: u16,
+
+    /// Maximum requested profile duration in seconds.
+    #[arg(
+        long = "profiling.max-seconds",
+        env = "PROFILING_MAX_SECONDS",
+        default_value_t = 60,
+        value_parser = clap::value_parser!(u64).range(1..),
+        requires = "enable_profiling"
+    )]
+    pub max_seconds: u64,
+
+    /// Sampling frequency used when a profiling request omits one.
+    #[arg(
+        long = "profiling.default-frequency",
+        env = "PROFILING_DEFAULT_FREQUENCY",
+        default_value_t = 101,
+        value_parser = clap::value_parser!(u32).range(1..=1000),
+        requires = "enable_profiling"
+    )]
+    pub default_frequency: u32,
+}
+
+impl Default for ProfilingArgs {
+    fn default() -> Self {
+        Self {
+            enable_profiling: false,
+            port: DEFAULT_PROFILING_PORT,
+            max_seconds: 60,
+            default_frequency: 101,
+        }
+    }
+}
+
+impl From<&ProfilingArgs> for ProfilingConfig {
+    fn from(args: &ProfilingArgs) -> Self {
+        Self {
+            enabled: args.enable_profiling,
+            port: args.port,
+            max_seconds: args.max_seconds,
+            default_frequency: args.default_frequency,
+        }
     }
 }
 
@@ -773,6 +850,7 @@ impl StandardBaseRethNode {
         };
         runner.install_ext::<MeteringExtension>(metering_config);
         runner.install_ext::<ShadowIndexerExtension>((&args.shadow_indexer).try_into()?);
+        runner.install_ext::<ProfilingExtension>(ProfilingConfig::from(&args.profiling));
         let tx_forwarding_config: TxForwardingConfig = (&args).into();
         if args.rpc.enable_experimental_validity_transactions {
             runner.install_ext::<SendRawTransactionValidityExtension>(
@@ -1358,6 +1436,40 @@ mod tests {
     }
 
     #[test]
+    fn test_standard_node_args_parses_profiling_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.port",
+            "7070",
+            "--profiling.max-seconds",
+            "120",
+            "--profiling.default-frequency",
+            "250",
+        ])
+        .args;
+
+        assert!(args.profiling.enable_profiling);
+        assert_eq!(args.profiling.port, 7070);
+        assert_eq!(args.profiling.max_seconds, 120);
+        assert_eq!(args.profiling.default_frequency, 250);
+
+        let config = ProfilingConfig::from(&args.profiling);
+        assert!(config.enabled);
+        assert_eq!(config.port, 7070);
+        assert_eq!(config.max_seconds, 120);
+        assert_eq!(config.default_frequency, 250);
+    }
+
+    #[test]
+    fn test_standard_node_args_profiling_disabled_by_default() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from(["reth"]).args;
+
+        assert!(!args.profiling.enable_profiling);
+        assert!(!ProfilingConfig::from(&args.profiling).enabled);
+    }
+
+    #[test]
     fn test_shadow_indexer_retention_defaults_to_thirty_days() {
         let args = CommandParser::<StandardNodeArgs>::parse_from([
             "reth",
@@ -1631,5 +1743,64 @@ mod tests {
 
         StandardBaseRethNode::runner(args)
             .expect("STATE_ and unknown schedule names must not fail opcode parse");
+    }
+
+    #[test]
+    fn profiling_args_map_to_config() {
+        let args = CommandParser::<ProfilingArgs>::parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.port",
+            "6062",
+            "--profiling.max-seconds",
+            "45",
+            "--profiling.default-frequency",
+            "99",
+        ])
+        .args;
+
+        assert_eq!(
+            ProfilingConfig::from(&args),
+            ProfilingConfig { enabled: true, port: 6062, max_seconds: 45, default_frequency: 99 }
+        );
+    }
+
+    #[test]
+    fn profiling_rejects_zero_max_seconds() {
+        let error = CommandParser::<ProfilingArgs>::try_parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.max-seconds",
+            "0",
+        ])
+        .expect_err("zero max-seconds should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn profiling_rejects_out_of_range_default_frequency() {
+        let error = CommandParser::<ProfilingArgs>::try_parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.default-frequency",
+            "1001",
+        ])
+        .expect_err("default-frequency above 1000 should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn profiling_rejects_zero_default_frequency() {
+        let error = CommandParser::<ProfilingArgs>::try_parse_from([
+            "reth",
+            "--enable-profiling",
+            "--profiling.default-frequency",
+            "0",
+        ])
+        .expect_err("zero default-frequency should fail");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
     }
 }
