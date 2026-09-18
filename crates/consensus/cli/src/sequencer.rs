@@ -9,7 +9,7 @@ use alloy_primitives::{
     Address, U256,
     utils::{Unit, parse_ether},
 };
-use base_consensus_node::{SequencerConfig, ShadowFunding};
+use base_consensus_node::{SequencerConfig, SequencerMode, ShadowFunding};
 use base_protocol::DEFAULT_SEAL_OFFSET;
 use clap::Parser;
 use url::Url;
@@ -123,11 +123,15 @@ impl Default for SequencerArgs {
 impl SequencerArgs {
     /// Creates a [`SequencerConfig`] from the [`SequencerArgs`].
     pub fn config(&self) -> SequencerConfig {
+        let mode = match (self.isolated, self.shadow_blocks_per_cycle) {
+            (false, None) => SequencerMode::Active,
+            (false, Some(blocks_per_cycle)) => SequencerMode::Shadow { blocks_per_cycle },
+            (true, _) => SequencerMode::Isolated,
+        };
         SequencerConfig {
             sequencer_stopped: self.stopped,
             sequencer_recovery_mode: self.recover,
-            isolated: self.isolated,
-            shadow_blocks_per_cycle: self.shadow_blocks_per_cycle,
+            mode,
             shadow_funding: self.shadow_funding_address.map(|address| {
                 ShadowFunding::new(
                     address,
@@ -153,7 +157,7 @@ mod tests {
         Address, U256, address,
         utils::{Unit, parse_ether},
     };
-    use base_consensus_node::ShadowFunding;
+    use base_consensus_node::{SequencerMode, ShadowFunding};
     use clap::{Parser, error::ErrorKind};
 
     use super::{SequencerArgs, SequencerConfig};
@@ -211,7 +215,10 @@ mod tests {
         ]);
 
         assert_eq!(args.shadow_blocks_per_cycle, NonZeroU64::new(12));
-        assert_eq!(args.config().shadow_blocks_per_cycle, NonZeroU64::new(12));
+        assert_eq!(
+            args.config().mode,
+            SequencerMode::Shadow { blocks_per_cycle: NonZeroU64::new(12).unwrap() }
+        );
     }
 
     #[test]
@@ -220,7 +227,7 @@ mod tests {
             .expect("isolated flag should parse");
 
         assert!(args.isolated);
-        assert!(args.config().isolated);
+        assert_eq!(args.config().mode, SequencerMode::Isolated);
     }
 
     #[test]
