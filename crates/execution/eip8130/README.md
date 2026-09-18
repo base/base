@@ -75,7 +75,8 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + bytecode_cost
 | Component | Source |
 |---|---|
 | `base` | `AA_BASE_COST` (15,000) |
-| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the caller-supplied EIP-2718 serialization of the signed transaction |
+| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the caller-supplied EIP-2718 serialization of the signed transaction — the *standard* rate, subject to the EIP-7623 calldata floor below |
+| `payload_floor` | EIP-7623 calldata floor over the same bytes: `TX_TOTAL_COST_FLOOR_PER_TOKEN` (10) per payload token instead of the standard 4, so a data-heavy transaction cannot post data availability more cheaply than a standard EIP-7623 transaction on the same chain (always `>= payload`) |
 | `nonce_key` | nonce-free `13,000`; otherwise first-use `22,100` / existing `5,000` (a cold SLOAD plus an SSTORE set or reset) |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
 | `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read — the first access to that slot in the transaction (create bootstrap or first config change) is a cold zero-to-nonzero write, later same-account bumps are only a warm SLOAD + dirty SSTORE (`200`, the slot was already modified earlier in the transaction) — its `auth` cost, and each mutated actor/policy slot; revokes conservatively price all three actor/policy resets, except each revoke slot execution resolves to be an empty zero-to-zero touch is discounted by the reset-vs-cold-noop delta (an inline secp256k1 self revoke discounts its always-empty `actor_config` slot plus each policy slot — `manager`/`commitment` — whose stored value is zero, so three empty slots when ungated and one to three when policy-gated, since the EIP permits a gated actor to carry a zero manager and/or commitment); a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
@@ -85,6 +86,27 @@ intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + bytecode_cost
 `sender_intrinsic` excludes `payer_auth` (payer authentication is metered on top
 of `gas_limit`), so `execution_gas_available(gas_limit) = gas_limit -
 sender_intrinsic`.
+
+### EIP-7623 calldata floor
+
+Following [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623), the sender's
+metered gas is floored so a transaction that posts many bytes relative to its
+execution cannot drive the maximum block size back up. An 8130 transaction has
+no single `data` field — its bytes live in `account_changes`, `sender_auth`,
+`calls`, `metadata`, and `payer_auth` — so the floor is evaluated over the
+serialized transaction:
+
+```text
+sender_floor      = (sender_intrinsic - payload) + payload_floor
+sender_metered_gas = max(sender_intrinsic + execution_gas_used, sender_floor)
+```
+
+`sender_floor >= sender_intrinsic`, so a `gas_limit` below the floor is rejected
+at mempool acceptance and at inclusion, and settlement charges at least
+`sender_floor` for the sender portion (`payer_auth` is added on top and is not
+part of the floor). The `10`-per-token rate is normative structure: an L2-profile
+chain may reprice `TX_TOTAL_COST_FLOOR_PER_TOKEN` but must not set it below the
+standard `4` or drop the floor.
 
 ### Authenticator execution gas
 

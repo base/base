@@ -1114,7 +1114,10 @@ where
             ),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
-        if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
+        // EIP-7623 calldata floor: a transaction whose `gas_limit` is below the
+        // floor branch is invalid. `sender_floor >= sender_intrinsic`, so this
+        // check subsumes the underfunded sender-intrinsic case.
+        if signed.tx().gas_limit < intrinsic.sender_floor() {
             return Err(InvalidTransactionError::GasTooLow.into());
         }
 
