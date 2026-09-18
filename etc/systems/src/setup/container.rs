@@ -419,7 +419,10 @@ impl SetupContainer {
 
         let _container = container
             .with_mount(Mount::bind_mount(output_mount, "/output"))
-            .with_cmd(["op-deployer"])
+            // The image runs as root. Keep its disposable devnet artifacts editable by the
+            // host test user on Linux (e.g. when scheduling a fork after genesis generation).
+            // These fixtures contain only the public development keys, never production secrets.
+            .with_cmd(["sh", "-c", "op-deployer && chmod -R a+rwX /output"])
             .start()
             .wrap_err("Failed to generate devnet genesis with op-deployer")?;
 
