@@ -24,7 +24,7 @@ use super::{
     transfer::{Transfer, TransferRequest},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the pinned real-client Glamsterdam fixture and Docker"]
 async fn blob_transfers_remain_safe_across_glamsterdam() -> Result<()> {
     let artifacts = GlamsterdamScenario::artifact_directory()?;
