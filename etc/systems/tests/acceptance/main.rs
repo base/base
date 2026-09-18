@@ -6,6 +6,9 @@ pub use activation::Schedule;
 mod batch;
 pub use batch::{BatchAttribution, BatchObserver, Submission, SubmittedChannel, TransferTarget};
 
+mod blob;
+pub use blob::BlobEvidence;
+
 mod evidence;
 pub use evidence::Evidence;
 

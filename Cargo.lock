@@ -6309,6 +6309,7 @@ dependencies = [
  "axum 0.8.9",
  "base-batcher-encoder",
  "base-batcher-service",
+ "base-blobs",
  "base-builder-core",
  "base-builder-multiplex",
  "base-common-chains",

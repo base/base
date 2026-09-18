@@ -134,6 +134,9 @@ default = [ "upgrade-signal" ]
 upgrade-signal = [ "base-test-utils/contracts", "dep:base-test-utils" ]
 
 [dev-dependencies]
+# batcher
+base-blobs.workspace = true
+
 # consensus
 base-consensus-derive.workspace = true
 base-consensus-engine = { workspace = true, features = ["test-utils"] }

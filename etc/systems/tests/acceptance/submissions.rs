@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-use alloy_primitives::Bytes;
+use alloy_primitives::{B256, Bytes};
+use base_batcher_encoder::DaType;
 use base_common_genesis::RollupConfig;
 use base_protocol::BlockInfo;
 use base_system_tests::BATCHER;
@@ -11,7 +12,9 @@ use serde_json::json;
 use tokio::time::{sleep, timeout};
 
 use super::{
+    activation::Schedule,
     batch::{BatchAttribution, BatchObserver, Submission},
+    blob::BlobEvidence,
     header::AuthenticatedHeader,
     rpc::Rpc,
     transfer::Transfer,
@@ -24,12 +27,27 @@ pub struct Submissions {
     pub next_block: u64,
     /// Partial channels carried across successive L1 blocks.
     pub observer: BatchObserver,
+    /// DA envelope required by this independently selected case.
+    pub da: DaType,
+    /// Real consensus endpoint serving hash-authenticated blob data.
+    pub beacon: String,
+    /// Consensus genesis timestamp used to map L1 inclusion to its beacon slot.
+    pub genesis: u64,
+    /// Consensus slot duration from the matched live schedule.
+    pub seconds_per_slot: u64,
 }
 
 impl Submissions {
     /// Starts at a known L1 head from before the transfer was sent.
-    pub fn new(first_block: u64) -> Self {
-        Self { next_block: first_block, observer: BatchObserver::default() }
+    pub fn new(first_block: u64, da: DaType, beacon: String, schedule: &Schedule) -> Self {
+        Self {
+            next_block: first_block,
+            observer: BatchObserver::default(),
+            da,
+            beacon,
+            genesis: schedule.genesis,
+            seconds_per_slot: schedule.seconds_per_slot,
+        }
     }
 
     /// Rechecks contributing L1 blocks and receipts after safe derivation and consensus finality.
@@ -80,9 +98,14 @@ impl Submissions {
                         {
                             continue;
                         }
+                        let expected_type = match self.da {
+                            DaType::Calldata => 2,
+                            DaType::Blob => 3,
+                        };
                         ensure!(
-                            Rpc::quantity(&transaction["type"])? == 2,
-                            "calldata case observed non-EIP-1559 inbox transaction"
+                            Rpc::quantity(&transaction["type"])? == expected_type,
+                            "inbox transaction does not use selected {:?} DA: {transaction}",
+                            self.da
                         );
                         let receipt = rpc
                             .call(l1, "eth_getTransactionReceipt", json!([transaction["hash"]]))
@@ -97,10 +120,37 @@ impl Submissions {
                                 && receipt["transactionHash"] == transaction["hash"],
                             "batch receipt/header mismatch"
                         );
-                        let payload: Bytes = serde_json::from_value(transaction["input"].clone())?;
+                        let input: Bytes = serde_json::from_value(transaction["input"].clone())?;
+                        let blobs = if self.da == DaType::Blob {
+                            ensure!(input.is_empty(), "blob batch unexpectedly carries calldata");
+                            let hashes: Vec<B256> =
+                                serde_json::from_value(transaction["blobVersionedHashes"].clone())?;
+                            let elapsed =
+                                header.header.timestamp.checked_sub(self.genesis).ok_or_else(
+                                    || eyre::eyre!("batch header predates CL genesis"),
+                                )?;
+                            ensure!(
+                                self.seconds_per_slot > 0 && elapsed % self.seconds_per_slot == 0,
+                                "batch timestamp does not map to a consensus slot"
+                            );
+                            BlobEvidence::fetch(
+                                &self.beacon,
+                                elapsed / self.seconds_per_slot,
+                                &hashes,
+                            )
+                            .await?
+                        } else {
+                            Vec::new()
+                        };
+                        let payloads = if self.da == DaType::Blob {
+                            blobs.iter().map(|blob| blob.payload.clone()).collect::<Vec<_>>()
+                        } else {
+                            vec![input]
+                        };
                         let submission = Submission {
                             transaction: transaction.clone(),
                             receipt,
+                            blobs,
                             block: BlockInfo::new(
                                 header.hash,
                                 header.header.number,
@@ -108,14 +158,19 @@ impl Submissions {
                                 header.header.timestamp,
                             ),
                         };
-                        if let Some(attribution) =
-                            self.observer.ingest(payload, submission, &target, rollup)?
-                        {
-                            ensure!(
-                                attribution.transaction_hash == transfer.transaction_hash,
-                                "decoded batch transfer hash mismatch"
-                            );
-                            found = Some(attribution);
+                        for payload in payloads {
+                            if let Some(attribution) = self.observer.ingest(
+                                payload,
+                                submission.clone(),
+                                &target,
+                                rollup,
+                            )? {
+                                ensure!(
+                                    attribution.transaction_hash == transfer.transaction_hash,
+                                    "decoded batch transfer hash mismatch"
+                                );
+                                found = Some(attribution);
+                            }
                         }
                     }
                     self.next_block += 1;

@@ -9,6 +9,8 @@ use eyre::{Result, ensure};
 use serde::Serialize;
 use serde_json::Value;
 
+use super::blob::BlobEvidence;
+
 /// Successful inbox transaction carrying channel frames.
 #[derive(Clone, Debug, Serialize)]
 pub struct Submission {
@@ -16,6 +18,8 @@ pub struct Submission {
     pub transaction: Value,
     /// Successful receipt, including the exact containing block hash and number.
     pub receipt: Value,
+    /// Full authenticated blob bytes and decoded payloads; empty for calldata DA.
+    pub blobs: Vec<BlobEvidence>,
     /// Authenticated L1 block containing the submission.
     pub block: BlockInfo,
 }
@@ -136,12 +140,13 @@ impl BatchObserver {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{B256, Bytes, keccak256};
+    use base_blobs::BlobEncoder;
     use base_common_genesis::RollupConfig;
     use base_protocol::{Batch, BlockInfo, Frame, SingleBatch};
     use miniz_oxide::{deflate::compress_to_vec_zlib, inflate::decompress_to_vec_zlib};
     use serde_json::json;
 
-    use super::{BatchObserver, Submission, TransferTarget};
+    use super::{BatchObserver, BlobEvidence, Submission, TransferTarget};
 
     fn target() -> TransferTarget {
         TransferTarget {
@@ -155,6 +160,7 @@ mod tests {
         Submission {
             transaction: json!({"hash": B256::with_last_byte(number as u8)}),
             receipt: json!({"status": "0x1"}),
+            blobs: Vec::new(),
             block: BlockInfo::new(B256::with_last_byte(number as u8), number, B256::ZERO, number),
         }
     }
@@ -193,6 +199,40 @@ mod tests {
         assert_eq!(evidence.submissions.len(), 2);
         assert_eq!(evidence.submissions[0].block.number, 11);
         assert_eq!(evidence.submissions[1].block.number, 12);
+    }
+
+    #[test]
+    fn attributes_blob_frames_to_the_exact_transfer_not_just_the_inbox_sender() {
+        let target = target();
+        let mut observer = BatchObserver::default();
+        let mut attributed = None;
+        for (number, payload) in payloads(&target).into_iter().enumerate() {
+            let blob = BlobEncoder::encode(&payload).unwrap();
+            let evidence = BlobEvidence::decode(B256::repeat_byte(1), &blob).unwrap();
+            let mut submission = submission(11 + number as u64);
+            submission.blobs.push(evidence.clone());
+            attributed = observer
+                .ingest(evidence.payload, submission, &target, &RollupConfig::default())
+                .unwrap();
+        }
+        let attributed = attributed.unwrap();
+        assert_eq!(attributed.transaction_hash, keccak256(&target.raw_transaction));
+        assert_eq!(attributed.submissions.len(), 2);
+        assert!(attributed.submissions.iter().all(|submission| !submission.blobs.is_empty()));
+
+        let unrelated =
+            TransferTarget { raw_transaction: Bytes::from_static(&[2, 0xcc]), ..target };
+        let mut observer = BatchObserver::default();
+        for payload in payloads(&unrelated) {
+            let blob = BlobEncoder::encode(&payload).unwrap();
+            let evidence = BlobEvidence::decode(B256::repeat_byte(1), &blob).unwrap();
+            assert!(
+                observer
+                    .ingest(evidence.payload, submission(11), &target, &RollupConfig::default())
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
 
     #[test]

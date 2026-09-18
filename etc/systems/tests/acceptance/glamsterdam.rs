@@ -27,6 +27,12 @@ async fn glamsterdam_calldata() -> Result<()> {
     run(DaType::Calldata, "glamsterdam::glamsterdam_calldata").await
 }
 
+#[tokio::test]
+#[ignore = "requires the pinned real-client Glamsterdam fixture and Docker"]
+async fn glamsterdam_blob() -> Result<()> {
+    run(DaType::Blob, "glamsterdam::glamsterdam_blob").await
+}
+
 /// Owns setup and teardown, keeping observable acceptance expectations in `scenario`.
 pub async fn run(da: DaType, case: &str) -> Result<()> {
     let mut evidence = Evidence::new(case)?;
@@ -48,7 +54,7 @@ pub async fn run(da: DaType, case: &str) -> Result<()> {
             return Err(error);
         }
     };
-    let result = AssertUnwindSafe(scenario(&rpc, &system, &mut evidence))
+    let result = AssertUnwindSafe(scenario(&rpc, &system, &mut evidence, da))
         .catch_unwind()
         .await
         .unwrap_or_else(|panic| {
@@ -91,7 +97,12 @@ pub async fn run(da: DaType, case: &str) -> Result<()> {
 }
 
 /// Setup → transfer → batch → safe agreement → activation → repeat, with four explicit checks.
-pub async fn scenario(rpc: &Rpc, system: &SystemTestStack, evidence: &mut Evidence) -> Result<()> {
+pub async fn scenario(
+    rpc: &Rpc,
+    system: &SystemTestStack,
+    evidence: &mut Evidence,
+    da: DaType,
+) -> Result<()> {
     evidence.configs(system)?;
     ensure!(
         std::env::var("BASE_GLAMSTERDAM_INJECT_FAILURE").as_deref() != Ok("after_setup"),
@@ -130,7 +141,7 @@ pub async fn scenario(rpc: &Rpc, system: &SystemTestStack, evidence: &mut Eviden
 
     // 2 + 3. A successful pre-fork value transfer, its decoded batch, and matching safe blocks.
     // Start at genesis so an already-open channel cannot hide earlier contributing frames.
-    let mut batches = Submissions::new(rollup.genesis.l1.number);
+    let mut batches = Submissions::new(rollup.genesis.l1.number, da, beacon.clone(), &schedule);
     let pre = Transfer::send(
         rpc,
         &sequencer,

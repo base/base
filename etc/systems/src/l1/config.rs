@@ -82,7 +82,8 @@ impl L1Image {
 }
 
 impl L1ContainerConfig {
-    /// Adds log collection before startup so readiness failures retain client diagnostics.
+    /// Adds log collection and artifact ownership labels before startup.
+    /// The labels allow the acceptance runner to retain diagnostics and clean up after a killed test.
     pub fn capture_logs(
         &self,
         request: ContainerRequest<GenericImage>,
@@ -90,6 +91,18 @@ impl L1ContainerConfig {
     ) -> Result<ContainerRequest<GenericImage>> {
         let Some(directory) = &self.diagnostics_dir else { return Ok(request) };
         std::fs::create_dir_all(directory).wrap_err("create L1 diagnostics directory")?;
+        let directory =
+            directory.canonicalize().wrap_err("canonicalize L1 diagnostics directory")?;
+        let artifacts = directory
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("L1 diagnostics directory must be valid UTF-8"))?;
+        let network = request.network().clone();
+        let mut request = request
+            .with_label("org.base.glamsterdam.artifacts", artifacts)
+            .with_label("org.base.glamsterdam.component", component);
+        if let Some(network) = network {
+            request = request.with_label("org.base.glamsterdam.network", network);
+        }
         let path = directory.join(format!("{component}.stream.log"));
         let file = Mutex::new(
             OpenOptions::new()
@@ -109,9 +122,38 @@ impl L1ContainerConfig {
 
 #[cfg(test)]
 mod tests {
-    use testcontainers::core::ContainerRequest;
+    use testcontainers::{GenericImage, ImageExt, core::ContainerRequest};
 
-    use super::L1Image;
+    use super::{L1ContainerConfig, L1Image};
+
+    #[test]
+    fn diagnostics_label_identifies_canonical_artifact_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = L1ContainerConfig {
+            diagnostics_dir: Some(directory.path().join("runtime/../runtime")),
+            ..Default::default()
+        };
+        let request = config
+            .capture_logs(
+                GenericImage::new("alpine", "latest").with_network("glamsterdam-l1-12345678"),
+                "reth",
+            )
+            .unwrap();
+        assert_eq!(
+            request.labels()["org.base.glamsterdam.artifacts"],
+            directory.path().join("runtime").canonicalize().unwrap().to_str().unwrap()
+        );
+        assert_eq!(request.labels()["org.base.glamsterdam.component"], "reth");
+        assert_eq!(request.labels()["org.base.glamsterdam.network"], "glamsterdam-l1-12345678");
+    }
+
+    #[test]
+    fn no_diagnostics_does_not_claim_container_ownership() {
+        let request = L1ContainerConfig::default()
+            .capture_logs(GenericImage::new("alpine", "latest").into(), "reth")
+            .unwrap();
+        assert!(request.labels().is_empty());
+    }
 
     #[test]
     fn digest_reference_preserves_registry_port() {
