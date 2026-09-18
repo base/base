@@ -2,11 +2,11 @@
 
 ## Status and tested boundary
 
-The local runner and manually dispatched CI workflow are for **candidate
-qualification**, not required merge gates. Passing the artifact tools' unit tests
-does **not** qualify a Reth/Lighthouse pair or demonstrate a Base fork transition.
-Full calldata/blob runtime results and repeatability are pending; no remote CI
-success is claimed here.
+Both DA cases have passed locally across real scheduled activation with the pinned
+Reth/Lighthouse pair, including independent repeated runs. The workflow remains
+**manual**, not a required merge gate. Tooling unit tests alone are not client
+qualification; the recorded live evidence below is the acceptance result.
+No remote acceptance CI success is claimed.
 
 The acceptance boundary is containerized Ethereum Reth and a real Gloas consensus
 client, with Base's builder, sequencer, verifier and batcher running **in-process**
@@ -18,7 +18,60 @@ Scenarios belong to the grouped `base-system-tests` integration-test target
 assertion code, not simulated actors, manual mining, or fabricated safe/finalized
 heads. Calldata and blob are independently selected cases of the same scenario.
 
-## Candidate clients
+## Local qualification record — 2026-09-18
+
+The complete recorded runner was exercised from clean source
+`ee5bdd323f9f695647f487b63b6fad0454886667` on macOS arm64 with Podman's Docker API,
+Rust 1.96.0 and nextest 0.9.144. This record is a documentation-only follow-up.
+Both cases used the same compiled acceptance binary, SHA256
+`d8ae3c7a0fb35b42cdd03c5fb0c7cd61c7770ec3e37f95361839060678b92784`.
+
+| Case | Test duration | Matching safe L2 blocks | Attributed L1 batches |
+| --- | --- | --- | --- |
+| Calldata | 538.78 s | 6 before, 195 after | Type 2, blocks 4 and 66 |
+| Blob | 532.20 s | 6 before, 196 after | Type 3, blocks 4 and 68; actual blobs authenticated |
+
+Both cases authenticated the L1 boundary at execution blocks 63/64, observed
+Gloas finalized epoch 9, successful transfer balance deltas of exactly 1,337 and
+2,003 wei, and matching sequencer/verifier receipt-block hashes after safety.
+L1 SLOTNUM returned slot 64; both L2 nodes rejected it as `NotActivated`.
+
+Post-fork safe hashes:
+
+- Calldata block 195: `0x0b7195e11d1f75763edf49cc9ceabf8fcf25e27e7b03593cfc06bb21c3198568`.
+- Blob block 196: `0x082209370623259e7a8a54ed0888ed2e64fff567e9cac89ba2ae401c894b3b51`.
+
+Actual arm64 image identities:
+
+- Reth: `sha256:e2d89346092ffee5db87a7ab199e7ffd2390166c03932f6b289a17fbb268a714`.
+- Lighthouse: `sha256:da3f81fdb0ae20fa06cfcf1fa38f80ee386d16c8f126d58b071ee0ccc652fee5`.
+- Setup: `sha256:8a724319cde1d207e9d09d633393adff3d48a6945edb6e29b8f29a8e8513af2a`.
+
+The immutable manifest digests, source revisions, executed versions and full build
+commands are in each run's provenance. Local artifacts are retained under
+`/private/tmp/base-glamsterdam-evidence/final-calldata` and `final-blob`, including
+JUnit (one executed case, no retries), full logs, configurations, raw transaction
+and blob data, and passed scenario/cleanup reports. Each mode also passed an
+independent parent-slice run and an earlier recorded run with this fixed pair;
+this is a small local repeatability sample, not Linux/amd64 CI qualification.
+
+A deliberate error after setup retained diagnostics before removing all owned
+resources. A separate deliberately timed-out real nextest process returned 100;
+the fallback captured all three surviving L1 containers' logs/inspect data before
+removing their exact IDs and one exclusive network. Another live case and
+unrelated sentinel resources were preserved. These are failure-path checks, not
+successful acceptance cases.
+
+Focused Rust tests, Clippy with `-D warnings`, nightly workspace formatting and
+35 Python tooling tests passed. The 46-test existing library suite passed. The
+ordinary unchanged smoke path was attempted but fails on this host because
+testcontainers tries to create Podman's reserved `none` network. The fixture's
+separate setup network avoids that incompatibility without changing the default.
+Logs retain nonfatal multiproof-worker and shutdown database diagnostics.
+The early concurrent-startup investigation also observed a TCP bind failure;
+no gate retry hides it. CI deliberately isolates modes on separate workers.
+
+## Client pins and selection
 
 [`fixtures/glamsterdam.json`](fixtures/glamsterdam.json) is the single source of
 truth for the immutable client image digests and source revisions. The runner
