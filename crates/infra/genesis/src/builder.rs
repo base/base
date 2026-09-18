@@ -136,10 +136,18 @@ impl GenesisBuilder {
             GenesisOutput::write(staging.path().join(path), &serde_json::to_vec_pretty(&value)?)?;
         }
         let mut conductor = serde_json::to_value(&rollup)?;
-        conductor
+        let conductor_fields =
+            conductor.as_object_mut().ok_or_else(|| eyre::eyre!("invalid rollup config"))?;
+        // The pinned Go conductor rejects unknown fields, including Rust-only
+        // configuration and optional scalar fields serialized as null.
+        conductor_fields.remove("base");
+        conductor_fields.remove("granite_channel_timeout");
+        conductor["genesis"]["system_config"]
             .as_object_mut()
-            .ok_or_else(|| eyre::eyre!("invalid rollup config"))?
-            .remove("base");
+            .ok_or_else(|| eyre::eyre!("missing genesis system config"))?
+            .retain(|key, _| {
+                matches!(key.as_str(), "batcherAddr" | "overhead" | "scalar" | "gasLimit")
+            });
         GenesisOutput::write(
             staging.path().join("l2/rollup-conductor.json"),
             &serde_json::to_vec_pretty(&conductor)?,
