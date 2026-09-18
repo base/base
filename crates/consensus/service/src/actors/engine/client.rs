@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use async_trait::async_trait;
 use base_consensus_derive::Signal;
 use base_protocol::L2BlockInfo;
-use derive_more::Constructor;
 use tokio::sync::mpsc;
 
 use crate::{DerivationActorRequest, DerivationClientError, DerivationClientResult};
@@ -27,53 +26,105 @@ pub trait EngineDerivationClient: Debug + Send + Sync {
 }
 
 /// Client to use to send messages to the [`crate::DerivationActor`]'s inbound channel.
-#[derive(Constructor, Debug)]
-pub struct QueuedEngineDerivationClient {
-    /// A channel to use to send the [`DerivationActorRequest`]s to the [`crate::DerivationActor`].
-    pub derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+#[derive(Debug)]
+pub enum QueuedEngineDerivationClient {
+    /// Requests are sent to a derivation actor.
+    Enabled {
+        /// Channel used to send [`DerivationActorRequest`]s to the derivation actor.
+        derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>,
+    },
+    /// Requests are accepted without a derivation actor.
+    Disabled,
+}
+
+impl QueuedEngineDerivationClient {
+    /// Creates an enabled derivation client.
+    pub const fn new(derivation_actor_request_tx: mpsc::Sender<DerivationActorRequest>) -> Self {
+        Self::Enabled { derivation_actor_request_tx }
+    }
+
+    /// Creates a disabled derivation client for a node without a derivation actor.
+    pub const fn disabled() -> Self {
+        Self::Disabled
+    }
 }
 
 #[async_trait]
 impl EngineDerivationClient for QueuedEngineDerivationClient {
     async fn notify_sync_completed(&self, safe_head: L2BlockInfo) -> DerivationClientResult<()> {
-        info!(target: "engine", "Sending sync completed to derivation actor");
-
-        self.derivation_actor_request_tx
-            .send(DerivationActorRequest::ProcessEngineSyncCompletionRequest(Box::new(safe_head)))
-            .await
-            .map_err(|_| {
-                DerivationClientError::RequestError("request channel closed.".to_string())
-            })?;
-
-        Ok(())
+        match self {
+            Self::Enabled { derivation_actor_request_tx } => {
+                info!(target: "engine", "Sending sync completed to derivation actor");
+                derivation_actor_request_tx
+                    .send(DerivationActorRequest::ProcessEngineSyncCompletionRequest(Box::new(
+                        safe_head,
+                    )))
+                    .await
+                    .map_err(|_| {
+                        DerivationClientError::RequestError("request channel closed.".to_string())
+                    })
+            }
+            Self::Disabled => {
+                info!(target: "engine", "Ignoring sync completed notification: derivation client disabled");
+                Ok(())
+            }
+        }
     }
 
     async fn send_new_engine_safe_head(
         &self,
         safe_head: L2BlockInfo,
     ) -> DerivationClientResult<()> {
-        info!(target: "engine", safe_head = ?safe_head, "Sending new safe head to derivation actor");
-
-        self.derivation_actor_request_tx
-            .send(DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(safe_head)))
-            .await
-            .map_err(|_| {
-                DerivationClientError::RequestError("request channel closed.".to_string())
-            })?;
-
-        Ok(())
+        match self {
+            Self::Enabled { derivation_actor_request_tx } => {
+                info!(target: "engine", safe_head = ?safe_head, "Sending new safe head to derivation actor");
+                derivation_actor_request_tx
+                    .send(DerivationActorRequest::ProcessEngineSafeHeadUpdateRequest(Box::new(
+                        safe_head,
+                    )))
+                    .await
+                    .map_err(|_| {
+                        DerivationClientError::RequestError("request channel closed.".to_string())
+                    })
+            }
+            Self::Disabled => {
+                info!(target: "engine", safe_head = ?safe_head, "Ignoring new engine safe head: derivation client disabled");
+                Ok(())
+            }
+        }
     }
 
     async fn send_signal(&self, signal: Signal) -> DerivationClientResult<()> {
-        info!(target: "engine", signal = ?signal, "Sending signal to derivation actor");
+        match self {
+            Self::Enabled { derivation_actor_request_tx } => {
+                info!(target: "engine", signal = ?signal, "Sending signal to derivation actor");
+                derivation_actor_request_tx
+                    .send(DerivationActorRequest::ProcessEngineSignalRequest(Box::new(signal)))
+                    .await
+                    .map_err(|_| {
+                        DerivationClientError::RequestError("request channel closed.".to_string())
+                    })
+            }
+            Self::Disabled => {
+                info!(target: "engine", signal = ?signal, "Ignoring signal: derivation client disabled");
+                Ok(())
+            }
+        }
+    }
+}
 
-        self.derivation_actor_request_tx
-            .send(DerivationActorRequest::ProcessEngineSignalRequest(Box::new(signal)))
-            .await
-            .map_err(|_| {
-                DerivationClientError::RequestError("request channel closed.".to_string())
-            })?;
+#[cfg(test)]
+mod tests {
+    use base_protocol::L2BlockInfo;
 
-        Ok(())
+    use super::{EngineDerivationClient, QueuedEngineDerivationClient};
+
+    #[tokio::test]
+    async fn disabled_client_accepts_sync_completion_without_an_actor() {
+        let client = QueuedEngineDerivationClient::Disabled;
+
+        let result = client.notify_sync_completed(L2BlockInfo::default()).await;
+
+        assert!(result.is_ok());
     }
 }
