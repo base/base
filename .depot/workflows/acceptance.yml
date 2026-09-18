@@ -1,0 +1,56 @@
+name: Glamsterdam Acceptance
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.depot/workflows/acceptance.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    name: Glamsterdam acceptance (advisory)
+    runs-on: depot-ubuntu-24.04-16
+    timeout-minutes: 110
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+      - uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          tools: cargo-nextest
+      - name: Run acceptance qualification
+        shell: bash
+        env:
+          BASE_ACCEPTANCE_ARTIFACTS: ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          RUST_LOG: info,base_system_tests=debug
+        run: timeout --signal=TERM --kill-after=2m 95m just devnet acceptance
+      - name: Clean up owned acceptance networks
+        if: always()
+        timeout-minutes: 3
+        run: just --justfile etc/docker/Justfile _cleanup-acceptance "${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}"
+      - name: Upload acceptance diagnostics and JUnit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: glamsterdam-acceptance-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/
+            target/nextest/acceptance/test-results.xml
+          if-no-files-found: warn
+          retention-days: 14

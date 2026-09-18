@@ -262,6 +262,53 @@ tests: _install-nextest _build-contracts
 tests-ci: _install-nextest _build-contracts
     RUST_MIN_STACK={{ system_test_min_stack }} cargo nextest run -P ci --locked -p base-system-tests --cargo-profile ci --no-fail-fast
 
+# Runs the pinned, serial Glamsterdam acceptance qualification (requires Docker and jq)
+acceptance: _install-nextest _build-setup-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    manifest=etc/systems/fixtures/glamsterdam.json
+    command -v jq >/dev/null 2>&1 || { echo "ERROR: acceptance requires jq" >&2; exit 1; }
+    while IFS= read -r image; do
+      docker pull "$image"
+    done < <(jq -er '.reth.image, .lighthouse.image' "$manifest")
+
+    if [ -n "${BASE_ACCEPTANCE_ARTIFACTS:-}" ]; then
+      [ ! -e "$BASE_ACCEPTANCE_ARTIFACTS" ] || {
+        echo "ERROR: BASE_ACCEPTANCE_ARTIFACTS must be a fresh path" >&2
+        exit 1
+      }
+      mkdir -p "$BASE_ACCEPTANCE_ARTIFACTS"
+    else
+      BASE_ACCEPTANCE_ARTIFACTS="$(mktemp -d "${TMPDIR:-/tmp}/base-acceptance.XXXXXXXX")"
+    fi
+    export BASE_ACCEPTANCE_ARTIFACTS
+    export RUST_MIN_STACK={{ system_test_min_stack }}
+    export RUST_LOG="${RUST_LOG:-info,base_system_tests=debug}"
+    echo "Acceptance artifacts: $BASE_ACCEPTANCE_ARTIFACTS"
+    trap 'just --justfile {{ source_file() }} _cleanup-acceptance "$BASE_ACCEPTANCE_ARTIFACTS"' EXIT
+    cargo nextest run --locked --profile acceptance \
+      -p base-system-tests --no-default-features --test acceptance \
+      --run-ignored only --no-tests fail --retries 0 --no-fail-fast
+
+[private]
+_cleanup-acceptance artifacts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shopt -s nullglob
+    for manifest in {{ quote(artifacts) }}/glamsterdam-blob-*/networks; do
+      while IFS= read -r network; do
+        [[ "$network" =~ ^glamsterdam-(setup|l1)-[a-zA-Z0-9_-]+$ ]] || exit 1
+        docker network inspect "$network" >/dev/null 2>&1 || continue
+        ids=$(docker network inspect "$network" | jq -r '.[0].Containers // {} | keys[]')
+        for id in $ids; do
+          docker logs "$id" > "${manifest%/*}/$id.log" 2>&1 || true
+          docker inspect "$id" > "${manifest%/*}/$id.json"
+          docker rm -f "$id"
+        done
+        docker network rm "$network"
+      done < "$manifest"
+    done
+
 # Builds base-bench in release mode and runs a benchmark
 bench *args:
     cargo run --release -p base-system-tests --bin base-bench -- {{ args }}
