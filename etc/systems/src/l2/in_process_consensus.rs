@@ -20,7 +20,7 @@ use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
     EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
-    UpgradeSignalBuilderConfig,
+    SequencerMode, UpgradeSignalBuilderConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
@@ -246,9 +246,13 @@ impl InProcessConsensus {
         .with_checkpoint_path(checkpoint_path);
 
         if config.mode == NodeMode::Sequencer {
+            let mode = match config.shadow_blocks_per_cycle {
+                Some(blocks_per_cycle) => SequencerMode::Shadow { blocks_per_cycle },
+                None => SequencerMode::Active,
+            };
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
-                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
+                mode,
                 l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });

@@ -4,12 +4,38 @@
 
 use std::{num::NonZeroU64, time::Duration};
 
+use thiserror::Error;
 use url::Url;
 
 use super::ShadowFunding;
 
 /// Default conductor RPC timeout (1 second), matching the CLI default.
 const DEFAULT_CONDUCTOR_RPC_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Sequencer operating mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SequencerMode {
+    /// Produces and publishes canonical unsafe blocks.
+    Active,
+    /// Produces private blocks before reconciling with the canonical chain.
+    Shadow {
+        /// Number of private blocks to build per cycle before reconciling.
+        blocks_per_cycle: NonZeroU64,
+    },
+    /// Produces private blocks without canonical-chain ingress or payload publication.
+    Isolated,
+}
+
+/// Errors returned when validating a [`SequencerConfig`].
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum SequencerConfigError {
+    /// An isolated sequencer was configured with a signing key.
+    #[error("isolated sequencer must not configure a signing key")]
+    IsolatedSigningKey,
+    /// An isolated sequencer was configured with a conductor RPC endpoint.
+    #[error("isolated sequencer must not configure a conductor RPC URL")]
+    IsolatedConductorRpc,
+}
 
 /// Configuration for the [`SequencerActor`].
 ///
@@ -20,12 +46,8 @@ pub struct SequencerConfig {
     pub sequencer_stopped: bool,
     /// Whether or not the sequencer is in recovery mode.
     pub sequencer_recovery_mode: bool,
-    /// Whether the sequencer runs without canonical-chain ingress or payload publication.
-    pub isolated: bool,
-    /// Number of private blocks to build per cycle when running as a shadow sequencer.
-    ///
-    /// When [`None`], the node runs as a normal sequencer.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// The sequencer operating mode.
+    pub mode: SequencerMode,
     /// Optional account funding for the first private block of each shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// The [`Url`] for the conductor RPC endpoint. If [`Some`], enables the conductor service.
@@ -58,19 +80,39 @@ impl SequencerConfig {
     /// Default request timeout for L1 RPC calls on the sequencer block-production hot path.
     pub const DEFAULT_L1_RPC_TIMEOUT: Duration = Duration::from_millis(500);
 
+    /// Validates a fully constructed sequencer configuration against signing-key capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SequencerConfigError::IsolatedSigningKey`] when an isolated sequencer has a
+    /// signing key, or [`SequencerConfigError::IsolatedConductorRpc`] when it has a conductor RPC
+    /// endpoint.
+    pub fn validated(config: Self, has_signing_key: bool) -> Result<Self, SequencerConfigError> {
+        if config.is_isolated() && has_signing_key {
+            return Err(SequencerConfigError::IsolatedSigningKey);
+        }
+        if config.is_isolated() && config.conductor_rpc_url.is_some() {
+            return Err(SequencerConfigError::IsolatedConductorRpc);
+        }
+        Ok(config)
+    }
+
     /// Returns whether shadow sequencer mode is enabled.
     pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
+        matches!(self.mode, SequencerMode::Shadow { .. })
     }
 
-    /// Returns whether the consensus network actor should be constructed.
-    pub const fn network_enabled(&self) -> bool {
-        !self.isolated
+    /// Returns whether isolated sequencer mode is enabled.
+    pub const fn is_isolated(&self) -> bool {
+        matches!(self.mode, SequencerMode::Isolated)
     }
 
-    /// Returns whether a derivation actor should be constructed.
-    pub const fn derivation_enabled(&self) -> bool {
-        !self.isolated
+    /// Returns the configured shadow-cycle block count, or [`None`] outside shadow mode.
+    pub const fn shadow_blocks_per_cycle(&self) -> Option<NonZeroU64> {
+        match self.mode {
+            SequencerMode::Shadow { blocks_per_cycle } => Some(blocks_per_cycle),
+            SequencerMode::Active | SequencerMode::Isolated => None,
+        }
     }
 }
 
@@ -79,8 +121,7 @@ impl Default for SequencerConfig {
         Self {
             sequencer_stopped: false,
             sequencer_recovery_mode: false,
-            isolated: false,
-            shadow_blocks_per_cycle: None,
+            mode: SequencerMode::Active,
             shadow_funding: None,
             conductor_rpc_url: None,
             conductor_binary_commit: false,
@@ -94,13 +135,53 @@ impl Default for SequencerConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::SequencerConfig;
+    use std::num::NonZeroU64;
+
+    use url::Url;
+
+    use super::{SequencerConfig, SequencerConfigError, SequencerMode};
 
     #[test]
-    fn isolated_disables_network_and_derivation_actor_construction() {
-        let config = SequencerConfig { isolated: true, ..Default::default() };
+    fn isolated_mode_is_reported() {
+        let config = SequencerConfig { mode: SequencerMode::Isolated, ..Default::default() };
 
-        assert!(!config.network_enabled());
-        assert!(!config.derivation_enabled());
+        assert!(config.is_isolated());
+        assert!(!config.is_shadow_sequencer());
+        assert_eq!(config.shadow_blocks_per_cycle(), None);
+    }
+
+    #[test]
+    fn shadow_mode_reports_its_block_count() {
+        let blocks_per_cycle = NonZeroU64::new(10).unwrap();
+        let config = SequencerConfig {
+            mode: SequencerMode::Shadow { blocks_per_cycle },
+            ..Default::default()
+        };
+
+        assert!(config.is_shadow_sequencer());
+        assert!(!config.is_isolated());
+        assert_eq!(config.shadow_blocks_per_cycle(), Some(blocks_per_cycle));
+    }
+
+    #[test]
+    fn validated_rejects_conductor_rpc_when_isolated() {
+        let config = SequencerConfig {
+            mode: SequencerMode::Isolated,
+            conductor_rpc_url: Some(Url::parse("http://localhost:8545").unwrap()),
+            ..Default::default()
+        };
+
+        let result = SequencerConfig::validated(config, false);
+
+        assert_eq!(result, Err(SequencerConfigError::IsolatedConductorRpc));
+    }
+
+    #[test]
+    fn validated_rejects_signing_key_when_isolated() {
+        let config = SequencerConfig { mode: SequencerMode::Isolated, ..Default::default() };
+
+        let result = SequencerConfig::validated(config, true);
+
+        assert_eq!(result, Err(SequencerConfigError::IsolatedSigningKey));
     }
 }

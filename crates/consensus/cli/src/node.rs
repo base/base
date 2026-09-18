@@ -8,8 +8,8 @@ use base_cli_utils::{LogConfig, RuntimeManager};
 use base_common_chains::ChainConfig;
 use base_common_genesis::RollupConfig;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder,
-    UpgradeSignalBuilderConfig,
+    EngineConfig, L1ConfigBuilder, NodeMode, RollupNode, RollupNodeBuilder, SequencerConfig,
+    SequencerMode, UpgradeSignalBuilderConfig,
 };
 use base_upgrade_signal::{
     UpgradeSignalArgs, UpgradeSignalConfig, UpgradeSignalDefaults, UpgradeSignalMetricLayer,
@@ -366,15 +366,16 @@ impl ConsensusNodeArgs {
             let has_signing_key = signer.sequencer_key.is_some()
                 || signer.sequencer_key_path.is_some()
                 || signer.endpoint.is_some();
-            if sequencer.isolated && has_signing_key {
-                eyre::bail!("isolated sequencer must not configure a signing key");
-            }
-            if !sequencer.isolated && !sequencer.is_shadow_sequencer() && !has_signing_key {
-                eyre::bail!(
-                    "sequencer mode requires a signing key; \
-                     provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
-                     or --p2p.signer.endpoint"
-                );
+            let sequencer = SequencerConfig::validated(sequencer, has_signing_key)?;
+            match sequencer.mode {
+                SequencerMode::Active if !has_signing_key => {
+                    eyre::bail!(
+                        "sequencer mode requires a signing key; \
+                         provide --p2p.sequencer.key, --p2p.sequencer.key.path, \
+                         or --p2p.signer.endpoint"
+                    );
+                }
+                SequencerMode::Active | SequencerMode::Shadow { .. } | SequencerMode::Isolated => {}
             }
         }
         Ok(())
