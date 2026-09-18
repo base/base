@@ -66,6 +66,14 @@ metadata and verify/reuse individual SSTs; consumers that do not ignore the exte
 the complete standard components. Do not remove the complete component archives until the
 migration gate is explicitly retired.
 
+### Main RocksDB index restore migration
+
+The `rocksdb_static` extension follows the same dual-format migration contract as
+`proofs_static`. Reth first restores the complete legacy `rocksdb_indices` component.
+The Base downloader then verifies the metadata files and restores only any missing,
+verified static SST archives. A manifest without this extension remains a normal legacy
+snapshot and the extension step is intentionally a no-op.
+
 #### Controlling legacy archives
 
 `--emit-legacy-rocksdb-archives` (or `SNAPSHOTTER_EMIT_LEGACY_ROCKSDB_ARCHIVES`) defaults

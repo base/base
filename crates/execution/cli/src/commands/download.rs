@@ -55,26 +55,41 @@ impl<C: ChainSpecParser<ChainSpec = BaseChainSpec>> BaseDownloadCommand<C> {
     pub async fn execute<N>(self) -> Result<()> {
         let Self { inner, proofs } = self;
 
-        let (data_dir, chain_id) = if proofs {
+        // Preserve the current command's behavior for proofs: resolve its data
+        // directory and chain only when the opt-in flag is selected.
+        let proofs_target = if proofs {
             let chain = inner
                 .chain_spec()
                 .ok_or_else(|| eyre::eyre!("--proofs flag is only on Base"))?
                 .chain();
-            let chain_id = chain.id();
             let dir = resolve_datadir_args(std::env::args_os()).resolve_datadir(chain);
             info!(target: "reth::cli", datadir = %dir.data_dir().display(), "Resolved datadir for proofs download");
-            (Some(dir), Some(chain_id))
+            Some((dir.data_dir().to_path_buf(), chain.id()))
         } else {
-            (None, None)
+            None
         };
 
+        // The optional indices extension applies only after reth has completed
+        // the standard component restore. Do not make it a prerequisite for a
+        // legacy download: a missing extension is a no-op.
+        let indices_target = inner.chain_spec().map(|spec| {
+            let chain = spec.chain();
+            (
+                resolve_datadir_args(std::env::args_os())
+                    .resolve_datadir(chain)
+                    .data_dir()
+                    .to_path_buf(),
+                chain.id(),
+            )
+        });
         inner.execute::<N>().await?;
 
-        if let (Some(data_dir), Some(chain_id)) = (data_dir, chain_id) {
-            let target_dir = data_dir.data_dir().to_path_buf();
+        if let Some((target_dir, chain_id)) = proofs_target {
             ProofsDownloader::run(&target_dir, chain_id).await?;
         }
-
+        if let Some((target_dir, chain_id)) = indices_target {
+            RocksdbIndicesDownloader::run_if_selected(&target_dir, chain_id).await?;
+        }
         Ok(())
     }
 }
@@ -218,6 +233,8 @@ struct ProofsDownloadManifest {
     components: BTreeMap<String, ComponentManifest>,
     #[serde(default)]
     proofs_static: Option<ProofsStaticManifest>,
+    #[serde(default)]
+    rocksdb_static: Option<ProofsStaticManifest>,
 }
 
 /// A concrete proof artifact to fetch and verify.
@@ -237,17 +254,20 @@ struct ProofsManifestEntry {
 struct ProofsDownloader;
 
 impl ProofsDownloader {
-    /// Runs the full proofs download pipeline for the given chain.
-    async fn run(target_dir: &Path, chain_id: u64) -> Result<()> {
-        // Resolve exactly as the current download command does: callers may pin
-        // a manifest, otherwise the snapshot API supplies the chain-specific URL.
-        let manifest_url = match resolve_manifest_url_arg(std::env::args_os()) {
-            Some(url) => url,
+    /// Resolves the exact manifest source used by the current download command.
+    async fn resolve_manifest_url(chain_id: u64) -> Result<String> {
+        match resolve_manifest_url_arg(std::env::args_os()) {
+            Some(url) => Ok(url),
             None => {
                 let api_url = DownloadDefaults::get_global().snapshot_api_url.as_ref();
-                discover_latest_manifest_url(api_url, chain_id).await?
+                discover_latest_manifest_url(api_url, chain_id).await
             }
-        };
+        }
+    }
+
+    /// Runs the full proofs download pipeline for the given chain.
+    async fn run(target_dir: &Path, chain_id: u64) -> Result<()> {
+        let manifest_url = Self::resolve_manifest_url(chain_id).await?;
         Self::run_from_manifest(target_dir, &manifest_url).await
     }
 
@@ -406,7 +426,7 @@ impl ProofsDownloader {
         }
         for file in files {
             let path = Path::new(&file.path);
-            if !file.path.starts_with("proofs/")
+            if !(file.path.starts_with("proofs/") || file.path.starts_with("rocksdb/"))
                 || path.is_absolute()
                 || path
                     .components()
@@ -554,6 +574,56 @@ impl ProofsDownloader {
         let decoder = zstd::Decoder::new(file)?;
         let mut archive = tar::Archive::new(decoder);
         archive.unpack(target_dir)?;
+        Ok(())
+    }
+}
+
+/// Restores immutable SSTs for the optional main `RocksDB` index component.
+#[derive(Debug)]
+struct RocksdbIndicesDownloader;
+
+impl RocksdbIndicesDownloader {
+    async fn run_if_selected(target_dir: &Path, chain_id: u64) -> Result<()> {
+        let manifest_url = ProofsDownloader::resolve_manifest_url(chain_id).await?;
+        Self::run_if_selected_from_manifest(target_dir, &manifest_url).await
+    }
+
+    async fn run_if_selected_from_manifest(target_dir: &Path, manifest_url: &str) -> Result<()> {
+        let client = reqwest::Client::new();
+        let manifest: ProofsDownloadManifest = client
+            .get(manifest_url)
+            .send()
+            .await
+            .map_err(|e| eyre::eyre!("failed to fetch manifest from {manifest_url}: {e}"))?
+            .error_for_status()?
+            .json()
+            .await?;
+        let Some(static_tables) = manifest.rocksdb_static else { return Ok(()) };
+        // Reth's normal downloader owns the complete legacy `rocksdb_indices`
+        // component. Only fetch static tables after its metadata files are present
+        // and verified locally.
+        if !ProofsDownloader::verify_outputs(target_dir, &static_tables.metadata.output_files)? {
+            return Ok(());
+        }
+        let base = manifest.base_url.as_deref().unwrap_or_else(|| {
+            manifest_url.rsplit_once('/').map(|(base, _)| base).unwrap_or(manifest_url)
+        });
+        let cache_dir = target_dir.join(".snapshot-cache");
+        tokio::fs::create_dir_all(&cache_dir).await?;
+        for table in static_tables.tables {
+            let entry = ProofsDownloader::entry_from_archive(&table, base)?;
+            if ProofsDownloader::verify_outputs(target_dir, &entry.output_files)? {
+                continue;
+            }
+            ProofsDownloader::cleanup_outputs(target_dir, &entry.output_files);
+            let archive = ProofsDownloader::download_archive(&entry, &cache_dir).await?;
+            ProofsDownloader::extract_tar_zst(&archive, target_dir)?;
+            tokio::fs::remove_file(archive).await.ok();
+            if !ProofsDownloader::verify_outputs(target_dir, &entry.output_files)? {
+                eyre::bail!("RocksDB SST verification failed after extraction")
+            }
+        }
+        tokio::fs::remove_dir_all(cache_dir).await.ok();
         Ok(())
     }
 }
@@ -731,6 +801,55 @@ mod tests {
         ProofsDownloader::run_from_manifest(target.path(), &url).await.unwrap();
         assert_eq!(std::fs::read(target.path().join("proofs/000001.sst")).unwrap(), b"table");
         ProofsDownloader::run_from_manifest(target.path(), &url).await.unwrap();
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn restores_main_rocksdb_static_tables_after_standard_metadata_download() {
+        let table = create_proofs_archive(&[("rocksdb/000001.sst", b"index-table")]);
+        let current = b"MANIFEST-000001\n";
+        let manifest_file = b"manifest";
+        let manifest = serde_json::json!({
+            "components": {
+                "rocksdb_indices": {
+                    "file": "42/rocksdb-indices-metadata.tar.zst",
+                    "size": 1,
+                    "output_files": [
+                        output("rocksdb/CURRENT", current),
+                        output("rocksdb/MANIFEST-000001", manifest_file)
+                    ]
+                }
+            },
+            "rocksdb_static": {
+                "version": 1,
+                "database": "rocksdb",
+                "metadata": {
+                    "file": "1/rocksdb-indices-metadata.tar.zst",
+                    "size": 1,
+                    "output_files": [
+                        output("rocksdb/CURRENT", current),
+                        output("rocksdb/MANIFEST-000001", manifest_file)
+                    ]
+                },
+                "tables": [{
+                    "file": "static_files/rocksdb/table.tar.zst",
+                    "size": table.len(),
+                    "output_files": [output("rocksdb/000001.sst", b"index-table")]
+                }]
+            }
+        });
+        let mut archives = HashMap::new();
+        archives.insert("static_files/rocksdb/table.tar.zst".to_string(), table);
+        let target = tempfile::tempdir().unwrap();
+        let rocksdb = target.path().join("rocksdb");
+        std::fs::create_dir_all(&rocksdb).unwrap();
+        std::fs::write(rocksdb.join("CURRENT"), current).unwrap();
+        std::fs::write(rocksdb.join("MANIFEST-000001"), manifest_file).unwrap();
+
+        let (url, handle) = start_test_server(manifest, archives).await;
+        RocksdbIndicesDownloader::run_if_selected_from_manifest(target.path(), &url).await.unwrap();
+        assert_eq!(std::fs::read(rocksdb.join("000001.sst")).unwrap(), b"index-table");
+        RocksdbIndicesDownloader::run_if_selected_from_manifest(target.path(), &url).await.unwrap();
         handle.abort();
     }
 
