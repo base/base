@@ -4866,6 +4866,7 @@ dependencies = [
  "ethereum_ssz",
  "eyre",
  "reth-chainspec",
+ "reth-cli-util",
  "serde",
  "serde_json",
  "sha2 0.10.9",

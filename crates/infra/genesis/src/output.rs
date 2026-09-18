@@ -110,7 +110,8 @@ impl GenesisOutput {
             ("SEQ1_P2P_KEY", "sequencer-1-p2p-key.txt"),
             ("SEQ2_P2P_KEY", "sequencer-2-p2p-key.txt"),
         ] {
-            Self::write(output.join("l2").join(file), format!("{}\n", settings[key]).as_bytes())?;
+            // Reth's P2P key loader parses the whole file without trimming whitespace.
+            Self::write(output.join("l2").join(file), settings[key].as_bytes())?;
         }
         Ok(())
     }
@@ -165,5 +166,30 @@ impl GenesisOutput {
         }
         Self::write(output.join(".setup-complete"), &serde_json::to_vec_pretty(self)?)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reth_cli_util::get_secret_key;
+    use tempfile::tempdir;
+
+    use crate::GenesisOutput;
+
+    #[test]
+    fn generated_p2p_keys_load_with_reth() {
+        let directory = tempdir().unwrap();
+        let settings = serde_json::from_str(include_str!("../assets/keys.json")).unwrap();
+        GenesisOutput::write_keys(directory.path(), &settings).unwrap();
+        for (name, file) in [
+            ("BUILDER_P2P_KEY", "builder-p2p-key.txt"),
+            ("L2_EL_BOOTNODE_P2P_KEY", "el-bootnode-p2p-key.txt"),
+            ("L2_CL_BOOTNODE_P2P_KEY", "cl-bootnode-p2p-key.txt"),
+            ("SEQ1_P2P_KEY", "sequencer-1-p2p-key.txt"),
+            ("SEQ2_P2P_KEY", "sequencer-2-p2p-key.txt"),
+        ] {
+            let key = get_secret_key(&directory.path().join("l2").join(file)).unwrap();
+            assert_eq!(key.display_secret().to_string(), settings[name]);
+        }
     }
 }
