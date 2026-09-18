@@ -138,9 +138,11 @@ impl L1Stack {
             self.beacon.capture_diagnostics(directory),
             self.validator.capture_diagnostics(directory),
         );
-        reth?;
-        beacon?;
-        validator?;
+        let failures: Vec<_> = [("reth", reth), ("beacon", beacon), ("validator", validator)]
+            .into_iter()
+            .filter_map(|(client, result)| result.err().map(|error| format!("{client}: {error:#}")))
+            .collect();
+        eyre::ensure!(failures.is_empty(), "L1 diagnostics failed: {}", failures.join("; "));
         Ok(())
     }
 
