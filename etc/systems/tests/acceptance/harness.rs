@@ -39,7 +39,9 @@ impl Acceptance {
                 Ok((rpc, system))
             },
             async |state: &(Rpc, SystemTestStack)| scenario(&state.0, &state.1).await,
-            async |state: &(Rpc, SystemTestStack)| state.1.capture_diagnostics(&artifacts).await,
+            async |state: &(Rpc, SystemTestStack)| {
+                state.1.capture_diagnostics(&artifacts.join("diagnostics")).await
+            },
             async |state: (Rpc, SystemTestStack)| state.1.shutdown().await,
         )
         .await;
@@ -59,9 +61,8 @@ impl Acceptance {
             "scenario name must contain only ASCII letters, digits, hyphens, or underscores"
         );
         std::fs::create_dir_all(parent)?;
-        // Retain the existing runner's prefix until the suite-wide artifact contract changes.
         Ok(tempfile::Builder::new()
-            .prefix(&format!("glamsterdam-blob-{name}-"))
+            .prefix(&format!("acceptance-{name}-"))
             .tempdir_in(parent)?
             .keep())
     }
@@ -187,7 +188,8 @@ mod tests {
             "startup-failure",
             async |path| {
                 *directory.borrow_mut() = Some(path.to_owned());
-                std::fs::write(path.join("startup.log"), "client startup failed")?;
+                std::fs::create_dir_all(path.join("diagnostics"))?;
+                std::fs::write(path.join("diagnostics/startup.log"), "client startup failed")?;
                 Err(eyre!("fixture unavailable"))
             },
             async |_, _| panic!("scenario must not run"),
@@ -199,7 +201,7 @@ mod tests {
         assert!(message.contains(directory.to_str().unwrap()), "{message}");
         assert!(message.contains("setup failed: fixture unavailable"), "{message}");
         assert_eq!(
-            std::fs::read_to_string(directory.join("startup.log")).unwrap(),
+            std::fs::read_to_string(directory.join("diagnostics/startup.log")).unwrap(),
             "client startup failed"
         );
         std::fs::remove_dir_all(directory).unwrap();

@@ -1,10 +1,19 @@
-name: Glamsterdam Acceptance
+name: Acceptance Tests
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - '.depot/workflows/acceptance.yml'
+      - '.depot/actions/setup/**'
+      - '.config/nextest.toml'
+      - 'etc/systems/**'
+      - 'etc/docker/Justfile'
+      - 'etc/docker/Dockerfile.devnet'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'Justfile'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -20,7 +29,7 @@ permissions:
 
 jobs:
   acceptance:
-    name: Glamsterdam acceptance (advisory)
+    name: Acceptance tests (advisory)
     runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 110
     steps:
@@ -51,24 +60,22 @@ jobs:
         if: ${{ always() && hashFiles('target/nextest/acceptance/test-results.xml') != '' }}
         uses: mikepenz/action-junit-report@bccf2e31636835cf0874589931c4116687171386 # v6.4.0
         with:
-          check_name: Glamsterdam Acceptance Results
+          check_name: Acceptance Test Results
           report_paths: target/nextest/acceptance/test-results.xml
       - name: Upload acceptance diagnostics and JUnit
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: glamsterdam-acceptance-${{ github.run_attempt }}
+          name: acceptance-${{ github.run_attempt }}
           # Export configs and captured diagnostics, not root-owned validator runtime state.
           path: |
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/*.json
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/*.log
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/networks
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/diagnostics/*.log
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/el/*.json
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/l2/*.json
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/cl/config.yaml
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/cl/glamsterdam-schedule.json
-            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/glamsterdam-blob-*/cl/genesis.ssz
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/diagnostics/
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/networks
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/el/*.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/l2/*.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/cl/config.yaml
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/cl/*.json
+            ${{ runner.temp }}/base-acceptance-${{ github.run_id }}-${{ github.run_attempt }}/acceptance-*/cl/genesis.ssz
             target/nextest/acceptance/test-results.xml
           if-no-files-found: warn
           retention-days: 14
