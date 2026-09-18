@@ -73,15 +73,18 @@ impl Qualification {
         let spec = self.beacon("/eth/v1/config/spec").await?;
         ensure!(spec["data"]["PRESET_BASE"] == "minimal", "unexpected CL preset");
         ensure!(
-            spec["data"]["SLOTS_PER_EPOCH"] == schedule.slots_per_epoch.to_string(),
+            spec["data"]["SLOTS_PER_EPOCH"].as_str().and_then(|value| value.parse().ok())
+                == Some(schedule.slots_per_epoch),
             "CL epoch length mismatch"
         );
         ensure!(
-            spec["data"]["SECONDS_PER_SLOT"] == schedule.slot_duration.to_string(),
+            spec["data"]["SECONDS_PER_SLOT"].as_str().and_then(|value| value.parse().ok())
+                == Some(schedule.slot_duration),
             "CL slot duration mismatch"
         );
         ensure!(
-            spec["data"]["GLOAS_FORK_EPOCH"] == schedule.activation_epoch.to_string(),
+            spec["data"]["GLOAS_FORK_EPOCH"].as_str().and_then(|value| value.parse().ok())
+                == Some(schedule.activation_epoch),
             "CL activation epoch mismatch"
         );
         let genesis = self.block("0x0").await?;
