@@ -115,7 +115,7 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
 }
 
 /// A second startup must wait for the migration lock without holding a snapshot that blocks
-/// the first startup's concurrent index build. Use SQLx itself as the lock holder so this also
+/// the first startup's concurrent index build. Use `SQLx` itself as the lock holder so this also
 /// checks that pool initialization still coordinates with its migration lock.
 #[tokio::test]
 async fn shadow_indexer_migration_waiter_does_not_block_concurrent_index() -> anyhow::Result<()> {
