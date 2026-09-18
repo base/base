@@ -143,10 +143,13 @@ impl L2ClientConsensus {
     }
 
     /// Stops the client consensus task.
-    pub async fn shutdown(self) {
+    pub async fn shutdown(self) -> Result<()> {
         match self {
-            Self::Validator(consensus) => drop(consensus),
-            Self::Follow(consensus) => consensus.shutdown().await,
+            Self::Validator(consensus) => consensus.shutdown().await,
+            Self::Follow(consensus) => {
+                consensus.shutdown().await;
+                Ok(())
+            }
         }
     }
 }
@@ -621,17 +624,36 @@ impl L2Stack {
             shadow_sequencers,
         } = self;
 
-        for shadow in shadow_sequencers {
-            shadow.shutdown().await.wrap_err("Failed to shut down shadow sequencer")?;
+        let mut errors = Vec::new();
+        // Stop batch production before any of its execution or rollup RPC dependencies.
+        if let Err(error) = batcher.shutdown().await {
+            errors.push(format!("batcher: {error:#}"));
         }
 
-        client_consensus.shutdown().await;
-        drop(batcher);
-        drop(builder_consensus);
+        for (index, shadow) in shadow_sequencers.into_iter().enumerate() {
+            if let Err(error) = shadow.shutdown().await {
+                errors.push(format!("shadow sequencer {index}: {error:#}"));
+            }
+        }
 
-        client.shutdown().await.wrap_err("Failed to shut down L2 client")?;
-        builder.shutdown().await.wrap_err("Failed to shut down L2 builder")?;
+        if let Err(error) = client_consensus.shutdown().await {
+            errors.push(format!("client consensus: {error:#}"));
+        }
+        if let Err(error) = builder_consensus.shutdown().await {
+            errors.push(format!("builder consensus: {error:#}"));
+        }
 
-        Ok(())
+        if let Err(error) = client.shutdown().await {
+            errors.push(format!("L2 client: {error:#}"));
+        }
+        if let Err(error) = builder.shutdown().await {
+            errors.push(format!("L2 builder: {error:#}"));
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(eyre::eyre!("L2 stack shutdown failures: {}", errors.join("; ")))
+        }
     }
 }
