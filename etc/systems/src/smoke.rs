@@ -448,7 +448,7 @@ impl SystemTestStackBuilder {
     ///
     /// Requires prebuilt fixture images and a fresh caller-owned `with_output_dir` for
     /// retained startup diagnostics. Does not change any Base L2 fork configuration.
-    pub fn with_l1_glamsterdam(mut self, config: GlamsterdamConfig) -> Self {
+    pub const fn with_l1_glamsterdam(mut self, config: GlamsterdamConfig) -> Self {
         self.devnet_config.l1_slot_duration = config.slot_duration;
         self.l1_glamsterdam = Some(config);
         self
@@ -1017,17 +1017,17 @@ impl SystemTestStackBuilder {
             #[cfg(feature = "upgrade-signal")]
             _runtime_upgrade_signal_guard: runtime_upgrade_signal_guard,
         };
-        if let Some(schedule) = glamsterdam_schedule {
-            if let Err(error) = schedule.ensure_pre_fork() {
-                if let Some(directory) = glamsterdam_artifacts {
-                    let diagnostics = system.l1_stack().capture_diagnostics(&directory).await;
-                    if let Err(diagnostic_error) = diagnostics {
-                        tracing::error!(%diagnostic_error, "failed to capture late-start diagnostics");
-                    }
+        if let Some(schedule) = glamsterdam_schedule
+            && let Err(error) = schedule.ensure_pre_fork()
+        {
+            if let Some(directory) = glamsterdam_artifacts {
+                let diagnostics = system.l1_stack().capture_diagnostics(&directory).await;
+                if let Err(diagnostic_error) = diagnostics {
+                    tracing::error!(%diagnostic_error, "failed to capture late-start diagnostics");
                 }
-                system.shutdown().await?;
-                return Err(error);
             }
+            system.shutdown().await?;
+            return Err(error);
         }
         Ok(system)
     }
