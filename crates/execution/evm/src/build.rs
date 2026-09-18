@@ -1,8 +1,8 @@
 use alloc::sync::Arc;
 
 use alloy_consensus::{
-    Block, BlockBody, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt, constants::EMPTY_WITHDRAWALS,
-    proofs,
+    Block, BlockBody, BlockHeader, EMPTY_OMMER_ROOT_HASH, Header, TxReceipt,
+    constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_evm::block::BlockExecutorFactory;
@@ -10,7 +10,7 @@ use alloy_primitives::logs_bloom;
 use base_common_chains::Upgrades;
 use base_common_consensus::DepositReceiptExt;
 use base_common_evm::BaseBlockExecutionCtx;
-use base_execution_consensus::{calculate_receipt_root_no_memo, isthmus};
+use base_execution_consensus::{WithdrawalsRoot, calculate_receipt_root_no_memo};
 use reth_evm::execute::{BlockAssembler, BlockAssemblerInput};
 use reth_execution_errors::BlockExecutionError;
 use reth_execution_types::BlockExecutionResult;
@@ -31,14 +31,14 @@ impl<ChainSpec> BaseBlockAssembler<ChainSpec> {
 }
 
 impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
-    /// Builds a block for `input` without any bounds on header `H`.
+    /// Builds a block for `input`, reusing the parent withdrawals root when storage is unchanged.
     pub fn assemble_block<
         F: for<'a> BlockExecutorFactory<
                 ExecutionCtx<'a>: Into<BaseBlockExecutionCtx>,
                 Transaction: SignedTransaction,
                 Receipt: Receipt + DepositReceiptExt,
             >,
-        H,
+        H: BlockHeader,
     >(
         &self,
         input: BlockAssemblerInput<'_, '_, F, H>,
@@ -51,6 +51,7 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
             bundle_state,
             state_root,
             state_provider,
+            parent,
             ..
         } = input;
         let ctx = ctx.into();
@@ -71,8 +72,13 @@ impl<ChainSpec: Upgrades> BaseBlockAssembler<ChainSpec> {
                 // withdrawals root field in block header is used for storage root of L2 predeploy
                 // `l2tol1-message-passer`
                 Some(
-                    isthmus::withdrawals_root(bundle_state, state_provider)
-                        .map_err(BlockExecutionError::other)?,
+                    WithdrawalsRoot::compute(
+                        bundle_state,
+                        state_provider,
+                        parent.header(),
+                        &*self.chain_spec,
+                    )
+                    .map_err(BlockExecutionError::other)?,
                 )
             } else if Upgrades::is_canyon_active_at_timestamp(&*self.chain_spec, timestamp) {
                 Some(EMPTY_WITHDRAWALS)

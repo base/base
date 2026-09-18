@@ -10,7 +10,7 @@
 
 extern crate alloc;
 
-use alloc::{format, sync::Arc};
+use alloc::{boxed::Box, format, sync::Arc};
 
 use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, Header, constants::MAXIMUM_EXTRA_DATA_SIZE,
@@ -35,6 +35,11 @@ pub use proof::{calculate_receipt_root, calculate_receipt_root_no_memo};
 
 pub mod validation;
 pub use validation::{canyon, isthmus, validate_base_time_metadata, validate_block_post_execution};
+
+mod withdrawals;
+pub use withdrawals::WithdrawalsRoot;
+#[cfg(test)]
+pub use withdrawals::tests as withdrawals_root_test_utils;
 
 pub mod error;
 pub use error::BaseConsensusError;
