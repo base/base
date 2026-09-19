@@ -164,6 +164,17 @@ cargo run -p base-acceptance-cli -- cleanup \
   --manifest target/acceptance/smoke/private/ownership.json
 ```
 
+Cleanup requires the local `devnet-setup:local-v2` image to remove root-owned chain
+state. If that image was removed after the run, rebuild it from the same checkout
+before retrying cleanup:
+
+```console
+docker build --tag devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
+```
+
+Recovery must run on the original machine and Docker daemon with the recorded
+repository and output paths intact; the manifest is not a portable backup.
+
 ## Results and status
 
 A run writes these user-facing files below `<output>/report/`:

@@ -170,7 +170,7 @@ impl Provisioner {
                 "base-shadow-validator" => Some(8845),
                 _ => None,
             };
-            overlay.push_str(&format!("  {name}:\n    ports: !override"));
+            overlay.push_str(&format!("  {}:\n    ports: !override", serde_json::to_string(name)?));
             if let Some(port) = port {
                 overlay.push_str(&format!("\n      - \"127.0.0.1::{port}\"\n"));
             } else {
@@ -356,6 +356,7 @@ impl Provisioner {
     }
 
     /// Stops owned resources and deletes only this run's freshly generated state.
+    /// Removing root-owned state requires the local `devnet-setup:local-v2` image.
     pub async fn cleanup(&mut self) -> Result<()> {
         if self.owned {
             self.compose(

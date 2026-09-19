@@ -362,6 +362,9 @@ impl RpcObserver {
     }
 
     /// Requires every sample to be available and fresh for the complete window.
+    /// Block age uses the host's Unix wall clock, while the observation window uses monotonic time.
+    /// Keep the host clock synchronized: clock skew or backward adjustments can cause a fresh
+    /// head to appear stale or in the future.
     pub async fn fresh(
         &self,
         url: &str,

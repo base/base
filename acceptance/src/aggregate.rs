@@ -233,6 +233,8 @@ impl Aggregate {
     }
 
     /// Copies evidence only when its canonical source remains in the source bundle and total bytes are bounded.
+    /// Source and destination bundles must not be mutated concurrently; path checks do not isolate
+    /// aggregation from another process changing the filesystem during a copy.
     pub fn copy_evidence(
         source_result: &Path,
         output: &Path,
@@ -403,6 +405,8 @@ impl Aggregate {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     use serde_json::json;
     use tempfile::TempDir;
@@ -574,5 +578,49 @@ mod tests {
         assert_eq!(fs::read_to_string(output.join(&checks[0].evidence[1])).unwrap(), "b");
         assert_eq!(checks[1].status, Status::Error);
         assert!(checks[1].evidence.is_empty());
+    }
+
+    #[test]
+    fn bounded_read_accepts_the_limit_and_rejects_larger_files() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        file.as_file().set_len(20 * 1024 * 1024).unwrap();
+        assert_eq!(Aggregate::bounded_read(file.path()).unwrap().len(), 20 * 1024 * 1024);
+        file.as_file().set_len(20 * 1024 * 1024 + 1).unwrap();
+        assert!(Aggregate::bounded_read(file.path()).unwrap_err().to_string().contains("20 MiB"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn evidence_symlinks_and_escaping_parent_links_are_not_copied() {
+        let temp = TempDir::new().unwrap();
+        let bundle = temp.path().join("bundle");
+        let output = temp.path().join("output");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(bundle.join("evidence")).unwrap();
+        fs::create_dir(&outside).unwrap();
+        fs::write(bundle.join("evidence/regular.txt"), "allowed evidence").unwrap();
+        fs::write(outside.join("secret.txt"), "must not be copied").unwrap();
+        symlink("regular.txt", bundle.join("evidence/internal-link.txt")).unwrap();
+        symlink(outside.join("secret.txt"), bundle.join("evidence/external-link.txt")).unwrap();
+        symlink(&outside, bundle.join("evidence/parent-link")).unwrap();
+        let mut scenario = scenario(&["check-a"]);
+        scenario.checks[0].evidence = vec![
+            "evidence/regular.txt".into(),
+            "evidence/internal-link.txt".into(),
+            "evidence/external-link.txt".into(),
+            "evidence/parent-link/secret.txt".into(),
+        ];
+        let mut copied = 0;
+        Aggregate::copy_evidence(&bundle.join("result.json"), &output, &mut scenario, &mut copied);
+        assert_eq!(scenario.checks[0].status, Status::Error);
+        assert_eq!(scenario.checks[0].evidence.len(), 1);
+        assert_eq!(scenario.diagnostics.len(), 3);
+        assert_eq!(copied, 16);
+        assert_eq!(
+            fs::read_to_string(output.join(&scenario.checks[0].evidence[0])).unwrap(),
+            "allowed evidence"
+        );
+        let directory = output.join("evidence/scenario-a/check-a/evidence");
+        assert_eq!(fs::read_dir(directory).unwrap().count(), 1);
     }
 }
