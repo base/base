@@ -103,6 +103,10 @@ test: install-nextest build::contracts build::elfs
 check-snapshot-manifests:
     cargo test --locked -p base --test snapshot_defaults -- --ignored --nocapture
 
+# Runs one real-devnet acceptance scenario (requires Docker and no existing devnet)
+acceptance scenario="smoke":
+    cargo run --locked -p base-acceptance-cli -- run acceptance/scenarios/{{ scenario }}.toml --output target/acceptance/{{ scenario }}-$(date +%s)
+
 # Runs tests only for crates affected by changes vs main (excludes system tests)
 test-affected base="main": install-nextest build::contracts build::elfs
     #!/usr/bin/env bash

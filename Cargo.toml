@@ -11,6 +11,7 @@ exclude = [".github/"]
 resolver = "2"
 exclude = ["actions/fixtures", "crates/proof/zk/programs"]
 members = [
+  "acceptance",
   "actions/*",
   "bin/[a-o]*",
   "bin/[q-z]*",
@@ -223,6 +224,7 @@ base-execution-eip8130-rpc-node = { path = "crates/execution/eip8130-rpc-node" }
 base-execution-eip8130 = { path = "crates/execution/eip8130", default-features = false }
 
 # Infra
+base-acceptance = { path = "acceptance" }
 basectl-cli = { path = "crates/infra/basectl" }
 base-roxy = { path = "crates/infra/roxy" }
 base-sidecrush = { path = "crates/infra/sidecrush" }
