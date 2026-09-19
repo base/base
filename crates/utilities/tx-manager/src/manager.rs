@@ -1626,9 +1626,9 @@ where
                 }
             }
 
-            // The deadline only reaps pollers of transactions that are not mined. Once a
-            // transaction is mined the send loop stops fee bumping and relies on this
-            // poller alone, so it must run until the confirmation depth is reached.
+            // Give up at the deadline only if the transaction is not mined. Once it is mined
+            // the send loop stops fee bumping and relies on this poller alone, so keep polling
+            // until the confirmation depth is reached.
             if runtime.now() >= deadline && !send_state.is_mined(tx_hash) {
                 warn!(
                     tx_hash = %tx_hash,
@@ -2071,7 +2071,7 @@ mod tests {
     #[test]
     fn wait_mined_keeps_polling_mined_tx_past_confirmation_timeout() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            // A canonical receipt for a transaction mined in block 10.
+            // Build a canonical receipt for a transaction mined in block 10.
             let tx_hash = B256::with_last_byte(1);
             let block_hash = B256::with_last_byte(2);
             let receipt: TransactionReceipt = TransactionReceipt {
@@ -2098,8 +2098,8 @@ mod tests {
             let mut block: Block = Block::default();
             block.header.hash = block_hash;
 
-            // Five confirmations are required, so the transaction is confirmed once the tip
-            // is 14. That only happens on the poll after the 3s timeout.
+            // Script the chain tip so the 5 required confirmations are only reached at tip 14,
+            // on the poll after the 3s timeout.
             let asserter = Asserter::new();
             for tip in [10u64, 10, 10, 10, 14] {
                 asserter.push_success(&tip);
