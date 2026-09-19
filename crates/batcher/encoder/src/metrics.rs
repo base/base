@@ -26,7 +26,7 @@ base_metrics::define_metrics! {
             "safe_head_reorg",
             "safe_head_mismatch",
             "stalled_channel",
-            "admin_pause",
+            "admin_stop",
         ]
     )]
     pipeline_reset_total: counter,
@@ -97,7 +97,7 @@ impl BatcherMetrics {
     pub const RESET_STALLED_CHANNEL: &'static str = "stalled_channel";
 
     /// The batcher was stopped through the admin API.
-    pub const RESET_ADMIN_PAUSE: &'static str = "admin_pause";
+    pub const RESET_ADMIN_STOP: &'static str = "admin_stop";
 
     /// Submission accepted and handed to the tx manager.
     pub const OUTCOME_SUBMITTED: &'static str = "submitted";
