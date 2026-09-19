@@ -30,12 +30,11 @@ echo "Sending L2 tx to client..."
 cast send --private-key $PK --rpc-url $L2_CLIENT_RPC_URL $TO --value 0.001ether --json | jq -r '"TX: \(.transactionHash) block=\(.blockNumber)"'
 
 echo ""
-echo "=== L2 Ingress Transaction Tests ==="
-INGRESS_HEALTH_URL="http://localhost:${L2_INGRESS_HEALTH_PORT:-8081}/health"
-if curl -sf "$INGRESS_HEALTH_URL" >/dev/null 2>&1; then
-    echo "Sending L2 tx through ingress..."
+echo "=== L2 Proxyd Transaction Tests ==="
+if cast chain-id --rpc-url $L2_INGRESS_RPC_URL >/dev/null 2>&1; then
+    echo "Sending L2 tx through proxyd..."
     sleep 3  # wait for the previous tx's nonce to be reflected on-chain
     cast send --private-key $PK --rpc-url $L2_INGRESS_RPC_URL $TO --value 0.001ether --json | jq -r '"TX: \(.transactionHash) block=\(.blockNumber)"'
 else
-    echo "Ingress not running (start with: just devnet ingress)"
+    echo "Proxyd not running (start with: just devnet ingress)"
 fi

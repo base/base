@@ -113,7 +113,7 @@ and `privateKey` before ingest.
 Core devnet (`just devnet up` / `just devnet up-single`) enables durable
 transaction event journals on `base-client` and `base-builder`, writing JSONL
 under `.devnet/transaction-events/`. The ingress overlay adds the collection
-pipeline (Vector, Postgres, `audit-archiver`) plus ingress/proxyd producers; it
+pipeline (Vector, Postgres, `audit-archiver`) plus the proxyd producer; it
 does not own node journal config.
 
 ```bash
@@ -130,8 +130,8 @@ BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet ingress
 just devnet tx-observability-smoke
 ```
 
-The smoke test sends one transaction through ingress, waits for Vector to ship
-JSONL events from ingress, proxyd, txpool tracing, and builder producers, and
+The smoke test sends one transaction through proxyd, waits for Vector to ship
+JSONL events from proxyd, txpool tracing, and builder producers, and
 verifies `audit-archiver` can read the persisted events back from Postgres by
 transaction hash.
 
@@ -143,8 +143,8 @@ For local Vector health, alert or inspect `component_discarded_events_total`.
 
 - `base-reth-node`
 - `base-builder`
-- `ingress-rpc`
 - `base-routing/proxyd`
+- `ingress-rpc` (retired; retained so historical events remain readable)
 
 ## Txpool Tracing Example
 
@@ -167,11 +167,11 @@ Edge/proxy:
 - `PROXY_ROUTED_TO_BACKEND`
 - `PROXY_BACKEND_SUCCESS`
 - `PROXY_BACKEND_FAILURE`
-- `PROXY_INGRESS_RPC_ATTEMPT`
-- `PROXY_INGRESS_RPC_SUCCESS`
-- `PROXY_INGRESS_RPC_FAILURE`
+- `PROXY_INGRESS_RPC_ATTEMPT` (retired)
+- `PROXY_INGRESS_RPC_SUCCESS` (retired)
+- `PROXY_INGRESS_RPC_FAILURE` (retired)
 
-Ingress/audit:
+Ingress/audit (retired producer; retained so historical events remain readable):
 
 - `INGRESS_RECEIVED`
 - `SIMULATION_STARTED`
