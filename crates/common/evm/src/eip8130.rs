@@ -1416,8 +1416,9 @@ impl Eip8130Executor {
             input: CallInput::Bytes(data),
             return_memory_offset: 0..0,
             gas_limit,
-            // Base never enables EIP-8037 (Amsterdam is `ForkCondition::Never`),
-            // so the state-gas reservoir is always zero.
+            // Protocol calls currently receive only regular gas here. EIP-8130
+            // reservoir accounting is a separate prerequisite for activating Zenith,
+            // which inherits Denim's Amsterdam spec.
             reservoir: 0,
             bytecode_address: to,
             known_bytecode,

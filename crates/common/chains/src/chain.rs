@@ -2,9 +2,9 @@ use core::ops::Index;
 
 // Production imports for upgrade implementations
 use EthereumHardfork::{
-    Amsterdam, ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao,
-    Frontier, GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris, Petersburg,
-    SpuriousDragon, Tangerine,
+    ArrowGlacier, Berlin, Bpo1, Bpo2, Bpo3, Bpo4, Bpo5, Byzantium, Constantinople, Dao, Frontier,
+    GrayGlacier, Homestead, Istanbul, London, MuirGlacier, Paris, Petersburg, SpuriousDragon,
+    Tangerine,
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
 use alloy_primitives::U256;
@@ -103,7 +103,7 @@ impl Index<EthereumHardfork> for ChainUpgrades {
 
         match hf {
             // Dao Upgrade is not needed for ChainUpgrades
-            Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 | Amsterdam => &ForkCondition::Never,
+            Dao | Bpo1 | Bpo2 | Bpo3 | Bpo4 | Bpo5 => &ForkCondition::Never,
             Frontier | Homestead | Tangerine | SpuriousDragon | Byzantium | Constantinople
             | Petersburg | Istanbul | MuirGlacier | Berlin => &ForkCondition::ZERO_BLOCK,
             London | ArrowGlacier | GrayGlacier => &self[BaseUpgrade::Bedrock],
@@ -371,6 +371,18 @@ mod tests {
             zeronet_forks.ethereum_fork_activation(EthereumHardfork::Osaka),
             ForkCondition::Timestamp(1_782_348_888)
         );
+    }
+
+    #[test]
+    fn amsterdam_tracks_denim_activation() {
+        let unscheduled = ChainUpgrades::new([]);
+        assert_eq!(unscheduled[EthereumHardfork::Amsterdam], ForkCondition::Never);
+        assert!(!unscheduled.is_amsterdam_active_at_timestamp(u64::MAX));
+
+        let scheduled = ChainUpgrades::new([(Denim, ForkCondition::Timestamp(42))]);
+        assert_eq!(scheduled[EthereumHardfork::Amsterdam], ForkCondition::Timestamp(42));
+        assert!(!scheduled.is_amsterdam_active_at_timestamp(41));
+        assert!(scheduled.is_amsterdam_active_at_timestamp(42));
     }
 
     #[test]

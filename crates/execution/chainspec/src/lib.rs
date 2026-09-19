@@ -16,6 +16,9 @@ pub use basefee::*;
 mod builder;
 pub use builder::BaseChainSpecBuilder;
 
+mod engine;
+pub use engine::BaseEngineApiForks;
+
 mod upgrades;
 pub use upgrades::ChainUpgradesExt;
 
