@@ -598,7 +598,7 @@ where
                             });
                         }
                     }
-                    // All commands except Flush loop to await the next real event.
+                    // Await the next real event. Only a flush on a running batcher returns above.
                     continue;
                 }
 
