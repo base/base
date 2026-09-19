@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 eyre.workspace = true
+chrono.workspace = true
 humantime.workspace = true
 clap = { workspace = true, features = ["derive"] }
 reqwest = { workspace = true, features = ["json"] }

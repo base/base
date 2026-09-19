@@ -270,6 +270,7 @@ base-acceptance run acceptance/scenarios/smoke.toml --output target/acceptance/l
 base-acceptance check acceptance/scenarios/smoke.toml --endpoints endpoints.json
 base-acceptance report path/to/result.json --output path/to/report
 base-acceptance aggregate --expected expected.json --results results/ --output report/
+base-acceptance publish --event event.json --result result.json --expected expected.json --run-id run-1 --attempt 1 --started-at 2026-09-19T00:00:00Z
 base-acceptance cleanup --manifest path/to/private/ownership.json
 ```
 
@@ -597,9 +598,10 @@ provenance.
    artifacts. Validate identity/schema/bounds; synthesize incomplete/error entries
    for missing scenarios. Re-render aggregate HTML/Markdown, upload the report,
    write the step summary, then enforce the truthful aggregate conclusion.
-4. **Comment:** a distinct, minimal-permission publisher upserts the PR comment
-   from validated data using trusted code. No checkout or execution of PR code in
-   a job with comment-write credentials.
+4. **Comment:** a distinct, minimal-permission Rust publisher upserts the PR
+   comment from validated data. It checks out and builds the CLI from the trusted
+   base revision before downloading untrusted artifacts; no PR code or binary is
+   executed in a job with comment-write credentials.
 
 Initial image strategy: build/load within each scenario runner; this is simplest
 for the first one or two scenarios and benefits from warm remote layers. Measure

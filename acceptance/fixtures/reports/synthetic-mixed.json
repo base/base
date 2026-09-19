@@ -37,7 +37,7 @@
         {"id":"checks","status":"failed","duration_ms":58000,"message":"A synthetic assertion failed"},
         {"id":"cleanup","status":"passed","duration_ms":2000,"message":"Synthetic cleanup completed"}
       ],
-      "checks": [{"id":"validator-catches-up","kind":"heads_converge","status":"failed","duration_ms":58000,"expected":{"max_lag_blocks":5,"common_height_hashes_equal":true},"observed":{"lag_blocks":14,"common_height_hashes_equal":true,"at_elapsed_ms":50000},"message":"Validator lag was 14 blocks at the deadline; the allowed maximum was 5.","next_step":"Inspect validator derivation and engine logs for the recorded observation window.","samples":9,"rpc_errors":1,"evidence":["evidence/lag-heads.json","evidence/validator.log"]}],
+      "checks": [{"id":"validator-catches-up","kind":"heads_converge","status":"failed","duration_ms":58000,"expected":{"max_lag_blocks":5,"common_height_hashes_equal":true},"observed":{"lag_blocks":14,"common_height_hashes_equal":true,"at_elapsed_ms":50000},"message":"Validator lag was 14 blocks at the deadline; the allowed maximum was 5.","next_step":"Inspect validator derivation and engine logs for the recorded observation window.","samples":9,"rpc_errors":1,"evidence":["evidence/lag-heads.json"]}],
       "samples": [
         {"endpoint":"builder","elapsed_ms":0,"number":2000,"timestamp":1789785620,"hash":"0x2000"},
         {"endpoint":"builder","elapsed_ms":10000,"number":2005,"timestamp":1789785630,"hash":"0x2005"},
@@ -68,8 +68,8 @@
         {"id":"cleanup","status":"passed","duration_ms":2000,"message":"Synthetic cleanup completed"}
       ],
       "checks": [
-        {"id":"chain-identity","kind":"chain_id","status":"blocked","duration_ms":0,"expected":{"chain_id":84538453},"observed":{"reason":"setup prerequisite error"},"message":"Not evaluated because setup failed.","next_step":"Inspect the setup-stage evidence before retrying.","samples":0,"rpc_errors":0,"evidence":["evidence/setup.log"]},
-        {"id":"head-progress","kind":"head_progress","status":"blocked","duration_ms":0,"expected":{"minimum_blocks":3},"observed":{"reason":"setup prerequisite error"},"message":"Not evaluated because setup failed.","next_step":"Resolve startup, then rerun the complete scenario.","samples":0,"rpc_errors":0,"evidence":["evidence/setup.log"]}
+        {"id":"chain-identity","kind":"chain_id","status":"blocked","duration_ms":0,"expected":{"chain_id":84538453},"observed":{"reason":"setup prerequisite error"},"message":"Not evaluated because setup failed.","next_step":"Inspect the setup-stage diagnostic before retrying.","samples":0,"rpc_errors":0,"evidence":[]},
+        {"id":"head-progress","kind":"head_progress","status":"blocked","duration_ms":0,"expected":{"minimum_blocks":3},"observed":{"reason":"setup prerequisite error"},"message":"Not evaluated because setup failed.","next_step":"Resolve startup, then rerun the complete scenario.","samples":0,"rpc_errors":0,"evidence":[]}
       ],
       "samples": [],
       "forks": [],
