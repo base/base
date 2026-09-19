@@ -123,7 +123,7 @@ pub struct TxManagerConfig {
     pub tx_send_timeout: Duration,
     /// Mempool appearance timeout (zero = disabled).
     pub tx_not_in_mempool_timeout: Duration,
-    /// Maximum time to poll for confirmation before giving up.
+    /// Maximum time to poll for a transaction that is not mined before giving up.
     pub confirmation_timeout: Duration,
     /// Minimum blob base fee (in wei) to use for blob transactions.
     pub min_blob_fee: u128,

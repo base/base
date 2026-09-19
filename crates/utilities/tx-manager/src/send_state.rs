@@ -191,6 +191,13 @@ impl SendState {
         None
     }
 
+    /// Returns `true` when the given transaction is currently recorded as mined.
+    #[must_use]
+    pub fn is_mined(&self, tx_hash: B256) -> bool {
+        let inner = self.inner.lock().expect("SendState mutex poisoned");
+        inner.mined_txs.contains(&tx_hash)
+    }
+
     /// Returns `true` when there are mined transactions awaiting confirmation.
     #[must_use]
     pub fn is_waiting_for_confirmation(&self) -> bool {

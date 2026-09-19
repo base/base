@@ -1563,7 +1563,8 @@ where
     ///
     /// Returns `Some(receipt)` when the transaction reaches
     /// `num_confirmations` depth, or `None` if the manager is closed or
-    /// the `confirmation_timeout` deadline is exceeded.
+    /// the transaction is still not mined when the `confirmation_timeout`
+    /// deadline is exceeded.
     pub async fn wait_mined(
         send_state: &SendState,
         provider: &P,
@@ -1625,7 +1626,10 @@ where
                 }
             }
 
-            if runtime.now() >= deadline {
+            // Give up at the deadline only if the transaction is not mined. Once it is mined
+            // the send loop stops fee bumping and relies on this poller alone, so keep polling
+            // until the confirmation depth is reached.
+            if runtime.now() >= deadline && !send_state.is_mined(tx_hash) {
                 warn!(
                     tx_hash = %tx_hash,
                     timeout = ?config.confirmation_timeout,
@@ -1832,16 +1836,17 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEip1559};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
+    use alloy_rpc_types_eth::{Block, TransactionReceipt};
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
     use base_runtime::{
         Clock,
-        deterministic::{Config, Runner},
+        deterministic::{Config, Context, Runner},
     };
     use rstest::rstest;
 
@@ -2057,6 +2062,73 @@ mod tests {
 
             assert!(receipt.is_none(), "receipt polling should stop at confirmation timeout");
             assert_eq!(ctx.now(), Duration::from_secs(3));
+        });
+    }
+
+    /// A mined transaction that reaches the confirmation depth only after the
+    /// confirmation timeout must still be delivered: once it is mined nothing
+    /// else watches it, so abandoning it would leave the send pending forever.
+    #[test]
+    fn wait_mined_keeps_polling_mined_tx_past_confirmation_timeout() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            // Build a canonical receipt for a transaction mined in block 10.
+            let tx_hash = B256::with_last_byte(1);
+            let block_hash = B256::with_last_byte(2);
+            let receipt: TransactionReceipt = TransactionReceipt {
+                inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                    receipt: Receipt {
+                        status: Eip658Value::Eip658(true),
+                        cumulative_gas_used: 21_000,
+                        logs: vec![],
+                    },
+                    logs_bloom: Bloom::ZERO,
+                }),
+                transaction_hash: tx_hash,
+                transaction_index: Some(0),
+                block_hash: Some(block_hash),
+                block_number: Some(10),
+                gas_used: 21_000,
+                effective_gas_price: 1,
+                blob_gas_used: None,
+                blob_gas_price: None,
+                from: Address::ZERO,
+                to: Some(Address::ZERO),
+                contract_address: None,
+            };
+            let mut block: Block = Block::default();
+            block.header.hash = block_hash;
+
+            // Script the chain tip so the 5 required confirmations are only reached at tip 14,
+            // on the poll after the 3s timeout.
+            let asserter = Asserter::new();
+            for tip in [10u64, 10, 10, 10, 14] {
+                asserter.push_success(&tip);
+                asserter.push_success(&Some(&receipt));
+                asserter.push_success(&Some(&block));
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+            let send_state = SendState::new(3).expect("send state should be valid");
+            let config = TxManagerConfig {
+                num_confirmations: 5,
+                receipt_query_interval: Duration::from_secs(1),
+                confirmation_timeout: Duration::from_secs(3),
+                network_timeout: Duration::from_secs(30),
+                ..TxManagerConfig::default()
+            };
+
+            let confirmed = SimpleTxManager::<_, Context>::wait_mined_using_runtime(
+                &ctx,
+                &send_state,
+                &provider,
+                tx_hash,
+                &config,
+                &AtomicBool::new(false),
+            )
+            .await;
+
+            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
+            assert_eq!(ctx.now(), Duration::from_secs(4));
         });
     }
 
