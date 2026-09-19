@@ -18,14 +18,14 @@ pub trait BatcherAdminApi {
 
     /// Stop block ingestion; the driver task keeps running.
     ///
-    /// Returns once no submission is in flight, or `-32003` if some still are after the
+    /// Returns once no submission is in flight, or an error if some still are after the
     /// driver's drain timeout; the batcher stays stopped either way.
     #[method(name = "stopBatcher")]
     async fn stop_batcher(&self) -> RpcResult<()>;
 
     /// Flush the current encoding channel, making its frames eligible for submission.
     ///
-    /// Returns the outcome of the flush, or `-32002` if the batcher is stopped.
+    /// Returns the outcome of the flush, or an error if the batcher is stopped.
     #[method(name = "flushBatcher")]
     async fn flush_batcher(&self) -> RpcResult<()>;
 
