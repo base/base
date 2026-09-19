@@ -20,8 +20,8 @@ variable "DEVNET_TARGETS" {
   default = ["base", "op-batcher"]
 }
 
-variable "INGRESS_TARGETS" {
-  default = ["base", "ingress-rpc", "audit-archiver", "op-batcher"]
+variable "TX_OBSERVABILITY_TARGETS" {
+  default = ["base", "audit-archiver", "op-batcher"]
 }
 
 group "default" {
@@ -38,7 +38,6 @@ group "rust-services" {
     "snapshotter",
     "proposer",
     "websocket-proxy",
-    "ingress-rpc",
     "audit-archiver",
     "sidecrush",
     "prover-service",
@@ -50,8 +49,8 @@ group "devnet" {
   targets = DEVNET_TARGETS
 }
 
-group "ingress" {
-  targets = INGRESS_TARGETS
+group "tx-observability" {
+  targets = TX_OBSERVABILITY_TARGETS
 }
 
 target "profiling-tools" {
@@ -155,16 +154,6 @@ target "websocket-proxy" {
     SCCACHE_CACHE_ID = "rust-services-websocket-proxy-sccache"
   }
   tags = ["websocket-proxy:local"]
-}
-
-target "ingress-rpc" {
-  inherits = ["_rust-service-common"]
-  target = "ingress-rpc"
-  args = {
-    CARGO_CHEF_ARGS = "--package ingress-rpc"
-    SCCACHE_CACHE_ID = "rust-services-ingress-rpc-sccache"
-  }
-  tags = ["ingress-rpc:local"]
 }
 
 target "audit-archiver" {

@@ -26,7 +26,7 @@ event journal. It is not a stdout/stderr log ingestion endpoint.
 To verify the local devnet path end-to-end:
 
 ```bash
-just devnet ingress
+just devnet tx-observability
 just devnet tx-observability-smoke
 ```
 
