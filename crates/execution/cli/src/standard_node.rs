@@ -17,7 +17,7 @@ use base_metering::{MeteredOpcodes, MeteringConfig, MeteringExtension};
 use base_node_core::{HasRollupArgs, RollupArgs};
 use base_node_runner::{BaseNodeBuilder, BaseNodeRunner, LaunchedBaseNode, PayloadServiceBuilder};
 use base_observability_events::{
-    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY,
+    DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, DEFAULT_SHUTDOWN_TIMEOUT,
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventWriterConfig,
 };
 use base_proofs_extension::ProofsHistoryExtension;
@@ -807,6 +807,8 @@ impl StandardBaseRethNode {
 
     /// Launches the node and waits for it to exit.
     pub async fn run(builder: BaseNodeBuilder, args: StandardNodeArgs) -> eyre::Result<()> {
+        let _transaction_event_journal =
+            GlobalTransactionEventWriter::drain_on_drop(DEFAULT_SHUTDOWN_TIMEOUT);
         let builder = Self::apply_initial_upgrade_signal(builder, &args).await?;
 
         Self::runner_with_version_metrics(args)?.run(builder).await

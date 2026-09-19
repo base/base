@@ -201,12 +201,14 @@ impl BuilderConnector {
     ///
     /// RPC calls are dispatched concurrently (up to [`MAX_CONCURRENT_RPCS`]) so
     /// that slow responses don't block the recv loop and risk broadcast channel
-    /// lag.
+    /// lag. The returned handle must be joined after the broadcast sender is
+    /// dropped so in-flight metering journal events are emitted before writer
+    /// shutdown.
     pub fn connect(
         metering_rx: broadcast::Receiver<MeteringForwardMessage>,
         builder_rpc: Url,
         destination_index: usize,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let rpc_url = builder_rpc.clone();
         let builder: RootProvider<Base> = RootProvider::new_http(builder_rpc);
 
@@ -326,7 +328,7 @@ impl BuilderConnector {
                     error!(url = %rpc_url, error = %e, "RPC forwarding task failed during shutdown");
                 }
             }
-        });
+        })
     }
 }
 
@@ -424,7 +426,7 @@ mod tests {
         }
 
         // Start the connector with the already-lagged receiver.
-        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
+        let _connector = BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
 
         // Give the connector time to hit Lagged and recover.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -452,7 +454,7 @@ mod tests {
         Mock::given(method("POST")).respond_with(jsonrpc_ok()).expect(1).mount(&mock_server).await;
 
         let (tx, rx) = broadcast::channel::<MeteringForwardMessage>(16);
-        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
+        let _connector = BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
 
         tx.send(forwarding_message(response_with_results())).unwrap();
 
@@ -467,7 +469,7 @@ mod tests {
         Mock::given(method("POST")).respond_with(jsonrpc_ok()).expect(0).mount(&mock_server).await;
 
         let (tx, rx) = broadcast::channel::<MeteringForwardMessage>(16);
-        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
+        let _connector = BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
 
         // Default response has empty results — should be skipped.
         tx.send(forwarding_message(MeterBundleResponse::default())).unwrap();
@@ -490,7 +492,7 @@ mod tests {
             .await;
 
         let (tx, rx) = broadcast::channel::<MeteringForwardMessage>(16);
-        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
+        let _connector = BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
 
         for _ in 0..5 {
             tx.send(forwarding_message(response_with_results())).unwrap();
@@ -509,7 +511,7 @@ mod tests {
         Mock::given(method("POST")).respond_with(jsonrpc_ok()).expect(1).mount(&mock_server).await;
 
         let (tx, rx) = broadcast::channel::<MeteringForwardMessage>(16);
-        BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
+        let _connector = BuilderConnector::connect(rx, mock_server.uri().parse().unwrap(), 0);
 
         // Send one message, then close the channel.
         tx.send(forwarding_message(response_with_results())).unwrap();

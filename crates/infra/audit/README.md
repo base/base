@@ -22,7 +22,8 @@ audit-archiver-lib = { workspace = true }
 use audit_archiver_lib::{AuditConnector, RpcBundleEventPublisher};
 
 let publisher = RpcBundleEventPublisher::new(rpc_url, timeout)?;
-AuditConnector::connect_batched(event_rx, publisher, batch_size, batch_wait);
+let audit_task = AuditConnector::connect_batched(event_rx, publisher, batch_size, batch_wait);
+// After producers stop, join `audit_task` before draining the transaction event writer.
 ```
 
 ## License

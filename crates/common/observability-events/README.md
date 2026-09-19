@@ -19,7 +19,11 @@ stdout/stderr and the normal Kubernetes log pipeline.
   can deduplicate retries.
 - **`TransactionEventWriter`**: Non-blocking JSONL append writer with bounded
   queueing, aggregate dropped-event metrics, write-error metrics, and bytes
-  written metrics.
+  written metrics. After event-producing tasks stop, `shutdown(timeout)` drains
+  already queued events, flushes the active file, and closes it. The wait is
+  bounded so a blocked worker cannot hang process exit. Forced termination
+  (SIGKILL, OOM, abort, or shutdown timeout) can still lose queued events and
+  leave a partial last line.
 - **`TransactionEventBuilder`** and **`transaction_event!`**: Helpers for
   producer call sites that use the process-global transaction event writer while
   filling common envelope fields such as `event_time`, `network`, join keys,
@@ -37,10 +41,23 @@ forwarding headers in transaction events. Rust validation rejects a small exact
 denylist; collector pipelines should enforce broader key-pattern filtering before
 ingest.
 
-The writer is best-effort after initialization. Runtime write or flush failures
-are reported through metrics and logs, but they do not block transaction-serving
-paths. Collectors must tolerate and skip malformed JSONL lines because storage
-failures such as disk-full conditions can leave a partial line in the file.
+The writer is best-effort on the emit path after initialization. Runtime write
+or flush failures are reported through metrics and logs, but they do not block
+transaction-serving paths. Collectors must tolerate and skip malformed JSONL
+lines because storage failures such as disk-full conditions can leave a
+partial line in the file.
+
+Graceful process shutdown is different: producers stop first, then
+`shutdown(timeout)` atomically rejects new events (drop reason `shutdown`),
+drains events already in the queue, flushes the active file, and closes it.
+That path returns write/flush errors and cannot wait longer than `timeout`.
+It does not `fsync`. Forced termination does not run this drain.
+
+Binaries should bind `GlobalTransactionEventWriter::drain_on_drop(timeout)` in
+the scope that owns the process lifecycle rather than calling `shutdown` on each
+return path. Declaring the guard before the producers makes drop order drain the
+journal after they stop, and covers early `?` returns and unwinding. Call
+`shutdown(timeout)` directly when the caller needs the error.
 
 ## License
 
