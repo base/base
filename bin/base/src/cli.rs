@@ -1,6 +1,7 @@
 use base_cli_utils::{LogConfig, MetricsConfig};
 use clap::Parser;
 use eyre::WrapErr;
+use reth_node_core::args::TraceArgs;
 
 use crate::{
     commands::BaseCommand,
@@ -32,6 +33,10 @@ pub(crate) struct BaseCli {
     #[command(flatten)]
     pub(crate) logging: LogArgs,
 
+    /// `OpenTelemetry` tracing export configuration.
+    #[command(flatten)]
+    pub traces: TraceArgs,
+
     /// Metrics configuration.
     #[command(flatten)]
     pub(crate) metrics: MetricsArgs,
@@ -44,9 +49,23 @@ pub(crate) struct BaseCli {
 impl BaseCli {
     /// Runs the selected command with shared process initialization.
     pub(crate) fn run(self) -> eyre::Result<()> {
-        LogConfig::from(self.logging)
-            .init_tracing_subscriber()
-            .wrap_err("failed to initialize tracing")?;
+        // Tonic captures the runtime during OTLP initialization. Keep it alive while the
+        // command runs, but leave its context before commands enter their own runtimes.
+        let tracing_runtime = self
+            .traces
+            .otlp
+            .as_ref()
+            .map(|_| {
+                tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build()
+            })
+            .transpose()
+            .wrap_err("failed to create tracing runtime")?;
+        {
+            let _guard = tracing_runtime.as_ref().map(tokio::runtime::Runtime::enter);
+            LogConfig::from(self.logging)
+                .init_with_trace_args(&self.traces, &[])
+                .wrap_err("failed to initialize tracing")?;
+        }
 
         let metrics_enabled = self.metrics.enabled;
         MetricsConfig::from(self.metrics)
@@ -62,11 +81,180 @@ impl BaseCli {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
+    use std::{ffi::OsStr, process::Command, thread, time::Duration};
 
+    use axum::{Router, body::Bytes, routing::post};
     use clap::{CommandFactory, Parser};
+    use tokio::{net::TcpListener, sync::mpsc};
 
     use super::*;
+
+    #[test]
+    fn parses_shared_otlp_configuration() {
+        for flavor in ["rpc", "follow", "sequencer"] {
+            for before_subcommand in [false, true] {
+                let mut args = vec!["base"];
+                if !before_subcommand {
+                    args.push(flavor);
+                }
+                args.extend([
+                    "--tracing-otlp=http://localhost:4317",
+                    "--tracing-otlp-protocol",
+                    "grpc",
+                    "--tracing-otlp.filter",
+                    "warn,base_otlp_test=debug",
+                    "--tracing-otlp.service-name",
+                    "unified-test",
+                    "--tracing-otlp.sample-ratio",
+                    "0.25",
+                ]);
+                if before_subcommand {
+                    args.push(flavor);
+                }
+                args.extend([
+                    "--l1-eth-rpc",
+                    "http://localhost:8545",
+                    "--l1-beacon",
+                    "http://localhost:5052",
+                ]);
+                if flavor == "follow" {
+                    args.extend(["--source-l2-rpc", "http://localhost:9545"]);
+                } else if flavor == "sequencer" {
+                    args.extend(["--p2p.sequencer.key.path", "/tmp/sequencer-key"]);
+                }
+                let cli = BaseCli::try_parse_from(args).unwrap();
+                assert_eq!(cli.traces.otlp.unwrap().as_str(), "http://localhost:4317/");
+                assert_eq!(cli.traces.service_name, "unified-test");
+                assert_eq!(cli.traces.sample_ratio, Some(0.25));
+                assert_eq!(cli.traces.otlp_filter.to_string(), "base_otlp_test=debug,warn");
+            }
+        }
+    }
+
+    #[test]
+    fn exports_otlp_spans_with_independent_filter() {
+        // Each exporter needs its own process because the tracing subscriber is global.
+        for protocol in ["http", "grpc"] {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            for (key, _) in std::env::vars() {
+                if key.starts_with("OTEL_") || key.starts_with("BASE_") || key == "RUST_LOG" {
+                    command.env_remove(key);
+                }
+            }
+            let output = command
+                .args(["--exact", "cli::tests::exports_otlp_child", "--ignored", "--nocapture"])
+                .env("BASE_OTLP_TEST_PROTOCOL", protocol)
+                .env("BASE_NODE_METRICS_ENABLED", "false")
+                .env("OTEL_BSP_SCHEDULE_DELAY", "50")
+                .env("OTEL_SERVICE_NAME", "unified-otlp-test")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{protocol} export failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "spawned by exports_otlp_spans_with_independent_filter"]
+    async fn exports_otlp_child() {
+        let protocol = std::env::var("BASE_OTLP_TEST_PROTOCOL").unwrap();
+        let collector = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", collector.local_addr().unwrap());
+        let (sender, mut requests) = mpsc::unbounded_channel();
+        let grpc = protocol == "grpc";
+        let path = if grpc {
+            "/opentelemetry.proto.collector.trace.v1.TraceService/Export"
+        } else {
+            "/v1/traces"
+        };
+        let router = Router::new().route(
+            path,
+            post(move |body: Bytes| {
+                let sender = sender.clone();
+                async move {
+                    sender.send(body).unwrap();
+                    let content_type =
+                        if grpc { "application/grpc" } else { "application/x-protobuf" };
+                    // An empty ExportTraceServiceResponse, with a gRPC message envelope if needed.
+                    (
+                        [("content-type", content_type), ("grpc-status", "0")],
+                        if grpc { vec![0_u8; 5] } else { Vec::new() },
+                    )
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(collector, router).await.unwrap() });
+
+        // Keep the unified RPC command running without any external network dependency.
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_url = format!("http://{}", upstream.local_addr().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let otlp_arg = format!("--tracing-otlp={endpoint}");
+        let cli = BaseCli::try_parse_from([
+            "base",
+            "--chain",
+            "dev",
+            "rpc",
+            "--datadir",
+            dir.path().to_str().unwrap(),
+            "--ipcpath",
+            dir.path().join("rpc.ipc").to_str().unwrap(),
+            "--port",
+            "0",
+            "--authrpc.port",
+            "0",
+            "--rpc.port",
+            "0",
+            "--p2p.listen.tcp",
+            "0",
+            "--p2p.listen.udp",
+            "0",
+            "--disable-discovery",
+            "--l1-eth-rpc",
+            &upstream_url,
+            "--l1-beacon",
+            &upstream_url,
+            "-q",
+            &otlp_arg,
+            "--tracing-otlp-protocol",
+            &protocol,
+            "--tracing-otlp.filter",
+            "off,base_otlp_test=debug",
+        ])
+        .unwrap();
+        let node =
+            thread::Builder::new().stack_size(32 * 1024 * 1024).spawn(move || cli.run()).unwrap();
+        let received = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if node.is_finished() {
+                    panic!("node exited before OTLP export: {:?}", node.join().unwrap());
+                }
+                {
+                    let _span =
+                        tracing::debug_span!(target: "base_otlp_test", "included_span").entered();
+                }
+                {
+                    let _span =
+                        tracing::error_span!(target: "excluded_target", "excluded_span").entered();
+                }
+                tokio::select! {
+                    Some(body) = requests.recv() => break body,
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for OTLP export");
+        // Protobuf string fields retain their UTF-8 bytes in both transport encodings.
+        let payload = String::from_utf8_lossy(&received);
+        assert!(payload.contains("included_span"), "missing enabled debug span: {payload}");
+        assert!(payload.contains("unified-otlp-test"), "missing service name: {payload}");
+        assert!(!payload.contains("excluded_span"), "OTLP filter was ignored: {payload}");
+    }
 
     #[test]
     fn parses_batcher_configuration() {

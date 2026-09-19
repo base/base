@@ -2,6 +2,23 @@
 
 Unified Base node binary.
 
+## OTLP Tracing
+
+Unified commands, including `rpc`, `follow`, and `sequencer`, support the same
+OTLP span-export options as the standalone nodes. Set
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL` (`http` or
+`grpc`), and `OTEL_SERVICE_NAME`, or use their CLI equivalents:
+
+```text
+base rpc --tracing-otlp=http://localhost:4317 --tracing-otlp-protocol=grpc --tracing-otlp.filter=info,reth=debug
+```
+
+Tracing flags work before or after the subcommand. `--tracing-otlp.filter`
+controls exported spans independently of stdout/file logging verbosity, and
+`--tracing-otlp.sample-ratio` controls sampling. Export is disabled unless an
+endpoint is configured; HTTP endpoints use `/v1/traces` and gRPC endpoints use
+the collector address without that path.
+
 ## `base batcher`
 
 `base batcher` submits L2 batch data to L1. It uses the shared logging and metrics
