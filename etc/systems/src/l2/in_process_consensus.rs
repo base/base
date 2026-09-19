@@ -99,7 +99,7 @@ pub struct InProcessConsensus {
     p2p_tcp_port: u16,
     peer_id: String,
     _checkpoint_dir: TempDir,
-    _handle: JoinHandle<()>,
+    handle: JoinHandle<()>,
 }
 
 impl std::fmt::Debug for InProcessConsensus {
@@ -288,7 +288,7 @@ impl InProcessConsensus {
             p2p_tcp_port,
             peer_id,
             _checkpoint_dir: checkpoint_dir,
-            _handle: handle,
+            handle,
         })
     }
 
@@ -392,11 +392,21 @@ impl InProcessConsensus {
     pub fn peer_id(&self) -> &str {
         &self.peer_id
     }
+
+    /// Stops the consensus task and reports any failure that preceded shutdown.
+    pub async fn shutdown(mut self) -> Result<()> {
+        self.handle.abort();
+        match (&mut self.handle).await {
+            Err(error) if error.is_cancelled() => Ok(()),
+            Err(error) => Err(eyre::eyre!("in-process consensus task failed: {error}")),
+            Ok(()) => Err(eyre::eyre!("in-process consensus task exited unexpectedly")),
+        }
+    }
 }
 
 impl Drop for InProcessConsensus {
     fn drop(&mut self) {
-        self._handle.abort();
+        self.handle.abort();
     }
 }
 
@@ -437,4 +447,74 @@ pub(super) async fn wait_for_rpc(addr: SocketAddr, description: &str) -> Result<
     };
 
     Err(eyre::eyre!("{description} at {url} did not become ready within 30s: {last_err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::SocketAddr, time::Duration};
+
+    use jsonrpsee::http_client::HttpClientBuilder;
+    use tokio::task::JoinHandle;
+
+    use super::InProcessConsensus;
+
+    fn consensus(handle: JoinHandle<()>) -> InProcessConsensus {
+        InProcessConsensus {
+            rpc_addr: SocketAddr::from(([127, 0, 0, 1], 1)),
+            rpc_client: HttpClientBuilder::default().build("http://127.0.0.1:1").unwrap(),
+            p2p_tcp_port: 1,
+            peer_id: "test-peer".to_owned(),
+            _checkpoint_dir: tempfile::tempdir().unwrap(),
+            handle,
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_aborts_running_task() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            started_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started_rx.await.unwrap();
+
+        consensus(handle).shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_surfaces_completed_panic() {
+        let handle = tokio::spawn(async { panic!("consensus panic") });
+        while !handle.is_finished() {
+            tokio::task::yield_now().await;
+        }
+
+        let error = consensus(handle).shutdown().await.unwrap_err().to_string();
+        assert!(error.contains("task failed"), "{error}");
+        assert!(error.contains("consensus panic"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn dropping_pending_shutdown_aborts_task() {
+        struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+            }
+        }
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            let _guard = OnDrop(Some(dropped_tx));
+            started_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started_rx.await.unwrap();
+
+        let mut shutdown = Box::pin(consensus(handle).shutdown());
+        assert!(futures::poll!(shutdown.as_mut()).is_pending());
+        drop(shutdown);
+
+        tokio::time::timeout(Duration::from_secs(1), dropped_rx).await.unwrap().unwrap();
+    }
 }

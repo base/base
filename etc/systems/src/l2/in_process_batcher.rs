@@ -23,6 +23,9 @@ use url::Url;
 
 const INITIAL_SAFE_L2_HEAD_TIMEOUT: Duration = Duration::from_secs(60);
 const INITIAL_SAFE_L2_HEAD_POLL_INTERVAL: Duration = Duration::from_millis(250);
+// The production batcher allows a 96-second drain with its default transaction settings.
+// Keep its L1 and rollup dependencies alive until that drain can finish.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Configuration for starting an in-process batcher.
 #[derive(Debug, Clone)]
@@ -43,7 +46,7 @@ pub struct InProcessBatcherConfig {
 pub struct InProcessBatcher {
     cancellation: CancellationToken,
     failure_rx: watch::Receiver<Option<String>>,
-    _handle: JoinHandle<()>,
+    handle: JoinHandle<()>,
 }
 
 impl std::fmt::Debug for InProcessBatcher {
@@ -82,7 +85,7 @@ impl InProcessBatcher {
                 failure_tx.send_replace(Some(e.to_string()));
             }
         });
-        Ok(Self { cancellation, failure_rx, _handle: handle })
+        Ok(Self { cancellation, failure_rx, handle })
     }
 
     /// Waits for the rollup node to initialize the safe L2 head used by batcher startup.
@@ -153,26 +156,64 @@ impl InProcessBatcher {
     pub fn stop(&self) {
         self.cancellation.cancel();
     }
+
+    /// Stops batch submission and waits for the service task to exit.
+    pub async fn shutdown(mut self) -> Result<()> {
+        let was_cancelled = self.cancellation.is_cancelled();
+        let was_finished = self.handle.is_finished();
+        self.cancellation.cancel();
+
+        let join_result = match tokio::time::timeout(SHUTDOWN_TIMEOUT, &mut self.handle).await {
+            Ok(result) => result,
+            Err(_) => {
+                return Err(eyre::eyre!("timed out waiting for in-process batcher to shut down"));
+            }
+        };
+        if let Err(error) = join_result {
+            return Err(eyre::eyre!("in-process batcher task failed: {error}"));
+        }
+        if let Some(error) = self.failure() {
+            return Err(eyre::eyre!("in-process batcher service failed: {error}"));
+        }
+        if was_finished && !was_cancelled {
+            return Err(eyre::eyre!("in-process batcher task exited unexpectedly"));
+        }
+        Ok(())
+    }
 }
 
 impl Drop for InProcessBatcher {
     fn drop(&mut self) {
         self.cancellation.cancel();
+        self.handle.abort();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
     };
 
     use alloy_primitives::B256;
     use base_protocol::{BlockInfo, SyncStatus};
     use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
+    use tokio::{sync::watch, task::JoinHandle};
+    use tokio_util::sync::CancellationToken;
 
     use super::InProcessBatcher;
+
+    fn batcher(
+        cancellation: CancellationToken,
+        failure_rx: watch::Receiver<Option<String>>,
+        handle: JoinHandle<()>,
+    ) -> InProcessBatcher {
+        InProcessBatcher { cancellation, failure_rx, handle }
+    }
 
     #[derive(Clone)]
     struct SyncStatusServer {
@@ -208,5 +249,88 @@ mod tests {
 
         handle.stop().unwrap();
         assert!(server.requests.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[tokio::test]
+    async fn shutdown_accepts_intentional_stop() {
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let (_failure_tx, failure_rx) = watch::channel(None);
+        let handle = tokio::spawn(async move { task_cancellation.cancelled().await });
+        let batcher = batcher(cancellation, failure_rx, handle);
+
+        batcher.stop();
+        batcher.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_waits_for_in_flight_receipts_after_cancellation() {
+        let cancellation = CancellationToken::new();
+        let task_cancellation = cancellation.clone();
+        let (_failure_tx, failure_rx) = watch::channel(None);
+        let (drained_tx, drained_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            task_cancellation.cancelled().await;
+            // A receipt can arrive after the old five-second shutdown deadline.
+            tokio::time::sleep(Duration::from_secs(6)).await;
+            drained_tx.send(()).unwrap();
+        });
+        batcher(cancellation, failure_rx, handle).shutdown().await.unwrap();
+        drained_rx.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_reports_service_failure() {
+        let cancellation = CancellationToken::new();
+        let (failure_tx, failure_rx) = watch::channel(None);
+        let handle = tokio::spawn(async move {
+            failure_tx.send_replace(Some("submission failed".to_owned()));
+        });
+        let batcher = batcher(cancellation, failure_rx, handle);
+        tokio::task::yield_now().await;
+
+        let error = batcher.shutdown().await.unwrap_err().to_string();
+        assert!(error.contains("service failed: submission failed"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn shutdown_reports_task_panic() {
+        let cancellation = CancellationToken::new();
+        let (_failure_tx, failure_rx) = watch::channel(None);
+        let handle = tokio::spawn(async { panic!("batcher panic") });
+        let batcher = batcher(cancellation, failure_rx, handle);
+        tokio::task::yield_now().await;
+
+        let error = batcher.shutdown().await.unwrap_err().to_string();
+        assert!(error.contains("task failed"), "{error}");
+        assert!(error.contains("batcher panic"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn dropping_pending_shutdown_aborts_task() {
+        struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for OnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.take().unwrap().send(());
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let (_failure_tx, failure_rx) = watch::channel(None);
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn(async move {
+            let _guard = OnDrop(Some(dropped_tx));
+            started_tx.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started_rx.await.unwrap();
+        let batcher = batcher(cancellation, failure_rx, handle);
+
+        let mut shutdown = Box::pin(batcher.shutdown());
+        assert!(tokio::time::timeout(Duration::from_millis(10), &mut shutdown).await.is_err());
+        drop(shutdown);
+
+        tokio::time::timeout(Duration::from_secs(1), dropped_rx).await.unwrap().unwrap();
     }
 }
