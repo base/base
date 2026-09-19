@@ -2071,6 +2071,7 @@ mod tests {
     #[test]
     fn wait_mined_keeps_polling_mined_tx_past_confirmation_timeout() {
         Runner::start(Config::seeded(0), |ctx| async move {
+            // A canonical receipt for a transaction mined in block 10.
             let tx_hash = B256::with_last_byte(1);
             let block_hash = B256::with_last_byte(2);
             let receipt: TransactionReceipt = TransactionReceipt {
@@ -2097,8 +2098,8 @@ mod tests {
             let mut block: Block = Block::default();
             block.header.hash = block_hash;
 
-            // Mined in block 10 with 5 confirmations required: confirmed once the tip is 14,
-            // which only happens on the poll after the 3s timeout.
+            // Five confirmations are required, so the transaction is confirmed once the tip
+            // is 14. That only happens on the poll after the 3s timeout.
             let asserter = Asserter::new();
             for tip in [10u64, 10, 10, 10, 14] {
                 asserter.push_success(&tip);
@@ -2106,6 +2107,7 @@ mod tests {
                 asserter.push_success(&Some(&block));
             }
             let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
             let send_state = SendState::new(3).expect("send state should be valid");
             let config = TxManagerConfig {
                 num_confirmations: 5,
