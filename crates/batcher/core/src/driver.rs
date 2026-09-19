@@ -519,6 +519,7 @@ where
     /// return type with a no-op variant.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
+            // Timer of the stop requests still waiting for in-flight submissions, if any.
             let stop_timeout = self
                 .stop_deadline
                 .map(|deadline| self.runtime.sleep(deadline.saturating_sub(self.runtime.now())));
@@ -537,19 +538,26 @@ where
                             return Ok(DriverEvent::AdminFlush(reply));
                         }
                         AdminCommand::Stop { reply } => {
+                            // Stopping a stopped batcher only joins the wait below.
                             if !self.stopped {
                                 self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
                                 self.stopped = true;
                                 info!(stopped = true, "batcher stopped via admin");
                             }
+
+                            // Answer once nothing is in flight. The first waiter arms the
+                            // deadline; later ones share it.
                             self.pending_stop_replies.push(reply);
                             self.stop_deadline
                                 .get_or_insert_with(|| self.runtime.now() + self.drain_timeout);
                             self.settle_stop();
                         }
                         AdminCommand::Start { reply } => {
+                            // A running batcher must not be re-anchored: the source would
+                            // replay blocks the pipeline already holds.
                             if self.stopped {
                                 self.answer_stop_requests(Err(AdminError::StopSuperseded));
+
                                 if let Some(safe_head) = self.safe_head {
                                     self.source.reset_catchup(safe_head);
                                     info!(
@@ -562,6 +570,7 @@ where
                                 }
                                 self.stopped = false;
                             }
+
                             let _ = reply.send(Ok(()));
                         }
                         AdminCommand::SetThrottle { strategy, config } => {
@@ -591,6 +600,7 @@ where
                     continue;
                 }
 
+                // Stop requests waited for in-flight submissions past the deadline.
                 _ = async {
                     match stop_timeout {
                         Some(timeout) => timeout.await,
