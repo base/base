@@ -40,6 +40,8 @@ pub struct InProcessBatcherConfig {
     pub batcher_key: B256,
     /// Whether to use short-lived calldata channels for deterministic tests.
     pub force_batch_submission: bool,
+    /// Service settings; endpoints and signer are supplied by the running stack.
+    pub settings: BatcherConfig,
 }
 
 /// A running in-process batcher.
@@ -67,10 +69,7 @@ impl InProcessBatcher {
             l2_rpc_url: vec![config.l2_rpc_url],
             rollup_rpc_url: vec![config.rollup_rpc_url],
             signer: Some(SignerConfig::local(signer)),
-            // SystemTestStack defaults come from the shared batcher config:
-            // poll_interval: 1s, num_confirmations: 1, resubmission_timeout: 48s —
-            // all set by BatcherConfig::default().
-            ..BatcherConfig::default()
+            ..config.settings
         };
         if config.force_batch_submission {
             batcher_config.encoder_config.da_type = DaType::Calldata;

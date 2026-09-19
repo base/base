@@ -17,6 +17,7 @@ use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
+use base_batcher_service::BatcherConfig;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
 use base_common_rpc_types::BaseTransactionRequest;
@@ -89,6 +90,8 @@ pub struct L2StackConfig {
     pub verifier_l1_confs: u64,
     /// When set, the in-process batcher posts short-lived calldata channels instead of blobs.
     pub force_batch_submission: bool,
+    /// Batcher service settings; the stack supplies endpoints and signer.
+    pub batcher_config: BatcherConfig,
     /// Consensus mode for the L2 client node.
     pub client_consensus_mode: L2ClientConsensusMode,
     /// Optional L1 upgrade signal configuration shared by both consensus nodes.
@@ -282,6 +285,7 @@ impl L2Stack {
                     rollup_rpc_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
                     force_batch_submission: config.force_batch_submission,
+                    settings: config.batcher_config.clone(),
                 })
                 .await
                 .wrap_err("Failed to start in-process batcher")?,
@@ -438,6 +442,7 @@ impl L2Stack {
                     rollup_rpc_url: builder_consensus.rpc_url(),
                     batcher_key: config.batcher_key,
                     force_batch_submission: true,
+                    settings: config.batcher_config,
                 })
                 .await
                 .wrap_err("Failed to start delayed-shadow batcher")?,

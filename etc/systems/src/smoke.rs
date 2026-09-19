@@ -18,6 +18,7 @@ use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use alloy_rpc_types_engine::JwtSecret;
 use alloy_signer_local::PrivateKeySigner;
+use base_batcher_service::BatcherConfig;
 #[cfg(feature = "upgrade-signal")]
 use base_common_genesis::{BaseUpgrade, RollupConfig, RuntimeUpgradeRegistry, UpgradeActivation};
 use base_common_network::Base;
@@ -397,6 +398,7 @@ pub struct SystemTestStackBuilder {
     payload_builder_cutover: bool,
     verifier_l1_confs: u64,
     force_batch_submission: bool,
+    batcher_config: BatcherConfig,
     client_consensus_mode: L2ClientConsensusMode,
     shadow_sequencer_count: usize,
     shadow_blocks_per_cycle: Option<NonZeroU64>,
@@ -586,6 +588,12 @@ impl SystemTestStackBuilder {
     /// Posts L2 batches as short-lived calldata so the derived safe head can catch up.
     pub const fn with_force_batch_submission(mut self) -> Self {
         self.force_batch_submission = true;
+        self
+    }
+
+    /// Configures the production batcher; endpoints and signer come from the running stack.
+    pub fn with_batcher_config(mut self, config: BatcherConfig) -> Self {
+        self.batcher_config = config;
         self
     }
 
@@ -974,6 +982,7 @@ impl SystemTestStackBuilder {
             payload_builder_cutover: self.payload_builder_cutover,
             verifier_l1_confs: self.verifier_l1_confs,
             force_batch_submission: self.force_batch_submission,
+            batcher_config: self.batcher_config,
             client_consensus_mode: self.client_consensus_mode,
             upgrade_signal: l2_upgrade_signal,
             execution_upgrade_signal: l2_execution_upgrade_signal,
