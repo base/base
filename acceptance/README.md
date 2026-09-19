@@ -149,6 +149,13 @@ cargo run -p base-acceptance-cli -- aggregate --expected expected.json \
   --results downloaded-results --output target/acceptance/aggregate
 ```
 
+The CI-only `publish` command validates aggregate artifacts and safely updates the
+marker-owned PR comment. Its `GitHub` credentials and provenance inputs are supplied
+by the trusted-base publication job; it is not part of the local runner workflow.
+It accepts `--event`, `--result`, `--expected`, `--run-id`, `--attempt`, and
+`--started-at`, with `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, `TESTED_SHA`, and optional
+`BOT_LOGIN` in the environment.
+
 If a managed process is killed before cleanup, recover only the resources named
 by its private ownership manifest:
 
@@ -185,7 +192,6 @@ for a different bot). Reports remain artifact-only on the first introduction PR.
 
 ```console
 cargo test --locked -p base-acceptance -p base-acceptance-cli
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s acceptance/ci
 cargo run -p base-acceptance-cli -- report \
   acceptance/fixtures/reports/synthetic-mixed.json --output target/acceptance/preview
 ```

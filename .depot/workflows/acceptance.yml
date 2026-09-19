@@ -55,7 +55,6 @@ jobs:
       - name: Test acceptance runner and publisher
         run: |
           cargo test --locked -p base-acceptance -p base-acceptance-cli
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s acceptance/ci
       - id: select
         shell: bash
         env:
@@ -190,7 +189,7 @@ jobs:
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     needs: [select, aggregate]
     runs-on: depot-ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
       group: acceptance-publisher-${{ github.event.pull_request.number }}
       cancel-in-progress: false
@@ -205,30 +204,35 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
           persist-credentials: false
-      - name: Publish when trusted publisher exists
-        if: hashFiles('acceptance/ci/publish.py') != ''
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          BOT_LOGIN: ${{ vars.BOT_LOGIN }}
-        run: echo 'Publisher available; downloading aggregate and expected manifest.'
+      - name: Set up trusted Rust toolchain
+        if: hashFiles('acceptance/src/publish.rs') != ''
+        uses: ./.depot/actions/setup
+        with:
+          native-deps: "true"
+          just: "false"
+      - name: Build trusted publisher
+        if: hashFiles('acceptance/src/publish.rs') != ''
+        run: cargo build --locked -p base-acceptance-cli
       - name: Download acceptance data
-        if: hashFiles('acceptance/ci/publish.py') != ''
+        if: hashFiles('acceptance/src/publish.rs') != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with:
           pattern: acceptance-*
           path: downloaded
       - name: Publish validated acceptance result
-        if: hashFiles('acceptance/ci/publish.py') != ''
+        if: hashFiles('acceptance/src/publish.rs') != ''
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TESTED_SHA: ${{ github.sha }}
           BOT_LOGIN: ${{ vars.BOT_LOGIN }}
           STARTED_AT: ${{ needs.select.outputs.started_at }}
         run: |
-          python3 acceptance/ci/publish.py --event "$GITHUB_EVENT_PATH" \
+          target/debug/base-acceptance publish --event "$GITHUB_EVENT_PATH" \
             --result "downloaded/acceptance-aggregate-${GITHUB_RUN_ATTEMPT}/result.json" \
             --expected "downloaded/acceptance-expected-${GITHUB_RUN_ATTEMPT}/manifest.json" \
             --run-id "$RUN_KEY" --attempt "$GITHUB_RUN_ATTEMPT" --started-at "$STARTED_AT"
       - name: First-introduction notice
-        if: hashFiles('acceptance/ci/publish.py') == ''
+        if: hashFiles('acceptance/src/publish.rs') == ''
         run: echo 'Trusted publisher is not on the base revision yet; reports are artifact-only.' >> "$GITHUB_STEP_SUMMARY"
