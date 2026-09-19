@@ -306,7 +306,7 @@ where
                     debug!("flush signal received, released channel artifacts");
                 }
                 DriverEvent::AdminFlush(reply) => {
-                    // A flush failure is fatal: answer the caller before the driver exits.
+                    // Answer the caller first because a flush failure stops the driver.
                     let result = self.pipeline.flush();
                     let _ = reply.send(match &result {
                         Ok(()) => Ok(()),
@@ -519,7 +519,7 @@ where
     /// return type with a no-op variant.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
-            // Timer of the stop requests still waiting for in-flight submissions, if any.
+            // Arm the stop timer only while a stop request is waiting.
             let stop_timeout = self
                 .stop_deadline
                 .map(|deadline| self.runtime.sleep(deadline.saturating_sub(self.runtime.now())));
@@ -538,24 +538,26 @@ where
                             return Ok(DriverEvent::AdminFlush(reply));
                         }
                         AdminCommand::Stop { reply } => {
-                            // Stopping a stopped batcher only joins the wait below.
+                            // Reset the pipeline on the first stop only. A repeated stop just
+                            // joins the wait below.
                             if !self.stopped {
                                 self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
                                 self.stopped = true;
                                 info!(stopped = true, "batcher stopped via admin");
                             }
 
-                            // Answer once nothing is in flight. The first waiter arms the
-                            // deadline; later ones share it.
+                            // Park the reply until nothing is in flight. Repeated stops share
+                            // the running deadline.
                             self.pending_stop_replies.push(reply);
                             self.stop_deadline
                                 .get_or_insert_with(|| self.runtime.now() + self.drain_timeout);
                             self.settle_stop();
                         }
                         AdminCommand::Start { reply } => {
-                            // A running batcher must not be re-anchored: the source would
-                            // replay blocks the pipeline already holds.
+                            // Re-anchor the source only if stopped, otherwise it replays blocks
+                            // the pipeline already holds.
                             if self.stopped {
+                                // Fail any stop still waiting since this start supersedes it.
                                 self.answer_stop_requests(Err(AdminError::StopSuperseded));
 
                                 if let Some(safe_head) = self.safe_head {
@@ -600,7 +602,8 @@ where
                     continue;
                 }
 
-                // Stop requests waited for in-flight submissions past the deadline.
+                // Fail the waiting stop requests once the deadline passes. The batcher stays
+                // stopped.
                 _ = async {
                     match stop_timeout {
                         Some(timeout) => timeout.await,

@@ -220,19 +220,19 @@ fn test_stop_waits_for_in_flight_submissions() {
             DriverFixture::build(ctx.clone(), pipeline, tx_manager.clone()).with_admin_rx(admin_rx);
         let handle = ctx.spawn(driver.run());
 
-        // The stub is in flight, so the stop has to wait.
+        // Request a stop while the stub is in flight. It must not answer yet.
         let stop = ctx.spawn({
             let admin_handle = admin_handle.clone();
             async move { admin_handle.stop().await }
         });
         ctx.sleep(Duration::from_millis(1)).await;
 
-        // Meanwhile the driver still answers other admin requests.
+        // Check that the driver still answers other admin requests while the stop waits.
         let status = admin_handle.get_status().await.unwrap();
         assert!(status.stopped);
         assert_eq!(status.in_flight, 1);
 
-        // The receipt settles the submission and releases the stop.
+        // Confirm the submission so the stop can answer.
         tx_manager.confirm_next(1);
         assert!(stop.await.unwrap().is_ok());
         assert_eq!(admin_handle.get_status().await.unwrap().in_flight, 0);
@@ -278,7 +278,7 @@ fn test_start_supersedes_pending_stop() {
             .with_admin_rx(admin_rx);
         let handle = ctx.spawn(driver.run());
 
-        // The stub never confirms, so this stop keeps waiting.
+        // Request a stop that cannot complete because the stub never confirms.
         let stop = ctx.spawn({
             let admin_handle = admin_handle.clone();
             async move { admin_handle.stop().await }
