@@ -10,6 +10,18 @@ max-threads = 1
 [test-groups.system-tests]
 max-threads = 6
 
+[test-groups.acceptance]
+max-threads = 1
+
+[profile.acceptance]
+junit = { path = "test-results.xml" }
+retries = 0
+
+[[profile.acceptance.overrides]]
+filter = 'package(base-system-tests) & binary(acceptance)'
+test-group = 'acceptance'
+slow-timeout = { period = "15m", terminate-after = 1 }
+
 [profile.ci]
 junit = { path = "test-results.xml" }
 retries = 1

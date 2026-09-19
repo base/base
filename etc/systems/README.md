@@ -300,3 +300,19 @@ See the exact supported options at any revision with:
 cargo run -p base-system-tests --bin base-devnet -- snapshot --help
 cargo run -p base-system-tests --bin base-bench -- snapshot --help
 ```
+
+## Glamsterdam acceptance qualification
+
+Run `just devnet acceptance` to execute the ignored, serial acceptance suite using the digest-pinned
+Reth and Lighthouse images in `fixtures/glamsterdam.json`. The runner builds
+`devnet-setup:local-v2` first, then starts real containerized L1 execution and consensus nodes with
+the production Base L2 running in-process. An observed safe L2 head is not a finalized L2 head.
+
+Docker, Rust, `cargo-nextest`, and `jq` are required; no local Python installation is required. Set
+`BASE_ACCEPTANCE_ARTIFACTS` to a fresh path to retain generated configurations and logs (otherwise a
+unique temporary directory outside the checkout is used). Normal exit removes owned containers;
+the command's exit trap and CI's always-run cleanup also remove containers on the fixture's recorded,
+uniquely named networks after a test-process timeout. If the entire runner is killed or Docker is
+unavailable, cleanup is not guaranteed. Recover using
+`just --justfile etc/docker/Justfile _cleanup-acceptance <artifact-directory>`; this never prunes
+unrelated containers or networks.
