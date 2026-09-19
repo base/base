@@ -1,4 +1,4 @@
-//! Integration tests for pause/resume admin commands in [`BatchDriver`].
+//! Integration tests for stop/start admin commands in [`BatchDriver`].
 
 use std::{
     sync::{Arc, Mutex},
@@ -27,11 +27,11 @@ use base_runtime::{
 };
 use tokio::sync::mpsc;
 
-/// `AdminCommand::Pause` must immediately reset the pipeline. This is verified
-/// by checking that `pipeline.reset()` is called exactly once after the pause
+/// `AdminCommand::Stop` must immediately reset the pipeline. This is verified
+/// by checking that `pipeline.reset()` is called exactly once after the stop
 /// command is processed.
 #[test]
-fn test_pause_resets_pipeline() {
+fn test_stop_resets_pipeline() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -42,7 +42,7 @@ fn test_pause_resets_pipeline() {
                 .with_admin_rx(admin_rx);
         let handle = ctx.spawn(driver.run());
 
-        admin_handle.pause().await.unwrap();
+        admin_handle.stop().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 
@@ -50,16 +50,16 @@ fn test_pause_resets_pipeline() {
         assert_eq!(
             recorded.lock().unwrap().resets,
             1,
-            "pipeline must be reset exactly once when paused"
+            "pipeline must be reset exactly once when stopped"
         );
     });
 }
 
-/// `AdminCommand::Resume` must reanchor the source at the safe head so it
+/// `AdminCommand::Start` must reanchor the source at the safe head so it
 /// delivers missed blocks sequentially after that head. When no derivation-status feed
 /// is wired, no catchup is triggered.
 #[test]
-fn test_resume_triggers_catchup_from_safe_head() {
+fn test_start_triggers_catchup_from_safe_head() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (source, catchup_args) = TrackingSource::new();
         let (admin_handle, admin_rx) = AdminHandle::channel();
@@ -85,10 +85,10 @@ fn test_resume_triggers_catchup_from_safe_head() {
 
         let handle = ctx.spawn(driver.run());
 
-        // Pause then resume with safe_head = 42; the source will poll 43 next.
-        admin_handle.pause().await.unwrap();
+        // Stop then start with safe_head = 42; the source will poll 43 next.
+        admin_handle.stop().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
-        admin_handle.resume().await.unwrap();
+        admin_handle.start().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         ctx.cancel();
 
@@ -98,15 +98,15 @@ fn test_resume_triggers_catchup_from_safe_head() {
         assert_eq!(
             *catchup_args.lock().unwrap(),
             vec![safe_head],
-            "source must be reanchored at the safe head on resume"
+            "source must be reanchored at the safe head on start"
         );
     });
 }
 
-/// While paused, `Block` and `Flush` source events must be dropped; the
+/// While stopped, `Block` and `Flush` source events must be dropped; the
 /// pipeline must not receive any blocks.
 #[test]
-fn test_paused_drops_block_and_flush_events() {
+fn test_stopped_drops_block_and_flush_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (admin_handle, admin_rx) = AdminHandle::channel();
         let (source, source_tx) = ChannelBlockSource::new();
@@ -180,20 +180,20 @@ fn test_paused_drops_block_and_flush_events() {
         .with_admin_rx(admin_rx);
         let handle = ctx.spawn(driver.run());
 
-        // Pause, then send a block — it must be dropped.
-        admin_handle.pause().await.unwrap();
+        // Stop, then send a block — it must be dropped.
+        admin_handle.stop().await.unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         source_tx.send(L2BlockEvent::Block(Box::default())).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
 
-        // A flush's ack must also be dropped (not silently leaked/hung) while paused, so a
+        // A flush's ack must also be dropped (not silently leaked/hung) while stopped, so a
         // waiter sees an immediate closed-channel error rather than an indefinite wait.
         let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
         source_tx.send(L2BlockEvent::Flush { ack: Some(ack_tx) }).unwrap();
         ctx.sleep(Duration::from_millis(10)).await;
         assert!(
             ack_rx.await.is_err(),
-            "flush ack must be dropped (not fired) while the batcher is paused"
+            "flush ack must be dropped (not fired) while the batcher is stopped"
         );
 
         ctx.cancel();
@@ -202,7 +202,7 @@ fn test_paused_drops_block_and_flush_events() {
         assert_eq!(
             *add_block_calls.lock().unwrap(),
             0,
-            "add_block must not be called while paused"
+            "add_block must not be called while stopped"
         );
     });
 }

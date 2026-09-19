@@ -61,7 +61,7 @@ name = "lifecycle"
 required-features = ["test-utils"]
 
 [[test]]
-name = "pause_resume"
+name = "stop_start"
 required-features = ["test-utils"]
 
 [features]
