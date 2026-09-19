@@ -12,10 +12,10 @@ use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension, ShadowRet
 use base_shadow_indexer_db::{PgConnectionParams, ShadowBlockRepo, ShadowDbConfig};
 use base_system_tests::{SystemTestProviderExt, SystemTestStackBuilder};
 use eyre::{Result, WrapErr, ensure};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{Connection, PgConnection, migrate::Migrate, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, sleep, timeout};
 
 /// `testcontainers-modules` still defaults to Postgres 11, which predates the
 /// `jsonb_path_query_array` used by migration 0004.
@@ -111,5 +111,84 @@ async fn shadow_indexer_persists_no_canonical_blocks() -> Result<()> {
         sleep(DB_POLL_INTERVAL).await;
     }
 
+    Ok(())
+}
+
+/// A second startup must wait for the migration lock without holding a snapshot that blocks
+/// the first startup's concurrent index build. Use `SQLx` itself as the lock holder so this also
+/// checks that pool initialization still coordinates with its migration lock.
+#[tokio::test]
+async fn shadow_indexer_migration_waiter_does_not_block_concurrent_index() -> anyhow::Result<()> {
+    let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
+    let connection = PgConnectionParams {
+        host: "127.0.0.1".to_string(),
+        port: container.get_host_port_ipv4(5432).await?,
+        database: "postgres".to_string(),
+        username: "postgres".to_string(),
+        password: "postgres".to_string(),
+    };
+    let config = ShadowDbConfig {
+        connection: connection.clone(),
+        max_connections: 1,
+        connection_timeout: Duration::from_secs(5),
+    };
+    let mut holder = PgConnection::connect_with(&connection.connect_options()).await?;
+    let mut observer = PgConnection::connect_with(&connection.connect_options()).await?;
+    let holder_pid: i32 =
+        sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&mut holder).await?;
+    sqlx::query("CREATE TABLE migration_probe (value integer)").execute(&mut holder).await?;
+    holder.lock().await?;
+
+    let build_index = async {
+        // Wait until init_pool has attempted to acquire the lock, rather than relying on a
+        // sleep to arrange the race. Accept both the old blocking query and the new polling one.
+        loop {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+                 WHERE pid NOT IN (pg_backend_pid(), $1) \
+                 AND query LIKE '%advisory_lock%' \
+                 AND (state = 'idle' OR wait_event = 'advisory'))",
+            )
+            .bind(holder_pid)
+            .fetch_one(&mut observer)
+            .await?;
+            if waiting {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+        let table: Option<String> =
+            sqlx::query_scalar("SELECT to_regclass('public.shadow_blocks')::text")
+                .fetch_one(&mut observer)
+                .await?;
+        anyhow::ensure!(table.is_none(), "migrations ran without owning SQLx's lock");
+
+        // An expression index must wait for old snapshots, including a blocking advisory-lock
+        // query's snapshot. With that query this deterministically deadlocks, even on no rows.
+        sqlx::query(
+            "CREATE INDEX CONCURRENTLY migration_probe_idx ON migration_probe ((value + 1))",
+        )
+        .execute(&mut holder)
+        .await?;
+        holder.unlock().await?;
+        Ok::<_, anyhow::Error>(())
+    };
+    let (pool, ()) = timeout(Duration::from_secs(20), async {
+        tokio::try_join!(config.init_pool(), build_index)
+    })
+    .await??;
+
+    // The waiter must actually finish migrating, including the final BYTEA-to-TEXT cutover.
+    let hash_type: String = sqlx::query_scalar(
+        "SELECT data_type FROM information_schema.columns \
+         WHERE table_schema = 'public' AND table_name = 'shadow_blocks' AND column_name = 'hash'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    anyhow::ensure!(hash_type == "text", "migrations did not finish: hash type is {hash_type}");
+
+    // Keep the returned pool alive: a leaked session lock in it would block the next startup.
+    timeout(Duration::from_secs(5), config.init_pool()).await??;
+    pool.close().await;
     Ok(())
 }
