@@ -13,7 +13,7 @@ pub use event::*;
 mod emit;
 pub use emit::{
     GlobalTransactionEventWriter, GlobalTransactionEventWriterInitStatus, TransactionEventBuilder,
-    TransactionEventEmitOutcome,
+    TransactionEventEmitOutcome, TransactionEventJournalGuard,
 };
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -30,7 +30,9 @@ pub use metrics::Metrics;
 mod writer;
 #[cfg(any(test, feature = "test-utils"))]
 pub use writer::TransactionEventRecorder;
-pub use writer::{TransactionEventWriter, TransactionEventWriterConfig, WriteEventError};
+pub use writer::{
+    ShutdownError, TransactionEventWriter, TransactionEventWriterConfig, WriteEventError,
+};
 
 #[doc(hidden)]
 pub mod __private {

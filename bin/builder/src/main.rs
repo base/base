@@ -11,7 +11,7 @@ use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
-use base_observability_events::GlobalTransactionEventWriter;
+use base_observability_events::{DEFAULT_SHUTDOWN_TIMEOUT, GlobalTransactionEventWriter};
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
@@ -45,6 +45,8 @@ fn main() {
         GlobalTransactionEventWriter::init(
             transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
         )?;
+        let _transaction_event_journal =
+            GlobalTransactionEventWriter::drain_on_drop(DEFAULT_SHUTDOWN_TIMEOUT);
 
         let builder_api_config = builder_args.builder_api_config()?;
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;

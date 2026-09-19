@@ -2920,6 +2920,7 @@ dependencies = [
  "base-execution-evm",
  "base-node-core",
  "base-node-runner",
+ "base-observability-events",
  "base-reth-cli",
  "base-shadow-indexer",
  "base-txpool-rpc",
@@ -5155,7 +5156,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tracing",
- "tracing-appender",
 ]
 
 [[package]]

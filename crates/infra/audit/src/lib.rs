@@ -82,6 +82,10 @@ impl AuditConnector {
     /// fresh deadline. When `event_rx` is closed, any remaining buffered events
     /// are flushed before the spawned task exits.
     ///
+    /// The returned [`tokio::task::JoinHandle`] must be awaited or aborted by
+    /// the caller before draining the transaction event writer, so in-flight
+    /// publish work can finish emitting events.
+    ///
     /// Publish failures are logged and the offending batch is dropped; the
     /// connector does not retry and does not apply backpressure to `event_rx`.
     pub fn connect_batched<P>(
@@ -89,7 +93,8 @@ impl AuditConnector {
         publisher: P,
         batch_max_size: usize,
         batch_max_wait: Duration,
-    ) where
+    ) -> tokio::task::JoinHandle<()>
+    where
         P: BundleEventPublisher + 'static,
     {
         tokio::spawn(async move {
@@ -132,7 +137,7 @@ impl AuditConnector {
                     }
                 }
             }
-        });
+        })
     }
 
     /// Drains `buffer` and ships it via `publisher.publish_all`. Errors are

@@ -1,19 +1,18 @@
-#[cfg(any(test, feature = "test-utils"))]
-use std::sync::Mutex;
 use std::{
     fmt,
     fs::{File, OpenOptions, create_dir_all, read_dir, remove_file, rename},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Condvar, Mutex, RwLock, TryLockError,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use tracing::warn;
-use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
 
 use crate::{
     DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_FILES, DEFAULT_QUEUE_CAPACITY, Metrics, TransactionEvent,
@@ -99,20 +98,28 @@ pub struct TransactionEventWriter {
 struct WriterInner {
     backend: WriterBackend,
     network: String,
+    accepting: AtomicBool,
 }
 
 enum WriterBackend {
     Disabled,
-    File {
-        writer: NonBlocking,
-        dropped: ErrorCounter,
-        observed_drops: AtomicUsize,
-        _guard: WorkerGuard,
-    },
+    File(FileBackend),
     #[cfg(any(test, feature = "test-utils"))]
     Memory {
         recorder: TransactionEventRecorder,
     },
+}
+
+struct FileBackend {
+    sender: RwLock<Option<mpsc::SyncSender<Vec<u8>>>>,
+    state: Mutex<FileWriterState>,
+    cv: Condvar,
+}
+
+enum FileWriterState {
+    Running(thread::JoinHandle<Result<(), ShutdownError>>),
+    InProgress,
+    Completed(Result<(), ShutdownError>),
 }
 
 impl fmt::Debug for TransactionEventWriter {
@@ -202,23 +209,22 @@ impl TransactionEventWriter {
             }
         };
 
-        let queue_capacity = config.queue_capacity.max(1);
-        let (writer, guard) = NonBlockingBuilder::default()
-            .lossy(true)
-            .buffered_lines_limit(queue_capacity)
-            .thread_name("transaction-event-writer")
-            .finish(MetricWriter::new(file));
-        let dropped = writer.error_counter();
-
-        Ok(Self::new(
-            WriterBackend::File {
-                writer,
-                dropped,
-                observed_drops: AtomicUsize::new(0),
-                _guard: guard,
-            },
-            config.network,
-        ))
+        match spawn_file_backend(file, config.queue_capacity, "transaction-event-writer") {
+            Ok(backend) => Ok(Self::new(WriterBackend::File(backend), config.network)),
+            Err(err) if config.required => Err(eyre::eyre!(
+                "failed to start required transaction event writer at {}: {err}",
+                config.file_path.display()
+            )),
+            Err(err) => {
+                Metrics::write_errors("write").increment(1);
+                warn!(
+                    path = %config.file_path.display(),
+                    error = %err,
+                    "transaction event writer disabled after worker start failure"
+                );
+                Ok(Self::disabled(config))
+            }
+        }
     }
 
     /// Creates a disabled writer handle.
@@ -233,11 +239,18 @@ impl TransactionEventWriter {
     }
 
     fn new(backend: WriterBackend, network: impl Into<String>) -> Self {
-        Self { inner: Arc::new(WriterInner { backend, network: network.into() }) }
+        Self {
+            inner: Arc::new(WriterInner {
+                backend,
+                network: network.into(),
+                accepting: AtomicBool::new(true),
+            }),
+        }
     }
 
     /// Attempts to enqueue one event without blocking the caller.
     pub fn try_write(&self, event: &TransactionEvent) -> Result<(), WriteEventError> {
+        self.reject_if_shut_down()?;
         match &self.inner.backend {
             WriterBackend::Disabled => {
                 Metrics::dropped_events("disabled").increment(1);
@@ -250,19 +263,46 @@ impl TransactionEventWriter {
                 Metrics::submitted_events().increment(1);
                 Ok(())
             }
-            WriterBackend::File { writer, .. } => {
+            WriterBackend::File(backend) => {
                 Self::validate_event(event)?;
                 let mut line = serde_json::to_vec(event).map_err(|err| {
                     Metrics::dropped_events("serialization").increment(1);
                     WriteEventError::Serialize(err)
                 })?;
                 line.push(b'\n');
-                let _ = writer.clone().write_all(&line);
-                self.observe_dropped_events();
-                Metrics::submitted_events().increment(1);
-                Ok(())
+                backend.try_enqueue(line, &self.inner.accepting)
             }
         }
+    }
+
+    /// Stops accepting events, drains already queued events, and flushes the
+    /// active file.
+    ///
+    /// This method is idempotent. The first call performs shutdown; later calls
+    /// return the same result. Emission that races with shutdown is rejected
+    /// with [`WriteEventError::Shutdown`] and does not write through a closed
+    /// backend.
+    ///
+    /// The wait is bounded by `timeout`. A blocked worker does not hang process
+    /// shutdown; the worker thread is detached and [`ShutdownError::Timeout`] is
+    /// returned.
+    pub fn shutdown(&self, timeout: Duration) -> Result<(), ShutdownError> {
+        self.inner.accepting.store(false, Ordering::Release);
+        match &self.inner.backend {
+            WriterBackend::Disabled => Ok(()),
+            #[cfg(any(test, feature = "test-utils"))]
+            WriterBackend::Memory { .. } => Ok(()),
+            WriterBackend::File(backend) => backend.shutdown(timeout),
+        }
+    }
+
+    fn reject_if_shut_down(&self) -> Result<(), WriteEventError> {
+        if self.inner.accepting.load(Ordering::Acquire) { Ok(()) } else { Self::reject_shut_down() }
+    }
+
+    fn reject_shut_down() -> Result<(), WriteEventError> {
+        Metrics::dropped_events("shutdown").increment(1);
+        Err(WriteEventError::Shutdown)
     }
 
     fn validate_event(event: &TransactionEvent) -> Result<(), WriteEventError> {
@@ -276,28 +316,152 @@ impl TransactionEventWriter {
     pub fn network(&self) -> &str {
         &self.inner.network
     }
+}
 
-    fn observe_dropped_events(&self) -> usize {
-        let WriterBackend::File { dropped, observed_drops, .. } = &self.inner.backend else {
-            return 0;
+impl FileBackend {
+    fn try_enqueue(&self, line: Vec<u8>, accepting: &AtomicBool) -> Result<(), WriteEventError> {
+        let sender = match self.sender.try_read() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return TransactionEventWriter::reject_shut_down(),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         };
-
-        loop {
-            let current = dropped.dropped_lines();
-            let previous = observed_drops.load(Ordering::Relaxed);
-            if current <= previous {
-                return 0;
+        if !accepting.load(Ordering::Acquire) {
+            return TransactionEventWriter::reject_shut_down();
+        }
+        let Some(sender) = sender.as_ref() else {
+            return TransactionEventWriter::reject_shut_down();
+        };
+        match sender.try_send(line) {
+            Ok(()) => {
+                Metrics::submitted_events().increment(1);
+                Ok(())
             }
+            Err(mpsc::TrySendError::Full(_)) => {
+                Metrics::dropped_events("backpressure").increment(1);
+                Ok(())
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => TransactionEventWriter::reject_shut_down(),
+        }
+    }
 
-            if observed_drops
-                .compare_exchange_weak(previous, current, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                let delta = current - previous;
-                Metrics::dropped_events("backpressure").increment(delta as u64);
-                return delta;
+    fn disconnect_sender(&self, deadline: Instant) -> Result<(), ShutdownError> {
+        loop {
+            match self.sender.try_write() {
+                Ok(mut guard) => {
+                    drop(guard.take());
+                    return Ok(());
+                }
+                Err(TryLockError::WouldBlock) => {
+                    if Instant::now() >= deadline {
+                        return Err(ShutdownError::Timeout);
+                    }
+                    thread::sleep(Duration::from_millis(1));
+                }
+                Err(TryLockError::Poisoned(poisoned)) => {
+                    drop(poisoned.into_inner().take());
+                    return Ok(());
+                }
             }
         }
+    }
+
+    fn shutdown(&self, timeout: Duration) -> Result<(), ShutdownError> {
+        let deadline = Instant::now() + timeout;
+        self.disconnect_sender(deadline)?;
+        let handle = loop {
+            let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+            match &*state {
+                FileWriterState::Completed(result) => return result.clone(),
+                FileWriterState::InProgress => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return Err(ShutdownError::Timeout);
+                    }
+                    let remaining = deadline.saturating_duration_since(now);
+                    let (guard, wait) = match self.cv.wait_timeout(state, remaining) {
+                        Ok(result) => result,
+                        Err(err) => err.into_inner(),
+                    };
+                    if wait.timed_out() {
+                        return Err(ShutdownError::Timeout);
+                    }
+                    drop(guard);
+                }
+                FileWriterState::Running(_) => {
+                    let FileWriterState::Running(handle) =
+                        std::mem::replace(&mut *state, FileWriterState::InProgress)
+                    else {
+                        unreachable!("file writer state was Running");
+                    };
+                    break handle;
+                }
+            }
+        };
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let result = join_worker(handle, remaining);
+        let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        *state = FileWriterState::Completed(result.clone());
+        self.cv.notify_all();
+        result
+    }
+}
+
+fn spawn_file_backend<W>(
+    sink: W,
+    queue_capacity: usize,
+    thread_name: &str,
+) -> io::Result<FileBackend>
+where
+    W: Write + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(queue_capacity.max(1));
+    let handle = thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || run_writer_thread(receiver, MetricWriter::new(sink)))?;
+
+    Ok(FileBackend {
+        sender: RwLock::new(Some(sender)),
+        state: Mutex::new(FileWriterState::Running(handle)),
+        cv: Condvar::new(),
+    })
+}
+
+fn join_worker(
+    handle: thread::JoinHandle<Result<(), ShutdownError>>,
+    timeout: Duration,
+) -> Result<(), ShutdownError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if handle.is_finished() {
+            return handle.join().unwrap_or(Err(ShutdownError::WorkerPanicked));
+        }
+        if Instant::now() >= deadline {
+            return Err(ShutdownError::Timeout);
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn run_writer_thread<W>(receiver: mpsc::Receiver<Vec<u8>>, mut sink: W) -> Result<(), ShutdownError>
+where
+    W: Write,
+{
+    let mut first_error = None;
+    while let Ok(buf) = receiver.recv() {
+        write_job(&mut sink, &buf, &mut first_error);
+    }
+
+    if let Err(err) = sink.flush() {
+        first_error.get_or_insert_with(|| ShutdownError::from(err));
+    }
+
+    first_error.map_or(Ok(()), Err)
+}
+
+fn write_job<W: Write>(sink: &mut W, buf: &[u8], first_error: &mut Option<ShutdownError>) {
+    if let Err(err) = sink.write_all(buf) {
+        first_error.get_or_insert_with(|| ShutdownError::from(err));
     }
 }
 
@@ -307,12 +471,40 @@ pub enum WriteEventError {
     /// Writer is disabled.
     #[error("transaction event writer is disabled")]
     Disabled,
+    /// Writer is shutting down or has already shut down.
+    #[error("transaction event writer is shut down")]
+    Shutdown,
     /// Serialization failed.
     #[error("failed to serialize transaction event: {0}")]
     Serialize(serde_json::Error),
     /// Event failed contract validation.
     #[error("invalid transaction event: {0}")]
     Invalid(TransactionEventValidationError),
+}
+
+/// Error returned when the writer cannot finish a graceful shutdown.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ShutdownError {
+    /// The worker did not finish draining and flushing within the timeout.
+    #[error("transaction event writer shutdown timed out")]
+    Timeout,
+    /// The background writer thread panicked.
+    #[error("transaction event writer worker panicked")]
+    WorkerPanicked,
+    /// A write or flush failed while draining the queue or closing the file.
+    #[error("transaction event writer failed during shutdown: {message}")]
+    Io {
+        /// `std::io` error kind from the failed write or flush.
+        kind: io::ErrorKind,
+        /// Display text of the underlying I/O error.
+        message: String,
+    },
+}
+
+impl From<io::Error> for ShutdownError {
+    fn from(err: io::Error) -> Self {
+        Self::Io { kind: err.kind(), message: err.to_string() }
+    }
 }
 
 const MAX_ROTATED_PATH_ATTEMPTS: u32 = 1000;
@@ -488,8 +680,14 @@ mod tests {
     use std::{
         fs,
         io::{self, ErrorKind},
+        path::Path,
+        sync::{
+            Arc, Condvar, Mutex,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+            mpsc as std_mpsc,
+        },
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use alloy_primitives::TxHash;
@@ -526,32 +724,27 @@ mod tests {
     where
         W: Write + Send + 'static,
     {
-        let config = TransactionEventWriterConfig {
+        let backend = spawn_file_backend(sink, queue_capacity, "transaction-event-writer-test")
+            .expect("test writer worker should start");
+        TransactionEventWriter::new(WriterBackend::File(backend), "base-mainnet")
+    }
+
+    fn file_writer(path: PathBuf, queue_capacity: usize) -> TransactionEventWriter {
+        TransactionEventWriter::from_config(TransactionEventWriterConfig {
             enabled: true,
-            file_path: PathBuf::from("test.jsonl"),
+            file_path: path,
             queue_capacity,
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_files: DEFAULT_MAX_FILES,
             required: true,
             producer: TransactionEventProducer::BaseRethNode,
             network: "base-mainnet".to_string(),
-        };
-        let (writer, guard) = NonBlockingBuilder::default()
-            .lossy(true)
-            .buffered_lines_limit(queue_capacity)
-            .thread_name("transaction-event-writer-test")
-            .finish(MetricWriter::new(sink));
-        let dropped = writer.error_counter();
+        })
+        .unwrap()
+    }
 
-        TransactionEventWriter::new(
-            WriterBackend::File {
-                writer,
-                dropped,
-                observed_drops: AtomicUsize::new(0),
-                _guard: guard,
-            },
-            config.network,
-        )
+    fn jsonl_lines(path: &Path) -> Vec<String> {
+        fs::read_to_string(path).unwrap().lines().map(str::to_string).collect()
     }
 
     #[test]
@@ -764,7 +957,7 @@ mod tests {
         .unwrap();
 
         writer.try_write(&sample_event()).unwrap();
-        drop(writer);
+        writer.shutdown(Duration::from_secs(5)).unwrap();
 
         let contents = fs::read_to_string(path).unwrap();
         let lines = contents.lines().collect::<Vec<_>>();
@@ -809,11 +1002,14 @@ mod tests {
 
     #[test]
     fn writer_observes_aggregate_backpressure_drops() {
-        struct SlowWriter;
+        struct CountingSlowWriter {
+            written: Arc<AtomicUsize>,
+        }
 
-        impl Write for SlowWriter {
+        impl Write for CountingSlowWriter {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                 thread::sleep(Duration::from_millis(50));
+                self.written.fetch_add(1, Ordering::Relaxed);
                 Ok(buf.len())
             }
 
@@ -822,20 +1018,19 @@ mod tests {
             }
         }
 
-        let writer = writer_with_sink(SlowWriter, 0);
-        let WriterBackend::File { observed_drops, .. } = &writer.inner.backend else {
-            panic!("backpressure test requires a file-backed writer");
-        };
-
-        for _ in 0..10_000 {
+        let written = Arc::new(AtomicUsize::new(0));
+        let writer = writer_with_sink(CountingSlowWriter { written: Arc::clone(&written) }, 1);
+        let submitted = 256;
+        for _ in 0..submitted {
             writer.try_write(&sample_event()).unwrap();
-            if observed_drops.load(Ordering::Relaxed) > 0 {
-                break;
-            }
         }
+        writer.shutdown(Duration::from_secs(5)).unwrap();
 
-        let dropped = observed_drops.load(Ordering::Relaxed);
-        assert!(dropped > 0, "lossy writer should report aggregate drops under backpressure");
+        let written = written.load(Ordering::Relaxed);
+        assert!(
+            written < submitted,
+            "lossy writer should drop events under backpressure, wrote {written} of {submitted}"
+        );
     }
 
     #[test]
@@ -855,7 +1050,7 @@ mod tests {
         .unwrap();
 
         writer.try_write(&sample_event()).unwrap();
-        drop(writer);
+        writer.shutdown(Duration::from_secs(5)).unwrap();
 
         assert!(path.exists());
     }
@@ -901,5 +1096,187 @@ mod tests {
 
         let err = writer.flush().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::Other);
+    }
+
+    #[test]
+    fn shutdown_writes_queued_events_before_returning() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer = file_writer(path.clone(), 64);
+
+        for index in 0..32 {
+            let mut event = sample_event();
+            event.event_id = EventIdBuilder::new()
+                .part("producer", TransactionEventProducer::BaseRethNode)
+                .part("index", index)
+                .finish();
+            writer.try_write(&event).unwrap();
+        }
+
+        writer.shutdown(Duration::from_secs(5)).unwrap();
+        assert_eq!(jsonl_lines(&path).len(), 32);
+    }
+
+    #[test]
+    fn concurrent_emit_and_shutdown_does_not_panic_or_write_after_close() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer = file_writer(path.clone(), 64);
+        let stop = Arc::new(AtomicBool::new(false));
+        let emitters: Vec<_> = (0..4)
+            .map(|_| {
+                let writer = writer.clone();
+                let stop = Arc::clone(&stop);
+                thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = writer.try_write(&sample_event());
+                    }
+                })
+            })
+            .collect();
+
+        thread::sleep(Duration::from_millis(10));
+        writer.shutdown(Duration::from_secs(5)).unwrap();
+        let lines_after_shutdown = jsonl_lines(&path).len();
+
+        thread::sleep(Duration::from_millis(10));
+        stop.store(true, Ordering::Relaxed);
+        for emitter in emitters {
+            emitter.join().expect("emitter thread should not panic");
+        }
+
+        assert_eq!(jsonl_lines(&path).len(), lines_after_shutdown);
+        assert!(matches!(writer.try_write(&sample_event()), Err(WriteEventError::Shutdown)));
+        for line in jsonl_lines(&path) {
+            serde_json::from_str::<Value>(&line)
+                .expect("shutdown must not leave a partial JSONL line");
+        }
+    }
+
+    #[test]
+    fn shutdown_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer = file_writer(path, 8);
+
+        writer.try_write(&sample_event()).unwrap();
+        writer.shutdown(Duration::from_secs(5)).unwrap();
+        writer.shutdown(Duration::from_secs(5)).unwrap();
+        assert!(matches!(writer.try_write(&sample_event()), Err(WriteEventError::Shutdown)));
+    }
+
+    #[test]
+    fn shutdown_returns_write_failure() {
+        struct FailingWrite;
+
+        impl Write for FailingWrite {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("disk full"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = writer_with_sink(FailingWrite, 8);
+        writer.try_write(&sample_event()).unwrap();
+        let first = writer.shutdown(Duration::from_secs(5)).unwrap_err();
+        let second = writer.shutdown(Duration::from_secs(5)).unwrap_err();
+        assert!(matches!(first, ShutdownError::Io { kind: ErrorKind::Other, .. }));
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn shutdown_returns_flush_failure() {
+        struct FailingFlush;
+
+        impl Write for FailingFlush {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Err(io::Error::other("flush failed"))
+            }
+        }
+
+        let writer = writer_with_sink(FailingFlush, 8);
+        writer.try_write(&sample_event()).unwrap();
+        let err = writer.shutdown(Duration::from_secs(5)).unwrap_err();
+        assert!(matches!(err, ShutdownError::Io { kind: ErrorKind::Other, .. }));
+        assert!(err.to_string().contains("flush failed"));
+    }
+
+    #[test]
+    fn shutdown_times_out_when_writer_blocks() {
+        struct BlockingWriter {
+            started: std_mpsc::SyncSender<()>,
+            release: Arc<(Mutex<bool>, Condvar)>,
+        }
+
+        impl Write for BlockingWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                let _ = self.started.try_send(());
+                let (lock, cv) = &*self.release;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = cv.wait(released).unwrap();
+                }
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let (started_tx, started_rx) = std_mpsc::sync_channel(1);
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let writer = writer_with_sink(
+            BlockingWriter { started: started_tx, release: Arc::clone(&release) },
+            8,
+        );
+        writer.try_write(&sample_event()).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(1)).expect("worker should enter write");
+
+        let started = Instant::now();
+        let err = writer.shutdown(Duration::from_millis(100)).unwrap_err();
+        assert!(matches!(err, ShutdownError::Timeout));
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        {
+            let (lock, cv) = &*release;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+        }
+    }
+
+    #[test]
+    fn emission_after_shutdown_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("transaction-events.jsonl");
+        let writer = file_writer(path.clone(), 8);
+        writer.try_write(&sample_event()).unwrap();
+        writer.shutdown(Duration::from_secs(5)).unwrap();
+
+        assert!(matches!(writer.try_write(&sample_event()), Err(WriteEventError::Shutdown)));
+        let mut invalid = sample_event();
+        invalid.event_id.clear();
+        assert!(matches!(writer.try_write(&invalid), Err(WriteEventError::Shutdown)));
+        assert_eq!(jsonl_lines(&path).len(), 1);
+
+        let recorder = TransactionEventRecorder::new();
+        let memory = TransactionEventWriter::in_memory("test", recorder);
+        memory.shutdown(Duration::from_secs(1)).unwrap();
+        assert!(matches!(memory.try_write(&sample_event()), Err(WriteEventError::Shutdown)));
+
+        let disabled = TransactionEventWriter::disabled(TransactionEventWriterConfig::disabled(
+            TransactionEventProducer::BaseRethNode,
+            "base-mainnet",
+            "/tmp/transaction-events.jsonl",
+        ));
+        disabled.shutdown(Duration::from_secs(1)).unwrap();
+        assert!(matches!(disabled.try_write(&sample_event()), Err(WriteEventError::Shutdown)));
     }
 }
