@@ -32,7 +32,7 @@ printf "%-12s | %-10s | %-10s\n" "L2 Builder" "$BUILDER_UNSAFE" "$BUILDER_SAFE"
 printf "%-12s | %-10s | %-10s\n" "L2 Client" "$CLIENT_UNSAFE" "$CLIENT_SAFE"
 
 # Check proxyd health
-PROXYD_STATUS=$(cast chain-id --rpc-url $L2_INGRESS_RPC_URL >/dev/null 2>&1 && echo "healthy" || echo "not running")
+PROXYD_STATUS=$(cast chain-id --rpc-url $L2_PROXYD_RPC_URL >/dev/null 2>&1 && echo "healthy" || echo "not running")
 printf "%-12s | %-10s | %-10s\n" "L2 Proxyd" "$PROXYD_STATUS" "-"
 
 printf "\n"

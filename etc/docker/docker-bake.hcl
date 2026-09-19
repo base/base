@@ -20,7 +20,7 @@ variable "DEVNET_TARGETS" {
   default = ["base", "op-batcher"]
 }
 
-variable "INGRESS_TARGETS" {
+variable "TX_OBSERVABILITY_TARGETS" {
   default = ["base", "audit-archiver", "op-batcher"]
 }
 
@@ -49,8 +49,8 @@ group "devnet" {
   targets = DEVNET_TARGETS
 }
 
-group "ingress" {
-  targets = INGRESS_TARGETS
+group "tx-observability" {
+  targets = TX_OBSERVABILITY_TARGETS
 }
 
 target "profiling-tools" {

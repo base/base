@@ -12,7 +12,7 @@ The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerf
 
 `Dockerfile.op-batcher` builds Go `op-batcher/v1.16.5` at commit
 [`abe047af`](https://github.com/ethereum-optimism/optimism/commit/abe047afc995e0e22abf5ea9b157e267e907d494),
-matching the Base mainnet infrastructure source pin. The `devnet` and `ingress`
+matching the Base mainnet infrastructure source pin. The `devnet` and `tx-observability`
 Bake groups build it as `op-batcher:local`; it runs as the canonical batcher.
 The Rust `base batcher` (the `base batcher` subcommand of `base:local`) runs
 alongside it in shadow mode; no separate Rust batcher image is needed.
@@ -169,8 +169,8 @@ must schedule Denim and configure both sides of the forwarding path:
 
 - builder: `--builder.enable-experimental-validity-transactions` and
   `--builder.payload-builder-cutover`. The builder flag also registers
-  `base_sendRawTransactionValidity` for direct ingress.
-- ingress/client: `--enable-experimental-validity-transactions` and a
+  `base_sendRawTransactionValidity` for direct submission.
+- mempool/client: `--enable-experimental-validity-transactions` and a
   `--builder-rpc-urls` endpoint targeting the builder
 
 The default devnet compose files include these flags and schedule Cobalt at

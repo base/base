@@ -216,19 +216,19 @@ transfer-leader to='':
 conductor:
     cargo run --quiet -p basectl -- -c devnet monitor conductor
 
-# Stops devnet+ingress, deletes data, and starts fresh with full ingress stack
-ingress: ingress-down _build-setup-image (_build-rust-images "ingress" "dev")
+# Stops devnet+tx-observability, deletes data, and starts fresh with full observability stack
+tx-observability: tx-observability-down _build-setup-image (_build-rust-images "tx-observability" "dev")
     mkdir -p .devnet
-    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml up -d --no-build
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.tx-observability.yml up -d --no-build
 
-# Stops devnet+ingress and deletes all data
-ingress-down:
-    -docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml down
+# Stops devnet+tx-observability and deletes all data
+tx-observability-down:
+    -docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.tx-observability.yml down
     -[ ! -d .devnet ] || docker run --rm -v "$(pwd)/.devnet:/devnet" alpine sh -c 'rm -rf /devnet/*'
 
-# Stream logs from devnet+ingress containers (optionally specify container names)
-ingress-logs *containers:
-    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.ingress.yml logs -f {{ containers }}
+# Stream logs from devnet+tx-observability containers (optionally specify container names)
+tx-observability-logs *containers:
+    docker compose {{ _env }} {{ _base }} -f etc/docker/docker-compose.tx-observability.yml logs -f {{ containers }}
 
 # Builds one of the shared Rust service images (default: base)
 build-image target='base' profile='dev':
@@ -290,7 +290,7 @@ _build-rust-images group profile='dev':
     case "{{ profile }}" in
       dev|profiling)
         case "{{ group }}" in
-          devnet|ingress) elf_require=0 ;;
+          devnet|tx-observability) elf_require=0 ;;
         esac
         ;;
     esac
@@ -325,7 +325,7 @@ _up-devnet compose_profile mode:
       ha)
         compose_files=({{ _ha }})
         # Any of the three conductor-managed sequencers can be the leader/builder,
-        # so ingress nodes fan validity (advanced) txs out to all of them.
+        # so mempool nodes fan validity (advanced) txs out to all of them.
         export VALIDITY_BUILDER_RPC_URLS="http://base-builder:${L2_BUILDER_HTTP_PORT},http://base-sequencer-1:${L2_SEQ1_HTTP_PORT},http://base-sequencer-2:${L2_SEQ2_HTTP_PORT}"
         ;;
       base) compose_files=({{ _base }}) ;;

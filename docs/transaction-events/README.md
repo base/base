@@ -112,12 +112,12 @@ and `privateKey` before ingest.
 
 Core devnet (`just devnet up` / `just devnet up-single`) enables durable
 transaction event journals on `base-client` and `base-builder`, writing JSONL
-under `.devnet/transaction-events/`. The ingress overlay adds the collection
+under `.devnet/transaction-events/`. The tx-observability overlay adds the collection
 pipeline (Vector, Postgres, `audit-archiver`) plus the proxyd producer; it
 does not own node journal config.
 
 ```bash
-just devnet ingress
+just devnet tx-observability
 just devnet tx-observability-smoke
 ```
 
@@ -126,7 +126,7 @@ testing proxyd transaction events before that implementation has landed in the
 default proxyd image:
 
 ```bash
-BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet ingress
+BASE_ROUTING_CONTEXT=/path/to/base-routing just devnet tx-observability
 just devnet tx-observability-smoke
 ```
 

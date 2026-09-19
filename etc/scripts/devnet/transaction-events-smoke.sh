@@ -3,7 +3,7 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-RPC_URL="${1:-$L2_INGRESS_RPC_URL}"
+RPC_URL="${1:-$L2_PROXYD_RPC_URL}"
 AUDIT_RPC_URL="${2:-http://localhost:${AUDIT_RPC_PORT:-9100}}"
 PK="${3:-$ANVIL_ACCOUNT_5_KEY}"
 TO="${4:-$ANVIL_ACCOUNT_6_ADDR}"

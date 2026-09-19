@@ -4,7 +4,7 @@ x-rust-service-build: &rust-service-build
   args:
     PROFILE: "${CARGO_PROFILE:-dev}"
 
-x-ingress-healthcheck: &ingress-healthcheck
+x-overlay-healthcheck: &overlay-healthcheck
   interval: 5s
   timeout: 5s
   retries: 30
@@ -24,7 +24,7 @@ services:
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
-      <<: *ingress-healthcheck
+      <<: *overlay-healthcheck
       start_period: 5s
     restart: unless-stopped
 
@@ -54,7 +54,7 @@ services:
       base-client:
         condition: service_healthy
     ports:
-      - "${L2_INGRESS_HTTP_PORT}:8080"
+      - "${L2_PROXYD_HTTP_PORT}:8080"
     volumes:
       - ./proxyd:/config:ro
       - ../../.devnet/transaction-events:/var/log/transaction-events
@@ -66,7 +66,7 @@ services:
     command: ["/config/proxyd.toml"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json", "-H", "X-Forwarded-For: 127.0.0.1", "--data", "{\"jsonrpc\":\"2.0\",\"method\":\"eth_chainId\",\"params\":[],\"id\":1}", "http://localhost:8080"]
-      <<: *ingress-healthcheck
+      <<: *overlay-healthcheck
     restart: unless-stopped
 
   audit-archiver:
@@ -147,7 +147,7 @@ services:
     ports:
       - "${TRANSACTION_EVENTS_VECTOR_METRICS_PORT}:8686"
     environment:
-      TRANSACTION_EVENTS_CONFIG_NAME: local-devnet-ingress
+      TRANSACTION_EVENTS_CONFIG_NAME: local-devnet-tx-observability
       TRANSACTION_EVENTS_ENVIRONMENT_NAME: devnet
       TRANSACTION_EVENTS_PROJECT_NAME: base
       TRANSACTION_EVENTS_COLLECTOR_CONTAINER_NAME: transaction-events-vector

@@ -31,10 +31,10 @@ cast send --private-key $PK --rpc-url $L2_CLIENT_RPC_URL $TO --value 0.001ether 
 
 echo ""
 echo "=== L2 Proxyd Transaction Tests ==="
-if cast chain-id --rpc-url $L2_INGRESS_RPC_URL >/dev/null 2>&1; then
+if cast chain-id --rpc-url $L2_PROXYD_RPC_URL >/dev/null 2>&1; then
     echo "Sending L2 tx through proxyd..."
     sleep 3  # wait for the previous tx's nonce to be reflected on-chain
-    cast send --private-key $PK --rpc-url $L2_INGRESS_RPC_URL $TO --value 0.001ether --json | jq -r '"TX: \(.transactionHash) block=\(.blockNumber)"'
+    cast send --private-key $PK --rpc-url $L2_PROXYD_RPC_URL $TO --value 0.001ether --json | jq -r '"TX: \(.transactionHash) block=\(.blockNumber)"'
 else
-    echo "Proxyd not running (start with: just devnet ingress)"
+    echo "Proxyd not running (start with: just devnet tx-observability)"
 fi
