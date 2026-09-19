@@ -4,7 +4,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::Write,
-    net::{TcpListener, UdpSocket},
     path::{Path, PathBuf},
     process::Stdio,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -232,7 +231,8 @@ impl Provisioner {
         Self::restrict(&path, false)
     }
 
-    /// Rejects name and host-port collisions without adopting existing resources.
+    /// Rejects container name collisions without adopting existing resources.
+    /// Docker assigns and binds the dynamically allocated host ports at startup.
     pub async fn preflight(&self) -> Result<()> {
         let model = self.model().await?;
         let existing = Self::command(
@@ -254,18 +254,6 @@ impl Provisioner {
                 bail!(
                     "container {name} already exists; stop the developer devnet explicitly before acceptance"
                 )
-            }
-            for port in service["ports"].as_array().into_iter().flatten() {
-                if let Some(port_number) = port["published"].as_str() {
-                    let address = format!("0.0.0.0:{port_number}");
-                    if port["protocol"] == "udp" {
-                        UdpSocket::bind(&address)
-                            .wrap_err_with(|| format!("UDP port {port_number} is in use"))?;
-                    } else {
-                        TcpListener::bind(&address)
-                            .wrap_err_with(|| format!("TCP port {port_number} is in use"))?;
-                    }
-                }
             }
         }
         Ok(())

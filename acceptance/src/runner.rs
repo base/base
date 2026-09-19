@@ -224,7 +224,7 @@ impl AcceptanceRunner {
                     .find(|fork| &fork.name == name)
                     .ok_or_else(|| eyre::eyre!("fork {name} not present in verified schedule"))?
                     .activation_timestamp;
-                let builder = &endpoints["builder"];
+                let builder = RpcObserver::endpoint(&endpoints, "builder")?;
                 loop {
                     let block = observer.block(builder, "latest", deadline).await?;
                     let active = block.timestamp >= boundary;
@@ -267,9 +267,8 @@ impl AcceptanceRunner {
                     .find(|fork| &fork.name == name)
                     .expect("resolved fork")
                     .activation_timestamp;
-                if observer.block(&endpoints["builder"], "latest", deadline).await?.timestamp
-                    >= boundary
-                {
+                let builder = RpcObserver::endpoint(&endpoints, "builder")?;
+                if observer.block(builder, "latest", deadline).await?.timestamp >= boundary {
                     result.checks[index].status = Status::Error;
                     result.checks[index].message = format!(
                         "check window crossed {name} activation; pre-fork coverage is incomplete"
@@ -291,7 +290,7 @@ impl AcceptanceRunner {
         loop {
             let mut all = true;
             for role in Self::required_roles(config) {
-                let url = &endpoints[&role];
+                let url = RpcObserver::endpoint(endpoints, &role)?;
                 match observer.chain_id(url, deadline).await {
                     Ok(chain) => {
                         let expected = if role == "l1" {
@@ -524,6 +523,23 @@ start = {{ {window} = "denim", chain = "l2" }}
             assert_eq!(error.to_string(), "required endpoint builder missing");
             assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn readiness_rejects_missing_endpoints_when_called_directly() {
+        let config = ScenarioConfig::load("scenarios/smoke.toml").unwrap();
+        let observer =
+            RpcObserver::new(config.readiness.request_timeout.0, config.readiness.poll_interval.0)
+                .unwrap();
+        let error = AcceptanceRunner::wait_ready(
+            &observer,
+            &config,
+            &BTreeMap::new(),
+            Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), "endpoint builder was not resolved");
     }
 
     #[test]
