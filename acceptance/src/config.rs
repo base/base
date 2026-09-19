@@ -679,6 +679,32 @@ mod tests {
     }
 
     #[test]
+    fn zenith_requires_enabled_ordered_denim() {
+        let mut config = ScenarioConfig::load("scenarios/smoke.toml").unwrap();
+        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 24 });
+        assert_eq!(
+            config.validate().unwrap_err().to_string(),
+            "fork zenith activates before its prerequisite"
+        );
+
+        for at_block in [25, 30] {
+            config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block });
+            config.validate().unwrap();
+        }
+        config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 26 });
+        assert_eq!(
+            config.validate().unwrap_err().to_string(),
+            "post-Denim fork offsets must be divisible by five"
+        );
+
+        config.devnet.l2.forks.insert("denim".into(), ForkActivation::Disabled { disabled: true });
+        assert_eq!(
+            config.validate().unwrap_err().to_string(),
+            "enabled fork zenith has a disabled prerequisite"
+        );
+    }
+
+    #[test]
     fn rejects_wrong_generated_schedule() {
         let config: ScenarioConfig = toml::from_str("schema_version=1\nid='x'\ndescription='x'\n[[checks]]\nid='identity'\nkind='chain_id'\nendpoint='builder'\nexpected=1\ntimeout='5s'").unwrap();
         let temp = tempfile::NamedTempFile::new().unwrap();

@@ -486,6 +486,46 @@ mod tests {
         assert!(dir.path().join("report/evidence/heads.json").is_file());
     }
 
+    #[tokio::test]
+    async fn fork_windows_require_builder_even_when_checks_use_another_role() {
+        for window in ["before_fork", "after_fork"] {
+            let config: ScenarioConfig = toml::from_str(&format!(
+                r#"
+schema_version = 1
+id = "fork-window"
+description = "Observe a validator across a builder fork boundary"
+[[checks]]
+id = "identity"
+kind = "chain_id"
+endpoint = "validator"
+expected = 84538453
+timeout = "5s"
+start = {{ {window} = "denim", chain = "l2" }}
+"#
+            ))
+            .unwrap();
+            config.validate().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let error = AcceptanceRunner::run(
+                config,
+                AcceptanceOptions {
+                    repo_root: PathBuf::new(),
+                    output: dir.path().into(),
+                    endpoints: Some(BTreeMap::from([(
+                        "validator".into(),
+                        "http://127.0.0.1:1".into(),
+                    )])),
+                    rollup: None,
+                    build: false,
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), "required endpoint builder missing");
+            assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
+        }
+    }
+
     #[test]
     fn missing_or_credential_bearing_endpoints_are_rejected() {
         let config = ScenarioConfig::load("scenarios/smoke.toml").unwrap();

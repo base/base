@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
@@ -7,9 +9,6 @@ use std::{
     process::Stdio,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 use eyre::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
