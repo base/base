@@ -1,11 +1,15 @@
+import io
 import json
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import mock_open, patch
 
 from publish import (
     MARKER,
     MAX_PAGES,
     ValidationError,
     comment_body,
+    main,
     manifest_ids,
     publish,
     validate_result,
@@ -276,6 +280,82 @@ class PublishTests(unittest.TestCase):
         item["scenarios"][0]["checks"] *= 200
         with self.assertRaises(ValidationError):
             comment_body(item, "https://github.com/o/r/pull/1/checks", {})
+
+
+class CliTests(unittest.TestCase):
+    def argv(self, started_at):
+        return [
+            "publish.py",
+            "--event",
+            "event.json",
+            "--result",
+            "result.json",
+            "--expected",
+            "manifest.json",
+            "--run-id",
+            RUN,
+            "--attempt",
+            "2",
+            "--started-at",
+            started_at,
+        ]
+
+    def test_invalid_timestamp_fails_clearly_before_io(self):
+        for started_at in (
+            "",
+            "invalid",
+            "2026-02-30T00:00:00Z",
+            "2026-01-02T00:00:00",
+            "2026-1-2T00:00:00Z",
+            "2026-01-02T01:00:00+01:00",
+            "2026-01-02T00:00:00.123Z",
+        ):
+            with (
+                self.subTest(started_at=started_at),
+                patch("sys.argv", self.argv(started_at)),
+                patch("builtins.open") as source,
+                patch("publish.Api") as api,
+                redirect_stderr(io.StringIO()) as stderr,
+                self.assertRaises(SystemExit) as exit_code,
+            ):
+                main()
+            self.assertEqual(exit_code.exception.code, 2)
+            self.assertIn("--started-at must be a UTC timestamp", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            source.assert_not_called()
+            api.assert_not_called()
+
+    def test_canonical_timestamp_publishes_with_trusted_ordering(self):
+        started_at = "2026-01-02T00:00:00Z"
+        current = {"head": {"sha": "head"}, "base": {"sha": "base"}}
+        event = {"pull_request": {"number": 1, **current}}
+        manifest = {
+            "schema_version": 1,
+            "run_id": RUN,
+            "tested_sha": SHA,
+            "scenarios": [{"id": "smoke", "checks": ["identity"]}],
+        }
+        api = FakeApi([current, [], current, {}])
+        with (
+            patch("sys.argv", self.argv(started_at)),
+            patch("builtins.open", mock_open(read_data=json.dumps(event))),
+            patch.dict(
+                "os.environ",
+                {
+                    "GITHUB_REPOSITORY": "base/base",
+                    "GITHUB_TOKEN": "test-token",
+                    "TESTED_SHA": SHA,
+                    "BOT_LOGIN": "depot[bot]",
+                },
+            ),
+            patch("publish.load_json", side_effect=[manifest, result()]),
+            patch("publish.Api", return_value=api),
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            main()
+        self.assertEqual(stdout.getvalue(), "published\n")
+        self.assertEqual(api.calls[-1][:2], ("POST", "/issues/1/comments"))
+        self.assertIn(f'"started_at":"{started_at}"', api.calls[-1][2]["body"])
 
 
 if __name__ == "__main__":

@@ -403,6 +403,15 @@ def main():
     parser.add_argument("--attempt", required=True, type=int)
     parser.add_argument("--started-at", required=True)
     args = parser.parse_args()
+    try:
+        started = datetime.datetime.strptime(args.started_at, "%Y-%m-%dT%H:%M:%S%z")
+        if started.strftime("%Y-%m-%dT%H:%M:%SZ") != args.started_at:
+            raise ValueError("noncanonical timestamp")
+    except ValueError:
+        parser.error(
+            "--started-at must be a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ format; "
+            "refusing to publish without trusted run ordering"
+        )
     with open(args.event, encoding="utf-8") as source:
         event = json.load(source)
     pr = event["pull_request"]
@@ -433,7 +442,6 @@ def main():
                 }
             ],
         }
-    datetime.datetime.fromisoformat(args.started_at.replace("Z", "+00:00"))
     api = Api(repo, token)
     bot = os.environ.get("BOT_LOGIN") or "depot-code-access[bot]"
     metadata = {

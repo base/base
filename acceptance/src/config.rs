@@ -400,7 +400,6 @@ impl ForkActivation {
 }
 
 /// Endpoint readiness settings.
-/// A fork-relative check start condition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadinessConfig {
