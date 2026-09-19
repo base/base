@@ -705,9 +705,10 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::{CheckResult, ForkBoundary, HeadSample, ScenarioResult, StageResult};
-    use serde_json::json;
 
     fn run(status: Status) -> RunResult {
         RunResult {

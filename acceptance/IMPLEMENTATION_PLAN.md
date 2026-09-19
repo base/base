@@ -501,22 +501,15 @@ Derivation         ERROR   --       --       OK      Error
 
 Synthetic numbers above illustrate layout, not actual test execution.
 
-Three layout concepts were explored in this
-[design comparison](https://ampcode.com/user-content/attachments/c834249eb8776c5d4f597bcd15615fe313cd1f8b60ebdada61c99d515973d0c8-file.png).
-Choose concept A's failure-first hierarchy plus concept C's larger charts.
-Concept B adds unnecessary navigation for an offline document. The generated
-image is a visual reference only: its counts/text are inconsistent, its sample
-fork numbers are not configuration advice, and invented state-root/peer checks
-are not requirements. Use real fixture-derived counts and the typed checks above.
+Use a failure-first hierarchy with large charts, real fixture-derived counts,
+and the typed checks above. Keep the report in one offline document without
+additional navigation. Illustrative fork numbers are not configuration advice;
+only verified scenario configuration should supply activation boundaries.
 
-A [refined single-report concept](https://ampcode.com/user-content/attachments/71c2ab8ebcd8afc45cceb5b2ebc856318adb3bb8e8434e553210db858cfb2eb2-file.png)
-shows the recommended hierarchy and consistent outcome counts. It remains a
-layout reference, not the chart specification: the generated chart incorrectly
-draws block lag horizontally and gives a lagging node a different fork boundary.
 Actual charts must measure block lag vertically at the same observation time,
 distinguish observation delay from chain activation, and leave gaps for absent
 samples. Sort unsuccessful scenarios before passed ones and label each stage
-with status text, not only colored glyphs, despite the reference image.
+with status text, not only colored glyphs.
 
 ### Required surfaces
 
