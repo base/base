@@ -643,6 +643,20 @@ impl AcceptanceCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MINIMAL_SCENARIO: &str = r#"
+schema_version = 1
+id = "smoke"
+description = "x"
+
+[[checks]]
+id = "identity"
+kind = "chain_id"
+endpoint = "builder"
+expected = 84538453
+timeout = "5s"
+"#;
+
     #[test]
     fn rejects_unknown_and_empty() {
         assert!(
@@ -652,28 +666,34 @@ mod tests {
             .is_err()
         );
     }
+
     #[test]
     fn validates_minimal() {
-        let c:ScenarioConfig=toml::from_str("schema_version=1\nid='smoke'\ndescription='x'\n[[checks]]\nid='identity'\nkind='chain_id'\nendpoint='builder'\nexpected=84538453\ntimeout='5s'").unwrap();
-        assert!(c.validate().is_ok());
+        let config: ScenarioConfig = toml::from_str(MINIMAL_SCENARIO).unwrap();
+        assert!(config.validate().is_ok());
     }
 
     #[test]
     fn partial_forks_retain_devnet_defaults() {
-        let config: ScenarioConfig = toml::from_str("schema_version=1\nid='x'\ndescription='x'\n[devnet.l2.forks]\ndenim={at_block=30}\n[[checks]]\nid='identity'\nkind='chain_id'\nendpoint='builder'\nexpected=1\ntimeout='5s'").unwrap();
+        let config: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}\n[devnet.l2.forks]\ndenim = {{ at_block = 30 }}\n"
+        ))
+        .unwrap();
         assert_eq!(config.devnet.l2.forks["azul"].block(), Some(20));
         assert_eq!(config.devnet.l2.forks["denim"].block(), Some(30));
     }
 
     #[test]
     fn rejects_unknown_fork_and_false_disabled() {
-        let base = "schema_version=1\nid='x'\ndescription='x'\n[[checks]]\nid='identity'\nkind='chain_id'\nendpoint='builder'\nexpected=1\ntimeout='5s'\n";
-        let unknown: ScenarioConfig =
-            toml::from_str(&format!("{base}[devnet.l2.forks]\nwat={{at_block=30}}\n")).unwrap();
+        let unknown: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}\n[devnet.l2.forks]\nwat = {{ at_block = 30 }}\n"
+        ))
+        .unwrap();
         assert!(unknown.validate().is_err());
-        let false_disabled: ScenarioConfig =
-            toml::from_str(&format!("{base}[devnet.l2.forks]\nzenith={{disabled=false}}\n"))
-                .unwrap();
+        let false_disabled: ScenarioConfig = toml::from_str(&format!(
+            "{MINIMAL_SCENARIO}\n[devnet.l2.forks]\nzenith = {{ disabled = false }}\n"
+        ))
+        .unwrap();
         assert!(false_disabled.validate().is_err());
     }
 
@@ -705,20 +725,43 @@ mod tests {
 
     #[test]
     fn rejects_wrong_generated_schedule() {
-        let config: ScenarioConfig = toml::from_str("schema_version=1\nid='x'\ndescription='x'\n[[checks]]\nid='identity'\nkind='chain_id'\nendpoint='builder'\nexpected=1\ntimeout='5s'").unwrap();
+        let config: ScenarioConfig = toml::from_str(MINIMAL_SCENARIO).unwrap();
         let temp = tempfile::NamedTempFile::new().unwrap();
-        fs::write(temp.path(), r#"{"genesis":{"l2_time":100},"base":{"azul":141,"beryl":142,"cobalt":144,"denim":150}}"#).unwrap();
-        assert!(config.verified_forks(temp.path()).is_err());
+        fs::write(
+            temp.path(),
+            r#"{
+                "l1_chain_id": 1337,
+                "l2_chain_id": 84538453,
+                "genesis": { "l2_time": 100 },
+                "base": { "azul": 141, "beryl": 142, "cobalt": 144, "denim": 150 }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.verified_forks(temp.path()).unwrap_err().to_string(),
+            "generated azul timestamp Some(141) does not match expected Some(140)"
+        );
     }
 
     #[test]
     fn verifies_post_denim_slot_offset() {
-        let mut config: ScenarioConfig = toml::from_str("schema_version=1\nid='x'\ndescription='x'\n[[checks]]\nid='identity'\nkind='chain_id'\nendpoint='builder'\nexpected=1\ntimeout='5s'").unwrap();
+        let mut config: ScenarioConfig = toml::from_str(MINIMAL_SCENARIO).unwrap();
         config.devnet.l2.forks.insert("zenith".into(), ForkActivation::AtBlock { at_block: 30 });
         let temp = tempfile::NamedTempFile::new().unwrap();
         fs::write(
             temp.path(),
-            r#"{"l1_chain_id":1337,"l2_chain_id":84538453,"genesis":{"l2_time":100},"base":{"azul":140,"beryl":142,"cobalt":144,"denim":150,"zenith":151}}"#,
+            r#"{
+                "l1_chain_id": 1337,
+                "l2_chain_id": 84538453,
+                "genesis": { "l2_time": 100 },
+                "base": {
+                    "azul": 140,
+                    "beryl": 142,
+                    "cobalt": 144,
+                    "denim": 150,
+                    "zenith": 151
+                }
+            }"#,
         )
         .unwrap();
         let forks = config.verified_forks(temp.path()).unwrap();

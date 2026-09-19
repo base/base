@@ -69,11 +69,28 @@ impl AcceptanceRunner {
             + config.timeout.0
             + if options.build { Duration::from_secs(3600) } else { Duration::ZERO };
         let operation = tokio::select! {
-            execution = tokio::time::timeout_at(deadline, Self::execute(&config, &options, &mut provisioner, &mut result, started, deadline)) => {
-                execution.map_err(|_| eyre::eyre!("scenario deadline elapsed")).and_then(std::convert::identity)
+            execution = tokio::time::timeout_at(
+                deadline,
+                Self::execute(
+                    &config,
+                    &options,
+                    &mut provisioner,
+                    &mut result,
+                    started,
+                    deadline,
+                ),
+            ) => {
+                execution
+                    .map_err(|_| eyre::eyre!("scenario deadline elapsed"))
+                    .and_then(std::convert::identity)
             }
             () = Self::interrupted() => {
-                for check in &mut result.checks { if check.status == Status::Blocked { check.status = Status::Cancelled; check.message = "execution interrupted".into(); } }
+                for check in &mut result.checks {
+                    if check.status == Status::Blocked {
+                        check.status = Status::Cancelled;
+                        check.message = "execution interrupted".into();
+                    }
+                }
                 result.stages.push(Self::stage("interruption", Status::Cancelled, started, "received shutdown signal"));
                 Ok(())
             }

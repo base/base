@@ -218,7 +218,14 @@ impl Provisioner {
             bail!("unsupported characters in output directory")
         }
         let mut env = fs::read_to_string(self.repo.join("etc/docker/devnet-env"))?;
-        env.push_str(&format!("\nDEVNET_ROOT={}\nPROFILE=dev\nBASE_SUCCINCT_ELF_REQUIRE=0\nL1_CHAIN_ID={}\nL2_CHAIN_ID={}\nL1_SLOT_DURATION_OVERRIDE={}\nBASE_NODE_VERIFIER_L1_CONFS={}\n", root.display(), config.devnet.l1.chain_id, config.devnet.l2.chain_id, config.devnet.l1.slot_duration.0.as_secs(), config.devnet.l2.verifier_l1_confirmations));
+        env.push_str(&format!(
+            "\nDEVNET_ROOT={}\nPROFILE=dev\nBASE_SUCCINCT_ELF_REQUIRE=0\nL1_CHAIN_ID={}\nL2_CHAIN_ID={}\nL1_SLOT_DURATION_OVERRIDE={}\nBASE_NODE_VERIFIER_L1_CONFS={}\n",
+            root.display(),
+            config.devnet.l1.chain_id,
+            config.devnet.l2.chain_id,
+            config.devnet.l1.slot_duration.0.as_secs(),
+            config.devnet.l2.verifier_l1_confirmations,
+        ));
         for (name, activation) in &config.devnet.l2.forks {
             env.push_str(&format!(
                 "L2_BASE_{}_BLOCK={}\n",
