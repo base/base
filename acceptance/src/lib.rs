@@ -13,6 +13,8 @@ pub use config::{
 };
 mod provision;
 pub use provision::{EndpointMap, Ownership, Provisioner};
+mod publish;
+pub use publish::{CommentMetadata, PrPublisher, PublishArgs};
 mod result;
 pub use result::{
     CheckResult, ForkBoundary, HeadSample, RunResult, ScenarioResult, StageResult, Status,

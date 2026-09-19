@@ -2,7 +2,8 @@
 
 `base-acceptance` is the command-line entry point for the acceptance system in
 [`../../acceptance`](../../acceptance/README.md). It supports `validate`, `plan`,
-`manifest`, `run`, `check`, `report`, `aggregate`, and recovery via `cleanup`.
+`manifest`, `run`, `check`, `report`, `aggregate`, CI-only `publish`, and recovery
+via `cleanup`.
 
 From the repository root:
 
