@@ -39,6 +39,7 @@ tower-http.workspace = true
 [dev-dependencies]
 base-bundles = { workspace = true, features = ["test-utils"] }
 testcontainers = { workspace = true, features = ["blocking"] }
+tower = { workspace = true, features = ["util"] }
 aws-config = { workspace = true, features = ["default-https-client", "rt-tokio"] }
 testcontainers-modules = { workspace = true, features = ["postgres", "minio"] }
 
