@@ -1,8 +1,9 @@
 use std::{
-    fs,
-    io::ErrorKind,
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::Command,
+    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -10,7 +11,7 @@ use std::{
 use eyre::{Result, WrapErr, ensure};
 use testcontainers::{
     GenericImage, ImageExt,
-    core::{Mount, WaitFor, wait::ExitWaitStrategy},
+    core::{Mount, WaitFor, logs::LogFrame, wait::ExitWaitStrategy},
     runners::SyncRunner,
 };
 
@@ -239,6 +240,9 @@ pub struct SetupContainer {
     chain_id: u64,
     l2_chain_id: u64,
     slot_duration: u64,
+    validator_count: u64,
+    owned_network: Option<String>,
+    diagnostics_dir: Option<PathBuf>,
     isthmus_activation_block: Option<u64>,
     base_azul_activation_block: Option<u64>,
     base_beryl_activation_block: Option<u64>,
@@ -255,6 +259,9 @@ impl SetupContainer {
             chain_id: 1337,
             l2_chain_id: 84538453,
             slot_duration: 1,
+            validator_count: 1,
+            owned_network: None,
+            diagnostics_dir: None,
             isthmus_activation_block: None,
             base_azul_activation_block: None,
             base_beryl_activation_block: None,
@@ -279,6 +286,25 @@ impl SetupContainer {
     /// Sets the slot duration.
     pub const fn with_slot_duration(mut self, slot_duration: u64) -> Self {
         self.slot_duration = slot_duration;
+        self
+    }
+
+    /// Sets the number of validators generated for the L1 consensus network.
+    pub const fn with_validator_count(mut self, validator_count: u64) -> Self {
+        self.validator_count = validator_count;
+        self
+    }
+
+    /// Lets testcontainers create and remove a caller-selected unique setup network.
+    /// By default setup remains isolated on Docker's `none` network.
+    pub fn with_owned_network(mut self, network: impl Into<String>) -> Self {
+        self.owned_network = Some(network.into());
+        self
+    }
+
+    /// Streams setup output to this directory, including output emitted before startup failure.
+    pub fn with_diagnostics_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.diagnostics_dir = Some(directory.into());
         self
     }
 
@@ -320,22 +346,25 @@ impl SetupContainer {
 
     /// Generates both chains before starting L1, with deployed contracts in genesis.
     pub fn generate_genesis(&self) -> Result<(L1GenesisOutput, L2DeploymentOutput)> {
+        ensure!(self.validator_count > 0, "validator count must be nonzero");
         SetupImage::ensure_built()?;
         fs::create_dir_all(&self.output_dir).wrap_err("Failed to create output directory")?;
         let output_dir =
             self.output_dir.canonicalize().wrap_err("Failed to canonicalize output directory")?;
         let output_mount = output_dir.to_string_lossy().to_string();
 
+        let network = self.owned_network.as_deref().unwrap_or("none");
         let mut container = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
-            .with_network("none")
+            .with_network(network)
             .with_env_var("OUTPUT_DIR", "/output")
             .with_env_var("L2_OUTPUT_DIR", "/output/l2")
             .with_env_var("SHARED_DIR", "/output/shared")
             .with_env_var("CHAIN_ID", self.chain_id.to_string())
             .with_env_var("L2_CHAIN_ID", self.l2_chain_id.to_string())
             .with_env_var("SLOT_DURATION", self.slot_duration.to_string())
+            .with_env_var("BASE_DEVNET_VALIDATOR_COUNT", self.validator_count.to_string())
             // Upgrade-signal tests deploy their own configurable mock after L1 starts.
             .with_env_var("UPGRADE_SIGNAL_PREINSTALL", "false")
             .with_env_var("DEPLOYER_ADDR", format!("{:#x}", DEPLOYER.address))
@@ -375,9 +404,25 @@ impl SetupContainer {
             container = container.with_env_var("L2_BASE_ZENITH_BLOCK", block.to_string());
         }
 
+        if let Some(directory) = &self.diagnostics_dir {
+            fs::create_dir_all(directory).wrap_err("create setup diagnostics directory")?;
+            let path = directory.join("setup.stream.log");
+            let file = Mutex::new(OpenOptions::new().create(true).append(true).open(&path)?);
+            container = container.with_log_consumer(move |frame: &LogFrame| {
+                if let Err(error) =
+                    file.lock().expect("setup log lock poisoned").write_all(frame.bytes())
+                {
+                    tracing::error!(error = %error, path = %path.display(), "failed to retain setup log");
+                }
+            });
+        }
+
         let _container = container
             .with_mount(Mount::bind_mount(output_mount, "/output"))
-            .with_cmd(["op-deployer"])
+            // The image runs as root. Keep its disposable devnet artifacts editable by the
+            // host test user on Linux (e.g. when scheduling a fork after genesis generation).
+            // These fixtures contain only the public development keys, never production secrets.
+            .with_cmd(["sh", "-c", "op-deployer && chmod -R a+rwX /output"])
             .start()
             .wrap_err("Failed to generate devnet genesis with op-deployer")?;
 
@@ -386,9 +431,32 @@ impl SetupContainer {
             self.output_dir.join("l2/genesis.json").exists(),
             "L2 genesis.json was not generated"
         );
+        let generated_validators = Self::count_named_files(
+            &self.output_dir.join("cl/validator_data"),
+            "voting-keystore.json",
+        )?;
+        ensure!(
+            generated_validators == self.validator_count,
+            "setup generated {generated_validators} validators, expected {}; rebuild the setup image with validator-count support",
+            self.validator_count
+        );
         Ok((
             L1GenesisOutput { output_dir: self.output_dir.clone() },
             L2DeploymentOutput { output_dir: self.output_dir.clone() },
         ))
+    }
+
+    /// Counts recursively generated files with the requested name.
+    pub fn count_named_files(directory: &Path, name: &str) -> Result<u64> {
+        let mut count = 0;
+        for entry in fs::read_dir(directory).wrap_err("read generated validator data")? {
+            let path = entry?.path();
+            if path.is_dir() {
+                count += Self::count_named_files(&path, name)?;
+            } else if path.file_name().and_then(|value| value.to_str()) == Some(name) {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 }

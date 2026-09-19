@@ -131,6 +131,19 @@ impl L1Stack {
         self.beacon.beacon_url().await
     }
 
+    /// Captures all owned L1 client diagnostics before cleanup.
+    pub async fn capture_diagnostics(&self, directory: &std::path::Path) -> Result<()> {
+        let (reth, beacon, validator) = tokio::join!(
+            self.reth.capture_diagnostics(directory),
+            self.beacon.capture_diagnostics(directory),
+            self.validator.capture_diagnostics(directory),
+        );
+        reth?;
+        beacon?;
+        validator?;
+        Ok(())
+    }
+
     /// Stops the L1 validator and beacon node, leaving the execution layer under test control.
     pub async fn stop_consensus(&self) -> Result<()> {
         self.validator.stop().await.wrap_err("Failed to stop L1 validator")?;
