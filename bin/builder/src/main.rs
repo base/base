@@ -11,7 +11,6 @@ use base_builder_metering::MeteringStoreExtension;
 use base_builder_multiplex::MultiplexingServiceBuilder;
 use base_execution_cli::{Cli, StandardBaseRethNode};
 use base_node_runner::BaseNodeRunner;
-use base_observability_events::GlobalTransactionEventWriter;
 use base_shadow_indexer::{ShadowIndexerConfig, ShadowIndexerExtension};
 use base_txpool_rpc::{
     SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
@@ -41,10 +40,7 @@ fn main() {
 
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder_args.build_metering_store());
-        let transaction_events_enabled = builder_args.transaction_events.enabled;
-        GlobalTransactionEventWriter::init(
-            transaction_events_enabled.then(|| builder_args.transaction_events.writer_config()),
-        )?;
+        builder_args.transaction_events.init_global_writer()?;
 
         let builder_api_config = builder_args.builder_api_config()?;
         let shadow_indexer_config = ShadowIndexerConfig::try_from(&builder_args.shadow_indexer)?;
