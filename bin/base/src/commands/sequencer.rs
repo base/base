@@ -71,6 +71,10 @@ impl SequencerCommand {
         let metering_provider: base_builder_core::SharedMeteringProvider =
             Arc::new(builder.build_metering_store());
         let builder_api_config = builder.builder_api_config()?;
+        // The builder journal is the only `GlobalTransactionEventWriter` in this process: the
+        // embedded execution config accepts no journal flags, and the execution journal init in
+        // `StandardBaseRethNode::runner` is only reached by `base rpc`.
+        builder.transaction_events.init_global_writer()?;
         // Build the shadow-indexer config before `into_builder_config` consumes `builder`. The
         // config carries an `enabled` flag (false unless ENABLE_SHADOW_INDEXER is set), so the
         // ExEx is installed unconditionally and no-ops for non-shadow sequencers.
@@ -376,5 +380,69 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(rendered.contains("--mode"));
+    }
+
+    #[test]
+    fn parses_builder_transaction_events_journal_args() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--builder.transaction-events.enabled",
+            "--builder.transaction-events.file-path",
+            "/var/log/transaction-events/base-builder/events.jsonl",
+            "--builder.transaction-events.network",
+            "base-sepolia",
+            "--builder.transaction-events.required",
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(sequencer.builder.transaction_events.enabled);
+        assert!(sequencer.builder.transaction_events.required);
+        let config = sequencer.builder.transaction_events.global_writer_config().expect(
+            "enabled journal should yield the writer config used by the sequencer run path",
+        );
+        assert_eq!(
+            config.file_path,
+            std::path::PathBuf::from("/var/log/transaction-events/base-builder/events.jsonl")
+        );
+        assert_eq!(config.network, "base-sepolia");
+    }
+
+    #[test]
+    fn builder_transaction_events_journal_defaults_to_disabled() {
+        let cli = BaseCli::parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+        ]));
+
+        let BaseCommand::Sequencer(sequencer) = cli.command else {
+            panic!("expected sequencer command");
+        };
+
+        assert!(sequencer.builder.transaction_events.global_writer_config().is_none());
+    }
+
+    #[test]
+    fn rejects_execution_transaction_event_journal_args() {
+        // `base sequencer` is single-writer: only the builder journal is initialized, so the
+        // execution journal flags accepted by `base rpc` are rejected here rather than parsed
+        // and silently ignored.
+        let err = BaseCli::try_parse_from(sequencer_args(&[
+            "base",
+            "sequencer",
+            "--p2p.sequencer.key",
+            SEQUENCER_KEY,
+            "--enable-transaction-event-journal",
+        ]))
+        .unwrap_err();
+
+        assert!(err.to_string().contains("--enable-transaction-event-journal"));
     }
 }

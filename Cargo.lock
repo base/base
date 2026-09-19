@@ -3176,7 +3176,6 @@ dependencies = [
  "base-cli-utils",
  "base-execution-cli",
  "base-node-runner",
- "base-observability-events",
  "base-reth-cli",
  "base-shadow-indexer",
  "base-txpool-rpc",
