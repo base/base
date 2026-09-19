@@ -865,6 +865,172 @@ mod tests {
         assert!(!result.is_success(), "CLZ opcode should not be available on JOVIAN (pre-OSAKA)");
     }
 
+    /// Runs a single call transaction against `spec` and returns the execution result.
+    ///
+    /// Used to exercise the Glamsterdam (`SpecId::AMSTERDAM`) gas-repricing EIPs end to end
+    /// through Base's EVM: `target` seeds the recipient account (`None` leaves it non-existent),
+    /// `code` optionally deploys runtime bytecode there, and L1 fees are zeroed so `gas_used`
+    /// reflects only the L2 intrinsic + execution cost.
+    fn run_glamsterdam_gas_tx(
+        spec: BaseSpecId,
+        code: Option<Bytes>,
+        calldata: Bytes,
+        value: U256,
+        target: Option<AccountInfo>,
+    ) -> revm::context_interface::result::ExecutionResult<BaseHaltReason> {
+        let contract = Address::from([0x42; 20]);
+        let mut db = InMemoryDB::default();
+        if let Some(code) = code {
+            db.insert_account_info(
+                contract,
+                AccountInfo { code: Some(Bytecode::new_legacy(code)), ..Default::default() },
+            );
+        } else if let Some(info) = target {
+            db.insert_account_info(contract, info);
+        }
+        db.insert_account_info(
+            Address::ZERO,
+            AccountInfo { balance: U256::from(1_000_000_000u64), ..Default::default() },
+        );
+
+        let ctx = Context::base()
+            .with_db(db)
+            .with_tx(
+                BaseTransaction::builder()
+                    .base(
+                        TxEnv::builder()
+                            .gas_limit(1_000_000)
+                            .kind(TxKind::Call(contract))
+                            .data(calldata)
+                            .value(value),
+                    )
+                    .enveloped_tx(Some(bytes!("FACADE")))
+                    .build_fill(),
+            )
+            .with_cfg(CfgEnv::new_with_spec(spec))
+            .with_chain(L1BlockInfo {
+                l2_block: Some(U256::ZERO),
+                operator_fee_scalar: Some(U256::ZERO),
+                operator_fee_constant: Some(U256::ZERO),
+                ..Default::default()
+            });
+        let mut evm = ctx.build_base();
+        let mut handler =
+            BaseHandler::<_, EVMError<_, BaseTransactionError>, EthFrame<EthInterpreter>>::new();
+        handler.run(&mut evm).unwrap()
+    }
+
+    /// A funded (non-empty) recipient account, so value transfers to it are not treated as
+    /// state creation.
+    fn funded_account() -> Option<AccountInfo> {
+        Some(AccountInfo { balance: U256::from(1u64), ..Default::default() })
+    }
+
+    /// Marginal gas per zero calldata byte at `spec`, measured on a zero-value call to a funded
+    /// account so the calldata floor (not execution) sets the cost.
+    fn calldata_marginal_per_zero_byte(spec: BaseSpecId) -> u64 {
+        let gas = |n: usize| {
+            run_glamsterdam_gas_tx(
+                spec,
+                None,
+                Bytes::copy_from_slice(&alloc::vec![0u8; n]),
+                U256::ZERO,
+                funded_account(),
+            )
+            .tx_gas_used()
+        };
+        (gas(600) - gas(100)) / 500
+    }
+
+    /// EIP-2780 decomposes the flat 21,000 intrinsic cost, but preserves the invariant that a
+    /// plain ETH transfer to an existing (non-empty) account still costs exactly 21,000 gas,
+    /// both before and after Denim.
+    #[test]
+    fn test_eip2780_plain_transfer_intrinsic_unchanged_at_denim() {
+        for upgrade in [BaseUpgrade::Cobalt, BaseUpgrade::Denim] {
+            let result = run_glamsterdam_gas_tx(
+                BaseSpecId::new(upgrade),
+                None,
+                Bytes::new(),
+                U256::from(1),
+                funded_account(),
+            );
+            assert!(result.is_success(), "plain transfer should succeed on {upgrade:?}");
+            assert_eq!(
+                result.tx_gas_used(),
+                21_000,
+                "plain transfer to an existing account should cost 21,000 gas on {upgrade:?}",
+            );
+        }
+    }
+
+    /// EIP-8037 prices new-account state creation at 120 * 1,530 = 183,600 gas. A value transfer
+    /// to a non-existent account should cost exactly that much more than the same transfer to an
+    /// existing account at Denim, and carry no extra tx-level creation charge pre-Denim.
+    #[test]
+    fn test_eip8037_new_account_state_creation_charge_at_denim() {
+        let existing_denim = run_glamsterdam_gas_tx(
+            BaseSpecId::new(BaseUpgrade::Denim),
+            None,
+            Bytes::new(),
+            U256::from(1),
+            funded_account(),
+        )
+        .tx_gas_used();
+        let new_denim = run_glamsterdam_gas_tx(
+            BaseSpecId::new(BaseUpgrade::Denim),
+            None,
+            Bytes::new(),
+            U256::from(1),
+            None,
+        )
+        .tx_gas_used();
+        assert_eq!(
+            new_denim - existing_denim,
+            183_600,
+            "EIP-8037 new-account state-creation charge should be 183,600 gas at Denim",
+        );
+
+        let existing_cobalt = run_glamsterdam_gas_tx(
+            BaseSpecId::new(BaseUpgrade::Cobalt),
+            None,
+            Bytes::new(),
+            U256::from(1),
+            funded_account(),
+        )
+        .tx_gas_used();
+        let new_cobalt = run_glamsterdam_gas_tx(
+            BaseSpecId::new(BaseUpgrade::Cobalt),
+            None,
+            Bytes::new(),
+            U256::from(1),
+            None,
+        )
+        .tx_gas_used();
+        assert_eq!(
+            new_cobalt, existing_cobalt,
+            "no extra tx-level new-account charge should apply pre-Denim",
+        );
+    }
+
+    /// EIP-7976 raises the EIP-7623 calldata floor. Pre-Denim the floor is exactly 10 gas per
+    /// zero-byte token; at Denim the marginal cost is strictly higher.
+    ///
+    /// Note: the observed Denim marginal is 64 gas per zero byte, which exceeds the 16 gas per
+    /// zero byte stated in the EIP-7976 ticket (BASE-441). This upstream-revm value is flagged
+    /// for reconciliation before Denim is scheduled; this test asserts only the direction so it
+    /// is not a change detector on the exact (still-preliminary) number.
+    #[test]
+    fn test_eip7976_calldata_floor_increases_at_denim() {
+        let cobalt = calldata_marginal_per_zero_byte(BaseSpecId::new(BaseUpgrade::Cobalt));
+        let denim = calldata_marginal_per_zero_byte(BaseSpecId::new(BaseUpgrade::Denim));
+        assert_eq!(cobalt, 10, "EIP-7623 calldata floor is 10 gas per zero-byte token pre-Denim");
+        assert!(
+            denim > cobalt,
+            "EIP-7976 should raise the calldata floor at Denim (got {denim} vs {cobalt})",
+        );
+    }
+
     fn tx_error_cleanup_db_with_warmed_account(
         warmed: Address,
         warmed_account_info: AccountInfo,
