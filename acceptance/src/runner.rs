@@ -10,8 +10,8 @@ use serde_json::json;
 use tokio::time::Instant;
 
 use crate::{
-    AcceptanceCheck, CheckResult, EndpointMap, ObservationState, Provisioner, RpcObserver,
-    ScenarioConfig, ScenarioResult, StageResult, Status,
+    AcceptanceCheck, Aggregate, CheckResult, EndpointMap, ObservationState, Provisioner,
+    RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
 };
 
 /// Invocation-owned paths, attach endpoints, and image build policy.
@@ -150,7 +150,8 @@ impl AcceptanceRunner {
         fs::write(evidence.join("heads.json"), serde_json::to_vec_pretty(&result.samples)?)?;
         let environment = options.output.join("report/environment.json");
         if environment.exists() {
-            result.config["environment"] = serde_json::from_slice(&fs::read(environment)?)?;
+            result.config["environment"] =
+                serde_json::from_slice(&Aggregate::bounded_read(&environment)?)?;
         }
         for check in &mut result.checks {
             check.evidence.push("evidence/heads.json".into());
@@ -303,11 +304,12 @@ impl AcceptanceRunner {
         endpoints: &EndpointMap,
         deadline: Instant,
     ) -> Result<()> {
+        let roles = Self::required_roles(config);
         let mut initial = BTreeMap::new();
         loop {
             let mut all = true;
-            for role in Self::required_roles(config) {
-                let url = RpcObserver::endpoint(endpoints, &role)?;
+            for role in &roles {
+                let url = RpcObserver::endpoint(endpoints, role)?;
                 match observer.chain_id(url, deadline).await {
                     Ok(chain) => {
                         let expected = if role == "l1" {
@@ -557,6 +559,31 @@ start = {{ {window} = "denim", chain = "l2" }}
         .await
         .unwrap_err();
         assert_eq!(error.to_string(), "endpoint builder was not resolved");
+    }
+
+    #[tokio::test]
+    async fn oversized_environment_is_rejected_before_json_parsing() {
+        let config = ScenarioConfig::load("scenarios/denim-transition.toml").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("report")).unwrap();
+        fs::File::create(dir.path().join("report/environment.json"))
+            .unwrap()
+            .set_len(20 * 1024 * 1024 + 1)
+            .unwrap();
+        // Missing rollup stops execution before RPC calls; final evidence still gets validated.
+        let error = AcceptanceRunner::run(
+            config,
+            AcceptanceOptions {
+                repo_root: PathBuf::new(),
+                output: dir.path().into(),
+                endpoints: Some(Provisioner::default_endpoints()),
+                rollup: None,
+                build: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("input exceeds 20 MiB"));
     }
 
     #[test]
