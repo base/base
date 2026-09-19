@@ -7,6 +7,7 @@ use base_protocol::FromBlockError;
 use thiserror::Error;
 
 use super::{ForkchoiceCheckpointLabel, checkpoint::ForkchoiceCheckpointError};
+use crate::EngineClientError;
 
 /// An error that can occur during the sync start process.
 #[derive(Error, Debug)]
@@ -87,4 +88,13 @@ pub enum SyncStartError {
         /// The reth-reported latest L2 block number at the time of the search.
         latest_block_number: u64,
     },
+}
+
+impl From<EngineClientError> for SyncStartError {
+    fn from(error: EngineClientError) -> Self {
+        match error {
+            EngineClientError::RpcError(error) => Self::RpcError(error),
+            EngineClientError::BlockInfoDecodeError(error) => Self::FromBlock(error),
+        }
+    }
 }

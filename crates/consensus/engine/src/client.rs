@@ -25,7 +25,7 @@ use base_common_rpc_types_engine::{
     BaseExecutionPayloadV4, BasePayloadAttributes,
 };
 use base_consensus_providers::L1RpcProvider;
-use base_protocol::{FromBlockError, L2BlockInfo};
+use base_protocol::{BlockInfo, FromBlockError, L2BlockInfo};
 use http_body_util::Full;
 use thiserror::Error;
 use tower::ServiceBuilder;
@@ -59,6 +59,12 @@ pub trait EngineClient: BaseEngineApi + Send + Sync {
 
     /// Fetches the L2 block with the provided `BlockId`.
     fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse>;
+
+    /// Fetches L2 block info by hash without requiring all transaction bodies.
+    async fn l2_block_info_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<L2BlockInfo>, EngineClientError>;
 
     /// Get the account and storage values of the specified account including the merkle proofs.
     /// This call can be used to verify that the data has not been tampered with.
@@ -215,6 +221,45 @@ where
 
     fn get_l2_block(&self, block: BlockId) -> EthGetBlock<<Base as Network>::BlockResponse> {
         self.engine.get_block(block)
+    }
+
+    async fn l2_block_info_by_hash(
+        &self,
+        hash: B256,
+    ) -> Result<Option<L2BlockInfo>, EngineClientError> {
+        let Some(header) = self.engine.get_header_by_hash(hash).await? else {
+            return Ok(None);
+        };
+        let block_info = BlockInfo::new(
+            header.inner.inner.hash_slow(),
+            header.number,
+            header.parent_hash,
+            header.timestamp,
+        );
+        // Genesis needs no deposit. Pin both reads to the same hash across reorgs.
+        let first_tx = if block_info.number == self.cfg.genesis.l2.number {
+            None
+        } else {
+            match self.engine.get_transaction_by_block_hash_and_index(hash, 0).await {
+                Ok(tx) => tx,
+                // Older authenticated endpoints expose only full-block reads.
+                Err(error) if error.as_error_resp().is_some_and(|error| error.code == -32601) => {
+                    let Some(block) = self.engine.get_block_by_hash(hash).full().await? else {
+                        return Ok(None);
+                    };
+                    return Ok(Some(L2BlockInfo::from_block_and_genesis(
+                        &block.map_header(|header| header.into_inner()).into_consensus(),
+                        &self.cfg.genesis,
+                    )?));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        Ok(Some(L2BlockInfo::from_block_info_and_first_tx(
+            block_info,
+            first_tx.as_ref().map(|tx| tx.inner.inner.inner()),
+            &self.cfg.genesis,
+        )?))
     }
 
     fn get_proof(
@@ -403,12 +448,236 @@ async fn record_call_time<T, Err>(
 
 #[cfg(test)]
 mod tests {
+    use alloy_consensus::{Header, Signed, TxLegacy, transaction::Recovered};
+    use alloy_eips::BlockNumHash;
+    use alloy_json_rpc::{ErrorPayload, RequestPacket};
+    use alloy_primitives::{Sealed, Signature, U256};
     use alloy_rpc_types_engine::JwtSecret;
+    use alloy_rpc_types_eth::BlockTransactions;
+    use alloy_transport::mock::{Asserter, MockTransport};
+    use base_common_consensus::{BaseTxEnvelope, TxDeposit};
+    use base_common_rpc_types::{BaseHeaderResponse, Transaction};
     use base_consensus_providers::L1_RPC_TIMEOUT;
+    use base_protocol::{DecodeError, L1BlockInfoBedrock};
+    use serde_json::json;
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
+    use tower::{Service, service_fn};
 
     use super::*;
+
+    impl BaseEngineClient<RootProvider, RootProvider<Base>> {
+        /// Restricts the lookup to hash-pinned header and first-transaction reads.
+        pub fn block_info_client(cfg: RollupConfig, hash: B256, asserter: Asserter) -> Self {
+            let transport = service_fn(move |request: RequestPacket| {
+                let call = request.as_single().unwrap();
+                let params: serde_json::Value =
+                    serde_json::from_str(call.params().unwrap().get()).unwrap();
+                match call.method() {
+                    "eth_getHeaderByHash" => assert_eq!(params, json!([hash])),
+                    "eth_getTransactionByBlockHashAndIndex" => {
+                        assert_eq!(params, json!([hash, "0x0"]));
+                    }
+                    // Older endpoints fall back to hash-pinned block reads.
+                    "eth_getBlockByHash" => {
+                        assert!(params == json!([hash, false]) || params == json!([hash, true]));
+                    }
+                    method => panic!("unexpected lookup method: {method}"),
+                }
+                let mut transport = MockTransport::new(asserter.clone());
+                transport.call(request)
+            });
+            Self {
+                engine: RootProvider::new(RpcClient::new(transport, true)),
+                l1_provider: RootProvider::new(RpcClient::mocked(Asserter::new())),
+                cfg: Arc::new(cfg),
+            }
+        }
+
+        /// Wraps an envelope in the transaction response used by the execution RPC.
+        pub fn rpc_transaction(envelope: BaseTxEnvelope) -> Transaction {
+            Transaction {
+                inner: alloy_rpc_types_eth::Transaction {
+                    inner: Recovered::new_unchecked(envelope, Address::ZERO),
+                    block_hash: None,
+                    block_number: Some(42),
+                    block_timestamp: None,
+                    transaction_index: Some(0),
+                    effective_gas_price: Some(0),
+                },
+                block_timestamp_ms: None,
+                deposit_nonce: None,
+                deposit_receipt_version: None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn block_info_by_hash_reads_only_header_and_first_deposit() {
+        let header = BaseHeaderResponse::new(alloy_rpc_types_eth::Header {
+            // Do not trust the RPC-reported hash instead of hashing the consensus header.
+            hash: B256::repeat_byte(9),
+            inner: Header {
+                number: 42,
+                parent_hash: B256::repeat_byte(3),
+                timestamp: 1234,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let hash = header.inner.inner.hash_slow();
+        let origin = BlockNumHash { number: 17, hash: B256::repeat_byte(5) };
+        let deposit =
+            BaseEngineClient::rpc_transaction(BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+                input: L1BlockInfoBedrock::new(
+                    origin.number,
+                    1000,
+                    7,
+                    origin.hash,
+                    8,
+                    Address::ZERO,
+                    U256::ZERO,
+                    U256::ZERO,
+                )
+                .encode_calldata(),
+                ..Default::default()
+            })));
+        let asserter = Asserter::new();
+        asserter.push_success(&header);
+        asserter.push_success(&deposit);
+        let client = BaseEngineClient::block_info_client(RollupConfig::default(), hash, asserter);
+
+        assert_eq!(
+            client.l2_block_info_by_hash(hash).await.unwrap(),
+            Some(
+                L2BlockInfo::new(BlockInfo::new(hash, 42, B256::repeat_byte(3), 1234), origin, 8,)
+            ),
+        );
+    }
+
+    #[tokio::test]
+    async fn block_info_by_hash_missing_header_returns_none() {
+        let asserter = Asserter::new();
+        asserter.push_success(&serde_json::Value::Null);
+        let hash = B256::repeat_byte(1);
+        let client = BaseEngineClient::block_info_client(RollupConfig::default(), hash, asserter);
+        assert_eq!(client.l2_block_info_by_hash(hash).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn block_info_by_hash_validates_genesis_without_reading_a_deposit() {
+        let header = BaseHeaderResponse::<alloy_rpc_types_eth::Header>::default();
+        let hash = header.inner.inner.hash_slow();
+        for valid_hash in [true, false] {
+            let mut cfg = RollupConfig::default();
+            cfg.genesis.l2.hash = if valid_hash { hash } else { B256::repeat_byte(7) };
+            cfg.genesis.l1 = BlockNumHash { number: 13, hash: B256::repeat_byte(4) };
+            let origin = cfg.genesis.l1;
+            let asserter = Asserter::new();
+            asserter.push_success(&header);
+            let client = BaseEngineClient::block_info_client(cfg, hash, asserter);
+            let result = client.l2_block_info_by_hash(hash).await;
+            if valid_hash {
+                assert_eq!(
+                    result.unwrap(),
+                    Some(L2BlockInfo::new(BlockInfo::new(hash, 0, B256::ZERO, 0), origin, 0,))
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(EngineClientError::BlockInfoDecodeError(
+                        FromBlockError::InvalidGenesisHash,
+                    ))
+                ));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn block_info_by_hash_rejects_missing_or_invalid_deposits() {
+        let header = BaseHeaderResponse::new(alloy_rpc_types_eth::Header {
+            inner: Header { number: 42, ..Default::default() },
+            ..Default::default()
+        });
+        let hash = header.inner.inner.hash_slow();
+        let legacy = BaseEngineClient::rpc_transaction(BaseTxEnvelope::Legacy(
+            Signed::new_unchecked(TxLegacy::default(), Signature::test_signature(), B256::ZERO),
+        ));
+        let malformed = BaseEngineClient::rpc_transaction(BaseTxEnvelope::Deposit(Sealed::new(
+            TxDeposit::default(),
+        )));
+        for (transaction, expected) in [
+            (None, FromBlockError::MissingL1InfoDeposit(hash)),
+            (Some(legacy), FromBlockError::FirstTxNonDeposit(0)),
+            (Some(malformed), FromBlockError::BlockInfoDecodeError(DecodeError::MissingSelector)),
+        ] {
+            let asserter = Asserter::new();
+            asserter.push_success(&header);
+            asserter.push_success(&transaction);
+            let client =
+                BaseEngineClient::block_info_client(RollupConfig::default(), hash, asserter);
+            let error = client.l2_block_info_by_hash(hash).await.unwrap_err();
+            let EngineClientError::BlockInfoDecodeError(error) = error else {
+                panic!("expected block info error, got {error}");
+            };
+            assert_eq!(error, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn block_info_by_hash_supports_older_auth_endpoints() {
+        let header = BaseHeaderResponse::new(alloy_rpc_types_eth::Header {
+            inner: Header { number: 42, ..Default::default() },
+            ..Default::default()
+        });
+        let hash = header.inner.inner.hash_slow();
+        let deposit =
+            BaseEngineClient::rpc_transaction(BaseTxEnvelope::Deposit(Sealed::new(TxDeposit {
+                input: L1BlockInfoBedrock::new_from_sequence_number(9).encode_calldata(),
+                ..Default::default()
+            })));
+        let mut block = L2RpcBlock {
+            header,
+            transactions: BlockTransactions::Hashes(vec![B256::repeat_byte(8)]),
+            ..Default::default()
+        };
+        let asserter = Asserter::new();
+        asserter.push_failure(ErrorPayload::method_not_found());
+        asserter.push_success(&block);
+        asserter.push_failure(ErrorPayload::method_not_found());
+        block.transactions = BlockTransactions::Full(vec![deposit]);
+        asserter.push_success(&block);
+        let client = BaseEngineClient::block_info_client(RollupConfig::default(), hash, asserter);
+        assert_eq!(
+            client.l2_block_info_by_hash(hash).await.unwrap(),
+            Some(L2BlockInfo::new(
+                BlockInfo::new(hash, 42, B256::ZERO, 0),
+                BlockNumHash::default(),
+                9,
+            )),
+        );
+    }
+
+    #[tokio::test]
+    async fn block_info_by_hash_propagates_rpc_errors() {
+        let header = BaseHeaderResponse::new(alloy_rpc_types_eth::Header {
+            inner: Header { number: 42, ..Default::default() },
+            ..Default::default()
+        });
+        let hash = header.inner.inner.hash_slow();
+        for fail_header in [true, false] {
+            let asserter = Asserter::new();
+            if !fail_header {
+                asserter.push_success(&header);
+            }
+            asserter.push_failure_msg("lookup failed");
+            let client =
+                BaseEngineClient::block_info_client(RollupConfig::default(), hash, asserter);
+            let error = client.l2_block_info_by_hash(hash).await.unwrap_err();
+            assert!(matches!(error, EngineClientError::RpcError(_)));
+            assert!(error.to_string().contains("lookup failed"));
+        }
+    }
 
     /// Binding to port 0 lets the OS assign a free ephemeral port.
     async fn free_port_listener() -> (TcpListener, u16) {

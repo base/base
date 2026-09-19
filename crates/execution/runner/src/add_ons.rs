@@ -12,6 +12,7 @@ use base_execution_rpc::{
 };
 use base_execution_txpool::BasePooledTx;
 use base_node_core::{BaseEngineApiBuilder, BaseNodeTypes, BasePayloadValidatorBuilder};
+use jsonrpsee::Methods;
 use reth_evm::ConfigureEvm;
 use reth_node_api::{BuildNextEnv, FullNodeComponents, HeaderTy, NodeAddOns, PayloadTypes, TxTy};
 use reth_node_builder::{
@@ -23,7 +24,7 @@ use reth_node_builder::{
     },
 };
 use reth_primitives_traits::header::HeaderMut;
-use reth_rpc_api::DebugApiServer;
+use reth_rpc_api::{DebugApiServer, EthApiServer};
 use reth_rpc_server_types::RethRpcModule;
 use reth_tracing::tracing::debug;
 use reth_transaction_pool::TransactionPool;
@@ -252,6 +253,19 @@ where
                     auth_module.merge_auth_methods(registry.debug_api().into_rpc())?;
                 }
 
+                // Reset walks need only the header and first deposit, not every transaction body.
+                // Extend the authenticated allowlist without exposing the full eth namespace.
+                let eth_methods = registry.eth_api().clone().into_rpc();
+                let mut lookup_methods = Methods::new();
+                for name in ["eth_getHeaderByHash", "eth_getTransactionByBlockHashAndIndex"] {
+                    let method = eth_methods
+                        .method(name)
+                        .cloned()
+                        .ok_or_else(|| eyre::eyre!("missing eth RPC method: {name}"))?;
+                    lookup_methods.verify_and_insert(name, method)?;
+                }
+                auth_module.merge_auth_methods(lookup_methods)?;
+
                 Ok(())
             })
             .await
@@ -448,5 +462,46 @@ impl<NetworkT, RpcMiddleware> BaseAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config.unwrap_or_default(),
             gas_limit_config.unwrap_or_default(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_eips::Encodable2718;
+    use base_common_rpc_types::{BaseHeaderResponse, Transaction};
+    use jsonrpsee::{
+        core::client::{ClientT, Error},
+        rpc_params,
+    };
+
+    use crate::test_utils::{L1_BLOCK_INFO_DEPOSIT_TX, TestHarness};
+
+    #[tokio::test]
+    async fn auth_ipc_exposes_only_the_additional_block_info_reads() -> eyre::Result<()> {
+        let harness = TestHarness::new().await?;
+        harness.build_block_from_transactions(vec![L1_BLOCK_INFO_DEPOSIT_TX]).await?;
+        let block = harness.latest_block();
+        let client = harness.engine().client().await;
+
+        let header: Option<BaseHeaderResponse> =
+            client.request("eth_getHeaderByHash", rpc_params![block.hash()]).await?;
+        let header = header.expect("canonical header should exist");
+        assert_eq!(header.inner.hash, block.hash());
+        assert_eq!(header.number, block.number);
+        let transaction: Option<Transaction> = client
+            .request("eth_getTransactionByBlockHashAndIndex", rpc_params![block.hash(), "0x0"])
+            .await?;
+        assert_eq!(
+            transaction.expect("first deposit should exist").inner.inner.encoded_2718(),
+            L1_BLOCK_INFO_DEPOSIT_TX.as_ref(),
+        );
+
+        // The change must not merge the entire public eth API into the auth endpoint.
+        let error = client
+            .request::<serde_json::Value, _>("eth_accounts", rpc_params![])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Call(error) if error.code() == -32601));
+        Ok(())
     }
 }

@@ -117,7 +117,9 @@ impl<P: EngineProtocol> fmt::Debug for EngineApi<P> {
 
 impl<P: EngineProtocol> EngineApi<P> {
     /// Create a subscription-capable client for the configured Engine endpoint.
-    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static + use<P> {
+    pub async fn client(
+        &self,
+    ) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static + use<P> {
         P::client(self.jwt_secret, self.address.clone()).await
     }
 
