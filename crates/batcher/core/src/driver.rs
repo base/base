@@ -493,7 +493,7 @@ where
                     match cmd {
                         AdminCommand::Flush { ack } => return Ok(DriverEvent::Flush(ack)),
                         AdminCommand::Stop => {
-                            self.reset_pipeline(BatcherMetrics::RESET_ADMIN_PAUSE);
+                            self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
                             self.stopped = true;
                             info!(stopped = true, "batcher stopped via admin");
                         }
