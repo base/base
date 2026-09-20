@@ -110,7 +110,7 @@ impl AcceptanceRunner {
             result.stages.push(Self::stage(stage, Status::Error, started, &message));
             result.diagnostics.push(message);
         }
-        let check_status = [Status::Error, Status::Cancelled, Status::Failed, Status::Blocked]
+        let check_status = [Status::Error, Status::Cancelled, Status::Blocked, Status::Failed]
             .into_iter()
             .find(|status| result.checks.iter().any(|check| check.status == *status))
             .unwrap_or(Status::Passed);
@@ -359,7 +359,8 @@ impl AcceptanceRunner {
         let mut roles = BTreeSet::new();
         for check in &config.checks {
             match check {
-                AcceptanceCheck::HeadsConverge { endpoints, .. } => {
+                AcceptanceCheck::HeadsConverge { endpoints, .. }
+                | AcceptanceCheck::HeadsHealthy { endpoints, .. } => {
                     roles.extend(endpoints.iter().cloned())
                 }
                 AcceptanceCheck::ChainId { endpoint, .. }

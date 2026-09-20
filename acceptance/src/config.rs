@@ -548,12 +548,40 @@ pub enum AcceptanceCheck {
         #[serde(default)]
         start: Option<CheckStart>,
     },
+    /// Checks sustained health and progress across L2 node roles.
+    HeadsHealthy {
+        /// Check identifier.
+        id: String,
+        /// Distinct L2 endpoint roles.
+        endpoints: Vec<String>,
+        /// Delay before establishing baselines.
+        #[serde(default = "AcceptanceCheck::default_warmup")]
+        warmup: Span,
+        /// Complete observation window after warmup.
+        duration: Span,
+        /// Minimum independent progress required from every node.
+        minimum_blocks: u64,
+        /// Maximum permitted head age.
+        maximum_age: Span,
+        /// Maximum permitted head lag.
+        max_lag_blocks: u64,
+        /// Check timeout, including warmup and observations.
+        timeout: Span,
+        /// Optional start condition.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
 }
 
 impl AcceptanceCheck {
     /// Returns the default head tag.
     pub fn default_head() -> String {
         "latest".into()
+    }
+
+    /// Returns the default zero warmup.
+    pub const fn default_warmup() -> Span {
+        Span(Duration::ZERO)
     }
 
     /// Returns the check identifier.
@@ -563,7 +591,8 @@ impl AcceptanceCheck {
             | Self::HeadProgress { id, .. }
             | Self::HeadsConverge { id, .. }
             | Self::SafeHeadProgress { id, .. }
-            | Self::HeadFresh { id, .. } => id,
+            | Self::HeadFresh { id, .. }
+            | Self::HeadsHealthy { id, .. } => id,
         }
     }
 
@@ -575,6 +604,7 @@ impl AcceptanceCheck {
             Self::HeadsConverge { .. } => "heads_converge",
             Self::SafeHeadProgress { .. } => "safe_head_progress",
             Self::HeadFresh { .. } => "head_fresh",
+            Self::HeadsHealthy { .. } => "heads_healthy",
         }
     }
 
@@ -585,7 +615,8 @@ impl AcceptanceCheck {
             | Self::HeadProgress { timeout, .. }
             | Self::HeadsConverge { timeout, .. }
             | Self::SafeHeadProgress { timeout, .. }
-            | Self::HeadFresh { timeout, .. } => timeout.0,
+            | Self::HeadFresh { timeout, .. }
+            | Self::HeadsHealthy { timeout, .. } => timeout.0,
         }
     }
 
@@ -596,7 +627,8 @@ impl AcceptanceCheck {
             | Self::HeadProgress { start, .. }
             | Self::HeadsConverge { start, .. }
             | Self::SafeHeadProgress { start, .. }
-            | Self::HeadFresh { start, .. } => start.as_ref(),
+            | Self::HeadFresh { start, .. }
+            | Self::HeadsHealthy { start, .. } => start.as_ref(),
         }
     }
 
@@ -626,6 +658,19 @@ impl AcceptanceCheck {
                 }
                 endpoints.iter().map(String::as_str).collect()
             }
+            Self::HeadsHealthy { endpoints, .. } => {
+                if endpoints.len() < 2 {
+                    bail!("heads_healthy requires at least two endpoints");
+                }
+                let unique: BTreeSet<_> = endpoints.iter().collect();
+                if unique.len() != endpoints.len() {
+                    bail!("heads_healthy endpoints must be distinct");
+                }
+                if endpoints.iter().any(|endpoint| endpoint == "l1") {
+                    bail!("heads_healthy accepts only L2 endpoint roles");
+                }
+                endpoints.iter().map(String::as_str).collect()
+            }
         };
         for endpoint in endpoints {
             if !matches!(endpoint, "l1" | "builder" | "validator" | "rpc" | "shadow") {
@@ -652,9 +697,21 @@ impl AcceptanceCheck {
                 timeout.0,
             )?
         }
+        if let Self::HeadsHealthy { warmup, duration, timeout, .. } = self {
+            ScenarioConfig::validate_duration_against(
+                duration.0,
+                "health duration",
+                Duration::from_secs(1),
+                timeout.0,
+            )?;
+            if warmup.0.checked_add(duration.0).is_none_or(|total| total >= timeout.0) {
+                bail!("heads_healthy timeout must exceed warmup plus duration for RPC budget");
+            }
+        }
         match self {
             Self::HeadProgress { minimum_blocks: 0, .. }
-            | Self::SafeHeadProgress { minimum_blocks: 0, .. } => {
+            | Self::SafeHeadProgress { minimum_blocks: 0, .. }
+            | Self::HeadsHealthy { minimum_blocks: 0, .. } => {
                 bail!("minimum_blocks must be non-zero");
             }
             _ => {}
