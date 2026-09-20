@@ -139,7 +139,7 @@ impl ScenarioResult {
             .map(|stage| stage.status)
             .chain(self.checks.iter().map(|check| check.status))
             .collect();
-        for status in [Status::Error, Status::Cancelled, Status::Failed, Status::Blocked] {
+        for status in [Status::Error, Status::Cancelled, Status::Blocked, Status::Failed] {
             if statuses.contains(&status) {
                 return status;
             }
