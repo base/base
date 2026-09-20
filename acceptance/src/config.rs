@@ -119,6 +119,29 @@ impl ScenarioConfig {
         if self.devnet.l1.slot_duration.0.subsec_nanos() != 0 {
             bail!("L1 slot duration must use whole seconds");
         }
+        if self.devnet.l1.validator_count == 0 {
+            bail!("L1 validator_count must be non-zero")
+        }
+        match self.devnet.profile {
+            DevnetProfile::Canonical => {
+                if self.devnet.l1.forks.glamsterdam.is_some() {
+                    bail!("Glamsterdam forks require profile = 'glamsterdam'")
+                }
+            }
+            DevnetProfile::Glamsterdam => {
+                if self.devnet.l1.validator_count != 64
+                    || self.devnet.l1.slot_duration.0 != Duration::from_secs(6)
+                {
+                    bail!("Glamsterdam requires 64 validators and 6s slots")
+                }
+                let fork = self.devnet.l1.forks.glamsterdam.as_ref().ok_or_else(|| {
+                    eyre::eyre!("Glamsterdam profile requires its L1 fork schedule")
+                })?;
+                if fork.activation_epoch == 0 {
+                    bail!("Glamsterdam activation_epoch must be non-zero")
+                }
+            }
+        }
         Self::validate_duration_against(
             self.readiness.timeout.0,
             "readiness timeout",
@@ -297,6 +320,9 @@ impl ScenarioConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DevnetConfig {
+    /// Reviewed environment profile.
+    #[serde(default)]
+    pub profile: DevnetProfile,
     /// Topology name.
     #[serde(default = "DevnetConfig::default_topology")]
     pub topology: String,
@@ -318,11 +344,23 @@ impl DevnetConfig {
 impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
+            profile: DevnetProfile::default(),
             topology: Self::default_topology(),
             l1: L1Config::default(),
             l2: L2Config::default(),
         }
     }
+}
+
+/// Reviewed devnet environment profile.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DevnetProfile {
+    /// Existing canonical Compose environment.
+    #[default]
+    Canonical,
+    /// Pinned Amsterdam/Gloas L1 with the canonical Rust blob batcher.
+    Glamsterdam,
 }
 
 /// Layer-one settings.
@@ -335,6 +373,12 @@ pub struct L1Config {
     /// Slot duration.
     #[serde(default = "L1Config::default_slot_duration")]
     pub slot_duration: Span,
+    /// Number of genesis validators.
+    #[serde(default = "L1Config::default_validator_count")]
+    pub validator_count: u64,
+    /// Layer-one fork settings.
+    #[serde(default)]
+    pub forks: L1Forks,
 }
 
 impl L1Config {
@@ -347,11 +391,42 @@ impl L1Config {
     pub const fn default_slot_duration() -> Span {
         Span(Duration::from_secs(12))
     }
+    /// Returns the default validator count.
+    pub const fn default_validator_count() -> u64 {
+        1
+    }
 }
 
 impl Default for L1Config {
     fn default() -> Self {
-        Self { chain_id: Self::default_chain_id(), slot_duration: Self::default_slot_duration() }
+        Self {
+            chain_id: Self::default_chain_id(),
+            slot_duration: Self::default_slot_duration(),
+            validator_count: Self::default_validator_count(),
+            forks: L1Forks::default(),
+        }
+    }
+}
+/// Layer-one fork schedule.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct L1Forks {
+    /// Matched Amsterdam execution and Gloas consensus activation.
+    #[serde(default)]
+    pub glamsterdam: Option<GlamsterdamFork>,
+}
+/// Matched Amsterdam execution and Gloas consensus activation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlamsterdamFork {
+    /// Gloas activation epoch and corresponding Amsterdam epoch boundary.
+    #[serde(default = "GlamsterdamFork::default_activation_epoch")]
+    pub activation_epoch: u64,
+}
+impl GlamsterdamFork {
+    /// Returns the reviewed activation epoch.
+    pub const fn default_activation_epoch() -> u64 {
+        8
     }
 }
 
@@ -696,7 +771,16 @@ impl AcceptanceCheck {
             }
         };
         for endpoint in endpoints {
-            if !matches!(endpoint, "l1" | "builder" | "validator" | "rpc" | "shadow") {
+            if !matches!(
+                endpoint,
+                "l1" | "beacon"
+                    | "builder"
+                    | "builder-consensus"
+                    | "validator"
+                    | "validator-consensus"
+                    | "rpc"
+                    | "shadow"
+            ) {
                 bail!("unknown endpoint {endpoint}");
             }
         }
@@ -774,6 +858,41 @@ timeout = "5s"
     fn validates_minimal() {
         let config: ScenarioConfig = toml::from_str(MINIMAL_SCENARIO).unwrap();
         assert!(config.validate().is_ok());
+        assert_eq!(config.devnet.profile, DevnetProfile::Canonical);
+        assert_eq!(config.devnet.l1.validator_count, 1);
+        assert!(config.devnet.l1.forks.glamsterdam.is_none());
+    }
+
+    #[test]
+    fn validates_only_the_reviewed_glamsterdam_profile() {
+        let source = MINIMAL_SCENARIO.replace(
+            "[[checks]]",
+            r#"[devnet]
+profile = "glamsterdam"
+
+[devnet.l1]
+validator_count = 64
+slot_duration = "6s"
+
+[devnet.l1.forks]
+glamsterdam = {}
+
+[[checks]]"#,
+        );
+        let config: ScenarioConfig = toml::from_str(&source).unwrap();
+        config.validate().unwrap();
+        assert_eq!(
+            config.devnet.l1.forks.glamsterdam.unwrap().activation_epoch,
+            GlamsterdamFork::default_activation_epoch()
+        );
+
+        for invalid in [
+            source.replace("validator_count = 64", "validator_count = 63"),
+            source.replace("slot_duration = \"6s\"", "slot_duration = \"12s\""),
+            source.replace("glamsterdam = {}", "glamsterdam = { activation_epoch = 0 }"),
+        ] {
+            assert!(toml::from_str::<ScenarioConfig>(&invalid).unwrap().validate().is_err());
+        }
     }
 
     #[test]

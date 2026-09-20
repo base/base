@@ -385,7 +385,16 @@ impl AcceptanceRunner {
             }
         }
         for (role, url) in endpoints {
-            if !matches!(role.as_str(), "l1" | "builder" | "validator" | "rpc" | "shadow") {
+            if !matches!(
+                role.as_str(),
+                "l1" | "beacon"
+                    | "builder"
+                    | "builder-consensus"
+                    | "validator"
+                    | "validator-consensus"
+                    | "rpc"
+                    | "shadow"
+            ) {
                 bail!("unknown endpoint role");
             }
             let parsed =
