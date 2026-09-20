@@ -14,8 +14,8 @@ pub use cli::{
 
 mod config;
 pub use config::{
-    AcceptanceCheck, CheckStart, CiConfig, CiSuite, DevnetConfig, ForkActivation, L1Config,
-    L2Config, ReadinessConfig, ScenarioConfig, Span,
+    AcceptanceCheck, CheckStart, CiConfig, CiSuite, DevnetConfig, DevnetProfile, ForkActivation,
+    GlamsterdamFork, L1Config, L1Forks, L2Config, ReadinessConfig, ScenarioConfig, Span,
 };
 
 mod provision;
