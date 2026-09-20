@@ -18,6 +18,21 @@ use crate::{CheckResult, EndpointMap, Status};
 pub struct GlamsterdamCheck;
 
 impl GlamsterdamCheck {
+    /// Ordered assertion names shared by execution and expected-result manifests.
+    pub const STAGES: [&str; 11] = [
+        "schedule",
+        "pre-transfer",
+        "pre-batch",
+        "pre-safe",
+        "boundary",
+        "post-transfer",
+        "post-batch",
+        "post-safe",
+        "l2-rules",
+        "finality",
+        "canonical",
+    ];
+
     /// Runs every assertion in order and leaves stable blocked rows after the first failure.
     pub async fn run(
         id: &str,
@@ -26,19 +41,7 @@ impl GlamsterdamCheck {
         within: Duration,
         results: &mut [CheckResult],
     ) {
-        let names = [
-            "schedule",
-            "pre-transfer",
-            "pre-batch",
-            "pre-safe",
-            "boundary",
-            "post-transfer",
-            "post-batch",
-            "post-safe",
-            "l2-rules",
-            "finality",
-            "canonical",
-        ];
+        let names = Self::STAGES;
         debug_assert_eq!(results.len(), names.len());
         for (result, name) in results.iter_mut().zip(names) {
             *result = Self::result(
@@ -57,7 +60,10 @@ impl GlamsterdamCheck {
             Ok(Ok(())) => None,
             Ok(Err(failure)) => Some(failure),
             Err(error) => Some((
-                results.iter().position(|result| result.status == Status::Blocked).unwrap_or(10),
+                results
+                    .iter()
+                    .position(|result| result.status == Status::Blocked)
+                    .unwrap_or(results.len() - 1),
                 error.into(),
             )),
         };
@@ -337,7 +343,10 @@ impl GlamsterdamCheck {
         match operation.await {
             Ok(()) => Ok(()),
             Err(error) => Err((
-                results.iter().position(|result| result.status == Status::Blocked).unwrap_or(10),
+                results
+                    .iter()
+                    .position(|result| result.status == Status::Blocked)
+                    .unwrap_or(results.len() - 1),
                 error,
             )),
         }

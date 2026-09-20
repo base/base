@@ -8,7 +8,7 @@ use std::{
 use eyre::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ForkBoundary;
+use crate::{ForkBoundary, GlamsterdamCheck};
 
 const FORKS: [&str; 5] = ["azul", "beryl", "cobalt", "denim", "zenith"];
 const MAX_ROLLUP_JSON_BYTES: u64 = 1024 * 1024;
@@ -866,22 +866,9 @@ impl AcceptanceCheck {
 
     /// Expands this configured check into stable portable result identifiers.
     pub fn result_ids(&self) -> Vec<String> {
-        const STAGES: [&str; 11] = [
-            "schedule",
-            "pre-transfer",
-            "pre-batch",
-            "pre-safe",
-            "boundary",
-            "post-transfer",
-            "post-batch",
-            "post-safe",
-            "l2-rules",
-            "finality",
-            "canonical",
-        ];
         match self {
             Self::GlamsterdamBlobTransfers { id, .. } => {
-                STAGES.iter().map(|stage| format!("{id}-{stage}")).collect()
+                GlamsterdamCheck::STAGES.iter().map(|stage| format!("{id}-{stage}")).collect()
             }
             _ => vec![self.id().into()],
         }
