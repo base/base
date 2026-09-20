@@ -12,9 +12,9 @@ use eyre::{Context, Result, bail};
 use serde_json::json;
 
 use crate::{
-    AcceptanceOptions, AcceptanceRunner, Aggregate, CheckResult, CiSuite, ExpectedManifest,
-    ExpectedScenario, Provisioner, PublishArgs, Report, RunResult, ScenarioConfig, ScenarioResult,
-    StageResult, Status,
+    AcceptanceCheck, AcceptanceOptions, AcceptanceRunner, Aggregate, CheckResult, CiSuite,
+    ExpectedManifest, ExpectedScenario, Provisioner, PublishArgs, Report, RunResult,
+    ScenarioConfig, ScenarioResult, StageResult, Status,
 };
 
 /// Scenario suites accepted by CI discovery.
@@ -231,7 +231,11 @@ impl AcceptanceCli {
                     .into_iter()
                     .map(|scenario| ExpectedScenario {
                         id: scenario.id,
-                        checks: scenario.checks.iter().map(|check| check.id().into()).collect(),
+                        checks: scenario
+                            .checks
+                            .iter()
+                            .flat_map(AcceptanceCheck::result_ids)
+                            .collect(),
                     })
                     .collect();
                 let manifest =
@@ -368,7 +372,7 @@ impl CliRun {
             if selected {
                 scenarios.push(ExpectedScenario {
                     id: config.id.clone(),
-                    checks: config.checks.iter().map(|check| check.id().into()).collect(),
+                    checks: config.checks.iter().flat_map(AcceptanceCheck::result_ids).collect(),
                 });
                 include.push(MatrixScenario {
                     id: config.id,
@@ -628,6 +632,39 @@ mod tests {
             CliRun::select(temp.path(), SelectionSuite::Extended, "run".into(), "sha".into())
                 .unwrap();
         assert_eq!(extended.include.len(), 2);
+    }
+
+    #[test]
+    fn discovery_expands_protocol_assertions_in_the_expected_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("fork.toml"),
+            r#"
+schema_version = 1
+id = "fork"
+description = "protocol discovery"
+[devnet]
+profile = "glamsterdam"
+[devnet.l1]
+validator_count = 64
+slot_duration = "6s"
+[devnet.l1.forks]
+glamsterdam = {}
+[[checks]]
+id = "transition"
+kind = "glamsterdam_blob_transfers"
+timeout = "9m"
+"#,
+        )
+        .unwrap();
+        let (manifest, matrix) =
+            CliRun::select(temp.path(), SelectionSuite::Extended, "run".into(), "sha".into())
+                .unwrap();
+        assert_eq!(matrix.include.len(), 1);
+        assert_eq!(manifest.scenarios[0].checks.len(), 11);
+        assert_eq!(manifest.scenarios[0].checks[0], "transition-schedule");
+        assert_eq!(manifest.scenarios[0].checks[10], "transition-canonical");
+        assert!(!manifest.scenarios[0].checks.contains(&"transition".into()));
     }
 
     #[test]

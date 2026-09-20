@@ -159,9 +159,35 @@ impl ScenarioConfig {
         if self.checks.len() > MAX_CHECKS {
             bail!("no more than {MAX_CHECKS} checks are allowed");
         }
+        let protocol_checks = self
+            .checks
+            .iter()
+            .filter(|check| matches!(check, AcceptanceCheck::GlamsterdamBlobTransfers { .. }))
+            .count();
+        if protocol_checks > 1 {
+            bail!("at most one glamsterdam_blob_transfers check is allowed")
+        }
+        if protocol_checks == 1 && self.devnet.profile != DevnetProfile::Glamsterdam {
+            bail!("glamsterdam_blob_transfers requires the Glamsterdam devnet profile")
+        }
+        if protocol_checks == 1
+            && !matches!(
+                self.checks.first(),
+                Some(AcceptanceCheck::GlamsterdamBlobTransfers { .. })
+            )
+        {
+            bail!("glamsterdam_blob_transfers must be the first check")
+        }
         let mut ids = BTreeSet::new();
+        let mut result_ids = BTreeSet::new();
         for check in &self.checks {
             Self::validate_id(check.id(), "check")?;
+            for result_id in check.result_ids() {
+                Self::validate_id(&result_id, "result check")?;
+                if !result_ids.insert(result_id.to_ascii_lowercase()) {
+                    bail!("duplicate result id {result_id}")
+                }
+            }
             if !ids.insert(check.id().to_ascii_lowercase()) {
                 bail!("duplicate check id {}", check.id());
             }
@@ -571,6 +597,13 @@ pub struct CheckStart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AcceptanceCheck {
+    /// Verifies blob derivation and chain rules across L1 Glamsterdam.
+    GlamsterdamBlobTransfers {
+        /// Prefix for stable assertion result identifiers.
+        id: String,
+        /// Overall protocol-check timeout.
+        timeout: Span,
+    },
     /// Checks a chain identifier.
     ChainId {
         /// Check identifier.
@@ -685,7 +718,8 @@ impl AcceptanceCheck {
     /// Returns the check identifier.
     pub fn id(&self) -> &str {
         match self {
-            Self::ChainId { id, .. }
+            Self::GlamsterdamBlobTransfers { id, .. }
+            | Self::ChainId { id, .. }
             | Self::HeadProgress { id, .. }
             | Self::HeadsConverge { id, .. }
             | Self::SafeHeadProgress { id, .. }
@@ -697,6 +731,7 @@ impl AcceptanceCheck {
     /// Returns the check kind.
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::GlamsterdamBlobTransfers { .. } => "glamsterdam_blob_transfers",
             Self::ChainId { .. } => "chain_id",
             Self::HeadProgress { .. } => "head_progress",
             Self::HeadsConverge { .. } => "heads_converge",
@@ -709,7 +744,8 @@ impl AcceptanceCheck {
     /// Returns the check timeout.
     pub const fn timeout(&self) -> Duration {
         match self {
-            Self::ChainId { timeout, .. }
+            Self::GlamsterdamBlobTransfers { timeout, .. }
+            | Self::ChainId { timeout, .. }
             | Self::HeadProgress { timeout, .. }
             | Self::HeadsConverge { timeout, .. }
             | Self::SafeHeadProgress { timeout, .. }
@@ -721,6 +757,7 @@ impl AcceptanceCheck {
     /// Returns the optional start condition.
     pub const fn start(&self) -> Option<&CheckStart> {
         match self {
+            Self::GlamsterdamBlobTransfers { .. } => None,
             Self::ChainId { start, .. }
             | Self::HeadProgress { start, .. }
             | Self::HeadsConverge { start, .. }
@@ -739,6 +776,7 @@ impl AcceptanceCheck {
             scenario.timeout.0,
         )?;
         let endpoints = match self {
+            Self::GlamsterdamBlobTransfers { .. } => Vec::new(),
             Self::ChainId { endpoint, .. }
             | Self::HeadProgress { endpoint, .. }
             | Self::SafeHeadProgress { endpoint, .. }
@@ -825,6 +863,29 @@ impl AcceptanceCheck {
         }
         Ok(())
     }
+
+    /// Expands this configured check into stable portable result identifiers.
+    pub fn result_ids(&self) -> Vec<String> {
+        const STAGES: [&str; 11] = [
+            "schedule",
+            "pre-transfer",
+            "pre-batch",
+            "pre-safe",
+            "boundary",
+            "post-transfer",
+            "post-batch",
+            "post-safe",
+            "l2-rules",
+            "finality",
+            "canonical",
+        ];
+        match self {
+            Self::GlamsterdamBlobTransfers { id, .. } => {
+                STAGES.iter().map(|stage| format!("{id}-{stage}")).collect()
+            }
+            _ => vec![self.id().into()],
+        }
+    }
 }
 
 #[cfg(test)]
@@ -893,6 +954,61 @@ glamsterdam = {}
         ] {
             assert!(toml::from_str::<ScenarioConfig>(&invalid).unwrap().validate().is_err());
         }
+    }
+
+    #[test]
+    fn protocol_check_expands_ids_and_must_be_unique_and_first() {
+        let source = r#"
+schema_version = 1
+id = "glamsterdam"
+description = "protocol"
+
+[devnet]
+profile = "glamsterdam"
+[devnet.l1]
+validator_count = 64
+slot_duration = "6s"
+[devnet.l1.forks]
+glamsterdam = {}
+
+[[checks]]
+id = "glam"
+kind = "glamsterdam_blob_transfers"
+timeout = "500s"
+
+[[checks]]
+id = "health"
+kind = "chain_id"
+endpoint = "builder"
+expected = 84538453
+timeout = "5s"
+"#;
+        let config: ScenarioConfig = toml::from_str(source).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.checks[0].result_ids().len(), 11);
+        assert_eq!(config.checks[0].result_ids()[0], "glam-schedule");
+        assert_eq!(config.checks[1].result_ids(), ["health"]);
+
+        let colliding = source.replace("id = \"health\"", "id = \"glam-schedule\"");
+        assert!(toml::from_str::<ScenarioConfig>(&colliding).unwrap().validate().is_err());
+        let mut wrong_profile = config;
+        wrong_profile.devnet = DevnetConfig::default();
+        assert!(wrong_profile.validate().is_err());
+
+        let reversed = source.replacen(
+            "[[checks]]\nid = \"glam\"",
+            r#"[[checks]]
+id = "later"
+kind = "chain_id"
+endpoint = "builder"
+expected = 84538453
+timeout = "5s"
+
+[[checks]]
+id = "glam""#,
+            1,
+        );
+        assert!(toml::from_str::<ScenarioConfig>(&reversed).unwrap().validate().is_err());
     }
 
     #[test]

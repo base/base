@@ -48,7 +48,7 @@ impl ReportCounts {
     /// Returns the failure-first verdict derived from scenario records.
     pub fn verdict(run: &RunResult) -> Status {
         let outcomes: Vec<_> = run.scenarios.iter().map(ScenarioResult::outcome).collect();
-        for status in [Status::Error, Status::Cancelled, Status::Blocked, Status::Failed] {
+        for status in [Status::Error, Status::Cancelled, Status::Failed, Status::Blocked] {
             if outcomes.contains(&status) {
                 return status;
             }

@@ -186,6 +186,9 @@ impl RpcObserver {
         state: &mut ObservationState<'_>,
     ) -> Result<String> {
         match check {
+            AcceptanceCheck::GlamsterdamBlobTransfers { .. } => {
+                bail!("protocol check must be dispatched by the acceptance runner")
+            }
             AcceptanceCheck::ChainId { endpoint, expected, .. } => {
                 state.expected = json!(expected);
                 match self.chain_id(Self::endpoint(endpoints, endpoint)?, deadline).await {

@@ -15,7 +15,7 @@ The checked-in scenarios are:
 
 - Linux, Git, Rust/Cargo, Docker with Compose 2.24.4+ and Buildx, and enough resources to
   build and run the canonical devnet.
-- Acceptance publishes only execution RPCs on dynamically allocated localhost ports.
+- Acceptance publishes execution, consensus, and beacon RPCs on dynamically allocated localhost ports.
 - No canonical devnet containers may already exist.
 
 Run commands from the repository root. `cargo run` compiles the CLI as needed:
@@ -36,7 +36,8 @@ resources and private chain state.
 
 A scenario has two phases in one TOML document. Top-level, `devnet`, and
 `readiness` fields describe what to provision and when it is usable; `[[checks]]`
-tables describe read-only observations made after readiness.
+tables describe bounded checks made after readiness. Ordinary checks are read-only;
+the managed-only Glamsterdam protocol check sends two signed devnet transfers.
 
 ```toml
 schema_version = 1
@@ -100,9 +101,36 @@ are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are
 - `heads_healthy`: at least two distinct L2 `endpoints`, optional `warmup` (default
   `0s`), `duration`, non-zero `minimum_blocks` per node, `maximum_age`,
   `max_lag_blocks`, and `timeout`. The timeout includes warmup and observations.
+  The complete observation window starts after the baseline round. L2 timestamps
+  may be up to five seconds ahead of the host, matching gossip validation.
+- `glamsterdam_blob_transfers`: `id` and `timeout`. Requires the Glamsterdam
+  profile, managed mode, and the first check position; it may appear only once.
+  Expands into eleven independently reported protocol assertions. Ordinary health
+  checks may follow it.
 
-Every check may have one L2 `start` condition with exactly one of `before_fork` or
+Every ordinary check may have one L2 `start` condition with exactly one of `before_fork` or
 `after_fork`. Checks run in file order. See `scenarios/` for complete examples.
+
+### Glamsterdam profile and protocol evidence
+
+Set `devnet.profile = "glamsterdam"`, `devnet.l1.validator_count = 64`,
+`devnet.l1.slot_duration = "6s"`, and
+`devnet.l1.forks.glamsterdam = { activation_epoch = 8 }`. The reviewed profile
+pins compatible Reth and Lighthouse images, generates matching Amsterdam/Gloas
+artifacts before startup, and runs the Rust blob batcher as the canonical batcher.
+The Go batcher and shadow validator are disabled in this profile. Set
+`devnet.l2.verifier_l1_confirmations = 0` for the bounded pre-fork derivation window.
+L2 Zenith remains disabled; this tests an L1-only activation, not an L2 upgrade.
+
+The protocol check verifies matching EL/CL schedules, successful value transfers
+before and after activation, exact signed transaction attribution to decoded blob
+channels, and safe derivation on builder and validator. It authenticates adjacent
+fork-boundary headers, checks L1 SLOTNUM activation and its absence on L2, requires
+executed Gloas finality, and rechecks canonical L1 inclusions and L2 receipts.
+Completed assertion rows survive cancellation. Their JSON observations retain
+transfer receipts, signed transaction bytes, channel attribution, inclusion
+receipts, and finality evidence; service logs supplement rather than replace them.
+The check never resubmits a transaction after an ambiguous submission.
 
 ## CLI workflows
 
@@ -195,11 +223,22 @@ Check and lifecycle statuses are `passed`, `failed`, `error`, `blocked`, and
 means invalid invocation/configuration, and 3 means infrastructure prevented a
 complete evaluation. Infrastructure takes precedence when outcomes are mixed.
 
-The advisory Depot workflow validates scenarios, runs one selected shard, uploads
-its report bundle, and strictly aggregates expected results. Reports are artifacts;
+The advisory Depot workflow discovers and validates every scenario, runs the selected
+suite as independent shards, uploads report bundles, and strictly aggregates expected results. Reports are artifacts;
 PR publication is available only when the trusted base revision contains the
-publisher. Same-repository PRs run smoke automatically; manual dispatch selects
-any checked-in scenario. The publisher updates only its marker-owned
+publisher. Same-repository PRs select `[ci] suite = "pr"` (currently only smoke).
+Scenarios without CI metadata default to `extended`; manual dispatch selects
+`pr`, `extended`, or `all`. Adding a scenario requires only its TOML file, not a
+workflow edit. The Rust `select` command emits both the matrix and matching expected
+manifest, including expanded protocol assertion IDs:
+
+```console
+cargo run -p base-acceptance-cli -- select --suite extended \
+  --run-id local --tested-sha "$(git rev-parse HEAD)" \
+  --expected target/acceptance-expected.json --matrix target/acceptance-matrix.json
+```
+
+The publisher updates only its marker-owned
 `depot-code-access[bot]` comment (override with the `BOT_LOGIN` repository variable
 for a different bot). Reports remain artifact-only on the first introduction PR.
 
@@ -226,8 +265,8 @@ It is a rendering example, not evidence of a real devnet run.
 - Only the fixed `single-sequencer` topology is supported. Fixed container names
   and its subnet, plus a host lock, mean acceptance runs must be serial and cannot
   share a machine with the canonical developer devnet.
-- Configurable L1 forks, including Glamsterdam, are unsupported: the pinned
-  devnet generator does not expose a compatible Glamsterdam schedule.
+- L1 fork configuration is restricted to the reviewed Glamsterdam profile;
+  arbitrary client image overrides and L1 fork-relative start conditions are unsupported.
 - `--no-build` inspects and reports cached local image IDs. It does **not** prove
   that those images correspond to the current source revision.
 - Attach mode validates RPC identity and behavior but does not own the target or
