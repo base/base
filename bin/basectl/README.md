@@ -315,6 +315,46 @@ Safety notes:
   before reporting success so an acknowledged RPC is not confused with the node
   actually reaching the desired state.
 
+### `basectl batcher`
+
+Batcher inspection and control commands, served by the batcher admin RPC.
+
+- `basectl batcher status` shows whether batch submission is stopped, the number
+  of L1 submissions in flight, and the DA backlog, through
+  `admin_getBatcherStatus`.
+- `basectl batcher stop` stops batch submission through `admin_stopBatcher`. The
+  batcher drops its buffered encoding state and the process keeps running.
+- `basectl batcher start` starts batch submission again from the safe L2 head
+  through `admin_startBatcher`. It does nothing if the batcher is already running.
+- `basectl batcher flush` closes the current channel through `admin_flushBatcher`
+  so its frames are submitted now. It fails while the batcher is stopped.
+
+The admin RPC URL comes from `--batcher-rpc`, then from `batcher_rpc` in the
+selected config. The `mainnet` and `sepolia` presets default to
+`http://127.0.0.1:6545`. The `devnet` preset leaves it unset because its
+conductor already listens on that port, so devnet needs `--batcher-rpc`.
+
+| Flag                  | Description                                                                     |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `--batcher-rpc <URL>` | Batcher admin RPC URL. Overrides `batcher_rpc` from the selected config.        |
+| `--json`              | For `status`, emit a structured JSON status instead of the pretty table output. |
+
+Destructive batcher commands also support:
+
+| Flag     | Description                                                                                                                |
+| -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`  | Skip the interactive confirmation prompt.                                                                                  |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+
+Safety notes:
+
+- `stop`, `start` and `flush` prompt with the network name and the admin RPC URL.
+- `stop` answers once no submission is in flight, which can take a few minutes.
+  If submissions are still in flight when the batcher gives up waiting, the
+  command fails and the batcher stays stopped. Check it with `status`.
+- Output, logs and errors only show the origin of the admin RPC URL, so
+  credentials in the URL never leak.
+
 ### `basectl doctor`
 
 Runs read-only diagnostics for a single node and prints one row per check. The
@@ -626,6 +666,25 @@ basectl -c devnet sequencer start op-conductor-0 --yes
 
 # Start a sequencer node with an explicit unsafe head hash
 basectl -c devnet sequencer start op-conductor-0 0x1111111111111111111111111111111111111111111111111111111111111111 --yes --json | jq .
+```
+
+### `basectl batcher`
+
+```sh
+# Show the batcher state
+basectl -c sepolia batcher status
+
+# Show the batcher state of a devnet batcher as JSON
+basectl -c devnet batcher status --batcher-rpc http://localhost:16545 --json | jq .
+
+# Stop batch submission and wait for in-flight submissions to settle
+basectl -c sepolia batcher stop --yes
+
+# Start batch submission again
+basectl -c sepolia batcher start --yes --json | jq .
+
+# Submit the current channel now
+basectl -c sepolia batcher flush --yes
 ```
 
 ### `basectl doctor`
