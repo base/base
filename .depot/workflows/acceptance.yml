@@ -4,14 +4,14 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      scenario:
-        description: Acceptance scenario
+      suite:
+        description: Acceptance suite
         type: choice
         options:
-          - smoke
-          - denim-transition
-          - derivation
-        default: smoke
+          - pr
+          - extended
+          - all
+        default: pr
 
 concurrency:
   group: acceptance-${{ github.event.pull_request.number || github.ref }}
@@ -58,21 +58,14 @@ jobs:
       - id: select
         shell: bash
         env:
-          REQUESTED_SCENARIO: ${{ github.event_name == 'workflow_dispatch' && inputs.scenario || 'smoke' }}
+          REQUESTED_SUITE: ${{ github.event_name == 'workflow_dispatch' && inputs.suite || 'pr' }}
         run: |
           set -euo pipefail
-          case "$REQUESTED_SCENARIO" in
-            smoke|denim-transition|derivation) ;;
-            *) echo 'unsupported scenario' >&2; exit 2 ;;
-          esac
-          scenarios=("acceptance/scenarios/${REQUESTED_SCENARIO}.toml")
-          cargo run --locked -p base-acceptance-cli -- validate "${scenarios[@]}"
           mkdir -p expected
-          cargo run --locked -p base-acceptance-cli -- manifest "${scenarios[@]}" \
-            --run-id "$RUN_KEY" --tested-sha "$TESTED_SHA" --output expected/manifest.json
-          jq -e '.schema_version == 1 and .run_id == env.RUN_KEY and .tested_sha == env.TESTED_SHA and (.scenarios | length == 1)' expected/manifest.json
-          jq -cn --arg id "$REQUESTED_SCENARIO" --arg path "${scenarios[0]}" \
-            '{include:[{id:$id,path:$path}]}' | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+          cargo run --locked -p base-acceptance-cli -- select --suite "$REQUESTED_SUITE" \
+            --run-id "$RUN_KEY" --tested-sha "$TESTED_SHA" \
+            --expected expected/manifest.json --matrix expected/matrix.json \
+            --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: acceptance-expected-${{ github.run_attempt }}

@@ -15,6 +15,26 @@ const MAX_ROLLUP_JSON_BYTES: u64 = 1024 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 1024;
 const MAX_CHECKS: usize = 100;
 
+/// CI suite assigned to a scenario.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CiSuite {
+    /// Runs for pull requests and extended invocations.
+    Pr,
+    /// Runs only for extended invocations by default.
+    #[default]
+    Extended,
+}
+
+/// Strict CI metadata for a scenario.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CiConfig {
+    /// Suite used by CI discovery.
+    #[serde(default)]
+    pub suite: CiSuite,
+}
+
 /// A human-readable, positive duration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span(pub Duration);
@@ -42,6 +62,9 @@ pub struct ScenarioConfig {
     pub id: String,
     /// Human-readable purpose.
     pub description: String,
+    /// CI discovery metadata.
+    #[serde(default)]
+    pub ci: CiConfig,
     /// Overall execution deadline.
     #[serde(default = "ScenarioConfig::default_timeout")]
     pub timeout: Span,
