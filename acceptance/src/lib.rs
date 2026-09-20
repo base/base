@@ -7,12 +7,15 @@ mod check;
 pub use check::{ObservationState, ObservedBlock, RpcObserver};
 
 mod cli;
-pub use cli::{AcceptanceCli, AcceptanceCommand, CliRun, ExitCode};
+pub use cli::{
+    AcceptanceCli, AcceptanceCommand, CliRun, ExitCode, MatrixScenario, ScenarioMatrix,
+    SelectionSuite,
+};
 
 mod config;
 pub use config::{
-    AcceptanceCheck, CheckStart, DevnetConfig, ForkActivation, L1Config, L2Config, ReadinessConfig,
-    ScenarioConfig, Span,
+    AcceptanceCheck, CheckStart, CiConfig, CiSuite, DevnetConfig, ForkActivation, L1Config,
+    L2Config, ReadinessConfig, ScenarioConfig, Span,
 };
 
 mod provision;
