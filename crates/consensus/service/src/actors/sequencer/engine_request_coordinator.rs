@@ -1,6 +1,9 @@
 //! Sequencer ownership and serialized routing of engine requests.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use alloy_eips::BlockNumberOrTag;
 use base_consensus_engine::{
@@ -11,6 +14,7 @@ use opentelemetry::context::FutureExt as OtelFutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
+    time::{self, Instant as TokioInstant, MissedTickBehavior},
 };
 use tracing::{debug, error, info, warn};
 
@@ -23,6 +27,7 @@ use crate::{
 };
 
 const MAX_SEQUENCER_EXTERNAL_UNSAFE_GAP: u64 = 300;
+const SEQUENCER_EL_SYNC_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BootstrapRole {
@@ -225,6 +230,12 @@ where
                 }
             }
 
+            let mut el_sync_probe_interval = time::interval_at(
+                TokioInstant::now() + SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+                SEQUENCER_EL_SYNC_PROBE_INTERVAL,
+            );
+            el_sync_probe_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
             loop {
                 // Full processor iteration window: drain + recv wait + request handling.
                 // Bounds the worst-case channel wait — any request arriving during this
@@ -266,7 +277,23 @@ where
                 // Wait for the next processing request.
                 let recv_result = base_metrics::time!(
                     EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    { request_channel.recv().await }
+                    {
+                        if self.processor.engine_state().el_sync_finished {
+                            request_channel.recv().await
+                        } else {
+                            tokio::select! {
+                                request = request_channel.recv() => request,
+                                _ = el_sync_probe_interval.tick() => {
+                                    let active_sequencer = self.resolve_bootstrap_role().await
+                                        == BootstrapRole::ActiveSequencer;
+                                    self.processor
+                                        .probe_sequencer_el_sync(active_sequencer)
+                                        .await;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
                 );
                 let Some(request) = recv_result else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
