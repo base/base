@@ -19,9 +19,15 @@ The shared CLI flags are:
 
 | Flag | Env var | Default | Description |
 | ---- | ------- | ------- | ----------- |
-| `--upgrade-signal.contract <ADDRESS>` | `BASE_NODE_UPGRADE_SIGNAL_CONTRACT` | unset | Enables L1 schedule reads from the `ProtocolVersions` contract or proxy. The full contract-backed upgrade schedule is always read; application depends on the selected mode. |
+| `--upgrade-signal.contract <ADDRESS>` | `BASE_NODE_UPGRADE_SIGNAL_CONTRACT` | chain-dependent (see below) | Enables L1 schedule reads from the `ProtocolVersions` contract or proxy. The full contract-backed upgrade schedule is always read; application depends on the selected mode. |
 | `--upgrade-signal.mode <metrics-only\|startup-apply\|runtime-admin>` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only` | Selects whether reads are observation-only, startup-applied, or runtime-applied. |
 | `--upgrade-signal.l1-block-tag <finalized\|safe\|latest>` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | `finalized` | Selects the L1 block tag used for contract calls. Also selects the interval between live contract reads: `finalized` 15m, `safe` 6m24s, `latest` 12s. |
+
+On Base Sepolia (L2 chain ID `84532`), `base-consensus`, `base rpc`, and `base sequencer` default to
+`0x1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f`. Explicit CLI or environment contract addresses take
+precedence. Other chains and standalone execution nodes have no default contract. This default is
+specific to the dynamic upgrade reader, not the legacy protocol-versions address in the rollup
+config. The mode remains `metrics-only`; select `startup-apply` or `runtime-admin` to apply upgrades.
 
 Execution-side readers also need `--upgrade-signal.l1-rpc` or
 `BASE_NODE_UPGRADE_SIGNAL_L1_RPC`. Integrated `base rpc` and `base sequencer` commands derive this
