@@ -40,6 +40,20 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
+
+      - name: Record pre-review comment boundary
+        id: review-comments
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest_comment_id="$(gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" |
+            jq '[.[][] | .id] | max // 0')"
+          echo "latest_comment_id=$latest_comment_id" >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code
         id: claude-review
         uses: anthropics/claude-code-action@1b8ee3b94104046d71fde52ec3557651ad8c0d71 # v1.0.29
@@ -111,24 +125,31 @@ jobs:
 
       - name: Remove superseded review summaries
         # A review can post its summary before a later action error.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.review-comments.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PRE_REVIEW_COMMENT_ID: ${{ steps.review-comments.outputs.latest_comment_id }}
+          REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
         shell: bash
         run: |
           set -euo pipefail
           stale_comments="$(mktemp)"
           trap 'rm -f "$stale_comments"' EXIT
 
-          # Fetch every page before deleting anything. Keep the newest summary,
-          # and never touch human comments or comments owned by other workflows.
+          # Fetch every page before deleting anything. Keep the newest summary
+          # unless a successful review posted none, making all old summaries stale.
+          # Failed reviews without a replacement retain the latest prior summary.
+          # Never touch human comments or comments owned by other workflows.
           gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" |
-            jq -r '[.[][]
+            jq -r --argjson boundary "$PRE_REVIEW_COMMENT_ID" --arg outcome "$REVIEW_OUTCOME" '[.[][]
               | select(.user.login == "github-actions[bot]" and .user.type == "Bot")
               | select((.body // "") | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->"))]
-              | sort_by(.id) | .[:-1][] | .id' > "$stale_comments"
+              | sort_by(.id)
+              | if $outcome == "success" and ((.[-1].id // 0) <= $boundary)
+                then .[] else .[:-1][] end
+              | .id' > "$stale_comments"
 
           cleanup_failed=0
           while IFS= read -r comment_id; do
