@@ -199,6 +199,12 @@ any checked-in scenario. The publisher updates only its marker-owned
 `depot-code-access[bot]` comment (override with the `BOT_LOGIN` repository variable
 for a different bot). Reports remain artifact-only on the first introduction PR.
 
+The publisher treats artifacts as data and validates their identity, schema, and
+expected check sets. Both the results and expected manifest come from PR-controlled
+code: a passing advisory comment is not an independent attestation that tests ran.
+Trusted rendering protects the publisher's credentials, not the truth of those
+observations; review the scenario and runner changes alongside the results.
+
 ## Testing the runner and report
 
 ```console
