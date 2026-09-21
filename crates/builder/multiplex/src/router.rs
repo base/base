@@ -4,7 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use alloy_consensus::BlockHeader;
@@ -88,6 +88,8 @@ pub struct MultiplexRouter {
     pub chain_spec: Arc<BaseChainSpec>,
     /// Whether recent payload IDs are routed to the basic builder, ordered oldest first.
     pub payload_routes: VecDeque<(PayloadId, bool)>,
+    /// Maximum time to observe a shadow build response.
+    shadow_observation_timeout: Duration,
 }
 
 impl MultiplexRouter {
@@ -98,6 +100,7 @@ impl MultiplexRouter {
         flashblocks_health: HealthState,
         basic_health: HealthState,
         chain_spec: Arc<BaseChainSpec>,
+        shadow_observation_timeout: Duration,
     ) -> Self {
         Self {
             flashblocks_handle,
@@ -106,6 +109,7 @@ impl MultiplexRouter {
             basic_health,
             chain_spec,
             payload_routes: VecDeque::new(),
+            shadow_observation_timeout,
         }
     }
 
@@ -242,6 +246,7 @@ impl MultiplexRouter {
         };
 
         Self::inc_selected_build_metric(selected_builder);
+        let shadow_observation_timeout = self.shadow_observation_timeout;
         async move {
             let selected_response = async move {
                 let selected_result = selected_rx.await.unwrap_or_else(|_| {
@@ -259,11 +264,24 @@ impl MultiplexRouter {
                 let _ = tx.send(selected_result);
             };
             let shadow_response = async move {
-                let shadow_result = shadow_rx.await.unwrap_or_else(|_| {
-                    shadow_health.mark_unavailable();
-                    Self::set_service_health_metric(shadow_builder, false);
-                    Err(Self::unavailable_error(shadow_builder))
-                });
+                let shadow_result =
+                    match tokio::time::timeout(shadow_observation_timeout, shadow_rx).await {
+                        Ok(Ok(result)) => result,
+                        Ok(Err(_)) => {
+                            shadow_health.mark_unavailable();
+                            Self::set_service_health_metric(shadow_builder, false);
+                            Err(Self::unavailable_error(shadow_builder))
+                        }
+                        Err(_) => {
+                            Self::inc_shadow_metric(shadow_builder, false);
+                            warn!(
+                                builder = shadow_builder,
+                                payload_id = ?payload_id,
+                                "multiplex shadow build request timed out"
+                            );
+                            return;
+                        }
+                    };
                 Self::inc_shadow_metric(shadow_builder, shadow_result.is_ok());
                 info!(
                     builder = shadow_builder,
@@ -546,6 +564,16 @@ mod tests {
         mpsc::UnboundedReceiver<PayloadServiceCommand<BaseEngineTypes>>,
         mpsc::UnboundedReceiver<PayloadServiceCommand<BaseEngineTypes>>,
     ) {
+        test_router_with_shadow_timeout(Duration::from_secs(1))
+    }
+
+    fn test_router_with_shadow_timeout(
+        shadow_observation_timeout: Duration,
+    ) -> (
+        MultiplexRouter,
+        mpsc::UnboundedReceiver<PayloadServiceCommand<BaseEngineTypes>>,
+        mpsc::UnboundedReceiver<PayloadServiceCommand<BaseEngineTypes>>,
+    ) {
         let (flash_tx, flash_rx) = mpsc::unbounded_channel();
         let (basic_tx, basic_rx) = mpsc::unbounded_channel();
         let router = MultiplexRouter::new(
@@ -558,6 +586,7 @@ mod tests {
                     .with_fork(BaseUpgrade::Denim, ForkCondition::Timestamp(DENIM_TIMESTAMP))
                     .build(),
             ),
+            shadow_observation_timeout,
         );
         (router, flash_rx, basic_rx)
     }
@@ -799,6 +828,40 @@ mod tests {
             drop(handle);
             router_task.await.expect("router task");
         }
+    }
+
+    #[tokio::test]
+    async fn build_future_completes_after_shadow_response_timeout() {
+        let shadow_observation_timeout = Duration::from_millis(10);
+        let (mut router, mut flash_rx, mut basic_rx) =
+            test_router_with_shadow_timeout(shadow_observation_timeout);
+        let input = sample_input(DENIM_TIMESTAMP - 1);
+        let payload_id = input.payload_id();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let response = router.handle_build_new_payload(input, tx);
+
+        let flash_cmd = flash_rx.recv().await.expect("flash build command");
+        let PayloadServiceCommand::BuildNewPayload(_, _, flash_tx) = flash_cmd else {
+            panic!("expected flash BuildNewPayload command");
+        };
+        let basic_cmd = basic_rx.recv().await.expect("basic build command");
+        let PayloadServiceCommand::BuildNewPayload(_, _, stalled_shadow_tx) = basic_cmd else {
+            panic!("expected basic BuildNewPayload command");
+        };
+        flash_tx.send(Ok(payload_id)).expect("selected build response");
+
+        let response = tokio::spawn(response);
+        assert_eq!(
+            rx.await.expect("selected response channel").expect("successful selected response"),
+            payload_id
+        );
+        tokio::time::timeout(Duration::from_secs(1), response)
+            .await
+            .expect("build future should complete after shadow timeout")
+            .expect("build future should not panic");
+
+        assert!(router.basic_health.is_healthy());
+        drop(stalled_shadow_tx);
     }
 
     #[tokio::test]
