@@ -209,14 +209,12 @@ impl SnapshotBenchmarkReportConfig {
         let validator_gas_per_second =
             result.validator_blocks.iter().map(|block| block.gas_used).sum::<u64>() as f64
                 / (result.validator_blocks.len() as f64 * block_seconds);
-        let gas_limit = result.blocks.first().map(|block| block.gas_limit).unwrap_or_default();
         let transaction_payload = Self::transaction_payload(result);
         let test_config = BTreeMap::from([
             ("BenchmarkRun".to_string(), serde_json::Value::String(self.benchmark_run.clone())),
             ("Scenario".to_string(), serde_json::Value::String(self.scenario.clone())),
             ("ChainId".to_string(), result.chain_id.into()),
             ("BlockTimeMilliseconds".to_string(), result.block_interval_ms.into()),
-            ("GasLimit".to_string(), gas_limit.into()),
             ("NodeType".to_string(), serde_json::Value::String("base-reth-node".to_string())),
             ("TransactionPayload".to_string(), serde_json::Value::String(transaction_payload)),
             ("ClientVersion".to_string(), serde_json::Value::String(self.client_version.clone())),
@@ -406,7 +404,7 @@ transactions:
         assert_eq!(metadata["runs"][0]["outputDir"], output_name);
         assert_eq!(metadata["runs"][0]["testConfig"]["BenchmarkRun"], "snapshot-throughput");
         assert_eq!(metadata["runs"][0]["testConfig"]["Scenario"], "blake2f-200ms");
-        assert_eq!(metadata["runs"][0]["testConfig"]["GasLimit"], 400_000_000);
+        assert!(metadata["runs"][0]["testConfig"].get("GasLimit").is_none());
         assert_eq!(metadata["runs"][0]["testConfig"]["TransactionPayload"], "blake2f");
         assert_eq!(
             metadata["runs"][0]["result"]["artifacts"]["loadTestResult"],
