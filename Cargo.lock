@@ -4180,6 +4180,7 @@ dependencies = [
  "ipnet",
  "jsonrpsee",
  "libp2p",
+ "mockall",
  "rstest",
  "serde",
  "serde_json",
