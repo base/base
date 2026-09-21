@@ -3,7 +3,7 @@ id = "system-transaction-eip8130-mined"
 description = "Minimal self-paying EIP-8130 transaction inclusion"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 20 }
 beryl = { at_block = 21 }

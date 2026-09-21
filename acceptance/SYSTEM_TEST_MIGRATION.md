@@ -1,99 +1,71 @@
 # System-test to Docker-acceptance migration ledger
 
-`migration.toml` is the authoritative ledger for all 84 annotated test identities
-in the 22 top-level `etc/systems/tests/*.rs` files. Identity is the `(source,
-name)` pair. The current dispositions are:
+`migration.toml` is the authoritative ledger for the 84 distinct annotated test
+identities originally present in the 22 top-level `etc/systems/tests/*.rs` files.
+The historical `(source, name)` pair remains the identity even after its original
+function is retired.
 
 | Disposition | Count | Meaning |
 | --- | ---: | --- |
-| `ported_unverified` | 43 | Equivalent-intent implementation and scenario exist; live verification is pending. |
-| `partial` | 1 | High-load forwarding is implemented, without the original rate/concurrency configuration. |
-| `requires_workload` | 2 | Fuzz parity or startup-negative behavior has no acceptance workload. |
-| `requires_topology` | 16 | The required deployment or fault-control capability is absent. |
-| `retain_rust` | 22 | Direct database, mock/component, or deterministic unit behavior remains Rust coverage. |
+| `ported_unverified` | 46 | An equivalent-intent PR-suite scenario and check exist; live verification is pending. |
+| `moved_unit` | 3 | The parity classifier unit test moved to `acceptance/src/parity.rs`. |
+| `retain_rust` | 19 | The original Rust test remains the appropriate coverage. |
+| `requires_topology` | 15 | Acceptance lacks the required deployment or fault-control capability. |
+| `requires_workload` | 1 | Acceptance lacks the required startup-negative workload. |
 
-Scenario existence is not proof that a case passed. Each implemented ledger entry
-names the repo-relative TOML file and exact check ID so results can be reconciled
-without inferring from similar names. Both smoke synchronization checks map to
-`system-runtime-sync.toml`, with distinct `canonical-sync` and
-`pending-flashblocks` IDs. Fork/config equality maps to the separate
-`system-runtime-fork-equality-smoke.toml` lifecycle scenario.
+The 46 scenario-backed originals and three relocated unit tests are marked
+`retired = true`. Retirement means the old function must be absent; it does not
+mean the replacement scenario passed. All 46 remain `ported_unverified` until a
+managed Docker run supplies evidence. Scenario and check IDs in the ledger make
+that reconciliation explicit.
 
-## Implemented scope
+## Current scope and CI
 
-The extended suite now contains all newly added system scenarios:
+The 46 replacements cover contracts, signed transactions, high-load forwarding,
+seeded fuzz/sync parity, gossip-topic retirement, synchronization, fork equality,
+and fork cutover. All 45 system scenario files are in the `pr` suite. Acceptance
+runs for pull requests and `merge_group`; the nightly invocation uses the seeded
+acceptance workload. This is broader retirement coverage, not a claim that all 84
+original identities have migrated to Docker acceptance.
 
-- 28 contract cases covering activation registry, B-20, policy registry, and
-  transfer-policy behavior;
-- 11 transaction cases, including EIP-8130 and forwarding/validity behavior;
-  high-load is explicitly partial because its 40 interleaved sends do not recreate
-  `max_rps=1` and `resend_after=30s`; seeded fuzz generation was removed;
-- four runtime dispatch cases: full Denim cutover, full Denim/Zenith cutover,
-  canonical synchronization, and pending Flashblocks synchronization; and
-- generated fork equality through the acceptance provisioning lifecycle.
+## Remaining coverage and blockers
 
-The PR suite remains only smoke plus Glamsterdam. The new system scenarios declare
-`[ci] suite = "extended"`; the known workflow behavior is that same-repository PRs
-select `pr`, while manual dispatch can select `pr`, `extended`, or `all`. This
-document makes no branch-protection or required-check claim.
+The 35 original test identities that remain live comprise 19 `retain_rust`, 15
+`requires_topology`, and one `requires_workload` entry:
 
-## Deliberate gaps and retained tests
+- upgrade tests mutate a process-local registry and execution chain spec for which
+  no external administrative API exists;
+- snapshot prefunding is available only through the in-process snapshot launcher;
+- the EIP-8130 guest proof is intentionally deferred to Everest;
+- the in-process ZK startup-negative case still needs missing-session RPC behavior;
+- deep L1 reorg/outage control, shadow Postgres/lifecycle deployments, snapshot
+  boundaries, and managed prover/ZK hosts still need topology capabilities; and
+- deterministic library, mocked Engine, wire-validation, and direct SQL contracts
+  remain better expressed as Rust tests.
 
-`requires_workload` covers seeded fuzz/sustained parity and the prover startup
-negative (missing-session RPC) behavior. `requires_topology` covers ZK proof hosts,
-L1 outage/deep-reorg controls, snapshots, upgrade signaling, shadow Postgres and
-shadow lifecycle deployments, and gossip retirement diagnostics/unsafe propagation.
-In particular, no runtime dispatch implements the old shadow or gossip tests; head
-health is not a substitute for those capabilities.
+These are real capability gaps. Healthy heads or a mined transaction are not
+substitutes for the omitted reorg, shadow, snapshot, upgrade, or prover behavior.
 
-The 22 `retain_rust` identities are intentionally not erased from the total. They
-cover mnemonic derivation and parity classification, exact mocked Engine failure
-and ordering behavior, the post-Denim wire validation unit, and direct SQL schema,
-reconciliation, retention, pagination, batching, constraint, and advisory-lock
-contracts. A healthy Compose observation would test a different contract.
+## Verification status
 
-Two spike tradeoffs are visible in the implementation: the B-20 workload has a
-duplicate RPC-only helper rather than sharing the old in-process harness helper,
-and transaction workloads carry relatively heavy consensus/txpool wire-type
-dependencies to construct the exact signed transaction forms. These choices keep
-the acceptance path external-RPC-only while preserving equivalent intent; they
-should be reviewed before treating the spike as permanent architecture.
+Local verification passed 107 acceptance unit tests plus the explicitly invoked
+Docker Compose configuration-rendering test (no containers started), strict
+acceptance Clippy, and an all-targets check of the remaining system-test crate.
+All 50 scenario files validate; PR selection includes 47 scenarios (45 migrated
+system scenarios plus smoke and Glamsterdam). Formatting, workflow YAML lint, and
+diff whitespace checks also pass. The system-test check reports missing SP1 ELFs
+and uses build-time stubs; this is not proof-runtime verification.
 
-## Validation commands
+Live managed Docker execution remains outstanding: the matching setup and L1
+images are not cached, and local disk space is insufficient for image builds.
+The 46 scenario-backed entries therefore remain `ported_unverified`.
 
-These commands do not contact Docker:
+Useful non-Docker checks include:
 
 ```console
-cargo run -p base-acceptance-cli -- validate \
-  acceptance/scenarios/system-transaction-eip8130-mined.toml
-cargo run -p base-acceptance-cli -- plan \
-  acceptance/scenarios/system-runtime-sync.toml
-cargo run -p base-acceptance-cli -- select --suite extended \
+cargo run -p base-acceptance-cli -- validate acceptance/scenarios/*.toml
+cargo run -p base-acceptance-cli -- select --suite pr \
   --run-id local --tested-sha "$(git rev-parse HEAD)" \
   --expected target/acceptance-expected.json \
   --matrix target/acceptance-matrix.json
 ```
-
-Run one managed scenario (Docker required) with:
-
-```console
-cargo run -p base-acceptance-cli -- run \
-  acceptance/scenarios/system-runtime-sync.toml \
-  --output target/acceptance/system-runtime-sync
-```
-
-The ledger was checked against annotated original functions, TOML scenario/check
-IDs, and duplicate identities. Parent verification completed the following:
-
-- `cargo test --locked -p base-acceptance -p base-acceptance-cli`: 95 passed;
-- `cargo clippy --locked -p base-acceptance -p base-acceptance-cli --tests -- -D warnings`:
-  passed;
-- CLI validation of all 48 scenario files: passed; and
-- CLI `select --suite extended`: passed.
-
-Live managed Docker execution remains unverified. The required
-`devnet-setup:local-v2`, Reth, and Lighthouse images were not cached, the host had
-only about 8 GiB free, and the cached `base:local` image was not proven to match
-this revision. Therefore all 43 implemented entries remain `ported_unverified`;
-the ledger also retains one partial high-load case, two workload gaps, 16 topology
-gaps, and 22 Rust tests across the original 84 identities.

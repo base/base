@@ -4,7 +4,7 @@ description = "Denim builder cutover with receipts, exact cadence, contiguous ch
 timeout = "5m"
 
 [ci]
-suite = "extended"
+suite = "pr"
 
 [devnet.l2.forks]
 azul = { at_block = 0 }

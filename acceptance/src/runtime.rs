@@ -1,6 +1,6 @@
 //! Runtime observations for deployed builder and validator nodes.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
@@ -8,7 +8,9 @@ use alloy_network::{ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_signer::SignerSync;
+use base_common_genesis::RollupConfig;
 use base_common_rpc_types::BaseTransactionRequest;
+use base_protocol::SyncStatus;
 use eyre::{Result, WrapErr, bail, ensure};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,7 @@ use crate::{ForkActivation, Provisioner, ScenarioConfig, WorkloadContext};
 
 const POLL: Duration = Duration::from_millis(100);
 const REPLAY_QUIET: Duration = Duration::from_secs(2);
+const MAX_GOSSIP_BLOCK_AGE: u64 = 60;
 const RECIPIENT: Address = Address::repeat_byte(0xfe);
 
 /// Runtime behavior exercised against the real Compose-deployed node binaries.
@@ -34,6 +37,8 @@ pub enum RuntimeCase {
     BuilderCutover,
     /// Ports the Denim cutover followed by Zenith system test.
     BuilderCutoverZenith,
+    /// Proves post-Isthmus V4 gossip after the legacy topics retire.
+    GossipTopicRetirement,
 }
 
 impl RuntimeCase {
@@ -71,6 +76,9 @@ impl RuntimeCase {
             Self::BuilderCutoverZenith => {
                 &["builder", "validator", "builder-flashblocks", "builder-metrics"]
             }
+            Self::GossipTopicRetirement => {
+                &["builder", "validator", "builder-consensus", "validator-consensus"]
+            }
         }
     }
 
@@ -78,7 +86,7 @@ impl RuntimeCase {
     pub async fn execute(
         &self,
         context: &WorkloadContext<'_>,
-        _provisioner: &Provisioner,
+        provisioner: &Provisioner,
     ) -> Result<Value> {
         self.validate(context.config)?;
         match self {
@@ -86,7 +94,113 @@ impl RuntimeCase {
             Self::BuilderClientSync => Self::builder_client_sync(context).await,
             Self::BuilderCutover => Self::builder_cutover(context, false).await,
             Self::BuilderCutoverZenith => Self::builder_cutover(context, true).await,
+            Self::GossipTopicRetirement => {
+                Self::gossip_topic_retirement(context, provisioner).await
+            }
         }
+    }
+
+    /// Retires old gossip topics and proves the validator still imports unbatched unsafe blocks.
+    pub async fn gossip_topic_retirement(
+        context: &WorkloadContext<'_>,
+        provisioner: &Provisioner,
+    ) -> Result<Value> {
+        let builder_cl = context.endpoint("builder-consensus")?;
+        let validator_cl = context.endpoint("validator-consensus")?;
+        let rollup: RollupConfig = serde_json::from_value(
+            context.rpc.call(builder_cl, "optimism_rollupConfig", json!([])).await?,
+        )?;
+        let isthmus = rollup
+            .upgrades
+            .isthmus_time
+            .ok_or_else(|| eyre::eyre!("rollup config is missing Isthmus activation"))?;
+
+        timeout_at(context.deadline, async {
+            loop {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+                if now >= isthmus + MAX_GOSSIP_BLOCK_AGE
+                    && Self::all_topics_retired(context, [builder_cl, validator_cl]).await?
+                {
+                    return Ok::<_, eyre::Error>(());
+                }
+                sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .wrap_err("nodes did not retain V4 peering after old topics retired")??;
+
+        let unsafe_head = context.rpc.call(builder_cl, "admin_stopSequencer", json!([])).await?;
+        provisioner.stop_batchers().await?;
+        let builder = context.provider("builder")?;
+        let validator = context.provider("validator")?;
+        let target = builder.get_block_number().await? + 5;
+        context.rpc.call(builder_cl, "admin_startSequencer", json!([unsafe_head])).await?;
+
+        timeout_at(context.deadline, async {
+            loop {
+                let status = context
+                    .rpc
+                    .call(validator_cl, "optimism_syncStatus", json!([]))
+                    .await?;
+                let (unsafe_number, safe_number) = Self::sync_numbers(&status)?;
+                if unsafe_number >= target {
+                    ensure!(safe_number < target, "target block arrived through safe derivation");
+                    let tag = BlockNumberOrTag::Number(target);
+                    let expected = builder
+                        .get_block_by_number(tag)
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("builder target block missing"))?;
+                    let received = validator
+                        .get_block_by_number(tag)
+                        .await?
+                        .ok_or_else(|| eyre::eyre!("validator target block missing"))?;
+                    ensure!(received.header.hash == expected.header.hash, "target hash mismatch");
+                    ensure!(
+                        Self::all_topics_retired(context, [builder_cl, validator_cl]).await?,
+                        "peer topics regressed after unsafe propagation"
+                    );
+                    return Ok(json!({"target": target, "hash": expected.header.hash, "validator_unsafe": unsafe_number, "validator_safe": safe_number}));
+                }
+                sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await
+        .wrap_err("validator stopped importing unsafe blocks after topic retirement")?
+    }
+
+    /// Checks legacy topic retirement on both consensus RPC endpoints.
+    pub async fn all_topics_retired(
+        context: &WorkloadContext<'_>,
+        roles: [&str; 2],
+    ) -> Result<bool> {
+        for role in roles {
+            let stats = context.rpc.call(role, "opp2p_peerStats", json!([])).await?;
+            if !Self::topics_retired(&stats)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Requires connected V4 peers with no legacy-topic peers.
+    pub fn topics_retired(stats: &Value) -> Result<bool> {
+        let field = |name| {
+            stats
+                .get(name)
+                .and_then(Value::as_u64)
+                .ok_or_else(|| eyre::eyre!("peer stats missing {name}"))
+        };
+        Ok(field("connected")? > 0
+            && field("blocksTopic")? == 0
+            && field("blocksTopicV2")? == 0
+            && field("blocksTopicV3")? == 0
+            && field("blocksTopicV4")? > 0)
+    }
+
+    /// Reads unsafe and safe heights using the consensus RPC wire schema.
+    pub fn sync_numbers(status: &Value) -> Result<(u64, u64)> {
+        let status: SyncStatus = serde_json::from_value(status.clone())?;
+        Ok((status.unsafe_l2.block_info.number, status.safe_l2.block_info.number))
     }
 
     /// Performs the source test's bounded ten-poll, three-consecutive pending observation.
@@ -412,5 +526,31 @@ mod tests {
         assert!(RuntimeCase::validate_replay_positions(&[(24, 0)], 25).is_ok());
         assert!(RuntimeCase::validate_replay_positions(&[(23, 0)], 25).is_err());
         assert!(RuntimeCase::validate_replay_positions(&[(24, 0), (25, 0)], 25).is_err());
+    }
+
+    #[test]
+    fn gossip_peer_stats_require_only_v4_connections() {
+        let retired = json!({
+            "connected": 1,
+            "blocksTopic": 0,
+            "blocksTopicV2": 0,
+            "blocksTopicV3": 0,
+            "blocksTopicV4": 1
+        });
+        assert!(RuntimeCase::topics_retired(&retired).unwrap());
+
+        let mut legacy = retired;
+        legacy["blocksTopicV3"] = json!(1);
+        assert!(!RuntimeCase::topics_retired(&legacy).unwrap());
+        assert!(RuntimeCase::topics_retired(&json!({})).is_err());
+    }
+
+    #[test]
+    fn sync_status_numbers_are_strictly_parsed() {
+        let mut status = SyncStatus::default();
+        status.unsafe_l2.block_info.number = 10;
+        status.safe_l2.block_info.number = 4;
+        assert_eq!(RuntimeCase::sync_numbers(&json!(status)).unwrap(), (10, 4));
+        assert!(RuntimeCase::sync_numbers(&json!({})).is_err());
     }
 }

@@ -3,7 +3,7 @@ id = "system-transaction-block-lifecycle"
 description = "Future expired and parked validity transactions"
 timeout = "8m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 0 }
 beryl = { at_block = 0 }

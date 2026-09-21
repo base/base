@@ -115,6 +115,9 @@ impl ScenarioConfig {
         if self.devnet.l2.verifier_l1_confirmations > 10_000 {
             bail!("verifier_l1_confirmations must not exceed 10000");
         }
+        if let Some(forwarding) = &self.devnet.l2.forwarding {
+            Self::validate_duration(forwarding.resend_after.0, "forwarding resend_after", 1, 3600)?;
+        }
         Self::validate_duration(self.devnet.l1.slot_duration.0, "L1 slot duration", 1, 60)?;
         if self.devnet.l1.slot_duration.0.subsec_nanos() != 0 {
             bail!("L1 slot duration must use whole seconds");
@@ -456,6 +459,16 @@ impl GlamsterdamFork {
     }
 }
 
+/// RPC-node transaction forwarding controls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardingConfig {
+    /// Maximum RPC requests per second per forwarder; zero disables rate limiting.
+    pub max_rps: u32,
+    /// Delay before resubmitting a transaction not yet included.
+    pub resend_after: Span,
+}
+
 /// Layer-two settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -469,6 +482,9 @@ pub struct L2Config {
     /// Fork activation schedule.
     #[serde(default = "L2Config::default_forks", deserialize_with = "L2Config::merge_forks")]
     pub forks: BTreeMap<String, ForkActivation>,
+    /// Optional RPC forwarding overrides; omitted settings preserve binary defaults.
+    #[serde(default)]
+    pub forwarding: Option<ForwardingConfig>,
 }
 
 impl L2Config {
@@ -507,6 +523,7 @@ impl Default for L2Config {
             chain_id: Self::default_chain_id(),
             verifier_l1_confirmations: Self::default_confirmations(),
             forks: Self::default_forks(),
+            forwarding: None,
         }
     }
 }

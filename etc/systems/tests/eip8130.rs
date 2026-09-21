@@ -3,12 +3,9 @@
 #[path = "common/balance.rs"]
 mod balance;
 mod common;
-#[path = "common/zenith.rs"]
-mod zenith;
 #[path = "common/zk_dry_run.rs"]
 mod zk_dry_run;
 
-use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::ReceiptResponse;
 use alloy_primitives::{B256, Bytes, U256};
@@ -28,27 +25,6 @@ use eyre::{Result, WrapErr, ensure};
 /// EIP-8130 transaction type byte.
 const EIP8130_TX_TYPE: u8 = 0x79;
 
-/// Mines a minimal EOA-path EIP-8130 transaction on the Zenith system-test stack.
-#[tokio::test]
-async fn eip8130_transaction_is_mined() -> Result<()> {
-    let (_system, provider) = zenith::start_zenith_system().await?;
-    let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
-
-    assert!(receipt.status(), "EIP-8130 transaction receipt must report success");
-    assert_eq!(
-        receipt.inner.inner.receipt.ty(),
-        EIP8130_TX_TYPE,
-        "mined receipt must report type 0x79"
-    );
-    assert_eq!(
-        receipt.payer,
-        Some(ANVIL_ACCOUNT_1.address),
-        "self-pay receipt payer must be the sender"
-    );
-
-    Ok(())
-}
-
 /// Dry-run SP1-executes the block that contains a type `0x79` transaction.
 ///
 /// Guest 8130 execution is deferred to Everest (Cobalt ZK stays `no_std`).
@@ -62,9 +38,18 @@ async fn eip8130_block_dry_run_proves() -> Result<()> {
          -E 'test(eip8130_block_dry_run)'"
     );
 
-    let (system, provider) =
-        zenith::start_zenith_stack(SystemTestStackBuilder::new().with_force_batch_submission())
-            .await?;
+    let system = SystemTestStackBuilder::new()
+        .with_force_batch_submission()
+        .with_l1_chain_id(common::L1_CHAIN_ID)
+        .with_l2_chain_id(common::L2_CHAIN_ID)
+        .with_base_azul_activation_block(common::BASE_AZUL_ACTIVATION_BLOCK)
+        .with_base_beryl_activation_block(common::BASE_BERYL_ACTIVATION_BLOCK)
+        .with_base_cobalt_activation_block(5)
+        .with_base_zenith_activation_block(7)
+        .build()
+        .await?;
+    let provider = system.l2_builder_provider()?;
+    common::wait_for_block(&provider, 8).await?;
     let (_tx_hash, receipt) = send_minimal_eip8130(&provider).await?;
     let block_number =
         receipt.block_number().expect("mined EIP-8130 transaction must have a block");

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout_at};
 
-use crate::{ForkActivation, ScenarioConfig, WorkloadContext};
+use crate::{ForkActivation, ParityWorkload, ScenarioConfig, WorkloadContext};
 
 const RECIPIENT: Address =
     Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xde, 0xad]);
@@ -44,8 +44,10 @@ pub enum TransactionCase {
     BlockPredicateLifecycle,
     /// Invalid predicate lists are rejected at ingress.
     InvalidValidityBatches,
-    /// Partial high-load coverage; provisioning cannot yet reproduce the original rate limits.
+    /// Forty interleaved transactions under deliberately constrained forwarding.
     ForwardingHighLoad,
+    /// Seeded mixed transaction workload followed by sustained builder/validator parity.
+    FuzzSyncParity,
     /// Minimal successful, self-paying EIP-8130 transaction.
     Eip8130Mined,
 }
@@ -77,6 +79,17 @@ impl TransactionCase {
                 "EIP-8130 transaction case requires Zenith"
             );
         }
+        if matches!(self, Self::ForwardingHighLoad) {
+            let forwarding =
+                config.devnet.l2.forwarding.as_ref().ok_or_else(|| {
+                    eyre::eyre!("forwarding high load requires forwarding settings")
+                })?;
+            ensure!(forwarding.max_rps == 1, "forwarding high load requires max_rps = 1");
+            ensure!(
+                forwarding.resend_after.0 == Duration::from_secs(30),
+                "forwarding high load requires resend_after = 30s"
+            );
+        }
         Ok(())
     }
 
@@ -87,6 +100,7 @@ impl TransactionCase {
             Self::InsertValidatedTransactionSingle
             | Self::DirectBuilderValidity
             | Self::Eip8130Mined => &["builder"],
+            Self::FuzzSyncParity => &["builder", "validator"],
             _ => &["builder", "rpc"],
         }
     }
@@ -108,6 +122,7 @@ impl TransactionCase {
             Self::BlockPredicateLifecycle => TransactionWorkload::block_lifecycle(context).await,
             Self::InvalidValidityBatches => TransactionWorkload::invalid_validity(context).await,
             Self::ForwardingHighLoad => TransactionWorkload::high_load(context).await,
+            Self::FuzzSyncParity => ParityWorkload::execute(context).await,
             Self::Eip8130Mined => TransactionWorkload::eip8130(context, false).await,
         }
     }
@@ -589,7 +604,7 @@ impl TransactionWorkload {
         Ok(json!({"hash": hash, "rejected_batches": 3}))
     }
 
-    /// Runs partial high-load coverage pending configurable forwarding provisioning.
+    /// Sends forty interleaved transactions through a one-request-per-second forwarder.
     pub async fn high_load(context: &WorkloadContext<'_>) -> Result<Value> {
         let mut expected = Vec::new();
         let mut nonces = Vec::new();
@@ -633,6 +648,20 @@ mod tests {
             json!("block_predicate_lifecycle")
         );
         assert!(serde_json::from_value::<TransactionCase>(json!("unknown")).is_err());
+    }
+
+    #[test]
+    fn high_load_requires_the_original_forwarding_constraints() {
+        let mut config =
+            ScenarioConfig::load("scenarios/system-transaction-high-load.toml").unwrap();
+        assert!(TransactionCase::ForwardingHighLoad.validate(&config).is_ok());
+        config.devnet.l2.forwarding.as_mut().unwrap().max_rps = 0;
+        assert!(TransactionCase::ForwardingHighLoad.validate(&config).is_err());
+        config.devnet.l2.forwarding.as_mut().unwrap().max_rps = 1;
+        config.devnet.l2.forwarding.as_mut().unwrap().resend_after.0 = Duration::from_secs(2);
+        assert!(TransactionCase::ForwardingHighLoad.validate(&config).is_err());
+        config.devnet.l2.forwarding = None;
+        assert!(TransactionCase::ForwardingHighLoad.validate(&config).is_err());
     }
 
     #[test]

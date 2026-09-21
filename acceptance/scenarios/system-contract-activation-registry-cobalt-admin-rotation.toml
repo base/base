@@ -3,7 +3,7 @@ id = "system-contract-activation-registry-cobalt-admin-rotation"
 description = "Activation registry admin rotation at Cobalt"
 timeout = "5m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 0 }
 beryl = { at_block = 1 }

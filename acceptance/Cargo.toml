@@ -20,6 +20,7 @@ humantime.workspace = true
 alloy-signer.workspace = true
 alloy-network.workspace = true
 alloy-transport.workspace = true
+base-load-tests.workspace = true
 tokio-tungstenite.workspace = true
 base-common-network.workspace = true
 base-common-consensus.workspace = true

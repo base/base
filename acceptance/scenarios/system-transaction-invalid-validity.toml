@@ -3,7 +3,7 @@ id = "system-transaction-invalid-validity"
 description = "Malformed validity batches rejected before forwarding"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 0 }
 beryl = { at_block = 0 }

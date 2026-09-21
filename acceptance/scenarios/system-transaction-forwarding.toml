@@ -3,7 +3,7 @@ id = "system-transaction-forwarding"
 description = "Validator mempool to builder transaction forwarding"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [[checks]]
 id = "forwarding"
 kind = "transaction"

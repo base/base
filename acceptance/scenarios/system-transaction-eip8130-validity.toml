@@ -3,7 +3,7 @@ id = "system-transaction-eip8130-validity"
 description = "Forwarded EIP-8130 transaction with validity metadata"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 0 }
 beryl = { at_block = 0 }

@@ -3,7 +3,7 @@ id = "system-transaction-balance-trigger"
 description = "Parked validity transaction released by a balance change"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 0 }
 beryl = { at_block = 0 }

@@ -3,7 +3,7 @@ id = "system-transaction-insert-validated"
 description = "Direct prevalidated transaction insertion"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [[checks]]
 id = "insert-validated"
 kind = "transaction"

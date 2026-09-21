@@ -4,7 +4,7 @@ description = "Generated requested fork block equality smoke at 20, 25, and 100"
 timeout = "4m"
 
 [ci]
-suite = "extended"
+suite = "pr"
 
 [devnet.l2.forks]
 azul = { at_block = 20 }

@@ -3,7 +3,7 @@ id = "system-transaction-matching-validity"
 description = "Matching balance storage and block validity predicates"
 timeout = "6m"
 [ci]
-suite = "extended"
+suite = "pr"
 [devnet.l2.forks]
 azul = { at_block = 0 }
 beryl = { at_block = 0 }

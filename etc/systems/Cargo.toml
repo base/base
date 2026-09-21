@@ -143,7 +143,6 @@ alloy-json-rpc.workspace = true
 
 # base-alloy
 base-common-consensus.workspace = true
-base-common-flashblocks.workspace = true
 base-common-rpc-types-engine.workspace = true
 
 # proof
@@ -161,9 +160,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "postgres", "chrono", "j
 
 # misc
 anyhow.workspace = true
-futures.workspace = true
 indicatif.workspace = true
-tokio-tungstenite.workspace = true
 
 [[bench]]
 name = "b20_zk_proving"

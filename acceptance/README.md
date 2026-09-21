@@ -4,12 +4,16 @@ The acceptance runner provisions the repository's real Docker Compose devnet and
 checks its externally visible RPC behavior. Scenarios are strict, versioned TOML;
 each run produces a portable JSON result and an offline visual report.
 
-The checked-in scenarios are:
+The core checked-in scenarios include:
 
 - `smoke`: chain identity, block production, and validator convergence.
 - `health`: sustained sampled health across all four L2 node roles.
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
 - `denim-transition`: progress and convergence immediately before and after Denim.
+
+The `system-*` scenarios replace 46 retired system-test functions across contract,
+transaction, and runtime behavior. Their historical identities and the remaining
+coverage gaps are recorded in [the migration ledger](SYSTEM_TEST_MIGRATION.md).
 
 ## Requirements
 
@@ -242,10 +246,11 @@ The advisory Depot workflow discovers and validates every scenario, runs the sel
 suite as independent shards, uploads report bundles, and strictly aggregates expected results. Reports are artifacts;
 PR publication is available only when the trusted base revision contains the
 publisher. Same-repository PRs select `[ci] suite = "pr"`, running both smoke and
-Glamsterdam blob-transfer and post-fork health checks automatically.
-Scenarios without CI metadata default to `extended`; manual dispatch selects
-`pr`, `extended`, or `all`. Adding a scenario requires only its TOML file, not a
-workflow edit. The Rust `select` command emits both the matrix and matching expected
+Glamsterdam blob-transfer and post-fork health checks plus all 45 system scenarios
+automatically. The same acceptance selection also runs for `merge_group`; nightly
+uses the seeded acceptance workload. Scenarios without CI metadata default to
+`extended`; manual dispatch selects `pr`, `extended`, or `all`. Adding a scenario
+requires only its TOML file, not a workflow edit. The Rust `select` command emits both the matrix and matching expected
 manifest, including expanded protocol assertion IDs:
 
 ```console
