@@ -54,8 +54,8 @@ pub use network::MockUnsafePayloadGossipClient;
 pub use network::{
     GossipTransport, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
     NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,
-    NetworkInboundData, QueuedNetworkEngineClient, QueuedUnsafePayloadGossipClient,
-    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    NetworkInboundData, PrivateGossipClient, QueuedNetworkEngineClient,
+    QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
 mod sequencer;

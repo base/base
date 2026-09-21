@@ -273,7 +273,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         });
         let (_sequencer_admin_tx, sequencer_admin_rx) = mpsc::channel(1024);
         let recovery_mode = RecoveryModeGuard::new(false);
-        let sequencer_actor: SequencerActor<_, ConductorClient, _, _, _> = SequencerActor {
+        let sequencer_actor: SequencerActor<_, ConductorClient, _, _> = SequencerActor {
             admin_api_rx: sequencer_admin_rx,
             builder: PayloadBuilder {
                 attributes_builder: self.attributes_builder.clone(),
@@ -290,7 +290,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
             shadow_funding: None,
             recovery_mode,
             rollup_config: Arc::clone(&self.rollup_config),
-            unsafe_payload_gossip_client: StandaloneUnsafePayloadGossipClient,
+            unsafe_payload_gossip_client: Box::new(StandaloneUnsafePayloadGossipClient),
             sealer: None,
             pending_stop: None,
             seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,

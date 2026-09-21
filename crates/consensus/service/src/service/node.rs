@@ -39,7 +39,10 @@ use crate::{
     QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
     SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
     ValidatorEngineRequestHandler,
-    actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
+    actors::{
+        BlockStream, NetworkInboundData, PrivateGossipClient, QueuedUnsafePayloadGossipClient,
+        UnsafePayloadGossipClient,
+    },
 };
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
@@ -612,10 +615,10 @@ impl RollupNode {
 
             // Create the admin API channel
             let (sequencer_admin_api_tx, sequencer_admin_api_rx) = mpsc::channel(1024);
-            let queued_gossip_client = gossip_payload_tx.map_or_else(
-                QueuedUnsafePayloadGossipClient::private,
-                QueuedUnsafePayloadGossipClient::new,
-            );
+            let queued_gossip_client: Box<dyn UnsafePayloadGossipClient> = match gossip_payload_tx {
+                Some(tx) => Box::new(QueuedUnsafePayloadGossipClient::new(tx)),
+                None => Box::new(PrivateGossipClient),
+            };
 
             let recovery_mode =
                 RecoveryModeGuard::new(self.sequencer_config.sequencer_recovery_mode);
