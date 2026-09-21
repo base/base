@@ -653,7 +653,7 @@ mod tests {
     #[test]
     fn high_load_requires_the_original_forwarding_constraints() {
         let mut config =
-            ScenarioConfig::load("scenarios/system-transaction-high-load.toml").unwrap();
+            ScenarioConfig::load("scenarios/system/transaction/high-load.toml").unwrap();
         assert!(TransactionCase::ForwardingHighLoad.validate(&config).is_ok());
         config.devnet.l2.forwarding.as_mut().unwrap().max_rps = 0;
         assert!(TransactionCase::ForwardingHighLoad.validate(&config).is_err());

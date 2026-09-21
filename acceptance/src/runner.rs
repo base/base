@@ -548,29 +548,23 @@ mod tests {
     };
 
     use super::*;
+    use crate::{CliRun, SelectionSuite};
 
     #[test]
     fn every_checked_in_scenario_parses_and_validates() {
         let scenarios = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
-        let mut paths = fs::read_dir(&scenarios)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_some_and(|extension| extension == "toml"))
-            .collect::<Vec<_>>();
-        paths.sort();
-
-        assert!(!paths.is_empty());
-        for path in paths {
-            ScenarioConfig::load(&path)
-                .unwrap_or_else(|error| panic!("{} did not validate: {error:#}", path.display()));
-        }
+        let (manifest, matrix) =
+            CliRun::select(&scenarios, SelectionSuite::All, "test".into(), "sha".into()).unwrap();
+        let configs = CliRun::load_all(&[scenarios]).unwrap();
+        assert_eq!(configs.len(), manifest.scenarios.len());
+        assert!(matrix.include.iter().any(|entry| entry.id == "system-contract-b20-mint-and-burn"));
     }
 
     #[tokio::test]
     async fn attach_mode_rejects_mutating_workloads_before_side_effects() {
         let config = ScenarioConfig::load(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("scenarios/system-transaction-direct-validity.toml"),
+                .join("scenarios/system/transaction/direct-validity.toml"),
         )
         .unwrap();
         let parent = tempfile::tempdir().unwrap();

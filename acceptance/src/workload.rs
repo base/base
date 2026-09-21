@@ -131,7 +131,7 @@ mod tests {
 
     fn fixture() -> (ScenarioConfig, tempfile::TempDir) {
         let config = ScenarioConfig::load(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios/system-runtime-sync.toml"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios/system/runtime/sync.toml"),
         )
         .unwrap();
         (config, tempfile::tempdir().unwrap())

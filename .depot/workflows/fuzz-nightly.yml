@@ -85,7 +85,7 @@ jobs:
         run: |
           set -o pipefail
           cargo run --locked -p base-acceptance-cli -- run \
-            acceptance/scenarios/system-transaction-fuzz-parity.toml \
+            acceptance/scenarios/system/transaction/fuzz-parity.toml \
             --output "target/acceptance/$RUN_KEY/system-transaction-fuzz-parity" --no-build \
             --run-id "$RUN_KEY" --tested-sha "$TESTED_SHA"
       - name: Preserve startup failure evidence

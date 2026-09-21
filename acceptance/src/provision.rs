@@ -797,7 +797,7 @@ timeout = "5s"
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let provisioner = Provisioner::new(repo.into(), dir.path().into(), "compose-test");
         let config = ScenarioConfig::load(
-            repo.join("acceptance/scenarios/system-transaction-high-load.toml"),
+            repo.join("acceptance/scenarios/system/transaction/high-load.toml"),
         )
         .unwrap();
         provisioner.write_environment(&config).unwrap();

@@ -11,7 +11,16 @@ The core checked-in scenarios include:
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
 - `denim-transition`: progress and convergence immediately before and after Denim.
 
-The `system-*` scenarios cover contract, transaction, and runtime behavior.
+System scenarios are grouped beneath `scenarios/system/`:
+
+- `contract/activation-registry/`, `contract/policy-registry/`, and `contract/b20/`
+  contain the corresponding contract checks; other contract checks live in `contract/`.
+- `transaction/` covers transaction validity, forwarding, and load.
+- `runtime/` covers synchronization, cutovers, and gossip retirement.
+
+Directories may be nested to any depth. Scenario `id` values remain globally unique
+and independent of filenames, so different folders may use the same filename.
+Discovery sorts by full path and rejects symlinks (including directory links).
 
 ## Requirements
 
@@ -151,11 +160,21 @@ The check never resubmits a transaction after an ambiguous submission.
 ## CLI workflows
 
 Validation and planning do not contact Docker or RPCs. `plan` prints the resolved
-configuration, including defaults, as JSON:
+configuration, including defaults, as JSON. `validate`, `plan`, and `manifest` accept
+files or directories; directories recursively include every `.toml` file. Pass the
+directory itself rather than a top-level shell glob to include nested scenarios:
 
 ```console
-cargo run -p base-acceptance-cli -- validate acceptance/scenarios/*.toml
+cargo run -p base-acceptance-cli -- validate acceptance/scenarios
 cargo run -p base-acceptance-cli -- plan acceptance/scenarios/denim-transition.toml
+```
+
+Run a nested scenario by its path, or use the path without `.toml` with `just`:
+
+```console
+just acceptance system/transaction/smoke
+cargo run -p base-acceptance-cli -- run acceptance/scenarios/system/contract/b20/mint-and-burn.toml \
+  --output target/acceptance/mint-and-burn
 ```
 
 Use `--no-build` only when the required images have already been built and loaded:
@@ -191,7 +210,7 @@ Sharded CI first records exactly which scenarios and checks are expected, then
 strictly aggregates one matching result for each scenario:
 
 ```console
-cargo run -p base-acceptance-cli -- manifest acceptance/scenarios/*.toml \
+cargo run -p base-acceptance-cli -- manifest acceptance/scenarios \
   --run-id run-1 --tested-sha "$GIT_SHA" --output expected.json
 cargo run -p base-acceptance-cli -- aggregate --expected expected.json \
   --results downloaded-results --output target/acceptance/aggregate
