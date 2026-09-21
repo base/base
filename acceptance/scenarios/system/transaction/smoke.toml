@@ -1,0 +1,11 @@
+schema_version = 1
+id = "system-transaction-smoke"
+description = "External-node block production and forwarded transfer"
+timeout = "6m"
+[ci]
+suite = "pr"
+[[checks]]
+id = "transaction-smoke"
+kind = "transaction"
+case = "smoke_block_production_and_transactions"
+timeout = "3m"

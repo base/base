@@ -2,6 +2,7 @@ name: Acceptance (advisory)
 
 on:
   pull_request:
+  merge_group:
   workflow_dispatch:
     inputs:
       suite:

@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-b20-create-token-duplicate-reverts"
+description = "External RPC contract acceptance for b20_create_token_duplicate_reverts"
+timeout = "5m"
+
+[ci]
+suite = "pr"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "b20-create-token-duplicate-reverts"
+kind = "contract"
+case = "b20_create_token_duplicate_reverts"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }

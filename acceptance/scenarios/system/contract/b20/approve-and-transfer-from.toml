@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-b20-approve-and-transfer-from"
+description = "External RPC contract acceptance for b20_approve_and_transfer_from"
+timeout = "5m"
+
+[ci]
+suite = "pr"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "b20-approve-and-transfer-from"
+kind = "contract"
+case = "b20_approve_and_transfer_from"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }

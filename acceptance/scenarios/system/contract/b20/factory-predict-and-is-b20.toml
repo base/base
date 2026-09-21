@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-b20-factory-predict-and-is-b20"
+description = "External RPC contract acceptance for b20_factory_predict_and_is_b20"
+timeout = "5m"
+
+[ci]
+suite = "pr"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "b20-factory-predict-and-is-b20"
+kind = "contract"
+case = "b20_factory_predict_and_is_b20"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }

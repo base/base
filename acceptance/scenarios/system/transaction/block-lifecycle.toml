@@ -1,0 +1,17 @@
+schema_version = 1
+id = "system-transaction-block-lifecycle"
+description = "Future expired and parked validity transactions"
+timeout = "8m"
+[ci]
+suite = "pr"
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 0 }
+cobalt = { at_block = 0 }
+denim = { at_block = 0 }
+zenith = { at_block = 0 }
+[[checks]]
+id = "block-lifecycle"
+kind = "transaction"
+case = "block_predicate_lifecycle"
+timeout = "5m"

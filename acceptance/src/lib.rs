@@ -15,8 +15,17 @@ pub use cli::{
 mod config;
 pub use config::{
     AcceptanceCheck, CheckStart, CiConfig, CiSuite, DevnetConfig, DevnetProfile, ForkActivation,
-    GlamsterdamFork, L1Config, L1Forks, L2Config, ReadinessConfig, ScenarioConfig, Span,
+    ForwardingConfig, GlamsterdamFork, L1Config, L1Forks, L2Config, ReadinessConfig,
+    ScenarioConfig, Span,
 };
+
+mod contract;
+pub use contract::{
+    B20CreateConfig, B20PrecompileClient, ContractCase, RegistryWorkload, TokenWorkload,
+};
+
+mod parity;
+pub use parity::{FuzzTransactionGenerator, FuzzedTransaction, Parity, ParityWorkload};
 
 mod provision;
 pub use provision::{EndpointMap, Ownership, Provisioner};
@@ -40,3 +49,12 @@ pub use result::{
 
 mod runner;
 pub use runner::{AcceptanceOptions, AcceptanceRunner};
+
+mod runtime;
+pub use runtime::RuntimeCase;
+
+mod transaction;
+pub use transaction::{TransactionCase, TransactionWorkload};
+
+mod workload;
+pub use workload::WorkloadContext;

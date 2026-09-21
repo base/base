@@ -72,7 +72,7 @@ impl Provisioner {
         fs::create_dir(private.join("devnet"))?;
         self.write_environment(config)?;
         self.write_profile(config)?;
-        self.write_ports().await?;
+        self.write_ports(config).await?;
         self.preflight().await?;
         if build {
             let mut command = Command::new("docker");
@@ -165,9 +165,15 @@ impl Provisioner {
         self.endpoints().await
     }
 
-    /// Exposes only execution RPCs on daemon-allocated localhost ports.
-    pub async fn write_ports(&self) -> Result<()> {
+    /// Writes isolated ports and optional RPC-forwarding overrides.
+    pub async fn write_ports(&self, config: &ScenarioConfig) -> Result<()> {
         let model = self.model().await?;
+        fs::write(self.output.join("private/ports.yml"), Self::port_overlay(&model, config)?)?;
+        Ok(())
+    }
+
+    /// Renders the isolated service overlay from Compose's resolved commands.
+    pub fn port_overlay(model: &Value, config: &ScenarioConfig) -> Result<String> {
         let mut overlay = String::from("services:\n");
         for name in model["services"]
             .as_object()
@@ -177,8 +183,8 @@ impl Provisioner {
             let ports: &[u16] = match name.as_str() {
                 "l1-el" => &[4545],
                 "l1-cl" => &[4052],
-                "base-builder" => &[7545, 7549],
-                "base-client" => &[8545, 8549],
+                "base-builder" => &[7545, 7549, 7111, 7090],
+                "base-client" => &[8545, 8549, 8090],
                 "base-rpc" => &[8645],
                 "base-shadow-validator" => &[8845],
                 _ => &[],
@@ -192,9 +198,23 @@ impl Provisioner {
                 }
                 overlay.push('\n');
             }
+            if name == "base-rpc"
+                && let Some(forwarding) = &config.devnet.l2.forwarding
+            {
+                let mut command: Vec<String> =
+                    serde_json::from_value(model["services"][name]["command"].clone())?;
+                command.push(format!("--tx-forwarding-max-rps={}", forwarding.max_rps));
+                command.push(format!(
+                    "--tx-forwarding-resend-after-ms={}",
+                    forwarding.resend_after.0.as_millis()
+                ));
+                overlay.push_str(&format!(
+                    "    command: !override {}\n",
+                    serde_json::to_string(&command)?
+                ));
+            }
         }
-        fs::write(self.output.join("private/ports.yml"), overlay)?;
-        Ok(())
+        Ok(overlay)
     }
 
     /// Resolves the published host endpoint for each logical role after startup.
@@ -205,8 +225,11 @@ impl Provisioner {
             ("beacon", "l1-cl", "4052"),
             ("builder", "base-builder", "7545"),
             ("builder-consensus", "base-builder", "7549"),
+            ("builder-flashblocks", "base-builder", "7111"),
+            ("builder-metrics", "base-builder", "7090"),
             ("validator", "base-client", "8545"),
             ("validator-consensus", "base-client", "8549"),
+            ("validator-metrics", "base-client", "8090"),
             ("rpc", "base-rpc", "8645"),
             ("shadow", "base-shadow-validator", "8845"),
         ] {
@@ -511,6 +534,15 @@ impl Provisioner {
         Ok(())
     }
 
+    /// Stops both batchers only in the invocation-owned Compose project.
+    pub async fn stop_batchers(&self) -> Result<()> {
+        if !self.owned || self.lock_handle.is_none() {
+            bail!("cannot stop batchers without an owned, locked devnet");
+        }
+        self.compose(&["stop", "op-batcher", "base-batcher"], Duration::from_secs(30)).await?;
+        Ok(())
+    }
+
     /// Recovers an interrupted local run using its private ownership manifest.
     pub async fn recover(path: &Path) -> Result<()> {
         let canonical = path.canonicalize()?;
@@ -625,8 +657,11 @@ impl Provisioner {
             ("beacon", 4052),
             ("builder", 7545),
             ("builder-consensus", 7549),
+            ("builder-flashblocks", 7111),
+            ("builder-metrics", 7090),
             ("validator", 8545),
             ("validator-consensus", 8549),
+            ("validator-metrics", 8090),
             ("rpc", 8645),
             ("shadow", 8845),
         ]
@@ -717,6 +752,81 @@ timeout = "5s"
         let provisioner = Provisioner::new(PathBuf::new(), dir.path().into(), "test");
         provisioner.write_profile(&scenario(DevnetProfile::Canonical)).unwrap();
         assert!(!dir.path().join("private/profile.yml").exists());
+    }
+
+    #[test]
+    fn forwarding_overlay_preserves_rpc_command_and_does_not_modify_builder() {
+        let command = json!(["--chain", "dev", "rpc", "--enable-tx-forwarding"]);
+        let model = json!({"services": {
+            "base-rpc": {"command": command},
+            "base-builder": {"command": ["sequencer"]}
+        }});
+        let mut config = scenario(DevnetProfile::Canonical);
+        let unchanged = Provisioner::port_overlay(&model, &config).unwrap();
+        assert!(!unchanged.contains("command:"));
+        config.devnet.l2.forwarding = Some(crate::ForwardingConfig {
+            max_rps: 7,
+            resend_after: crate::Span(Duration::from_millis(1750)),
+        });
+        let overlay = Provisioner::port_overlay(&model, &config).unwrap();
+        let command_line =
+            overlay.lines().find_map(|line| line.strip_prefix("    command: !override ")).unwrap();
+        let actual: Vec<String> = serde_json::from_str(command_line).unwrap();
+        assert_eq!(
+            actual,
+            [
+                "--chain",
+                "dev",
+                "rpc",
+                "--enable-tx-forwarding",
+                "--tx-forwarding-max-rps=7",
+                "--tx-forwarding-resend-after-ms=1750"
+            ]
+        );
+        assert_eq!(overlay.matches("command:").count(), 1);
+        assert!(overlay.contains(
+            "\"base-rpc\":\n    ports: !override\n      - \"127.0.0.1::8645\"\n    command:"
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker Compose; renders configuration without starting containers"]
+    async fn forwarding_overlay_renders_with_canonical_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("private/devnet")).unwrap();
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let provisioner = Provisioner::new(repo.into(), dir.path().into(), "compose-test");
+        let config = ScenarioConfig::load(
+            repo.join("acceptance/scenarios/system/transaction/high-load.toml"),
+        )
+        .unwrap();
+        provisioner.write_environment(&config).unwrap();
+        provisioner.write_profile(&config).unwrap();
+        let original = provisioner.model().await.unwrap();
+        provisioner.write_ports(&config).await.unwrap();
+        let rendered = provisioner.model().await.unwrap();
+        let command = rendered["services"]["base-rpc"]["command"].as_array().unwrap();
+        let original_command = original["services"]["base-rpc"]["command"].as_array().unwrap();
+        assert!(command.starts_with(original_command));
+        assert_eq!(
+            &command[original_command.len()..],
+            &[json!("--tx-forwarding-max-rps=1"), json!("--tx-forwarding-resend-after-ms=30000")]
+        );
+        assert_eq!(
+            rendered["services"]["base-builder"]["command"],
+            original["services"]["base-builder"]["command"]
+        );
+    }
+
+    #[tokio::test]
+    async fn stopping_batchers_requires_owned_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let provisioner = Provisioner::new(PathBuf::new(), dir.path().into(), "test");
+        assert_eq!(
+            provisioner.stop_batchers().await.unwrap_err().to_string(),
+            "cannot stop batchers without an owned, locked devnet"
+        );
+        assert!(fs::read_dir(dir.path()).unwrap().next().is_none());
     }
 
     #[test]

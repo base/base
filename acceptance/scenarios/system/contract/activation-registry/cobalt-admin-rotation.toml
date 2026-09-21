@@ -1,0 +1,18 @@
+schema_version = 1
+id = "system-contract-activation-registry-cobalt-admin-rotation"
+description = "Activation registry admin rotation at Cobalt"
+timeout = "5m"
+[ci]
+suite = "pr"
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { at_block = 2 }
+denim = { disabled = true }
+zenith = { disabled = true }
+[[checks]]
+id = "activation-registry-cobalt-admin-rotation"
+kind = "contract"
+case = "activation_registry_cobalt_admin_rotation"
+timeout = "3m"
+start = { after_fork = "cobalt", chain = "l2" }

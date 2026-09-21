@@ -13,11 +13,11 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolValue};
 use base_common_network::Base;
 use base_common_precompiles::{
-    ActivationRegistryStorage, B20FactoryStorage, B20PausableFeature, B20Variant,
-    IActivationRegistry, IB20, IB20Factory, IB20Stablecoin,
+    ActivationRegistryStorage, B20FactoryStorage, B20Variant, IActivationRegistry, IB20,
+    IB20Factory,
 };
 use base_common_rpc_types::{BaseTransactionReceipt, BaseTransactionRequest};
-use eyre::{ContextCompat, Result, WrapErr, ensure};
+use eyre::{Result, WrapErr, ensure};
 use tokio::time::{sleep, timeout};
 
 /// Creation settings used by the system test B-20 factory client.
@@ -77,27 +77,9 @@ impl<'a> B20PrecompileClient<'a> {
         }
     }
 
-    /// Sets the gas limit used for B-20 transactions.
-    pub const fn with_gas_limit(mut self, gas_limit: u64) -> Self {
-        self.gas_limit = gas_limit;
-        self
-    }
-
     /// Sets the receipt timeout used after sending B-20 transactions.
     pub const fn with_receipt_timeout(mut self, receipt_timeout: Duration) -> Self {
         self.receipt_timeout = receipt_timeout;
-        self
-    }
-
-    /// Sets the max fee per gas used for B-20 transactions.
-    pub const fn with_max_fee_per_gas(mut self, max_fee_per_gas: u128) -> Self {
-        self.max_fee_per_gas = max_fee_per_gas;
-        self
-    }
-
-    /// Sets the priority fee per gas used for B-20 transactions.
-    pub const fn with_max_priority_fee_per_gas(mut self, max_priority_fee_per_gas: u128) -> Self {
-        self.max_priority_fee_per_gas = max_priority_fee_per_gas;
         self
     }
 
@@ -116,32 +98,6 @@ impl<'a> B20PrecompileClient<'a> {
                 symbol: symbol.to_string(),
                 initialAdmin: initial_admin,
                 decimals: 6,
-            }
-            .abi_encode()
-            .into(),
-            initial_supply,
-            initial_supply_recipient,
-            supply_cap: U256::MAX,
-            contract_uri: String::new(),
-        }
-    }
-
-    /// Builds the required B-20 stablecoin params for factory creation.
-    pub fn stablecoin_params(
-        name: &str,
-        symbol: &str,
-        initial_admin: Address,
-        initial_supply: U256,
-        initial_supply_recipient: Address,
-        currency: &str,
-    ) -> B20CreateConfig {
-        B20CreateConfig {
-            encoded_params: IB20Factory::B20StablecoinCreateParams {
-                version: B20Variant::Stablecoin.supported_version(),
-                name: name.to_string(),
-                symbol: symbol.to_string(),
-                initialAdmin: initial_admin,
-                currency: currency.to_string(),
             }
             .abi_encode()
             .into(),
@@ -214,17 +170,6 @@ impl<'a> B20PrecompileClient<'a> {
         Ok(())
     }
 
-    /// Deactivates an activation-registry feature.
-    pub async fn deactivate_feature(&self, feature: B256) -> Result<()> {
-        self.send_call(
-            ActivationRegistryStorage::ADDRESS,
-            IActivationRegistry::deactivateCall { feature },
-            "deactivate feature",
-        )
-        .await?;
-        Ok(())
-    }
-
     /// Computes the token address a factory creation call will use.
     pub fn predict_token_address(&self, variant: B20Variant, salt: B256) -> Address {
         variant.compute_address(self.signer.address(), salt).0
@@ -248,259 +193,6 @@ impl<'a> B20PrecompileClient<'a> {
         })
         .await
         .wrap_err("Timed out waiting for B-20 token code")?
-    }
-
-    /// Reads the B-20 balance for an account.
-    pub async fn balance_of(&self, token: Address, account: Address) -> Result<U256> {
-        let output = self.call(token, IB20::balanceOfCall { account }).await?;
-        IB20::balanceOfCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode balanceOf")
-    }
-
-    /// Reads the variant encoded in a token address.
-    pub async fn variant_of(&self, token: Address) -> Result<B20Variant> {
-        B20Variant::from_address(token).wrap_err("Token address is not a supported B-20 token")
-    }
-
-    /// Reads the token decimals.
-    pub async fn decimals_of(&self, token: Address) -> Result<u8> {
-        let output = self.call(token, IB20::decimalsCall {}).await?;
-        IB20::decimalsCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode decimals")
-    }
-
-    /// Mints B-20 tokens to an account.
-    pub async fn mint(&self, token: Address, to: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::mintCall { to, amount }, "mint B-20 token").await?;
-        Ok(())
-    }
-
-    /// Transfers B-20 tokens.
-    pub async fn transfer(&self, token: Address, to: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::transferCall { to, amount }, "transfer B-20 token").await?;
-        Ok(())
-    }
-
-    /// Reads the token name.
-    pub async fn name(&self, token: Address) -> Result<String> {
-        let output = self.call(token, IB20::nameCall {}).await?;
-        IB20::nameCall::abi_decode_returns(output.as_ref()).wrap_err("Failed to decode name")
-    }
-
-    /// Reads the token symbol.
-    pub async fn symbol(&self, token: Address) -> Result<String> {
-        let output = self.call(token, IB20::symbolCall {}).await?;
-        IB20::symbolCall::abi_decode_returns(output.as_ref()).wrap_err("Failed to decode symbol")
-    }
-
-    /// Reads the token total supply.
-    pub async fn total_supply(&self, token: Address) -> Result<U256> {
-        let output = self.call(token, IB20::totalSupplyCall {}).await?;
-        IB20::totalSupplyCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode totalSupply")
-    }
-
-    /// Reads the allowance granted by `owner` to `spender`.
-    pub async fn allowance(
-        &self,
-        token: Address,
-        owner: Address,
-        spender: Address,
-    ) -> Result<U256> {
-        let output = self.call(token, IB20::allowanceCall { owner, spender }).await?;
-        IB20::allowanceCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode allowance")
-    }
-
-    /// Approves `spender` to transfer up to `amount` on behalf of the signer.
-    pub async fn approve(&self, token: Address, spender: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::approveCall { spender, amount }, "approve B-20 spender")
-            .await?;
-        Ok(())
-    }
-
-    /// Transfers tokens from `from` to `to` using the signer's allowance.
-    pub async fn transfer_from(
-        &self,
-        token: Address,
-        from: Address,
-        to: Address,
-        amount: U256,
-    ) -> Result<()> {
-        self.send_call(
-            token,
-            IB20::transferFromCall { from, to, amount },
-            "transferFrom B-20 token",
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Burns tokens from the signer's balance.
-    pub async fn burn(&self, token: Address, amount: U256) -> Result<()> {
-        self.send_call(token, IB20::burnCall { amount }, "burn B-20 token").await?;
-        Ok(())
-    }
-
-    /// Transfers tokens with a memo tag.
-    pub async fn transfer_with_memo(
-        &self,
-        token: Address,
-        to: Address,
-        amount: U256,
-        memo: B256,
-    ) -> Result<()> {
-        self.send_call(
-            token,
-            IB20::transferWithMemoCall { to, amount, memo },
-            "transferWithMemo B-20 token",
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Reads the supply cap.
-    pub async fn supply_cap(&self, token: Address) -> Result<U256> {
-        let output = self.call(token, IB20::supplyCapCall {}).await?;
-        IB20::supplyCapCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode supplyCap")
-    }
-
-    /// Updates the supply cap.
-    pub async fn update_supply_cap(&self, token: Address, new_cap: U256) -> Result<()> {
-        self.send_call(
-            token,
-            IB20::updateSupplyCapCall { newSupplyCap: new_cap },
-            "updateSupplyCap B-20 token",
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Updates the token name.
-    pub async fn update_name(&self, token: Address, new_name: &str) -> Result<()> {
-        self.send_call(
-            token,
-            IB20::updateNameCall { newName: new_name.to_string() },
-            "updateName B-20 token",
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Updates the token symbol.
-    pub async fn update_symbol(&self, token: Address, new_symbol: &str) -> Result<()> {
-        self.send_call(
-            token,
-            IB20::updateSymbolCall { newSymbol: new_symbol.to_string() },
-            "updateSymbol B-20 token",
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Reads the contract URI.
-    pub async fn contract_uri(&self, token: Address) -> Result<String> {
-        let output = self.call(token, IB20::contractURICall {}).await?;
-        IB20::contractURICall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode contractURI")
-    }
-
-    /// Reads the stablecoin currency code.
-    pub async fn currency(&self, token: Address) -> Result<String> {
-        let output = self.call(token, IB20Stablecoin::currencyCall {}).await?;
-        IB20Stablecoin::currencyCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode currency")
-    }
-
-    /// Updates the contract URI.
-    pub async fn update_contract_uri(&self, token: Address, new_uri: &str) -> Result<()> {
-        self.send_call(
-            token,
-            IB20::updateContractURICall { newURI: new_uri.to_string() },
-            "updateContractURI B-20 token",
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Reads the pause vector flags.
-    pub async fn paused(&self, token: Address) -> Result<U256> {
-        let output = self.call(token, IB20::pausedFeaturesCall {}).await?;
-        let features = IB20::pausedFeaturesCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode pausedFeatures")?;
-        Ok(features
-            .into_iter()
-            .fold(U256::ZERO, |paused, feature| paused | B20PausableFeature::mask(feature)))
-    }
-
-    /// Pauses the token for the given vector flags.
-    pub async fn pause(&self, token: Address, vectors: U256) -> Result<()> {
-        let features = pausable_features_from_mask(vectors);
-        self.send_call(token, IB20::pauseCall { features }, "pause B-20 token").await?;
-        Ok(())
-    }
-
-    /// Unpauses all pause vectors on the token.
-    pub async fn unpause(&self, token: Address) -> Result<()> {
-        let features = pausable_features_from_mask(U256::from(0x0f));
-        self.send_call(token, IB20::unpauseCall { features }, "unpause B-20 token").await?;
-        Ok(())
-    }
-
-    /// Returns true if `token` is a deployed B-20 via the factory.
-    pub async fn is_b20(&self, token: Address) -> Result<bool> {
-        let output =
-            self.call(B20FactoryStorage::ADDRESS, IB20Factory::isB20Call { token }).await?;
-        IB20Factory::isB20Call::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode isB20")
-    }
-
-    /// Returns true if `token` has been initialized by the B-20 factory.
-    pub async fn is_b20_initialized(&self, token: Address) -> Result<bool> {
-        let output = self
-            .call(B20FactoryStorage::ADDRESS, IB20Factory::isB20InitializedCall { token })
-            .await?;
-        IB20Factory::isB20InitializedCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode isB20Initialized")
-    }
-
-    /// Calls `getB20Address` on the factory precompile via RPC.
-    pub async fn predict_token_address_rpc(
-        &self,
-        creator: Address,
-        variant: B20Variant,
-        salt: B256,
-    ) -> Result<Address> {
-        let output = self
-            .call(
-                B20FactoryStorage::ADDRESS,
-                IB20Factory::getB20AddressCall { variant: variant.abi(), sender: creator, salt },
-            )
-            .await?;
-        IB20Factory::getB20AddressCall::abi_decode_returns(output.as_ref())
-            .wrap_err("Failed to decode getB20Address")
-    }
-
-    /// Sends a transaction and returns `true` if it succeeded, `false` if it reverted.
-    pub async fn try_send_call<C>(&self, to: Address, call: C, label: &'static str) -> Result<bool>
-    where
-        C: SolCall,
-    {
-        Ok(self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await?.status())
-    }
-
-    /// Sends a transaction and returns the receipt without requiring success.
-    pub async fn send_call_unchecked_receipt<C>(
-        &self,
-        to: Address,
-        call: C,
-        label: &'static str,
-    ) -> Result<BaseTransactionReceipt>
-    where
-        C: SolCall,
-    {
-        self.send_and_wait(to, Bytes::from(call.abi_encode()), label).await
     }
 
     /// Executes an `eth_call` against `to`.
@@ -543,8 +235,8 @@ impl<'a> B20PrecompileClient<'a> {
 
     /// Signs, sends, and polls until a receipt is available.
     ///
-    /// All error messages use `label`.  Both `send_call` and `try_send_call` delegate here so
-    /// the nonce-fetch / sign / send / poll-receipt pipeline stays in one place.
+    /// All error messages use `label`; callers share this nonce-fetch, sign, send, and receipt
+    /// polling pipeline.
     async fn send_and_wait(
         &self,
         to: Address,
@@ -599,11 +291,4 @@ impl<'a> B20PrecompileClient<'a> {
 
         Ok((raw_tx, tx_hash))
     }
-}
-
-fn pausable_features_from_mask(mask: U256) -> Vec<IB20::PausableFeature> {
-    [IB20::PausableFeature::TRANSFER, IB20::PausableFeature::MINT, IB20::PausableFeature::BURN]
-        .into_iter()
-        .filter(|feature| (mask & B20PausableFeature::mask(*feature)) != U256::ZERO)
-        .collect()
 }

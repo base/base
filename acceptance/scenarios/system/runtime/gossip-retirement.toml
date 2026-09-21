@@ -1,0 +1,20 @@
+schema_version = 1
+id = "system-runtime-gossip-retirement"
+description = "Post-Isthmus legacy gossip topic retirement preserves V4 unsafe propagation"
+timeout = "5m"
+
+[ci]
+suite = "pr"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 0 }
+cobalt = { at_block = 0 }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "gossip-topic-retirement"
+kind = "runtime"
+case = "gossip_topic_retirement"
+timeout = "3m"

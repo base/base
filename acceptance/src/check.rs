@@ -186,7 +186,10 @@ impl RpcObserver {
         state: &mut ObservationState<'_>,
     ) -> Result<String> {
         match check {
-            AcceptanceCheck::GlamsterdamBlobTransfers { .. } => {
+            AcceptanceCheck::Contract { .. }
+            | AcceptanceCheck::Transaction { .. }
+            | AcceptanceCheck::Runtime { .. }
+            | AcceptanceCheck::GlamsterdamBlobTransfers { .. } => {
                 bail!("protocol check must be dispatched by the acceptance runner")
             }
             AcceptanceCheck::ChainId { endpoint, expected, .. } => {

@@ -33,7 +33,7 @@ pub enum SelectionSuite {
 pub struct MatrixScenario {
     /// Validated scenario identifier.
     pub id: String,
-    /// Direct repository-relative TOML path.
+    /// TOML path beneath the supplied scenario directory, retaining nested components.
     pub path: String,
 }
 
@@ -72,19 +72,19 @@ pub struct AcceptanceCli {
 pub enum AcceptanceCommand {
     /// Parse and validate scenario files.
     Validate {
-        /// Scenario paths.
+        /// Scenario files or directories (searched recursively).
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
     /// Emit a resolved execution plan as JSON.
     Plan {
-        /// Scenario paths.
+        /// Scenario files or directories (searched recursively).
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
     /// Build an expected-shards manifest.
     Manifest {
-        /// Scenario paths.
+        /// Scenario files or directories (searched recursively).
         #[arg(required = true)]
         paths: Vec<PathBuf>,
         /// Run identity.
@@ -99,7 +99,7 @@ pub enum AcceptanceCommand {
     },
     /// Discover, validate, and select checked-in scenarios for CI.
     Select {
-        /// Direct scenario directory.
+        /// Scenario directory (searched recursively).
         #[arg(long, default_value = "acceptance/scenarios")]
         scenarios: PathBuf,
         /// Suite to select.
@@ -328,38 +328,63 @@ impl AcceptanceCli {
 }
 
 impl CliRun {
-    /// Discovers direct regular TOML files and derives a manifest and matrix together.
+    /// Recursively discovers regular TOML files in deterministic path order.
+    ///
+    /// Non-TOML files are ignored. Symlinks are rejected to prevent traversal outside
+    /// the scenario tree or cycles; directory and scenario paths must be UTF-8.
+    pub fn discover(directory: &Path) -> Result<Vec<PathBuf>> {
+        let mut directories = vec![directory.to_path_buf()];
+        let mut paths = Vec::new();
+        while let Some(directory) = directories.pop() {
+            let metadata = fs::symlink_metadata(&directory)
+                .wrap_err_with(|| format!("inspect scenario directory {}", directory.display()))?;
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                bail!("scenario directory must be a regular directory: {}", directory.display());
+            }
+            if directory.to_str().is_none() {
+                bail!("scenario directory is not UTF-8: {}", directory.display());
+            }
+            for entry in fs::read_dir(&directory)
+                .wrap_err_with(|| format!("read scenario directory {}", directory.display()))?
+            {
+                let entry = entry?;
+                let path = entry.path();
+                let file_type = entry.file_type()?;
+                if file_type.is_symlink() {
+                    bail!("scenario tree must not contain symlinks: {}", path.display());
+                }
+                if file_type.is_dir() {
+                    directories.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+                    continue;
+                }
+                if !file_type.is_file() {
+                    bail!("scenario must be a regular file: {}", path.display());
+                }
+                if path.to_str().is_none() {
+                    bail!("scenario path is not UTF-8: {}", path.display());
+                }
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        Ok(paths)
+    }
+
+    /// Recursively discovers TOML files and derives a manifest and matrix together.
     pub fn select(
         directory: &Path,
         suite: SelectionSuite,
         run_id: String,
         tested_sha: String,
     ) -> Result<(ExpectedManifest, ScenarioMatrix)> {
-        let mut paths = Vec::new();
-        for entry in fs::read_dir(directory).wrap_err("read scenario directory")? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("toml") {
-                continue;
-            }
-            let metadata = fs::symlink_metadata(&path)?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
-                bail!("scenario must be a direct regular file: {}", path.display())
-            }
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| eyre::eyre!("scenario filename is not UTF-8"))?;
-            if Path::new(&name).components().count() != 1 || name == ".toml" {
-                bail!("unsafe scenario filename")
-            }
-            paths.push((name, path));
-        }
-        paths.sort_by(|left, right| left.0.cmp(&right.0));
+        let paths = Self::discover(directory)?;
         let mut ids = BTreeSet::new();
         let mut scenarios = Vec::new();
         let mut include = Vec::new();
-        for (name, path) in paths {
+        for path in paths {
             let config = ScenarioConfig::load(&path)?;
             if !ids.insert(config.id.clone()) {
                 bail!("duplicate scenario id {}", config.id)
@@ -376,7 +401,7 @@ impl CliRun {
                 });
                 include.push(MatrixScenario {
                     id: config.id,
-                    path: directory.join(name).to_string_lossy().into_owned(),
+                    path: path.to_str().expect("discovery validated UTF-8").to_owned(),
                 });
             }
         }
@@ -457,9 +482,24 @@ impl CliRun {
         Ok(Self::verdict(&run))
     }
 
-    /// Loads every supplied scenario configuration.
+    /// Loads supplied files and recursively discovered directories, rejecting duplicate IDs.
     pub fn load_all(paths: &[PathBuf]) -> Result<Vec<ScenarioConfig>> {
-        paths.iter().map(ScenarioConfig::load).collect()
+        let mut configs = Vec::new();
+        let mut ids = BTreeSet::new();
+        for path in paths {
+            let discovered = if path.is_dir() { Self::discover(path)? } else { vec![path.clone()] };
+            for path in discovered {
+                let config = ScenarioConfig::load(&path)?;
+                if !ids.insert(config.id.clone()) {
+                    bail!("duplicate scenario id {}", config.id);
+                }
+                configs.push(config);
+            }
+        }
+        if configs.is_empty() {
+            bail!("no scenarios found");
+        }
+        Ok(configs)
     }
 
     /// Creates a truthful blocked result after fatal setup failure.
@@ -598,10 +638,13 @@ impl CliRun {
 mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
+    #[cfg(target_os = "linux")]
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
     use super::*;
 
     fn copy(directory: &Path, source: &str, name: &str) {
+        fs::create_dir_all(directory.join(name).parent().unwrap()).unwrap();
         fs::copy(Path::new("scenarios").join(source), directory.join(name)).unwrap();
     }
 
@@ -609,8 +652,8 @@ mod tests {
     fn discovery_is_deterministic_and_manifest_matches_matrix() {
         let temp = tempfile::tempdir().unwrap();
         copy(temp.path(), "smoke.toml", "z.toml");
-        copy(temp.path(), "derivation.toml", "a.toml");
-        copy(temp.path(), "denim-transition.toml", "m.toml");
+        copy(temp.path(), "derivation.toml", "a/smoke.toml");
+        copy(temp.path(), "denim-transition.toml", "m/deep/smoke.toml");
         copy(temp.path(), "glamsterdam.toml", "g.toml");
         let (manifest, matrix) =
             CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).unwrap();
@@ -625,6 +668,17 @@ mod tests {
                 .map(|item| &item.id)
                 .eq(matrix.include.iter().map(|item| &item.id))
         );
+        assert_eq!(
+            matrix
+                .include
+                .iter()
+                .map(|item| Path::new(&item.path).strip_prefix(temp.path()).unwrap())
+                .collect::<Vec<_>>(),
+            ["a/smoke.toml", "g.toml", "m/deep/smoke.toml", "z.toml"].map(Path::new)
+        );
+        for item in &matrix.include {
+            assert_eq!(ScenarioConfig::load(&item.path).unwrap().id, item.id);
+        }
         let (manifest, pr) =
             CliRun::select(temp.path(), SelectionSuite::Pr, "run".into(), "sha".into()).unwrap();
         assert_eq!(
@@ -686,15 +740,81 @@ timeout = "9m"
         assert!(
             CliRun::select(temp.path(), SelectionSuite::Pr, "run".into(), "sha".into()).is_err()
         );
-        copy(temp.path(), "derivation.toml", "duplicate.toml");
+        copy(temp.path(), "derivation.toml", "nested/duplicate.toml");
         assert!(
             CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).is_err()
         );
-        fs::remove_file(temp.path().join("duplicate.toml")).unwrap();
-        fs::write(temp.path().join("invalid.toml"), "not toml").unwrap();
+        fs::remove_file(temp.path().join("nested/duplicate.toml")).unwrap();
+        fs::write(temp.path().join("nested/invalid.toml"), "not toml").unwrap();
         assert!(
             CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).is_err()
         );
+    }
+
+    #[test]
+    fn bulk_loading_accepts_files_and_nested_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        copy(temp.path(), "smoke.toml", "smoke.toml");
+        copy(temp.path(), "derivation.toml", "nested/deep/smoke.toml");
+        fs::write(temp.path().join("nested/README.md"), "not a scenario").unwrap();
+        fs::create_dir(temp.path().join("nested/empty")).unwrap();
+        let configs =
+            CliRun::load_all(&[temp.path().join("smoke.toml"), temp.path().join("nested")])
+                .unwrap();
+        assert_eq!(
+            configs.iter().map(|config| config.id.as_str()).collect::<Vec<_>>(),
+            ["smoke", "derivation"]
+        );
+        assert!(CliRun::load_all(&[temp.path().join("nested/empty")]).is_err());
+        copy(temp.path(), "smoke.toml", "nested/duplicate.toml");
+        assert!(
+            CliRun::load_all(&[temp.path().to_path_buf()])
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate scenario id smoke")
+        );
+    }
+
+    #[test]
+    fn discovery_validates_nested_scenarios_outside_selected_suite() {
+        let temp = tempfile::tempdir().unwrap();
+        copy(temp.path(), "smoke.toml", "smoke.toml");
+        copy(temp.path(), "derivation.toml", "nested/derivation.toml");
+        let nested = temp.path().join("nested/derivation.toml");
+        let invalid = fs::read_to_string(&nested)
+            .unwrap()
+            .replace("schema_version = 1", "schema_version = 999");
+        fs::write(nested, invalid).unwrap();
+        assert!(
+            CliRun::select(temp.path(), SelectionSuite::Pr, "run".into(), "sha".into()).is_err()
+        );
+    }
+
+    // macOS filesystems reject these names before discovery can inspect them.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn discovery_rejects_non_utf8_scenario_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(OsString::from_vec(b"invalid-\xff.toml".to_vec()));
+        fs::write(&path, "not toml").unwrap();
+        assert!(CliRun::discover(temp.path()).unwrap_err().to_string().contains("UTF-8"));
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(CliRun::discover(temp.path()).unwrap_err().to_string().contains("UTF-8"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_rejects_directory_symlinks_and_cycles() {
+        let temp = tempfile::tempdir().unwrap();
+        copy(temp.path(), "smoke.toml", "nested/smoke.toml");
+        symlink(temp.path(), temp.path().join("nested/cycle")).unwrap();
+        assert!(CliRun::discover(temp.path()).unwrap_err().to_string().contains("symlink"));
+        fs::remove_file(temp.path().join("nested/cycle")).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(temp.path().join("nested"), outside.path().join("linked")).unwrap();
+        assert!(CliRun::discover(outside.path()).is_err());
+        assert!(CliRun::discover(&outside.path().join("linked")).is_err());
     }
 
     #[cfg(unix)]

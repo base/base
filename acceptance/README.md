@@ -4,12 +4,23 @@ The acceptance runner provisions the repository's real Docker Compose devnet and
 checks its externally visible RPC behavior. Scenarios are strict, versioned TOML;
 each run produces a portable JSON result and an offline visual report.
 
-The checked-in scenarios are:
+The core checked-in scenarios include:
 
 - `smoke`: chain identity, block production, and validator convergence.
 - `health`: sustained sampled health across all four L2 node roles.
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
 - `denim-transition`: progress and convergence immediately before and after Denim.
+
+System scenarios are grouped beneath `scenarios/system/`:
+
+- `contract/activation-registry/`, `contract/policy-registry/`, and `contract/b20/`
+  contain the corresponding contract checks; other contract checks live in `contract/`.
+- `transaction/` covers transaction validity, forwarding, and load.
+- `runtime/` covers synchronization, cutovers, and gossip retirement.
+
+Directories may be nested to any depth. Scenario `id` values remain globally unique
+and independent of filenames, so different folders may use the same filename.
+Discovery sorts by full path and rejects symlinks (including directory links).
 
 ## Requirements
 
@@ -36,8 +47,9 @@ resources and private chain state.
 
 A scenario has two phases in one TOML document. Top-level, `devnet`, and
 `readiness` fields describe what to provision and when it is usable; `[[checks]]`
-tables describe bounded checks made after readiness. Ordinary checks are read-only;
-the managed-only Glamsterdam protocol check sends two signed devnet transfers.
+tables describe bounded checks made after readiness. Head and identity checks are
+read-only. Managed protocol and typed workload checks may send signed devnet
+transactions and mutate chain state.
 
 ```toml
 schema_version = 1
@@ -107,9 +119,22 @@ are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are
   profile, managed mode, and the first check position; it may appear only once.
   Expands into eleven independently reported protocol assertions. Ordinary health
   checks may follow it.
+- `contract`: `id`, `case`, `timeout`, and optional `start`. Selects one reviewed
+  external-RPC smart-contract workload.
+- `transaction`: `id`, `case`, `timeout`, and optional `start`. Selects one
+  reviewed signed-transaction, validity, or forwarding workload.
+- `runtime`: `id`, `case`, `timeout`, and optional `start`. Selects one reviewed
+  deployment-runtime workload, such as synchronization or fork cutover.
 
 Every ordinary check may have one L2 `start` condition with exactly one of `before_fork` or
 `after_fork`. Checks run in file order. See `scenarios/` for complete examples.
+
+The `contract`, `transaction`, and `runtime` kinds are managed-only. Their only
+check fields are `id`, `case`, `timeout`, and optional fork-relative `start`;
+attach mode rejects them. TOML chooses reviewed Rust RPC workloads by stable case
+name—it is not an arbitrary declarative transaction or RPC language. These
+workloads exercise externally provisioned nodes and are distinct from the old
+in-process Rust system-test harness.
 
 ### Glamsterdam profile and protocol evidence
 
@@ -135,11 +160,21 @@ The check never resubmits a transaction after an ambiguous submission.
 ## CLI workflows
 
 Validation and planning do not contact Docker or RPCs. `plan` prints the resolved
-configuration, including defaults, as JSON:
+configuration, including defaults, as JSON. `validate`, `plan`, and `manifest` accept
+files or directories; directories recursively include every `.toml` file. Pass the
+directory itself rather than a top-level shell glob to include nested scenarios:
 
 ```console
-cargo run -p base-acceptance-cli -- validate acceptance/scenarios/*.toml
+cargo run -p base-acceptance-cli -- validate acceptance/scenarios
 cargo run -p base-acceptance-cli -- plan acceptance/scenarios/denim-transition.toml
+```
+
+Run a nested scenario by its path, or use the path without `.toml` with `just`:
+
+```console
+just acceptance system/transaction/smoke
+cargo run -p base-acceptance-cli -- run acceptance/scenarios/system/contract/b20/mint-and-burn.toml \
+  --output target/acceptance/mint-and-burn
 ```
 
 Use `--no-build` only when the required images have already been built and loaded:
@@ -175,7 +210,7 @@ Sharded CI first records exactly which scenarios and checks are expected, then
 strictly aggregates one matching result for each scenario:
 
 ```console
-cargo run -p base-acceptance-cli -- manifest acceptance/scenarios/*.toml \
+cargo run -p base-acceptance-cli -- manifest acceptance/scenarios \
   --run-id run-1 --tested-sha "$GIT_SHA" --output expected.json
 cargo run -p base-acceptance-cli -- aggregate --expected expected.json \
   --results downloaded-results --output target/acceptance/aggregate
@@ -227,10 +262,11 @@ The advisory Depot workflow discovers and validates every scenario, runs the sel
 suite as independent shards, uploads report bundles, and strictly aggregates expected results. Reports are artifacts;
 PR publication is available only when the trusted base revision contains the
 publisher. Same-repository PRs select `[ci] suite = "pr"`, running both smoke and
-Glamsterdam blob-transfer and post-fork health checks automatically.
-Scenarios without CI metadata default to `extended`; manual dispatch selects
-`pr`, `extended`, or `all`. Adding a scenario requires only its TOML file, not a
-workflow edit. The Rust `select` command emits both the matrix and matching expected
+Glamsterdam blob-transfer and post-fork health checks plus all 45 system scenarios
+automatically. The same acceptance selection also runs for `merge_group`; nightly
+uses the seeded acceptance workload. Scenarios without CI metadata default to
+`extended`; manual dispatch selects `pr`, `extended`, or `all`. Adding a scenario
+requires only its TOML file, not a workflow edit. The Rust `select` command emits both the matrix and matching expected
 manifest, including expanded protocol assertion IDs:
 
 ```console

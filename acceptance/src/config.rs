@@ -8,7 +8,7 @@ use std::{
 use eyre::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{ForkBoundary, GlamsterdamCheck};
+use crate::{ContractCase, ForkBoundary, GlamsterdamCheck, RuntimeCase, TransactionCase};
 
 const FORKS: [&str; 5] = ["azul", "beryl", "cobalt", "denim", "zenith"];
 const MAX_ROLLUP_JSON_BYTES: u64 = 1024 * 1024;
@@ -114,6 +114,9 @@ impl ScenarioConfig {
         }
         if self.devnet.l2.verifier_l1_confirmations > 10_000 {
             bail!("verifier_l1_confirmations must not exceed 10000");
+        }
+        if let Some(forwarding) = &self.devnet.l2.forwarding {
+            Self::validate_duration(forwarding.resend_after.0, "forwarding resend_after", 1, 3600)?;
         }
         Self::validate_duration(self.devnet.l1.slot_duration.0, "L1 slot duration", 1, 60)?;
         if self.devnet.l1.slot_duration.0.subsec_nanos() != 0 {
@@ -456,6 +459,16 @@ impl GlamsterdamFork {
     }
 }
 
+/// RPC-node transaction forwarding controls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForwardingConfig {
+    /// Maximum RPC requests per second per forwarder; zero disables rate limiting.
+    pub max_rps: u32,
+    /// Delay before resubmitting a transaction not yet included.
+    pub resend_after: Span,
+}
+
 /// Layer-two settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -469,6 +482,9 @@ pub struct L2Config {
     /// Fork activation schedule.
     #[serde(default = "L2Config::default_forks", deserialize_with = "L2Config::merge_forks")]
     pub forks: BTreeMap<String, ForkActivation>,
+    /// Optional RPC forwarding overrides; omitted settings preserve binary defaults.
+    #[serde(default)]
+    pub forwarding: Option<ForwardingConfig>,
 }
 
 impl L2Config {
@@ -507,6 +523,7 @@ impl Default for L2Config {
             chain_id: Self::default_chain_id(),
             verifier_l1_confirmations: Self::default_confirmations(),
             forks: Self::default_forks(),
+            forwarding: None,
         }
     }
 }
@@ -597,6 +614,42 @@ pub struct CheckStart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AcceptanceCheck {
+    /// Runs one isolated contract workload on the managed devnet.
+    Contract {
+        /// Check identifier.
+        id: String,
+        /// Reviewed contract behavior, not an arbitrary RPC program.
+        case: ContractCase,
+        /// Total workload budget including all submissions and observations.
+        timeout: Span,
+        /// Optional fork-relative observation window.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
+    /// Runs one signed-transaction workload on the managed devnet.
+    Transaction {
+        /// Check identifier.
+        id: String,
+        /// Reviewed transaction behavior.
+        case: TransactionCase,
+        /// Total workload budget.
+        timeout: Span,
+        /// Optional fork-relative observation window.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
+    /// Runs one deployment-runtime workload on the managed devnet.
+    Runtime {
+        /// Check identifier.
+        id: String,
+        /// Reviewed runtime behavior.
+        case: RuntimeCase,
+        /// Total workload budget.
+        timeout: Span,
+        /// Optional fork-relative observation window.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
     /// Verifies blob derivation and chain rules across L1 Glamsterdam.
     GlamsterdamBlobTransfers {
         /// Prefix for stable assertion result identifiers.
@@ -718,7 +771,10 @@ impl AcceptanceCheck {
     /// Returns the check identifier.
     pub fn id(&self) -> &str {
         match self {
-            Self::GlamsterdamBlobTransfers { id, .. }
+            Self::Contract { id, .. }
+            | Self::Transaction { id, .. }
+            | Self::Runtime { id, .. }
+            | Self::GlamsterdamBlobTransfers { id, .. }
             | Self::ChainId { id, .. }
             | Self::HeadProgress { id, .. }
             | Self::HeadsConverge { id, .. }
@@ -731,6 +787,9 @@ impl AcceptanceCheck {
     /// Returns the check kind.
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::Contract { .. } => "contract",
+            Self::Transaction { .. } => "transaction",
+            Self::Runtime { .. } => "runtime",
             Self::GlamsterdamBlobTransfers { .. } => "glamsterdam_blob_transfers",
             Self::ChainId { .. } => "chain_id",
             Self::HeadProgress { .. } => "head_progress",
@@ -744,7 +803,10 @@ impl AcceptanceCheck {
     /// Returns the check timeout.
     pub const fn timeout(&self) -> Duration {
         match self {
-            Self::GlamsterdamBlobTransfers { timeout, .. }
+            Self::Contract { timeout, .. }
+            | Self::Transaction { timeout, .. }
+            | Self::Runtime { timeout, .. }
+            | Self::GlamsterdamBlobTransfers { timeout, .. }
             | Self::ChainId { timeout, .. }
             | Self::HeadProgress { timeout, .. }
             | Self::HeadsConverge { timeout, .. }
@@ -758,7 +820,10 @@ impl AcceptanceCheck {
     pub const fn start(&self) -> Option<&CheckStart> {
         match self {
             Self::GlamsterdamBlobTransfers { .. } => None,
-            Self::ChainId { start, .. }
+            Self::Contract { start, .. }
+            | Self::Transaction { start, .. }
+            | Self::Runtime { start, .. }
+            | Self::ChainId { start, .. }
             | Self::HeadProgress { start, .. }
             | Self::HeadsConverge { start, .. }
             | Self::SafeHeadProgress { start, .. }
@@ -776,6 +841,18 @@ impl AcceptanceCheck {
             scenario.timeout.0,
         )?;
         let endpoints = match self {
+            Self::Contract { case, .. } => {
+                case.validate(scenario)?;
+                case.required_roles().to_vec()
+            }
+            Self::Transaction { case, .. } => {
+                case.validate(scenario)?;
+                case.required_roles().to_vec()
+            }
+            Self::Runtime { case, .. } => {
+                case.validate(scenario)?;
+                case.required_roles().to_vec()
+            }
             Self::GlamsterdamBlobTransfers { .. } => Vec::new(),
             Self::ChainId { endpoint, .. }
             | Self::HeadProgress { endpoint, .. }
@@ -814,8 +891,11 @@ impl AcceptanceCheck {
                 "l1" | "beacon"
                     | "builder"
                     | "builder-consensus"
+                    | "builder-flashblocks"
+                    | "builder-metrics"
                     | "validator"
                     | "validator-consensus"
+                    | "validator-metrics"
                     | "rpc"
                     | "shadow"
             ) {
@@ -862,6 +942,17 @@ impl AcceptanceCheck {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Whether execution requires resources owned by this invocation.
+    pub const fn requires_managed(&self) -> bool {
+        matches!(
+            self,
+            Self::Contract { .. }
+                | Self::Transaction { .. }
+                | Self::Runtime { .. }
+                | Self::GlamsterdamBlobTransfers { .. }
+        )
     }
 
     /// Expands this configured check into stable portable result identifiers.

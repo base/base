@@ -1,0 +1,14 @@
+schema_version = 1
+id = "system-transaction-high-load"
+description = "Forty interleaved forwarding transactions under one-request-per-second backpressure"
+timeout = "10m"
+[ci]
+suite = "pr"
+[devnet.l2.forwarding]
+max_rps = 1
+resend_after = "30s"
+[[checks]]
+id = "forwarding-high-load"
+kind = "transaction"
+case = "forwarding_high_load"
+timeout = "6m"

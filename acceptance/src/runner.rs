@@ -11,7 +11,8 @@ use tokio::time::Instant;
 
 use crate::{
     AcceptanceCheck, Aggregate, CheckResult, EndpointMap, GlamsterdamCheck, ObservationState,
-    Provisioner, RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
+    Provisioner, Rpc, RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
+    WorkloadContext,
 };
 
 /// Invocation-owned paths, attach endpoints, and image build policy.
@@ -38,12 +39,9 @@ impl AcceptanceRunner {
     pub async fn run(config: ScenarioConfig, options: AcceptanceOptions) -> Result<ScenarioResult> {
         config.validate()?;
         if options.endpoints.is_some()
-            && config
-                .checks
-                .iter()
-                .any(|check| matches!(check, AcceptanceCheck::GlamsterdamBlobTransfers { .. }))
+            && config.checks.iter().any(AcceptanceCheck::requires_managed)
         {
-            bail!("glamsterdam_blob_transfers rejects attach mode");
+            bail!("managed workloads reject attach mode");
         }
         if options.endpoints.is_some() && options.build {
             bail!("attach mode cannot build images");
@@ -307,8 +305,18 @@ impl AcceptanceRunner {
                 result_index = end;
                 continue;
             }
-            result.checks[result_index] =
-                observer.run(check, &endpoints, &mut result.samples, origin, deadline).await;
+            result.checks[result_index] = if check.requires_managed() {
+                let context = WorkloadContext {
+                    endpoints: &endpoints,
+                    config,
+                    output: &options.output,
+                    deadline: deadline.min(Instant::now() + check.timeout()),
+                    rpc: Rpc::new()?,
+                };
+                context.run(check, provisioner).await
+            } else {
+                observer.run(check, &endpoints, &mut result.samples, origin, deadline).await
+            };
             if let Some(name) = check.start().and_then(|window| window.before_fork.as_ref()) {
                 let boundary = result
                     .forks
@@ -323,6 +331,10 @@ impl AcceptanceRunner {
                         "check window crossed {name} activation; pre-fork coverage is incomplete"
                     );
                 }
+            }
+            if check.requires_managed() && result.checks[result_index].status != Status::Passed {
+                // A failed mutating workload may leave state unsuitable for later checks.
+                break;
             }
             result_index += 1;
         }
@@ -341,7 +353,15 @@ impl AcceptanceRunner {
         loop {
             let mut all = true;
             for role in &roles {
-                if matches!(role.as_str(), "beacon" | "builder-consensus" | "validator-consensus") {
+                if matches!(
+                    role.as_str(),
+                    "beacon"
+                        | "builder-consensus"
+                        | "validator-consensus"
+                        | "builder-flashblocks"
+                        | "builder-metrics"
+                        | "validator-metrics"
+                ) {
                     continue;
                 }
                 let url = RpcObserver::endpoint(endpoints, role)?;
@@ -389,6 +409,15 @@ impl AcceptanceRunner {
         let mut roles = BTreeSet::new();
         for check in &config.checks {
             match check {
+                AcceptanceCheck::Contract { case, .. } => {
+                    roles.extend(case.required_roles().iter().map(|role| (*role).to_owned()));
+                }
+                AcceptanceCheck::Transaction { case, .. } => {
+                    roles.extend(case.required_roles().iter().map(|role| (*role).to_owned()));
+                }
+                AcceptanceCheck::Runtime { case, .. } => {
+                    roles.extend(case.required_roles().iter().map(|role| (*role).to_owned()));
+                }
                 AcceptanceCheck::GlamsterdamBlobTransfers { .. } => {
                     roles.extend(
                         [
@@ -433,8 +462,11 @@ impl AcceptanceRunner {
                 "l1" | "beacon"
                     | "builder"
                     | "builder-consensus"
+                    | "builder-flashblocks"
+                    | "builder-metrics"
                     | "validator"
                     | "validator-consensus"
+                    | "validator-metrics"
                     | "rpc"
                     | "shadow"
             ) {
@@ -508,12 +540,51 @@ impl AcceptanceRunner {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
 
     use super::*;
+    use crate::{CliRun, SelectionSuite};
+
+    #[test]
+    fn every_checked_in_scenario_parses_and_validates() {
+        let scenarios = Path::new(env!("CARGO_MANIFEST_DIR")).join("scenarios");
+        let (manifest, matrix) =
+            CliRun::select(&scenarios, SelectionSuite::All, "test".into(), "sha".into()).unwrap();
+        let configs = CliRun::load_all(&[scenarios]).unwrap();
+        assert_eq!(configs.len(), manifest.scenarios.len());
+        assert!(matrix.include.iter().any(|entry| entry.id == "system-contract-b20-mint-and-burn"));
+    }
+
+    #[tokio::test]
+    async fn attach_mode_rejects_mutating_workloads_before_side_effects() {
+        let config = ScenarioConfig::load(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("scenarios/system/transaction/direct-validity.toml"),
+        )
+        .unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let output = parent.path().join("must-not-exist");
+        let error = AcceptanceRunner::run(
+            config,
+            AcceptanceOptions {
+                repo_root: parent.path().into(),
+                output: output.clone(),
+                endpoints: Some(BTreeMap::from([("builder".into(), "http://127.0.0.1:1".into())])),
+                rollup: None,
+                build: false,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "managed workloads reject attach mode");
+        assert!(!output.exists());
+    }
 
     #[tokio::test]
     async fn wrong_chain_blocks_every_check_without_owning_attached_resources() {

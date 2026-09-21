@@ -1,0 +1,19 @@
+schema_version = 1
+id = "system-contract-beryl-activation"
+description = "Factory calls have no precompile effects before Beryl and deploy a token after activation"
+timeout = "8m"
+[ci]
+suite = "pr"
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 100 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+[[checks]]
+id = "beryl-precompiles-do-not-execute-before-activation-block"
+kind = "contract"
+case = "beryl_precompiles_do_not_execute_before_activation_block"
+timeout = "5m"
+# The compound workload verifies both sides of Beryl itself; a before_fork
+# observation window would correctly reject crossing the boundary.

@@ -1,0 +1,18 @@
+schema_version = 1
+id = "system-transaction-eip8130-mined"
+description = "Minimal self-paying EIP-8130 transaction inclusion"
+timeout = "6m"
+[ci]
+suite = "pr"
+[devnet.l2.forks]
+azul = { at_block = 20 }
+beryl = { at_block = 21 }
+cobalt = { at_block = 22 }
+denim = { at_block = 25 }
+zenith = { at_block = 30 }
+[[checks]]
+id = "eip8130-mined"
+kind = "transaction"
+case = "eip8130_mined"
+timeout = "3m"
+start = { after_fork = "zenith", chain = "l2" }

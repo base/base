@@ -1,0 +1,13 @@
+schema_version = 1
+id = "system-transaction-fuzz-parity"
+description = "Seeded mixed transaction workload with sustained builder and validator block parity"
+timeout = "5m"
+
+[ci]
+suite = "pr"
+
+[[checks]]
+id = "fuzz-sync-parity"
+kind = "transaction"
+case = "fuzz_sync_parity"
+timeout = "3m"

@@ -4,7 +4,7 @@
 # Changes made:
 # - Rewrote .github/ path references to .depot/
 
-# Nightly fuzz: runs the build/validate sync-parity fuzz test with a fresh random
+# Nightly fuzz: runs the acceptance sync-parity fuzz scenario with a fresh random
 # seed each run (several shards in parallel) so every run explores a different
 # transaction stream. The chosen seed is logged; a failing run can be replayed by
 # dispatching this workflow with that seed.
@@ -26,8 +26,8 @@ permissions:
   contents: read
 jobs:
   fuzz-sync-parity:
-    name: Fuzz sync parity
-    runs-on: depot-ubuntu-24.04-8
+    name: Fuzz sync parity / shard ${{ matrix.shard }}
+    runs-on: depot-ubuntu-24.04-16
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -45,11 +45,22 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 1
+          persist-credentials: false
       - uses: ./.depot/actions/setup
         with:
           native-deps: "true"
-          foundry: "true"
-          tools: cargo-nextest
+          just: "false"
+      - uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
+      - name: Build and load tested images
+        env:
+          PROFILE: dev
+          BASE_SUCCINCT_ELF_REQUIRE: "0"
+        run: |
+          set -euo pipefail
+          depot bake --project "${{ vars.DEPOT_PROJECT_ID }}" -f etc/docker/docker-bake.hcl \
+            base op-batcher --set '*.platform=linux/amd64' --load
+          depot build --project "${{ vars.DEPOT_PROJECT_ID }}" --load \
+            --tag devnet-setup:local-v2 -f etc/docker/Dockerfile.devnet .
       - name: Pick fuzz seed
         # Replay a specific seed via the workflow_dispatch input; otherwise generate
         # a fresh random seed so each run fuzzes a different transaction stream. The
@@ -66,21 +77,31 @@ jobs:
           fi
           echo "FUZZ_SEED=$SEED" >> "$GITHUB_ENV"
           echo "::notice::Fuzzing with seed $SEED (replay via workflow_dispatch input seed=$SEED)"
-      - name: Pre-pull docker images
-        run: just devnet pull-images
-      - name: Build test contracts
-        # base-test-utils embeds Foundry artifacts (contracts/out/*.json) at compile
-        # time; they are gitignored build output, so generate them before building.
-        run: cd crates/utilities/test-utils/contracts && forge soldeer install && forge build
-      - name: Run fuzz sync-parity test
+      - name: Run fuzz sync-parity acceptance scenario
         # FUZZ_SEED is exported by the "Pick fuzz seed" step above.
+        env:
+          RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
+          TESTED_SHA: ${{ github.sha }}
         run: |
-          cargo nextest run -P ci --locked -p base-system-tests \
-            --cargo-profile ci --no-capture -E 'test(fuzz_sync_parity)'
-      - name: Upload run log on failure
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          set -o pipefail
+          cargo run --locked -p base-acceptance-cli -- run \
+            acceptance/scenarios/system/transaction/fuzz-parity.toml \
+            --output "target/acceptance/$RUN_KEY/system-transaction-fuzz-parity" --no-build \
+            --run-id "$RUN_KEY" --tested-sha "$TESTED_SHA"
+      - name: Preserve startup failure evidence
+        if: always()
+        env:
+          RUN_KEY: ${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
+        run: |
+          report="target/acceptance/$RUN_KEY/system-transaction-fuzz-parity/report"
+          mkdir -p "$report"
+          if [ ! -f "$report/result.json" ]; then
+            echo 'No scenario result; inspect the job log for the infrastructure failure.' > "$report/runner-status.txt"
+          fi
+      - name: Upload sanitized scenario report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuzz-log-shard-${{ matrix.shard }}-${{ github.run_id }}
-          path: target/nextest/ci/*.xml
-          if-no-files-found: ignore
+          name: fuzz-result-shard-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: target/acceptance/${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}/system-transaction-fuzz-parity/report
+          if-no-files-found: warn

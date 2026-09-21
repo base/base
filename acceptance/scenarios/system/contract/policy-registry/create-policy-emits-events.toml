@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-policy-registry-create-policy-emits-events"
+description = "External RPC contract acceptance for policy_registry_create_policy_emits_events"
+timeout = "5m"
+
+[ci]
+suite = "pr"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "policy-registry-create-policy-emits-events"
+kind = "contract"
+case = "policy_registry_create_policy_emits_events"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }
