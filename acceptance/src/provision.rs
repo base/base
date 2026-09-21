@@ -165,7 +165,7 @@ impl Provisioner {
         self.endpoints().await
     }
 
-    /// Exposes only execution RPCs on daemon-allocated localhost ports.
+    /// Exposes RPC and workload observation ports on daemon-allocated localhost ports.
     pub async fn write_ports(&self) -> Result<()> {
         let model = self.model().await?;
         let mut overlay = String::from("services:\n");
@@ -177,8 +177,8 @@ impl Provisioner {
             let ports: &[u16] = match name.as_str() {
                 "l1-el" => &[4545],
                 "l1-cl" => &[4052],
-                "base-builder" => &[7545, 7549],
-                "base-client" => &[8545, 8549],
+                "base-builder" => &[7545, 7549, 7111, 7090],
+                "base-client" => &[8545, 8549, 8090],
                 "base-rpc" => &[8645],
                 "base-shadow-validator" => &[8845],
                 _ => &[],
@@ -205,8 +205,11 @@ impl Provisioner {
             ("beacon", "l1-cl", "4052"),
             ("builder", "base-builder", "7545"),
             ("builder-consensus", "base-builder", "7549"),
+            ("builder-flashblocks", "base-builder", "7111"),
+            ("builder-metrics", "base-builder", "7090"),
             ("validator", "base-client", "8545"),
             ("validator-consensus", "base-client", "8549"),
+            ("validator-metrics", "base-client", "8090"),
             ("rpc", "base-rpc", "8645"),
             ("shadow", "base-shadow-validator", "8845"),
         ] {
@@ -625,8 +628,11 @@ impl Provisioner {
             ("beacon", 4052),
             ("builder", 7545),
             ("builder-consensus", 7549),
+            ("builder-flashblocks", 7111),
+            ("builder-metrics", 7090),
             ("validator", 8545),
             ("validator-consensus", 8549),
+            ("validator-metrics", 8090),
             ("rpc", 8645),
             ("shadow", 8845),
         ]

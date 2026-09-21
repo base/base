@@ -1,0 +1,20 @@
+schema_version = 1
+id = "system-runtime-fork-equality-smoke"
+description = "Generated requested fork block equality smoke at 20, 25, and 100"
+timeout = "4m"
+
+[ci]
+suite = "extended"
+
+[devnet.l2.forks]
+azul = { at_block = 20 }
+beryl = { at_block = 21 }
+cobalt = { at_block = 22 }
+denim = { at_block = 25 }
+zenith = { at_block = 100 }
+
+[[checks]]
+id = "generated-fork-equality"
+kind = "runtime"
+case = "builder_client_sync"
+timeout = "90s"

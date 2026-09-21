@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-b20-metadata-updates"
+description = "External RPC contract acceptance for b20_metadata_updates"
+timeout = "5m"
+
+[ci]
+suite = "extended"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "b20-metadata-updates"
+kind = "contract"
+case = "b20_metadata_updates"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }

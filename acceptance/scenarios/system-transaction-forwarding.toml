@@ -1,0 +1,11 @@
+schema_version = 1
+id = "system-transaction-forwarding"
+description = "Validator mempool to builder transaction forwarding"
+timeout = "6m"
+[ci]
+suite = "extended"
+[[checks]]
+id = "forwarding"
+kind = "transaction"
+case = "forwarding_pipeline"
+timeout = "3m"

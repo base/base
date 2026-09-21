@@ -1,0 +1,11 @@
+schema_version = 1
+id = "system-transaction-high-load"
+description = "Partial high-load forwarding coverage: 40 interleaved sends without original max_rps=1/resend_after=30s provisioning"
+timeout = "10m"
+[ci]
+suite = "extended"
+[[checks]]
+id = "forwarding-high-load"
+kind = "transaction"
+case = "forwarding_high_load"
+timeout = "6m"

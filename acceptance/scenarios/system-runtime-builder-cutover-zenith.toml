@@ -1,0 +1,20 @@
+schema_version = 1
+id = "system-runtime-builder-cutover-zenith"
+description = "Denim cutover followed by Zenith without Flashblocks restart and with basic builds continuing"
+timeout = "5m"
+
+[ci]
+suite = "extended"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 0 }
+cobalt = { at_block = 0 }
+denim = { at_block = 25 }
+zenith = { at_block = 100 }
+
+[[checks]]
+id = "denim-zenith-cutover"
+kind = "runtime"
+case = "builder_cutover_zenith"
+timeout = "3m"

@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-always-block-policy-blocks-transfer"
+description = "External RPC contract acceptance for always_block_policy_blocks_transfer"
+timeout = "5m"
+
+[ci]
+suite = "extended"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "always-block-policy-blocks-transfer"
+kind = "contract"
+case = "always_block_policy_blocks_transfer"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }

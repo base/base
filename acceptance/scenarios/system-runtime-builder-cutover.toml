@@ -1,0 +1,20 @@
+schema_version = 1
+id = "system-runtime-builder-cutover"
+description = "Denim builder cutover with receipts, exact cadence, contiguous chain, and Flashblocks retirement"
+timeout = "5m"
+
+[ci]
+suite = "extended"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 0 }
+cobalt = { at_block = 0 }
+denim = { at_block = 25 }
+zenith = { disabled = true }
+
+[[checks]]
+id = "denim-cutover"
+kind = "runtime"
+case = "builder_cutover"
+timeout = "2m"

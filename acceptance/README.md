@@ -36,8 +36,9 @@ resources and private chain state.
 
 A scenario has two phases in one TOML document. Top-level, `devnet`, and
 `readiness` fields describe what to provision and when it is usable; `[[checks]]`
-tables describe bounded checks made after readiness. Ordinary checks are read-only;
-the managed-only Glamsterdam protocol check sends two signed devnet transfers.
+tables describe bounded checks made after readiness. Head and identity checks are
+read-only. Managed protocol and typed workload checks may send signed devnet
+transactions and mutate chain state.
 
 ```toml
 schema_version = 1
@@ -107,9 +108,23 @@ are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are
   profile, managed mode, and the first check position; it may appear only once.
   Expands into eleven independently reported protocol assertions. Ordinary health
   checks may follow it.
+- `contract`: `id`, `case`, `timeout`, and optional `start`. Selects one reviewed
+  external-RPC smart-contract workload.
+- `transaction`: `id`, `case`, `timeout`, and optional `start`. Selects one
+  reviewed signed-transaction, validity, or forwarding workload.
+- `runtime`: `id`, `case`, `timeout`, and optional `start`. Selects one reviewed
+  deployment-runtime workload, such as synchronization or fork cutover.
 
 Every ordinary check may have one L2 `start` condition with exactly one of `before_fork` or
 `after_fork`. Checks run in file order. See `scenarios/` for complete examples.
+
+The `contract`, `transaction`, and `runtime` kinds are managed-only. Their only
+check fields are `id`, `case`, `timeout`, and optional fork-relative `start`;
+attach mode rejects them. TOML chooses reviewed Rust RPC workloads by stable case
+name—it is not an arbitrary declarative transaction or RPC language. These
+workloads exercise externally provisioned nodes and are distinct from the old
+in-process Rust system-test harness. See [the migration ledger](SYSTEM_TEST_MIGRATION.md)
+for scope, retained tests, and known gaps.
 
 ### Glamsterdam profile and protocol evidence
 

@@ -8,7 +8,7 @@ use std::{
 use eyre::{Context, Result, bail};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{ForkBoundary, GlamsterdamCheck};
+use crate::{ContractCase, ForkBoundary, GlamsterdamCheck, RuntimeCase, TransactionCase};
 
 const FORKS: [&str; 5] = ["azul", "beryl", "cobalt", "denim", "zenith"];
 const MAX_ROLLUP_JSON_BYTES: u64 = 1024 * 1024;
@@ -597,6 +597,42 @@ pub struct CheckStart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AcceptanceCheck {
+    /// Runs one isolated contract workload on the managed devnet.
+    Contract {
+        /// Check identifier.
+        id: String,
+        /// Reviewed contract behavior, not an arbitrary RPC program.
+        case: ContractCase,
+        /// Total workload budget including all submissions and observations.
+        timeout: Span,
+        /// Optional fork-relative observation window.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
+    /// Runs one signed-transaction workload on the managed devnet.
+    Transaction {
+        /// Check identifier.
+        id: String,
+        /// Reviewed transaction behavior.
+        case: TransactionCase,
+        /// Total workload budget.
+        timeout: Span,
+        /// Optional fork-relative observation window.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
+    /// Runs one deployment-runtime workload on the managed devnet.
+    Runtime {
+        /// Check identifier.
+        id: String,
+        /// Reviewed runtime behavior.
+        case: RuntimeCase,
+        /// Total workload budget.
+        timeout: Span,
+        /// Optional fork-relative observation window.
+        #[serde(default)]
+        start: Option<CheckStart>,
+    },
     /// Verifies blob derivation and chain rules across L1 Glamsterdam.
     GlamsterdamBlobTransfers {
         /// Prefix for stable assertion result identifiers.
@@ -718,7 +754,10 @@ impl AcceptanceCheck {
     /// Returns the check identifier.
     pub fn id(&self) -> &str {
         match self {
-            Self::GlamsterdamBlobTransfers { id, .. }
+            Self::Contract { id, .. }
+            | Self::Transaction { id, .. }
+            | Self::Runtime { id, .. }
+            | Self::GlamsterdamBlobTransfers { id, .. }
             | Self::ChainId { id, .. }
             | Self::HeadProgress { id, .. }
             | Self::HeadsConverge { id, .. }
@@ -731,6 +770,9 @@ impl AcceptanceCheck {
     /// Returns the check kind.
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::Contract { .. } => "contract",
+            Self::Transaction { .. } => "transaction",
+            Self::Runtime { .. } => "runtime",
             Self::GlamsterdamBlobTransfers { .. } => "glamsterdam_blob_transfers",
             Self::ChainId { .. } => "chain_id",
             Self::HeadProgress { .. } => "head_progress",
@@ -744,7 +786,10 @@ impl AcceptanceCheck {
     /// Returns the check timeout.
     pub const fn timeout(&self) -> Duration {
         match self {
-            Self::GlamsterdamBlobTransfers { timeout, .. }
+            Self::Contract { timeout, .. }
+            | Self::Transaction { timeout, .. }
+            | Self::Runtime { timeout, .. }
+            | Self::GlamsterdamBlobTransfers { timeout, .. }
             | Self::ChainId { timeout, .. }
             | Self::HeadProgress { timeout, .. }
             | Self::HeadsConverge { timeout, .. }
@@ -758,7 +803,10 @@ impl AcceptanceCheck {
     pub const fn start(&self) -> Option<&CheckStart> {
         match self {
             Self::GlamsterdamBlobTransfers { .. } => None,
-            Self::ChainId { start, .. }
+            Self::Contract { start, .. }
+            | Self::Transaction { start, .. }
+            | Self::Runtime { start, .. }
+            | Self::ChainId { start, .. }
             | Self::HeadProgress { start, .. }
             | Self::HeadsConverge { start, .. }
             | Self::SafeHeadProgress { start, .. }
@@ -776,6 +824,18 @@ impl AcceptanceCheck {
             scenario.timeout.0,
         )?;
         let endpoints = match self {
+            Self::Contract { case, .. } => {
+                case.validate(scenario)?;
+                case.required_roles().to_vec()
+            }
+            Self::Transaction { case, .. } => {
+                case.validate(scenario)?;
+                case.required_roles().to_vec()
+            }
+            Self::Runtime { case, .. } => {
+                case.validate(scenario)?;
+                case.required_roles().to_vec()
+            }
             Self::GlamsterdamBlobTransfers { .. } => Vec::new(),
             Self::ChainId { endpoint, .. }
             | Self::HeadProgress { endpoint, .. }
@@ -814,8 +874,11 @@ impl AcceptanceCheck {
                 "l1" | "beacon"
                     | "builder"
                     | "builder-consensus"
+                    | "builder-flashblocks"
+                    | "builder-metrics"
                     | "validator"
                     | "validator-consensus"
+                    | "validator-metrics"
                     | "rpc"
                     | "shadow"
             ) {
@@ -862,6 +925,17 @@ impl AcceptanceCheck {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Whether execution requires resources owned by this invocation.
+    pub const fn requires_managed(&self) -> bool {
+        matches!(
+            self,
+            Self::Contract { .. }
+                | Self::Transaction { .. }
+                | Self::Runtime { .. }
+                | Self::GlamsterdamBlobTransfers { .. }
+        )
     }
 
     /// Expands this configured check into stable portable result identifiers.

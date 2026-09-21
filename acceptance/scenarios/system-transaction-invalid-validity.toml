@@ -1,0 +1,17 @@
+schema_version = 1
+id = "system-transaction-invalid-validity"
+description = "Malformed validity batches rejected before forwarding"
+timeout = "6m"
+[ci]
+suite = "extended"
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 0 }
+cobalt = { at_block = 0 }
+denim = { at_block = 0 }
+zenith = { at_block = 0 }
+[[checks]]
+id = "invalid-validity"
+kind = "transaction"
+case = "invalid_validity_batches"
+timeout = "3m"

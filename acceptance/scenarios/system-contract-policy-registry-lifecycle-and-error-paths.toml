@@ -1,0 +1,21 @@
+schema_version = 1
+id = "system-contract-policy-registry-lifecycle-and-error-paths"
+description = "External RPC contract acceptance for policy_registry_lifecycle_and_error_paths"
+timeout = "5m"
+
+[ci]
+suite = "extended"
+
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+
+[[checks]]
+id = "policy-registry-lifecycle-and-error-paths"
+kind = "contract"
+case = "policy_registry_lifecycle_and_error_paths"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }

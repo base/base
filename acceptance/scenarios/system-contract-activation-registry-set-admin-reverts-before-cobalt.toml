@@ -1,0 +1,18 @@
+schema_version = 1
+id = "system-contract-admin-before-cobalt"
+description = "setAdmin remains disabled between Beryl and Cobalt"
+timeout = "5m"
+[ci]
+suite = "extended"
+[devnet.l2.forks]
+azul = { at_block = 0 }
+beryl = { at_block = 1 }
+cobalt = { disabled = true }
+denim = { disabled = true }
+zenith = { disabled = true }
+[[checks]]
+id = "activation-registry-set-admin-reverts-before-cobalt"
+kind = "contract"
+case = "activation_registry_set_admin_reverts_before_cobalt"
+timeout = "3m"
+start = { after_fork = "beryl", chain = "l2" }
