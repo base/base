@@ -35,7 +35,7 @@ pub enum BatcherCommands {
 #[derive(Debug, Args)]
 pub struct BatcherStatusArgs {
     /// Batcher admin RPC URL. Overrides `batcher_rpc` from the selected config.
-    #[arg(long = "batcher-rpc", value_name = "URL")]
+    #[arg(long = "batcher-rpc", env = "BASECTL_BATCHER_RPC", value_name = "URL")]
     pub batcher_rpc: Option<Url>,
     /// Emit a structured JSON status instead of pretty text.
     #[arg(long)]
@@ -46,7 +46,7 @@ pub struct BatcherStatusArgs {
 #[derive(Debug, Args)]
 pub struct BatcherActionArgs {
     /// Batcher admin RPC URL. Overrides `batcher_rpc` from the selected config.
-    #[arg(long = "batcher-rpc", value_name = "URL")]
+    #[arg(long = "batcher-rpc", env = "BASECTL_BATCHER_RPC", value_name = "URL")]
     pub batcher_rpc: Option<Url>,
     /// Skip the interactive confirmation prompt.
     #[arg(long)]

@@ -332,14 +332,14 @@ Batcher inspection and control commands, served by the batcher admin RPC.
   so its frames become eligible for submission. It fails while the batcher is
   stopped.
 
-The admin RPC URL comes from `--batcher-rpc`, then from `batcher_rpc` in the
-selected config. The `mainnet` and `sepolia` presets default to
-`http://127.0.0.1:6545`. The `devnet` preset leaves it unset because its
-conductor already listens on that port, so devnet needs `--batcher-rpc`.
+The admin RPC URL comes from the `--batcher-rpc` flag, then the
+`BASECTL_BATCHER_RPC` environment variable, then the selected config's
+`batcher_rpc` field. The built-in presets ship without a `batcher_rpc` because
+the batcher admin server is internal, so one of the three must be provided.
 
 | Flag                  | Description                                                                     |
 | --------------------- | ------------------------------------------------------------------------------- |
-| `--batcher-rpc <URL>` | Batcher admin RPC URL. Overrides `batcher_rpc` from the selected config.        |
+| `--batcher-rpc <URL>` | Batcher admin RPC URL. Also `BASECTL_BATCHER_RPC` or config `batcher_rpc`.      |
 | `--json`              | For `status`, emit a structured JSON status instead of the pretty table output. |
 
 Destructive batcher commands also support:
@@ -673,11 +673,13 @@ basectl -c devnet sequencer start op-conductor-0 0x11111111111111111111111111111
 ### `basectl batcher`
 
 ```sh
+# Show the batcher state, as JSON
+basectl -c sepolia batcher status --batcher-rpc http://your-batcher.example/ --json | jq .
+
+# The commands below rely on `BASECTL_BATCHER_RPC` or `batcher_rpc` from the selected config
+
 # Show the batcher state
 basectl -c sepolia batcher status
-
-# Show the state of a batcher reached through an explicit admin RPC URL, as JSON
-basectl -c sepolia batcher status --batcher-rpc http://10.0.0.12:6545 --json | jq .
 
 # Stop batch submission
 basectl -c sepolia batcher stop --yes

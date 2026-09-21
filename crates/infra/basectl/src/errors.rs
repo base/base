@@ -370,7 +370,8 @@ pub struct MissingConsensusRpcError {
 #[error(
     "batcher commands need a batcher admin RPC URL.\n\
      The '{config_name}' config does not set `batcher_rpc`.\n\
-     Override with `--batcher-rpc <url>` or set `batcher_rpc` in your YAML config."
+     Override with `--batcher-rpc <url>`, set `BASECTL_BATCHER_RPC`, \
+     or set `batcher_rpc` in your YAML config."
 )]
 pub struct MissingBatcherRpcError {
     /// The config name selected for the command.
