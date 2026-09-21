@@ -275,26 +275,26 @@ where
                 });
 
                 // Wait for the next processing request.
-                let recv_result = base_metrics::time!(
-                    EngineMetrics::engine_processor_recv_wait_duration_seconds(),
-                    {
-                        if self.processor.engine_state().el_sync_finished {
-                            request_channel.recv().await
-                        } else {
-                            tokio::select! {
-                                request = request_channel.recv() => request,
-                                _ = el_sync_probe_interval.tick() => {
-                                    let active_sequencer = self.resolve_bootstrap_role().await
-                                        == BootstrapRole::ActiveSequencer;
-                                    self.processor
-                                        .probe_sequencer_el_sync(active_sequencer)
-                                        .await;
-                                    continue;
-                                }
-                            }
+                let recv_wait_timer = base_metrics::timed!(
+                    EngineMetrics::engine_processor_recv_wait_duration_seconds()
+                );
+                let recv_result = if self.processor.engine_state().el_sync_finished {
+                    request_channel.recv().await
+                } else {
+                    tokio::select! {
+                        request = request_channel.recv() => request,
+                        _ = el_sync_probe_interval.tick() => {
+                            drop(recv_wait_timer);
+                            let active_sequencer = self.resolve_bootstrap_role().await
+                                == BootstrapRole::ActiveSequencer;
+                            self.processor
+                                .probe_sequencer_el_sync(active_sequencer)
+                                .await;
+                            continue;
                         }
                     }
-                );
+                };
+                drop(recv_wait_timer);
                 let Some(request) = recv_result else {
                     error!(target: "engine", "Engine processing request receiver closed unexpectedly");
                     return Err(EngineError::ChannelClosed);
