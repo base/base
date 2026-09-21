@@ -311,6 +311,7 @@ impl Report {
         }
         Ok(())
     }
+
     /// Appends one semantic scenario section to an HTML document.
     pub fn render_scenario(out: &mut String, scenario: &ScenarioResult) -> Result<()> {
         let open = scenario.outcome() != Status::Passed;
@@ -543,22 +544,27 @@ impl Report {
     pub fn status_html(status: Status) -> String {
         format!("<td class=\"{}\"><strong>{}</strong></td>", status.label(), status.label())
     }
+
     /// Serializes a JSON value for human-readable display.
     pub fn pretty_json(value: &Value) -> String {
         serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into())
     }
+
     /// Serializes a JSON value on one line.
     pub fn compact_json(value: &Value) -> String {
         serde_json::to_string(value).unwrap_or_else(|_| "null".into())
     }
+
     /// Formats an optional observation as a value or explicit gap.
     pub fn option_u64(value: Option<u64>) -> String {
         value.map_or_else(|| "gap".into(), |v| v.to_string())
     }
+
     /// Scales an integer into a bounded chart coordinate range.
     pub fn scale(value: u64, min: u64, max: u64, low: u64, high: u64) -> u64 {
         low + value.saturating_sub(min).saturating_mul(high - low) / max.saturating_sub(min).max(1)
     }
+
     /// Converts a validated identifier to a stable HTML anchor fragment.
     pub fn anchor(value: &str) -> String {
         value
@@ -566,6 +572,7 @@ impl Report {
             .map(|b| if b.is_ascii_alphanumeric() { (b as char).to_ascii_lowercase() } else { '-' })
             .collect()
     }
+
     /// Escapes untrusted text for HTML text and quoted-attribute contexts.
     pub fn escape_html(value: &str) -> String {
         value
@@ -581,6 +588,7 @@ impl Report {
             })
             .collect()
     }
+
     /// Escapes untrusted text used in Markdown content.
     pub fn markdown_text(value: &str) -> String {
         value
@@ -592,6 +600,7 @@ impl Report {
             })
             .collect()
     }
+
     /// Renders untrusted text as portable inline code without Markdown delimiter ambiguity.
     pub fn markdown_code(value: &str) -> String {
         let delimiter = "`".repeat(value.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1);
@@ -609,6 +618,7 @@ impl Report {
             .collect();
         format!("{delimiter} {text} {delimiter}")
     }
+
     /// Validates a bounded portable record identifier.
     pub fn valid_id(kind: &str, value: &str) -> Result<()> {
         if value.is_empty()
@@ -619,6 +629,7 @@ impl Report {
         }
         Ok(())
     }
+
     /// Rejects a string exceeding its byte budget.
     pub fn bounded(name: &str, value: &str, maximum: usize) -> Result<()> {
         if value.len() > maximum {
@@ -626,6 +637,7 @@ impl Report {
         }
         Ok(())
     }
+
     /// Validates a contained, URL-safe relative evidence path.
     pub fn validate_evidence_path(value: &str) -> Result<()> {
         Self::bounded("evidence path", value, 500)?;
@@ -644,6 +656,7 @@ impl Report {
         }
         Ok(())
     }
+
     /// Rejects existing evidence links which resolve outside the report bundle.
     pub fn validate_existing_evidence(run: &RunResult, directory: &Path) -> Result<()> {
         let root = directory.canonicalize().wrap_err("canonicalize report directory")?;
@@ -665,6 +678,7 @@ impl Report {
         }
         Ok(())
     }
+
     /// Rejects common credential forms; collection must still use allowlists.
     pub fn reject_secret(name: &str, value: &str) -> Result<()> {
         let lower = value.to_ascii_lowercase();
@@ -687,6 +701,7 @@ impl Report {
         }
         Ok(())
     }
+
     /// Validates bounds and credential patterns recursively in JSON display data.
     pub fn validate_value(value: &Value, depth: usize) -> Result<()> {
         if depth > 20 {
@@ -722,6 +737,9 @@ impl Report {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
     use serde_json::json;
 
     use super::*;
@@ -737,7 +755,7 @@ mod tests {
                 id: "smoke".into(),
                 status: Status::Passed,
                 duration_ms: 10,
-                config: json!({"network":"synthetic"}),
+                config: json!({ "network": "synthetic" }),
                 stages: vec![StageResult {
                     id: "setup".into(),
                     status: Status::Passed,
@@ -749,8 +767,8 @@ mod tests {
                     kind: "heads_converge".into(),
                     status,
                     duration_ms: 5,
-                    expected: json!({"max_lag":5}),
-                    observed: json!({"lag":14}),
+                    expected: json!({ "max_lag": 5 }),
+                    observed: json!({ "lag": 14 }),
                     message: "result".into(),
                     next_step: "inspect logs".into(),
                     samples: 2,
@@ -803,6 +821,7 @@ mod tests {
         );
         assert!(Report::html(&value).unwrap().contains("FAILED"));
     }
+
     #[test]
     fn escapes_hostile_content_in_both_formats() {
         let mut value = run(Status::Failed);
@@ -813,14 +832,15 @@ mod tests {
         let md = Report::markdown(&value).unwrap();
         assert!(md.contains("\\*boom\\* \\| \\[x\\]"));
     }
+
     #[test]
     fn markdown_inline_code_preserves_hostile_literal_content() {
         let mut value = run(Status::Failed);
         value.run_id = "run`tick | <b>html</b>".into();
         value.tested_sha = "rev``tick | <i>sha</i>".into();
         value.scenarios[0].checks[0].kind = "kind` | <em>x</em>".into();
-        value.scenarios[0].checks[0].expected = json!({"value":"` | <tag>"});
-        value.scenarios[0].checks[0].observed = json!({"value":"`` | </code>"});
+        value.scenarios[0].checks[0].expected = json!({ "value": "` | <tag>" });
+        value.scenarios[0].checks[0].observed = json!({ "value": "`` | </code>" });
         value.scenarios[0].checks[0].message =
             "payload [click](https://example.invalid) <img src=x>".into();
         value.scenarios[0].reproduction =
@@ -839,6 +859,7 @@ mod tests {
         assert!(markdown.contains("Evidence: ` evidence/heads.json `"));
         assert!(!markdown.contains("<img src=x>"));
     }
+
     #[test]
     fn rejects_schema_duplicates_paths_secrets_and_large_input() {
         let mut value = run(Status::Passed);
@@ -858,12 +879,14 @@ mod tests {
         value.scenarios[0].reproduction = "x".repeat(4097);
         assert!(Report::html(&value).is_err());
     }
+
     #[test]
     fn chart_breaks_lines_at_explicit_gap_and_labels_boundary() {
         let chart = Report::head_chart(&run(Status::Passed).scenarios[0]).unwrap();
         assert_eq!(chart.matches("class=\"line\"").count(), 2);
         assert!(chart.contains("gap") && chart.contains("boundary observed"));
     }
+
     #[test]
     fn empty_results_and_startup_blocked_are_not_green() {
         let mut value = run(Status::Blocked);
@@ -879,6 +902,7 @@ mod tests {
         value.scenarios.clear();
         assert!(Report::html(&value).is_err());
     }
+
     #[test]
     fn rendering_is_deterministic_and_markdown_bounded() {
         let value = run(Status::Failed);
@@ -896,6 +920,7 @@ mod tests {
         assert!(md.len() < 50 * 1024);
         assert!(md.contains("omitted"));
     }
+
     #[test]
     fn write_preserves_evidence_directory() {
         let dir = tempfile::tempdir().unwrap();
@@ -933,8 +958,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn write_rejects_symlink_destinations() {
-        use std::os::unix::fs::symlink;
-
         let dir = tempfile::tempdir().unwrap();
         let outside = tempfile::NamedTempFile::new().unwrap();
         symlink(outside.path(), dir.path().join("result.json")).unwrap();

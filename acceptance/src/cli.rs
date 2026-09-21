@@ -12,8 +12,8 @@ use serde_json::json;
 
 use crate::{
     AcceptanceOptions, AcceptanceRunner, Aggregate, CheckResult, ExpectedManifest,
-    ExpectedScenario, PublishArgs, Report, RunResult, ScenarioConfig, ScenarioResult, StageResult,
-    Status,
+    ExpectedScenario, Provisioner, PublishArgs, Report, RunResult, ScenarioConfig, ScenarioResult,
+    StageResult, Status,
 };
 
 /// Process exit classification used by CI.
@@ -225,8 +225,9 @@ impl AcceptanceCli {
             }
             AcceptanceCommand::Report { result, output } => {
                 if fs::metadata(&result)?.len() > 20 * 1024 * 1024 {
-                    bail!("result exceeds 20 MiB")
+                    bail!("result exceeds 20 MiB");
                 }
+
                 let run: RunResult = serde_json::from_slice(&fs::read(&result)?)?;
                 Report::validate(&run)?;
                 CliRun::copy_report_evidence(&result, &output, &run)?;
@@ -238,7 +239,7 @@ impl AcceptanceCli {
                 Ok(CliRun::verdict(&run))
             }
             AcceptanceCommand::Cleanup { manifest } => {
-                crate::Provisioner::recover(&manifest).await?;
+                Provisioner::recover(&manifest).await?;
                 Ok(ExitCode::Passed)
             }
             AcceptanceCommand::Publish(args) => {
@@ -259,17 +260,19 @@ impl CliRun {
                 && entries[0].file_type()?.is_dir()
                 && fs::read_dir(entries[0].path())?.next().is_none();
             if !entries.is_empty() && !only_empty_report {
-                bail!("output already exists and is not empty: {}", self.output.display())
+                bail!("output already exists and is not empty: {}", self.output.display());
             }
         }
+
         let started_at = Self::now();
         let config = ScenarioConfig::load(&self.path)?;
         if let Some(endpoints) = &self.endpoints {
             AcceptanceRunner::validate_endpoints(&config, endpoints)?;
             if self.rollup.is_none() && config.checks.iter().any(|check| check.start().is_some()) {
-                bail!("fork-window checks in attach mode require --rollup")
+                bail!("fork-window checks in attach mode require --rollup");
             }
         }
+
         fs::create_dir_all(&self.output)?;
         let identity = self.run_id.unwrap_or_else(|| format!("local-{started_at}"));
         let sha = match self.tested_sha {
@@ -400,8 +403,9 @@ impl CliRun {
     pub fn git_revision(root: &Path) -> Result<String> {
         let output = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(root).output()?;
         if !output.status.success() {
-            bail!("git rev-parse failed")
+            bail!("git rev-parse failed");
         }
+
         let mut sha = String::from_utf8(output.stdout)?.trim().to_owned();
         let dirty =
             Command::new("git").args(["status", "--porcelain"]).current_dir(root).output()?;
