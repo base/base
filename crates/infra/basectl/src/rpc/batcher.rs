@@ -2,7 +2,11 @@
 
 use std::time::Duration;
 
-use jsonrpsee::{core::client::ClientT, http_client::HttpClientBuilder, rpc_params};
+use jsonrpsee::{
+    core::client::{ClientT, Error as JsonRpcClientError},
+    http_client::HttpClientBuilder,
+    rpc_params,
+};
 use serde::{Deserialize, de::DeserializeOwned};
 use url::Url;
 
@@ -67,15 +71,60 @@ impl BatcherClient {
                 |source| BatcherCommandError::BuildClient { rpc: Self::display_url(rpc), source },
             )?;
 
-        ClientT::request(&client, method, rpc_params![]).await.map_err(|source| {
-            BatcherCommandError::Rpc { rpc: Self::display_url(rpc), method, source }
+        ClientT::request(&client, method, rpc_params![]).await.map_err(|source| match source {
+            JsonRpcClientError::Call(rejection) => BatcherCommandError::Rejected {
+                rpc: Self::display_url(rpc),
+                method,
+                message: rejection.message().to_string(),
+            },
+            source => BatcherCommandError::Rpc { rpc: Self::display_url(rpc), method, source },
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use jsonrpsee::{
+        server::{RpcModule, Server},
+        types::ErrorObjectOwned,
+    };
+
     use super::*;
+
+    #[tokio::test]
+    async fn calls_decode_answers_and_report_rejections() {
+        let mut module = RpcModule::new(());
+        module
+            .register_method("admin_getBatcherStatus", |_, _, _| {
+                serde_json::json!({ "stopped": true, "in_flight": 0, "da_backlog_bytes": 7 })
+            })
+            .unwrap();
+        module.register_method("admin_stopBatcher", |_, _, _| ()).unwrap();
+        module
+            .register_method("admin_flushBatcher", |_, _, _| {
+                Err::<(), _>(ErrorObjectOwned::owned(-32002, "batcher is stopped", None::<()>))
+            })
+            .unwrap();
+        let server = Server::builder().build("127.0.0.1:0").await.unwrap();
+        let address = server.local_addr().unwrap();
+        let handle = server.start(module);
+        let rpc = Url::parse(&format!("http://operator:secret@{address}")).unwrap();
+
+        let status = BatcherClient::status(&rpc).await.unwrap();
+        assert_eq!(status, BatcherStatus { stopped: true, in_flight: 0, da_backlog_bytes: 7 });
+
+        BatcherClient::stop(&rpc).await.unwrap();
+
+        let error = BatcherClient::flush(&rpc).await.unwrap_err().to_string();
+        assert_eq!(
+            error,
+            format!(
+                "batcher at http://{address} rejected `admin_flushBatcher`: batcher is stopped"
+            )
+        );
+
+        handle.stop().unwrap();
+    }
 
     #[test]
     fn display_url_drops_credentials_path_and_query() {

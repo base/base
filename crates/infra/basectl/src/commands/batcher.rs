@@ -27,7 +27,7 @@ pub enum BatcherCommands {
     Stop(BatcherActionArgs),
     /// Start batch submission again from the safe L2 head.
     Start(BatcherActionArgs),
-    /// Close the current channel so its frames are submitted now.
+    /// Close the current channel so its frames become eligible for submission.
     Flush(BatcherActionArgs),
 }
 
@@ -101,7 +101,7 @@ async fn run_action(
     info!(
         network = %config.name,
         rpc = %display_rpc,
-        action = action.as_str(),
+        action = %action.as_str(),
         json = args.json,
         yes = args.yes,
         "running batcher action command"
@@ -112,7 +112,7 @@ async fn run_action(
         debug!(
             network = %config.name,
             rpc = %display_rpc,
-            action = action.as_str(),
+            action = %action.as_str(),
             "batcher action confirmation declined"
         );
         return Ok(());
@@ -128,7 +128,7 @@ async fn run_action(
             error = %error,
             network = %config.name,
             rpc = %display_rpc,
-            action = action.as_str(),
+            action = %action.as_str(),
             "batcher action failed"
         );
     })?;
@@ -138,7 +138,7 @@ async fn run_action(
     info!(
         network = %config.name,
         rpc = %display_rpc,
-        action = action.as_str(),
+        action = %action.as_str(),
         "batcher action completed"
     );
     Ok(())
@@ -179,7 +179,7 @@ impl BatcherAction {
     pub const fn message(self) -> &'static str {
         match self {
             Self::Stop => "batch submission stopped, no submission in flight",
-            Self::Start => "batch submission started",
+            Self::Start => "batch submission running",
             Self::Flush => "current channel flushed",
         }
     }
@@ -311,9 +311,17 @@ mod tests {
             .unwrap();
 
         let rendered = String::from_utf8(rendered).unwrap();
-        for expected in ["mainnet", "http://127.0.0.1:6545", "false", "3", "42"] {
-            assert!(rendered.contains(expected), "missing {expected} in {rendered}");
+        for (label, value) in [
+            ("network", "mainnet"),
+            ("rpc", "http://127.0.0.1:6545"),
+            ("stopped", "false"),
+            ("in flight", "3"),
+            ("da backlog bytes", "42"),
+        ] {
+            assert!(
+                rendered.lines().any(|line| line.starts_with(label) && line.ends_with(value)),
+                "missing `{label}` row with `{value}` in {rendered}"
+            );
         }
-        assert!(!rendered.contains("secret"));
     }
 }

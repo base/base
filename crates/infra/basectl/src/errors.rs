@@ -390,6 +390,16 @@ pub enum BatcherCommandError {
         #[source]
         source: JsonRpcClientError,
     },
+    /// The batcher refused the request, for example a flush while it is stopped.
+    #[error("batcher at {rpc} rejected `{method}`: {message}")]
+    Rejected {
+        /// The batcher admin RPC URL selected for the command, without credentials.
+        rpc: String,
+        /// The admin RPC method that was rejected.
+        method: &'static str,
+        /// The reason given by the batcher.
+        message: String,
+    },
     /// A batcher admin RPC call failed.
     #[error("batcher admin RPC method `{method}` failed on {rpc}")]
     Rpc {

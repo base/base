@@ -378,7 +378,8 @@ pub struct MonitoringConfig {
     /// Optional batcher admin JSON-RPC endpoint URL.
     ///
     /// Used by the `basectl batcher` command group. The devnet preset leaves this unset
-    /// because its conductor already listens on the batcher's default admin port.
+    /// because its conductor already listens on `localhost:6545`, the port the mainnet and
+    /// sepolia presets use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batcher_rpc: Option<Url>,
     /// Live rollup upgrade configuration fetched from the consensus node when available.
