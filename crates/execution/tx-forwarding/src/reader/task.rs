@@ -2,7 +2,9 @@ use std::{fmt, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, TxHash};
-use base_execution_txpool::{NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions};
+use base_execution_txpool::{
+    BasePooledTx, NoExtensions, ValidatedTransaction, ValidatedTransactionExtensions,
+};
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
 };
@@ -37,7 +39,7 @@ pub(crate) struct DestinationReader<P: TransactionPool, E = NoExtensions> {
 impl<P, E> DestinationReader<P, E>
 where
     P: TransactionPool + 'static,
-    P::Transaction: PoolTransaction,
+    P::Transaction: PoolTransaction + BasePooledTx,
     <P::Transaction as PoolTransaction>::Consensus: Encodable2718,
     E: ValidatedTransactionExtensions<P::Transaction>,
 {
@@ -150,6 +152,7 @@ where
             transaction: ValidatedTransaction {
                 sender: *transaction.sender_ref(),
                 raw: Bytes::from(consensus.inner().encoded_2718()),
+                metering: transaction.transaction.metering().cloned(),
                 extensions: E::extract(transaction),
             },
             tx_hash: *transaction.transaction.hash(),
@@ -258,6 +261,7 @@ mod tests {
 
         assert_eq!(converted.tx_hash, *transaction.hash());
         assert_eq!(converted.transaction.sender, *transaction.sender_ref());
+        assert!(converted.transaction.metering.is_none());
         assert!(!converted.transaction.raw.is_empty(), "the envelope must be encoded");
     }
 

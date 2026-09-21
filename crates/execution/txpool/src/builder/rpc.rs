@@ -1,8 +1,9 @@
-use std::{marker::PhantomData, time::Instant};
+use std::{marker::PhantomData, sync::Arc, time::Instant};
 
 use alloy_consensus::transaction::Recovered;
 use alloy_eips::Decodable2718;
 use alloy_primitives::TxHash;
+use base_bundles::MeterBundleResponse;
 use base_common_consensus::BaseTransactionSigned;
 use base_observability_events::{
     TransactionEventProducer, TransactionEventType, transaction_event,
@@ -21,6 +22,12 @@ use crate::{
     BasePooledTransaction, NoExtensions, PoolRejectionLabel, ValidatedTransaction,
     ValidatedTransactionExtensions,
 };
+
+/// Writes inbound `insertValidatedTransaction` metering into the builder cache.
+pub trait InsertMetering: core::fmt::Debug + Send + Sync + 'static {
+    /// Stores metering for `tx_hash`.
+    fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse);
+}
 
 /// RPC interface for submitting pre-validated transactions to a block builder.
 ///
@@ -48,6 +55,7 @@ pub struct BuilderApiImpl<P, E = NoExtensions> {
     pool: P,
     accept_extensions: bool,
     max_extension_items: usize,
+    metering_cache: Option<Arc<dyn InsertMetering>>,
     _extensions: PhantomData<E>,
 }
 
@@ -60,7 +68,13 @@ impl<P> BuilderApiImpl<P, NoExtensions> {
     /// call site (`E0282`), because type-parameter defaults do not participate
     /// in inference for associated-function calls.
     pub const fn new(pool: P) -> Self {
-        Self { pool, accept_extensions: false, max_extension_items: 0, _extensions: PhantomData }
+        Self {
+            pool,
+            accept_extensions: false,
+            max_extension_items: 0,
+            metering_cache: None,
+            _extensions: PhantomData,
+        }
     }
 }
 
@@ -75,7 +89,20 @@ impl<P, E> BuilderApiImpl<P, E> {
         accept_extensions: bool,
         max_extension_items: usize,
     ) -> Self {
-        Self { pool, accept_extensions, max_extension_items, _extensions: PhantomData }
+        Self {
+            pool,
+            accept_extensions,
+            max_extension_items,
+            metering_cache: None,
+            _extensions: PhantomData,
+        }
+    }
+
+    /// Writes inbound metering into the builder cache after the pool accepts the tx.
+    #[must_use]
+    pub fn with_metering_cache(mut self, cache: Arc<dyn InsertMetering>) -> Self {
+        self.metering_cache = Some(cache);
+        self
     }
 }
 
@@ -121,8 +148,11 @@ where
         let encoded_len = tx.raw.len();
 
         let recovered = Recovered::new_unchecked(consensus_tx, sender);
-        let pool_tx = BasePooledTransaction::new(recovered, encoded_len);
-
+        let mut pool_tx = BasePooledTransaction::new(recovered, encoded_len);
+        let metering = tx.metering;
+        if let Some(ref metering) = metering {
+            pool_tx = pool_tx.with_metering(metering.clone());
+        }
         // Attach any extension data carried on the wire. This is a no-op for
         // `NoExtensions`, the default payload.
         let pool_tx = tx.extensions.apply(pool_tx).map_err(|e| {
@@ -142,6 +172,11 @@ where
 
         match result {
             Ok(_) => {
+                if let Some(metering) = metering
+                    && let Some(cache) = &self.metering_cache
+                {
+                    cache.insert_metering(tx_hash, metering);
+                }
                 self.emit_validated_insert_event(
                     TransactionEventType::TxpoolValidatedInsertAccepted,
                     tx_hash,
@@ -197,9 +232,12 @@ impl<P, E> BuilderApiImpl<P, E> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
+    use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, U256};
+    use base_bundles::MeterBundleResponse;
     use base_common_consensus::{BaseTransactionSigned, BaseTypedTransaction, TxDeposit};
     use reth_transaction_pool::noop::NoopTransactionPool;
 
@@ -257,7 +295,7 @@ mod tests {
         raw: Bytes,
         extensions: E,
     ) -> ValidatedTransaction<E> {
-        ValidatedTransaction { sender, raw, extensions }
+        ValidatedTransaction { sender, raw, metering: None, extensions }
     }
 
     // ==========================================================================
@@ -362,6 +400,54 @@ mod tests {
         let err = handler.insert_validated_transaction(tx).await.unwrap_err();
 
         assert_eq!(err.code(), ErrorCode::InternalError.code());
+    }
+
+    #[tokio::test]
+    async fn metering_does_not_require_extension_opt_in() {
+        let handler = handler();
+        let (sender, raw) = create_eip1559_tx();
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse::default());
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+
+        assert_eq!(
+            err.code(),
+            ErrorCode::InternalError.code(),
+            "metering must not be gated on experimental validity extensions"
+        );
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingMetering {
+        inserted: Mutex<Vec<(TxHash, MeterBundleResponse)>>,
+    }
+
+    impl InsertMetering for RecordingMetering {
+        fn insert_metering(&self, tx_hash: TxHash, metering: MeterBundleResponse) {
+            self.inserted.lock().expect("recording lock").push((tx_hash, metering));
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_insert_does_not_write_metering_to_the_builder_cache() {
+        let cache = Arc::new(RecordingMetering::default());
+        let handler = handler().with_metering_cache(Arc::clone(&cache) as Arc<dyn InsertMetering>);
+        let (sender, raw) = create_eip1559_tx();
+        let mut tx = validated_transaction(sender, raw, NoExtensions {});
+        tx.metering = Some(MeterBundleResponse {
+            total_gas_used: 21_000,
+            total_execution_time_us: 500,
+            ..MeterBundleResponse::default()
+        });
+
+        let err = handler.insert_validated_transaction(tx).await.unwrap_err();
+
+        assert_eq!(err.code(), ErrorCode::InternalError.code());
+        assert!(
+            cache.inserted.lock().expect("recording lock").is_empty(),
+            "rejected pool inserts must not pollute the builder metering cache"
+        );
     }
 
     #[test]

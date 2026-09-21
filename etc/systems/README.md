@@ -141,8 +141,8 @@ report artifacts.
 
 The checked-in fresh-devnet suite runs every workload on a distinct empty
 devnet, so token state, accounts, the transaction pool, and caches cannot leak
-between scenarios. It currently covers B-20 transfers (with Beryl activated at
-genesis), high-concurrency ETH transfers to new and existing recipients, and a
+between scenarios. It currently covers B-20 transfers (with the B-20 asset
+feature activated before setup), high-concurrency ETH transfers to new and existing recipients, and a
 50,000-round Blake2f precompile profile:
 
 ```sh
@@ -168,9 +168,10 @@ results/fresh-devnet/
 `metadata.json` and the load-test sidecars are directly consumable by the
 static visualizer in `base/benchmark`; link this output directory to that
 repository's ignored `output/` directory and run its normal production build.
-The real-token Uniswap V3 workload is intentionally excluded from this suite:
-it depends on funded WETH, USDC, and router contracts at Base Sepolia addresses
-and therefore belongs in a snapshot benchmark, not a blank devnet.
+Swap workloads can opt into fresh-devnet contract provisioning with
+`deploy_devnet_swap_harness: true` on a workload entry. That mode deploys a
+fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
+then auto-wires swap and real-token setup addresses before execution.
 
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the

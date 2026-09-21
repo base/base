@@ -1,5 +1,10 @@
 //! Test [`TxManager`] implementations for controlling submission outcomes in driver tests.
 
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
+
 use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
 use alloy_primitives::{Address, B256, Bloom};
 use alloy_rpc_types_eth::TransactionReceipt;
@@ -91,6 +96,40 @@ impl TxManager for NeverConfirmTxManager {
         let (tx, rx) = oneshot::channel();
         // Keep tx alive by forgetting it — rx parks forever without a result.
         std::mem::forget(tx);
+        std::future::ready(SendHandle::new(rx))
+    }
+
+    fn sender_address(&self) -> Address {
+        Address::ZERO
+    }
+}
+
+/// [`TxManager`] whose submissions stay in flight until the test confirms them.
+///
+/// Hand-rolled because tests settle submissions while they are in flight, which `mockall`
+/// expectations cannot express. Clones share the same in-flight queue: keep one in the test and
+/// hand the other to the driver.
+#[derive(Debug, Clone, Default)]
+pub struct ManualConfirmTxManager {
+    in_flight: Arc<Mutex<VecDeque<oneshot::Sender<SendResponse>>>>,
+}
+
+impl ManualConfirmTxManager {
+    /// Confirm the oldest in-flight submission at `l1_block`.
+    pub fn confirm_next(&self, l1_block: u64) {
+        let tx = self.in_flight.lock().unwrap().pop_front().expect("a submission is in flight");
+        let _ = tx.send(Ok(stub_receipt(l1_block)));
+    }
+}
+
+impl TxManager for ManualConfirmTxManager {
+    async fn send(&self, _: TxCandidate) -> SendResponse {
+        unreachable!()
+    }
+
+    fn send_async(&self, _: TxCandidate) -> impl std::future::Future<Output = SendHandle> + Send {
+        let (tx, rx) = oneshot::channel();
+        self.in_flight.lock().unwrap().push_back(tx);
         std::future::ready(SendHandle::new(rx))
     }
 

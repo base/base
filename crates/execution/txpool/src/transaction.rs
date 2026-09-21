@@ -443,6 +443,11 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
 
+    /// Returns the attached `meter_bundle` result, if any.
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        None
+    }
+
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
@@ -509,6 +514,10 @@ where
 
     fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
+    }
+
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        self.metering.as_deref()
     }
 }
 
