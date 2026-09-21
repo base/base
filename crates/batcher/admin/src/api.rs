@@ -16,16 +16,13 @@ pub trait BatcherAdminApi {
     #[method(name = "startBatcher")]
     async fn start_batcher(&self) -> RpcResult<()>;
 
-    /// Stop block ingestion; the driver task keeps running.
-    ///
-    /// Returns once no submission is in flight. Fails if some still are after the driver's
-    /// drain timeout, or if a start arrives first.
+    /// Stop block ingestion; the driver task keeps running. Does nothing if already stopped.
     #[method(name = "stopBatcher")]
     async fn stop_batcher(&self) -> RpcResult<()>;
 
     /// Flush the current encoding channel, making its frames eligible for submission.
     ///
-    /// Returns the outcome of the flush, or an error if the batcher is stopped.
+    /// Fails if the batcher is stopped.
     #[method(name = "flushBatcher")]
     async fn flush_batcher(&self) -> RpcResult<()>;
 
@@ -74,9 +71,6 @@ impl BatcherAdminApiServerImpl {
             AdminError::NotSupported(_) => -32601,
             AdminError::ChannelClosed => -32001,
             AdminError::Stopped => -32002,
-            AdminError::StopTimeout { .. }
-            | AdminError::StopSuperseded
-            | AdminError::FlushFailed(_) => -32003,
         };
         ErrorObjectOwned::owned(code, e.to_string(), None::<()>)
     }
@@ -143,16 +137,5 @@ mod tests {
     fn admin_error_stopped_uses_invalid_state_code() {
         let err = BatcherAdminApiServerImpl::admin_error(AdminError::Stopped);
         assert_eq!(err.code(), -32002);
-    }
-
-    #[test]
-    fn admin_error_failed_operation_uses_operation_failed_code() {
-        for error in [
-            AdminError::StopTimeout { in_flight: 1 },
-            AdminError::StopSuperseded,
-            AdminError::FlushFailed("boom".to_string()),
-        ] {
-            assert_eq!(BatcherAdminApiServerImpl::admin_error(error).code(), -32003);
-        }
     }
 }

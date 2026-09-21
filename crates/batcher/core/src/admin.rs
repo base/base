@@ -24,7 +24,7 @@ pub struct BatcherStatus {
 }
 
 /// Errors produced by admin operations.
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum AdminError {
     /// The driver task has exited and the command channel is closed.
     #[error("admin channel closed: driver has shut down")]
@@ -35,20 +35,6 @@ pub enum AdminError {
     /// The operation needs a running batcher, but it is stopped.
     #[error("batcher is stopped")]
     Stopped,
-    /// The batcher stopped, but submissions were still in flight after the drain timeout.
-    #[error(
-        "batcher stopped, but {in_flight} submissions were still in flight after the drain timeout"
-    )]
-    StopTimeout {
-        /// Number of submissions still in flight when the wait ended.
-        in_flight: usize,
-    },
-    /// A start arrived while the stop was still waiting for in-flight submissions.
-    #[error("stop superseded by a start")]
-    StopSuperseded,
-    /// The pipeline failed to flush. The driver exits with the same error.
-    #[error("flush failed: {0}")]
-    FlushFailed(String),
 }
 
 /// Result type alias for admin operations.
@@ -65,13 +51,13 @@ pub enum AdminCommand {
     },
     /// Stop block ingestion; the driver task keeps running.
     Stop {
-        /// Answered once no submission is in flight, or with an error after the drain timeout.
+        /// Answered once the driver has applied the command.
         #[debug(skip)]
         reply: oneshot::Sender<AdminResult<()>>,
     },
     /// Flush the current encoding channel.
     Flush {
-        /// Answered with the outcome of the pipeline flush.
+        /// Answered once the pipeline is flushed, or with an error if the batcher is stopped.
         #[debug(skip)]
         reply: oneshot::Sender<AdminResult<()>>,
     },
@@ -122,16 +108,16 @@ impl AdminHandle {
 
     /// Stop block ingestion; the driver task keeps running.
     ///
-    /// Returns once no submission is in flight. If some are still in flight after the
-    /// driver's drain timeout, returns [`AdminError::StopTimeout`]; the batcher stays stopped.
-    /// If a start arrives first, returns [`AdminError::StopSuperseded`].
+    /// In-flight submissions continue to resolve; no new blocks are ingested
+    /// until [`start`](Self::start) is called. Does nothing if the batcher is already stopped.
     pub async fn stop(&self) -> AdminResult<()> {
         self.request(|reply| AdminCommand::Stop { reply }).await
     }
 
     /// Flush the current encoding channel, making its frames eligible for submission.
     ///
-    /// Returns the outcome of the pipeline flush. It does not wait for L1 inclusion.
+    /// Returns [`AdminError::Stopped`] if the batcher is stopped. It does not wait for L1
+    /// inclusion.
     pub async fn flush(&self) -> AdminResult<()> {
         self.request(|reply| AdminCommand::Flush { reply }).await
     }

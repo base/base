@@ -7,16 +7,16 @@ use std::{
 
 use alloy_primitives::Address;
 use base_batcher_core::{
-    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle,
-    DerivationStatus, NoopThrottleClient, ThrottleController,
+    AdminError, AdminHandle, BatchDriver, BatchDriverConfig, DaThrottle, DerivationStatus,
+    NoopThrottleClient, ThrottleController,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, NeverConfirmTxManager,
-        PendingL1HeadSource, Recorded, SubmissionStub, TrackingPipeline, TrackingSource,
+        DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, PendingL1HeadSource,
+        Recorded, SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
 use base_batcher_encoder::{
-    BatchPipeline, BatchSubmission, ChannelLimit, DerivationReconciliation, ReorgError, StepError,
-    StepResult, SubmissionId,
+    BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
+    SubmissionId,
 };
 use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
 use base_common_consensus::BaseBlock;
@@ -206,10 +206,10 @@ fn test_stopped_drops_block_and_flush_events() {
     });
 }
 
-/// A stop is answered only once the submissions in flight have settled, and the
-/// driver keeps serving other admin requests while it waits.
+/// A stop does not wait for the submissions in flight. They keep settling while the
+/// batcher is stopped, and the status reports how many remain.
 #[test]
-fn test_stop_waits_for_in_flight_submissions() {
+fn test_stop_leaves_in_flight_submissions_to_settle() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let mut pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
         pipeline.submissions.push_back(SubmissionStub::stub());
@@ -220,105 +220,16 @@ fn test_stop_waits_for_in_flight_submissions() {
             DriverFixture::build(ctx.clone(), pipeline, tx_manager.clone()).with_admin_rx(admin_rx);
         let handle = ctx.spawn(driver.run());
 
-        // Request a stop while the stub is in flight. It must not answer yet.
-        let mut stop = ctx.spawn({
-            let admin_handle = admin_handle.clone();
-            async move { admin_handle.stop().await }
-        });
-        ctx.sleep(Duration::from_millis(1)).await;
-        assert!(futures::poll!(&mut stop).is_pending());
-
-        // Check that the driver still answers other admin requests while the stop waits.
+        // Stop while the stub is in flight.
+        admin_handle.stop().await.unwrap();
         let status = admin_handle.get_status().await.unwrap();
         assert!(status.stopped);
         assert_eq!(status.in_flight, 1);
 
-        // Confirm the submission so the stop can answer.
+        // Confirm the submission and let the driver process the receipt.
         tx_manager.confirm_next(1);
-        assert!(stop.await.unwrap().is_ok());
-        assert_eq!(admin_handle.get_status().await.unwrap().in_flight, 0);
-
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-    });
-}
-
-/// If submissions are still in flight after the drain timeout, the stop reports
-/// it and the batcher stays stopped.
-#[test]
-fn test_stop_times_out_and_stays_stopped() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let mut pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
-        pipeline.submissions.push_back(SubmissionStub::stub());
-        let (admin_handle, admin_rx) = AdminHandle::channel();
-
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager)
-            .with_admin_rx(admin_rx);
-        let handle = ctx.spawn(driver.run());
-
-        let result = admin_handle.stop().await;
-
-        assert!(matches!(result, Err(AdminError::StopTimeout { in_flight: 1 })));
-        assert!(admin_handle.get_status().await.unwrap().stopped);
-
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-    });
-}
-
-/// A start received while a stop is still waiting wins: the batcher runs again
-/// and the stop reports that it was superseded.
-#[test]
-fn test_start_supersedes_pending_stop() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let mut pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
-        pipeline.submissions.push_back(SubmissionStub::stub());
-        let (admin_handle, admin_rx) = AdminHandle::channel();
-
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager)
-            .with_admin_rx(admin_rx);
-        let handle = ctx.spawn(driver.run());
-
-        // Request a stop that cannot complete because the stub never confirms.
-        let stop = ctx.spawn({
-            let admin_handle = admin_handle.clone();
-            async move { admin_handle.stop().await }
-        });
         ctx.sleep(Duration::from_millis(1)).await;
-
-        admin_handle.start().await.unwrap();
-
-        assert!(matches!(stop.await.unwrap(), Err(AdminError::StopSuperseded)));
-        assert!(!admin_handle.get_status().await.unwrap().stopped);
-
-        ctx.cancel();
-        assert!(handle.await.unwrap().is_ok());
-    });
-}
-
-/// Stop requests that arrive while an earlier one is waiting share its deadline, so repeating
-/// the call cannot extend the wait.
-#[test]
-fn test_repeated_stops_share_the_deadline() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let mut pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())));
-        pipeline.submissions.push_back(SubmissionStub::stub());
-        let (admin_handle, admin_rx) = AdminHandle::channel();
-
-        let driver = DriverFixture::build(ctx.clone(), pipeline, NeverConfirmTxManager)
-            .with_admin_rx(admin_rx);
-        let handle = ctx.spawn(driver.run());
-
-        let first = ctx.spawn({
-            let admin_handle = admin_handle.clone();
-            async move { admin_handle.stop().await }
-        });
-        ctx.sleep(Duration::from_millis(5)).await;
-        let second = admin_handle.stop().await;
-
-        assert!(matches!(first.await.unwrap(), Err(AdminError::StopTimeout { in_flight: 1 })));
-        assert!(matches!(second, Err(AdminError::StopTimeout { in_flight: 1 })));
-        assert_eq!(ctx.now(), Duration::from_millis(10));
+        assert_eq!(admin_handle.get_status().await.unwrap().in_flight, 0);
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
@@ -368,28 +279,5 @@ fn test_flush_is_rejected_while_stopped() {
 
         ctx.cancel();
         assert!(handle.await.unwrap().is_ok());
-    });
-}
-
-/// A flush failure is fatal for the driver; the admin caller must still get the error.
-#[test]
-fn test_flush_failure_is_reported_before_the_driver_exits() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let pipeline = TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default())))
-            .with_flush_error(StepError::BlockExceedsChannelLimit {
-                cursor: 0,
-                limit: ChannelLimit::RlpBytes { required: 1, maximum: 0 },
-            });
-        let (admin_handle, admin_rx) = AdminHandle::channel();
-
-        let driver =
-            DriverFixture::build(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .with_admin_rx(admin_rx);
-        let handle = ctx.spawn(driver.run());
-
-        let result = admin_handle.flush().await;
-
-        assert!(matches!(result, Err(AdminError::FlushFailed(_))));
-        assert!(matches!(handle.await.unwrap(), Err(BatchDriverError::Step(_))));
     });
 }

@@ -19,7 +19,7 @@ pub enum DriverEvent {
     /// If the ack is set, it fires once every frame resulting from this flush has been
     /// encoded and handed to the tx manager.
     SourceFlush(Option<oneshot::Sender<()>>),
-    /// Admin requested a force-flush of the current channel; answered with the flush outcome.
+    /// Admin requested a force-flush of the current channel; answered once the pipeline is flushed.
     AdminFlush(oneshot::Sender<AdminResult<()>>),
     /// L2 reorganisation detected.
     Reorg,

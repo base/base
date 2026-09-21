@@ -16,9 +16,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    AdminCommand, AdminError, AdminResult, BatchDriverConfig, BatchDriverError, BatcherStatus,
-    DaThrottle, DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController,
-    event::DriverEvent,
+    AdminCommand, AdminError, BatchDriverConfig, BatchDriverError, BatcherStatus, DaThrottle,
+    DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
 /// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
@@ -91,8 +90,8 @@ where
     safe_head: Option<BlockInfo>,
     /// Ordered derivation-progress snapshots.
     derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
-    /// Maximum wall-clock time to wait for in-flight submissions to settle, when draining
-    /// on cancellation or source exhaustion and when an admin stop waits for them.
+    /// Maximum wall-clock time to wait for in-flight submissions to settle
+    /// when draining on cancellation or source exhaustion.
     drain_timeout: Duration,
     /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     stopped: bool,
@@ -105,10 +104,6 @@ where
     /// Acknowledgements for in-progress flushes, fired once encoding and submission both
     /// report no further ready work for the current channel (see [`Self::run`]).
     pending_flush_acks: Vec<oneshot::Sender<()>>,
-    /// Admin stop requests waiting for in-flight submissions to settle.
-    pending_stop_replies: Vec<oneshot::Sender<AdminResult<()>>>,
-    /// When the waiting stop requests give up; set while `pending_stop_replies` is not empty.
-    stop_deadline: Option<Duration>,
 }
 
 impl<R, P, S, TM, TC, L> BatchDriver<R, P, S, TM, TC, L>
@@ -160,8 +155,6 @@ where
             admin_rx: None,
             force_blobs_when_throttling: config.force_blobs_when_throttling,
             pending_flush_acks: Vec::new(),
-            pending_stop_replies: Vec::new(),
-            stop_deadline: None,
         }
     }
 
@@ -271,7 +264,6 @@ where
                     let _ = ack.send(());
                 }
             }
-            self.settle_stop();
 
             if shutting_down {
                 self.submissions
@@ -306,13 +298,8 @@ where
                     debug!("flush signal received, released channel artifacts");
                 }
                 DriverEvent::AdminFlush(reply) => {
-                    // Answer the caller first because a flush failure stops the driver.
-                    let result = self.pipeline.flush();
-                    let _ = reply.send(match &result {
-                        Ok(()) => Ok(()),
-                        Err(error) => Err(AdminError::FlushFailed(error.to_string())),
-                    });
-                    result?;
+                    self.pipeline.flush()?;
+                    let _ = reply.send(Ok(()));
                     debug!("admin flush applied, released channel artifacts");
                 }
                 DriverEvent::Reorg => {
@@ -483,32 +470,27 @@ where
         self.pending_flush_acks.clear();
     }
 
-    /// Stop block ingestion and answer `reply` once no submission is in flight.
-    fn on_admin_stop(&mut self, reply: oneshot::Sender<AdminResult<()>>) {
-        // Reset the pipeline on the first stop only. A repeated stop just joins the wait below.
-        if !self.stopped {
-            self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
-            self.stopped = true;
-            info!(stopped = true, "batcher stopped via admin");
-        }
-
-        // Park the reply until nothing is in flight. Repeated stops share the running deadline.
-        self.pending_stop_replies.push(reply);
-        self.stop_deadline.get_or_insert_with(|| self.runtime.now() + self.drain_timeout);
-        self.settle_stop();
-    }
-
-    /// Start block ingestion again from the safe head and answer `reply`.
-    fn on_admin_start(&mut self, reply: oneshot::Sender<AdminResult<()>>) {
-        // Leave a running batcher alone. Re-anchoring its source would replay blocks the
-        // pipeline already holds.
-        if !self.stopped {
-            let _ = reply.send(Ok(()));
+    /// Stop block ingestion and drop the buffered pipeline state.
+    ///
+    /// Submissions already in flight keep settling.
+    fn on_admin_stop(&mut self) {
+        // Leave a stopped batcher alone. It holds nothing to reset.
+        if self.stopped {
             return;
         }
 
-        // Fail any stop still waiting since this start supersedes it.
-        self.answer_stop_requests(Err(AdminError::StopSuperseded));
+        self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
+        self.stopped = true;
+        info!(stopped = true, "batcher stopped via admin");
+    }
+
+    /// Start block ingestion again from the safe head.
+    fn on_admin_start(&mut self) {
+        // Leave a running batcher alone. Re-anchoring its source would replay blocks the
+        // pipeline already holds.
+        if !self.stopped {
+            return;
+        }
 
         if let Some(safe_head) = self.safe_head {
             self.source.reset_catchup(safe_head);
@@ -521,25 +503,6 @@ where
             info!(stopped = false, "batcher started via admin");
         }
         self.stopped = false;
-
-        let _ = reply.send(Ok(()));
-    }
-
-    /// Answer the pending stop requests once no submission is in flight.
-    fn settle_stop(&mut self) {
-        if self.submissions.in_flight_count() > 0 {
-            return;
-        }
-
-        self.answer_stop_requests(Ok(()));
-    }
-
-    /// Answer every pending stop request with `result`.
-    fn answer_stop_requests(&mut self, result: AdminResult<()>) {
-        self.stop_deadline = None;
-        for reply in self.pending_stop_replies.drain(..) {
-            let _ = reply.send(result.clone());
-        }
     }
 
     /// Block on the next external event using a biased `tokio::select!`.
@@ -553,21 +516,15 @@ where
     ///
     /// [`AdminCommand::Stop`] immediately resets the pipeline, then drops
     /// `Block` and `Flush` source events until [`AdminCommand::Start`] is
-    /// received. It is answered once no submission is in flight, or with
-    /// [`AdminError::StopTimeout`] after `drain_timeout`; the wait never
-    /// blocks the loop. Reorg events propagate regardless of the stopped state. On
-    /// start the source is reset to catch up sequentially from the last
-    /// known safe L2 head; starting a running batcher does nothing.
+    /// received. Reorg events propagate regardless of the stopped state. On
+    /// start the source is reset to catch up sequentially from the last known
+    /// safe L2 head. Stopping a stopped batcher or starting a running one does
+    /// nothing. Each command is answered once it has been applied.
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
-            // Arm the stop timer only while a stop request is waiting.
-            let stop_timeout = self
-                .stop_deadline
-                .map(|deadline| self.runtime.sleep(deadline.saturating_sub(self.runtime.now())));
-
             let event = tokio::select! {
                 biased;
 
@@ -581,8 +538,14 @@ where
                         AdminCommand::Flush { reply } => {
                             return Ok(DriverEvent::AdminFlush(reply));
                         }
-                        AdminCommand::Stop { reply } => self.on_admin_stop(reply),
-                        AdminCommand::Start { reply } => self.on_admin_start(reply),
+                        AdminCommand::Stop { reply } => {
+                            self.on_admin_stop();
+                            let _ = reply.send(Ok(()));
+                        }
+                        AdminCommand::Start { reply } => {
+                            self.on_admin_start();
+                            let _ = reply.send(Ok(()));
+                        }
                         AdminCommand::SetThrottle { strategy, config } => {
                             self.throttle.set_controller(
                                 ThrottleController::new(config, strategy)
@@ -607,20 +570,6 @@ where
                         }
                     }
                     // Await the next real event. Only a flush on a running batcher returns above.
-                    continue;
-                }
-
-                // Fail the waiting stop requests once the deadline passes. The batcher stays
-                // stopped.
-                _ = async {
-                    match stop_timeout {
-                        Some(timeout) => timeout.await,
-                        None => std::future::pending().await,
-                    }
-                } => {
-                    let in_flight = self.submissions.in_flight_count();
-                    warn!(in_flight = %in_flight, "stop timed out waiting for in-flight submissions");
-                    self.answer_stop_requests(Err(AdminError::StopTimeout { in_flight }));
                     continue;
                 }
 
