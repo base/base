@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    SequencerActor,
+    NodeOperatingMode, SequencerActor,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -27,8 +27,7 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
     let rollup_config = Arc::new(RollupConfig::default());
     let recovery_mode = RecoveryModeGuard::new(false);
     let engine_client = Arc::new(MockSequencerEngineClient::new());
-    let mut unsafe_payload_gossip_client = MockUnsafePayloadGossipClient::new();
-    unsafe_payload_gossip_client.expect_seals_privately().return_const(false);
+    let unsafe_payload_gossip_client = MockUnsafePayloadGossipClient::new();
     SequencerActor {
         admin_api_rx,
         builder: PayloadBuilder {
@@ -42,7 +41,7 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
         conductor: None,
         engine_client,
         is_active: true,
-        shadow_blocks_per_cycle: None,
+        mode: NodeOperatingMode::Sequencer,
         shadow_funding: None,
         recovery_mode,
         rollup_config,
