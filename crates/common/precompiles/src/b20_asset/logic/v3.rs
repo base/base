@@ -1591,9 +1591,8 @@ mod tests {
         let mut tok = token();
         fund(&mut tok, ALICE, U256::from(10u64));
 
-        let err = LOGIC
-            .transfer_from(&mut tok, BOB, ALICE, TOKEN, U256::from(1u64), true)
-            .unwrap_err();
+        let err =
+            LOGIC.transfer_from(&mut tok, BOB, ALICE, TOKEN, U256::from(1u64), true).unwrap_err();
 
         assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
     }

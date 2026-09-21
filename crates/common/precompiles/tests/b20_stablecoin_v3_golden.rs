@@ -29,8 +29,8 @@ use base_common_genesis::BaseUpgrade;
 use base_common_precompiles::{
     B20_MAX_SUPPLY_CAP, B20PolicyType, B20StablecoinInit, B20StablecoinStorage, B20StablecoinToken,
     B20TokenRole, FakePolicyAccounting, IB20, IB20Stablecoin, NoopPrecompileCallObserver,
-    PolicyVersion, Stablecoin, StablecoinV3, StablecoinVersion, StablecoinVersions, TokenAccounting,
-    UpgradeGatedStorageFeatures,
+    PolicyVersion, Stablecoin, StablecoinV3, StablecoinVersion, StablecoinVersions,
+    TokenAccounting, UpgradeGatedStorageFeatures,
 };
 use base_precompile_storage::{BasePrecompileError, HashMapStorageProvider, StorageCtx};
 
