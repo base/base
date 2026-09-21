@@ -8,7 +8,8 @@ use super::{UpgradeSignalBlockTag, UpgradeSignalConfig, UpgradeSignalDefaults, U
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct UpgradeSignalArgs {
     /// L1 upgrade signal contract or proxy address.
-    /// Defaults to the Base Sepolia contract on base-consensus and unified base nodes.
+    /// Defaults to the network's contract for Base mainnet, Sepolia, and zeronet on
+    /// base-consensus and unified base nodes.
     #[arg(long = "upgrade-signal.contract", env = "BASE_NODE_UPGRADE_SIGNAL_CONTRACT")]
     pub contract_address: Option<Address>,
 
@@ -34,12 +35,15 @@ pub struct UpgradeSignalArgs {
 
 impl UpgradeSignalArgs {
     /// Defaults the contract for the selected L2 chain, preserving explicit CLI/env overrides.
-    /// Only Base Sepolia has a default; other chains remain opt-in.
+    /// Base mainnet, Sepolia, and zeronet have defaults; other chains remain opt-in.
     pub fn apply_chain_default(&mut self, chain_id: u64) {
-        if chain_id == 84532 {
-            self.contract_address
-                .get_or_insert(address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"));
-        }
+        let contract = match chain_id {
+            8453 => address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"),
+            84532 => address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"),
+            763360 => address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"),
+            _ => return,
+        };
+        self.contract_address.get_or_insert(contract);
     }
 
     /// Builds a schedule read configuration if the upgrade signal is enabled.
@@ -164,21 +168,28 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn defaults_base_sepolia_contract_without_changing_mode() {
+    #[rstest]
+    #[case(8453, address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"))]
+    #[case(84532, address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"))]
+    #[case(763360, address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"))]
+    fn defaults_chain_contract_without_changing_mode(
+        #[case] chain_id: u64,
+        #[case] contract: Address,
+    ) {
         let mut args = UpgradeSignalArgs::default();
 
-        args.apply_chain_default(84532);
+        args.apply_chain_default(chain_id);
 
         let config = args.config().unwrap();
-        assert_eq!(config.contract_address, address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"));
+        assert_eq!(config.contract_address, contract);
         assert_eq!(config.mode, UpgradeSignalMode::MetricsOnly);
         assert_eq!(config.l1_block_tag, UpgradeSignalBlockTag::Finalized);
     }
 
     #[rstest]
-    #[case(8453)]
+    #[case(1)]
     #[case(11155111)]
+    #[case(560048)]
     #[case(12345)]
     fn other_chains_remain_opt_in(#[case] chain_id: u64) {
         let mut args = UpgradeSignalArgs::default();
@@ -191,6 +202,8 @@ mod tests {
     #[rstest]
     #[case(84532)]
     #[case(8453)]
+    #[case(763360)]
+    #[case(12345)]
     fn chain_default_preserves_explicit_contract(#[case] chain_id: u64) {
         let contract = address!("0000000000000000000000000000000000000001");
         let mut args = UpgradeSignalArgs { contract_address: Some(contract), ..Default::default() };
@@ -201,9 +214,15 @@ mod tests {
     }
 
     #[rstest]
-    #[case(UpgradeSignalMode::StartupApply)]
-    #[case(UpgradeSignalMode::RuntimeAdmin)]
-    fn base_sepolia_default_is_used_for_startup(#[case] mode: UpgradeSignalMode) {
+    #[case(8453, address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"))]
+    #[case(84532, address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"))]
+    #[case(763360, address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"))]
+    fn chain_default_is_used_for_startup(
+        #[case] chain_id: u64,
+        #[case] contract: Address,
+        #[values(UpgradeSignalMode::StartupApply, UpgradeSignalMode::RuntimeAdmin)]
+        mode: UpgradeSignalMode,
+    ) {
         let mut args = UpgradeSignalArgs {
             mode,
             l1_block_tag: UpgradeSignalBlockTag::Safe,
@@ -213,13 +232,10 @@ mod tests {
             upgrade_signal_l1_rpc: Some(Url::parse("http://l1:8545").unwrap()),
         };
 
-        args.apply_chain_default(84532);
+        args.apply_chain_default(chain_id);
 
         let config = args.startup_config(&l1_rpc_args).unwrap().unwrap();
-        assert_eq!(
-            config.signal_config.contract_address,
-            address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f")
-        );
+        assert_eq!(config.signal_config.contract_address, contract);
         assert_eq!(config.signal_config.mode, mode);
         assert_eq!(config.signal_config.l1_block_tag, UpgradeSignalBlockTag::Safe);
     }
