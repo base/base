@@ -212,7 +212,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         privileged: bool,
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
-        let to = B20CreditRecipient::new(to)
+        let to = B20CreditRecipient::new(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(caller)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: caller }))?;
@@ -238,7 +238,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::TRANSFER)?;
         // Validate before allowance / transfer-policy-id SLOADs.
-        let to = B20CreditRecipient::new(to)
+        let to = B20CreditRecipient::new(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         let from = NonZeroAddress::new(from)
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidSender { sender: from }))?;
@@ -307,7 +307,7 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
         if !privileged {
             B20Guards::ensure_token_role(token, caller, B20TokenRole::Mint)?;
         }
-        B20CreditRecipient::new(to)
+        B20CreditRecipient::new(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         B20Guards::ensure_policy_type(token, B20PolicyType::MintReceiver, to)?;
         let supply = token.accounting().total_supply()?;
@@ -372,9 +372,9 @@ impl<S: StablecoinAccounting, A: PolicyAccounting> Stablecoin<S, A> for Stableco
     ) -> Result<()> {
         B20Guards::ensure_not_paused(token, IB20::PausableFeature::SEIZE)?;
         B20Guards::ensure_token_role(token, caller, B20TokenRole::Seize)?;
-        // A valid recipient guards against a disguised burn or a stranded B-20 balance; `from != 0`
-        // guards against a disguised mint (`Transfer(0x0, to, ...)`), matching `transfer_inner`.
-        B20CreditRecipient::new(to)
+        // A valid recipient guards against a disguised burn or a balance stranded on this token;
+        // `from != 0` guards against a disguised mint, matching `transfer_inner`.
+        B20CreditRecipient::new(to, token.token_address())
             .map_err(|_| BasePrecompileError::revert(IB20::InvalidReceiver { receiver: to }))?;
         if from == Address::ZERO {
             return Err(BasePrecompileError::revert(IB20::InvalidSender { sender: from }));
@@ -1092,8 +1092,8 @@ mod tests {
         tok.accounting_mut().set_total_supply(supply + amount).unwrap();
     }
 
-    /// Returns an uninitialized address in the structural B-20 range.
-    fn b20_prefix_address() -> Address {
+    /// Returns a B-20 address other than [`TOKEN`].
+    fn other_b20_address() -> Address {
         B20Variant::compute_address_for_discriminant(ALICE, u8::MAX, B256::repeat_byte(0x42)).0
     }
 
@@ -1154,15 +1154,25 @@ mod tests {
     }
 
     #[test]
-    fn transfer_reverts_on_b20_prefix_receiver() {
+    fn transfer_reverts_on_token_receiver() {
         let mut tok = token();
-        let receiver = b20_prefix_address();
         fund(&mut tok, ALICE, U256::from(10u64));
 
-        let err = LOGIC.transfer(&mut tok, ALICE, receiver, U256::from(1u64), true).unwrap_err();
+        let err = LOGIC.transfer(&mut tok, ALICE, TOKEN, U256::from(1u64), true).unwrap_err();
 
-        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
         assert_eq!(tok.accounting().balance_of(ALICE).unwrap(), U256::from(10u64));
+    }
+
+    #[test]
+    fn transfer_allows_another_b20_receiver() {
+        let mut tok = token();
+        let receiver = other_b20_address();
+        fund(&mut tok, ALICE, U256::from(10u64));
+
+        LOGIC.transfer(&mut tok, ALICE, receiver, U256::from(1u64), true).unwrap();
+
+        assert_eq!(tok.accounting().balance_of(receiver).unwrap(), U256::ONE);
     }
 
     #[test]
@@ -1233,16 +1243,15 @@ mod tests {
     }
 
     #[test]
-    fn transfer_from_reverts_on_b20_prefix_receiver_before_allowance() {
+    fn transfer_from_reverts_on_token_receiver_before_allowance() {
         let mut tok = token();
-        let receiver = b20_prefix_address();
         fund(&mut tok, ALICE, U256::from(10u64));
 
         let err = LOGIC
-            .transfer_from(&mut tok, BOB, ALICE, receiver, U256::from(1u64), true)
+            .transfer_from(&mut tok, BOB, ALICE, TOKEN, U256::from(1u64), true)
             .unwrap_err();
 
-        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
     }
 
     #[test]
@@ -1322,13 +1331,12 @@ mod tests {
     }
 
     #[test]
-    fn mint_reverts_on_b20_prefix_receiver() {
+    fn mint_reverts_on_token_receiver() {
         let mut tok = token();
-        let receiver = b20_prefix_address();
 
-        let err = LOGIC.mint(&mut tok, ADMIN, receiver, U256::from(1u64), true).unwrap_err();
+        let err = LOGIC.mint(&mut tok, ADMIN, TOKEN, U256::from(1u64), true).unwrap_err();
 
-        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
         assert_eq!(tok.accounting().total_supply().unwrap(), U256::ZERO);
     }
 
@@ -1439,29 +1447,27 @@ mod tests {
     }
 
     #[test]
-    fn seize_reverts_on_b20_prefix_receiver_before_sender_validation() {
+    fn seize_reverts_on_token_receiver_before_sender_validation() {
         let mut tok = token();
-        let receiver = b20_prefix_address();
         grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
 
         let err = LOGIC
-            .seize_with_memo(&mut tok, ADMIN, Address::ZERO, receiver, U256::from(1u64), MEMO)
+            .seize_with_memo(&mut tok, ADMIN, Address::ZERO, TOKEN, U256::from(1u64), MEMO)
             .unwrap_err();
 
-        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver }));
+        assert_eq!(err, BasePrecompileError::revert(IB20::InvalidReceiver { receiver: TOKEN }));
     }
 
     #[test]
-    fn seize_can_recover_a_balance_from_a_b20_prefix_address() {
+    fn seize_can_recover_a_balance_from_the_token_address() {
         let mut tok = token();
-        let source = b20_prefix_address();
-        fund(&mut tok, source, U256::from(10u64));
+        fund(&mut tok, TOKEN, U256::from(10u64));
         make_seizable(&mut tok);
         grant(&mut tok, B20TokenRole::Seize.id(), ADMIN);
 
-        LOGIC.seize_with_memo(&mut tok, ADMIN, source, BOB, U256::from(10u64), MEMO).unwrap();
+        LOGIC.seize_with_memo(&mut tok, ADMIN, TOKEN, BOB, U256::from(10u64), MEMO).unwrap();
 
-        assert_eq!(tok.accounting().balance_of(source).unwrap(), U256::ZERO);
+        assert_eq!(tok.accounting().balance_of(TOKEN).unwrap(), U256::ZERO);
         assert_eq!(tok.accounting().balance_of(BOB).unwrap(), U256::from(10u64));
     }
 
