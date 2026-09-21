@@ -29,15 +29,15 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
-    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector,
-    L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig,
-    NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
-    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
-    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
-    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
-    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
-    ValidatorEngineRequestHandler,
+    DerivationActor, DerivationDelegateClient, DerivationError, DisabledEngineDerivationClient,
+    EngineActor, EngineActorRequest, EngineConfig, EngineDerivationClient, EngineProcessor,
+    EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector, L1WatcherActor,
+    L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeMode,
+    PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
+    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
+    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
+    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
+    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -45,8 +45,8 @@ const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
 
 #[derive(Debug)]
 enum ConfiguredEngineReceiver<E: EngineClient + 'static> {
-    Validator(ValidatorEngineRequestHandler<E, QueuedEngineDerivationClient>),
-    Sequencer(SequencerEngineRequestCoordinator<E, QueuedEngineDerivationClient>),
+    Validator(ValidatorEngineRequestHandler<E>),
+    Sequencer(SequencerEngineRequestCoordinator<E>),
 }
 
 impl<E: EngineClient + 'static> EngineRequestReceiver for ConfiguredEngineReceiver<E> {
@@ -261,32 +261,21 @@ impl RollupNode {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn create_engine_actor<E: EngineClient + 'static>(
+    fn create_engine_processor<E: EngineClient + 'static>(
         &self,
         engine_client: Arc<E>,
-        cancellation_token: CancellationToken,
-        engine_request_rx: mpsc::Receiver<EngineActorRequest>,
-        derivation_client: QueuedEngineDerivationClient,
-        unsafe_head_tx: watch::Sender<L2BlockInfo>,
-        conductor: Option<Arc<dyn Conductor>>,
+        derivation_client: Box<dyn EngineDerivationClient>,
         checkpoint_client: CheckpointClient,
-    ) -> (
-        EngineActor<ConfiguredEngineReceiver<E>>,
-        EngineRpcProcessor<E>,
-        watch::Receiver<EngineState>,
-    ) {
+    ) -> (EngineProcessor<E>, EngineRpcProcessor<E>, watch::Receiver<EngineState>) {
         let engine_state = EngineState::default();
         let (engine_state_tx, engine_state_rx) = watch::channel(engine_state);
         let sequencer_engine_state_rx = engine_state_rx.clone();
         let (engine_queue_length_tx, engine_queue_length_rx) = watch::channel(0);
         let engine = Engine::new(engine_state, engine_state_tx, engine_queue_length_tx);
 
-        let mode = self.mode();
         let checkpoint_reader: Arc<dyn ForkchoiceCheckpointReader> =
             Arc::new(checkpoint_client.clone());
         let checkpoint_writer: Arc<dyn CheckpointWriter> = Arc::new(checkpoint_client);
-        let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
         let engine_processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&engine_client),
             Arc::clone(&self.config),
@@ -303,22 +292,7 @@ impl RollupNode {
             engine_queue_length_rx,
         );
 
-        let engine_handler = if mode.is_validator() {
-            ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(
-                engine_processor,
-            ))
-        } else {
-            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
-                engine_processor,
-                shadow_sequencer,
-                conductor,
-                self.sequencer_config.sequencer_stopped,
-                unsafe_head_tx,
-            ))
-        };
-        let engine_actor = EngineActor::new(cancellation_token, engine_request_rx, engine_handler);
-
-        (engine_actor, engine_rpc_processor, sequencer_engine_state_rx)
+        (engine_processor, engine_rpc_processor, sequencer_engine_state_rx)
     }
 
     /// Starts the rollup node service.
@@ -474,21 +448,29 @@ impl RollupNode {
         let engine_conductor: Option<Arc<dyn Conductor>> =
             conductor.clone().map(|c| Arc::new(c) as Arc<dyn Conductor>);
 
-        let engine_derivation_client = if self.sequencer_config.derivation_enabled() {
-            QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone())
+        let engine_derivation_client: Box<dyn EngineDerivationClient> =
+            if self.sequencer_config.derivation_enabled() {
+                Box::new(QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()))
+            } else {
+                Box::new(DisabledEngineDerivationClient)
+            };
+        let (processor, engine_rpc_processor, sequencer_engine_state_rx) = self
+            .create_engine_processor(engine_client, engine_derivation_client, checkpoint_client);
+        let mode = self.mode();
+        let shadow_sequencer = mode.is_sequencer() && self.sequencer_config.is_shadow_sequencer();
+        let engine_handler = if mode.is_validator() {
+            ConfiguredEngineReceiver::Validator(ValidatorEngineRequestHandler::new(processor))
         } else {
-            QueuedEngineDerivationClient::disabled()
-        };
-        let (engine_actor, engine_rpc_processor, sequencer_engine_state_rx) = self
-            .create_engine_actor(
-                engine_client,
-                cancellation.clone(),
-                engine_actor_request_rx,
-                engine_derivation_client,
-                unsafe_head_tx,
+            ConfiguredEngineReceiver::Sequencer(SequencerEngineRequestCoordinator::new(
+                processor,
+                shadow_sequencer,
                 engine_conductor,
-                checkpoint_client,
-            );
+                self.sequencer_config.sequencer_stopped,
+                unsafe_head_tx,
+            ))
+        };
+        let engine_actor =
+            EngineActor::new(cancellation.clone(), engine_actor_request_rx, engine_handler);
 
         // Select the concrete derivation actor implementation based on
         // RollupNode configuration.

@@ -12,37 +12,33 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{error, warn};
 
 use crate::{
-    BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
+    BuildRequest, EngineActorRequest, EngineClientError, EngineError, EngineProcessor,
+    EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
     ReconcileShadowRequest, ResetRequest, ResetRequestOutcome,
 };
 
 /// Receives validator engine requests without carrying sequencer configuration.
 #[derive(Debug)]
-pub struct ValidatorEngineRequestHandler<EngineClient_, DerivationClient>
+pub struct ValidatorEngineRequestHandler<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
-    DerivationClient: EngineDerivationClient + 'static,
 {
-    processor: EngineProcessor<EngineClient_, DerivationClient>,
+    processor: EngineProcessor<EngineClient_>,
 }
 
-impl<EngineClient_, DerivationClient> ValidatorEngineRequestHandler<EngineClient_, DerivationClient>
+impl<EngineClient_> ValidatorEngineRequestHandler<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
-    DerivationClient: EngineDerivationClient + 'static,
 {
     /// Creates a validator request receiver.
-    pub const fn new(processor: EngineProcessor<EngineClient_, DerivationClient>) -> Self {
+    pub const fn new(processor: EngineProcessor<EngineClient_>) -> Self {
         Self { processor }
     }
 }
 
-impl<EngineClient_, DerivationClient> EngineRequestReceiver
-    for ValidatorEngineRequestHandler<EngineClient_, DerivationClient>
+impl<EngineClient_> EngineRequestReceiver for ValidatorEngineRequestHandler<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
-    DerivationClient: EngineDerivationClient + 'static,
 {
     fn start(
         mut self,

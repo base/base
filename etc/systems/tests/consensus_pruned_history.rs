@@ -163,7 +163,7 @@ impl PrunedHistoryStartup {
         let processor = EngineProcessor::new_with_checkpoint(
             Arc::clone(&self.client),
             Arc::clone(&self.rollup),
-            NoopDerivationClient,
+            Box::new(NoopDerivationClient),
             engine,
             checkpoint_reader,
             Arc::new(NoopCheckpointWriter),

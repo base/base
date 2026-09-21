@@ -870,7 +870,7 @@ mod tests {
         let processor = EngineProcessor::new(
             el,
             Arc::clone(&config),
-            derivation,
+            Box::new(derivation),
             Engine::new(state, state_tx, queue_tx),
         );
         let (request_tx, request_rx) = mpsc::channel(8);
