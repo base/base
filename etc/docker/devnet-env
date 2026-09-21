@@ -70,7 +70,7 @@ L1_CL_P2P_PORT=4900
 L2_EL_BOOTNODE_P2P_PORT=9303
 L2_CL_BOOTNODE_P2P_PORT=9003
 L2_BUILDER_HTTP_PORT=7545
-# Builder RPC endpoint(s) that ingress nodes forward validity (advanced) txs to.
+# Builder RPC endpoint(s) that mempool nodes forward validity (advanced) txs to.
 # Single-sequencer default targets base-builder; the HA `up` recipe overrides
 # this to fan out to all three conductor-managed sequencers.
 VALIDITY_BUILDER_RPC_URLS=http://base-builder:7545
@@ -192,21 +192,19 @@ L2_BASE_RPC_WS_URL=ws://localhost:8646
 L2_BASE_RPC_OP_RPC_URL=http://localhost:8649
 L2_PROOFS_RPC_URL=http://localhost:8745
 L2_PROOFS_OP_RPC_URL=http://localhost:8749
-L2_INGRESS_RPC_URL=http://localhost:8080
+L2_PROXYD_RPC_URL=http://localhost:8080
 CONDUCTOR0_RPC_URL=http://localhost:6545
 CONDUCTOR1_RPC_URL=http://localhost:6546
 CONDUCTOR2_RPC_URL=http://localhost:6547
 
-# L2 Ingress Ports
-L2_INGRESS_HTTP_PORT=8080
-L2_INGRESS_HEALTH_PORT=8081
-L2_INGRESS_METRICS_PORT=9002
+# L2 Proxyd Entrypoint Ports
+L2_PROXYD_HTTP_PORT=8080
 
 # L2 Audit Archiver Ports
 AUDIT_RPC_PORT=9100
 AUDIT_METRICS_PORT=9102
 
-# Ingress Infrastructure Ports
+# Transaction Observability Infrastructure Ports
 MINIO_API_PORT=7000
 MINIO_CONSOLE_PORT=7001
 TRANSACTION_EVENTS_POSTGRES_PORT=5434

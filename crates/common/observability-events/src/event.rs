@@ -29,7 +29,7 @@ pub enum TransactionEventProducer {
     /// Base builder payload loop.
     #[serde(rename = "base-builder")]
     BaseBuilder,
-    /// Ingress RPC/audit clients.
+    /// Retired ingress-rpc producer. Retained so historical events remain readable.
     #[serde(rename = "ingress-rpc")]
     IngressRpc,
     /// base-routing proxyd.
@@ -73,6 +73,8 @@ pub enum TransactionEventType {
     /// A proxyd backend returned an error or failed before responding.
     #[serde(rename = "PROXY_BACKEND_FAILURE")]
     ProxyBackendFailure,
+    // Retired ingress-rpc lifecycle vocabulary. No active producer emits these
+    // variants; they are retained so historical audit-archiver rows still parse.
     /// Proxyd attempted to forward a transaction to ingress-rpc.
     #[serde(rename = "PROXY_INGRESS_RPC_ATTEMPT")]
     ProxyIngressRpcAttempt,

@@ -11428,64 +11428,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ingress-rpc"
-version = "0.0.0"
-dependencies = [
- "alloy-provider",
- "anyhow",
- "audit-archiver-lib",
- "base-bundles",
- "base-cli-utils",
- "base-common-network",
- "base-observability-events",
- "clap",
- "dotenvy",
- "ingress-rpc-lib",
- "jsonrpsee",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "ingress-rpc-lib"
-version = "0.0.0"
-dependencies = [
- "alloy-consensus 2.4.1",
- "alloy-eips 2.4.1",
- "alloy-network 2.4.1",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types-eth 2.4.1",
- "alloy-signer 2.4.1",
- "alloy-signer-local 2.4.1",
- "anyhow",
- "async-trait",
- "audit-archiver-lib",
- "axum 0.8.9",
- "base-bundles",
- "base-common-consensus",
- "base-common-evm",
- "base-common-network",
- "base-execution-evm",
- "base-metrics",
- "base-observability-events",
- "clap",
- "jsonrpsee",
- "metrics",
- "moka",
- "reth-rpc-eth-types",
- "reth-rpc-server-types",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "wiremock",
-]
-
-[[package]]
 name = "inlinable_string"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -24734,29 +24676,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "wiremock"
-version = "0.6.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08db1edfb05d9b3c1542e521aea074442088292f00b5f28e435c714a98f85031"
-dependencies = [
- "assert-json-diff",
- "base64 0.22.1",
- "deadpool",
- "futures",
- "http 1.4.2",
- "http-body-util",
- "hyper 1.11.0",
- "hyper-util",
- "log",
- "once_cell",
- "regex",
- "serde",
- "serde_json",
- "tokio",
- "url",
 ]
 
 [[package]]
