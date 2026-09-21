@@ -57,6 +57,11 @@ impl RpcCommand {
         execution
             .standard
             .rollup_args
+            .upgrade_signal
+            .apply_chain_default(execution_chain.chain().id());
+        execution
+            .standard
+            .rollup_args
             .upgrade_signal_l1_rpc
             .apply_default_from(&consensus_config.l1_rpc_args.l1_eth_rpc);
         consensus_config.upgrade_signal = execution.standard.rollup_args.upgrade_signal.clone();

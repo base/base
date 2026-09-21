@@ -466,7 +466,9 @@ impl ConsensusNodeArgs {
                 "overriding the L1 data-availability batcher sender filter"
             );
         }
-        let upgrade_signal_config = self.config.upgrade_signal.config();
+        let mut upgrade_signal = self.config.upgrade_signal.clone();
+        upgrade_signal.apply_chain_default(cfg.l2_chain_id.id());
+        let upgrade_signal_config = upgrade_signal.config();
         let upgrade_signal_l1_rpc = overrides.upgrade_signal_l1_rpc.clone();
         if let Some(signal_config) = &upgrade_signal_config
             && startup_mode.reads_and_applies()

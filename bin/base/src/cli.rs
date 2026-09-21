@@ -81,11 +81,20 @@ impl BaseCli {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsStr, process::Command, thread, time::Duration};
+    use std::{ffi::OsStr, process::Command};
+    #[cfg(unix)]
+    use std::{thread, time::Duration};
 
+    #[cfg(unix)]
     use axum::{Router, body::Bytes, routing::post};
     use clap::{CommandFactory, Parser};
-    use tokio::{net::TcpListener, sync::mpsc};
+    #[cfg(unix)]
+    use tokio::{
+        net::TcpListener,
+        process::Command as AsyncCommand,
+        signal::unix::{SignalKind, signal},
+        sync::{mpsc, oneshot},
+    };
 
     use super::*;
 
@@ -131,6 +140,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn exports_otlp_spans_with_independent_filter() {
         // Each exporter needs its own process because the tracing subscriber is global.
@@ -158,10 +168,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     #[ignore = "spawned by exports_otlp_spans_with_independent_filter"]
     async fn exports_otlp_child() {
         let protocol = std::env::var("BASE_OTLP_TEST_PROTOCOL").unwrap();
+        // Install before node startup so an early shutdown request cannot terminate the
+        // process before the CLI has registered its own SIGTERM listener.
+        let _sigterm = signal(SignalKind::terminate()).unwrap();
         let collector = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", collector.local_addr().unwrap());
         let (sender, mut requests) = mpsc::unbounded_channel();
@@ -187,7 +201,15 @@ mod tests {
                 }
             }),
         );
-        tokio::spawn(async move { axum::serve(collector, router).await.unwrap() });
+        let (stop_collector, collector_shutdown) = oneshot::channel();
+        let collector = tokio::spawn(async move {
+            axum::serve(collector, router)
+                .with_graceful_shutdown(async {
+                    let _ = collector_shutdown.await;
+                })
+                .await
+                .unwrap();
+        });
 
         // Keep the unified RPC command running without any external network dependency.
         let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -231,7 +253,7 @@ mod tests {
         let received = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 if node.is_finished() {
-                    panic!("node exited before OTLP export: {:?}", node.join().unwrap());
+                    break None;
                 }
                 {
                     let _span =
@@ -242,13 +264,40 @@ mod tests {
                         tracing::error_span!(target: "excluded_target", "excluded_span").entered();
                 }
                 tokio::select! {
-                    Some(body) = requests.recv() => break body,
+                    Some(body) = requests.recv() => break Some(body),
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {}
                 }
             }
         })
+        .await;
+
+        // Export may complete before the CLI starts listening for shutdown. Retry the signal
+        // until it exits, keeping the collector, upstream and data directory alive throughout.
+        // Never let the test process exit with a detached node using RocksDB's global mutexes.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while !node.is_finished() {
+                let status = AsyncCommand::new("kill")
+                    .args(["-TERM", &std::process::id().to_string()])
+                    .status()
+                    .await
+                    .unwrap();
+                assert!(status.success(), "failed to request CLI shutdown");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
         .await
-        .expect("timed out waiting for OTLP export");
+        .expect("timed out waiting for CLI shutdown");
+        let node_result = node.join();
+        stop_collector.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), collector)
+            .await
+            .expect("timed out waiting for collector shutdown")
+            .unwrap();
+        node_result.expect("CLI thread panicked").expect("CLI shutdown failed");
+        let received = received
+            .expect("timed out waiting for OTLP export")
+            .expect("node exited before OTLP export");
+
         // Protobuf string fields retain their UTF-8 bytes in both transport encodings.
         let payload = String::from_utf8_lossy(&received);
         assert!(payload.contains("included_span"), "missing enabled debug span: {payload}");
