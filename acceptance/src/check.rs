@@ -44,6 +44,8 @@ pub struct ObservationState<'a> {
     pub origin: Instant,
     /// Whether the sample collection reached its fixed report limit.
     pub samples_truncated: bool,
+    /// Whether the terminal failure was caused by unavailable observations.
+    pub observation_unavailable: bool,
 }
 
 impl<'a> ObservationState<'a> {
@@ -57,6 +59,7 @@ impl<'a> ObservationState<'a> {
             samples,
             origin,
             samples_truncated: false,
+            observation_unavailable: false,
         }
     }
 
@@ -147,7 +150,9 @@ impl RpcObserver {
         let evaluation = self.evaluate(check, endpoints, deadline, &mut state).await;
         let (status, message) = match evaluation {
             Ok(message) => (Status::Passed, message),
-            Err(error) if state.count == 0 && state.errors > 0 => {
+            Err(error)
+                if state.observation_unavailable || (state.count == 0 && state.errors > 0) =>
+            {
                 (Status::Error, error.to_string())
             }
             Err(error) => (Status::Failed, error.to_string()),
@@ -260,6 +265,7 @@ impl RpcObserver {
                 Err(error) => {
                     state.failure(&sample_role);
                     if !self.wait(deadline).await {
+                        state.observation_unavailable = true;
                         return Err(error);
                     }
                 }
@@ -267,13 +273,19 @@ impl RpcObserver {
         };
         state.observed =
             json!({"from": first.number, "last": first.number, "required_delta": minimum});
+        let mut observation_error = None;
         loop {
             if !self.wait(deadline).await {
+                if let Some(error) = observation_error {
+                    state.observation_unavailable = true;
+                    return Err(error);
+                }
                 let delta = state.observed["delta"].as_u64().unwrap_or_default();
                 bail!("head advanced {delta} blocks; required {minimum}")
             }
             match self.block(url, tag, deadline).await {
                 Ok(block) => {
+                    observation_error = None;
                     state.success(&sample_role, &block);
                     let delta = block.number.saturating_sub(first.number);
                     state.observed = json!({"from": first.number, "last": block.number, "delta": delta, "required_delta": minimum});
@@ -284,7 +296,10 @@ impl RpcObserver {
                         return Ok("head advanced".into());
                     }
                 }
-                Err(_) => state.failure(&sample_role),
+                Err(error) => {
+                    state.failure(&sample_role);
+                    observation_error = Some(error);
+                }
             }
         }
     }
@@ -301,6 +316,7 @@ impl RpcObserver {
     ) -> Result<String> {
         loop {
             let mut heads = Vec::new();
+            let mut observation_error = None;
             for role in roles {
                 let sample_role =
                     if tag == "latest" { role.clone() } else { format!("{role}:{tag}") };
@@ -309,7 +325,10 @@ impl RpcObserver {
                         state.success(&sample_role, &block);
                         heads.push((role, block));
                     }
-                    Err(_) => state.failure(&sample_role),
+                    Err(error) => {
+                        state.failure(&sample_role);
+                        observation_error = Some(error);
+                    }
                 }
             }
             if heads.len() == roles.len() {
@@ -342,9 +361,7 @@ impl RpcObserver {
                             }
                             Err(error) => {
                                 state.errors += 1;
-                                if Instant::now() >= deadline {
-                                    return Err(error);
-                                }
+                                observation_error = Some(error);
                             }
                         }
                     }
@@ -356,6 +373,10 @@ impl RpcObserver {
                 }
             }
             if !self.wait(deadline).await {
+                if let Some(error) = observation_error {
+                    state.observation_unavailable = true;
+                    return Err(error);
+                }
                 bail!("heads did not converge before deadline")
             }
         }
@@ -397,6 +418,7 @@ impl RpcObserver {
                 }
                 Err(error) => {
                     state.failure(role);
+                    state.observation_unavailable = true;
                     return Err(error.wrap_err("freshness sample unavailable"));
                 }
             }
@@ -539,6 +561,9 @@ mod tests {
     use super::{ObservationState, RpcObserver};
     use crate::{AcceptanceCheck, Span, Status};
 
+    // Socket scheduling is real time; ordinary assertions must not benchmark the CI host.
+    const RPC_BUDGET: Duration = Duration::from_secs(5);
+
     #[derive(Clone)]
     struct Reply {
         delay: Duration,
@@ -548,20 +573,29 @@ mod tests {
     async fn server(replies: Vec<Reply>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let fallback = replies
+            .last()
+            .cloned()
+            .unwrap_or_else(|| Reply { delay: Duration::ZERO, body: rpc(Value::Null) });
         let replies = Arc::new(Mutex::new(VecDeque::from(replies)));
         tokio::spawn(async move {
             loop {
                 let Ok((mut socket, _)) = listener.accept().await else { break };
                 let replies = Arc::clone(&replies);
+                let fallback = fallback.clone();
                 tokio::spawn(async move {
                     let mut request = vec![0; 8192];
                     let _ = socket.read(&mut request).await;
-                    let reply = replies
-                        .lock()
-                        .await
-                        .pop_front()
-                        .unwrap_or_else(|| Reply { delay: Duration::ZERO, body: rpc(Value::Null) });
+                    let mut reply = replies.lock().await.pop_front().unwrap_or(fallback);
                     tokio::time::sleep(reply.delay).await;
+                    if let Ok(mut body) = serde_json::from_str::<Value>(&reply.body)
+                        && let Some(offset) = body["result"]["timestamp"].as_i64()
+                    {
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                        body["result"]["timestamp"] =
+                            json!(format!("0x{:x}", now.saturating_add_signed(offset)));
+                        reply.body = body.to_string();
+                    }
                     let response = format!(
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         reply.body.len(),
@@ -578,8 +612,7 @@ mod tests {
         json!({"jsonrpc":"2.0","id":1,"result":result}).to_string()
     }
     fn block(number: u64, hash: char) -> Value {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        json!({"number":format!("0x{number:x}"),"timestamp":format!("0x{timestamp:x}"),"hash":format!("0x{}", hash.to_string().repeat(64))})
+        json!({"number":format!("0x{number:x}"),"timestamp":0,"hash":format!("0x{}", hash.to_string().repeat(64))})
     }
     fn replies(values: &[Value]) -> Vec<Reply> {
         values
@@ -589,7 +622,7 @@ mod tests {
             .collect()
     }
     fn observer() -> RpcObserver {
-        RpcObserver::new(Duration::from_millis(100), Duration::from_millis(2)).unwrap()
+        RpcObserver::new(RPC_BUDGET, Duration::from_millis(2)).unwrap()
     }
     fn progress(timeout: Duration, minimum: u64) -> AcceptanceCheck {
         AcceptanceCheck::HeadProgress {
@@ -606,13 +639,14 @@ mod tests {
         let url = server(replies(&[block(1_000_000, 'a'), block(1_000_001, 'b')])).await;
         let map = BTreeMap::from([("rpc".into(), url)]);
         let mut samples = Vec::new();
-        let result = observer()
+        let result = RpcObserver::new(RPC_BUDGET, Duration::from_millis(200))
+            .unwrap()
             .run(
-                &progress(Duration::from_millis(15), 2),
+                &progress(Duration::from_secs(1), 2),
                 &map,
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(30),
+                Instant::now() + RPC_BUDGET,
             )
             .await;
         assert_eq!(result.status, Status::Failed);
@@ -623,15 +657,53 @@ mod tests {
         let mut samples = Vec::new();
         let result = observer()
             .run(
-                &progress(Duration::from_millis(30), 2),
+                &progress(RPC_BUDGET, 2),
                 &BTreeMap::from([("rpc".into(), url)]),
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(40),
+                Instant::now() + RPC_BUDGET,
             )
             .await;
         assert_eq!(result.status, Status::Passed);
         assert_eq!(result.observed["delta"], 2);
+    }
+
+    #[tokio::test]
+    async fn progress_distinguishes_outage_from_recovered_violation() {
+        let result = run_progress(replies(&[block(10, 'a'), Value::Null])).await;
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.samples, 1);
+
+        // A single request consuming the remaining deadline is also infrastructure failure.
+        let mut delayed = replies(&[block(10, 'a'), block(11, 'b')]);
+        delayed[1].delay = RPC_BUDGET;
+        let result = run_progress(delayed).await;
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.samples, 1);
+        assert_eq!(result.rpc_errors, 1);
+
+        let result = run_progress(replies(&[block(10, 'a'), Value::Null, block(9, 'b')])).await;
+        assert_eq!(result.status, Status::Failed);
+        assert!(result.message.contains("reorged"));
+        assert!(result.rpc_errors > 0);
+
+        let result = run_progress(replies(&[block(10, 'a'), Value::Null, block(11, 'b')])).await;
+        assert_eq!(result.status, Status::Passed);
+        assert!(result.rpc_errors > 0);
+    }
+
+    async fn run_progress(script: Vec<Reply>) -> crate::CheckResult {
+        let url = server(script).await;
+        let mut samples = Vec::new();
+        observer()
+            .run(
+                &progress(Duration::from_secs(1), 1),
+                &BTreeMap::from([("rpc".into(), url)]),
+                &mut samples,
+                Instant::now(),
+                Instant::now() + RPC_BUDGET,
+            )
+            .await
     }
 
     #[tokio::test]
@@ -647,7 +719,7 @@ mod tests {
                 &roles,
                 "latest",
                 0,
-                Instant::now() + Duration::from_millis(20),
+                Instant::now() + RPC_BUDGET,
                 &mut state,
             )
             .await;
@@ -664,7 +736,7 @@ mod tests {
                     &roles,
                     "latest",
                     2,
-                    Instant::now() + Duration::from_millis(20),
+                    Instant::now() + RPC_BUDGET,
                     &mut state
                 )
                 .await
@@ -677,11 +749,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn partial_convergence_and_freshness_observations_remain_infrastructure_errors() {
+        // Exercise both unavailable heads and unavailable historical comparison blocks.
+        for script in [vec![Value::Null], vec![block(10, 'a'), Value::Null]] {
+            let left = server(replies(&script)).await;
+            let right = server(replies(&[block(10, 'a')])).await;
+            let check = AcceptanceCheck::HeadsConverge {
+                id: "converge".into(),
+                endpoints: vec!["a".into(), "b".into()],
+                head: "latest".into(),
+                max_lag_blocks: 0,
+                timeout: Span(Duration::from_secs(1)),
+                start: None,
+            };
+            let result = RpcObserver::new(RPC_BUDGET, Duration::from_secs(2))
+                .unwrap()
+                .run(
+                    &check,
+                    &BTreeMap::from([("a".into(), left), ("b".into(), right)]),
+                    &mut Vec::new(),
+                    Instant::now(),
+                    Instant::now() + RPC_BUDGET,
+                )
+                .await;
+            assert_eq!(result.status, Status::Error);
+            assert!(result.samples > 0);
+            assert_eq!(result.rpc_errors, 1);
+        }
+
+        let url = server(replies(&[block(10, 'a'), Value::Null])).await;
+        let check = AcceptanceCheck::HeadFresh {
+            id: "fresh".into(),
+            endpoint: "rpc".into(),
+            maximum_age: Span(RPC_BUDGET),
+            duration: Span(Duration::from_secs(1)),
+            timeout: Span(RPC_BUDGET),
+            start: None,
+        };
+        let result = observer()
+            .run(
+                &check,
+                &BTreeMap::from([("rpc".into(), url)]),
+                &mut Vec::new(),
+                Instant::now(),
+                Instant::now() + RPC_BUDGET,
+            )
+            .await;
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.samples, 1);
+        assert_eq!(result.rpc_errors, 1);
+    }
+
+    #[tokio::test]
     async fn block_rejects_wrong_height_and_response_cap() {
         let url = server(replies(&[block(8, 'a')])).await;
         assert!(
             observer()
-                .block(&url, "0x7", Instant::now() + Duration::from_millis(20))
+                .block(&url, "0x7", Instant::now() + RPC_BUDGET)
                 .await
                 .unwrap_err()
                 .to_string()
@@ -691,7 +815,7 @@ mod tests {
         let url = server(vec![huge]).await;
         assert!(
             observer()
-                .chain_id(&url, Instant::now() + Duration::from_millis(100))
+                .chain_id(&url, Instant::now() + RPC_BUDGET)
                 .await
                 .unwrap_err()
                 .to_string()
@@ -712,7 +836,7 @@ mod tests {
                     "rpc",
                     Duration::from_secs(1),
                     Duration::from_millis(10),
-                    Instant::now() + Duration::from_millis(20),
+                    Instant::now() + RPC_BUDGET,
                     &mut state
                 )
                 .await
@@ -729,7 +853,7 @@ mod tests {
                     "rpc",
                     Duration::from_secs(1),
                     Duration::from_millis(10),
-                    Instant::now() + Duration::from_millis(20),
+                    Instant::now() + RPC_BUDGET,
                     &mut state
                 )
                 .await
