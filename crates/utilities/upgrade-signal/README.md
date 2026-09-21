@@ -23,10 +23,17 @@ The shared CLI flags are:
 | `--upgrade-signal.mode <metrics-only\|startup-apply\|runtime-admin>` | `BASE_NODE_UPGRADE_SIGNAL_MODE` | `metrics-only` | Selects whether reads are observation-only, startup-applied, or runtime-applied. |
 | `--upgrade-signal.l1-block-tag <finalized\|safe\|latest>` | `BASE_NODE_UPGRADE_SIGNAL_L1_BLOCK_TAG` | `finalized` | Selects the L1 block tag used for contract calls. Also selects the interval between live contract reads: `finalized` 15m, `safe` 6m24s, `latest` 12s. |
 
-On Base Sepolia (L2 chain ID `84532`), `base-consensus`, `base rpc`, and `base sequencer` default to
-`0x1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f`. Explicit CLI or environment contract addresses take
-precedence. Other chains and standalone execution nodes have no default contract. This default is
-specific to the dynamic upgrade reader, not the legacy protocol-versions address in the rollup
+`base-consensus`, `base rpc`, and `base sequencer` use the following network defaults:
+
+| Network | L2 chain ID | Contract address |
+| ------- | ----------- | ---------------- |
+| Base mainnet | `8453` | `0x1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f` |
+| Base Sepolia | `84532` | `0x15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b` |
+| Base zeronet | `763360` | `0x30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da` |
+
+Explicit CLI or environment contract addresses take precedence. Other chains and standalone
+execution nodes have no default contract. These defaults are specific to the dynamic upgrade
+reader, not the legacy protocol-versions address in the rollup
 config. The mode remains `metrics-only`; select `startup-apply` or `runtime-admin` to apply upgrades.
 
 Execution-side readers also need `--upgrade-signal.l1-rpc` or
