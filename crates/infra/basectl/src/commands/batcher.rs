@@ -23,7 +23,7 @@ pub struct BatcherCommand {
 pub enum BatcherCommands {
     /// Show whether the batcher is stopped, its in-flight submissions and its DA backlog.
     Status(BatcherStatusArgs),
-    /// Stop batch submission and wait for in-flight submissions to settle.
+    /// Stop batch submission. Submissions already in flight keep settling.
     Stop(BatcherActionArgs),
     /// Start batch submission again from the safe L2 head.
     Start(BatcherActionArgs),
@@ -178,7 +178,7 @@ impl BatcherAction {
     /// Returns the result reported once the batcher has applied the action.
     pub const fn message(self) -> &'static str {
         match self {
-            Self::Stop => "batch submission stopped, no submission in flight",
+            Self::Stop => "batch submission stopped",
             Self::Start => "batch submission running",
             Self::Flush => "current channel flushed",
         }
@@ -297,7 +297,7 @@ mod tests {
                 "network": "sepolia",
                 "rpc": "http://127.0.0.1:6545",
                 "action": "stop",
-                "message": "batch submission stopped, no submission in flight",
+                "message": "batch submission stopped",
             })
         );
     }

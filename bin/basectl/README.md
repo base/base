@@ -324,6 +324,8 @@ Batcher inspection and control commands, served by the batcher admin RPC.
   `admin_getBatcherStatus`.
 - `basectl batcher stop` stops batch submission through `admin_stopBatcher`. The
   batcher drops its buffered encoding state and the process keeps running.
+  Submissions already in flight keep settling, and `status` reports how many
+  remain. It does nothing if the batcher is already stopped.
 - `basectl batcher start` starts batch submission again from the safe L2 head
   through `admin_startBatcher`. It does nothing if the batcher is already running.
 - `basectl batcher flush` closes the current channel through `admin_flushBatcher`
@@ -350,9 +352,6 @@ Destructive batcher commands also support:
 Safety notes:
 
 - `stop`, `start` and `flush` prompt with the network name and the admin RPC URL.
-- `stop` answers once no submission is in flight, which can take a few minutes.
-  If submissions are still in flight when the batcher gives up waiting, the
-  command fails and the batcher stays stopped. Check it with `status`.
 - The network name in prompts and output is only the selected config. basectl
   cannot check which chain the batcher behind the admin RPC URL serves.
 - Output, logs and errors only show the origin of the admin RPC URL, so
@@ -680,7 +679,7 @@ basectl -c sepolia batcher status
 # Show the state of a batcher reached through an explicit admin RPC URL, as JSON
 basectl -c sepolia batcher status --batcher-rpc http://10.0.0.12:6545 --json | jq .
 
-# Stop batch submission and wait for in-flight submissions to settle
+# Stop batch submission
 basectl -c sepolia batcher stop --yes
 
 # Start batch submission again

@@ -28,32 +28,27 @@ pub struct BatcherStatus {
 pub struct BatcherClient;
 
 impl BatcherClient {
-    /// Timeout of the calls the batcher answers right away.
+    /// Timeout of every batcher admin RPC call.
     pub const RPC_TIMEOUT: Duration = Duration::from_secs(10);
-
-    /// Timeout of `admin_stopBatcher`, which answers only once no submission is in flight.
-    ///
-    /// The batcher gives up after its own drain timeout, 96s with the default settings.
-    pub const STOP_TIMEOUT: Duration = Duration::from_secs(180);
 
     /// Reads the batcher runtime state via `admin_getBatcherStatus`.
     pub async fn status(rpc: &Url) -> Result<BatcherStatus, BatcherCommandError> {
-        Self::call(rpc, "admin_getBatcherStatus", Self::RPC_TIMEOUT).await
+        Self::call(rpc, "admin_getBatcherStatus").await
     }
 
     /// Stops batch submission via `admin_stopBatcher`.
     pub async fn stop(rpc: &Url) -> Result<(), BatcherCommandError> {
-        Self::call(rpc, "admin_stopBatcher", Self::STOP_TIMEOUT).await
+        Self::call(rpc, "admin_stopBatcher").await
     }
 
     /// Starts batch submission again via `admin_startBatcher`.
     pub async fn start(rpc: &Url) -> Result<(), BatcherCommandError> {
-        Self::call(rpc, "admin_startBatcher", Self::RPC_TIMEOUT).await
+        Self::call(rpc, "admin_startBatcher").await
     }
 
     /// Closes the current channel via `admin_flushBatcher`.
     pub async fn flush(rpc: &Url) -> Result<(), BatcherCommandError> {
-        Self::call(rpc, "admin_flushBatcher", Self::RPC_TIMEOUT).await
+        Self::call(rpc, "admin_flushBatcher").await
     }
 
     /// Origin-only URL for output, logs and errors so credentials never leak.
@@ -64,12 +59,14 @@ impl BatcherClient {
     async fn call<T: DeserializeOwned>(
         rpc: &Url,
         method: &'static str,
-        timeout: Duration,
     ) -> Result<T, BatcherCommandError> {
-        let client =
-            HttpClientBuilder::default().request_timeout(timeout).build(rpc.as_str()).map_err(
-                |source| BatcherCommandError::BuildClient { rpc: Self::display_url(rpc), source },
-            )?;
+        let client = HttpClientBuilder::default()
+            .request_timeout(Self::RPC_TIMEOUT)
+            .build(rpc.as_str())
+            .map_err(|source| BatcherCommandError::BuildClient {
+                rpc: Self::display_url(rpc),
+                source,
+            })?;
 
         ClientT::request(&client, method, rpc_params![]).await.map_err(|source| match source {
             JsonRpcClientError::Call(rejection) => BatcherCommandError::Rejected {
