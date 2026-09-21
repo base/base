@@ -4,7 +4,7 @@ description = "Real blob transfers across L1 Glamsterdam, followed by sustained 
 timeout = "18m"
 
 [ci]
-suite = "extended"
+suite = "pr"
 
 [devnet]
 profile = "glamsterdam"
