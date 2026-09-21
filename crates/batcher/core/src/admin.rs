@@ -124,6 +124,7 @@ impl AdminHandle {
     ///
     /// Returns once no submission is in flight. If some are still in flight after the
     /// driver's drain timeout, returns [`AdminError::StopTimeout`]; the batcher stays stopped.
+    /// If a start arrives first, returns [`AdminError::StopSuperseded`].
     pub async fn stop(&self) -> AdminResult<()> {
         self.request(|reply| AdminCommand::Stop { reply }).await
     }

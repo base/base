@@ -91,8 +91,8 @@ where
     safe_head: Option<BlockInfo>,
     /// Ordered derivation-progress snapshots.
     derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
-    /// Maximum wall-clock time to wait for in-flight submissions to settle
-    /// when draining on cancellation or source exhaustion.
+    /// Maximum wall-clock time to wait for in-flight submissions to settle, when draining
+    /// on cancellation or source exhaustion and when an admin stop waits for them.
     drain_timeout: Duration,
     /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     stopped: bool,
@@ -544,10 +544,10 @@ where
 
     /// Block on the next external event using a biased `tokio::select!`.
     ///
-    /// Admin commands are handled inline in the loop — only non-admin events
-    /// are returned to the caller. Admin commands are placed before the source
-    /// arm so control-plane operations (stop, start, flush) are never starved
-    /// by sustained block throughput.
+    /// Admin commands are handled inline in the loop. Only a flush on a running
+    /// batcher is returned to the caller, as [`DriverEvent::AdminFlush`]. Admin
+    /// commands are placed before the source arm so control-plane operations
+    /// (stop, start, flush) are never starved by sustained block throughput.
     /// Derivation-status changes are also handled before unsafe blocks so pruning and
     /// recovery cannot be starved by sequential catchup.
     ///

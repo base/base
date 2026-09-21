@@ -18,8 +18,8 @@ pub trait BatcherAdminApi {
 
     /// Stop block ingestion; the driver task keeps running.
     ///
-    /// Returns once no submission is in flight, or an error if some still are after the
-    /// driver's drain timeout; the batcher stays stopped either way.
+    /// Returns once no submission is in flight. Fails if some still are after the driver's
+    /// drain timeout, or if a start arrives first.
     #[method(name = "stopBatcher")]
     async fn stop_batcher(&self) -> RpcResult<()>;
 

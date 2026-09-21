@@ -9,9 +9,9 @@ pub struct BatchDriverConfig {
     pub inbox: alloy_primitives::Address,
     /// Maximum number of in-flight transactions before back-pressure kicks in.
     pub max_pending_transactions: usize,
-    /// Maximum time to wait for in-flight transactions to settle when draining
-    /// on cancellation or source exhaustion. Submissions that have not
-    /// confirmed within this window are abandoned.
+    /// Maximum time to wait for in-flight transactions to settle, when draining
+    /// on cancellation or source exhaustion and when an admin stop waits for them.
+    /// On shutdown, submissions that have not confirmed within this window are abandoned.
     pub drain_timeout: Duration,
     /// When `true` and DA-backlog throttling is active, force the encoder to
     /// emit blob-typed submissions even when its configured `da_type` is
