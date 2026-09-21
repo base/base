@@ -27,7 +27,7 @@ The shared CLI flags are:
 
 | Network | L2 chain ID | Contract address |
 | ------- | ----------- | ---------------- |
-| Base mainnet | `8453` | `0x1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f` |
+| Base mainnet | `8453` | `0x7480Afc8D99a5c645c247dB5A1e4a4f440e6e095` |
 | Base Sepolia | `84532` | `0x15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b` |
 | Base zeronet | `763360` | `0x30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da` |
 

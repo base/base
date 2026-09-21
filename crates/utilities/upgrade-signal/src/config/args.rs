@@ -38,7 +38,7 @@ impl UpgradeSignalArgs {
     /// Base mainnet, Sepolia, and zeronet have defaults; other chains remain opt-in.
     pub fn apply_chain_default(&mut self, chain_id: u64) {
         let contract = match chain_id {
-            8453 => address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"),
+            8453 => address!("7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"),
             84532 => address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"),
             763360 => address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"),
             _ => return,
@@ -169,7 +169,7 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case(8453, address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"))]
+    #[case(8453, address!("7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"))]
     #[case(84532, address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"))]
     #[case(763360, address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"))]
     fn defaults_chain_contract_without_changing_mode(
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case(8453, address!("1eEbd8c89be7Ac60B2363439Aa0C0D9C6a6dFD5f"))]
+    #[case(8453, address!("7480Afc8D99a5c645c247dB5A1e4a4f440e6e095"))]
     #[case(84532, address!("15B721B12CF3b0C4400c8a2935A0Ae391c2eF65b"))]
     #[case(763360, address!("30e172aaC675c9fe5A64792F92C9fD4d3E7cA9Da"))]
     fn chain_default_is_used_for_startup(
