@@ -17,14 +17,16 @@ use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
 use base_common_chains::Upgrades;
 use base_common_consensus::{BaseBlock, BaseTxEnvelope};
+use base_common_evm::BaseHaltReason;
 use base_common_flashblocks::Flashblock;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use rayon::prelude::*;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, Evm, FromRecoveredTx};
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{BlockReaderIdExt, StateProviderBox, StateProviderFactory};
 use reth_revm::{State, database::StateProviderDatabase};
+use revm::{Database, DatabaseCommit};
 use revm_database::states::bundle_state::BundleRetention;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 
@@ -558,6 +560,49 @@ where
         }
     }
 
+    /// Executes recovered transactions and records their pending-block data.
+    fn execute_recovered_transactions<E, ChainSpec, DB>(
+        pending_blocks_builder: &mut PendingBlocksBuilder,
+        pending_state_builder: &mut PendingStateBuilder<E, ChainSpec>,
+        txs_with_senders: Vec<(BaseTxEnvelope, Address)>,
+        transaction_index_offset: usize,
+    ) -> Result<()>
+    where
+        E: Evm<DB = DB, HaltReason = BaseHaltReason>,
+        DB: Database + DatabaseCommit,
+        E::Tx: FromRecoveredTx<BaseTxEnvelope>,
+        ChainSpec: Upgrades + Clone,
+    {
+        for (offset, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
+            let tx_hash = transaction.tx_hash();
+            let transaction_index = transaction_index_offset + offset;
+
+            pending_blocks_builder.with_transaction_sender(tx_hash, sender);
+            pending_blocks_builder.increment_nonce(sender);
+
+            let recovered_transaction = Recovered::new_unchecked(transaction, sender);
+            let executed_transaction = pending_state_builder
+                .execute_transaction(transaction_index, recovered_transaction)?;
+
+            if let Some(time_us) = executed_transaction.execution_time_us {
+                pending_blocks_builder.with_execution_time(tx_hash, time_us);
+            }
+
+            for (address, account) in &executed_transaction.state {
+                if account.is_touched() {
+                    pending_blocks_builder.with_account_balance(*address, account.info.balance);
+                }
+            }
+
+            pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
+            pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
+            pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
+            pending_blocks_builder.with_transaction_result(tx_hash, executed_transaction.result);
+        }
+
+        Ok(())
+    }
+
     #[instrument(
         level = "debug",
         skip_all,
@@ -659,32 +704,12 @@ where
             prev_pending_blocks.latest_block_next_log_index(),
         );
 
-        for (offset, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
-            let tx_hash = transaction.tx_hash();
-            let idx = previous_block_transaction_count + offset;
-
-            pending_blocks_builder.with_transaction_sender(tx_hash, sender);
-            pending_blocks_builder.increment_nonce(sender);
-
-            let recovered_transaction = Recovered::new_unchecked(transaction, sender);
-            let executed_transaction =
-                pending_state_builder.execute_transaction(idx, recovered_transaction)?;
-
-            if let Some(time_us) = executed_transaction.execution_time_us {
-                pending_blocks_builder.with_execution_time(tx_hash, time_us);
-            }
-
-            for (address, account) in &executed_transaction.state {
-                if account.is_touched() {
-                    pending_blocks_builder.with_account_balance(*address, account.info.balance);
-                }
-            }
-
-            pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
-            pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
-            pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
-            pending_blocks_builder.with_transaction_result(tx_hash, executed_transaction.result);
-        }
+        Self::execute_recovered_transactions(
+            &mut pending_blocks_builder,
+            &mut pending_state_builder,
+            txs_with_senders,
+            previous_block_transaction_count,
+        )?;
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
         let latest_block_next_log_index = pending_state_builder.next_log_index();
@@ -791,31 +816,12 @@ where
         pending_state_builder
             .apply_pre_execution_changes(base.parent_hash, Some(base.parent_beacon_block_root))?;
 
-        for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
-            let tx_hash = transaction.tx_hash();
-
-            pending_blocks_builder.with_transaction_sender(tx_hash, sender);
-            pending_blocks_builder.increment_nonce(sender);
-
-            let recovered_transaction = Recovered::new_unchecked(transaction, sender);
-            let executed_transaction =
-                pending_state_builder.execute_transaction(idx, recovered_transaction)?;
-
-            if let Some(time_us) = executed_transaction.execution_time_us {
-                pending_blocks_builder.with_execution_time(tx_hash, time_us);
-            }
-
-            for (address, account) in &executed_transaction.state {
-                if account.is_touched() {
-                    pending_blocks_builder.with_account_balance(*address, account.info.balance);
-                }
-            }
-
-            pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
-            pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
-            pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
-            pending_blocks_builder.with_transaction_result(tx_hash, executed_transaction.result);
-        }
+        Self::execute_recovered_transactions(
+            &mut pending_blocks_builder,
+            &mut pending_state_builder,
+            txs_with_senders,
+            0,
+        )?;
 
         let latest_block_cumulative_gas_used = pending_state_builder.cumulative_gas_used();
         let latest_block_next_log_index = pending_state_builder.next_log_index();
@@ -949,33 +955,12 @@ where
             pending_state_builder
                 .apply_pre_execution_changes(parent_block_hash, parent_beacon_block_root)?;
 
-            for (idx, (transaction, sender)) in txs_with_senders.into_iter().enumerate() {
-                let tx_hash = transaction.tx_hash();
-
-                pending_blocks_builder.with_transaction_sender(tx_hash, sender);
-                pending_blocks_builder.increment_nonce(sender);
-
-                let recovered_transaction = Recovered::new_unchecked(transaction, sender);
-
-                let executed_transaction =
-                    pending_state_builder.execute_transaction(idx, recovered_transaction)?;
-
-                if let Some(time_us) = executed_transaction.execution_time_us {
-                    pending_blocks_builder.with_execution_time(tx_hash, time_us);
-                }
-
-                for (address, account) in &executed_transaction.state {
-                    if account.is_touched() {
-                        pending_blocks_builder.with_account_balance(*address, account.info.balance);
-                    }
-                }
-
-                pending_blocks_builder.with_transaction(executed_transaction.rpc_transaction);
-                pending_blocks_builder.with_receipt(tx_hash, executed_transaction.receipt);
-                pending_blocks_builder.with_transaction_state(tx_hash, executed_transaction.state);
-                pending_blocks_builder
-                    .with_transaction_result(tx_hash, executed_transaction.result);
-            }
+            Self::execute_recovered_transactions(
+                &mut pending_blocks_builder,
+                &mut pending_state_builder,
+                txs_with_senders,
+                0,
+            )?;
 
             let latest_flashblock_tx_start = total_transaction_count
                 .saturating_add(latest_block_transaction_count)
