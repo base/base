@@ -7,6 +7,9 @@
 mod guards;
 pub use guards::B20Guards;
 
+mod credit_recipient;
+pub use credit_recipient::{B20CreditRecipient, B20CreditRecipientError};
+
 mod non_zero_address;
 pub use non_zero_address::{NonZeroAddress, ZeroAddressError};
 
