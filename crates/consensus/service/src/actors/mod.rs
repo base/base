@@ -40,9 +40,9 @@ pub use derivation::{
 
 mod l1_watcher;
 pub use l1_watcher::{
-    AlloyL1BlockFetcher, BlockStream, L1BlockFetcher, L1WatcherActor, L1WatcherActorError,
-    L1WatcherDerivationClient, L1WatcherQueryExecutor, L1WatcherQueryProcessor, LogRetrier,
-    QueuedL1WatcherDerivationClient,
+    AlloyL1BlockFetcher, BlockStream, DisabledL1WatcherDerivationClient, L1BlockFetcher,
+    L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
+    L1WatcherQueryProcessor, LogRetrier, QueuedL1WatcherDerivationClient,
 };
 
 mod upgrade_signal;

@@ -100,11 +100,10 @@ impl LogRetrier {
 
 /// An L1 chain watcher that checks for L1 block updates over RPC.
 #[derive(Debug)]
-pub struct L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
+pub struct L1WatcherActor<BlockStream, L1Provider>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send,
     L1Provider: L1BlockFetcher,
-    L1WatcherDerivationClient_: L1WatcherDerivationClient,
 {
     /// The [`RollupConfig`] to tell if ecotone is active.
     /// This is used to determine if the L1 watcher should check for unsafe block signer updates.
@@ -114,7 +113,7 @@ where
     /// The latest L1 head block.
     latest_head: watch::Sender<Option<BlockInfo>>,
     /// Client used to interact with the [`crate::DerivationActor`].
-    derivation_client: L1WatcherDerivationClient_,
+    derivation_client: Box<dyn L1WatcherDerivationClient>,
     /// The block signer sender.
     block_signer_sender: Option<mpsc::Sender<Address>>,
     /// The cancellation token, shared between all tasks.
@@ -135,12 +134,10 @@ where
     /// [`ConfDepthProvider`]: base_consensus_providers::ConfDepthProvider
     l1_head_number: Arc<AtomicU64>,
 }
-impl<BlockStream, L1Provider, L1WatcherDerivationClient_>
-    L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
+impl<BlockStream, L1Provider> L1WatcherActor<BlockStream, L1Provider>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send,
     L1Provider: L1BlockFetcher,
-    L1WatcherDerivationClient_: L1WatcherDerivationClient,
 {
     /// Instantiate a new [`L1WatcherActor`].
     #[allow(clippy::too_many_arguments)]
@@ -148,7 +145,7 @@ where
         rollup_config: Arc<RollupConfig>,
         l1_provider: L1Provider,
         l1_head_updates_tx: watch::Sender<Option<BlockInfo>>,
-        derivation_client: L1WatcherDerivationClient_,
+        derivation_client: Box<dyn L1WatcherDerivationClient>,
         signer: Option<mpsc::Sender<Address>>,
         cancellation: CancellationToken,
         head_stream: BlockStream,
@@ -172,12 +169,10 @@ where
 }
 
 #[async_trait]
-impl<BlockStream, L1Provider, L1WatcherDerivationClient_> NodeActor
-    for L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
+impl<BlockStream, L1Provider> NodeActor for L1WatcherActor<BlockStream, L1Provider>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send + 'static,
     L1Provider: L1BlockFetcher + 'static,
-    L1WatcherDerivationClient_: L1WatcherDerivationClient + 'static,
 {
     type Error = L1WatcherActorError<BlockInfo>;
     type StartData = ();
@@ -323,12 +318,10 @@ where
     }
 }
 
-impl<BlockStream, L1Provider, L1WatcherDerivationClient_> CancellableContext
-    for L1WatcherActor<BlockStream, L1Provider, L1WatcherDerivationClient_>
+impl<BlockStream, L1Provider> CancellableContext for L1WatcherActor<BlockStream, L1Provider>
 where
     BlockStream: Stream<Item = BlockInfo> + Unpin + Send + 'static,
     L1Provider: L1BlockFetcher,
-    L1WatcherDerivationClient_: L1WatcherDerivationClient + 'static,
 {
     fn cancelled(&self) -> WaitForCancellationFuture<'_> {
         self.cancellation.cancelled()
@@ -542,7 +535,7 @@ mod tests {
             Arc::new(RollupConfig::default()),
             fetcher,
             l1_head_tx,
-            derivation_client.clone(),
+            Box::new(derivation_client.clone()),
             None,
             cancel,
             head_stream,
