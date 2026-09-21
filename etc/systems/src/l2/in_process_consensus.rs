@@ -184,7 +184,7 @@ impl InProcessConsensus {
             .expect("valid gossip config");
 
         // For sequencer mode, attach a gossip signer.
-        if config.mode == NodeMode::Sequencer {
+        if config.mode.is_sequencer() && config.sequencer_key.is_some() {
             let seq_key = config
                 .sequencer_key
                 .ok_or_else(|| eyre::eyre!("sequencer_key is required for Sequencer mode"))?;
@@ -210,7 +210,10 @@ impl InProcessConsensus {
             l2_jwt_secret: config.jwt_secret,
             l1_url: config.l1_rpc_url,
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: config.mode,
+            mode: config
+                .mode
+                .try_into_operating_mode(config.shadow_blocks_per_cycle)
+                .map_err(|e| eyre::eyre!(e))?,
         };
 
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
@@ -245,10 +248,9 @@ impl InProcessConsensus {
         })
         .with_checkpoint_path(checkpoint_path);
 
-        if config.mode == NodeMode::Sequencer {
+        if config.mode.is_sequencer() {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
-                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
                 l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });

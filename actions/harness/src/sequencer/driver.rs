@@ -10,8 +10,8 @@ use base_common_consensus::{BaseBlock, BaseReceipt, BaseTxEnvelope};
 use base_common_genesis::RollupConfig;
 use base_consensus_derive::StatefulAttributesBuilder;
 use base_consensus_node::{
-    Conductor, L1OriginSelector, NodeActor, PayloadBuilder, RecoveryModeGuard, SequencerActor,
-    SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
+    Conductor, L1OriginSelector, NodeActor, NodeOperatingMode, PayloadBuilder, RecoveryModeGuard,
+    SequencerActor, SequencerActorError, SequencerAdminQuery, SequencerEngineClient,
 };
 use base_consensus_rpc::SequencerAdminAPIError;
 use base_protocol::{BlockInfo, L2BlockInfo};
@@ -276,7 +276,7 @@ impl<E: SequencerEngineBackend> L2Sequencer<E> {
             conductor: Some(ActionConductor::new(Arc::clone(&self.conductor))),
             engine_client,
             is_active: false,
-            shadow_blocks_per_cycle: None,
+            mode: NodeOperatingMode::Sequencer,
             shadow_funding: None,
             recovery_mode: RecoveryModeGuard::new(false),
             rollup_config: self.actor_rollup_config(),

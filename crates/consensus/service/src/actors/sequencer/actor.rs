@@ -1,7 +1,6 @@
 //! The [`SequencerActor`].
 
 use std::{
-    num::NonZeroU64,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -21,7 +20,7 @@ use tokio::{
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 
 use crate::{
-    CancellableContext, Metrics, NodeActor, ResetReason, SequencerAdminQuery,
+    CancellableContext, Metrics, NodeActor, NodeOperatingMode, ResetReason, SequencerAdminQuery,
     UnsafePayloadGossipClient,
     actors::{
         SequencerEngineClient,
@@ -65,8 +64,8 @@ where
     pub engine_client: Arc<SequencerEngineClient_>,
     /// Whether the sequencer is active.
     pub is_active: bool,
-    /// Number of private blocks to build per shadow sequencing cycle.
-    pub shadow_blocks_per_cycle: Option<NonZeroU64>,
+    /// The node's operating mode, used to derive shadow and isolated sequencer behaviour.
+    pub mode: NodeOperatingMode,
     /// Optional account funding injected into the first private block of every shadow cycle.
     pub shadow_funding: Option<ShadowFunding>,
     /// Shared recovery mode flag.
@@ -98,7 +97,7 @@ where
 {
     /// Returns whether this actor is running as a shadow sequencer.
     pub const fn is_shadow_sequencer(&self) -> bool {
-        self.shadow_blocks_per_cycle.is_some()
+        self.mode.is_shadow_sequencer()
     }
 
     /// Fetches the sealed payload envelope from the engine for the given unsealed handle.
@@ -119,7 +118,7 @@ where
 
         if self.is_shadow_sequencer() {
             Ok(PayloadSealer::new_private(envelope, "shadow"))
-        } else if self.unsafe_payload_gossip_client.seals_privately() {
+        } else if self.mode.is_isolated() {
             Ok(PayloadSealer::new_private(envelope, "isolated"))
         } else {
             Ok(PayloadSealer::new(envelope))
@@ -303,7 +302,7 @@ where
             .cycle
             .record_insertion(
                 inserted_head,
-                self.shadow_blocks_per_cycle.expect("shadow mode checked").get(),
+                self.mode.shadow_blocks_per_cycle().expect("shadow mode checked").get(),
             )
             .inspect_err(|_| self.cancellation_token.cancel())
     }

@@ -23,9 +23,10 @@ use rstest::rstest;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    ConductorError, L1OriginSelectorError, NodeActor, ResetReason, ScheduledTicker, SealState,
-    SealStepError, SealStepOutcome, SequencerActor, SequencerActorError, SequencerAdminQuery,
-    SequencerConfig, ShadowFunding, UnsafePayloadGossipClientError, UnsealedPayloadHandle,
+    ConductorError, L1OriginSelectorError, NodeActor, NodeOperatingMode, ResetReason,
+    ScheduledTicker, SealState, SealStepError, SealStepOutcome, SequencerActor,
+    SequencerActorError, SequencerAdminQuery, SequencerConfig, ShadowFunding,
+    UnsafePayloadGossipClientError, UnsealedPayloadHandle,
     actors::{
         MockConductor, MockOriginSelector, MockSequencerEngineClient,
         MockUnsafePayloadGossipClient,
@@ -168,7 +169,6 @@ async fn test_on_time_or_late_insert_starts_child_build_immediately(#[case] seco
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
-    gossip.expect_seals_privately().return_const(false);
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let rollup_config = Arc::new(base_common_genesis::RollupConfig {
@@ -266,7 +266,8 @@ async fn shadow_funding_only_applies_to_first_private_block() {
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.engine_client = engine_client;
     actor.rollup_config = rollup_config;
-    actor.shadow_blocks_per_cycle = NonZeroU64::new(2);
+    actor.mode =
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(2).unwrap() };
     actor.shadow_funding = Some(funding);
 
     let cancellation_token = actor.cancellation_token.clone();
@@ -310,7 +311,6 @@ async fn test_early_insert_defers_child_build_until_parent_timestamp() {
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
-    gossip.expect_seals_privately().return_const(false);
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let rollup_config = Arc::new(base_common_genesis::RollupConfig {
@@ -404,7 +404,6 @@ async fn test_stop_discards_queued_parent_and_restart_builds_immediately_on_fres
     origin_selector.expect_next_l1_origin().times(2).returning(|_| Ok(BlockInfo::default()));
 
     let mut gossip = MockUnsafePayloadGossipClient::new();
-    gossip.expect_seals_privately().return_const(false);
     gossip.expect_schedule_execution_payload_gossip().times(1).return_once(|_| Ok(()));
 
     let rollup_config = Arc::new(base_common_genesis::RollupConfig {
@@ -494,7 +493,8 @@ async fn shadow_cycle_reconciles_after_configured_private_block_count() {
     actor.engine_client = Arc::new(client);
     actor.builder.rollup_config = Arc::clone(&rollup_config);
     actor.rollup_config = rollup_config;
-    actor.shadow_blocks_per_cycle = NonZeroU64::new(1);
+    actor.mode =
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(1).unwrap() };
     actor.sealer = Some(PayloadSealer::new_private(dummy_envelope(), "shadow"));
 
     actor.start(()).await.unwrap();
@@ -853,7 +853,8 @@ async fn test_shadow_seal_payload_returns_private_sealer() {
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
-    actor.shadow_blocks_per_cycle = NonZeroU64::new(10);
+    actor.mode =
+        NodeOperatingMode::ShadowSequencer { blocks_per_cycle: NonZeroU64::new(10).unwrap() };
 
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
@@ -876,9 +877,7 @@ async fn isolated_private_sealing_is_not_capped_by_shadow_cycle_limit() {
 
     let mut actor = test_actor();
     actor.engine_client = Arc::new(client);
-    let mut private_sealing = MockUnsafePayloadGossipClient::new();
-    private_sealing.expect_seals_privately().times(private_block_count).return_const(true);
-    actor.unsafe_payload_gossip_client = Box::new(private_sealing);
+    actor.mode = NodeOperatingMode::IsolatedSequencer;
     let handle = UnsealedPayloadHandle {
         payload_id: Default::default(),
         attributes_with_parent: dummy_attributes_with_parent(),
