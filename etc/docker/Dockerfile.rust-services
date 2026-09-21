@@ -228,10 +228,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /var/log/supervisor
 COPY --from=base-image-builder /app/base ./base
-# Keep split binaries here for now, needed for bare metal work
-# Remove only when there is an alternative available
-# e.g. when we publish independent separate Docker images for each
-# via the CI
+# Keep the split binaries in the public node image for compatibility. Release
+# builds also publish each binary in its own image.
 COPY --from=base-image-builder /app/base-reth-node ./base-reth-node
 COPY --from=base-image-builder /app/base-consensus ./base-consensus
 COPY --from=base-image-builder /app/snapshotter ./snapshotter
@@ -243,6 +241,10 @@ COPY etc/scripts/node/consensus-entrypoint .
 RUN chmod +x ./base-entrypoint.sh execution-entrypoint consensus-entrypoint
 # Operator default. Devnet compose overrides entrypoint to /app/base or base-entrypoint.sh.
 CMD ["/usr/bin/supervisord"]
+
+FROM runtime-base AS unified
+COPY --from=base-builder /app/base ./base
+ENTRYPOINT ["./base"]
 
 FROM runtime-base AS execution
 COPY --from=execution-builder /app/base-reth-node ./base-reth-node

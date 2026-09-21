@@ -2,11 +2,22 @@
 
 This directory contains the Dockerfiles and Compose configuration for the **local devnet** and internal Rust services.
 
-The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. Published images and operator `--build` use `PROFILE=release` (same as `base/node`), while `just devnet` builds `dev`. `PROFILE` is set on the shared `_rust-service-common` target, so passing it as an environment variable applies it to every target in the invocation; to give one target a different profile, override just that target's build arg — `docker buildx bake -f etc/docker/docker-bake.hcl builder consensus --set builder.args.PROFILE=release-symbols --load` builds `builder` with profiling symbols while `consensus` stays on the default `release`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
+The public operator image (`ghcr.io/base/node`) is the `base` target in `Dockerfile.rust-services`. It retains the unified binary, execution node, consensus node, and snapshotter for compatibility. Releases also publish single-binary images:
+
+| Image | Bake target | Entrypoint |
+| --- | --- | --- |
+| `ghcr.io/base/base` | `unified` | `base` |
+| `ghcr.io/base/base-reth-node` | `execution` | `base-reth-node` |
+| `ghcr.io/base/base-consensus` | `consensus` | `base-consensus` |
+| `ghcr.io/base/base-builder` | `builder` | `base-builder` |
+| `ghcr.io/base/basectl` | `basectl` | `basectl` |
+| `ghcr.io/base/base-snapshotter` | `snapshotter` | `snapshotter` |
+
+RC and final releases apply the same version tag to every image. Published images and operator `--build` use `PROFILE=release` (same as `base/node`), while `just devnet` builds `dev`. `PROFILE` is set on the shared `_rust-service-common` target, so passing it as an environment variable applies it to every target in the invocation; to give one target a different profile, override just that target's build arg — `docker buildx bake -f etc/docker/docker-bake.hcl builder consensus --set builder.args.PROFILE=release-symbols --load` builds `builder` with profiling symbols while `consensus` stays on the default `release`. Operator entrypoints live in `etc/scripts/node/`; operators edit `.env.mainnet` / `.env.sepolia` at the repo root. Root `docker-compose.yml` pulls the published image, or compiles this tree with `--build`. `just devnet up` overrides the entrypoint to `./base`.
 
 ## Dockerfiles
 
-`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node` and is also the local devnet image. Devnet compose overrides the default supervisord CMD.
+`Dockerfile.rust-services` is the shared multi-target Dockerfile for the Debian-based Rust services. The `base` target is published as `ghcr.io/base/node` and is also the local devnet image. The `unified` target contains only the `base` binary. Devnet compose overrides the compatibility image's default supervisord CMD.
 
 `Dockerfile.devnet` builds a utility image containing genesis generation tools (`eth-genesis-state-generator`, `eth2-val-tools`, `op-deployer`) and setup scripts. This image bootstraps L1 and L2 chain configurations for local development.
 

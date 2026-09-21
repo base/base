@@ -31,6 +31,7 @@ group "default" {
 group "rust-services" {
   targets = [
     "base",
+    "unified",
     "execution",
     "consensus",
     "builder",
@@ -83,6 +84,17 @@ target "base" {
     SCCACHE_CACHE_ID = "rust-services-base-sccache"
   }
   tags = ["base:local"]
+}
+
+target "unified" {
+  inherits = ["_rust-service-common"]
+  target = "unified"
+  args = {
+    CARGO_CHEF_ARGS = "--package base"
+    CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
+    SCCACHE_CACHE_ID = "rust-services-unified-sccache"
+  }
+  tags = ["base-unified:local"]
 }
 
 target "execution" {
