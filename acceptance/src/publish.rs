@@ -333,7 +333,7 @@ impl PrPublisher {
             .replace(')', "&#41;")
     }
 
-    /// Summarizes check counts and non-passing records, leaving full evidence in the report.
+    /// Summarizes check counts with an inline, collapsed report of checks and lifecycle errors.
     pub fn body(run: &RunResult, checks_url: &str, metadata: &CommentMetadata) -> Result<String> {
         Report::validate(run)?;
         metadata.validate()?;
@@ -358,40 +358,58 @@ impl PrPublisher {
         }
         writeln!(out, " · [Checks & reports]({checks_url})\n")?;
 
-        let mut shown = 0;
+        out.push_str("<details>\n<summary>Acceptance report</summary>\n\n");
         let mut omitted = 0;
         for scenario in &run.scenarios {
             let records = scenario
                 .stages
                 .iter()
-                .map(|stage| (&stage.id, stage.status, &stage.message))
+                .filter(|stage| stage.status != Status::Passed)
+                .map(|stage| (&stage.id, stage.status, &stage.message, None))
                 .chain(
-                    scenario.checks.iter().map(|check| (&check.id, check.status, &check.message)),
-                )
-                .filter(|(_, status, _)| *status != Status::Passed);
-            for (id, status, message) in records {
-                if shown == 10 {
-                    omitted += 1;
-                    continue;
-                }
+                    scenario
+                        .checks
+                        .iter()
+                        .map(|check| (&check.id, check.status, &check.message, Some(check))),
+                );
+            for (id, status, message, check) in records {
                 let mut summary: String = message.chars().take(300).collect();
                 if summary.len() < message.len() {
                     summary.push('…');
                 }
-                writeln!(
-                    out,
-                    "- **{} / {}** — {}: {}",
+                let mut record = format!(
+                    "- **{} / {}** — {}: {}\n",
                     Self::text(&scenario.id),
                     Self::text(id),
                     status.label(),
                     Self::text(&summary),
-                )?;
-                shown += 1;
+                );
+                if let Some(check) = check {
+                    writeln!(
+                        record,
+                        "  - Expected: {}\n  - Observed: {}",
+                        Self::text(&Report::compact_json(&check.expected)),
+                        Self::text(&Report::compact_json(&check.observed)),
+                    )?;
+                    if check.status != Status::Passed {
+                        writeln!(record, "  - Next step: {}", Self::text(&check.next_step))?;
+                    }
+                }
+                // Leave room for the omission notice and closing tag below GitHub's limit.
+                if out.len() + record.len() > 50_000 {
+                    omitted += 1;
+                } else {
+                    out.push_str(&record);
+                }
             }
         }
         if omitted > 0 {
-            writeln!(out, "\n{omitted} more non-passing results in the report.")?;
+            writeln!(
+                out,
+                "\n{omitted} more results omitted due to comment size; see Checks & reports for the complete report."
+            )?;
         }
+        out.push_str("\n</details>\n");
         Report::bounded("comment body", &out, 60_000)?;
         Ok(out)
     }
@@ -660,17 +678,24 @@ mod tests {
     }
 
     #[test]
-    fn passing_comment_is_only_a_verdict_counts_and_report_link() {
+    fn passing_comment_keeps_summary_short_and_includes_a_collapsed_report() {
         let mut run = run();
         run.scenarios.truncate(1);
         let body =
             PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
                 .unwrap();
-        let visible: Vec<_> = body.lines().filter(|line| !line.starts_with("<!--")).collect();
+        let (summary, report) = body.split_once("<details>\n").unwrap();
+        let visible: Vec<_> = summary.lines().filter(|line| !line.starts_with("<!--")).collect();
         assert_eq!(
             visible.join("\n").trim(),
             "## Acceptance Tests: ✅ Passed\n\n1/1 checks passed · [Checks & reports](https://github.com/base/base/pull/1/checks)"
         );
+        assert!(report.starts_with("<summary>Acceptance report</summary>\n\n"));
+        assert!(report.contains("**healthy-synthetic / chain-identity** — passed:"));
+        assert!(report.contains("Expected: {\"chain_id\":84538453}"));
+        assert!(report.contains("Observed: {\"chain_id\":84538453}"));
+        assert!(report.ends_with("\n</details>\n"));
+        assert!(!body.contains("<details open"));
         assert_eq!(CommentMetadata::parse(&body).unwrap().run_id, metadata().run_id);
     }
 
@@ -681,11 +706,15 @@ mod tests {
             PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
                 .unwrap();
         assert!(body.contains("1/4 checks passed · 1 failed · 2 blocked"));
-        assert!(!body.contains("healthy-synthetic"));
-        assert!(body.contains("**lag-failure-synthetic / validator-catches-up** — failed:"));
-        assert!(body.contains("Validator lag was 14 blocks"));
-        assert!(body.contains("**startup-error-synthetic / setup** — error:"));
-        assert!(!body.contains("Expected:") && !body.contains("Observed:"));
+        let (summary, report) = body.split_once("<details>\n").unwrap();
+        assert!(!summary.contains("Validator lag") && !body.contains("<details open"));
+        assert!(report.contains("**healthy-synthetic / chain-identity** — passed:"));
+        assert!(report.contains("**lag-failure-synthetic / validator-catches-up** — failed:"));
+        assert!(report.contains("Validator lag was 14 blocks"));
+        assert!(report.contains("**startup-error-synthetic / setup** — error:"));
+        assert!(report.contains("\"max_lag_blocks\":5"));
+        assert!(report.contains("\"lag_blocks\":14"));
+        assert!(report.contains("Next step: Inspect validator derivation"));
 
         run.scenarios[2].checks[0].status = Status::Error;
         run.scenarios[2].checks[1].status = Status::Cancelled;
@@ -698,12 +727,17 @@ mod tests {
         run.scenarios[0].stages.last_mut().unwrap().status = Status::Error;
         run.scenarios[0].stages.last_mut().unwrap().message =
             "owned cleanup failed: <script>|`x`\n@team [click](https://evil.invalid/x)".into();
+        run.scenarios[0].checks[0].expected = json!({ "value": "</details>@expected" });
+        run.scenarios[0].checks[0].observed = json!({ "value": "<script>@observed" });
         let body =
             PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
                 .unwrap();
         assert!(body.contains("Not passed") && body.contains("owned cleanup failed"));
         assert!(body.contains("1/1 checks passed"));
         assert!(body.contains("&lt;script&gt;") && body.contains("＠team"));
+        assert!(body.contains("&lt;/details&gt;＠expected"));
+        assert!(body.contains("&lt;script&gt;＠observed"));
+        assert_eq!(body.matches("</details>").count(), 1);
         assert!(
             !body.contains("<script>") && !body.contains("@team") && !body.contains("https://evil")
         );
@@ -734,9 +768,12 @@ mod tests {
                 .unwrap();
         assert!(body.len() < 60_000);
         assert!(body.contains("0/200 checks passed · 200 failed"));
-        assert_eq!(body.lines().filter(|line| line.starts_with("- ")).count(), 10);
-        assert!(body.contains("check-9**") && !body.contains("check-10**"));
-        assert!(body.contains("190 more non-passing results in the report."));
+        let shown = body.lines().filter(|line| line.starts_with("- ")).count();
+        assert!(shown > 0 && shown < 200);
+        assert!(
+            body.contains(&format!("{} more results omitted due to comment size", 200 - shown))
+        );
+        assert!(body.ends_with("\n</details>\n"));
         assert!(body.contains("[Checks & reports]"));
     }
 
