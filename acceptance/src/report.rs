@@ -141,10 +141,10 @@ impl Report {
         const RESERVE: usize = 160;
         let counts = ReportCounts::from_run(run);
         let mut out = format!(
-            "<!-- acceptance-results -->\n## Acceptance: {}\n\nRun `{}` · revision `{}`\n\n| Passed | Failed | Error | Blocked | Cancelled |\n|---:|---:|---:|---:|---:|\n| {} | {} | {} | {} | {} |\n\n",
+            "<!-- acceptance-results -->\n## Acceptance: {}\n\nRun {} · revision {}\n\n| Passed | Failed | Error | Blocked | Cancelled |\n|---:|---:|---:|---:|---:|\n| {} | {} | {} | {} | {} |\n\n",
             Self::markdown_text(ReportCounts::status_phrase(run)),
-            Self::markdown_text(&run.run_id),
-            Self::markdown_text(&run.tested_sha),
+            Self::markdown_code(&run.run_id),
+            Self::markdown_code(&run.tested_sha),
             counts.passed,
             counts.failed,
             counts.error,
@@ -157,27 +157,27 @@ impl Report {
             let mut section = format!(
                 "<details{}><summary>{} — {}</summary>\n\n",
                 if scenario.outcome() == Status::Passed { "" } else { " open" },
-                Self::markdown_text(&scenario.id),
+                Self::escape_html(&scenario.id),
                 scenario.outcome().label()
             );
             for check in &scenario.checks {
                 let line = format!(
-                    "- **{}** (`{}`): {} — expected `{}`, observed `{}`. {}\n  - Next step: {}\n  - Reproduce: `{}`\n  - Evidence: {}\n",
+                    "- **{}** ({}): {} — expected {}, observed {}. {}\n  - Next step: {}\n  - Reproduce: {}\n  - Evidence: {}\n",
                     Self::markdown_text(&check.id),
-                    Self::markdown_text(&check.kind),
+                    Self::markdown_code(&check.kind),
                     check.status.label(),
-                    Self::markdown_text(&Self::compact_json(&check.expected)),
-                    Self::markdown_text(&Self::compact_json(&check.observed)),
+                    Self::markdown_code(&Self::compact_json(&check.expected)),
+                    Self::markdown_code(&Self::compact_json(&check.observed)),
                     Self::markdown_text(&check.message),
                     Self::markdown_text(&check.next_step),
-                    Self::markdown_text(&scenario.reproduction),
+                    Self::markdown_code(&scenario.reproduction),
                     if check.evidence.is_empty() {
                         "⚠ none recorded".into()
                     } else {
                         check
                             .evidence
                             .iter()
-                            .map(|path| format!("`{}`", Self::markdown_text(path)))
+                            .map(|path| Self::markdown_code(path))
                             .collect::<Vec<_>>()
                             .join(", ")
                     }
@@ -592,6 +592,23 @@ impl Report {
             })
             .collect()
     }
+    /// Renders untrusted text as portable inline code without Markdown delimiter ambiguity.
+    pub fn markdown_code(value: &str) -> String {
+        let delimiter = "`".repeat(value.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1);
+        let text: String = value
+            .chars()
+            .map(|c| {
+                if c.is_whitespace() {
+                    ' '
+                } else if c.is_control() {
+                    '�'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        format!("{delimiter} {text} {delimiter}")
+    }
     /// Validates a bounded portable record identifier.
     pub fn valid_id(kind: &str, value: &str) -> Result<()> {
         if value.is_empty()
@@ -797,6 +814,32 @@ mod tests {
         assert!(md.contains("\\*boom\\* \\| \\[x\\]"));
     }
     #[test]
+    fn markdown_inline_code_preserves_hostile_literal_content() {
+        let mut value = run(Status::Failed);
+        value.run_id = "run`tick | <b>html</b>".into();
+        value.tested_sha = "rev``tick | <i>sha</i>".into();
+        value.scenarios[0].checks[0].kind = "kind` | <em>x</em>".into();
+        value.scenarios[0].checks[0].expected = json!({"value":"` | <tag>"});
+        value.scenarios[0].checks[0].observed = json!({"value":"`` | </code>"});
+        value.scenarios[0].checks[0].message =
+            "payload [click](https://example.invalid) <img src=x>".into();
+        value.scenarios[0].reproduction =
+            "command --arg '` | <value> [click](https://example.invalid)'".into();
+
+        let markdown = Report::markdown(&value).unwrap();
+        assert!(markdown.contains("`` run`tick | <b>html</b> ``"));
+        assert!(markdown.contains("``` rev``tick | <i>sha</i> ```"));
+        assert!(markdown.contains("`` kind` | <em>x</em> ``"));
+        assert!(markdown.contains("`` {\"value\":\"` | <tag>\"} ``"));
+        assert!(markdown.contains("``` {\"value\":\"`` | </code>\"} ```"));
+        assert!(markdown.contains("\\[click\\](https://example.invalid) \\<img src=x\\>"));
+        assert!(
+            markdown.contains("`` command --arg '` | <value> [click](https://example.invalid)' ``")
+        );
+        assert!(markdown.contains("Evidence: ` evidence/heads.json `"));
+        assert!(!markdown.contains("<img src=x>"));
+    }
+    #[test]
     fn rejects_schema_duplicates_paths_secrets_and_large_input() {
         let mut value = run(Status::Passed);
         value.schema_version = 2;
@@ -880,7 +923,7 @@ mod tests {
         );
         let markdown = Report::markdown(&value).unwrap();
         assert!(markdown.contains("Next step: inspect logs"));
-        assert!(markdown.contains("Reproduce: `base-acceptance run synthetic.toml`"));
+        assert!(markdown.contains("Reproduce: ` base-acceptance run synthetic.toml `"));
         assert!(markdown.contains("⚠ none recorded"));
         let html = Report::html(&value).unwrap();
         assert!(html.contains("setup unavailable"));
