@@ -149,7 +149,9 @@ pub struct HarnessBuilder {
     scripted_el_responses: Vec<ScriptedForkchoiceResponse>,
     l1_chain: Vec<BlockInfo>,
     initial_safedb: Vec<SafeHeadResponse>,
+    initial_l2_head: L2BlockInfo,
     reset_recovery_support: bool,
+    sequencer_stopped: bool,
 }
 
 impl Default for HarnessBuilder {
@@ -159,7 +161,9 @@ impl Default for HarnessBuilder {
             scripted_el_responses: Vec::new(),
             l1_chain: Vec::new(),
             initial_safedb: Vec::new(),
+            initial_l2_head: L2BlockInfo::default(),
             reset_recovery_support: false,
+            sequencer_stopped: false,
         }
     }
 }
@@ -197,6 +201,18 @@ impl HarnessBuilder {
         entries: impl IntoIterator<Item = SafeHeadResponse>,
     ) -> Self {
         self.initial_safedb.extend(entries);
+        self
+    }
+
+    /// Sets the execution layer's latest L2 head returned during engine bootstrap.
+    pub const fn with_initial_l2_head(mut self, head: L2BlockInfo) -> Self {
+        self.initial_l2_head = head;
+        self
+    }
+
+    /// Configures a sequencer as stopped, which follows the conductor-follower bootstrap path.
+    pub const fn with_sequencer_stopped(mut self, stopped: bool) -> Self {
+        self.sequencer_stopped = stopped;
         self
     }
 
@@ -243,7 +259,7 @@ impl HarnessBuilder {
         fake_engine_handle.push_scripted_fcu_v3(self.scripted_el_responses);
 
         fake_engine_client
-            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, L2BlockInfo::default());
+            .set_l2_block_info_by_label(BlockNumberOrTag::Latest, self.initial_l2_head);
         if self.reset_recovery_support {
             fake_engine_handle.set_l2_block_by_label(BlockNumberOrTag::Latest, Default::default());
         }
@@ -277,7 +293,7 @@ impl HarnessBuilder {
                         engine_processor,
                         false,
                         None,
-                        false,
+                        self.sequencer_stopped,
                         unsafe_head_tx,
                     )
                     .start(engine_actor_request_rx)
