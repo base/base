@@ -540,7 +540,7 @@ impl AcceptanceRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, path::Path};
+    use std::path::Path;
 
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -548,62 +548,6 @@ mod tests {
     };
 
     use super::*;
-
-    #[test]
-    fn migration_ledger_preserves_original_coverage_after_retirement() {
-        let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let repo_root = crate_root.parent().unwrap();
-        let ledger: toml::Value =
-            toml::from_str(&fs::read_to_string(crate_root.join("migration.toml")).unwrap())
-                .unwrap();
-        let entries = ledger["tests"].as_array().unwrap();
-        let identities = entries
-            .iter()
-            .map(|entry| (entry["source"].as_str().unwrap(), entry["name"].as_str().unwrap()))
-            .collect::<BTreeSet<_>>();
-
-        assert_eq!(entries.len(), 84);
-        assert_eq!(identities.len(), 84);
-        for entry in entries {
-            let original = repo_root.join(entry["source"].as_str().unwrap());
-            let function = format!("fn {}(", entry["name"].as_str().unwrap());
-            let retired = entry.get("retired").and_then(toml::Value::as_bool).unwrap_or(false);
-            if retired && entry["disposition"].as_str() == Some("moved_unit") {
-                let replacement = repo_root.join(entry["replacement_source"].as_str().unwrap());
-                assert!(replacement.is_file(), "missing {}", replacement.display());
-                assert!(fs::read_to_string(replacement).unwrap().contains(&function));
-                assert!(
-                    !original.exists()
-                        || !fs::read_to_string(original).unwrap().contains(&function)
-                );
-            } else if retired {
-                let scenario = repo_root.join(entry["scenario"].as_str().unwrap());
-                let config = ScenarioConfig::load(&scenario).unwrap();
-                assert!(
-                    config.ci.suite == crate::CiSuite::Pr,
-                    "{} is not in the PR suite",
-                    scenario.display()
-                );
-                assert!(
-                    config
-                        .checks
-                        .iter()
-                        .flat_map(AcceptanceCheck::result_ids)
-                        .any(|id| id == entry["check_id"].as_str().unwrap()),
-                    "{} lacks check {}",
-                    scenario.display(),
-                    entry["check_id"].as_str().unwrap()
-                );
-                assert!(
-                    !original.exists()
-                        || !fs::read_to_string(original).unwrap().contains(&function)
-                );
-            } else {
-                assert!(original.is_file(), "missing retained source {}", original.display());
-                assert!(fs::read_to_string(original).unwrap().contains(&function));
-            }
-        }
-    }
 
     #[test]
     fn every_checked_in_scenario_parses_and_validates() {

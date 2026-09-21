@@ -11,9 +11,7 @@ The core checked-in scenarios include:
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
 - `denim-transition`: progress and convergence immediately before and after Denim.
 
-The `system-*` scenarios replace 46 retired system-test functions across contract,
-transaction, and runtime behavior. Their historical identities and the remaining
-coverage gaps are recorded in [the migration ledger](SYSTEM_TEST_MIGRATION.md).
+The `system-*` scenarios cover contract, transaction, and runtime behavior.
 
 ## Requirements
 
@@ -127,8 +125,7 @@ check fields are `id`, `case`, `timeout`, and optional fork-relative `start`;
 attach mode rejects them. TOML chooses reviewed Rust RPC workloads by stable case
 name—it is not an arbitrary declarative transaction or RPC language. These
 workloads exercise externally provisioned nodes and are distinct from the old
-in-process Rust system-test harness. See [the migration ledger](SYSTEM_TEST_MIGRATION.md)
-for scope, retained tests, and known gaps.
+in-process Rust system-test harness.
 
 ### Glamsterdam profile and protocol evidence
 

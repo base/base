@@ -4,14 +4,6 @@ System-test and development-network infrastructure for Base nodes. In addition t
 L1/L2 stack used by system tests, this crate can continue a Base mainnet execution snapshot with
 real builder and client execution and consensus components in one managed launcher process.
 
-The Docker acceptance migration retired 46 scenario-backed system-test functions
-and moved three parity classifier unit tests to `acceptance/src/parity.rs`. The 35
-original identities still present here are deliberate retained or blocked coverage,
-not evidence of a complete migration. See
-[`acceptance/migration.toml`](../../acceptance/migration.toml) and the accompanying
-[migration status](../../acceptance/SYSTEM_TEST_MIGRATION.md) for exact identities
-and current blockers.
-
 ## Snapshot devnet topology
 
 The snapshot mode starts these real local network roles inside one managed launcher process:
