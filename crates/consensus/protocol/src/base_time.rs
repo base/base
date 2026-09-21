@@ -20,7 +20,7 @@ use crate::REGOLITH_SYSTEM_TX_GAS;
 /// Its execution makes the current block's millisecond component available
 /// to subsequent transactions.
 ///
-/// BaseTime is not guaranteed to reflect the current block during `tx[0]`.
+/// `BaseTime` is not guaranteed to reflect the current block during `tx[0]`.
 /// Before this update, `timestampMs()` combines the current block's seconds
 /// with the previous stored millisecond component. For consecutive 200ms
 /// blocks, this is 200ms behind within a second and 800ms ahead at rollover.
