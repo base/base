@@ -223,6 +223,8 @@ where
                 + deposit_transactions.len()
                 + upgrade_transactions.len(),
         );
+        // L1-info remains tx[0]; BaseTime updates at tx[1] after Denim, before user execution.
+        // The L1-info execution path must not depend on current-block BaseTime millis.
         txs.push(encoded_l1_info_tx.into());
 
         if base_time_active {

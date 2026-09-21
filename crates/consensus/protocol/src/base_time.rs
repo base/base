@@ -12,6 +12,18 @@ use base_common_genesis::RollupConfig;
 use crate::REGOLITH_SYSTEM_TX_GAS;
 
 /// Versioned calldata for the `BaseTime` metadata deposit.
+///
+/// # Execution ordering
+///
+/// From Denim onward, this deposit occupies `tx[1]`, immediately after the
+/// L1-info deposit and before user deposits and sequencer transactions.
+/// Its execution makes the current block's millisecond component available
+/// to subsequent transactions.
+///
+/// BaseTime is not guaranteed to reflect the current block during `tx[0]`.
+/// Before this update, `timestampMs()` combines the current block's seconds
+/// with the previous stored millisecond component. For consecutive 200ms
+/// blocks, this is 200ms behind within a second and 800ms ahead at rollover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BaseTimeUpdateTx {
