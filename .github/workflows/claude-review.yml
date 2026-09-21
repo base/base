@@ -130,6 +130,11 @@ jobs:
               | select((.body // "") | startswith("<!-- CLAUDE_REVIEW_SUMMARY -->"))]
               | sort_by(.id) | .[:-1][] | .id' > "$stale_comments"
 
+          cleanup_failed=0
           while IFS= read -r comment_id; do
-            gh api --method DELETE "repos/$GH_REPO/issues/comments/$comment_id"
+            if ! gh api --method DELETE "repos/$GH_REPO/issues/comments/$comment_id"; then
+              echo "::warning::Failed to delete stale review summary $comment_id"
+              cleanup_failed=1
+            fi
           done < "$stale_comments"
+          exit "$cleanup_failed"
