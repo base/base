@@ -354,7 +354,6 @@ where
                     _ => {}
                 }
 
-                // skip logging expected caching case
                 if !matches!(
                     e,
                     StateProcessorError::Provider(ProviderError::MissingCanonicalHeader { .. })
@@ -387,7 +386,6 @@ where
         Metrics::flashblocks_in_block().record(num_flashblocks_for_canon as f64);
         Metrics::pending_snapshot_height().set(pending_blocks.latest_block_number() as f64);
 
-        // Check for reorg by comparing transaction sets
         let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
         let tracked_txn_hashes: Vec<_> = tracked_txns.map(|tx| tx.tx_hash()).collect();
         let block_txn_hashes: Vec<_> = block.body().transactions().map(|tx| tx.tx_hash()).collect();
@@ -460,7 +458,6 @@ where
                 self.build_pending_state(prev_pending_blocks, &flashblocks)
             }
             ReconciliationStrategy::NoPendingState => {
-                // This case is already handled above, but included for completeness
                 debug!(message = "no pending state to update with canonical block, skipping");
                 self.clear_live_state();
                 Ok(None)
@@ -867,8 +864,6 @@ where
         let state_provider_db = StateProviderDatabase::new(state_provider);
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
-        // Track state changes across flashblocks, accumulating bundle state
-        // from previous pending blocks if available.
         let mut db = State::builder().with_database(state_provider_db).with_bundle_update().build();
 
         let mut state_overrides =
@@ -878,7 +873,6 @@ where
 
         let mut total_transaction_count = 0usize;
         for (_block_number, flashblocks) in flashblocks_per_block {
-            // Use BlockAssembler to reconstruct the block from flashblocks
             let assembled = BlockAssembler::assemble(&flashblocks)?;
             let latest_flashblock_tx_count =
                 flashblocks.last().map(|latest| latest.diff.transactions.len()).unwrap_or_default();
@@ -887,7 +881,6 @@ where
             pending_blocks_builder.with_flashblocks(assembled.flashblocks.clone());
             pending_blocks_builder.with_header(assembled.header.clone());
 
-            // Extract L1 block info using the AssembledBlock method
             let l1_block_info = assembled.l1_block_info()?;
             let latest_block_l1_block_info = l1_block_info.clone();
             let latest_block_transaction_count = assembled.block.body.transactions.len();
@@ -909,7 +902,6 @@ where
                 .map_err(|e| ExecutionError::EvmEnv(e.to_string()))?;
             let evm = evm_config.evm_with_env(db, evm_env);
 
-            // Parallel sender recovery - batch all ECDSA operations upfront
             let recovery_start = Instant::now();
             let txs_with_senders: Vec<(BaseTxEnvelope, Address)> = assembled
                 .block

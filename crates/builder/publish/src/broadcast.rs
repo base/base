@@ -17,7 +17,6 @@ use tracing::{debug, info, warn};
 
 use crate::{FlashblockPosition, PositionedPayload, PublisherMetrics};
 
-/// Timeout for sending a single replay message during the replay phase.
 const REPLAY_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Per-client broadcast loop.
@@ -189,7 +188,6 @@ impl BroadcastLoop {
         Ok(())
     }
 
-    /// Sends a single message during the replay phase with a timeout.
     async fn send_replay_message(&mut self, data: Utf8Bytes) -> Result<(), ReplayError> {
         tokio::time::timeout(REPLAY_SEND_TIMEOUT, self.stream.send(Message::Text(data)))
             .await
@@ -200,7 +198,7 @@ impl BroadcastLoop {
     }
 }
 
-/// Errors that can occur during the replay phase.
+/// Replay errors.
 #[derive(Debug, thiserror::Error)]
 enum ReplayError {
     /// A replay message send timed out.
@@ -399,7 +397,6 @@ mod tests {
         let (_client, _) = connect_async(format!("ws://{addr}")).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        // Drop the sender to close the broadcast channel.
         drop(tx);
 
         server_handle.await.unwrap();
@@ -468,7 +465,6 @@ mod tests {
         let (_tx, rx) = broadcast::channel::<PositionedPayload>(16);
         let cancel = CancellationToken::new();
         let metrics = Arc::new(MockMetrics::new());
-        // capacity 2: after three pushes the first entry is evicted.
         let ring_buffer = Arc::new(RwLock::new(RingBuffer::new(cap(2))));
 
         {
@@ -485,10 +481,8 @@ mod tests {
                 FlashblockPosition { block_number: 3, flashblock_index: 0 },
                 Utf8Bytes::from("c"),
             );
-            // oldest is now (2, 0); (1, 0) was evicted
         }
 
-        // cutoff before oldest → stale
         let resume_from = Some(FlashblockPosition { block_number: 1, flashblock_index: 0 });
 
         let server_handle = tokio::spawn({
