@@ -557,7 +557,7 @@ impl RollupNode {
             Arc::clone(&self.config),
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
-            QueuedL1WatcherDerivationClient { derivation_actor_request_tx },
+            QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx),
             Some(signer),
             cancellation.clone(),
             head_stream,
