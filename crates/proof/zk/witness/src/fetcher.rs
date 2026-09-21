@@ -321,11 +321,6 @@ impl OPSuccinctDataFetcher {
         self.find_block_by_timestamp(&self.l1_provider, target_timestamp).await
     }
 
-    /// Finds the L2 block at the provided timestamp.
-    pub async fn find_l2_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        self.find_block_by_timestamp(&self.l2_provider, target_timestamp).await
-    }
-
     /// Finds the block at the provided timestamp, using the provided provider.
     async fn find_block_by_timestamp<N>(
         &self,
