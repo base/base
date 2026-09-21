@@ -7,7 +7,10 @@ use base_batcher_core::{
     ThrottleConfig, ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, EncoderConfig};
-use base_batcher_source::{ChannelBlockSource, ChannelL1HeadSource, L2BlockEvent};
+use base_batcher_source::{
+    L2BlockEvent,
+    test_utils::{ChannelBlockSource, ChannelL1HeadSource},
+};
 use base_common_consensus::BaseBlock;
 use base_common_genesis::RollupConfig;
 use base_runtime::TokioRuntime;
@@ -96,7 +99,7 @@ pub enum BatcherError {
 ///
 /// [`advance`]: Batcher::advance
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+/// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
 /// [`L1HeadEvent::NewHead`]: base_batcher_source::L1HeadEvent
 /// [`L2BlockEvent::Flush`]: base_batcher_source::L2BlockEvent::Flush
 pub struct Batcher<S: L2BlockProvider> {

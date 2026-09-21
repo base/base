@@ -93,7 +93,7 @@ pub struct Inner {
 /// [`mine_block`]: L1MinerTxManager::mine_block
 /// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
-/// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+/// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
     inner: Arc<Mutex<Inner>>,
@@ -105,7 +105,7 @@ pub struct L1MinerTxManager {
     /// can advance the driver's L1 head.
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
-    /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+    /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
     l1_head_tx: Option<mpsc::UnboundedSender<L1HeadEvent>>,
 }
 
@@ -130,7 +130,7 @@ impl L1MinerTxManager {
     ///
     /// [`mine_block`]: L1MinerTxManager::mine_block
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
-    /// [`ChannelL1HeadSource`]: base_batcher_source::ChannelL1HeadSource
+    /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
     pub fn with_l1_head_tx(mut self, tx: mpsc::UnboundedSender<L1HeadEvent>) -> Self {
         self.l1_head_tx = Some(tx);
         self

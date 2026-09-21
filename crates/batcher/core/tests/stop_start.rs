@@ -18,7 +18,7 @@ use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId,
 };
-use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
+use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::{
