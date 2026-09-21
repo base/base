@@ -8,7 +8,21 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # Only `bench:tps` label changes belong to the PR's benchmark concurrency group. Other label
+  # changes are skipped and receive a per-run group, so they cannot interrupt an active benchmark.
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event_name == 'pull_request' &&
+      (
+        (
+          github.event.action != 'labeled' &&
+          github.event.action != 'unlabeled'
+        ) ||
+        github.event.label.name == 'bench:tps'
+      ) &&
+      format('pr-{0}', github.event.pull_request.number) ||
+      github.run_id
+    }}
   cancel-in-progress: true
 
 env:
@@ -30,7 +44,9 @@ jobs:
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(github.event.pull_request.labels.*.name, 'bench:tps'))
+      contains(github.event.pull_request.labels.*.name, 'bench:tps') &&
+      ((github.event.action != 'labeled' && github.event.action != 'unlabeled') ||
+      github.event.label.name == 'bench:tps'))
     # Depot's largest x86 runner: 64 vCPUs, 256 GB memory, and a 32 GB RAM disk accelerator.
     runs-on: depot-ubuntu-24.04-64
     timeout-minutes: 90
