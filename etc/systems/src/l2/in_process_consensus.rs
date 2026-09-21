@@ -147,7 +147,9 @@ impl InProcessConsensus {
         }
 
         let rpc_port = config.rpc_port.unwrap_or_else(get_available_port);
-        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or_else(get_available_port);
+        // Let libp2p reserve its port when it binds. Picking and releasing a port
+        // first races other nodes starting concurrently in the system-test runner.
+        let p2p_tcp_port = config.p2p_tcp_port.unwrap_or(0);
         let p2p_udp_port = config.p2p_udp_port.unwrap_or_else(get_available_port);
         let listen_ip = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -282,14 +284,34 @@ impl InProcessConsensus {
             .build(format!("http://{rpc_addr}"))
             .wrap_err("Failed to build RPC client")?;
 
-        Ok(Self {
+        let mut consensus = Self {
             rpc_addr,
             rpc_client,
             p2p_tcp_port,
             peer_id,
             _checkpoint_dir: checkpoint_dir,
             _handle: handle,
-        })
+        };
+        if p2p_tcp_port == 0 {
+            let peer = consensus
+                .rpc_client
+                .opp2p_self()
+                .await
+                .wrap_err("Failed to query P2P listen port")?;
+            consensus.p2p_tcp_port = peer
+                .addresses
+                .iter()
+                .filter_map(|address| address.parse::<libp2p::Multiaddr>().ok())
+                .find_map(|address| {
+                    address.iter().find_map(|protocol| match protocol {
+                        libp2p::multiaddr::Protocol::Tcp(port) if port != 0 => Some(port),
+                        _ => None,
+                    })
+                })
+                .ok_or_else(|| eyre::eyre!("P2P node has no bound TCP listen address"))?;
+        }
+
+        Ok(consensus)
     }
 
     /// Connects this node to a peer at the given libp2p multiaddr via the `opp2p_connectPeer` RPC.
