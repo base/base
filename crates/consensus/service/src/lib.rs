@@ -21,8 +21,8 @@ pub use follow::{FollowError, RemoteClient, RemoteL2Client, RemoteL2ClientError}
 
 mod standalone;
 pub use standalone::{
-    StandaloneAttributesBuilder, StandaloneDerivationClient, StandaloneOriginSelector,
-    StandalonePrefund, StandaloneSequencerNode, StandaloneUnsafePayloadGossipClient,
+    StandaloneAttributesBuilder, StandaloneOriginSelector, StandalonePrefund,
+    StandaloneSequencerNode, StandaloneUnsafePayloadGossipClient,
 };
 
 mod actors;
@@ -34,17 +34,17 @@ pub use actors::{
     DelegateDerivationActor, DerivationActor, DerivationActorRequest, DerivationClientError,
     DerivationClientResult, DerivationDelegateClient, DerivationDelegateClientError,
     DerivationEngineClient, DerivationError, DerivationState, DerivationStateMachine,
-    DerivationStateTransitionError, DerivationStateUpdate, EngineActor, EngineActorRequest,
-    EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
-    GetPayloadRequest, GossipTransport, InsertUnsafePayloadRequest, L1BlockFetcher,
-    L1OriginSelector, L1OriginSelectorError, L1OriginSelectorProvider, L1WatcherActor,
-    L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
-    L1WatcherQueryProcessor, L2Finalizer, LogRetrier, NetworkActor, NetworkActorError,
-    NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver, NetworkDriverError,
-    NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor, NoopCheckpointWriter,
-    OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender, PoolActivation,
-    PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
+    DerivationStateTransitionError, DerivationStateUpdate, DisabledEngineDerivationClient,
+    EngineActor, EngineActorRequest, EngineClientError, EngineClientResult, EngineConfig,
+    EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
+    EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, GossipTransport,
+    InsertUnsafePayloadRequest, L1BlockFetcher, L1OriginSelector, L1OriginSelectorError,
+    L1OriginSelectorProvider, L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient,
+    L1WatcherQueryExecutor, L1WatcherQueryProcessor, L2Finalizer, LogRetrier, NetworkActor,
+    NetworkActorError, NetworkBuilder, NetworkBuilderError, NetworkConfig, NetworkDriver,
+    NetworkDriverError, NetworkEngineClient, NetworkHandler, NetworkInboundData, NodeActor,
+    NoopCheckpointWriter, OriginSelector, PayloadBuilder, PayloadSealer, PendingStopSender,
+    PoolActivation, PrefetchedChainProvider, PrefetchedChainProviderError, PreparedL1Origin,
     QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
     QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
     QueuedSequencerEngineClient, QueuedUnsafePayloadGossipClient, ReconcileShadowRequest,

@@ -10,7 +10,7 @@ use base_common_consensus::{Predeploys, TxDeposit};
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_derive::{
-    AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult, Signal,
+    AttributesBuilder, BuilderError, PipelineError, PipelineErrorKind, PipelineResult,
 };
 use base_consensus_engine::{Engine, EngineClient, EngineState};
 use base_protocol::{BaseTimeUpdateTx, BlockInfo, L1BlockInfoTx, L2BlockInfo};
@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ConductorClient, DerivationClientResult, EngineActor, EngineDerivationClient, EngineProcessor,
+    ConductorClient, DisabledEngineDerivationClient, EngineActor, EngineProcessor,
     L1OriginSelectorError, NodeActor, OriginSelector, PayloadBuilder, QueuedSequencerEngineClient,
     RecoveryModeGuard, SequencerActor, SequencerEngineRequestCoordinator,
     UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
@@ -187,28 +187,6 @@ impl OriginSelector for StandaloneOriginSelector {
     }
 }
 
-/// Discards derivation notifications for an L1-free standalone sequencer.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StandaloneDerivationClient;
-
-#[async_trait]
-impl EngineDerivationClient for StandaloneDerivationClient {
-    async fn notify_sync_completed(&self, _safe_head: L2BlockInfo) -> DerivationClientResult<()> {
-        Ok(())
-    }
-
-    async fn send_new_engine_safe_head(
-        &self,
-        _safe_head: L2BlockInfo,
-    ) -> DerivationClientResult<()> {
-        Ok(())
-    }
-
-    async fn send_signal(&self, _signal: Signal) -> DerivationClientResult<()> {
-        Ok(())
-    }
-}
-
 /// Discards unsafe payload gossip after the payload has been built locally.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StandaloneUnsafePayloadGossipClient;
@@ -280,7 +258,7 @@ impl<E: EngineClient + 'static> StandaloneSequencerNode<E> {
         let processor = EngineProcessor::new_skip_reset(
             Arc::clone(&self.engine_client),
             Arc::clone(&self.rollup_config),
-            StandaloneDerivationClient,
+            Box::new(DisabledEngineDerivationClient),
             engine,
         );
         let coordinator =

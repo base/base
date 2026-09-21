@@ -272,7 +272,7 @@ impl HarnessBuilder {
         let engine_processor = EngineProcessor::new(
             Arc::new(fake_engine_client.clone()),
             Arc::clone(&config),
-            QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()),
+            Box::new(QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone())),
             engine,
         );
         let role = self.role;
