@@ -117,7 +117,7 @@ impl RpcObserver {
     pub async fn block(&self, url: &str, tag: &str, deadline: Instant) -> Result<ObservedBlock> {
         let value = self.rpc(url, "eth_getBlockByNumber", json!([tag, false]), deadline).await?;
         if value.is_null() {
-            bail!("{tag} block is absent")
+            bail!("{tag} block is absent");
         }
         let block = ObservedBlock {
             number: Self::hex(value.get("number"))?,
@@ -125,14 +125,9 @@ impl RpcObserver {
             hash: Self::hash(value.get("hash"))?,
         };
         if tag.starts_with("0x") && block.number != Self::hex(Some(&Value::String(tag.into())))? {
-            bail!("RPC returned block {} for requested height {tag}", block.number)
+            bail!("RPC returned block {} for requested height {tag}", block.number);
         }
         Ok(block)
-    }
-
-    /// Returns the latest block number before `deadline`.
-    pub async fn head_number(&self, url: &str, deadline: Instant) -> Result<u64> {
-        Ok(self.block(url, "latest", deadline).await?.number)
     }
 
     /// Executes one check within both its own and the scenario deadline.
@@ -146,7 +141,7 @@ impl RpcObserver {
     ) -> CheckResult {
         let started = Instant::now();
         let deadline = (started + check.timeout()).min(scenario_deadline);
-        let mut state = ObservationState::new(json!({"check": check.kind()}), samples, origin);
+        let mut state = ObservationState::new(json!({ "check": check.kind() }), samples, origin);
         let evaluation = self.evaluate(check, endpoints, deadline, &mut state).await;
         let (status, message) = match evaluation {
             Ok(message) => (Status::Passed, message),
@@ -209,7 +204,7 @@ impl RpcObserver {
             }
             AcceptanceCheck::HeadProgress { endpoint, minimum_blocks, .. }
             | AcceptanceCheck::SafeHeadProgress { endpoint, minimum_blocks, .. } => {
-                state.expected = json!({"minimum_blocks": minimum_blocks});
+                state.expected = json!({ "minimum_blocks": minimum_blocks });
                 let tag = if matches!(check, AcceptanceCheck::SafeHeadProgress { .. }) {
                     "safe"
                 } else {
@@ -226,12 +221,17 @@ impl RpcObserver {
                 .await
             }
             AcceptanceCheck::HeadsConverge { endpoints: roles, head, max_lag_blocks, .. } => {
-                state.expected =
-                    json!({"max_lag_blocks": max_lag_blocks, "common_height_hash": true});
+                state.expected = json!({
+                    "max_lag_blocks": max_lag_blocks,
+                    "common_height_hash": true,
+                });
                 self.converge(endpoints, roles, head, *max_lag_blocks, deadline, state).await
             }
             AcceptanceCheck::HeadFresh { endpoint, maximum_age, duration, .. } => {
-                state.expected = json!({"maximum_age_seconds": maximum_age.0.as_secs(), "duration_ms": duration.0.as_millis()});
+                state.expected = json!({
+                    "maximum_age_seconds": maximum_age.0.as_secs(),
+                    "duration_ms": duration.0.as_millis(),
+                });
                 self.fresh(
                     Self::endpoint(endpoints, endpoint)?,
                     endpoint,
@@ -271,8 +271,11 @@ impl RpcObserver {
                 }
             }
         };
-        state.observed =
-            json!({"from": first.number, "last": first.number, "required_delta": minimum});
+        state.observed = json!({
+            "from": first.number,
+            "last": first.number,
+            "required_delta": minimum,
+        });
         let mut observation_error = None;
         loop {
             if !self.wait(deadline).await {
@@ -281,16 +284,21 @@ impl RpcObserver {
                     return Err(error);
                 }
                 let delta = state.observed["delta"].as_u64().unwrap_or_default();
-                bail!("head advanced {delta} blocks; required {minimum}")
+                bail!("head advanced {delta} blocks; required {minimum}");
             }
             match self.block(url, tag, deadline).await {
                 Ok(block) => {
                     observation_error = None;
                     state.success(&sample_role, &block);
                     let delta = block.number.saturating_sub(first.number);
-                    state.observed = json!({"from": first.number, "last": block.number, "delta": delta, "required_delta": minimum});
+                    state.observed = json!({
+                        "from": first.number,
+                        "last": block.number,
+                        "delta": delta,
+                        "required_delta": minimum,
+                    });
                     if block.number < first.number {
-                        bail!("head reorged below the initial observation")
+                        bail!("head reorged below the initial observation");
                     }
                     if delta >= minimum {
                         return Ok("head advanced".into());
@@ -334,7 +342,12 @@ impl RpcObserver {
             if heads.len() == roles.len() {
                 let low = heads.iter().map(|(_, block)| block.number).min().unwrap_or_default();
                 let high = heads.iter().map(|(_, block)| block.number).max().unwrap_or_default();
-                state.observed = json!({"low": low, "high": high, "lag": high.saturating_sub(low), "maximum_lag": max_lag});
+                state.observed = json!({
+                    "low": low,
+                    "high": high,
+                    "lag": high.saturating_sub(low),
+                    "maximum_lag": max_lag,
+                });
                 if high.saturating_sub(low) <= max_lag {
                     let mut common: Option<String> = None;
                     let mut compared = Vec::new();
@@ -349,13 +362,16 @@ impl RpcObserver {
                                 if sampled.number == low && sampled.hash != block.hash {
                                     bail!(
                                         "endpoint {role} reorganized sampled block {low} during comparison"
-                                    )
+                                    );
                                 }
-                                compared.push(json!({"endpoint": role, "hash": block.hash}));
+                                compared.push(json!({
+                                    "endpoint": role,
+                                    "hash": block.hash,
+                                }));
                                 if common.as_ref().is_some_and(|hash| hash != &block.hash) {
                                     state.observed["common_height"] = json!(low);
                                     state.observed["compared"] = json!(compared);
-                                    bail!("heads disagree at common height {low}")
+                                    bail!("heads disagree at common height {low}");
                                 }
                                 common = Some(block.hash);
                             }
@@ -377,7 +393,7 @@ impl RpcObserver {
                     state.observation_unavailable = true;
                     return Err(error);
                 }
-                bail!("heads did not converge before deadline")
+                bail!("heads did not converge before deadline");
             }
         }
     }
@@ -396,9 +412,11 @@ impl RpcObserver {
         state: &mut ObservationState<'_>,
     ) -> Result<String> {
         let start = Instant::now();
-        let Some(until) = start.checked_add(duration) else { bail!("freshness duration overflow") };
+        let Some(until) = start.checked_add(duration) else {
+            bail!("freshness duration overflow");
+        };
         if until > deadline {
-            bail!("freshness duration exceeds remaining check deadline")
+            bail!("freshness duration exceeds remaining check deadline");
         }
         let mut oldest = 0;
         loop {
@@ -411,9 +429,13 @@ impl RpcObserver {
                         .checked_sub(block.timestamp)
                         .ok_or_else(|| eyre!("head timestamp is in the future"))?;
                     oldest = oldest.max(age);
-                    state.observed = json!({"oldest_age_seconds": oldest, "last_block": block.number, "maximum_age_seconds": maximum_age.as_secs()});
+                    state.observed = json!({
+                        "oldest_age_seconds": oldest,
+                        "last_block": block.number,
+                        "maximum_age_seconds": maximum_age.as_secs(),
+                    });
                     if age > maximum_age.as_secs() {
-                        bail!("head age {age}s exceeds freshness limit")
+                        bail!("head age {age}s exceeds freshness limit");
                     }
                 }
                 Err(error) => {
@@ -429,7 +451,7 @@ impl RpcObserver {
                 .await;
         }
         if state.count == 0 {
-            bail!("freshness window produced no samples")
+            bail!("freshness window produced no samples");
         }
         Ok("head remained fresh for the observation window".into())
     }
@@ -450,29 +472,34 @@ impl RpcObserver {
             let sent = self
                 .client
                 .post(url)
-                .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
+                .json(&json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": params,
+                }))
                 .send()
                 .await;
             let mut response = sent.map_err(|error| Self::transport(&error))?;
             if !response.status().is_success() {
-                bail!("RPC HTTP status {}", response.status())
+                bail!("RPC HTTP status {}", response.status());
             }
             let mut bytes = Vec::new();
             while let Some(chunk) =
                 response.chunk().await.map_err(|error| Self::transport(&error))?
             {
                 if bytes.len().saturating_add(chunk.len()) > RESPONSE_LIMIT {
-                    bail!("RPC response exceeds 1 MiB")
+                    bail!("RPC response exceeds 1 MiB");
                 }
                 bytes.extend_from_slice(&chunk);
             }
             let value: Value = serde_json::from_slice(&bytes)
                 .map_err(|_| eyre!("RPC response is not valid JSON"))?;
             if value.get("jsonrpc") != Some(&json!("2.0")) {
-                bail!("RPC response has invalid protocol version")
+                bail!("RPC response has invalid protocol version");
             }
             if value.get("id") != Some(&json!(1)) {
-                bail!("RPC response has mismatched id")
+                bail!("RPC response has mismatched id");
             }
             let result = value.get("result");
             let error = value.get("error");
@@ -505,7 +532,7 @@ impl RpcObserver {
         let digits =
             text.strip_prefix("0x").ok_or_else(|| eyre!("hex quantity lacks 0x prefix"))?;
         if digits.is_empty() || (digits.len() > 1 && digits.starts_with('0')) {
-            bail!("non-canonical hex quantity")
+            bail!("non-canonical hex quantity");
         }
         u64::from_str_radix(digits, 16).map_err(|_| eyre!("invalid hex quantity"))
     }
@@ -517,7 +544,7 @@ impl RpcObserver {
             || !hash.starts_with("0x")
             || !hash[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
         {
-            bail!("block hash is not 0x-prefixed 32-byte hex")
+            bail!("block hash is not 0x-prefixed 32-byte hex");
         }
         Ok(hash.into())
     }
@@ -609,11 +636,22 @@ mod tests {
     }
 
     fn rpc(result: Value) -> String {
-        json!({"jsonrpc":"2.0","id":1,"result":result}).to_string()
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": result,
+        })
+        .to_string()
     }
+
     fn block(number: u64, hash: char) -> Value {
-        json!({"number":format!("0x{number:x}"),"timestamp":0,"hash":format!("0x{}", hash.to_string().repeat(64))})
+        json!({
+            "number": format!("0x{number:x}"),
+            "timestamp": 0,
+            "hash": format!("0x{}", hash.to_string().repeat(64)),
+        })
     }
+
     fn replies(values: &[Value]) -> Vec<Reply> {
         values
             .iter()
@@ -621,9 +659,11 @@ mod tests {
             .map(|value| Reply { delay: Duration::ZERO, body: rpc(value) })
             .collect()
     }
+
     fn observer() -> RpcObserver {
         RpcObserver::new(RPC_BUDGET, Duration::from_millis(2)).unwrap()
     }
+
     fn progress(timeout: Duration, minimum: u64) -> AcceptanceCheck {
         AcceptanceCheck::HeadProgress {
             id: "p".into(),

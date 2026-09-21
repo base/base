@@ -106,14 +106,19 @@ impl Provisioner {
                 Duration::from_secs(15),
             )
             .await?;
-            provenance.push(json!({"image":image,"id":serde_json::from_str::<Value>(&inspected)?}));
+            provenance.push(json!({
+                "image": image,
+                "id": serde_json::from_str::<Value>(&inspected)?,
+            }));
         }
         fs::create_dir_all(self.output.join("report"))?;
         fs::write(
             self.output.join("report/environment.json"),
-            serde_json::to_vec_pretty(
-                &json!({"images":provenance,"built_by_this_invocation":build,"project":self.project}),
-            )?,
+            serde_json::to_vec_pretty(&json!({
+                "images": provenance,
+                "built_by_this_invocation": build,
+                "project": self.project,
+            }))?,
         )?;
         let owner = Ownership {
             repo: self.repo.clone(),
@@ -215,7 +220,7 @@ impl Provisioner {
     pub fn write_environment(&self, config: &ScenarioConfig) -> Result<()> {
         let root = self.output.join("private/devnet").canonicalize()?;
         if root.to_string_lossy().contains(['\n', '\r', '$', '#', '"', '\'']) {
-            bail!("unsupported characters in output directory")
+            bail!("unsupported characters in output directory");
         }
         let mut env = fs::read_to_string(self.repo.join("etc/docker/devnet-env"))?;
         env.push_str(&format!(
@@ -260,7 +265,7 @@ impl Provisioner {
             {
                 bail!(
                     "container {name} already exists; stop the developer devnet explicitly before acceptance"
-                )
+                );
             }
         }
         Ok(())
@@ -283,20 +288,20 @@ impl Provisioner {
         if genesis.pointer("/config/chainId").and_then(Value::as_u64)
             != Some(config.devnet.l2.chain_id)
         {
-            bail!("L2 genesis chain ID differs from scenario")
+            bail!("L2 genesis chain ID differs from scenario");
         }
         let l1: Value =
             serde_json::from_slice(&fs::read(root.join("l1/configs/el/genesis.json"))?)?;
         if l1.pointer("/config/chainId").and_then(Value::as_u64) != Some(config.devnet.l1.chain_id)
         {
-            bail!("L1 genesis chain ID differs from scenario")
+            bail!("L1 genesis chain ID differs from scenario");
         }
         for (name, activation) in &config.devnet.l2.forks {
             let actual = genesis.pointer(&format!("/config/base/{name}")).and_then(Value::as_u64);
             let expected =
                 forks.iter().find(|fork| &fork.name == name).map(|fork| fork.activation_timestamp);
             if actual != expected && !(activation.block() == Some(0) && actual == Some(0)) {
-                bail!("L2 genesis {name} schedule differs from verified rollup")
+                bail!("L2 genesis {name} schedule differs from verified rollup");
             }
         }
         Ok(())
@@ -405,7 +410,7 @@ impl Provisioner {
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         {
-            bail!("invalid ownership manifest")
+            bail!("invalid ownership manifest");
         }
         let mut provisioner = Self {
             repo: owner.repo,
@@ -467,7 +472,7 @@ impl Provisioner {
             bail!(
                 "command failed ({status}): {}",
                 String::from_utf8_lossy(&err).chars().take(4000).collect::<String>()
-            )
+            );
         }
         Ok(String::from_utf8_lossy(&out).into_owned())
     }

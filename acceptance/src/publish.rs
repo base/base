@@ -301,7 +301,7 @@ impl PrPublisher {
         if !self.current().await? {
             return Ok(false);
         }
-        self.request(method, &path, Some(json!({"body": body}))).await?;
+        self.request(method, &path, Some(json!({ "body": body }))).await?;
         Ok(true)
     }
 
@@ -424,12 +424,28 @@ mod tests {
     }
 
     fn current() -> Value {
-        json!({"head":{"sha":"head"},"base":{"sha":"base"}})
+        json!({
+            "head": {
+                "sha": "head",
+            },
+            "base": {
+                "sha": "base",
+            },
+        })
     }
 
     fn owned(metadata: &CommentMetadata) -> Value {
-        json!({"id":777,"user":{"login":"depot-code-access[bot]","type":"Bot"},
-            "body": format!("{MARKER}\n{META_PREFIX}{} -->\nprior result", serde_json::to_string(metadata).unwrap())})
+        json!({
+            "id": 777,
+            "user": {
+                "login": "depot-code-access[bot]",
+                "type": "Bot",
+            },
+            "body": format!(
+                "{MARKER}\n{META_PREFIX}{} -->\nprior result",
+                serde_json::to_string(metadata).unwrap()
+            ),
+        })
     }
 
     async fn server(steps: Vec<(String, Value)>) -> (PrPublisher, JoinHandle<Vec<Value>>) {
@@ -688,8 +704,22 @@ mod tests {
     #[tokio::test]
     async fn stale_head_or_base_never_writes_even_if_changed_during_pagination() {
         for changed in [
-            json!({"head":{"sha":"new"},"base":{"sha":"base"}}),
-            json!({"head":{"sha":"head"},"base":{"sha":"new"}}),
+            json!({
+                "head": {
+                    "sha": "new",
+                },
+                "base": {
+                    "sha": "base",
+                },
+            }),
+            json!({
+                "head": {
+                    "sha": "head",
+                },
+                "base": {
+                    "sha": "new",
+                },
+            }),
         ] {
             for changed_late in [false, true] {
                 let mut steps = Vec::new();
@@ -727,10 +757,27 @@ mod tests {
 
     #[tokio::test]
     async fn paginated_update_only_modifies_the_exact_owned_bot_comment() {
-        let other = json!({"user":{"login":"other[bot]","type":"Bot"},"body":MARKER});
-        let human = json!({"user":{"login":"depot-code-access[bot]","type":"User"},"body":MARKER});
-        let unrelated =
-            json!({"user":{"login":"depot-code-access[bot]","type":"Bot"},"body":"other results"});
+        let other = json!({
+            "user": {
+                "login": "other[bot]",
+                "type": "Bot",
+            },
+            "body": MARKER,
+        });
+        let human = json!({
+            "user": {
+                "login": "depot-code-access[bot]",
+                "type": "User",
+            },
+            "body": MARKER,
+        });
+        let unrelated = json!({
+            "user": {
+                "login": "depot-code-access[bot]",
+                "type": "Bot",
+            },
+            "body": "other results",
+        });
         let (publisher, server) = server(vec![
             ("GET /pulls/1".into(), current()),
             ("GET /issues/1/comments?per_page=100&page=1".into(), json!(vec![other; 100])),
@@ -746,7 +793,7 @@ mod tests {
             PrPublisher::body(&run(), "https://github.com/base/base/pull/1/checks", &metadata())
                 .unwrap();
         assert!(publisher.publish(&metadata(), &body).await.unwrap());
-        assert_eq!(server.await.unwrap(), vec![json!({"body":body})]);
+        assert_eq!(server.await.unwrap(), vec![json!({ "body": body })]);
     }
 
     #[tokio::test]
@@ -759,10 +806,17 @@ mod tests {
         ])
         .await;
         assert!(publisher.publish(&metadata(), MARKER).await.unwrap());
-        assert_eq!(server.await.unwrap(), vec![json!({"body":MARKER})]);
+        assert_eq!(server.await.unwrap(), vec![json!({ "body": MARKER })]);
         for page in [
             json!([owned(&metadata()), owned(&metadata())]),
-            json!([{"id":7,"user":{"type":"Bot","login":"depot-code-access[bot]"},"body":MARKER}]),
+            json!([{
+                "id": 7,
+                "user": {
+                    "type": "Bot",
+                    "login": "depot-code-access[bot]",
+                },
+                "body": MARKER,
+            }]),
         ] {
             let (publisher, task) = self::server(vec![
                 ("GET /pulls/1".into(), current()),
@@ -780,7 +834,7 @@ mod tests {
         for page in 1..=MAX_PAGES {
             steps.push((
                 format!("GET /issues/1/comments?per_page=100&page={page}"),
-                json!(vec![json!({"user":{"type":"User"}}); 100]),
+                json!(vec![json!({ "user": { "type": "User" } }); 100]),
             ));
         }
         let (publisher, server) = server(steps).await;

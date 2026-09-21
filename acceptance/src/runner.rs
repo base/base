@@ -38,7 +38,7 @@ impl AcceptanceRunner {
     pub async fn run(config: ScenarioConfig, options: AcceptanceOptions) -> Result<ScenarioResult> {
         config.validate()?;
         if options.endpoints.is_some() && options.build {
-            bail!("attach mode cannot build images")
+            bail!("attach mode cannot build images");
         }
         if let Some(endpoints) = &options.endpoints {
             Self::validate_endpoints(&config, endpoints)?;
@@ -91,7 +91,12 @@ impl AcceptanceRunner {
                         check.message = "execution interrupted".into();
                     }
                 }
-                result.stages.push(Self::stage("interruption", Status::Cancelled, started, "received shutdown signal"));
+                result.stages.push(Self::stage(
+                    "interruption",
+                    Status::Cancelled,
+                    started,
+                    "received shutdown signal",
+                ));
                 Ok(())
             }
         };
@@ -320,7 +325,7 @@ impl AcceptanceRunner {
                         if chain != expected {
                             bail!(
                                 "{role} chain identity mismatch: expected {expected}, observed {chain}"
-                            )
+                            );
                         }
                     }
                     Err(_) => {
@@ -328,10 +333,10 @@ impl AcceptanceRunner {
                         continue;
                     }
                 }
-                match observer.head_number(url, deadline).await {
-                    Ok(head) => {
-                        let first = initial.entry(role).or_insert(head);
-                        all &= head > *first;
+                match observer.block(url, "latest", deadline).await {
+                    Ok(block) => {
+                        let first = initial.entry(role).or_insert(block.number);
+                        all &= block.number > *first;
                     }
                     Err(_) => all = false,
                 }
@@ -340,7 +345,7 @@ impl AcceptanceRunner {
                 return Ok(());
             }
             if Instant::now() >= deadline {
-                bail!("readiness deadline elapsed")
+                bail!("readiness deadline elapsed");
             }
             tokio::time::sleep_until(
                 (Instant::now() + config.readiness.poll_interval.0).min(deadline),
@@ -375,12 +380,12 @@ impl AcceptanceRunner {
     pub fn validate_endpoints(config: &ScenarioConfig, endpoints: &EndpointMap) -> Result<()> {
         for role in Self::required_roles(config) {
             if !endpoints.contains_key(&role) {
-                bail!("required endpoint {role} missing")
+                bail!("required endpoint {role} missing");
             }
         }
         for (role, url) in endpoints {
             if !matches!(role.as_str(), "l1" | "builder" | "validator" | "rpc" | "shadow") {
-                bail!("unknown endpoint role")
+                bail!("unknown endpoint role");
             }
             let parsed =
                 reqwest::Url::parse(url).map_err(|_| eyre::eyre!("invalid URL for {role}"))?;
@@ -391,7 +396,7 @@ impl AcceptanceRunner {
                 || parsed.query().is_some()
                 || parsed.fragment().is_some()
             {
-                bail!("{role} requires an HTTP URL without credentials, query, or fragment")
+                bail!("{role} requires an HTTP URL without credentials, query, or fragment");
             }
         }
         Ok(())
@@ -414,7 +419,7 @@ impl AcceptanceRunner {
             kind: check.kind().into(),
             status: Status::Blocked,
             duration_ms: 0,
-            expected: json!({"configuration":check}),
+            expected: json!({ "configuration": check }),
             observed: json!({}),
             message: message.into(),
             next_step: "inspect lifecycle errors and rerun with a fresh output directory".into(),

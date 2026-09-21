@@ -24,6 +24,7 @@ impl Serialize for Span {
         s.serialize_str(&humantime::format_duration(self.0).to_string())
     }
 }
+
 impl<'de> Deserialize<'de> for Span {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let value = String::deserialize(d)?;
@@ -72,28 +73,28 @@ impl ScenarioConfig {
     /// Validates schema, schedules, endpoints and all observation bounds.
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != 1 {
-            bail!("unsupported schema_version {}; expected 1", self.schema_version)
+            bail!("unsupported schema_version {}; expected 1", self.schema_version);
         }
         Self::validate_id(&self.id, "scenario")?;
         if self.description.trim().is_empty() {
-            bail!("description must not be empty")
+            bail!("description must not be empty");
         }
         if self.description.len() > MAX_DESCRIPTION_BYTES {
-            bail!("description must not exceed {MAX_DESCRIPTION_BYTES} bytes")
+            bail!("description must not exceed {MAX_DESCRIPTION_BYTES} bytes");
         }
         Self::validate_duration(self.timeout.0, "scenario timeout", 1, 3600)?;
         if self.devnet.topology != "single-sequencer" {
-            bail!("unsupported topology {}; HA is not version-one", self.devnet.topology)
+            bail!("unsupported topology {}; HA is not version-one", self.devnet.topology);
         }
         if self.devnet.l1.chain_id == 0 || self.devnet.l2.chain_id == 0 {
-            bail!("chain IDs must be non-zero")
+            bail!("chain IDs must be non-zero");
         }
         if self.devnet.l2.verifier_l1_confirmations > 10_000 {
-            bail!("verifier_l1_confirmations must not exceed 10000")
+            bail!("verifier_l1_confirmations must not exceed 10000");
         }
         Self::validate_duration(self.devnet.l1.slot_duration.0, "L1 slot duration", 1, 60)?;
         if self.devnet.l1.slot_duration.0.subsec_nanos() != 0 {
-            bail!("L1 slot duration must use whole seconds")
+            bail!("L1 slot duration must use whole seconds");
         }
         Self::validate_duration_against(
             self.readiness.timeout.0,
@@ -104,19 +105,19 @@ impl ScenarioConfig {
         Self::validate_duration(self.readiness.request_timeout.0, "request timeout", 1, 30)?;
         Self::validate_duration(self.readiness.poll_interval.0, "poll interval", 1, 30)?;
         if self.readiness.request_timeout.0 > self.readiness.timeout.0 {
-            bail!("request timeout exceeds readiness timeout")
+            bail!("request timeout exceeds readiness timeout");
         }
         if self.checks.is_empty() {
-            bail!("at least one check is required")
+            bail!("at least one check is required");
         }
         if self.checks.len() > MAX_CHECKS {
-            bail!("no more than {MAX_CHECKS} checks are allowed")
+            bail!("no more than {MAX_CHECKS} checks are allowed");
         }
         let mut ids = BTreeSet::new();
         for check in &self.checks {
             Self::validate_id(check.id(), "check")?;
             if !ids.insert(check.id().to_ascii_lowercase()) {
-                bail!("duplicate check id {}", check.id())
+                bail!("duplicate check id {}", check.id());
             }
             check.validate(self)?;
         }
@@ -130,23 +131,23 @@ impl ScenarioConfig {
                 .get(name)
                 .ok_or_else(|| eyre::eyre!("missing L2 fork {name}"))?;
             if let ForkActivation::Disabled { disabled: false } = activation {
-                bail!("fork {name}: disabled must be true")
+                bail!("fork {name}: disabled must be true");
             }
             if let ForkActivation::AtBlock { at_block } = activation {
                 if prerequisite_disabled {
-                    bail!("enabled fork {name} has a disabled prerequisite")
+                    bail!("enabled fork {name} has a disabled prerequisite");
                 }
                 if let Some(prior) = previous
                     && *at_block < prior
                 {
-                    bail!("fork {name} activates before its prerequisite")
+                    bail!("fork {name} activates before its prerequisite");
                 }
                 if name == "zenith" {
                     let denim = self.devnet.l2.forks["denim"]
                         .block()
                         .ok_or_else(|| eyre::eyre!("Zenith requires Denim"))?;
                     if (at_block - denim) % 5 != 0 {
-                        bail!("post-Denim fork offsets must be divisible by five")
+                        bail!("post-Denim fork offsets must be divisible by five");
                     }
                 }
                 previous = Some(*at_block);
@@ -156,7 +157,7 @@ impl ScenarioConfig {
         }
         for name in self.devnet.l2.forks.keys() {
             if !FORKS.contains(&name.as_str()) {
-                bail!("unsupported L2 fork {name}")
+                bail!("unsupported L2 fork {name}");
             }
         }
         Ok(())
@@ -167,18 +168,18 @@ impl ScenarioConfig {
         self.validate()?;
         let metadata = fs::metadata(rollup_path)?;
         if metadata.len() > MAX_ROLLUP_JSON_BYTES {
-            bail!("rollup JSON exceeds {MAX_ROLLUP_JSON_BYTES} bytes")
+            bail!("rollup JSON exceeds {MAX_ROLLUP_JSON_BYTES} bytes");
         }
         let value: serde_json::Value = serde_json::from_slice(&fs::read(rollup_path)?)?;
         if value.get("l1_chain_id").and_then(serde_json::Value::as_u64)
             != Some(self.devnet.l1.chain_id)
         {
-            bail!("generated L1 chain ID does not match scenario")
+            bail!("generated L1 chain ID does not match scenario");
         }
         if value.get("l2_chain_id").and_then(serde_json::Value::as_u64)
             != Some(self.devnet.l2.chain_id)
         {
-            bail!("generated L2 chain ID does not match scenario")
+            bail!("generated L2 chain ID does not match scenario");
         }
         let genesis = value
             .pointer("/genesis/l2_time")
@@ -219,7 +220,7 @@ impl ScenarioConfig {
                 .transpose()?;
             let actual = generated.get(name).and_then(serde_json::Value::as_u64);
             if actual != expected {
-                bail!("generated {name} timestamp {actual:?} does not match expected {expected:?}")
+                bail!("generated {name} timestamp {actual:?} does not match expected {expected:?}");
             }
             if let Some(activation_timestamp) = actual {
                 boundaries.push(ForkBoundary {
@@ -240,7 +241,7 @@ impl ScenarioConfig {
             || id.len() > 63
             || !id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         {
-            bail!("invalid {what} id {id:?}")
+            bail!("invalid {what} id {id:?}");
         }
         Ok(())
     }
@@ -263,7 +264,7 @@ impl ScenarioConfig {
         max: Duration,
     ) -> Result<()> {
         if value < min || value > max {
-            bail!("{name} must be between {min:?} and {max:?}")
+            bail!("{name} must be between {min:?} and {max:?}");
         }
         Ok(())
     }
@@ -283,12 +284,14 @@ pub struct DevnetConfig {
     #[serde(default)]
     pub l2: L2Config,
 }
+
 impl DevnetConfig {
     /// Returns the default topology.
     pub fn default_topology() -> String {
         "single-sequencer".into()
     }
 }
+
 impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
@@ -298,6 +301,7 @@ impl Default for DevnetConfig {
         }
     }
 }
+
 /// Layer-one settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -309,21 +313,25 @@ pub struct L1Config {
     #[serde(default = "L1Config::default_slot_duration")]
     pub slot_duration: Span,
 }
+
 impl L1Config {
     /// Returns the default chain identifier.
     pub const fn default_chain_id() -> u64 {
         1337
     }
+
     /// Returns the default slot duration.
     pub const fn default_slot_duration() -> Span {
         Span(Duration::from_secs(12))
     }
 }
+
 impl Default for L1Config {
     fn default() -> Self {
         Self { chain_id: Self::default_chain_id(), slot_duration: Self::default_slot_duration() }
     }
 }
+
 /// Layer-two settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -338,11 +346,13 @@ pub struct L2Config {
     #[serde(default = "L2Config::default_forks", deserialize_with = "L2Config::merge_forks")]
     pub forks: BTreeMap<String, ForkActivation>,
 }
+
 impl L2Config {
     /// Returns the default chain identifier.
     pub const fn default_chain_id() -> u64 {
         84_538_453
     }
+
     /// Returns the default confirmation count.
     pub const fn default_confirmations() -> u64 {
         15
@@ -356,6 +366,7 @@ impl L2Config {
         forks.extend(supplied);
         Ok(forks)
     }
+
     /// Returns the default fork schedule.
     pub fn default_forks() -> BTreeMap<String, ForkActivation> {
         [("azul", 20), ("beryl", 21), ("cobalt", 22), ("denim", 25)]
@@ -365,6 +376,7 @@ impl L2Config {
             .collect()
     }
 }
+
 impl Default for L2Config {
     fn default() -> Self {
         Self {
@@ -374,6 +386,7 @@ impl Default for L2Config {
         }
     }
 }
+
 /// Fork activation setting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
@@ -389,6 +402,7 @@ pub enum ForkActivation {
         disabled: bool,
     },
 }
+
 impl ForkActivation {
     /// Returns the activation block when enabled.
     pub const fn block(&self) -> Option<u64> {
@@ -413,20 +427,24 @@ pub struct ReadinessConfig {
     #[serde(default = "ReadinessConfig::default_poll_interval")]
     pub poll_interval: Span,
 }
+
 impl ReadinessConfig {
     /// Returns the default readiness timeout.
     pub const fn default_timeout() -> Span {
         Span(Duration::from_secs(240))
     }
+
     /// Returns the default request timeout.
     pub const fn default_request_timeout() -> Span {
         Span(Duration::from_secs(2))
     }
+
     /// Returns the default polling interval.
     pub const fn default_poll_interval() -> Span {
         Span(Duration::from_secs(1))
     }
 }
+
 impl Default for ReadinessConfig {
     fn default() -> Self {
         Self {
@@ -531,6 +549,7 @@ pub enum AcceptanceCheck {
         start: Option<CheckStart>,
     },
 }
+
 impl AcceptanceCheck {
     /// Returns the default head tag.
     pub fn default_head() -> String {
@@ -547,6 +566,7 @@ impl AcceptanceCheck {
             | Self::HeadFresh { id, .. } => id,
         }
     }
+
     /// Returns the check kind.
     pub const fn kind(&self) -> &'static str {
         match self {
@@ -557,6 +577,7 @@ impl AcceptanceCheck {
             Self::HeadFresh { .. } => "head_fresh",
         }
     }
+
     /// Returns the check timeout.
     pub const fn timeout(&self) -> Duration {
         match self {
@@ -567,6 +588,7 @@ impl AcceptanceCheck {
             | Self::HeadFresh { timeout, .. } => timeout.0,
         }
     }
+
     /// Returns the optional start condition.
     pub const fn start(&self) -> Option<&CheckStart> {
         match self {
@@ -577,6 +599,7 @@ impl AcceptanceCheck {
             | Self::HeadFresh { start, .. } => start.as_ref(),
         }
     }
+
     /// Validates the check against its containing scenario.
     pub fn validate(&self, scenario: &ScenarioConfig) -> Result<()> {
         ScenarioConfig::validate_duration_against(
@@ -592,33 +615,33 @@ impl AcceptanceCheck {
             | Self::HeadFresh { endpoint, .. } => vec![endpoint.as_str()],
             Self::HeadsConverge { endpoints, head, .. } => {
                 if endpoints.len() < 2 {
-                    bail!("heads_converge requires two endpoints")
-                };
+                    bail!("heads_converge requires two endpoints");
+                }
                 if !matches!(head.as_str(), "latest" | "safe" | "finalized") {
-                    bail!("unsupported head tag {head}")
+                    bail!("unsupported head tag {head}");
                 }
                 let unique: BTreeSet<_> = endpoints.iter().collect();
                 if unique.len() != endpoints.len() {
-                    bail!("heads_converge endpoints must be distinct")
+                    bail!("heads_converge endpoints must be distinct");
                 }
                 endpoints.iter().map(String::as_str).collect()
             }
         };
         for endpoint in endpoints {
             if !matches!(endpoint, "l1" | "builder" | "validator" | "rpc" | "shadow") {
-                bail!("unknown endpoint {endpoint}")
+                bail!("unknown endpoint {endpoint}");
             }
         }
         if let Some(start) = self.start() {
             if (start.before_fork.is_some()) == (start.after_fork.is_some()) {
-                bail!("start requires exactly one of before_fork/after_fork")
-            };
+                bail!("start requires exactly one of before_fork/after_fork");
+            }
             if start.chain != "l2" {
-                bail!("configurable L1 forks (including Glamsterdam) are unsupported")
-            };
+                bail!("configurable L1 forks (including Glamsterdam) are unsupported");
+            }
             let fork = start.before_fork.as_ref().or(start.after_fork.as_ref()).unwrap();
             if scenario.devnet.l2.forks.get(fork).and_then(ForkActivation::block).is_none() {
-                bail!("check references absent or disabled fork {fork}")
+                bail!("check references absent or disabled fork {fork}");
             }
         }
         if let Self::HeadFresh { duration, timeout, .. } = self {
@@ -632,7 +655,7 @@ impl AcceptanceCheck {
         match self {
             Self::HeadProgress { minimum_blocks: 0, .. }
             | Self::SafeHeadProgress { minimum_blocks: 0, .. } => {
-                bail!("minimum_blocks must be non-zero")
+                bail!("minimum_blocks must be non-zero");
             }
             _ => {}
         }
