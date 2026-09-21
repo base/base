@@ -8,7 +8,7 @@ use base_common_network::Base;
 use base_consensus_engine::{BaseEngineClient, EngineClientBuilder};
 use url::Url;
 
-use crate::NodeMode;
+use crate::NodeOperatingMode;
 
 /// Configuration for the Engine Actor.
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ pub struct EngineConfig {
     /// The mode of operation for the node.
     /// When the node is in sequencer mode, the engine actor will receive requests to build blocks
     /// from the sequencer actor.
-    pub mode: NodeMode,
+    pub mode: NodeOperatingMode,
 }
 
 impl EngineConfig {

@@ -15,11 +15,12 @@ mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
-    BuildRequest, EngineActor, EngineActorRequest, EngineClientError, EngineClientResult,
-    EngineConfig, EngineDerivationClient, EngineError, EngineProcessor, EngineRequestReceiver,
-    EngineRpcProcessor, EngineRpcRequest, GetPayloadRequest, InsertUnsafePayloadRequest,
-    QueuedEngineDerivationClient, ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason,
-    ResetRequest, ResetRequestOutcome, ValidatorEngineRequestHandler,
+    BuildRequest, EngineActor, EngineActorRequest,
+    EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
+    EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
+    GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient,
+    ReconcileShadowRequest, ResetOrigin, ResetOutcome, ResetReason, ResetRequest,
+    ResetRequestOutcome, ValidatorEngineRequestHandler,
 };
 
 mod rpc;
@@ -39,9 +40,9 @@ pub use derivation::{
 
 mod l1_watcher;
 pub use l1_watcher::{
-    AlloyL1BlockFetcher, BlockStream, L1BlockFetcher, L1WatcherActor, L1WatcherActorError,
-    L1WatcherDerivationClient, L1WatcherQueryExecutor, L1WatcherQueryProcessor, LogRetrier,
-    QueuedL1WatcherDerivationClient,
+    AlloyL1BlockFetcher, BlockStream, L1BlockFetcher,
+    L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
+    L1WatcherQueryProcessor, LogRetrier, QueuedL1WatcherDerivationClient,
 };
 
 mod upgrade_signal;
@@ -53,8 +54,8 @@ pub use network::MockUnsafePayloadGossipClient;
 pub use network::{
     GossipTransport, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
     NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,
-    NetworkInboundData, QueuedNetworkEngineClient, QueuedUnsafePayloadGossipClient,
-    UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
+    NetworkInboundData, QueuedNetworkEngineClient,
+    QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 
 mod sequencer;

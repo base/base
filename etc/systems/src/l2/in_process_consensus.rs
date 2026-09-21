@@ -19,8 +19,8 @@ use base_builder_core::test_utils::get_available_port;
 use base_common_genesis::RollupConfig;
 use base_consensus_disc::LocalNode;
 use base_consensus_node::{
-    EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, RollupNodeBuilder, SequencerConfig,
-    UpgradeSignalBuilderConfig,
+    EngineConfig, L1ConfigBuilder, NetworkConfig, NodeMode, NodeOperatingMode, RollupNodeBuilder,
+    SequencerConfig, UpgradeSignalBuilderConfig,
 };
 use base_consensus_peers::{PeerScoreLevel, SecretKeyLoader};
 use base_consensus_rpc::{AdminApiClient, BaseP2PApiClient, RollupNodeApiClient, RpcBuilder};
@@ -210,7 +210,10 @@ impl InProcessConsensus {
             l2_jwt_secret: config.jwt_secret,
             l1_url: config.l1_rpc_url,
             l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
-            mode: config.mode,
+            mode: config
+                .mode
+                .try_into_operating_mode(config.shadow_blocks_per_cycle)
+                .map_err(|e| eyre::eyre!(e))?,
         };
 
         let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), rpc_port);
@@ -248,7 +251,6 @@ impl InProcessConsensus {
         if config.mode == NodeMode::Sequencer {
             builder = builder.with_sequencer_config(SequencerConfig {
                 sequencer_stopped: config.sequencer_stopped,
-                shadow_blocks_per_cycle: config.shadow_blocks_per_cycle,
                 l1_rpc_timeout: base_consensus_providers::L1_RPC_TIMEOUT,
                 ..Default::default()
             });
