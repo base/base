@@ -50,7 +50,7 @@ pub use ordering::{
 mod parking;
 pub use parking::{
     BestTransactionLane, BestTransactionLaneState, ParkableBestTransactions,
-    ParkableTransactionPool, ParkedBestTransactions,
+    ParkableTransactionPool, ParkedBestTransactions, PayerSuspended,
 };
 
 mod pool;

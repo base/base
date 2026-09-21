@@ -7,14 +7,36 @@ use std::{
 
 use alloy_primitives::{
     Address, TxHash, U256,
-    map::{HashMap, hash_map::Entry},
+    map::{HashMap, HashSet, hash_map::Entry},
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionOrdering,
-    TransactionPool, ValidPoolTransaction, error::InvalidPoolTransactionError,
+    TransactionPool, ValidPoolTransaction,
+    error::{InvalidPoolTransactionError, PoolTransactionError},
 };
 
 use crate::{BasePooledTx, BestTransactionPriority};
+
+/// Excludes a transaction from the remainder of a best-transactions iterator
+/// because its EIP-8130 gas payer was suspended: the payer's balance can no
+/// longer cover its sponsored transactions.
+///
+/// This is not a bad transaction. The payer may refund before a later build, so
+/// the transaction stays in the pool and can be re-selected; only the current
+/// iterator excludes it.
+#[derive(Debug, thiserror::Error)]
+#[error("EIP-8130 gas payer suspended during selection")]
+pub struct PayerSuspended;
+
+impl PoolTransactionError for PayerSuspended {
+    fn is_bad_transaction(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+}
 
 /// A sequential transaction lane whose members must execute in nonce order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,6 +95,15 @@ where
 
     /// Records that a yielded transaction committed and releases its lane successor.
     fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<T>>);
+
+    /// Suspends an EIP-8130 gas payer, excluding every remaining transaction it
+    /// funds from the rest of this iterator.
+    ///
+    /// The flag itself is set in O(1) and covers all of the payer's sponsored
+    /// transactions regardless of how many there are; each surfacing candidate
+    /// is then skipped lazily as it is selected, and the first skip of a lane
+    /// drops that lane's blocked descendants with it. Idempotent.
+    fn suspend_payer(&mut self, payer: Address);
 }
 
 /// A transaction pool that can create lane-aware parkable best iterators.
@@ -106,6 +137,7 @@ where
     parked: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
     ready: HashMap<TxHash, Arc<ValidPoolTransaction<T>>>,
     ready_heap: BinaryHeap<(BestTransactionPriority<O::PriorityValue>, TxHash)>,
+    suspended_payers: HashSet<Address>,
 }
 
 impl<T, I, O> std::fmt::Debug for ParkedBestTransactions<T, I, O>
@@ -140,7 +172,33 @@ where
             parked: HashMap::default(),
             ready: HashMap::default(),
             ready_heap: BinaryHeap::new(),
+            suspended_payers: HashSet::default(),
         }
+    }
+
+    /// Returns whether this transaction's EIP-8130 gas payer is suspended.
+    fn is_gas_payer_suspended(&self, transaction: &Arc<ValidPoolTransaction<T>>) -> bool {
+        transaction
+            .transaction
+            .gas_payer()
+            .is_some_and(|payer| self.suspended_payers.contains(&payer))
+    }
+
+    /// Excludes a suspended-payer transaction from the remainder of the iterator.
+    ///
+    /// A finite-channel transaction terminally invalidates its lane, which drops
+    /// its blocked descendants; a nonce-free transaction is dropped on its own.
+    /// The source iterator is notified so it excludes the lane's descendants too.
+    fn exclude_suspended(&mut self, transaction: Arc<ValidPoolTransaction<T>>) {
+        if let Some(lane) = BestTransactionLane::for_transaction(&transaction) {
+            self.invalidate_lane(lane);
+        } else {
+            let hash = *transaction.hash();
+            self.ready.remove(&hash);
+            self.parked.remove(&hash);
+        }
+        self.inner
+            .mark_invalid(&transaction, InvalidPoolTransactionError::other(PayerSuspended));
     }
 
     /// Returns a complete priority key for a transaction.
@@ -273,23 +331,33 @@ where
     type Item = Arc<ValidPoolTransaction<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.fill_source_head();
+        loop {
+            self.fill_source_head();
 
-        let ready_priority = self.ready_priority().cloned();
-        let source_priority = self.source_head.as_ref().map(|source| self.priority(source));
-        let take_ready = match (source_priority, ready_priority) {
-            (Some(source), Some(ready)) => ready >= source,
-            (None, Some(_)) => true,
-            (Some(_), None) => false,
-            (None, None) => return None,
-        };
+            let ready_priority = self.ready_priority().cloned();
+            let source_priority = self.source_head.as_ref().map(|source| self.priority(source));
+            let take_ready = match (source_priority, ready_priority) {
+                (Some(source), Some(ready)) => ready >= source,
+                (None, Some(_)) => true,
+                (Some(_), None) => false,
+                (None, None) => return None,
+            };
 
-        let transaction = if take_ready {
-            self.pop_ready().expect("ready priority requires a ready transaction")
-        } else {
-            self.source_head.take().expect("source priority requires a source transaction")
-        };
-        Some(self.record_yielded(transaction))
+            let transaction = if take_ready {
+                self.pop_ready().expect("ready priority requires a ready transaction")
+            } else {
+                self.source_head.take().expect("source priority requires a source transaction")
+            };
+
+            // Lazily skip candidates whose gas payer was suspended. The first
+            // skip of a lane invalidates it, dropping its blocked descendants.
+            if self.is_gas_payer_suspended(&transaction) {
+                self.exclude_suspended(transaction);
+                continue;
+            }
+
+            return Some(self.record_yielded(transaction));
+        }
     }
 }
 
@@ -352,6 +420,34 @@ where
     fn mark_committed(&mut self, transaction: &Arc<ValidPoolTransaction<T>>) {
         if let Some(lane) = BestTransactionLane::for_transaction(transaction) {
             self.release_lane(lane);
+        }
+    }
+
+    fn suspend_payer(&mut self, payer: Address) {
+        // The flag is the only mandatory work: it is O(1) and covers every
+        // transaction this payer funds, now and as they surface. `next` skips
+        // them lazily. Purge candidates already staged so we neither yield nor
+        // rank them: draining a payer must not keep its transactions competing.
+        if !self.suspended_payers.insert(payer) {
+            return;
+        }
+        let source_suspended = self
+            .source_head
+            .as_ref()
+            .is_some_and(|transaction| self.is_gas_payer_suspended(transaction));
+        if source_suspended {
+            let transaction = self.source_head.take().expect("source head checked above");
+            self.exclude_suspended(transaction);
+        }
+        let staged: Vec<Arc<ValidPoolTransaction<T>>> = self
+            .ready
+            .values()
+            .chain(self.parked.values())
+            .filter(|transaction| self.is_gas_payer_suspended(transaction))
+            .map(Arc::clone)
+            .collect();
+        for transaction in staged {
+            self.exclude_suspended(transaction);
         }
     }
 }
@@ -427,6 +523,48 @@ mod tests {
             calls: Vec::new(),
             metadata: Bytes::new(),
             payer: None,
+        };
+        let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
+        let signed = Eip8130Signed::new(tx, Bytes::from(signature.as_bytes()), Bytes::new());
+        let pooled = ConsensusPooledTransaction::Eip8130(signed);
+        let encoded_length = pooled.encode_2718_len();
+        let transaction = BasePooledTransaction::new(
+            Recovered::new_unchecked(pooled.into(), signer.address()),
+            encoded_length,
+        );
+        Arc::new(ValidPoolTransaction {
+            transaction_id: TransactionId::new(0u64.into(), nonce),
+            transaction,
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::External,
+            authority_ids: None,
+        })
+    }
+
+    /// Builds an EIP-8130 transaction whose gas is paid by an explicit `payer`,
+    /// distinct from the sender, to model a sponsorship (1:Many) lane.
+    fn sponsored_transaction(
+        signer: &PrivateKeySigner,
+        payer: Address,
+        nonce_key: U256,
+        nonce: u64,
+        priority_fee: u128,
+    ) -> Arc<ValidPoolTransaction<BasePooledTransaction>> {
+        let tx = TxEip8130 {
+            chain_id: ChainConfig::mainnet().chain_id,
+            sender: None,
+            nonce_key,
+            nonce_sequence: nonce,
+            valid_after: 0,
+            valid_before: u64::from(nonce_key == Eip8130Constants::NONCE_KEY_MAX),
+            max_priority_fee_per_gas: priority_fee,
+            max_fee_per_gas: priority_fee + 10,
+            gas_limit: 50_000,
+            account_changes: Vec::new(),
+            calls: Vec::new(),
+            metadata: Bytes::new(),
+            payer: Some(payer),
         };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed = Eip8130Signed::new(tx, Bytes::from(signature.as_bytes()), Bytes::new());
@@ -540,5 +678,78 @@ mod tests {
 
         assert!(best.ready.is_empty());
         assert!(best.ready_heap.is_empty());
+    }
+
+    #[test]
+    fn suspend_payer_excludes_all_of_that_payers_sponsored_transactions() {
+        let payer = Address::repeat_byte(0xAA);
+        let sender_a = PrivateKeySigner::random();
+        let sender_b = PrivateKeySigner::random();
+        let sender_c = PrivateKeySigner::random();
+        let self_payer = PrivateKeySigner::random();
+        let sponsored_a = sponsored_transaction(&sender_a, payer, U256::ZERO, 0, 100);
+        let sponsored_b = sponsored_transaction(&sender_b, payer, U256::ZERO, 0, 90);
+        let sponsored_c = sponsored_transaction(&sender_c, payer, U256::ZERO, 0, 80);
+        let unrelated = transaction(&self_payer, U256::ZERO, 0, 10);
+
+        let inner = StaticBestTransactions::new(vec![
+            Arc::clone(&sponsored_a),
+            Arc::clone(&sponsored_b),
+            Arc::clone(&sponsored_c),
+            Arc::clone(&unrelated),
+        ]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
+
+        // One flag drop revokes every lane the payer funds, across all senders.
+        best.suspend_payer(payer);
+
+        assert_eq!(best.next().unwrap().hash(), unrelated.hash());
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn suspend_payer_mid_iteration_skips_the_payers_remaining_transactions() {
+        let payer = Address::repeat_byte(0xBB);
+        let sender_a = PrivateKeySigner::random();
+        let sender_b = PrivateKeySigner::random();
+        let self_payer = PrivateKeySigner::random();
+        let first = sponsored_transaction(&sender_a, payer, U256::ZERO, 0, 100);
+        let second = sponsored_transaction(&sender_b, payer, U256::ZERO, 0, 90);
+        let unrelated = transaction(&self_payer, U256::ZERO, 0, 10);
+
+        let inner = StaticBestTransactions::new(vec![
+            Arc::clone(&first),
+            Arc::clone(&second),
+            Arc::clone(&unrelated),
+        ]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
+
+        // The highest-priority sponsored transaction is included, then the payer
+        // drains mid-build and the rest of its book is skipped.
+        assert_eq!(best.next().unwrap().hash(), first.hash());
+        best.mark_committed(&first);
+        best.suspend_payer(payer);
+
+        assert_eq!(best.next().unwrap().hash(), unrelated.hash());
+        assert!(best.next().is_none());
+    }
+
+    #[test]
+    fn suspend_payer_covers_a_self_paying_sender() {
+        let signer = PrivateKeySigner::random();
+        let other = PrivateKeySigner::random();
+        let self_pay = transaction(&signer, U256::ZERO, 0, 100);
+        let unrelated = transaction(&other, U256::ZERO, 0, 10);
+
+        let inner =
+            StaticBestTransactions::new(vec![Arc::clone(&self_pay), Arc::clone(&unrelated)]);
+        let mut best = ParkedBestTransactions::new(inner, BaseOrdering::coinbase_tip(), 0);
+
+        // A self-paying sender's gas payer is itself, so suspending it excludes
+        // its transactions just like a sponsor.
+        best.suspend_payer(signer.address());
+
+        assert_eq!(best.next().unwrap().hash(), unrelated.hash());
+        assert!(best.next().is_none());
     }
 }

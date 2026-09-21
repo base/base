@@ -361,6 +361,14 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
         None
     }
 
+    /// Returns the account charged for gas: the EIP-8130 `payer` when present,
+    /// otherwise the sender for a self-paying EIP-8130 transaction. Returns
+    /// `None` for non-EIP-8130 transactions, which carry no payer dimension.
+    fn gas_payer(&self) -> Option<Address> {
+        let signed = self.as_eip8130()?;
+        Some(signed.tx().payer.unwrap_or_else(|| self.sender()))
+    }
+
     /// Returns the invalidation watch set computed during validation, if set.
     ///
     /// Defaults to `None` for implementers that do not track invalidation
