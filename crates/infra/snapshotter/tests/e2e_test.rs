@@ -1572,7 +1572,7 @@ async fn e2e_stop_upload_restart_real_container() -> Result<()> {
 
     docker.start_container(&container_name, None::<StartContainerOptions>).await?;
 
-    let container_manager = DockerContainerManager::new("/var/run/docker.sock")?;
+    let container_manager = DockerContainerManager::connect_with_defaults()?;
 
     assert!(
         container_manager.is_running(&container_name).await?,

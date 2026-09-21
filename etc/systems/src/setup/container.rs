@@ -329,7 +329,6 @@ impl SetupContainer {
         let mut container = SetupImage::request()
             .with_wait_for(WaitFor::exit(ExitWaitStrategy::default().with_exit_code(0)))
             .with_startup_timeout(Duration::from_secs(SETUP_TIMEOUT_SECS))
-            .with_network("none")
             .with_env_var("OUTPUT_DIR", "/output")
             .with_env_var("L2_OUTPUT_DIR", "/output/l2")
             .with_env_var("SHARED_DIR", "/output/shared")
