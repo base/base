@@ -14,7 +14,7 @@ pub use affordability::CoinbaseTipAffordability;
 pub mod builder;
 pub use builder::BasePayloadBuilder;
 pub mod config;
-pub use config::ResourceMeteringConfig;
+pub use config::{BuilderStateProvider, ResourceMeteringConfig};
 mod rejection_cache;
 pub use rejection_cache::{REJECTION_CACHE_MAX_CAPACITY, REJECTION_CACHE_TTL, RejectionCache};
 pub mod error;
@@ -53,7 +53,8 @@ pub use types::BasePayloadTypes;
 
 mod validity;
 pub use validity::{
-    ParkedPredicateIndex, StateChangeEffects, ValidityPredicateEvaluation, ValidityPredicateKey,
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD, ParkedPredicateIndex, StateChangeEffects,
+    ValidityPredicateEvaluation, ValidityPredicateKey,
 };
 
 pub mod validator;

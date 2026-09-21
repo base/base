@@ -124,10 +124,10 @@ pub struct GossipScores {
     pub behavioral_penalty: f64,
 }
 
-/// Request-response protocol scoring metrics.
+/// Legacy request-response scoring fields retained for RPC response compatibility.
 ///
-/// Tracks peer performance in direct request-response interactions outside
-/// of the gossip mesh, such as block synchronization requests.
+/// Base does not support the legacy block-sync request-response protocol and
+/// reports zeroes for these fields.
 ///
 /// Reference: <https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L31C1-L35C2>
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]

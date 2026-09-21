@@ -35,7 +35,6 @@ use reth_evm::{
         BlockBuilder, BlockBuilderOutcome, BlockExecutionError, BlockExecutor, BlockValidationError,
     },
 };
-use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::{BuildNextEnv, BuiltPayloadExecutedBlock};
@@ -234,23 +233,20 @@ where
             let _ = pool.remove_transactions(hashes);
         });
 
-        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        if let Some(execution_cache) = execution_cache {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                execution_cache.cache().clone(),
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
-            ));
-        }
-        let state = StateProviderDatabase::new(state_provider.as_ref());
+        let state_provider = crate::BuilderStateProvider::new(
+            self.client.state_by_block_hash(ctx.parent().hash())?,
+            execution_cache.map(|cache| cache.cache().clone()),
+            self.config.state_provider_metrics,
+        );
+        let state = StateProviderDatabase::new(state_provider.provider());
 
         if ctx.attributes().no_tx_pool() {
-            builder.build(state, state_provider.as_ref(), state_root_handle, ctx)
+            builder.build(state, state_provider.provider(), state_root_handle, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             builder.build(
                 cached_reads.as_db_mut(state),
-                state_provider.as_ref(),
+                state_provider.provider(),
                 state_root_handle,
                 ctx,
             )
@@ -947,7 +943,8 @@ where
         let block_number =
             builder.evm_mut().block().number().try_into().expect("block number must fit in u64");
         let predicate_context = PredicateContext { block_number, flashblock_index: 0 };
-        let mut predicate_index = ParkedPredicateIndex::default();
+        let mut predicate_index =
+            ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let mut predicate_loads = PredicateLoadTracker::default();
         let mut predicate_eval_duration = None;
         let mut predicate_bucket_wakeups = 0;
@@ -1125,7 +1122,11 @@ where
                         }
                         continue;
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired: false }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied {
+                        blocker,
+                        blocker_index,
+                        expired: false,
+                    }) => {
                         ValidityMetrics::validity_predicate_evaluations_total("not_satisfied")
                             .increment(1);
                         trace!(
@@ -1145,7 +1146,8 @@ where
                                     "defer_detail" => "a validity predicate is not satisfied by the current build state",
                                 }
                             );
-                            predicate_index.park(tx_hash, tx, blocker);
+                            let predicate = tx.validity_predicates()[blocker_index].clone();
+                            predicate_index.park(tx_hash, tx, predicate);
                         } else {
                             emit_native_validity_event!(
                                 self,
@@ -1438,12 +1440,14 @@ where
                         predicate_index.remove(parked_hash);
                         best_txs.promote(parked_hash);
                     }
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker_index, .. }) => {
                         ValidityMetrics::validity_predicate_evaluations_total(
                             "rescan_not_satisfied",
                         )
                         .increment(1);
-                        predicate_index.reindex(parked_hash, blocker);
+                        let predicate =
+                            parked_transaction.validity_predicates()[blocker_index].clone();
+                        predicate_index.reindex(parked_hash, predicate);
                     }
                     Err(error) => {
                         ValidityMetrics::validity_predicate_evaluations_total("rescan_read_error")
@@ -2675,5 +2679,80 @@ mod tests {
         assert_eq!(included_tx_count(outcome), 1);
         assert!(evicted.lock().unwrap().is_empty());
         assert!(invalid.lock().unwrap().is_empty());
+    }
+
+    /// The build loop wraps its state provider in `InstrumentedStateProvider` *outside*
+    /// `CachedStateProvider`, so the recorded latency is the total cost of a read as the builder
+    /// experiences it. This asserts the consequence: a cache hit and a read-through are both
+    /// timed. Wrapping the other way round would record only the read-through, and a warm cache
+    /// would then look like no improvement rather than a faster one.
+    ///
+    /// Hits are told apart from read-throughs by value: the cache and the provider underneath
+    /// hold different balances for the same address, so the returned balance names the source.
+    /// `CachedStateProvider::new` is lookup-only and never populates on a miss, so the cached
+    /// entry here stands in for one the engine placed there.
+    #[test]
+    fn instrumentation_times_both_cache_hits_and_read_throughs() {
+        const FROM_CACHE: u64 = 1;
+        const FROM_PROVIDER: u64 = 999;
+
+        let cached_address = Address::with_last_byte(0x11);
+        let uncached_address = Address::with_last_byte(0x22);
+
+        let mut provider = reth_revm::test_utils::StateProviderTest::default();
+        for address in [cached_address, uncached_address] {
+            provider.insert_account(
+                address,
+                reth_primitives_traits::Account {
+                    balance: U256::from(FROM_PROVIDER),
+                    ..Default::default()
+                },
+                None,
+                HashMap::default(),
+            );
+        }
+
+        let cache = reth_execution_cache::ExecutionCache::new(1_000_000);
+        cache.insert_account(
+            cached_address,
+            Some(reth_primitives_traits::Account {
+                balance: U256::from(FROM_CACHE),
+                ..Default::default()
+            }),
+        );
+
+        let instrumented = crate::BuilderStateProvider::new(provider, Some(cache), true);
+        let stats = Arc::clone(instrumented.stats().expect("instrumentation enabled"));
+
+        let hit = reth_storage_api::AccountReader::basic_account(
+            instrumented.provider(),
+            &cached_address,
+        )
+        .unwrap()
+        .expect("cached account");
+        assert_eq!(
+            hit.balance,
+            U256::from(FROM_CACHE),
+            "read should have been served by the cache, not the provider underneath"
+        );
+
+        let miss = reth_storage_api::AccountReader::basic_account(
+            instrumented.provider(),
+            &uncached_address,
+        )
+        .unwrap()
+        .expect("uncached account");
+        assert_eq!(
+            miss.balance,
+            U256::from(FROM_PROVIDER),
+            "read should have fallen through to the provider underneath"
+        );
+
+        assert_eq!(
+            stats.total_account_fetches(),
+            2,
+            "the cache hit must be timed as well as the read-through; recording only the \
+             read-through would hide the benefit of a warm cache"
+        );
     }
 }

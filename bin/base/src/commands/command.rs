@@ -60,11 +60,9 @@ impl BaseCommand {
                 RuntimeManager::new().run_until_ctrl_c((*batcher).exec(metrics_enabled))
             }
             Self::Bootnode(bootnode) => (*bootnode).run(chain_resolver.resolve()?, metrics_enabled),
-            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?, metrics_enabled),
-            Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?, metrics_enabled),
-            Self::Sequencer(sequencer) => {
-                (*sequencer).run(chain_resolver.resolve()?, metrics_enabled)
-            }
+            Self::Rpc(rpc) => (*rpc).run(chain_resolver.resolve()?),
+            Self::Follow(follow) => (*follow).run(chain_resolver.resolve()?),
+            Self::Sequencer(sequencer) => (*sequencer).run(chain_resolver.resolve()?),
             Self::Update(update) => (*update).run(),
             Self::Reth(reth) => {
                 chain_resolver.reject_for_reth_command("base reth")?;
@@ -86,6 +84,8 @@ impl BaseCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::{net::TcpListener, process::Command, thread, time::Duration};
+
     use clap::Parser;
 
     use crate::{cli::BaseCli, config::ChainResolver};
@@ -136,5 +136,123 @@ mod tests {
 
         assert!(err.to_string().contains("base reth"));
         assert!(err.to_string().contains("base --chain"));
+    }
+
+    #[test]
+    fn unified_upgrade_metrics_without_standalone_endpoint() {
+        // Each launch needs its own process: reth owns global recorder/thread-pool state.
+        // Keep temporary files alive until the child (including its node thread) has exited.
+        for flavor in ["rpc", "sequencer", "follow"] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            for (key, _) in std::env::vars() {
+                if key.starts_with("BASE_") || key.starts_with("OP_RETH_") {
+                    command.env_remove(key);
+                }
+            }
+            let output = command
+                .current_dir(dir.path())
+                .args([
+                    "--exact",
+                    "commands::command::tests::unified_upgrade_metrics_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("BASE_NODE_METRICS_ENABLED", "false")
+                .env("BASE_METRICS_TEST_FLAVOR", flavor)
+                .env("BASE_METRICS_TEST_DIR", dir.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{flavor} metrics test failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "spawned by unified_upgrade_metrics_without_standalone_endpoint"]
+    async fn unified_upgrade_metrics_child() {
+        let flavor = std::env::var("BASE_METRICS_TEST_FLAVOR").unwrap();
+        let dir = std::env::var("BASE_METRICS_TEST_DIR").unwrap();
+        let metrics_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let metrics_addr = metrics_listener.local_addr().unwrap().to_string();
+        // Leave upstream requests pending locally: this test needs execution startup and a
+        // metrics scrape, not a live L1, beacon node, or follow source.
+        let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_url = format!("http://{}", upstream.local_addr().unwrap());
+        let ipc = format!("{dir}/rpc.ipc");
+        let mut args = vec![
+            "base",
+            "--chain",
+            "dev",
+            &flavor,
+            "--datadir",
+            &dir,
+            "--ipcpath",
+            &ipc,
+            "--metrics",
+            &metrics_addr,
+            "--port",
+            "0",
+            "--authrpc.port",
+            "0",
+            "--rpc.port",
+            "0",
+            "--disable-discovery",
+            "--l1-eth-rpc",
+            &upstream_url,
+            "--l1-beacon",
+            &upstream_url,
+        ];
+        if flavor == "follow" {
+            args.extend(["--source-l2-rpc", &upstream_url, "--l2-rpc-url", &upstream_url]);
+        } else {
+            args.extend(["--p2p.listen.tcp", "0", "--p2p.listen.udp", "0"]);
+        }
+        if flavor == "sequencer" {
+            args.extend([
+                "--p2p.sequencer.key",
+                "bcc617ea05150ff60490d3c6058630ba94ae9f12a02a87efd291349ca0e54e0a",
+                "--flashblocks.port",
+                "0",
+            ]);
+        }
+        let cli = BaseCli::parse_from(args);
+        assert!(!cli.metrics.enabled);
+        drop(metrics_listener);
+        // Debug builds of the unified launch future need more than the default worker stack.
+        let node =
+            thread::Builder::new().stack_size(32 * 1024 * 1024).spawn(move || cli.run()).unwrap();
+        let client = reqwest::Client::builder().timeout(Duration::from_secs(1)).build().unwrap();
+        let metrics_url = format!("http://{metrics_addr}/metrics");
+        let scrape = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if node.is_finished() {
+                    panic!(
+                        "node exited before emitting upgrade metrics: {:?}",
+                        node.join().unwrap()
+                    );
+                }
+                if let Ok(response) = client.get(&metrics_url).send().await
+                    && let Ok(body) = response.text().await
+                    && [("Azul", 0), ("Beryl", -1), ("Cobalt", -1)].iter().all(|(upgrade, time)| {
+                        body.lines().any(|line| {
+                            line == format!(
+                                "reth_base_node_upgrades{{upgrade=\"{upgrade}\"}} {time}"
+                            )
+                        })
+                    }) && body.lines().any(|line| {
+                    line == "reth_base_upgrade_signal_mode_info{layer=\"el\",mode=\"disabled\"} 1"
+                }) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        assert!(scrape.is_ok(), "missing startup upgrade gauges on the reth metrics endpoint");
     }
 }

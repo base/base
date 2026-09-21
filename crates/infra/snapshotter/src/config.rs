@@ -29,13 +29,15 @@ pub enum S3ConfigType {
 /// Configuration for the snapshotter sidecar.
 #[derive(Debug, Args)]
 pub struct SnapshotterConfig {
-    /// Docker container name of the execution layer node to stop/start.
+    /// Docker container name of the execution layer or unified node to stop/start.
     #[arg(long)]
     pub container_name: String,
 
     /// Docker container name of the consensus layer node to stop/start.
+    ///
+    /// Required for split EL/CL deployments. Omit on unified nodes.
     #[arg(long)]
-    pub consensus_container_name: String,
+    pub consensus_container_name: Option<String>,
 
     /// HTTP JSON-RPC URL of the execution layer node.
     ///
@@ -89,15 +91,16 @@ pub struct SnapshotterConfig {
 
     /// Maximum number of threads for snapshot archive creation.
     ///
-    /// Defaults to Rayon's global thread count, normally the available CPU count.
+    /// This budget is shared between parallel archive creation and each database archive's native
+    /// zstd workers. Defaults to Rayon's global thread count, normally the available CPU count.
     #[arg(long)]
     pub snapshot_threads: Option<usize>,
 
     /// Maximum number of archive streams compressed and uploaded concurrently.
     ///
     /// The default of four preserves parallel compression of the state, RocksDB-index, and
-    /// proofs databases while leaving capacity for another archive. Each active stream can retain roughly 1.25 `GiB` of compressed data
-    /// while an S3 multipart part is uploaded and retried; lower this on memory-constrained nodes.
+    /// proofs databases while leaving capacity for another archive. Completed 128 `MiB` parts are
+    /// also bounded by the global streaming-part limit; lower this on memory-constrained nodes.
     #[arg(long, env = "SNAPSHOTTER_MAX_STREAMING_ARCHIVES", default_value = "4")]
     pub max_streaming_archives: NonZeroUsize,
 

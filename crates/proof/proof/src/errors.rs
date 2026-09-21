@@ -110,6 +110,16 @@ pub enum OracleProviderError {
     /// * `0` - The unknown chain ID that was encountered
     #[error("Unknown chain ID: {0}")]
     UnknownChainId(u64),
+    /// A supported L2 chain resolved an L1 chain without a built-in configuration.
+    ///
+    /// Only the mutable local devnet may take its L1 configuration from the oracle. For every other
+    /// supported chain the L1 chain ID is compiled in, so a missing built-in L1 config means the
+    /// chain configuration itself is inconsistent and the proof must not execute.
+    #[error("Missing built-in L1 chain config for L1 chain ID: {l1_chain_id}")]
+    MissingL1ChainConfig {
+        /// The L1 chain ID that has no built-in configuration.
+        l1_chain_id: u64,
+    },
     /// Rollup config L2 chain ID does not match the boot chain ID.
     ///
     /// This error occurs when an oracle-provided rollup config claims to be for

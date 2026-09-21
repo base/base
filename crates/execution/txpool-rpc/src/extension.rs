@@ -73,11 +73,12 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
+            let transaction_sender = ctx.registry.eth_api().eth_api().tx_batch_sender().clone();
             let api = SendRawTransactionValidityApiImpl::with_validity_limits(
-                ctx.pool().clone(),
                 ctx.provider().clone(),
                 config.max_validity_predicates,
                 config.max_validity_expiry_secs,
+                transaction_sender,
             );
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())

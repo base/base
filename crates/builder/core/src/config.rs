@@ -6,7 +6,10 @@ use core::{
 };
 use std::sync::Arc;
 
-use base_execution_payload_builder::config::{BaseDAConfig, GasLimitConfig};
+use base_execution_payload_builder::{
+    DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
+    config::{BaseDAConfig, GasLimitConfig},
+};
 
 use crate::{ExecutionMeteringMode, NoopMeteringProvider, RejectionCache, SharedMeteringProvider};
 
@@ -64,6 +67,8 @@ pub struct BuilderConfig {
     /// `base_builder_predicate_eval_duration_per_block` metric's P99 SLO.
     pub predicate_eval_hard_cutoff: Duration,
 
+    /// Number of parked predicates that converts one state bucket to ordered wakeups.
+    pub predicate_bucket_ordered_threshold: usize,
     /// Resource metering provider
     pub metering_provider: SharedMeteringProvider,
 
@@ -86,6 +91,14 @@ pub struct BuilderConfig {
     /// Whether to drop EIP-8130 transactions whose captured authorization
     /// predicates are positively stale before executing them.
     pub manifest_precheck_enabled: bool,
+
+    /// Whether to record per-call state fetch latency for the build loop.
+    ///
+    /// Wraps the builder's state provider so account, storage, and code reads are timed and
+    /// reported under `sync.state_provider` with a `builder` source label, separating build-loop
+    /// IO from the engine's validation-path IO. Adds overhead to every state read, so this is
+    /// driven by reth's `--engine.state-provider-metrics` and stays off by default.
+    pub state_provider_metrics: bool,
 }
 
 impl BuilderConfig {
@@ -115,12 +128,14 @@ impl core::fmt::Debug for BuilderConfig {
             .field("max_uncompressed_block_size", &self.max_uncompressed_block_size)
             .field("metering_wait_duration", &self.metering_wait_duration)
             .field("predicate_eval_hard_cutoff", &self.predicate_eval_hard_cutoff)
+            .field("predicate_bucket_ordered_threshold", &self.predicate_bucket_ordered_threshold)
             .field("metering_provider", &self.metering_provider)
             .field("rejection_cache_size", &self.rejection_cache.entry_count())
             .field("audit_archiver_url", &self.audit_archiver_url)
             .field("rejected_tx_channel_size", &self.rejected_tx_channel_size)
             .field("max_rejected_txs_per_block", &self.max_rejected_txs_per_block)
             .field("manifest_precheck_enabled", &self.manifest_precheck_enabled)
+            .field("state_provider_metrics", &self.state_provider_metrics)
             .finish()
     }
 }
@@ -142,12 +157,14 @@ impl Default for BuilderConfig {
             max_uncompressed_block_size: None,
             metering_wait_duration: None,
             predicate_eval_hard_cutoff: Duration::from_millis(10),
+            predicate_bucket_ordered_threshold: DEFAULT_PREDICATE_BUCKET_ORDERED_THRESHOLD,
             metering_provider: Arc::new(NoopMeteringProvider),
             rejection_cache: RejectionCache::default(),
             audit_archiver_url: None,
             rejected_tx_channel_size: 500,
             max_rejected_txs_per_block: 500,
             manifest_precheck_enabled: true,
+            state_provider_metrics: false,
         }
     }
 }
@@ -210,6 +227,13 @@ impl BuilderConfig {
         metering_wait_duration: Option<Duration>,
     ) -> Self {
         self.metering_wait_duration = metering_wait_duration;
+        self
+    }
+
+    /// Sets whether build-loop state reads are timed.
+    #[must_use]
+    pub const fn with_state_provider_metrics(mut self, enabled: bool) -> Self {
+        self.state_provider_metrics = enabled;
         self
     }
 

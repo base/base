@@ -171,13 +171,22 @@ impl ChainConfig {
     pub const ZERONET_NAME: &'static str = "base-zeronet";
     /// CLI chain name for the local Base devnet.
     pub const DEVNET_NAME: &'static str = "dev";
-    /// All chain names accepted by Base chain parsers.
+    /// Base-centric operator selector for Base Mainnet.
+    pub const MAINNET_SELECTOR: &'static str = "mainnet";
+    /// Base-centric operator selector for Base Sepolia.
+    pub const SEPOLIA_SELECTOR: &'static str = "sepolia";
+    /// Base-centric operator selector for Base Zeronet.
+    pub const ZERONET_SELECTOR: &'static str = "zeronet";
+    /// All chain names accepted by Base chain parsers, canonical selectors first.
     pub const SUPPORTED_NAMES: &'static [&'static str] = &[
+        Self::MAINNET_SELECTOR,
+        Self::SEPOLIA_SELECTOR,
+        Self::ZERONET_SELECTOR,
+        Self::DEVNET_NAME,
         Self::MAINNET_NAME,
         Self::SEPOLIA_ALIAS,
         Self::SEPOLIA_NAME,
         Self::ZERONET_NAME,
-        Self::DEVNET_NAME,
     ];
 
     /// Base Mainnet chain configuration.
@@ -243,12 +252,21 @@ impl ChainConfig {
     /// while `by_name("mainnet")` returns `None`.
     pub fn from_base_chain(name: &str) -> Option<&'static Self> {
         match name {
-            "mainnet" => Some(Self::mainnet()),
-            "sepolia" => Some(Self::sepolia()),
-            "zeronet" => Some(Self::zeronet()),
-            "dev" => Some(Self::devnet()),
+            Self::MAINNET_SELECTOR => Some(Self::mainnet()),
+            Self::SEPOLIA_SELECTOR => Some(Self::sepolia()),
+            Self::ZERONET_SELECTOR => Some(Self::zeronet()),
+            Self::DEVNET_NAME => Some(Self::devnet()),
             _ => None,
         }
+    }
+
+    /// Resolves a chain from either naming surface: the Base-centric selectors matched
+    /// by [`from_base_chain`](Self::from_base_chain) or the namespaced names matched by
+    /// [`by_name`](Self::by_name).
+    ///
+    /// Chain parsers should use this so every Base entry point accepts the same inputs.
+    pub fn by_any_name(name: &str) -> Option<&'static Self> {
+        Self::from_base_chain(name).or_else(|| Self::by_name(name))
     }
 
     /// Returns the Base-centric operator selector (`mainnet`, `sepolia`,
@@ -257,15 +275,15 @@ impl ChainConfig {
     ///
     /// Use this to normalize any recognized chain input back to the canonical
     /// selector understood by the `base` binary's `--chain` surface, for example
-    /// `from_base_chain(x).or_else(|| by_name(x)).and_then(Self::base_chain_selector)`.
+    /// `by_any_name(x).and_then(Self::base_chain_selector)`.
     ///
     /// Returns `None` for chains that have no built-in selector.
     pub const fn base_chain_selector(&self) -> Option<&'static str> {
         match self.chain_id {
-            8453 => Some("mainnet"),
-            84532 => Some("sepolia"),
-            763360 => Some("zeronet"),
-            84538453 => Some("dev"),
+            8453 => Some(Self::MAINNET_SELECTOR),
+            84532 => Some(Self::SEPOLIA_SELECTOR),
+            763360 => Some(Self::ZERONET_SELECTOR),
+            84538453 => Some(Self::DEVNET_NAME),
             _ => None,
         }
     }
@@ -453,7 +471,7 @@ const MAINNET: ChainConfig = ChainConfig {
     jovian_timestamp: 1_764_691_201,
     azul_timestamp: Some(1_779_991_200),
     beryl_timestamp: Some(1_782_410_400),
-    cobalt_timestamp: None,
+    cobalt_timestamp: Some(1_790_791_200),
     denim_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
@@ -527,7 +545,7 @@ const SEPOLIA: ChainConfig = ChainConfig {
     jovian_timestamp: 1_763_568_001,
     azul_timestamp: Some(1_776_708_000),
     beryl_timestamp: Some(1_781_805_600),
-    cobalt_timestamp: None,
+    cobalt_timestamp: Some(1_790_186_400),
     denim_timestamp: None,
 
     genesis_l1_hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
@@ -750,7 +768,7 @@ mod tests {
     #[test]
     fn supported_chain_names_resolve() {
         for name in ChainConfig::SUPPORTED_NAMES {
-            assert!(ChainConfig::by_name(name).is_some(), "{name} should resolve");
+            assert!(ChainConfig::by_any_name(name).is_some(), "{name} should resolve");
         }
         assert_eq!(ChainConfig::by_name(ChainConfig::SEPOLIA_ALIAS), Some(ChainConfig::sepolia()));
         assert_eq!(
@@ -780,6 +798,23 @@ mod tests {
         // namespaced names matched by `by_name`.
         assert_eq!(ChainConfig::by_name("mainnet"), None);
         assert_eq!(ChainConfig::from_base_chain(ChainConfig::MAINNET_NAME), None);
+    }
+
+    #[test]
+    fn by_any_name_accepts_both_naming_surfaces() {
+        for (selector, namespaced) in [
+            (ChainConfig::MAINNET_SELECTOR, ChainConfig::MAINNET_NAME),
+            (ChainConfig::SEPOLIA_SELECTOR, ChainConfig::SEPOLIA_NAME),
+            (ChainConfig::ZERONET_SELECTOR, ChainConfig::ZERONET_NAME),
+        ] {
+            assert_eq!(
+                ChainConfig::by_any_name(selector),
+                ChainConfig::by_any_name(namespaced),
+                "{selector} and {namespaced} must resolve to the same chain"
+            );
+        }
+
+        assert_eq!(ChainConfig::by_any_name("not-a-chain"), None);
     }
 
     #[test]

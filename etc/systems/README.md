@@ -86,7 +86,9 @@ cargo run -p base-system-tests --bin base-devnet -- snapshot \
 ```
 
 Use `--block-interval 200ms` for the subsecond variant. The first descendant activates `BaseTime`
-metadata and subsequent blocks advance on a deterministic 200ms schedule.
+metadata and subsequent blocks advance on a deterministic 200ms schedule. Snapshot devnets default
+to a 10 Ggas block limit at 2s and a 1 Ggas block limit at 200ms, preserving 5 Ggas/s of theoretical
+capacity at either cadence. Pass `--block-gas-limit <gas>` to override the cadence default.
 
 Startup validates the selected chain ID, the boundary L1-info transaction, `SystemConfig`, and
 sequence number. It waits for the builder to extend the snapshot and for the client to follow before
@@ -109,15 +111,67 @@ cast balance "$FUNDER_ADDRESS" --rpc-url "$BUILDER_RPC"
 ```
 
 The runtime JSON contains `status`, `chain_id`, `boundary_number`, `boundary_hash`,
-`block_interval_ms`, `builder_rpc_url`, `builder_flashblocks_url`, and `client_rpc_url`. Dynamic
-ports are the default and are safest for automation. `--stable-ports` binds the builder and client
-RPCs to ports 7545 and 8545, respectively, but fails if those ports are occupied.
+`block_interval_ms`, `block_gas_limit`, `builder_rpc_url`, `builder_flashblocks_url`, and
+`client_rpc_url`. Dynamic ports are the default and are safest for automation. `--stable-ports`
+binds the builder and client RPCs to ports 7545 and 8545, respectively, but fails if those ports are
+occupied.
 
 To pin a run to a known snapshot boundary, pass all three of `--expected-head-number`,
 `--expected-head-hash`, and `--expected-head-timestamp`. Startup fails before load generation if
 the captured boundary differs.
 
 ## Run a snapshot benchmark
+
+## Run a quick local transfer benchmark
+
+For a no-configuration smoke benchmark, `base-bench` starts a fresh temporary
+local devnet, runs the default 60-second plain-transfer profile, prints its
+load-test summary, and shuts everything down:
+
+```bash
+just devnet bench
+```
+
+It needs Docker, but it needs neither a snapshot nor a funded key. The generated
+datadirs are temporary and are removed during shutdown. Use the explicit
+`base-bench snapshot` arguments below for reproducible snapshot benchmarks and
+report artifacts.
+
+## Run the fresh-devnet workload suite
+
+The checked-in fresh-devnet suite runs every workload on a distinct empty
+devnet, so token state, accounts, the transaction pool, and caches cannot leak
+between scenarios. It currently covers B-20 transfers (with the B-20 asset
+feature activated before setup), high-concurrency ETH transfers to new and existing recipients, and a
+50,000-round Blake2f precompile profile:
+
+```sh
+cargo run --release -p base-system-tests --bin base-bench -- local \
+  --workload-config etc/benchmarks/fresh-devnet.yml \
+  --output-dir results/fresh-devnet \
+  --client-version "base/$(git rev-parse --short HEAD)"
+```
+
+The command writes one native load-test sidecar per workload plus a top-level
+visualizer manifest:
+
+```text
+results/fresh-devnet/
+├── metadata.json
+├── suite-results.json
+├── fresh-devnet-b20-transfer/load-test-result.json
+├── fresh-devnet-eth-new/load-test-result.json
+├── fresh-devnet-eth-existing/load-test-result.json
+└── fresh-devnet-blake2f-50000/load-test-result.json
+```
+
+`metadata.json` and the load-test sidecars are directly consumable by the
+static visualizer in `base/benchmark`; link this output directory to that
+repository's ignored `output/` directory and run its normal production build.
+Swap workloads can opt into fresh-devnet contract provisioning with
+`deploy_devnet_swap_harness: true` on a workload entry. That mode deploys a
+fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
+then auto-wires swap and real-token setup addresses before execution.
 
 `base-bench snapshot` owns the process lifecycle around one load test: it generates an ephemeral
 funder, deposits funds to it in the first local descendant, replaces placeholder endpoints in the
@@ -135,7 +189,7 @@ CPU-bound far below the 400M block gas limit.
 mkdir -p results
 export BASE_BENCH_CLIENT_VERSION="base/v0.0.0-$(git rev-parse --short HEAD)"
 
-cargo run --release -p base-system-tests --bin base-bench -- snapshot \
+just devnet bench snapshot \
   --chain mainnet \
   --builder-datadir "$BUILDER_DATADIR" \
   --client-datadir "$CLIENT_DATADIR" \

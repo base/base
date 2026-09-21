@@ -667,7 +667,7 @@ impl UpgradeConfig {
         base: BaseUpgradeConfig {
             azul: Some(1_779_991_200),
             beryl: Some(1_782_410_400),
-            cobalt: None,
+            cobalt: Some(1_790_791_200),
             denim: None,
             zenith: None,
         },
@@ -691,7 +691,7 @@ impl UpgradeConfig {
         base: BaseUpgradeConfig {
             azul: Some(1_776_708_000),
             beryl: Some(1_781_805_600),
-            cobalt: None,
+            cobalt: Some(1_790_186_400),
             denim: None,
             zenith: None,
         },
@@ -1109,7 +1109,7 @@ mod runtime_tests {
 
         assert_eq!(
             BaseUpgrade::from_chain_and_timestamp(CHAIN_ID, u64::MAX),
-            Some(BaseUpgrade::Azul),
+            Some(BaseUpgrade::Cobalt),
         );
 
         RuntimeUpgradeRegistry::clear_chain(CHAIN_ID);
@@ -1127,11 +1127,13 @@ mod runtime_tests {
         let _guard = RUNTIME_REGISTRY_TEST_LOCK.lock();
         RuntimeUpgradeRegistry::clear_chain(8453);
         RuntimeUpgradeRegistry::clear_chain(84532);
-        for chain_id in [8453, 84532] {
-            assert_eq!(
-                BaseUpgrade::from_chain_and_timestamp(chain_id, u64::MAX),
-                Some(BaseUpgrade::Beryl)
-            );
-        }
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(8453, u64::MAX),
+            Some(BaseUpgrade::Cobalt)
+        );
+        assert_eq!(
+            BaseUpgrade::from_chain_and_timestamp(84532, u64::MAX),
+            Some(BaseUpgrade::Cobalt)
+        );
     }
 }

@@ -26,8 +26,9 @@ use base_shadow_indexer_db::{
     DEFAULT_DATABASE, DEFAULT_PORT, DEFAULT_USERNAME, PgConnectionParams, ShadowDbConfig,
 };
 use base_tx_forwarding::{
-    DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS, DEFAULT_RESEND_AFTER_MS, TxForwardingConfig,
-    TxForwardingExtension,
+    DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY, DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+    DEFAULT_INLINE_SIMULATION_WORKERS, DEFAULT_MAX_BATCH_SIZE, DEFAULT_MAX_RPS,
+    DEFAULT_RESEND_AFTER_MS, TxForwardingConfig, TxForwardingExtension,
 };
 use base_txpool_rpc::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
@@ -35,7 +36,9 @@ use base_txpool_rpc::{
     TxPoolRpcExtension,
 };
 use base_txpool_tracing::{TxPoolExtension, TxpoolConfig};
-use base_upgrade_signal::UpgradeSignalStartupMode;
+use base_upgrade_signal::{
+    UpgradeSignalMetricLayer, UpgradeSignalMetrics, UpgradeSignalStartupMode,
+};
 use tracing::warn;
 use url::Url;
 
@@ -410,6 +413,39 @@ pub struct RpcStandardNodeArgs {
         requires = "enable_tx_forwarding"
     )]
     pub tx_forwarding_max_rps: u32,
+
+    /// Run `meter_bundle` on the mempool node before inserting into the forwarding pool.
+    ///
+    /// Has no effect until the sim-worker path is wired; keep off in production.
+    #[arg(long = "enable-inline-simulation", requires = "enable_tx_forwarding")]
+    pub enable_inline_simulation: bool,
+
+    /// Number of in-process `meter_bundle` workers.
+    #[arg(
+        long = "inline-simulation-workers",
+        value_name = "INLINE_SIMULATION_WORKERS",
+        default_value_t = DEFAULT_INLINE_SIMULATION_WORKERS,
+        requires = "enable_inline_simulation"
+    )]
+    pub inline_simulation_workers: usize,
+
+    /// Bounded queue of txs waiting for `meter_bundle`.
+    #[arg(
+        long = "inline-simulation-queue-capacity",
+        value_name = "INLINE_SIMULATION_QUEUE_CAPACITY",
+        default_value_t = DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+        requires = "enable_inline_simulation"
+    )]
+    pub inline_simulation_queue_capacity: usize,
+
+    /// Per-transaction `meter_bundle` timeout in milliseconds.
+    #[arg(
+        long = "inline-simulation-timeout-ms",
+        value_name = "INLINE_SIMULATION_TIMEOUT_MS",
+        default_value_t = DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
+        requires = "enable_inline_simulation"
+    )]
+    pub inline_simulation_timeout_ms: u64,
 }
 
 impl From<RpcStandardNodeArgs> for StandardNodeArgs {
@@ -528,6 +564,10 @@ impl From<&StandardNodeArgs> for TxForwardingConfig {
             .with_resend_after_ms(args.rpc.tx_forwarding_resend_after_ms)
             .with_max_batch_size(args.rpc.tx_forwarding_batch_size)
             .with_max_rps(args.rpc.tx_forwarding_max_rps)
+            .with_inline_simulation(args.rpc.enable_inline_simulation)
+            .with_inline_simulation_workers(args.rpc.inline_simulation_workers)
+            .with_inline_simulation_queue_capacity(args.rpc.inline_simulation_queue_capacity)
+            .with_inline_simulation_timeout_ms(args.rpc.inline_simulation_timeout_ms)
     }
 }
 
@@ -581,7 +621,14 @@ impl StandardBaseRethNode {
         runner: &mut BaseNodeRunner<SB>,
         rollup_args: &RollupArgs,
     ) -> eyre::Result<()> {
-        let Some(config) = Self::upgrade_signal_config(rollup_args)? else {
+        let config = Self::upgrade_signal_config(rollup_args)?;
+        let mode = config.as_ref().map(|config| config.signal_config.mode);
+        // Unified nodes may install their recorder during launch. Include disabled nodes too.
+        runner.add_started_callback(move || {
+            UpgradeSignalMetrics::record_mode(UpgradeSignalMetricLayer::Execution, mode);
+            Ok(())
+        });
+        let Some(config) = config else {
             return Ok(());
         };
 
@@ -937,6 +984,10 @@ mod tests {
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
             tx_forwarding_max_rps: DEFAULT_MAX_RPS,
+            enable_inline_simulation: false,
+            inline_simulation_workers: DEFAULT_INLINE_SIMULATION_WORKERS,
+            inline_simulation_queue_capacity: DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY,
+            inline_simulation_timeout_ms: DEFAULT_INLINE_SIMULATION_TIMEOUT_MS,
         }
     }
 
@@ -1065,6 +1116,7 @@ mod tests {
         );
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
+        assert!(!config.inline_simulation);
     }
 
     #[test]
@@ -1141,6 +1193,81 @@ mod tests {
         .args;
 
         assert_eq!(args.rpc.experimental_validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+    }
+
+    #[test]
+    fn inline_simulation_requires_forwarding() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-inline-simulation",
+        ])
+        .expect_err("inline simulation should require forwarding");
+
+        assert!(error.to_string().contains("--enable-tx-forwarding"));
+    }
+
+    #[test]
+    fn inline_simulation_workers_require_enable_flag() {
+        let error = CommandParser::<StandardNodeArgs>::try_parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--inline-simulation-workers",
+            "8",
+        ])
+        .expect_err("worker count should require --enable-inline-simulation");
+
+        assert!(error.to_string().contains("--enable-inline-simulation"));
+    }
+
+    #[test]
+    fn forwarding_without_inline_simulation_stays_off() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+        ])
+        .args;
+        let config = TxForwardingConfig::from(&args);
+
+        assert!(config.enabled);
+        assert!(!config.inline_simulation);
+        assert_eq!(config.inline_simulation_workers, DEFAULT_INLINE_SIMULATION_WORKERS);
+        assert_eq!(
+            config.inline_simulation_queue_capacity,
+            DEFAULT_INLINE_SIMULATION_QUEUE_CAPACITY
+        );
+        assert_eq!(config.inline_simulation_timeout_ms, DEFAULT_INLINE_SIMULATION_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn parses_inline_simulation_flags() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--enable-tx-forwarding",
+            "--builder-rpc-urls",
+            "http://localhost:8545",
+            "--enable-inline-simulation",
+            "--inline-simulation-workers",
+            "8",
+            "--inline-simulation-queue-capacity",
+            "32",
+            "--inline-simulation-timeout-ms",
+            "500",
+        ])
+        .args;
+        let config = TxForwardingConfig::from(&args);
+
+        assert!(args.rpc.enable_inline_simulation);
+        assert_eq!(args.rpc.inline_simulation_workers, 8);
+        assert_eq!(args.rpc.inline_simulation_queue_capacity, 32);
+        assert_eq!(args.rpc.inline_simulation_timeout_ms, 500);
+        assert!(config.inline_simulation);
+        assert_eq!(config.inline_simulation_workers, 8);
+        assert_eq!(config.inline_simulation_queue_capacity, 32);
+        assert_eq!(config.inline_simulation_timeout_ms, 500);
     }
 
     #[test]

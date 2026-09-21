@@ -846,7 +846,8 @@ impl BasePayloadBuilderCtx {
         let block_number = as_u64_saturated!(self.evm_env.block_env.number);
         let block_timestamp = self.attributes().timestamp();
         let payload_id = self.payload_id().to_string();
-        let mut predicate_index = ParkedPredicateIndex::default();
+        let mut predicate_index =
+            ParkedPredicateIndex::new(self.builder_config.predicate_bucket_ordered_threshold);
         let predicate_context =
             PredicateContext { block_number, flashblock_index: self.flashblock_index() };
 
@@ -920,9 +921,13 @@ impl BasePayloadBuilderCtx {
                     )
                 }) {
                     Ok(ValidityPredicateEvaluation::Matched) => None,
-                    Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, expired }) => {
+                    Ok(ValidityPredicateEvaluation::Unsatisfied {
+                        blocker,
+                        blocker_index,
+                        expired,
+                    }) => {
                         predicate_expired = expired;
-                        Some(blocker)
+                        Some((blocker, blocker_index))
                     }
                     Err(error) => {
                         warn!(
@@ -990,7 +995,7 @@ impl BasePayloadBuilderCtx {
                     // Recoverable state mismatch: park under the current blocker to retry at a
                     // later position or flashblock, or reject if the iterator cannot park it.
                     self.emit_considered(&cx, tx_hash, ordering_position);
-                    let blocking_predicate = blocking_predicate
+                    let (_, blocker_index) = blocking_predicate
                         .expect("unsatisfied, non-terminal predicate implies a blocking key");
                     if self.defer_or_reject_current(
                         best_txs,
@@ -999,7 +1004,8 @@ impl BasePayloadBuilderCtx {
                         &tx,
                         ordering_position,
                     ) {
-                        predicate_index.park(tx_hash, tx, blocking_predicate);
+                        let predicate = tx.validity_predicates()[blocker_index].clone();
+                        predicate_index.park(tx_hash, tx, predicate);
                     }
                 }
                 continue;
@@ -1540,9 +1546,11 @@ impl BasePayloadBuilderCtx {
                         )
                     }) {
                         Ok(ValidityPredicateEvaluation::Matched) => None,
-                        Ok(ValidityPredicateEvaluation::Unsatisfied { blocker, .. }) => {
-                            Some(blocker)
-                        }
+                        Ok(ValidityPredicateEvaluation::Unsatisfied {
+                            blocker,
+                            blocker_index,
+                            ..
+                        }) => Some((blocker, blocker_index)),
                         Err(error) => {
                             warn!(
                                 target: "payload_builder",
@@ -1565,8 +1573,9 @@ impl BasePayloadBuilderCtx {
                 if predicate_read_failed {
                     predicate_index.remove(*parked_hash);
                     best_txs.discard_parked(*parked_hash);
-                } else if let Some(blocking_predicate) = blocking_predicate {
-                    predicate_index.reindex(*parked_hash, blocking_predicate);
+                } else if let Some((_, blocker_index)) = blocking_predicate {
+                    let predicate = parked_transaction.validity_predicates()[blocker_index].clone();
+                    predicate_index.reindex(*parked_hash, predicate);
                 } else {
                     predicate_index.remove(*parked_hash);
                     best_txs.promote(*parked_hash);

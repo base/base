@@ -303,7 +303,7 @@ impl BaseChainSpec {
 
     /// Parses a chain name into an [`BaseChainSpec`], if recognized.
     pub fn parse_chain(s: &str) -> Option<Arc<Self>> {
-        let cfg = ChainConfig::by_name(s)?;
+        let cfg = ChainConfig::by_any_name(s)?;
         Some(Arc::new(
             Self::try_from(cfg).expect("recognized Base chain config must build a valid chainspec"),
         ))
@@ -1321,7 +1321,7 @@ mod tests {
     fn latest_base_mainnet_fork_id() {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         assert_eq!(
-            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Beryl).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Cobalt).unwrap(),
             base_mainnet_spec.latest_fork_id()
         )
     }
@@ -1331,7 +1331,7 @@ mod tests {
         let base_mainnet_spec = BaseChainSpec::mainnet();
         let base_mainnet = BaseChainSpecBuilder::base_mainnet().build();
         assert_eq!(
-            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Beryl).unwrap(),
+            base_mainnet_spec.hardfork_fork_id(BaseUpgrade::Cobalt).unwrap(),
             base_mainnet.latest_fork_id()
         )
     }

@@ -1,0 +1,58 @@
+# Fresh-devnet workload suite for `base-bench local --workload-config`.
+#
+# `base-bench` provisions a separate empty devnet for every entry, replaces all
+# endpoint settings with that devnet's dynamically allocated endpoints, and
+# writes a base/benchmark visualizer bundle to --output-dir. Omitted load-test
+# settings use TestConfig's portable defaults: a 60-second, 20M gas/s, two-
+# second-cadence test.
+#
+# Optional swap workloads can set `deploy_devnet_swap_harness: true` to deploy
+# a fresh devnet USDC token plus Uniswap/Aerodrome router shims per workload.
+# In that mode, swap `router`/`token_in`/`token_out` and real-token setup
+# `weth`/`pair_token.token`/acquisition `router` can be omitted.
+benchmark_workloads:
+  - workload: b20-transfer
+    transaction_payload: b20-transfer-existing
+    sender_count: 400
+    in_flight_per_sender: 128
+    fresh_recipient_ratio: 0.0
+    # createB20 reserves a 10M-gas limit; 0.01 ETH cannot cover it at the devnet base fee.
+    funding_amount: "100000000000000000"
+    b20_mint_amount: "1000000000000000000000"
+    transactions:
+      - weight: 100
+        type: b20
+
+  # High-concurrency fresh-recipient transfer profile.
+  - workload: eth-new
+    transaction_payload: eth-transfer-fresh
+    sender_count: 1000
+    # 1024 caused funding setup to exceed Reth's HTTP connection limit.
+    in_flight_per_sender: 32
+    fresh_recipient_ratio: 1.0
+    transactions:
+      - weight: 100
+        type: transfer
+
+  # Keep this workload for comparison with the external benchmark.
+  - workload: eth-existing
+    transaction_payload: eth-transfer-existing
+    sender_count: 1000
+    # 1024 caused funding setup to exceed Reth's HTTP connection limit.
+    in_flight_per_sender: 32
+    fresh_recipient_ratio: 0.0
+    transactions:
+      - weight: 100
+        type: transfer
+
+  - workload: blake2f-50000
+    transaction_payload: blake2f-rounds-50000
+    sender_count: 400
+    in_flight_per_sender: 128
+    fresh_recipient_ratio: 0.0
+    transactions:
+      - weight: 100
+        type: precompile
+        target: blake2f
+        rounds: 50000
+        iterations: 1

@@ -14,6 +14,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use base_bundles::MeterBundleResponse;
 use base_common_consensus::{BaseTransactionSigned, Eip8130Constants, Eip8130Signed};
 use c_kzg::KzgSettings;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -71,6 +72,13 @@ pub struct BasePooledTransaction<
     /// EIP-8130 validation. Unset for other transaction types; see
     /// [`crate::WatchManifest`].
     watch_manifest: OnceLock<crate::WatchManifest>,
+    /// In-process `meter_bundle` result, attached after sim and before pool insert.
+    ///
+    /// Behind [`Arc`] so [`Clone`] (payload-building `ParkableBestPayloadTransactions`)
+    /// stays a pointer bump once later PRs populate this. `None` on
+    /// sequencer/builder inserts and on mempool txs while inline simulation is
+    /// off. The later consumer only forwards `Some`.
+    metering: Option<Arc<MeterBundleResponse>>,
 }
 
 impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
@@ -97,7 +105,20 @@ impl<Cons: SignedTransaction, Pooled> BasePooledTransaction<Cons, Pooled> {
             watch_set: OnceLock::new(),
             limit_class: OnceLock::new(),
             watch_manifest: OnceLock::new(),
+            metering: None,
         }
+    }
+
+    /// Attaches an in-process `meter_bundle` result to this transaction.
+    #[must_use]
+    pub fn with_metering(mut self, metering: MeterBundleResponse) -> Self {
+        self.metering = Some(Arc::new(metering));
+        self
+    }
+
+    /// Returns the attached `meter_bundle` result, if any.
+    pub fn metering(&self) -> Option<&MeterBundleResponse> {
+        self.metering.as_deref()
     }
 
     /// Sets the validity predicates required for this transaction's inclusion.
@@ -228,6 +249,9 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             .get()
             .map_or(0, |manifest| core::mem::size_of_val(manifest.config_slots()));
         let validity_predicates_size = core::mem::size_of_val(self.validity_predicates.as_slice());
+        let metering_size = self.metering.as_ref().map_or(0, |metering| {
+            core::mem::size_of::<MeterBundleResponse>() + metering.heap_size()
+        });
         self.inner.size()
             + core::mem::size_of::<u128>()
             + core::mem::size_of::<Vec<crate::ValidityPredicate>>()
@@ -237,6 +261,8 @@ impl<Cons: InMemorySize, Pooled> InMemorySize for BasePooledTransaction<Cons, Po
             + core::mem::size_of::<OnceLock<crate::WatchManifest>>()
             + manifest_slots_size
             + validity_predicates_size
+            + core::mem::size_of::<Option<Arc<MeterBundleResponse>>>()
+            + metering_size
     }
 }
 
@@ -417,6 +443,11 @@ pub trait BasePooledTx: PoolTransaction + DataAvailabilitySized {
     /// Defaults to a no-op for transaction types that do not carry a manifest.
     fn set_watch_manifest(&self, _watch_manifest: crate::WatchManifest) {}
 
+    /// Returns the attached `meter_bundle` result, if any.
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        None
+    }
+
     /// Returns whether this transaction belongs in the EIP-8130 sidecar.
     fn is_eip8130_sidecar_transaction(&self) -> bool {
         self.eip8130_nonce_channel_key().is_some() || self.eip8130_replay_id().is_some()
@@ -484,6 +515,10 @@ where
     fn set_limit_class(&self, limit_class: crate::LimitClass) {
         let _ = self.limit_class.set(limit_class);
     }
+
+    fn metering(&self) -> Option<&MeterBundleResponse> {
+        self.metering.as_deref()
+    }
 }
 
 /// Trait for transactions that expose their received-at timestamp.
@@ -511,6 +546,7 @@ mod tests {
     use alloy_primitives::{Address, Bytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
+    use base_bundles::{MeterBundleResponse, OpcodeGas, TransactionResult};
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives, BaseTransactionSigned,
@@ -529,6 +565,28 @@ mod tests {
         BasePooledTransaction, BasePooledTx, BaseTransactionValidator, ConfigSlot, InvalidationKey,
         ValidityOperator, ValidityPredicate, WatchManifest, WatchSet,
     };
+
+    fn meter_response(results: usize) -> MeterBundleResponse {
+        MeterBundleResponse {
+            results: (0..results)
+                .map(|_| TransactionResult {
+                    coinbase_diff: U256::ZERO,
+                    eth_sent_to_coinbase: U256::ZERO,
+                    from_address: Address::ZERO,
+                    gas_fees: U256::ZERO,
+                    gas_price: U256::ZERO,
+                    gas_used: 21_000,
+                    to_address: None,
+                    tx_hash: Default::default(),
+                    value: U256::ZERO,
+                    execution_time_us: 1,
+                    opcode_gas: Vec::new(),
+                })
+                .collect(),
+            total_gas_used: 21_000 * results as u64,
+            ..MeterBundleResponse::default()
+        }
+    }
 
     fn signer() -> PrivateKeySigner {
         PrivateKeySigner::random()
@@ -703,6 +761,81 @@ mod tests {
         transaction.set_watch_manifest(manifest);
 
         assert_eq!(transaction.size(), size_without_slots + slots_size);
+    }
+
+    #[test]
+    fn metering_defaults_to_none() {
+        let transaction = eip8130_pooled(U256::ZERO);
+
+        assert!(transaction.metering().is_none());
+    }
+
+    #[test]
+    fn retains_metering() {
+        let metering = meter_response(1);
+        let transaction = eip8130_pooled(U256::ZERO).with_metering(metering.clone());
+
+        assert_eq!(transaction.metering(), Some(&metering));
+    }
+
+    #[test]
+    fn clone_shares_metering_arc() {
+        let transaction = eip8130_pooled(U256::ZERO).with_metering(meter_response(1));
+        let cloned = transaction.clone();
+
+        assert!(
+            core::ptr::eq(
+                transaction.metering().expect("original should retain metering"),
+                cloned.metering().expect("clone should retain metering"),
+            ),
+            "payload-building clones should share the metering Arc, not deep-copy it"
+        );
+    }
+
+    #[test]
+    fn in_memory_size_includes_metering_results() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_metering = transaction.size();
+        let metering = meter_response(2);
+        let results_size = core::mem::size_of_val(metering.results.as_slice());
+
+        let transaction = transaction.with_metering(metering);
+
+        assert_eq!(
+            transaction.size(),
+            size_without_metering + core::mem::size_of::<MeterBundleResponse>() + results_size,
+            "attaching metering should add the Arc-allocated response plus the results slice"
+        );
+        assert!(transaction.metering().is_some(), "metering should stay attached");
+    }
+
+    #[test]
+    fn in_memory_size_includes_opcode_gas_heap() {
+        let transaction = eip8130_pooled(U256::ZERO);
+        let size_without_metering = transaction.size();
+        let opcode = OpcodeGas {
+            contract_address: Address::ZERO,
+            opcode: "SSTORE".to_string(),
+            count: 1,
+            gas_used: 20_000,
+        };
+        let mut metering = meter_response(1);
+        metering.results[0].opcode_gas = vec![opcode];
+        let results_size = core::mem::size_of_val(metering.results.as_slice());
+        let opcode_gas_size = core::mem::size_of_val(metering.results[0].opcode_gas.as_slice());
+        let opcode_name_size = "SSTORE".len();
+
+        let transaction = transaction.with_metering(metering);
+
+        assert_eq!(
+            transaction.size(),
+            size_without_metering
+                + core::mem::size_of::<MeterBundleResponse>()
+                + results_size
+                + opcode_gas_size
+                + opcode_name_size,
+            "pool size should include Arc-allocated response, opcode_gas entries, and opcode name bytes"
+        );
     }
 
     #[test]

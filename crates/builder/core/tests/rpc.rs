@@ -25,7 +25,8 @@ async fn setup(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
+    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
+        .with_noop_metering();
     let harness = TestHarness::builder().with_ext::<BuilderApiExtension>(config).build().await?;
     let client = harness.rpc_client()?;
     Ok((harness, client))
@@ -54,7 +55,8 @@ async fn setup_with_validity_ingress(
     accept_validity: bool,
     max_validity_predicates: usize,
 ) -> eyre::Result<(TestHarness, RpcClient)> {
-    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates);
+    let config = BuilderApiExtensionConfig::new(accept_validity, max_validity_predicates)
+        .with_noop_metering();
     let mut builder = TestHarness::builder().with_ext::<BuilderApiExtension>(config);
     if accept_validity {
         builder = builder.with_ext::<SendRawTransactionValidityExtension>(
@@ -114,8 +116,8 @@ async fn test_insert_validated_deposit_tx() -> eyre::Result<()> {
     let (_harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     let (sender, raw) = create_deposit_tx();
-    let validated_tx = ValidatedTransaction { sender, raw, extensions: NoExtensions {} };
-
+    let validated_tx =
+        ValidatedTransaction { sender, raw, metering: None, extensions: NoExtensions {} };
     let result: Result<(), _> =
         client.request("base_insertValidatedTransaction", (validated_tx,)).await;
 
@@ -137,8 +139,8 @@ async fn test_insert_validated_eip1559_tx() -> eyre::Result<()> {
     let (harness, client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
 
     let (sender, raw) = create_eip1559_tx(harness.chain_id());
-    let validated_tx = ValidatedTransaction { sender, raw, extensions: NoExtensions {} };
-
+    let validated_tx =
+        ValidatedTransaction { sender, raw, metering: None, extensions: NoExtensions {} };
     // EIP-1559 transactions are supported by the pool
     let result: Result<(), _> =
         client.request("base_insertValidatedTransaction", (validated_tx,)).await;
@@ -156,6 +158,7 @@ async fn test_insert_invalid_tx_fails() -> eyre::Result<()> {
     let validated_tx = ValidatedTransaction {
         sender: Address::repeat_byte(0x01),
         raw: Bytes::from(vec![0xFF, 0x01, 0x02, 0x03]),
+        metering: None,
         extensions: NoExtensions {},
     };
 
@@ -184,7 +187,8 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
 
     let (disabled_harness, disabled_client) = setup(false, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
     let (sender, raw) = create_eip1559_tx(disabled_harness.chain_id());
-    let disabled_tx = ValidatedTransaction { sender, raw, extensions: validity.clone() };
+    let disabled_tx =
+        ValidatedTransaction { sender, raw, metering: None, extensions: validity.clone() };
     let disabled: Result<(), _> =
         disabled_client.request("base_insertValidatedTransaction", (disabled_tx,)).await;
     assert!(
@@ -196,7 +200,7 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
 
     let (enabled_harness, enabled_client) = setup(true, DEFAULT_MAX_VALIDITY_PREDICATES).await?;
     let (sender, raw) = create_eip1559_tx(enabled_harness.chain_id());
-    let enabled_tx = ValidatedTransaction { sender, raw, extensions: validity };
+    let enabled_tx = ValidatedTransaction { sender, raw, metering: None, extensions: validity };
     let enabled: Result<(), _> =
         enabled_client.request("base_insertValidatedTransaction", (enabled_tx,)).await;
     assert!(enabled.is_ok(), "enabled builder should accept validity: {enabled:?}");
@@ -217,6 +221,7 @@ async fn test_validity_transactions_enforce_configured_limit() -> eyre::Result<(
     let transaction = ValidatedTransaction {
         sender,
         raw,
+        metering: None,
         extensions: TransactionValidity { validity: vec![predicate; 2] },
     };
 

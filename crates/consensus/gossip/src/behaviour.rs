@@ -42,10 +42,6 @@ pub struct Behaviour {
     /// Enables the identify protocol.
     #[debug(skip)]
     pub identify: libp2p::identify::Behaviour,
-    /// Enables the sync request/response protocol.
-    /// See `<https://specs.base.org/protocol/consensus/p2p#payload_by_number>`
-    #[debug(skip)]
-    pub sync_req_resp: libp2p_stream::Behaviour,
 }
 
 impl Behaviour {
@@ -83,8 +79,6 @@ impl Behaviour {
                 .with_agent_version("base".to_string()),
         );
 
-        let sync_req_resp = libp2p_stream::Behaviour::new();
-
         let subscriptions = handlers
             .iter()
             .flat_map(|handler| {
@@ -109,7 +103,7 @@ impl Behaviour {
             info!(target: "gossip", topic = %topic, "Subscribed");
         }
 
-        Ok(Self { connection_limits, identify, ping, gossipsub, sync_req_resp })
+        Ok(Self { connection_limits, identify, ping, gossipsub })
     }
 }
 
@@ -124,7 +118,7 @@ impl From<Infallible> for Event {
 mod tests {
     use alloy_chains::Chain;
     use alloy_primitives::Address;
-    use base_common_genesis::RollupConfig;
+    use base_common_genesis::{RollupConfig, UpgradeConfig};
     use libp2p::gossipsub::{IdentTopic, TopicHash};
 
     use super::*;
@@ -145,6 +139,24 @@ mod tests {
         let cfg = config::default_config();
         let handlers = vec![];
         let _ = Behaviour::new(key.public(), cfg, &handlers).unwrap();
+    }
+
+    #[test]
+    fn startup_after_isthmus_only_subscribes_to_v4() {
+        let key = libp2p::identity::Keypair::generate_secp256k1();
+        let (_, recv) = tokio::sync::watch::channel(Address::ZERO);
+        let handler = BlockHandler::new(
+            RollupConfig {
+                l2_chain_id: Chain::base_mainnet(),
+                upgrades: UpgradeConfig { isthmus_time: Some(0), ..Default::default() },
+                ..Default::default()
+            },
+            recv,
+        );
+        let expected = handler.blocks_v4_topic.hash();
+        let behaviour =
+            Behaviour::new(key.public(), config::default_config(), &[Box::new(handler)]).unwrap();
+        assert_eq!(behaviour.gossipsub.topics().cloned().collect::<Vec<_>>(), [expected]);
     }
 
     #[test]

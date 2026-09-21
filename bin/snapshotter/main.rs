@@ -126,4 +126,40 @@ mod tests {
             .unwrap();
         assert_eq!(format.get_env(), Some(OsStr::new("SNAPSHOTTER_LOG_FORMAT")));
     }
+
+    #[test]
+    fn omits_consensus_container_name_when_flag_absent() {
+        let cli = Cli::try_parse_from([
+            "base-snapshotter",
+            "--container-name=execution",
+            "--el-rpc-url=http://execution:8545",
+            "--source-datadir=/data",
+            "--bucket=snapshots",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.snapshotter.consensus_container_name, None,
+            "omitting --consensus-container-name should leave the field unset"
+        );
+    }
+
+    #[test]
+    fn parses_consensus_container_name_when_flag_present() {
+        let cli = Cli::try_parse_from([
+            "base-snapshotter",
+            "--container-name=execution",
+            "--consensus-container-name=consensus",
+            "--el-rpc-url=http://execution:8545",
+            "--source-datadir=/data",
+            "--bucket=snapshots",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.snapshotter.consensus_container_name.as_deref(),
+            Some("consensus"),
+            "--consensus-container-name=consensus should parse as Some"
+        );
+    }
 }

@@ -29,7 +29,10 @@ pub use payload::{
     MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
 };
 #[cfg(feature = "std")]
-pub use payload::{BoundedTransactions, BoundedWithdrawals};
+pub use payload::{
+    BoundedExecutionPayloadV1, BoundedExecutionPayloadV2, BoundedExecutionPayloadV3,
+    BoundedTransactions, BoundedWithdrawals,
+};
 
 #[cfg(feature = "reth")]
 mod reth;

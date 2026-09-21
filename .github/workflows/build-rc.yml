@@ -1,0 +1,39 @@
+name: Build RC
+run-name: Build RC ${{ github.ref_name }}
+
+# Create RC dispatches this workflow at the immutable RC tag, not the branch.
+# No concurrency group: newer RCs must not cancel or wait for older builds.
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Validate RC tag
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != "tag" || ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "::error::Build RC must be dispatched at an RC tag (vX.Y.Z-rc.N), not a branch or final tag"
+            exit 1
+          fi
+
+  build:
+    needs: [validate-tag]
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ github.ref_name }}
+      is_final: false
+    secrets: inherit

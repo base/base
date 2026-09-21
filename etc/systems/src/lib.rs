@@ -17,7 +17,9 @@ pub use b20::{B20CreateConfig, B20PrecompileClient};
 
 mod benchmark_cli;
 pub use benchmark_cli::{
-    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, SnapshotBenchmarkArgs,
+    AggregateBenchmarkArgs, BenchmarkCli, BenchmarkCommand, LocalBenchmarkArgs,
+    LocalBenchmarkResult, LocalBenchmarkWorkload, LocalBenchmarkWorkloadConfig,
+    LocalBenchmarkWorkloadResult, LocalBenchmarkWorkloadResults, SnapshotBenchmarkArgs,
 };
 
 mod benchmark_report;
@@ -67,10 +69,10 @@ pub use l2::{
     ChainSpecSource, InProcessBatcher, InProcessBatcherConfig, InProcessBuilder,
     InProcessBuilderConfig, InProcessClient, InProcessClientConfig, InProcessConsensus,
     InProcessConsensusConfig, InProcessFollowConsensus, InProcessFollowConsensusConfig,
-    InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig, L2ClientConsensus,
-    L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig, ShadowSequencer,
-    ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary, SnapshotL2Stack,
-    SnapshotL2StackConfig, TestNodeRuntime,
+    InProcessNodeRuntime, InProcessStandaloneSequencer, InProcessStandaloneSequencerConfig,
+    L2ClientConsensus, L2ClientConsensusMode, L2ContainerConfig, L2Stack, L2StackConfig,
+    ShadowSequencer, ShadowSequencerConfig, ShadowSequencersConfig, SnapshotBoundary,
+    SnapshotL2Stack, SnapshotL2StackConfig, TestNodeRuntime,
 };
 
 mod network;

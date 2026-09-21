@@ -51,13 +51,23 @@ pub trait L2ChainProvider: BatchValidationProviderDerive {
 
 /// A super-trait for [`BatchValidationProvider`] that binds `Self::Error` to have a conversion into
 /// [`PipelineErrorKind`].
-pub trait BatchValidationProviderDerive: BatchValidationProvider {}
+pub trait BatchValidationProviderDerive: BatchValidationProvider {
+    /// Converts a [`BatchValidationProvider::Error`] into [`PipelineErrorKind`].
+    fn provider_error_into_pipeline_error(
+        error: <Self as BatchValidationProvider>::Error,
+    ) -> PipelineErrorKind;
+}
 
 // Auto-implement the [BatchValidationProviderDerive] trait for all types that implement
 // [BatchValidationProvider] where the error can be converted into [PipelineErrorKind].
 impl<T> BatchValidationProviderDerive for T
 where
     T: BatchValidationProvider,
-    <T as BatchValidationProvider>::Error: Into<PipelineErrorKind>,
+    PipelineErrorKind: From<<T as BatchValidationProvider>::Error>,
 {
+    fn provider_error_into_pipeline_error(
+        error: <Self as BatchValidationProvider>::Error,
+    ) -> PipelineErrorKind {
+        PipelineErrorKind::from(error)
+    }
 }

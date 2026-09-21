@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use alloy_provider::{Network, RootProvider};
+use base_common_chains::ChainConfig;
 use base_common_evm::BaseEvmFactory;
 use base_common_genesis::RollupConfig;
 use base_common_network::Base;
@@ -39,11 +40,27 @@ impl Host {
         Self { config }
     }
 
+    /// Rejects a configuration for a chain the proof program cannot prove.
+    ///
+    /// The guest re-checks this when it loads its boot info and that check is the security
+    /// boundary; failing here keeps the host from spending witness generation on a chain that can
+    /// never boot, and surfaces the misconfiguration as a host error.
+    pub const fn validate_supported_chain(&self) -> Result<()> {
+        let chain_id = self.config.prover.l2_chain_id;
+        if ChainConfig::by_chain_id(chain_id).is_none() {
+            return Err(HostError::UnsupportedChain(chain_id));
+        }
+
+        Ok(())
+    }
+
     /// Starts the preimage server, communicating with the client over the provided channels.
     pub async fn start_server<C>(&self, hint: C, preimage: C) -> Result<JoinHandle<Result<()>>>
     where
         C: Channel + Send + Sync + 'static,
     {
+        self.validate_supported_chain()?;
+
         let task_handle = if let Some(data_dir) = &self.config.data_dir {
             warn!(
                 l2_chain_id = self.config.prover.l2_chain_id,
@@ -101,6 +118,8 @@ impl Host {
     where
         W: WitnessOracle + std::fmt::Debug + 'static,
     {
+        self.validate_supported_chain()?;
+
         let witness = Arc::new(witness);
 
         let providers = self.create_providers().await?;
@@ -258,4 +277,61 @@ async fn rpc_provider<N: Network>(url: &str) -> Result<RootProvider<N>> {
     RootProvider::connect(url)
         .await
         .map_err(|e| HostError::Custom(format!("failed to connect to RPC at {url}: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_genesis::ChainConfig;
+    use base_proof_primitives::ProofRequest;
+
+    use super::*;
+    use crate::ProverConfig;
+
+    const UNSUPPORTED_CHAIN_ID: u64 = 999_999_999;
+
+    fn host_for_chain(l2_chain_id: u64) -> Host {
+        Host::new(HostConfig {
+            request: ProofRequest::default(),
+            prover: ProverConfig {
+                l1_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_eth_url: "http://127.0.0.1:1".to_string(),
+                l2_node_url: "http://127.0.0.1:1".to_string(),
+                l1_beacon_url: "http://127.0.0.1:1".to_string(),
+                l2_chain_id,
+                rollup_config: RollupConfig::default(),
+                l1_config: ChainConfig::default(),
+                enable_experimental_witness_endpoint: false,
+            },
+            data_dir: None,
+        })
+    }
+
+    #[test]
+    fn accepts_built_in_base_chain() {
+        host_for_chain(8453).validate_supported_chain().expect("Base mainnet should be supported");
+    }
+
+    #[test]
+    fn rejects_chain_without_a_built_in_config() {
+        let err = host_for_chain(UNSUPPORTED_CHAIN_ID)
+            .validate_supported_chain()
+            .expect_err("unsupported chain should be rejected");
+
+        assert!(matches!(err, HostError::UnsupportedChain(UNSUPPORTED_CHAIN_ID)));
+    }
+
+    /// The preimage server backs witness generation, so it must refuse to start for a chain the
+    /// guest cannot boot — before any RPC is dialed.
+    #[tokio::test]
+    async fn start_server_rejects_unsupported_chain() {
+        let hint = BidirectionalChannel::new().expect("hint channel should be created");
+        let preimage = BidirectionalChannel::new().expect("preimage channel should be created");
+
+        let err = host_for_chain(UNSUPPORTED_CHAIN_ID)
+            .start_server(hint.host, preimage.host)
+            .await
+            .expect_err("preimage server should not start");
+
+        assert!(matches!(err, HostError::UnsupportedChain(UNSUPPORTED_CHAIN_ID)));
+    }
 }

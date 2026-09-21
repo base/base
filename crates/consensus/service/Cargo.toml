@@ -65,7 +65,6 @@ opentelemetry.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
 tokio-stream.workspace = true
-libp2p-stream.workspace = true
 http-body-util.workspace = true
 strum = { workspace = true, features = ["derive"] }
 tracing = { workspace = true, features = ["std"] }

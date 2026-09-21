@@ -101,8 +101,9 @@ where
 
         // submit the transaction to the pool with the given origin
         let AddedTransactionOutcome { hash, .. } = self
-            .pool()
-            .add_transaction(origin, pool_transaction)
+            .inner
+            .eth_api
+            .add_pool_transaction(origin, pool_transaction)
             .await
             .map_err(Self::Error::from_eth_err)?;
 

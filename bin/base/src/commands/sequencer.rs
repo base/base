@@ -49,11 +49,7 @@ pub(crate) struct SequencerCommand {
 
 impl SequencerCommand {
     /// Runs the `sequencer` flavor with execution, builder, and consensus in one process.
-    pub(crate) fn run(
-        self,
-        resolved_chain: ResolvedChainConfig,
-        metrics_enabled: bool,
-    ) -> eyre::Result<()> {
+    pub(crate) fn run(self, resolved_chain: ResolvedChainConfig) -> eyre::Result<()> {
         let Self { execution_chain, execution, mut builder, consensus } = self;
         let mut execution_chain = match execution_chain {
             Some(chain) => chain,
@@ -97,12 +93,6 @@ impl SequencerCommand {
                 )
                 .await?;
 
-            if metrics_enabled {
-                CliMetrics::init_rollup_config(&rollup_config);
-            }
-            let _upgrade_countdown_metrics = metrics_enabled
-                .then(|| CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone()));
-
             let upgrade_signal_l1_rpc =
                 rollup_args.upgrade_signal_l1_rpc.upgrade_signal_l1_rpc.clone();
             let execution =
@@ -120,9 +110,11 @@ impl SequencerCommand {
                         .with_cutover_enabled(payload_builder_cutover)
                         .with_basic_only(basic_payload_builder),
                 );
-            runner.install_ext::<MeteringStoreExtension>(metering_provider);
+            runner.install_ext::<MeteringStoreExtension>(Arc::clone(&metering_provider));
             runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig { sequencer_rpc });
-            runner.install_ext::<BuilderApiExtension>(builder_api_config);
+            runner.install_ext::<BuilderApiExtension>(
+                builder_api_config.with_metering_provider(metering_provider),
+            );
             if builder_api_config.accept_experimental_validity_transactions {
                 runner.install_ext::<SendRawTransactionValidityExtension>(
                     SendRawTransactionValidityConfig {
@@ -138,6 +130,12 @@ impl SequencerCommand {
             )?;
 
             let launched = runner.launch(builder).await?;
+            // Execution launch installs the shared reth recorder. The standalone metrics flag
+            // controls a separate endpoint, not emission into this recorder.
+            CliMetrics::init_rollup_config(&rollup_config);
+            let _upgrade_countdown_metrics =
+                CliMetrics::spawn_upgrade_countdown_recorder(rollup_config.clone());
+
             let handle = launched.handle;
             // Keep the execution node handle alive until both services have coordinated shutdown.
             let execution_node = handle.node;

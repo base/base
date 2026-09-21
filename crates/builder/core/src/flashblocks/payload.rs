@@ -34,7 +34,6 @@ use base_observability_events::{GlobalTransactionEventWriter, TransactionEventTy
 use eyre::WrapErr as _;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
-use reth_execution_cache::{CachedStateMetrics, CachedStateMetricsSource, CachedStateProvider};
 use reth_execution_types::ChangedAccount;
 use reth_node_api::{Block, BuiltPayloadExecutedBlock, PayloadBuilderError};
 use reth_payload_primitives::PayloadAttributes;
@@ -288,14 +287,12 @@ where
             )
             .map_err(|e| PayloadBuilderError::Other(e.into()))?;
 
-        let mut state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        if let Some(execution_cache) = execution_cache {
-            state_provider = Box::new(CachedStateProvider::new(
-                state_provider,
-                execution_cache.cache().clone(),
-                Some(CachedStateMetrics::zeroed(CachedStateMetricsSource::Builder)),
-            ));
-        }
+        let state_provider = base_execution_payload_builder::BuilderStateProvider::new(
+            self.client.state_by_block_hash(ctx.parent().hash())?,
+            execution_cache.map(|cache| cache.cache().clone()),
+            self.config.state_provider_metrics,
+        )
+        .into_provider();
         let db = StateProviderDatabase::new(state_provider);
 
         // 1. execute the pre steps and seal an early block with that

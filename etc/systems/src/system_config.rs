@@ -72,6 +72,16 @@ impl DevnetBlockInterval {
             Self::TwoHundredMilliseconds => Duration::from_millis(200),
         }
     }
+
+    /// Returns the default block gas limit for snapshot-backed development networks.
+    ///
+    /// Both cadences expose five billion gas per second of theoretical block capacity.
+    pub const fn snapshot_block_gas_limit(self) -> u64 {
+        match self {
+            Self::TwoSeconds => 10_000_000_000,
+            Self::TwoHundredMilliseconds => 1_000_000_000,
+        }
+    }
 }
 
 /// Chain inputs used to continue a Base snapshot.
@@ -105,9 +115,7 @@ pub struct ResolvedSnapshotChain {
 impl SnapshotChainConfig {
     /// Resolves a built-in chain name or a Base genesis JSON plus its rollup configuration.
     pub fn resolve(&self) -> Result<ResolvedSnapshotChain> {
-        if let Some(config) =
-            ChainConfig::from_base_chain(&self.chain).or_else(|| ChainConfig::by_name(&self.chain))
-        {
+        if let Some(config) = ChainConfig::by_any_name(&self.chain) {
             return Ok(ResolvedSnapshotChain {
                 chain_spec: Arc::new(BaseChainSpec::try_from(config)?),
                 rollup_config: Arc::new(config.rollup_config()),
@@ -174,6 +182,17 @@ pub struct DevnetSnapshotConfig {
     /// Block interval for locally produced descendants.
     #[serde(default)]
     pub block_interval: DevnetBlockInterval,
+    /// Optional block gas limit override for locally produced descendants.
+    ///
+    /// When omitted, the limit is selected from [`Self::block_interval`].
+    #[serde(default)]
+    pub block_gas_limit: Option<u64>,
+    /// Optional elasticity override for locally sequenced snapshot descendants.
+    ///
+    /// This changes only the synthetic standalone sequencer's payload attributes; it does not
+    /// modify the captured snapshot's system configuration.
+    #[serde(default)]
+    pub eip1559_elasticity_override: Option<u32>,
 }
 
 /// Initial execution state used by a devnet stack.
@@ -349,6 +368,8 @@ impl DevnetConfig {
                 expected_head: None,
                 prefund: None,
                 block_interval: DevnetBlockInterval::default(),
+                block_gas_limit: None,
+                eip1559_elasticity_override: None,
             })),
             stable: StableSystemTestConfig::standard(),
             use_stable_ports: false,
@@ -376,6 +397,14 @@ impl DevnetConfig {
         );
         ensure!(snapshot.builder_datadir.is_dir(), "builder snapshot datadir does not exist");
         ensure!(snapshot.client_datadir.is_dir(), "client snapshot datadir does not exist");
+        ensure!(
+            snapshot.block_gas_limit != Some(0),
+            "snapshot block gas limit override must be greater than zero"
+        );
+        ensure!(
+            snapshot.eip1559_elasticity_override != Some(0),
+            "snapshot EIP-1559 elasticity override must be greater than zero"
+        );
 
         let builder_datadir = std::fs::canonicalize(&snapshot.builder_datadir)
             .wrap_err("Failed to resolve builder snapshot datadir")?;
@@ -455,6 +484,12 @@ mod tests {
         assert_eq!(config.l1_chain_id, 1);
         assert_eq!(config.l2_chain_id, 8453);
         assert_eq!(config.l1_mode, DevnetL1Mode::None);
+        let DevnetL2State::Snapshot(snapshot) = &config.l2_state else {
+            panic!("snapshot constructor must create snapshot state")
+        };
+        assert_eq!(snapshot.block_gas_limit, None);
+        assert_eq!(snapshot.block_interval.snapshot_block_gas_limit(), 10_000_000_000);
+        assert_eq!(snapshot.eip1559_elasticity_override, None);
         config.validate().expect("Base mainnet snapshot config should be valid");
     }
 
