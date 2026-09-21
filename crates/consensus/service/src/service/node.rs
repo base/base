@@ -30,14 +30,15 @@ use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
     DerivationActor, DerivationDelegateClient, DerivationError, DisabledEngineDerivationClient,
-    EngineActor, EngineActorRequest, EngineConfig, EngineDerivationClient, EngineProcessor,
-    EngineRequestReceiver, EngineRpcProcessor, L1OriginSelector, L1WatcherActor,
-    L1WatcherQueryProcessor, NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeMode,
-    PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin, QueuedDerivationEngineClient,
-    QueuedEngineDerivationClient, QueuedEngineRpcClient, QueuedL1WatcherDerivationClient,
-    QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
-    RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
-    SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
+    DisabledL1WatcherDerivationClient, EngineActor, EngineActorRequest, EngineConfig,
+    EngineDerivationClient, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
+    L1OriginSelector, L1WatcherActor, L1WatcherQueryProcessor, NetworkActor, NetworkBuilder,
+    NetworkConfig, NodeActor, NodeMode, PayloadBuilder, PrefetchedChainProvider, PreparedL1Origin,
+    QueuedDerivationEngineClient, QueuedEngineDerivationClient, QueuedEngineRpcClient,
+    QueuedL1WatcherDerivationClient, QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient,
+    QueuedSequencerEngineClient, RecoveryModeGuard, RpcActor, RpcContext, SequencerActor,
+    SequencerConfig, SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig,
+    ValidatorEngineRequestHandler,
     actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
 };
 
@@ -565,9 +566,9 @@ impl RollupNode {
             AlloyL1BlockFetcher(self.l1_config.engine_provider.clone()),
             l1_head_updates_tx.clone(),
             if self.sequencer_config.derivation_enabled() {
-                QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx)
+                Box::new(QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx))
             } else {
-                QueuedL1WatcherDerivationClient::disabled()
+                Box::new(DisabledL1WatcherDerivationClient)
             },
             signer,
             cancellation.clone(),
