@@ -589,6 +589,55 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_normalizes_reordered_shard_checks_for_publication() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut shard = run();
+        let expected = ExpectedManifest {
+            schema_version: 1,
+            run_id: shard.run_id.clone(),
+            tested_sha: shard.tested_sha.clone(),
+            scenarios: shard
+                .scenarios
+                .iter()
+                .map(|scenario| ExpectedScenario {
+                    id: scenario.id.clone(),
+                    checks: scenario.checks.iter().map(|check| check.id.clone()).collect(),
+                })
+                .collect(),
+        };
+        let reordered = shard
+            .scenarios
+            .iter_mut()
+            .find(|scenario| scenario.checks.len() > 1)
+            .expect("fixture has a multi-check scenario");
+        reordered.checks.reverse();
+
+        let expected_path = directory.path().join("expected.json");
+        let results = directory.path().join("results");
+        let output = directory.path().join("aggregate");
+        fs::create_dir_all(results.join("shard")).unwrap();
+        fs::write(&expected_path, serde_json::to_vec(&expected).unwrap()).unwrap();
+        fs::write(results.join("shard/result.json"), serde_json::to_vec(&shard).unwrap()).unwrap();
+
+        Aggregate::write(&expected_path, &results, &output).unwrap();
+        let args = PublishArgs {
+            event: PathBuf::new(),
+            result: output.join("result.json"),
+            expected: expected_path,
+            run_id: shard.run_id.clone(),
+            attempt: 2,
+            started_at: metadata().started_at,
+        };
+        let loaded = args.load_result(&shard.tested_sha).unwrap();
+        for (actual, wanted) in loaded.scenarios.iter().zip(&expected.scenarios) {
+            assert_eq!(
+                actual.checks.iter().map(|check| check.id.as_str()).collect::<Vec<_>>(),
+                wanted.checks.iter().map(String::as_str).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
     fn comments_preserve_outcomes_escape_content_and_explain_cleanup_errors() {
         let mut run = run();
         let body =

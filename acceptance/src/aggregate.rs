@@ -173,6 +173,9 @@ impl Aggregate {
                 ));
                 continue;
             }
+            scenario.checks.sort_by_key(|check| {
+                wanted.checks.iter().position(|id| id == &check.id).expect("validated check set")
+            });
             Self::copy_evidence(&source, output, &mut scenario, &mut evidence_bytes);
             scenario.status = scenario.outcome();
             scenarios.push(scenario);
