@@ -483,11 +483,55 @@ where
         self.pending_flush_acks.clear();
     }
 
+    /// Stop block ingestion and answer `reply` once no submission is in flight.
+    fn on_admin_stop(&mut self, reply: oneshot::Sender<AdminResult<()>>) {
+        // Reset the pipeline on the first stop only. A repeated stop just joins the wait below.
+        if !self.stopped {
+            self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
+            self.stopped = true;
+            info!(stopped = true, "batcher stopped via admin");
+        }
+
+        // Park the reply until nothing is in flight. Repeated stops share the running deadline.
+        self.pending_stop_replies.push(reply);
+        self.stop_deadline.get_or_insert_with(|| self.runtime.now() + self.drain_timeout);
+        self.settle_stop();
+    }
+
+    /// Start block ingestion again from the safe head and answer `reply`.
+    fn on_admin_start(&mut self, reply: oneshot::Sender<AdminResult<()>>) {
+        // Leave a running batcher alone. Re-anchoring its source would replay blocks the
+        // pipeline already holds.
+        if !self.stopped {
+            let _ = reply.send(Ok(()));
+            return;
+        }
+
+        // Fail any stop still waiting since this start supersedes it.
+        self.answer_stop_requests(Err(AdminError::StopSuperseded));
+
+        if let Some(safe_head) = self.safe_head {
+            self.source.reset_catchup(safe_head);
+            info!(
+                stopped = false,
+                safe_l2 = %safe_head.number,
+                "batcher started via admin, catching up from safe head"
+            );
+        } else {
+            info!(stopped = false, "batcher started via admin");
+        }
+        self.stopped = false;
+
+        let _ = reply.send(Ok(()));
+    }
+
     /// Answer the pending stop requests once no submission is in flight.
     fn settle_stop(&mut self) {
-        if !self.pending_stop_replies.is_empty() && self.submissions.in_flight_count() == 0 {
-            self.answer_stop_requests(Ok(()));
+        if self.submissions.in_flight_count() > 0 {
+            return;
         }
+
+        self.answer_stop_requests(Ok(()));
     }
 
     /// Answer every pending stop request with `result`.
@@ -537,44 +581,8 @@ where
                         AdminCommand::Flush { reply } => {
                             return Ok(DriverEvent::AdminFlush(reply));
                         }
-                        AdminCommand::Stop { reply } => {
-                            // Reset the pipeline on the first stop only. A repeated stop just
-                            // joins the wait below.
-                            if !self.stopped {
-                                self.reset_pipeline(BatcherMetrics::RESET_ADMIN_STOP);
-                                self.stopped = true;
-                                info!(stopped = true, "batcher stopped via admin");
-                            }
-
-                            // Park the reply until nothing is in flight. Repeated stops share
-                            // the running deadline.
-                            self.pending_stop_replies.push(reply);
-                            self.stop_deadline
-                                .get_or_insert_with(|| self.runtime.now() + self.drain_timeout);
-                            self.settle_stop();
-                        }
-                        AdminCommand::Start { reply } => {
-                            // Re-anchor the source only if stopped, otherwise it replays blocks
-                            // the pipeline already holds.
-                            if self.stopped {
-                                // Fail any stop still waiting since this start supersedes it.
-                                self.answer_stop_requests(Err(AdminError::StopSuperseded));
-
-                                if let Some(safe_head) = self.safe_head {
-                                    self.source.reset_catchup(safe_head);
-                                    info!(
-                                        stopped = false,
-                                        safe_l2 = %safe_head.number,
-                                        "batcher started via admin, catching up from safe head"
-                                    );
-                                } else {
-                                    info!(stopped = false, "batcher started via admin");
-                                }
-                                self.stopped = false;
-                            }
-
-                            let _ = reply.send(Ok(()));
-                        }
+                        AdminCommand::Stop { reply } => self.on_admin_stop(reply),
+                        AdminCommand::Start { reply } => self.on_admin_start(reply),
                         AdminCommand::SetThrottle { strategy, config } => {
                             self.throttle.set_controller(
                                 ThrottleController::new(config, strategy)
