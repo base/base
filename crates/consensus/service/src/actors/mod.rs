@@ -15,7 +15,7 @@ mod engine;
 #[cfg(test)]
 pub use engine::MockEngineDerivationClient;
 pub use engine::{
-    BuildRequest, EngineActor, EngineActorRequest,
+    BuildRequest, DisabledEngineDerivationClient, EngineActor, EngineActorRequest,
     EngineClientError, EngineClientResult, EngineConfig, EngineDerivationClient, EngineError,
     EngineProcessor, EngineRequestReceiver, EngineRpcProcessor, EngineRpcRequest,
     GetPayloadRequest, InsertUnsafePayloadRequest, QueuedEngineDerivationClient,
@@ -40,7 +40,7 @@ pub use derivation::{
 
 mod l1_watcher;
 pub use l1_watcher::{
-    AlloyL1BlockFetcher, BlockStream, L1BlockFetcher,
+    AlloyL1BlockFetcher, BlockStream, DisabledL1WatcherDerivationClient, L1BlockFetcher,
     L1WatcherActor, L1WatcherActorError, L1WatcherDerivationClient, L1WatcherQueryExecutor,
     L1WatcherQueryProcessor, LogRetrier, QueuedL1WatcherDerivationClient,
 };
@@ -54,7 +54,7 @@ pub use network::MockUnsafePayloadGossipClient;
 pub use network::{
     GossipTransport, NetworkActor, NetworkActorError, NetworkBuilder, NetworkBuilderError,
     NetworkConfig, NetworkDriver, NetworkDriverError, NetworkEngineClient, NetworkHandler,
-    NetworkInboundData, QueuedNetworkEngineClient,
+    NetworkInboundData, PrivateGossipClient, QueuedNetworkEngineClient,
     QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient, UnsafePayloadGossipClientError,
 };
 

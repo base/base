@@ -7,7 +7,9 @@ mod blockstream;
 pub use blockstream::BlockStream;
 
 mod client;
-pub use client::{L1WatcherDerivationClient, QueuedL1WatcherDerivationClient};
+pub use client::{
+    DisabledL1WatcherDerivationClient, L1WatcherDerivationClient, QueuedL1WatcherDerivationClient,
+};
 
 mod error;
 pub use error::L1WatcherActorError;

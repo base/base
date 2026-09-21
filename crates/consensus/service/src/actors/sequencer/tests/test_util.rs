@@ -20,7 +20,6 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
     MockConductor,
     MockOriginSelector,
     MockSequencerEngineClient,
-    MockUnsafePayloadGossipClient,
 > {
     // The sender is intentionally dropped, so the channel starts closed.
     // If future tests need to send messages, keep the sender instead of dropping it.
@@ -48,7 +47,7 @@ pub(in crate::actors::sequencer) fn test_actor() -> SequencerActor<
         recovery_mode,
         rollup_config,
         seal_offset: base_protocol::DEFAULT_SEAL_OFFSET,
-        unsafe_payload_gossip_client,
+        unsafe_payload_gossip_client: Box::new(unsafe_payload_gossip_client),
         sealer: None,
         pending_stop: None,
     }

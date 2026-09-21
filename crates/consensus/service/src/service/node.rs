@@ -29,8 +29,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     AlloyL1BlockFetcher, CheckpointActor, CheckpointClient, CheckpointDB, CheckpointWriter,
     Conductor, ConductorClient, DelayedL1OriginSelectorProvider, DelegateDerivationActor,
-    DerivationActor, DerivationDelegateClient, DerivationError, EngineActor, EngineActorRequest,
-    EngineConfig,
+    DerivationActor, DerivationDelegateClient, DerivationError, DisabledEngineDerivationClient,
+    DisabledL1WatcherDerivationClient, EngineActor, EngineActorRequest, EngineConfig,
     EngineDerivationClient, EngineProcessor, EngineRequestReceiver, EngineRpcProcessor,
     L1OriginSelector, L1WatcherActor, L1WatcherDerivationClient, L1WatcherQueryProcessor,
     NetworkActor, NetworkBuilder, NetworkConfig, NodeActor, NodeOperatingMode, PayloadBuilder,
@@ -39,7 +39,10 @@ use crate::{
     QueuedNetworkEngineClient, QueuedSequencerAdminAPIClient, QueuedSequencerEngineClient,
     RecoveryModeGuard, RpcActor, RpcContext, SequencerActor, SequencerConfig,
     SequencerEngineRequestCoordinator, UpgradeSignalNodeConfig, ValidatorEngineRequestHandler,
-    actors::{BlockStream, NetworkInboundData, QueuedUnsafePayloadGossipClient},
+    actors::{
+        BlockStream, NetworkInboundData, PrivateGossipClient, QueuedUnsafePayloadGossipClient,
+        UnsafePayloadGossipClient,
+    },
 };
 
 const DERIVATION_PROVIDER_CACHE_SIZE: usize = 1024;
@@ -458,7 +461,7 @@ impl RollupNode {
             | NodeOperatingMode::ShadowSequencer { .. } => {
                 Box::new(QueuedEngineDerivationClient::new(derivation_actor_request_tx.clone()))
             }
-            NodeOperatingMode::IsolatedSequencer => Box::new(QueuedEngineDerivationClient::disabled()),
+            NodeOperatingMode::IsolatedSequencer => Box::new(DisabledEngineDerivationClient),
         };
         let (processor, engine_rpc_processor, sequencer_engine_state_rx) =
             self.create_engine_processor(engine_client, derivation_client, checkpoint_client);
@@ -542,7 +545,8 @@ impl RollupNode {
                     (
                         Some(signer),
                         Some(network_rpc),
-                        QueuedUnsafePayloadGossipClient::new(gossip_payload_tx),
+                        Box::new(QueuedUnsafePayloadGossipClient::new(gossip_payload_tx))
+                            as Box<dyn UnsafePayloadGossipClient>,
                         AdminNetworkAccess::Enabled(net_admin_rpc),
                         Some(network),
                     )
@@ -550,7 +554,7 @@ impl RollupNode {
                 NodeOperatingMode::IsolatedSequencer => (
                     None,
                     None,
-                    QueuedUnsafePayloadGossipClient::private(),
+                    Box::new(PrivateGossipClient) as Box<dyn UnsafePayloadGossipClient>,
                     AdminNetworkAccess::Disabled,
                     None,
                 ),
@@ -581,7 +585,7 @@ impl RollupNode {
             | NodeOperatingMode::ShadowSequencer { .. } => {
                 Box::new(QueuedL1WatcherDerivationClient::new(derivation_actor_request_tx))
             }
-            NodeOperatingMode::IsolatedSequencer => Box::new(QueuedL1WatcherDerivationClient::disabled()),
+            NodeOperatingMode::IsolatedSequencer => Box::new(DisabledL1WatcherDerivationClient),
         };
         let l1_watcher = L1WatcherActor::new(
             Arc::clone(&self.config),

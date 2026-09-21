@@ -20,8 +20,8 @@ use tracing::{debug, error, info, warn};
 
 use super::{CanonicalUnsafeCatchup, Conductor, SequencerEngineState, ShadowReconciliationGate};
 use crate::{
-    BuildRequest, EngineActorRequest, EngineClientError, EngineDerivationClient, EngineError,
-    EngineProcessor, EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
+    BuildRequest, EngineActorRequest, EngineClientError, EngineError, EngineProcessor,
+    EngineRequestReceiver, GetPayloadRequest, InsertUnsafePayloadRequest, Metrics,
     ReconcileShadowRequest, ResetOrigin, ResetRequest, ResetRequestOutcome,
     actors::engine::ResetOutcome,
 };
@@ -37,12 +37,11 @@ enum BootstrapRole {
 
 /// Owns the engine processor and routes sequencer catch-up and shadow reconciliation requests.
 #[derive(Debug)]
-pub struct SequencerEngineRequestCoordinator<EngineClient_, DerivationClient>
+pub struct SequencerEngineRequestCoordinator<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
-    DerivationClient: EngineDerivationClient + 'static,
 {
-    processor: EngineProcessor<EngineClient_, DerivationClient>,
+    processor: EngineProcessor<EngineClient_>,
     /// Canonical catch-up or active shadow reconciliation state.
     sequencer_state: SequencerEngineState,
     conductor: Option<Arc<dyn Conductor>>,
@@ -50,15 +49,13 @@ where
     unsafe_head_tx: watch::Sender<base_protocol::L2BlockInfo>,
 }
 
-impl<EngineClient_, DerivationClient>
-    SequencerEngineRequestCoordinator<EngineClient_, DerivationClient>
+impl<EngineClient_> SequencerEngineRequestCoordinator<EngineClient_>
 where
     EngineClient_: EngineClient,
-    DerivationClient: EngineDerivationClient,
 {
     /// Creates a request handler with optional shadow request routing.
     pub fn new(
-        processor: EngineProcessor<EngineClient_, DerivationClient>,
+        processor: EngineProcessor<EngineClient_>,
         shadow_mode: bool,
         conductor: Option<Arc<dyn Conductor>>,
         sequencer_stopped: bool,
@@ -173,11 +170,9 @@ where
     }
 }
 
-impl<EngineClient_, DerivationClient> EngineRequestReceiver
-    for SequencerEngineRequestCoordinator<EngineClient_, DerivationClient>
+impl<EngineClient_> EngineRequestReceiver for SequencerEngineRequestCoordinator<EngineClient_>
 where
     EngineClient_: EngineClient + 'static,
-    DerivationClient: EngineDerivationClient + 'static,
 {
     fn start(
         mut self,
@@ -723,14 +718,14 @@ mod tests {
         shadow: bool,
         stopped: bool,
         conductor: Option<Arc<dyn Conductor>>,
-    ) -> SequencerEngineRequestCoordinator<MockEngineClient, MockEngineDerivationClient> {
+    ) -> SequencerEngineRequestCoordinator<MockEngineClient> {
         let (state_tx, _) = watch::channel(EngineState::default());
         let (queue_tx, _) = watch::channel(0usize);
         let engine = Engine::new(EngineState::default(), state_tx, queue_tx);
         let processor = EngineProcessor::new(
             Arc::new(test_engine_client_builder().build()),
             Arc::new(RollupConfig::default()),
-            MockEngineDerivationClient::new(),
+            Box::new(MockEngineDerivationClient::new()),
             engine,
         );
         let (unsafe_head_tx, _) = watch::channel(L2BlockInfo::default());

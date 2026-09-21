@@ -32,54 +32,66 @@ pub enum UnsafePayloadGossipClientError {
     RequestError(String),
 }
 
-/// Queued implementation of [`UnsafePayloadGossipClient`] that handles requests by sending them
-/// to a handler via the contained sender.
+/// Queued implementation of [`UnsafePayloadGossipClient`] that relays payloads to the network
+/// actor for gossip.
 #[derive(Debug, Clone)]
-pub enum QueuedUnsafePayloadGossipClient {
-    /// Payloads are relayed to the network actor for gossip.
-    Network {
-        /// Queue used to relay unsafe payloads to gossip.
-        request_tx: mpsc::Sender<BaseExecutionPayloadEnvelope>,
-    },
-    /// Payloads are sealed privately without a network actor.
-    Private,
+pub struct QueuedUnsafePayloadGossipClient {
+    /// Queue used to relay unsafe payloads to gossip.
+    request_tx: mpsc::Sender<BaseExecutionPayloadEnvelope>,
 }
 
 impl QueuedUnsafePayloadGossipClient {
     /// Creates a payload gossip client backed by the network actor.
     pub const fn new(request_tx: mpsc::Sender<BaseExecutionPayloadEnvelope>) -> Self {
-        Self::Network { request_tx }
-    }
-
-    /// Creates a private-sealing capability without a network actor.
-    pub const fn private() -> Self {
-        Self::Private
+        Self { request_tx }
     }
 }
 
 #[async_trait]
 impl UnsafePayloadGossipClient for QueuedUnsafePayloadGossipClient {
+    async fn schedule_execution_payload_gossip(
+        &self,
+        payload: BaseExecutionPayloadEnvelope,
+    ) -> Result<(), UnsafePayloadGossipClientError> {
+        self.request_tx.send(payload).await.map_err(|send_error| {
+            let err = UnsafePayloadGossipClientError::RequestError(
+                "request channel closed".to_string(),
+            );
+            error!(target: "gossip_client", payload = ?send_error.0, ?err, "failed to request to gossip payload.");
+            err
+        })
+    }
+}
+
+/// No-op gossip client for nodes that seal payloads privately without a network actor.
+#[derive(Debug, Clone)]
+pub struct PrivateGossipClient;
+
+#[async_trait]
+impl UnsafePayloadGossipClient for PrivateGossipClient {
     fn seals_privately(&self) -> bool {
-        match self {
-            Self::Network { .. } => false,
-            Self::Private => true,
-        }
+        true
+    }
+
+    async fn schedule_execution_payload_gossip(
+        &self,
+        _payload: BaseExecutionPayloadEnvelope,
+    ) -> Result<(), UnsafePayloadGossipClientError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl UnsafePayloadGossipClient for Box<dyn UnsafePayloadGossipClient> {
+    fn seals_privately(&self) -> bool {
+        self.as_ref().seals_privately()
     }
 
     async fn schedule_execution_payload_gossip(
         &self,
         payload: BaseExecutionPayloadEnvelope,
     ) -> Result<(), UnsafePayloadGossipClientError> {
-        match self {
-            Self::Network { request_tx } => request_tx.send(payload).await.map_err(|send_error| {
-                let err = UnsafePayloadGossipClientError::RequestError(
-                    "request channel closed".to_string(),
-                );
-                error!(target: "gossip_client", payload = ?send_error.0, ?err, "failed to request to gossip payload.");
-                err
-            }),
-            Self::Private => Ok(()),
-        }
+        self.as_ref().schedule_execution_payload_gossip(payload).await
     }
 }
 
@@ -89,7 +101,7 @@ mod tests {
     use alloy_rpc_types_engine::ExecutionPayloadV1;
     use base_common_rpc_types_engine::{BaseExecutionPayload, BaseExecutionPayloadEnvelope};
 
-    use super::{QueuedUnsafePayloadGossipClient, UnsafePayloadGossipClient};
+    use super::{PrivateGossipClient, UnsafePayloadGossipClient};
 
     fn dummy_envelope() -> BaseExecutionPayloadEnvelope {
         BaseExecutionPayloadEnvelope {
@@ -115,16 +127,14 @@ mod tests {
 
     #[test]
     fn private_client_seals_privately() {
-        let client = QueuedUnsafePayloadGossipClient::Private;
+        let client = PrivateGossipClient;
 
-        let result = client.seals_privately();
-
-        assert!(result);
+        assert!(client.seals_privately());
     }
 
     #[tokio::test]
     async fn private_client_gossip_is_a_no_op() {
-        let client = QueuedUnsafePayloadGossipClient::Private;
+        let client = PrivateGossipClient;
 
         let result = client.schedule_execution_payload_gossip(dummy_envelope()).await;
 
