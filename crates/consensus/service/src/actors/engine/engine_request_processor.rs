@@ -673,6 +673,32 @@ where
             }
         }
     }
+
+    /// Re-probes the execution layer while a sequencer is waiting for EL sync to complete.
+    pub async fn probe_sequencer_el_sync(&mut self, active_sequencer: bool) {
+        if self.engine.state().el_sync_finished {
+            return;
+        }
+
+        let head = match self.client.l2_block_info_by_label(BlockNumberOrTag::Latest).await {
+            Ok(Some(head)) => head,
+            Ok(None) => {
+                debug!(target: "engine", "Sequencer EL sync probe skipped: latest head unavailable");
+                return;
+            }
+            Err(err) => {
+                warn!(target: "engine", error = %err, "Sequencer EL sync probe failed to query latest head");
+                return;
+            }
+        };
+        let at_genesis = head.block_info.hash == self.rollup.genesis.l2.hash;
+
+        if active_sequencer {
+            self.bootstrap_active_sequencer(Some(head), at_genesis).await;
+        } else {
+            self.bootstrap_conductor_follower(Some(head)).await;
+        }
+    }
 }
 
 #[cfg(test)]
