@@ -168,6 +168,9 @@ results/fresh-devnet/
 `metadata.json` and the load-test sidecars are directly consumable by the
 static visualizer in `base/benchmark`; link this output directory to that
 repository's ignored `output/` directory and run its normal production build.
+The opt-in Depot workflow runs this suite for trusted `base/base` pull requests
+with the `bench:tps` label. It publishes raw and visualizer artifacts and updates
+one advisory PR comment with the workload summaries.
 Swap workloads can opt into fresh-devnet contract provisioning with
 `deploy_devnet_swap_harness: true` on a workload entry. That mode deploys a
 fresh devnet USDC token plus Uniswap/Aerodrome router shims for each workload,
