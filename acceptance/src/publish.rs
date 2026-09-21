@@ -2,7 +2,7 @@ use std::{env, fmt::Write as _, path::PathBuf, time::Duration};
 
 use chrono::DateTime;
 use clap::Args;
-use eyre::{Context, Result, bail, ensure};
+use eyre::{Context, Result, ensure};
 use reqwest::{Client, Method, header, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -333,60 +333,66 @@ impl PrPublisher {
             .replace(')', "&#41;")
     }
 
-    /// Builds bounded collapsible results with record-derived verdicts and lifecycle failures.
+    /// Summarizes check counts and non-passing records, leaving full evidence in the report.
     pub fn body(run: &RunResult, checks_url: &str, metadata: &CommentMetadata) -> Result<String> {
         Report::validate(run)?;
         metadata.validate()?;
         let counts = ReportCounts::from_run(run);
+        let total =
+            counts.passed + counts.failed + counts.error + counts.blocked + counts.cancelled;
         let mut out = format!(
-            "{MARKER}\n{META_PREFIX}{} -->\n## Acceptance: {}\n\nRevision `{}` · [PR checks]({checks_url})\n\n| Passed | Failed | Error | Blocked | Cancelled |\n|---:|---:|---:|---:|---:|\n| {} | {} | {} | {} | {} |\n\n",
+            "{MARKER}\n{META_PREFIX}{} -->\n## Acceptance Tests: {}\n\n{}/{total} checks passed",
             serde_json::to_string(metadata)?,
             if run.passed() { "✅ Passed" } else { "❌ Not passed" },
-            Self::text(&run.tested_sha),
             counts.passed,
-            counts.failed,
-            counts.error,
-            counts.blocked,
-            counts.cancelled
         );
-        for scenario in &run.scenarios {
-            write!(
-                out,
-                "<details{}><summary>{} — {}</summary>\n\n",
-                if scenario.outcome() == Status::Passed { "" } else { " open" },
-                Self::text(&scenario.id),
-                scenario.outcome().label()
-            )?;
-            for stage in scenario.stages.iter().filter(|stage| stage.status != Status::Passed) {
-                write!(
-                    out,
-                    "**Lifecycle: {} — {}**: {}\n\n",
-                    Self::text(&stage.id),
-                    stage.status.label(),
-                    Self::text(&stage.message)
-                )?;
-            }
-            for check in &scenario.checks {
-                write!(
-                    out,
-                    "**{}** — {}\n\n- Expected: `{}`\n- Observed: `{}`\n- Message: {}\n- Next step: {}\n\n",
-                    Self::text(&check.id),
-                    check.status.label(),
-                    Self::text(&Report::compact_json(&check.expected)),
-                    Self::text(&Report::compact_json(&check.observed)),
-                    Self::text(&check.message),
-                    Self::text(&check.next_step)
-                )?;
-            }
-            write!(
-                out,
-                "Reproduction: `{}`\n\n</details>\n\n",
-                Self::text(&scenario.reproduction)
-            )?;
-            if out.len() > 60_000 {
-                bail!("comment body exceeds bound");
+        for (count, label) in [
+            (counts.failed, "failed"),
+            (counts.error, "errored"),
+            (counts.blocked, "blocked"),
+            (counts.cancelled, "cancelled"),
+        ] {
+            if count > 0 {
+                write!(out, " · {count} {label}")?;
             }
         }
+        writeln!(out, " · [Checks & reports]({checks_url})\n")?;
+
+        let mut shown = 0;
+        let mut omitted = 0;
+        for scenario in &run.scenarios {
+            let records = scenario
+                .stages
+                .iter()
+                .map(|stage| (&stage.id, stage.status, &stage.message))
+                .chain(
+                    scenario.checks.iter().map(|check| (&check.id, check.status, &check.message)),
+                )
+                .filter(|(_, status, _)| *status != Status::Passed);
+            for (id, status, message) in records {
+                if shown == 10 {
+                    omitted += 1;
+                    continue;
+                }
+                let mut summary: String = message.chars().take(300).collect();
+                if summary.len() < message.len() {
+                    summary.push('…');
+                }
+                writeln!(
+                    out,
+                    "- **{} / {}** — {}: {}",
+                    Self::text(&scenario.id),
+                    Self::text(id),
+                    status.label(),
+                    Self::text(&summary),
+                )?;
+                shown += 1;
+            }
+        }
+        if omitted > 0 {
+            writeln!(out, "\n{omitted} more non-passing results in the report.")?;
+        }
+        Report::bounded("comment body", &out, 60_000)?;
         Ok(out)
     }
 }
@@ -654,51 +660,84 @@ mod tests {
     }
 
     #[test]
+    fn passing_comment_is_only_a_verdict_counts_and_report_link() {
+        let mut run = run();
+        run.scenarios.truncate(1);
+        let body =
+            PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
+                .unwrap();
+        let visible: Vec<_> = body.lines().filter(|line| !line.starts_with("<!--")).collect();
+        assert_eq!(
+            visible.join("\n").trim(),
+            "## Acceptance Tests: ✅ Passed\n\n1/1 checks passed · [Checks & reports](https://github.com/base/base/pull/1/checks)"
+        );
+        assert_eq!(CommentMetadata::parse(&body).unwrap().run_id, metadata().run_id);
+    }
+
+    #[test]
     fn comments_preserve_outcomes_escape_content_and_explain_cleanup_errors() {
         let mut run = run();
         let body =
             PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
                 .unwrap();
-        assert!(body.contains("| 1 | 1 | 0 | 2 | 0 |"));
-        assert!(body.contains("<details><summary>healthy-synthetic — passed"));
-        assert!(body.contains("<details open><summary>lag-failure-synthetic — failed"));
-        assert!(body.contains("- Expected: `{\"chain_id\":84538453}`"));
-        assert!(
-            body.contains("Expected:") && body.contains("Observed:") && body.contains("Next step:")
-        );
+        assert!(body.contains("1/4 checks passed · 1 failed · 2 blocked"));
+        assert!(!body.contains("healthy-synthetic"));
+        assert!(body.contains("**lag-failure-synthetic / validator-catches-up** — failed:"));
+        assert!(body.contains("Validator lag was 14 blocks"));
+        assert!(body.contains("**startup-error-synthetic / setup** — error:"));
+        assert!(!body.contains("Expected:") && !body.contains("Observed:"));
+
+        run.scenarios[2].checks[0].status = Status::Error;
+        run.scenarios[2].checks[1].status = Status::Cancelled;
+        let body =
+            PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
+                .unwrap();
+        assert!(body.contains("1/4 checks passed · 1 failed · 1 errored · 1 cancelled"));
+
         run.scenarios.truncate(1);
-        run.scenarios[0].checks[0].message =
-            "<script>|`x`\n@team [click](https://evil.invalid/x)".into();
         run.scenarios[0].stages.last_mut().unwrap().status = Status::Error;
-        run.scenarios[0].stages.last_mut().unwrap().message = "owned cleanup failed".into();
-        run.scenarios[0].samples = vec![run.scenarios[0].samples[0].clone(); 600];
+        run.scenarios[0].stages.last_mut().unwrap().message =
+            "owned cleanup failed: <script>|`x`\n@team [click](https://evil.invalid/x)".into();
         let body =
             PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
                 .unwrap();
         assert!(body.contains("Not passed") && body.contains("owned cleanup failed"));
+        assert!(body.contains("1/1 checks passed"));
         assert!(body.contains("&lt;script&gt;") && body.contains("＠team"));
         assert!(
             !body.contains("<script>") && !body.contains("@team") && !body.contains("https://evil")
         );
+
+        let error = Aggregate::fallback("missing result".into());
+        let body =
+            PrPublisher::body(&error, "https://github.com/base/base/pull/1/checks", &metadata())
+                .unwrap();
+        assert!(body.contains("Not passed") && body.contains("missing result"));
+    }
+
+    #[test]
+    fn large_comments_keep_counts_and_bound_diagnostics() {
+        let mut run = run();
+        run.scenarios.truncate(1);
         let check = run.scenarios[0].checks[0].clone();
         run.scenarios[0].checks = (0..200)
             .map(|id| {
                 let mut check = check.clone();
                 check.id = format!("check-{id}");
-                check.message = "x".repeat(2_000);
+                check.status = Status::Failed;
+                check.message = "<&🙂".repeat(2_000);
                 check
             })
             .collect();
-        assert!(
+        let body =
             PrPublisher::body(&run, "https://github.com/base/base/pull/1/checks", &metadata())
-                .is_err()
-        );
-        let error = Aggregate::fallback("missing result".into());
-        assert!(
-            PrPublisher::body(&error, "https://github.com/base/base/pull/1/checks", &metadata())
-                .unwrap()
-                .contains("Not passed")
-        );
+                .unwrap();
+        assert!(body.len() < 60_000);
+        assert!(body.contains("0/200 checks passed · 200 failed"));
+        assert_eq!(body.lines().filter(|line| line.starts_with("- ")).count(), 10);
+        assert!(body.contains("check-9**") && !body.contains("check-10**"));
+        assert!(body.contains("190 more non-passing results in the report."));
+        assert!(body.contains("[Checks & reports]"));
     }
 
     #[tokio::test]
