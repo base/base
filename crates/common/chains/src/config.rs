@@ -471,7 +471,7 @@ const MAINNET: ChainConfig = ChainConfig {
     jovian_timestamp: 1_764_691_201,
     azul_timestamp: Some(1_779_991_200),
     beryl_timestamp: Some(1_782_410_400),
-    cobalt_timestamp: None,
+    cobalt_timestamp: Some(1_790_791_200),
     denim_timestamp: None,
 
     genesis_l1_hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
