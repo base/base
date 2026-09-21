@@ -228,7 +228,7 @@ where
     /// When shutting down (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
     ///
-    /// If a [`DriverEvent::Flush`] carried an acknowledgement, it fires as soon as a later
+    /// If a [`DriverEvent::SourceFlush`] carried an acknowledgement, it fires as soon as a later
     /// CPU phase reports both encoding and submission fully drained (i.e. the flush's frames
     /// have all been handed to the tx manager) — see the `pending_flush_acks` field.
     ///
@@ -298,7 +298,7 @@ where
                 DriverEvent::Block(b) => {
                     self.on_block(b);
                 }
-                DriverEvent::Flush(ack) => {
+                DriverEvent::SourceFlush(ack) => {
                     self.pipeline.flush()?;
                     if let Some(ack) = ack {
                         self.pending_flush_acks.push(ack);
@@ -652,7 +652,7 @@ where
                         continue;
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
-                    Ok(L2BlockEvent::Flush { ack }) => DriverEvent::Flush(ack),
+                    Ok(L2BlockEvent::Flush { ack }) => DriverEvent::SourceFlush(ack),
                     Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
                     Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
@@ -1070,7 +1070,7 @@ mod tests {
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
             let event = driver.next_event().await.expect("next_event should succeed");
-            assert!(matches!(event, DriverEvent::Flush(_)));
+            assert!(matches!(event, DriverEvent::SourceFlush(_)));
         });
     }
 
