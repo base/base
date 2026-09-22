@@ -132,7 +132,7 @@ mod tests {
     }
 
     fn execute_call(to: Address) -> Call {
-        Call { to, data: encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]) }
+        Call { to, value: U256::ZERO, data: encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]) }
     }
 
     fn eoa_with_phase0(calls: Vec<Call>) -> TxEip8130 {
@@ -159,6 +159,7 @@ mod tests {
         assert_eq!(CoinbaseTip::decode(&tx, SENDER), Some(U256::from(TIP_AMOUNT)));
         let other = eoa_with_phase0(vec![Call {
             to: SENDER,
+            value: U256::ZERO,
             data: encode_execute(OTHER_RECIPIENT, U256::from(TIP_AMOUNT), &[]),
         }]);
         assert_eq!(CoinbaseTip::decode(&other, SENDER), None);
@@ -170,11 +171,13 @@ mod tests {
     fn coinbase_tip_eoa_execute_batch_single_send_returns_amount() {
         let tx = eoa_with_phase0(vec![Call {
             to: SENDER,
+            value: U256::ZERO,
             data: encode_execute_batch_one(COINBASE, U256::from(TIP_AMOUNT)),
         }]);
         assert_eq!(CoinbaseTip::decode(&tx, SENDER), Some(U256::from(TIP_AMOUNT)));
         let other = eoa_with_phase0(vec![Call {
             to: SENDER,
+            value: U256::ZERO,
             data: encode_execute_batch_one(OTHER_RECIPIENT, U256::from(TIP_AMOUNT)),
         }]);
         assert_eq!(CoinbaseTip::decode(&other, SENDER), None);
@@ -247,11 +250,13 @@ mod tests {
 
         let with_calldata = eoa_with_phase0(vec![Call {
             to: SENDER,
+            value: U256::ZERO,
             data: encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[0x01]),
         }]);
         assert_eq!(CoinbaseTip::decode(&with_calldata, SENDER), None);
 
-        let wrong_selector = eoa_with_phase0(vec![Call { to: SENDER, data: bytes!("deadbeef") }]);
+        let wrong_selector =
+            eoa_with_phase0(vec![Call { to: SENDER, value: U256::ZERO, data: bytes!("deadbeef") }]);
         assert_eq!(CoinbaseTip::decode(&wrong_selector, SENDER), None);
 
         let configured = TxEip8130 { sender: Some(SENDER), ..Default::default() };
@@ -278,14 +283,19 @@ mod tests {
     fn coinbase_tip_rejects_truncated_or_dirty_calldata() {
         let mut truncated = encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]).to_vec();
         truncated.truncate(truncated.len().saturating_sub(32));
-        let truncated_tx = eoa_with_phase0(vec![Call { to: SENDER, data: Bytes::from(truncated) }]);
+        let truncated_tx = eoa_with_phase0(vec![Call {
+            to: SENDER,
+            value: U256::ZERO,
+            data: Bytes::from(truncated),
+        }]);
         assert_eq!(CoinbaseTip::decode(&truncated_tx, SENDER), None);
 
         // High bytes of the address word must be zero; `abi_decode_validate` rejects
         // that dirty padding even though a lenient decoder would still yield a tip.
         let mut dirty = encode_execute(COINBASE, U256::from(TIP_AMOUNT), &[]).to_vec();
         dirty[4] = 0xff;
-        let dirty_tx = eoa_with_phase0(vec![Call { to: SENDER, data: Bytes::from(dirty) }]);
+        let dirty_tx =
+            eoa_with_phase0(vec![Call { to: SENDER, value: U256::ZERO, data: Bytes::from(dirty) }]);
         assert_eq!(CoinbaseTip::decode(&dirty_tx, SENDER), None);
     }
 }

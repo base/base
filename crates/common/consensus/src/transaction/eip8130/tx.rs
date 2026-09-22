@@ -378,6 +378,19 @@ impl TxEip8130 {
                 .sum::<usize>()
             + self.metadata.len()
     }
+
+    /// Total wei dispatched across every call in every phase.
+    ///
+    /// This is the sender-side ETH obligation the calls impose: each call moves
+    /// `call.value` from the sender when dispatched, so the sender must be able
+    /// to cover their sum (in addition to gas and any coinbase tip). The sum
+    /// saturates at [`U256::MAX`] rather than wrapping.
+    pub fn total_call_value(&self) -> U256 {
+        self.calls
+            .iter()
+            .flatten()
+            .fold(U256::ZERO, |acc, call| acc.saturating_add(call.value))
+    }
 }
 
 impl Encodable for TxEip8130 {
@@ -628,6 +641,7 @@ mod tests {
             })],
             calls: vec![vec![Call {
                 to: address!("0x00000000000000000000000000000000000000cc"),
+                value: U256::from(0x1234u64),
                 data: bytes!("deadbeef"),
             }]],
             metadata: bytes!("c0ffee"),
@@ -839,11 +853,11 @@ mod tests {
         let tx = TxEip8130 {
             chain_id: 1,
             calls: vec![
-                vec![Call { to: Address::ZERO, data: bytes!("01") }],
+                vec![Call { to: Address::ZERO, value: U256::from(7u64), data: bytes!("01") }],
                 vec![],
                 vec![
-                    Call { to: Address::ZERO, data: bytes!("02") },
-                    Call { to: Address::ZERO, data: bytes!("03") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("02") },
+                    Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("03") },
                 ],
             ],
             ..Default::default()
@@ -852,6 +866,39 @@ mod tests {
         tx.encode(&mut buf);
         let decoded = TxEip8130::decode(&mut buf.as_slice()).unwrap();
         assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn call_value_is_covered_by_signature_hash() {
+        let mut tx = TxEip8130 {
+            chain_id: 1,
+            calls: vec![vec![Call { to: Address::ZERO, value: U256::ZERO, data: bytes!("01") }]],
+            ..Default::default()
+        };
+        let zero_value_hash = tx.sender_signature_hash();
+        tx.calls[0][0].value = U256::from(1u64);
+        let nonzero_value_hash = tx.sender_signature_hash();
+        assert_ne!(
+            zero_value_hash, nonzero_value_hash,
+            "call value must be part of the signed preimage",
+        );
+    }
+
+    #[test]
+    fn total_call_value_sums_every_phase() {
+        let tx = TxEip8130 {
+            chain_id: 1,
+            calls: vec![
+                vec![
+                    Call { to: Address::ZERO, value: U256::from(3u64), data: Bytes::new() },
+                    Call { to: Address::ZERO, value: U256::from(4u64), data: Bytes::new() },
+                ],
+                vec![Call { to: Address::ZERO, value: U256::from(5u64), data: Bytes::new() }],
+            ],
+            ..Default::default()
+        };
+        assert_eq!(tx.total_call_value(), U256::from(12u64));
+        assert_eq!(TxEip8130 { calls: vec![], ..Default::default() }.total_call_value(), U256::ZERO);
     }
 
     #[test]
@@ -981,11 +1028,15 @@ mod tests {
     #[test]
     fn size_counts_call_data_heap() {
         let bare = TxEip8130 {
-            calls: vec![vec![Call { to: Address::ZERO, data: Bytes::new() }]],
+            calls: vec![vec![Call { to: Address::ZERO, value: U256::ZERO, data: Bytes::new() }]],
             ..Default::default()
         };
         let with_data = TxEip8130 {
-            calls: vec![vec![Call { to: Address::ZERO, data: Bytes::from(vec![0xab; 4_096]) }]],
+            calls: vec![vec![Call {
+                to: Address::ZERO,
+                value: U256::ZERO,
+                data: Bytes::from(vec![0xab; 4_096]),
+            }]],
             ..Default::default()
         };
 

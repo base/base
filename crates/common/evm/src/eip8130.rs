@@ -1229,8 +1229,14 @@ impl Eip8130Executor {
                     break;
                 }
 
-                let frame =
-                    Self::run_call(evm, outcome.sender, call.to, call.data.clone(), remaining)?;
+                let frame = Self::run_call(
+                    evm,
+                    outcome.sender,
+                    call.to,
+                    call.value,
+                    call.data.clone(),
+                    remaining,
+                )?;
                 let gas = frame.gas();
                 // `run_call` caps the frame at `remaining`, so a call can never
                 // report spending more than the pool held; treat a violation of
@@ -1371,14 +1377,16 @@ impl Eip8130Executor {
         inspector.call_end(ctx, &inputs, &mut outcome);
     }
 
-    /// Dispatches a single protocol call (`from = sender`, `value = 0`) as a
-    /// top-level EVM call frame with `gas_limit` and runs it to completion,
-    /// returning the [`FrameResult`]. Reuses the Base handler's frame loop and
-    /// drives the configured inspector when inspection is enabled.
+    /// Dispatches a single protocol call (`from = sender`, transferring `value`
+    /// wei to `to`) as a top-level EVM call frame with `gas_limit` and runs it to
+    /// completion, returning the [`FrameResult`]. Reuses the Base handler's frame
+    /// loop and drives the configured inspector when inspection is enabled. A
+    /// `value` the caller cannot afford reverts the frame like any other `CALL`.
     fn run_call<DB, I, P>(
         evm: &mut BaseEvm<DB, I, P>,
         caller: Address,
         to: Address,
+        value: U256,
         data: Bytes,
         gas_limit: u64,
     ) -> Result<FrameResult, EVMError<DB::Error, BaseTransactionError>>
@@ -1423,15 +1431,17 @@ impl Eip8130Executor {
             known_bytecode,
             target_address: to,
             caller,
-            // `Transfer(ZERO)` is exactly what a zero-value `CALL` opcode lowers
-            // to (`Apparent` is reserved for `DELEGATECALL`), so this matches
-            // mainnet CALL semantics: `msg.value` reads as 0 and the target is
-            // touched. Touching is the correct CALL behaviour and, for an empty
-            // target, is a no-op under EIP-161 state-clear (touched-empty is
-            // erased at tx end). No new-account gas differs from `Apparent`: the
-            // classic 25000 charge lives at the CALL-opcode gas site (which this
-            // directly-built frame bypasses) and applies only when value > 0.
-            value: CallValue::Transfer(U256::ZERO),
+            // `Transfer(value)` matches mainnet CALL semantics (`Apparent` is
+            // reserved for `DELEGATECALL`): revm's frame init moves `value` from
+            // `caller` to `to`, reverting the frame with `InsufficientBalance`
+            // when the caller's spendable balance cannot cover it, and `msg.value`
+            // reads as `value` inside the callee. The value-transfer stipend and
+            // new-account (25000) gas that a `CALL` opcode would levy are not
+            // charged here: this directly-built top-level frame bypasses the
+            // opcode gas site, exactly as the zero-value path already did, so the
+            // sender's dispatched calls stay metered by the 8130 call-gas pool
+            // rather than the opcode gas model.
+            value: CallValue::Transfer(value),
             scheme: CallScheme::Call,
             is_static: false,
             charged_new_account_state_gas: false,
@@ -1977,6 +1987,56 @@ mod tests {
         assert!(outcome.state.contains_key(&BENEFICIARY));
     }
 
+    /// A dispatched call carrying `value` moves that wei from the sender to the
+    /// call target, matching mainnet `CALL` value semantics.
+    #[test]
+    fn eoa_call_transfers_value_to_recipient() {
+        let key = signing_key(0x51);
+        let sender = eoa_address(&key);
+        let recipient = address!("0x00000000000000000000000000000000000000e1");
+        let transfer = U256::from(1_000_000u64);
+
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: recipient, value: transfer, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut evm = evm_with_accounts(initial_balance, sender, &[(recipient, bytes!("00"))]);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("value transfer should run");
+
+        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+        let recipient_acc = outcome.state.get(&recipient).expect("recipient in state");
+        assert_eq!(recipient_acc.info.balance, transfer, "recipient credited the call value");
+    }
+
+    /// A call whose `value` exceeds the sender's spendable balance (after the
+    /// self-pay gas prepay) reverts its phase like any other `CALL`: the
+    /// transaction is still included and charged gas, but the recipient is not
+    /// credited and the phase's state changes are rolled back.
+    #[test]
+    fn eoa_call_reverts_when_sender_cannot_cover_value() {
+        let key = signing_key(0x52);
+        let sender = eoa_address(&key);
+        let recipient = address!("0x00000000000000000000000000000000000000e2");
+
+        let mut tx = base_tx();
+        // 1e18 wei — far more than the funded balance below.
+        let transfer = U256::from(10u64).pow(U256::from(18u64));
+        tx.calls = vec![vec![Call { to: recipient, value: transfer, data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        // 1e16 wei covers worst-case gas (gas_limit 1e6 * max_fee 5e9 = 5e15) but
+        // is far below the 1e18 call value, so the value transfer cannot succeed.
+        let initial_balance = U256::from(10u64).pow(U256::from(16u64));
+        let mut evm = evm_with_accounts(initial_balance, sender, &[(recipient, bytes!("00"))]);
+        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
+
+        assert!(!outcome.result.is_success(), "phase should revert on insufficient value");
+        let recipient_balance =
+            outcome.state.get(&recipient).map_or(U256::ZERO, |acc| acc.info.balance);
+        assert!(recipient_balance.is_zero(), "recipient must not be credited on revert");
+    }
+
     /// Cross-chain-replay guard: an EIP-8130 envelope signed for a foreign chain
     /// must be rejected at inclusion, not just at pool admission. The sender and
     /// payer signature hashes commit to the transaction's embedded `chain_id`, so
@@ -2207,7 +2267,7 @@ mod tests {
         let target = address!("0x00000000000000000000000000000000000000c5");
 
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed = eoa_signed(tx, &key);
         let initial = U256::from(10u64).pow(U256::from(18u64));
 
@@ -2322,7 +2382,7 @@ mod tests {
 
         // --- reference execution at a generous limit to obtain the net charge ---
         let mut tx_ref = base_tx();
-        tx_ref.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx_ref.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed_ref = eoa_signed(tx_ref, &key);
         let mut evm_ref = evm_with_accounts_and_storage(
             initial,
@@ -2338,7 +2398,7 @@ mod tests {
 
         // --- estimate (simulation never commits state) ---
         let mut tx_sim = base_tx();
-        tx_sim.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx_sim.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed_sim = eoa_signed(tx_sim, &key);
         let mut evm_sim = evm_with_accounts_and_storage(
             initial,
@@ -2364,7 +2424,7 @@ mod tests {
         //     subtracted from pool but is not available during execution) ---
         let mut tx_low = base_tx();
         tx_low.gas_limit = charge_gas;
-        tx_low.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx_low.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed_low = eoa_signed(tx_low, &key);
         let mut evm_low = evm_with_accounts_and_storage(
             initial,
@@ -2383,7 +2443,7 @@ mod tests {
         // --- execute at gas_limit = estimate_gas → must succeed ---
         let mut tx_ok = base_tx();
         tx_ok.gas_limit = estimate_gas;
-        tx_ok.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx_ok.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed_ok = eoa_signed(tx_ok, &key);
         let mut evm_ok =
             evm_with_accounts_and_storage(initial, sender, &[(target, sstore_clears)], &storage);
@@ -2437,7 +2497,7 @@ mod tests {
 
         // --- reference execution at a generous limit for the net charge ---
         let mut tx_ref = base_tx();
-        tx_ref.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        tx_ref.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
         let signed_ref = eoa_signed(tx_ref, &key);
         let mut evm_ref = evm_with_accounts(
             initial,
@@ -2452,7 +2512,7 @@ mod tests {
 
         // --- estimate (binary search must go beyond ceiling_spent) ---
         let mut tx_sim = base_tx();
-        tx_sim.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        tx_sim.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
         let signed_sim = eoa_signed(tx_sim, &key);
         let mut evm_sim = evm_with_accounts(
             initial,
@@ -2475,7 +2535,7 @@ mod tests {
         // --- execute at gas_limit = charge_gas → must revert (sink OOGs) ---
         let mut tx_low = base_tx();
         tx_low.gas_limit = charge_gas;
-        tx_low.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        tx_low.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
         let signed_low = eoa_signed(tx_low, &key);
         let mut evm_low = evm_with_accounts(
             initial,
@@ -2492,7 +2552,7 @@ mod tests {
         // --- execute at gas_limit = estimate_gas → must succeed ---
         let mut tx_ok = base_tx();
         tx_ok.gas_limit = estimate_gas;
-        tx_ok.calls = vec![vec![Call { to: forwarder, data: Bytes::new() }]];
+        tx_ok.calls = vec![vec![Call { to: forwarder, value: U256::ZERO, data: Bytes::new() }]];
         let signed_ok = eoa_signed(tx_ok, &key);
         let mut evm_ok =
             evm_with_accounts(initial, sender, &[(forwarder, fwd_code), (sink, sink_code)]);
@@ -2590,7 +2650,7 @@ mod tests {
             // Simulate's apply path does not verify config auth.
             signature: Bytes::new(),
         })];
-        tx.calls = vec![vec![Call { to: allowed, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
         let signed = configured_signed(tx, &owner);
 
         let mut evm = evm_with_accounts(
@@ -2656,7 +2716,7 @@ mod tests {
         let sender = eoa_address(&key);
 
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed = eoa_signed(tx, &key);
 
         let mut evm = evm_with_accounts(
@@ -2676,7 +2736,7 @@ mod tests {
         let sender = eoa_address(&key);
 
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed = eoa_signed(tx, &key);
 
         let initial = U256::from(10u64).pow(U256::from(18u64));
@@ -2751,7 +2811,7 @@ mod tests {
         let sender = eoa_address(&key);
 
         let mut tx = base_tx();
-        tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
         let signed = eoa_signed(tx, &key);
 
         // Target code: PUSH1 0x00, SLOAD, STOP. The `SLOAD` forces a storage read
@@ -2819,7 +2879,7 @@ mod tests {
             let key = signing_key(signer);
             let sender = eoa_address(&key);
             let mut tx = base_tx();
-            tx.calls = vec![vec![Call { to: target, data: Bytes::new() }]];
+            tx.calls = vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]];
             let signed = eoa_signed(tx, &key);
             let mut evm = evm_with_accounts(
                 U256::from(10u64).pow(U256::from(18u64)),
@@ -2859,7 +2919,7 @@ mod tests {
         );
 
         let mut warm_tx = base_tx();
-        warm_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        warm_tx.calls = vec![vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }]];
         let warm_signed = eoa_signed(warm_tx, &key);
         let warm_outcome =
             evm.transact_raw(into_base_tx(&warm_signed)).expect("tx should be included");
@@ -2869,15 +2929,15 @@ mod tests {
         // Tx 1 already bumped the protocol nonce (0 -> 1) and delegated the sender
         // (both committed above), so tx 2 is a second-use transaction:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the tx 1_700
+        // payload EIP-2028 DA over the tx 1_716
         // nonce_key existing channel 0: COLD_SLOAD 2_100 + SSTORE_RESET 2_900 5_000
         // auto_delegation sender already delegated 0
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
-        // total 28_903
+        // total 28_919 (the call's zero value adds one 0x80 calldata byte)
         let mut load_tx = base_tx();
         load_tx.nonce_sequence = 1;
-        load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        load_tx.calls = vec![vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }]];
         let load_signed = eoa_signed(load_tx, &key);
         let load_outcome =
             evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
@@ -2885,7 +2945,7 @@ mod tests {
 
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            28_903,
+            28_919,
             "loader SLOAD must be COLD (2_100); a warm read (100) would be 2_000 \
              less, meaning tx 1's warmth leaked across the transaction boundary",
         );
@@ -2914,8 +2974,8 @@ mod tests {
 
         let mut tx = base_tx();
         tx.calls = vec![
-            vec![Call { to: loader, data: Bytes::new() }],
-            vec![Call { to: loader, data: Bytes::new() }],
+            vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }],
+            vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }],
         ];
         let signed = eoa_signed(tx, &key);
         let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
@@ -2923,16 +2983,17 @@ mod tests {
 
         // First-use, single-tx, two phases each calling `loader`:
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the two-phase tx 1_856
+        // payload EIP-2028 DA over the two-phase tx 1_888
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // auto_delegation codeless EOA -> DEFAULT_ACCOUNT 4_600
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call phase 0 PUSH1 (3) + COLD SLOAD (2_100) + STOP 2_103
         // call phase 1 PUSH1 (3) + WARM SLOAD (100) + STOP 103
-        // total 50_862
+        // total 50_894 (the two calls each carry a value word; a zero value adds
+        // one 0x80 calldata byte per call to the DA payload)
         assert_eq!(
             outcome.result.gas().tx_gas_used(),
-            50_862,
+            50_894,
             "phase 1's SLOAD must be WARM (100): committed phase 0 warmed \
              (loader, slot 0). A cold read (2_100) would be 2_000 more, meaning \
              the committed phase's warmth failed to carry across phases",
@@ -2956,7 +3017,8 @@ mod tests {
 
         let mut invalid_tx = base_tx();
         invalid_tx.nonce_sequence = 5;
-        invalid_tx.calls = vec![vec![Call { to: loader, data: bytes!("60006000fd") }]];
+        invalid_tx.calls =
+            vec![vec![Call { to: loader, value: U256::ZERO, data: bytes!("60006000fd") }]];
         let invalid_signed = eoa_signed(invalid_tx, &key);
         let invalid_outcome = evm.transact_raw(into_base_tx(&invalid_signed)).unwrap_err();
         assert!(
@@ -2965,7 +3027,7 @@ mod tests {
         );
 
         let mut load_tx = base_tx();
-        load_tx.calls = vec![vec![Call { to: loader, data: Bytes::new() }]];
+        load_tx.calls = vec![vec![Call { to: loader, value: U256::ZERO, data: Bytes::new() }]];
         let load_signed = eoa_signed(load_tx, &key);
         let load_outcome =
             evm.transact_raw(into_base_tx(&load_signed)).expect("tx should be included");
@@ -2975,17 +3037,17 @@ mod tests {
         // `loader` (PUSH1 0, SLOAD, STOP). Its gas splits into the EIP-8130
         // sender-intrinsic charge (48_484) plus the dispatched call (2_103):
         // base AA_BASE_COST 15_000
-        // payload EIP-2028 DA over the 122-byte tx 1_688
+        // payload EIP-2028 DA over the 123-byte tx 1_716
         // nonce_key first use of channel 0: COLD_SLOAD 2_100 + SSTORE_SET 20_000 22_100
         // auto_delegation codeless EOA -> DEFAULT_ACCOUNT (200 x 23-byte indicator) 4_600
         // sender_auth ECRECOVER 3_000 + cold SLOAD 2_100 5_100
         // call PUSH1 (3) + SLOAD + STOP (0) 2_103
-        // total 50_591
+        // total 50_619 (the call's zero value adds one 0x80 calldata byte)
         assert_eq!(
             load_outcome.result.gas().tx_gas_used(),
-            50_591,
+            50_619,
             "loader SLOAD must be COLD (2_100); a warm read (100) would total \
-             48_591, meaning the discarded invalid tx leaked warmth",
+             48_619, meaning the discarded invalid tx leaked warmth",
         );
     }
 
@@ -3000,8 +3062,8 @@ mod tests {
 
         let mut tx = base_tx();
         tx.calls = vec![
-            vec![Call { to: reverter, data: Bytes::new() }],
-            vec![Call { to: storer, data: Bytes::new() }],
+            vec![Call { to: reverter, value: U256::ZERO, data: Bytes::new() }],
+            vec![Call { to: storer, value: U256::ZERO, data: Bytes::new() }],
         ];
         let signed = eoa_signed(tx, &key);
 
@@ -3084,7 +3146,7 @@ mod tests {
 
         let mut tx = base_tx();
         tx.sender = Some(account);
-        tx.calls = vec![vec![Call { to: forbidden, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: forbidden, value: U256::ZERO, data: Bytes::new() }]];
         let signed = configured_signed(tx, &signer);
 
         let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), account);
@@ -3108,7 +3170,7 @@ mod tests {
 
         let mut tx = base_tx();
         tx.sender = Some(account);
-        tx.calls = vec![vec![Call { to: allowed, data: Bytes::new() }]];
+        tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
         let signed = configured_signed(tx, &signer);
 
         let mut evm = evm_with_accounts(
@@ -3270,7 +3332,7 @@ mod tests {
         let (derived, signed) = counterfactual_create_signed(
             &key,
             bytes!("00"),
-            vec![vec![Call { to: target, data: Bytes::new() }]],
+            vec![vec![Call { to: target, value: U256::ZERO, data: Bytes::new() }]],
         );
 
         let initial_balance = U256::from(10u64).pow(U256::from(18u64));
@@ -3328,8 +3390,8 @@ mod tests {
 
         let mut tx = base_tx();
         tx.calls = vec![vec![
-            Call { to: target, data: Bytes::from(clear_data) },
-            Call { to: target, data: Bytes::from(second_data) },
+            Call { to: target, value: U256::ZERO, data: Bytes::from(clear_data) },
+            Call { to: target, value: U256::ZERO, data: Bytes::from(second_data) },
         ]];
         let signed = eoa_signed(tx, &key);
 

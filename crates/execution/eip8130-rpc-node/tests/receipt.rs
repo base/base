@@ -130,7 +130,7 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
         account_changes: Vec::new(),
-        calls: vec![vec![Call { to: Account::Bob.address(), data: Bytes::new() }]],
+        calls: vec![vec![Call { to: Account::Bob.address(), value: U256::ZERO, data: Bytes::new() }]],
         metadata: Bytes::from_static(&[0xab, 0xcd]),
         payer: None,
     };
@@ -274,7 +274,11 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
         account_changes: Vec::new(),
-        calls: vec![vec![Call { to: Account::Charlie.address(), data: Bytes::new() }]],
+        calls: vec![vec![Call {
+            to: Account::Charlie.address(),
+            value: U256::ZERO,
+            data: Bytes::new(),
+        }]],
         metadata: Bytes::new(),
         payer: None,
     };
@@ -300,8 +304,8 @@ async fn two_eip8130_transactions_in_one_block_attribute_phase_statuses() -> eyr
         gas_limit: 200_000,
         account_changes: Vec::new(),
         calls: vec![
-            vec![Call { to: Account::Charlie.address(), data: Bytes::new() }],
-            vec![Call { to: revert_addr, data: Bytes::new() }],
+            vec![Call { to: Account::Charlie.address(), value: U256::ZERO, data: Bytes::new() }],
+            vec![Call { to: revert_addr, value: U256::ZERO, data: Bytes::new() }],
         ],
         metadata: Bytes::new(),
         payer: None,
