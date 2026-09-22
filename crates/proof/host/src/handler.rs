@@ -1299,6 +1299,9 @@ async fn handle_hint_inner(
                     ?parent_block_hash,
                     "payload witness served from prefetch cache"
                 );
+                // A configured cache owns `debug_executePayload`. Lookahead on a miss would
+                // still run for every block outside the retention window and share the proof
+                // node's three execute permits with the sidecar.
                 if cfg.prover.witness_cache_url.is_none() {
                     prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
                 }
@@ -1316,6 +1319,7 @@ async fn handle_hint_inner(
 
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
 
+            // A configured cache owns `debug_executePayload`, so a miss does not start lookahead.
             if cfg.prover.witness_cache_url.is_none()
                 && let Some(prefetcher) = payload_witness_prefetcher
             {

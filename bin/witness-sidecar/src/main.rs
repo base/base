@@ -86,13 +86,16 @@ async fn run(
     info!(listen_addr = %listener.local_addr()?, max_blocks, "payload witness cache listening");
 
     let server = WitnessServer::serve(Arc::clone(&cache), listener);
-    let follower = WitnessFollower::new(provider, rollup_config, cache).run();
+    let mut follower = tokio::spawn(WitnessFollower::new(provider, rollup_config, cache).run());
     tokio::pin!(server);
-    tokio::pin!(follower);
     tokio::select! {
         result = &mut server => result.map_err(Into::into),
-        () = &mut follower => Ok(()),
+        result = &mut follower => match result {
+            Ok(()) => Err(eyre!("witness follower stopped")),
+            Err(error) => Err(eyre!("witness follower stopped: {error}")),
+        },
         () = cancel.cancelled() => {
+            follower.abort();
             info!("payload witness cache stopped");
             Ok(())
         }

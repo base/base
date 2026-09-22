@@ -2,11 +2,12 @@
 
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use alloy_primitives::B256;
 use alloy_rpc_types::debug::ExecutionWitness;
+use bytes::Bytes;
 
 /// About two hours of 2-second Base blocks.
 ///
@@ -24,7 +25,8 @@ pub struct WitnessKey {
 }
 
 struct Entry {
-    witness: Arc<ExecutionWitness>,
+    /// JSON encoded once at insert. Lookups return these bytes instead of serializing again.
+    body: Bytes,
 }
 
 struct Inner {
@@ -76,7 +78,9 @@ impl WitnessCache {
             inner.order.retain(|existing| existing != &key);
         }
         inner.order.push_back(key);
-        inner.entries.insert(key, Entry { witness: Arc::new(witness) });
+        // ExecutionWitness is a plain JSON struct. Serde only fails for types this value is not.
+        let body = Bytes::from(serde_json::to_vec(&witness).expect("execution witness serializes"));
+        inner.entries.insert(key, Entry { body });
         while inner.entries.len() > inner.max_blocks {
             let Some(evicted) = inner.order.pop_front() else {
                 break;
@@ -85,9 +89,9 @@ impl WitnessCache {
         }
     }
 
-    /// Returns the witness stored for `key`.
-    pub fn get(&self, key: WitnessKey) -> Option<Arc<ExecutionWitness>> {
-        self.lock().entries.get(&key).map(|entry| Arc::clone(&entry.witness))
+    /// Returns the JSON body stored for `key`.
+    pub fn get(&self, key: WitnessKey) -> Option<Bytes> {
+        self.lock().entries.get(&key).map(|entry| entry.body.clone())
     }
 
     /// Returns the number of retained witnesses.

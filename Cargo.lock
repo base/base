@@ -6649,6 +6649,7 @@ dependencies = [
  "base-common-network",
  "base-common-rpc-types-engine",
  "base-metrics",
+ "bytes",
  "metrics",
  "reqwest 0.13.4",
  "serde_json",

@@ -84,3 +84,61 @@ pub enum PayloadAttributesError {
     #[error("failed to serialize payload attributes: {0}")]
     Serialize(#[from] serde_json::Error),
 }
+
+#[cfg(test)]
+mod tests {
+    use alloy_network::Network;
+    use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
+    use alloy_rpc_types::Block;
+    use base_common_genesis::RollupConfig;
+    use base_common_network::Base;
+    use base_common_rpc_types_engine::BasePayloadAttributes;
+
+    use super::PayloadAttributes;
+
+    #[test]
+    fn digest_matches_the_guest_encoding_of_the_reconstructed_attributes() {
+        let timestamp = 1_700_000_000;
+        let prev_randao = B256::repeat_byte(0x11);
+        let suggested_fee_recipient = Address::repeat_byte(0x22);
+        let parent_beacon_block_root = B256::repeat_byte(0x33);
+        let gas_limit = 30_000_000;
+        // Holocene extra data: version 0, denominator 2, elasticity 6.
+        let extra_data = Bytes::from(vec![0, 0, 0, 0, 2, 0, 0, 0, 6]);
+
+        let mut block = Block::<
+            <Base as Network>::TransactionResponse,
+            <Base as Network>::HeaderResponse,
+        >::default();
+        block.header.inner.timestamp = timestamp;
+        block.header.inner.mix_hash = prev_randao;
+        block.header.inner.beneficiary = suggested_fee_recipient;
+        block.header.inner.parent_beacon_block_root = Some(parent_beacon_block_root);
+        block.header.inner.gas_limit = gas_limit;
+        block.header.inner.extra_data = extra_data;
+
+        let mut rollup_config = RollupConfig::default();
+        rollup_config.upgrades.holocene_time = Some(0);
+
+        let reconstructed = PayloadAttributes::from_l2_block(&rollup_config, block).unwrap();
+        let expected = BasePayloadAttributes {
+            payload_attributes: {
+                let mut payload_attributes = BasePayloadAttributes::default().payload_attributes;
+                payload_attributes.timestamp = timestamp;
+                payload_attributes.prev_randao = prev_randao;
+                payload_attributes.suggested_fee_recipient = suggested_fee_recipient;
+                payload_attributes.parent_beacon_block_root = Some(parent_beacon_block_root);
+                payload_attributes
+            },
+            transactions: Some(vec![]),
+            no_tx_pool: Some(true),
+            gas_limit: Some(gas_limit),
+            eip_1559_params: Some(B64::from([0, 0, 0, 2, 0, 0, 0, 6])),
+            min_base_fee: None,
+        };
+        assert_eq!(reconstructed, expected);
+
+        let encoded = serde_json::to_vec(&expected).unwrap();
+        assert_eq!(PayloadAttributes::digest(&reconstructed).unwrap(), keccak256(encoded));
+    }
+}

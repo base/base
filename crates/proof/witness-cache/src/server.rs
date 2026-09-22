@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use alloy_primitives::B256;
 use axum::{
-    Json, Router,
+    Router,
     extract::{DefaultBodyLimit, Path, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -67,10 +67,10 @@ async fn respond(cache: Arc<WitnessCache>, parent_hash: B256, attributes_digest:
             debug!(parent_hash = %parent_hash, "payload witness cache miss");
             StatusCode::NOT_FOUND.into_response()
         },
-        |witness| {
+        |body| {
             Metrics::lookups_total(Metrics::LOOKUP_HIT).increment(1);
             debug!(parent_hash = %parent_hash, "payload witness cache hit");
-            Json(witness).into_response()
+            ([(header::CONTENT_TYPE, "application/json")], body).into_response()
         },
     )
 }
