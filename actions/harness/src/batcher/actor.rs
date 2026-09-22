@@ -415,12 +415,12 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// # Panics
     ///
-    /// Panics if the driver task has already exited.
+    /// Panics if the driver task has exited, or did not apply the reorg within the timeout.
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub async fn signal_reorg(&self) {
         self.send(L2BlockEvent::Reorg);
-        self.wait_for_driver().await.expect("driver task alive");
+        self.wait_for_driver().await.expect("driver applies the reorg");
     }
 
     /// Run one full batch cycle through the production [`BatchDriver`] path.
