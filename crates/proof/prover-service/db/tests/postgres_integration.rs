@@ -18,8 +18,8 @@ use std::time::Duration;
 use alloy_primitives::Address;
 use base_proof_primitives::Proposal;
 use base_prover_service_db::{
-    ApiProofType, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
+    AbandonProofJob, AbandonProofOutcome, ApiProofType, ClaimProofJob, CompleteClaimedProofJob,
+    CreateProofRequest, CreateProofRequestError, CreateProofRequestOutcome, CreateProofSession,
     DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
     ProofJobStatus, ProofRequestPage, ProofRequestRepo, ProofStatus, ProofType,
     RecordSessionOutcome, RetryOutcome, SessionStatus, SessionType, SubmitProofOutcome, TeeKind,
@@ -1835,6 +1835,118 @@ async fn test_heartbeat_proof_job_guards_current_expired_and_reclaimed_locks() {
         .await
         .unwrap();
     assert!(matches!(stale, HeartbeatOutcome::StaleLock(_)));
+}
+
+#[tokio::test]
+#[ignore = "requires a running Postgres with the prover schema (set DATABASE_URL); run with `cargo nextest run --run-ignored all -p base-prover-service-db --test postgres_integration --test-threads=1`"]
+async fn test_abandon_proof_job_requeues_then_terminally_fails_with_fencing() {
+    let pool = test_pool().await;
+    let repo = test_repo(pool);
+
+    drain_claimable_compressed_jobs(&repo).await;
+    let session_id = Uuid::new_v4().to_string();
+    let mut request = compressed_request();
+    set_request_session_id(&mut request, session_id.clone());
+    let id = repo.create(request).await.unwrap();
+    let first = repo
+        .claim_next_proof_job(compressed_claim("abandon-worker-a", 2))
+        .await
+        .unwrap()
+        .expect("first claim should succeed");
+    let first_lock = first.lock_id.expect("first claim has lock");
+
+    repo.record_worker_proof_session(WorkerSessionUpsert {
+        session_id: session_id.clone(),
+        lock_id: first_lock,
+        worker_id: "abandon-worker-a".to_owned(),
+        session_type: SessionType::Stark,
+        backend_session_id: "abandon-backend-session".to_owned(),
+        status: SessionStatus::Running,
+        error_message: None,
+    })
+    .await
+    .unwrap();
+
+    let stale = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: Uuid::new_v4(),
+            worker_id: "abandon-worker-a".to_owned(),
+            error_message: "stale failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(stale, AbandonProofOutcome::StaleLock(_)));
+
+    let requeued = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: first_lock,
+            worker_id: "abandon-worker-a".to_owned(),
+            error_message: "first generation failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    let AbandonProofOutcome::Requeued(requeued) = requeued else {
+        panic!("first abandon should requeue the job");
+    };
+    assert_eq!(requeued.attempt, 1);
+    assert_eq!(requeued.job_status, ProofJobStatus::Pending);
+    assert!(requeued.lock_id.is_none());
+    assert!(requeued.error_message.is_none());
+    assert_eq!(
+        repo.get_active_session(&session_id, SessionType::Stark)
+            .await
+            .unwrap()
+            .expect("active session should survive requeue")
+            .backend_session_id,
+        "abandon-backend-session"
+    );
+
+    let second = repo
+        .claim_next_proof_job(compressed_claim("abandon-worker-b", 2))
+        .await
+        .unwrap()
+        .expect("abandoned job should be immediately reclaimable");
+    assert_eq!(second.id, id);
+    assert_eq!(second.attempt, 2);
+    let second_lock = second.lock_id.expect("second claim has lock");
+
+    let old_fence = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: first_lock,
+            worker_id: "abandon-worker-a".to_owned(),
+            error_message: "old worker failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    assert!(matches!(old_fence, AbandonProofOutcome::StaleLock(_)));
+
+    let failed = repo
+        .abandon_proof_job(AbandonProofJob {
+            session_id: session_id.clone(),
+            lock_id: second_lock,
+            worker_id: "abandon-worker-b".to_owned(),
+            error_message: "final generation failure".to_owned(),
+            max_attempts: 2,
+        })
+        .await
+        .unwrap();
+    let AbandonProofOutcome::Failed(failed) = failed else {
+        panic!("second abandon should exhaust the reclaim budget");
+    };
+    assert_eq!(failed.job_status, ProofJobStatus::Failed);
+    assert_eq!(failed.attempt, 2);
+    assert_eq!(failed.error_message.as_deref(), Some("final generation failure"));
+    assert!(repo.get_active_session(&session_id, SessionType::Stark).await.unwrap().is_none());
+    let sessions = repo.get_sessions_for_request(id).await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].status, SessionStatus::Failed);
+    assert_eq!(sessions[0].error_message.as_deref(), Some("final generation failure"));
 }
 
 #[tokio::test]

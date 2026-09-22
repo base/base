@@ -320,10 +320,10 @@ mod tests {
 
     use async_trait::async_trait;
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-        ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult,
-        RecordProofSessionRequest, RecordProofSessionResponse, ZkBackend, ZkProofRequest,
-        ZkProofResult, ZkVm,
+        AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
+        GetProofSessionRequest, GetProofSessionResponse, ProofJob, ProofJobStatus, ProofRequest,
+        ProofRequestKind, ProofResult, RecordProofSessionRequest, RecordProofSessionResponse,
+        ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use chrono::Utc;
     use tokio::{sync::Notify, time::timeout};
@@ -380,6 +380,13 @@ mod tests {
             _request: HeartbeatRequest,
         ) -> Result<HeartbeatResponse, ProverServiceClientError> {
             panic!("heartbeat is not used by proof submitter tests")
+        }
+
+        async fn abandon_proof(
+            &self,
+            _request: AbandonProofRequest,
+        ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+            panic!("abandon_proof is not used by proof submitter tests")
         }
 
         async fn submit_proof(

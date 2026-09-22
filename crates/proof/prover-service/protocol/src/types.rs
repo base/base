@@ -437,6 +437,26 @@ pub struct HeartbeatResponse {
     pub job: ProofJob,
 }
 
+/// Request to abandon a claimed proof job after generation fails.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbandonProofRequest {
+    /// Proof session identifier.
+    pub session_id: String,
+    /// Server-issued lock identifier for this worker claim.
+    pub lock_id: String,
+    /// Worker identifier.
+    pub worker_id: String,
+    /// Proof generation failure message.
+    pub error_message: String,
+}
+
+/// Response returned after abandoning a claimed proof job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AbandonProofResponse {
+    /// Requeued or terminally failed proof job.
+    pub job: ProofJob,
+}
+
 /// Request to submit a proof result for a proof job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerSubmitProofRequest {

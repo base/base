@@ -177,6 +177,13 @@ impl ProverWorkerProvider for FirstPollWorker {
         self.inner.heartbeat(request).await
     }
 
+    async fn abandon_proof(
+        &self,
+        request: base_prover_service_protocol::AbandonProofRequest,
+    ) -> Result<base_prover_service_protocol::AbandonProofResponse, ProverServiceClientError> {
+        self.inner.abandon_proof(request).await
+    }
+
     async fn submit_proof(
         &self,
         request: WorkerSubmitProofRequest,

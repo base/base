@@ -16,7 +16,7 @@ pub use base_proof_worker::{
     WorkerHeartbeatConfig as ProofGeneratorHeartbeatConfig,
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
-use base_prover_service_protocol::{ProofJob, ProofRequestKind, TeeKind};
+use base_prover_service_protocol::{AbandonProofRequest, ProofJob, ProofRequestKind, TeeKind};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tokio::task::JoinHandle;
@@ -109,7 +109,7 @@ where
             "starting nitro proof generation"
         );
 
-        let (proof, permit) = self
+        let generated = self
             .with_heartbeat_while_generating(&request, async {
                 let proof = self
                     .pool
@@ -146,7 +146,19 @@ where
                     );
                 }
                 _ => {}
-            })?;
+            });
+        let (proof, permit) = match generated {
+            Ok(generated) => generated,
+            Err(error) => {
+                if matches!(
+                    error,
+                    ProofGeneratorError::Generate { source: NitroEnclavePoolError::Prover(_), .. }
+                ) {
+                    self.abandon_generation_failure(&request, &error).await;
+                }
+                return Err(error);
+            }
+        };
 
         let submit_request = ProofSubmitterRequest::from_tee_proof(
             request.claim.session_id.clone(),
@@ -169,6 +181,32 @@ where
         );
 
         Ok(())
+    }
+
+    async fn abandon_generation_failure(
+        &self,
+        request: &ProofGeneratorRequest,
+        error: &ProofGeneratorError,
+    ) {
+        if let Err(abandon_error) = self
+            .submitter
+            .client()
+            .abandon_proof(AbandonProofRequest {
+                session_id: request.claim.session_id.clone(),
+                lock_id: request.claim.lock_id.clone(),
+                worker_id: request.claim.worker_id.clone(),
+                error_message: error.to_string(),
+            })
+            .await
+        {
+            warn!(
+                session_id = %request.claim.session_id,
+                lock_id = %request.claim.lock_id,
+                worker_id = %request.claim.worker_id,
+                error = %abandon_error,
+                "failed to abandon nitro proof job after generation failure"
+            );
+        }
     }
 
     async fn with_heartbeat_while_generating<Output, Generate>(
@@ -379,8 +417,8 @@ mod tests {
     use base_proof_worker::ProofSubmitter;
     use base_prover_service_client::ProverServiceClientError;
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-        HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
+        AbandonProofResponse, GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest,
+        GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse, ProofJobStatus, ProofRequest,
         RecordProofSessionRequest, RecordProofSessionResponse, TeeKind, TeeProofRequest,
         WorkerSubmitProofRequest, WorkerSubmitProofResponse,
     };
@@ -404,6 +442,8 @@ mod tests {
     struct MockWorkerState {
         heartbeats: Vec<HeartbeatRequest>,
         heartbeat_failure: Option<MockHeartbeatFailure>,
+        abandons: Vec<AbandonProofRequest>,
+        abandon_failure: bool,
         submissions: Vec<WorkerSubmitProofRequest>,
     }
 
@@ -422,12 +462,25 @@ mod tests {
             }
         }
 
+        fn with_abandon_failure() -> Self {
+            Self {
+                state: Arc::new(Mutex::new(MockWorkerState {
+                    abandon_failure: true,
+                    ..Default::default()
+                })),
+            }
+        }
+
         fn heartbeats(&self) -> Vec<HeartbeatRequest> {
             self.state.lock().expect("mock state lock should not be poisoned").heartbeats.clone()
         }
 
         fn submissions(&self) -> Vec<WorkerSubmitProofRequest> {
             self.state.lock().expect("mock state lock should not be poisoned").submissions.clone()
+        }
+
+        fn abandons(&self) -> Vec<AbandonProofRequest> {
+            self.state.lock().expect("mock state lock should not be poisoned").abandons.clone()
         }
     }
 
@@ -466,6 +519,28 @@ mod tests {
                     ),
                 }),
             }
+        }
+
+        async fn abandon_proof(
+            &self,
+            request: AbandonProofRequest,
+        ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+            let mut state = self.state.lock().expect("mock state lock should not be poisoned");
+            state.abandons.push(request);
+            if state.abandon_failure {
+                return Err(ProverServiceClientError::MissingResult(
+                    "mock abandon failed".to_owned(),
+                ));
+            }
+            Ok(AbandonProofResponse {
+                job: proof_job(
+                    TEST_SESSION_ID,
+                    ProofJobStatus::Pending,
+                    None,
+                    None,
+                    PrimitiveRequestKind::Tee,
+                ),
+            })
         }
 
         async fn submit_proof(
@@ -530,14 +605,7 @@ mod tests {
     fn test_pool() -> NitroEnclavePool {
         let server = Arc::new(EnclaveServer::new_local().unwrap());
         let transport = Arc::new(NitroTransport::local(server));
-        let checker = Arc::new(
-            RegistrationChecker::new(vec![Arc::clone(&transport)], MockRegistry::new(false))
-                .unwrap(),
-        );
-
-        NitroEnclavePool::new(test_prover_config(), Arc::clone(&transport))
-            .with_registration_checker(checker)
-            .unwrap()
+        NitroEnclavePool::new(test_prover_config(), transport)
     }
 
     fn test_pool_with_registry(registry: MockRegistry) -> NitroEnclavePool {
@@ -787,6 +855,25 @@ mod tests {
         let err = generator.generate_and_submit(claimed_tee_job()).await.unwrap_err();
 
         assert!(matches!(err, ProofGeneratorError::Generate { .. }));
+        let abandons = client.abandons();
+        assert_eq!(abandons.len(), 1);
+        assert_eq!(abandons[0].session_id, TEST_SESSION_ID);
+        assert_eq!(abandons[0].lock_id, TEST_LOCK_ID);
+        assert_eq!(abandons[0].worker_id, TEST_WORKER_ID);
+        assert!(abandons[0].error_message.contains("proof generation failed"));
+        assert!(client.submissions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn abandon_failure_preserves_generation_error() {
+        let client = MockWorkerClient::with_abandon_failure();
+        let generator =
+            generator_with_heartbeat(client.clone(), ProofGeneratorHeartbeatConfig::default());
+
+        let err = generator.generate_and_submit(claimed_tee_job()).await.unwrap_err();
+
+        assert!(matches!(err, ProofGeneratorError::Generate { .. }));
+        assert_eq!(client.abandons().len(), 1);
         assert!(client.submissions().is_empty());
     }
 }
