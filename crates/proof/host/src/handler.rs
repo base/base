@@ -11,23 +11,23 @@ use alloy_consensus::Header;
 use alloy_eips::{
     BlockId, BlockNumberOrTag, eip2718::Encodable2718, eip4844::FIELD_ELEMENTS_PER_BLOB,
 };
-use alloy_network::Network;
-use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
 use alloy_transport::TransportError;
 use ark_ff::{BigInteger, PrimeField};
-use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
+use base_common_consensus::Predeploys;
 use base_common_network::Base;
 use base_common_rpc_types_engine::BasePayloadAttributes;
 use base_consensus_providers::BlobWithCommitmentAndProof;
 use base_proof::{Hint, HintType, ROOTS_OF_UNITY};
 use base_proof_preimage::{PreimageKey, PreimageKeyType};
 use base_protocol::{BlockInfo, OutputRoot};
+use base_witness_cache::{PayloadAttributes, WitnessCacheClient, WitnessKey};
 use futures::FutureExt;
 use tokio::sync::Semaphore;
-use tracing::{debug, error, warn};
+use tracing::{Instrument, debug, error, info_span, warn};
 
 use crate::{
     HostConfig, HostError, HostProviders, Metrics, Result, SharedKeyValueStore, store_ordered_trie,
@@ -335,25 +335,26 @@ impl PayloadWitnessPrefetcher {
         };
 
         let parent_block_hash = block.header.inner.parent_hash;
-        let payload_attributes = match payload_attributes_from_l2_block(&self.inner.cfg, block) {
-            Ok(payload_attributes) => payload_attributes,
-            Err(err) => {
-                debug!(
-                    target: HOST_SERVER_TARGET,
-                    block_number,
-                    error = %err,
-                    "payload witness prefetch skipped: failed to reconstruct payload attributes"
-                );
-                return false;
-            }
-        };
+        let payload_attributes =
+            match PayloadAttributes::from_l2_block(&self.inner.cfg.prover.rollup_config, block) {
+                Ok(payload_attributes) => payload_attributes,
+                Err(err) => {
+                    debug!(
+                        target: HOST_SERVER_TARGET,
+                        block_number,
+                        error = %err,
+                        "payload witness prefetch skipped: failed to reconstruct payload attributes"
+                    );
+                    return false;
+                }
+            };
         // This is a best-effort duplicate-RPC guard; another task may still mark the same parent
         // ready before this task finishes.
         if self.lock_state().ready.contains_key(&parent_block_hash) {
             return false;
         }
 
-        let payload_attributes_digest = match payload_attributes_digest(&payload_attributes) {
+        let payload_attributes_digest = match PayloadAttributes::digest(&payload_attributes) {
             Ok(digest) => digest,
             Err(err) => {
                 warn!(
@@ -781,10 +782,6 @@ fn panic_payload_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
-fn payload_attributes_digest(payload_attributes: &BasePayloadAttributes) -> Result<B256> {
-    Ok(keccak256(serde_json::to_vec(payload_attributes)?))
-}
-
 async fn fetch_payload_witness(
     provider: &alloy_provider::RootProvider<Base>,
     parent_block_hash: B256,
@@ -810,51 +807,49 @@ where
         .map_err(HostError::from)
 }
 
-fn payload_attributes_from_l2_block(
-    cfg: &HostConfig,
-    block: Block<<Base as Network>::TransactionResponse, <Base as Network>::HeaderResponse>,
-) -> Result<BasePayloadAttributes> {
-    let timestamp = block.header.inner.timestamp;
-    let mut payload_attributes = BasePayloadAttributes::default();
-    payload_attributes.payload_attributes.timestamp = timestamp;
-    payload_attributes.payload_attributes.prev_randao = block.header.inner.mix_hash;
-    payload_attributes.payload_attributes.suggested_fee_recipient = block.header.inner.beneficiary;
-    payload_attributes.payload_attributes.parent_beacon_block_root =
-        block.header.inner.parent_beacon_block_root;
-    payload_attributes.payload_attributes.withdrawals =
-        block.withdrawals.as_ref().map(|withdrawals| withdrawals.0.clone());
-    payload_attributes.transactions = Some(
-        block
-            .transactions
-            .into_transactions()
-            .map(|tx| tx.as_ref().encoded_2718().into())
-            .collect(),
-    );
-    payload_attributes.no_tx_pool = Some(true);
-    payload_attributes.gas_limit = Some(block.header.inner.gas_limit);
-
-    if cfg.prover.rollup_config.is_jovian_active(timestamp) {
-        let (elasticity, denominator, min_base_fee) =
-            JovianExtraData::decode(&block.header.inner.extra_data)
-                .map_err(|err| HostError::Custom(err.to_string()))?;
-        payload_attributes.eip_1559_params =
-            Some(encode_payload_eip_1559_params(elasticity, denominator));
-        payload_attributes.min_base_fee = Some(min_base_fee);
-    } else if cfg.prover.rollup_config.is_holocene_active(timestamp) {
-        let (elasticity, denominator) = HoloceneExtraData::decode(&block.header.inner.extra_data)
-            .map_err(|err| HostError::Custom(err.to_string()))?;
-        payload_attributes.eip_1559_params =
-            Some(encode_payload_eip_1559_params(elasticity, denominator));
+async fn cached_payload_witness(
+    cache_url: &str,
+    parent_block_hash: B256,
+    attributes_digest: B256,
+) -> Option<ExecutionWitness> {
+    async {
+        let key = WitnessKey { parent_hash: parent_block_hash, attributes_digest };
+        match WitnessCacheClient::get(cache_url, key).await {
+            Ok(Some(witness)) => {
+                Metrics::payload_witness_cache_lookups_total(Metrics::PAYLOAD_CACHE_HIT)
+                    .increment(1);
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    "payload witness served from cache"
+                );
+                Some(witness)
+            }
+            Ok(None) => {
+                Metrics::payload_witness_cache_lookups_total(Metrics::PAYLOAD_CACHE_MISS)
+                    .increment(1);
+                debug!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    "payload witness cache miss"
+                );
+                None
+            }
+            Err(error) => {
+                Metrics::payload_witness_cache_lookups_total(Metrics::PAYLOAD_CACHE_ERROR)
+                    .increment(1);
+                warn!(
+                    target: HOST_SERVER_TARGET,
+                    ?parent_block_hash,
+                    error = %error,
+                    "payload witness cache lookup failed"
+                );
+                None
+            }
+        }
     }
-
-    Ok(payload_attributes)
-}
-
-fn encode_payload_eip_1559_params(elasticity: u32, denominator: u32) -> B64 {
-    let mut encoded = [0u8; 8];
-    encoded[..4].copy_from_slice(&denominator.to_be_bytes());
-    encoded[4..].copy_from_slice(&elasticity.to_be_bytes());
-    B64::from(encoded)
+    .instrument(info_span!("witness_cache_lookup", parent_hash = %parent_block_hash))
+    .await
 }
 
 async fn insert_l1_header_preimage(
@@ -1280,9 +1275,18 @@ async fn handle_hint_inner(
 
             let parent_block_hash = B256::from_slice(&hint.data.as_ref()[..32]);
             let encoded_payload_attributes = &hint.data[32..];
+            let attributes_digest = keccak256(encoded_payload_attributes);
+
+            if let Some(cache_url) = cfg.prover.witness_cache_url.as_deref()
+                && let Some(witness) =
+                    cached_payload_witness(cache_url, parent_block_hash, attributes_digest).await
+            {
+                insert_execution_witness_preimages(Arc::clone(&kv), witness).await?;
+                return Ok(());
+            }
 
             if let Some(prefetcher) = payload_witness_prefetcher.as_ref()
-                && prefetcher.take_ready(parent_block_hash, keccak256(encoded_payload_attributes))
+                && prefetcher.take_ready(parent_block_hash, attributes_digest)
             {
                 // Prefetched preimages are written into the same proof-session KV store, which is
                 // append-only for the lifetime of a proof request. The guest emits this hint with
@@ -1293,7 +1297,9 @@ async fn handle_hint_inner(
                     ?parent_block_hash,
                     "payload witness served from prefetch cache"
                 );
-                prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
+                if cfg.prover.witness_cache_url.is_none() {
+                    prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
+                }
                 return Ok(());
             }
 
@@ -1308,7 +1314,9 @@ async fn handle_hint_inner(
 
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
 
-            if let Some(prefetcher) = payload_witness_prefetcher {
+            if cfg.prover.witness_cache_url.is_none()
+                && let Some(prefetcher) = payload_witness_prefetcher
+            {
                 prefetcher.schedule_lookahead(Arc::clone(&kv), parent_block_hash).await;
             }
         }
@@ -1328,6 +1336,7 @@ mod tests {
     use base_common_network::Base;
     use base_consensus_providers::{OnlineBeaconClient, OnlineBlobProvider};
     use base_proof_primitives::ProofRequest;
+    use base_witness_cache::PayloadAttributes;
     use tokio::sync::RwLock;
 
     use super::*;
@@ -1361,6 +1370,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
                 enable_experimental_witness_endpoint: false,
+                witness_cache_url: None,
             },
             data_dir: None,
         }
@@ -1421,7 +1431,7 @@ mod tests {
     fn test_payload_witness_ready_cache_evicts_oldest_entry() {
         let prefetcher = test_prefetcher();
         let payload_attributes = BasePayloadAttributes::default();
-        let digest = payload_attributes_digest(&payload_attributes).unwrap();
+        let digest = PayloadAttributes::digest(&payload_attributes).unwrap();
 
         for i in 0..=PAYLOAD_WITNESS_PREFETCH_MAX_READY {
             prefetcher.mark_ready(B256::new([i as u8; 32]), digest);
@@ -1453,10 +1463,10 @@ mod tests {
         let prefetcher = test_prefetcher();
         let parent_block_hash = B256::new([1; 32]);
         let payload_attributes = BasePayloadAttributes::default();
-        let digest = payload_attributes_digest(&payload_attributes).unwrap();
+        let digest = PayloadAttributes::digest(&payload_attributes).unwrap();
         let mismatched_payload_attributes =
             BasePayloadAttributes { gas_limit: Some(1), ..Default::default() };
-        let mismatched_digest = payload_attributes_digest(&mismatched_payload_attributes).unwrap();
+        let mismatched_digest = PayloadAttributes::digest(&mismatched_payload_attributes).unwrap();
 
         prefetcher.mark_ready(parent_block_hash, digest);
 

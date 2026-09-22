@@ -105,6 +105,11 @@ struct ProverRuntimeArgs {
     #[arg(long, env = "ENABLE_EXPERIMENTAL_WITNESS_ENDPOINT")]
     enable_experimental_witness_endpoint: bool,
 
+    /// Base URL of the payload witness cache. When set, payload witnesses are read from this
+    /// cache before the proof node.
+    #[arg(long, env = "WITNESS_CACHE_URL")]
+    witness_cache_url: Option<String>,
+
     /// `TEEProverRegistry` contract address on L1. When set, proving is guarded
     /// by onchain signer validity and server `/healthz` is registration-gated.
     #[arg(long, env = "TEE_PROVER_REGISTRY_ADDRESS")]
@@ -138,6 +143,7 @@ impl ProverRuntimeArgs {
             rollup_config,
             l1_config,
             enable_experimental_witness_endpoint: self.enable_experimental_witness_endpoint,
+            witness_cache_url: self.witness_cache_url.filter(|url| !url.is_empty()),
         })
     }
 }

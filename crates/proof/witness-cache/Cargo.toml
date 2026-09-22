@@ -1,0 +1,53 @@
+[package]
+name = "base-witness-cache"
+description = "In-memory cache of debug_executePayload witnesses for Base provers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-metrics.workspace = true
+base-common-genesis.workspace = true
+base-common-network.workspace = true
+base-common-consensus.workspace = true
+base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+
+# alloy
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types = { workspace = true, features = ["debug"] }
+alloy-provider = { workspace = true, optional = true, features = ["reqwest"] }
+alloy-transport = { workspace = true, optional = true }
+
+# async
+tokio = { workspace = true, optional = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+
+# http
+reqwest = { workspace = true, optional = true, features = ["json"] }
+axum = { workspace = true, optional = true, features = ["http1", "json", "tokio"] }
+tower = { workspace = true, optional = true, features = ["limit"] }
+
+# misc
+serde_json.workspace = true
+thiserror.workspace = true
+tracing = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
+
+[features]
+default = [ "client", "producer", "server" ]
+client = [ "dep:reqwest" ]
+server = [ "dep:axum", "dep:tokio", "dep:tower", "dep:tracing" ]
+producer = [
+	"dep:alloy-provider",
+	"dep:alloy-transport",
+	"dep:tokio",
+	"dep:tracing",
+]
+metrics = [ "base-metrics/metrics", "dep:metrics" ]

@@ -1,0 +1,37 @@
+[package]
+name = "base-witness-sidecar"
+description = "Sidecar that caches debug_executePayload witnesses as L2 blocks arrive."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "base-witness-sidecar"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# base
+base-cli-utils.workspace = true
+base-common-chains.workspace = true
+base-common-network.workspace = true
+base-witness-cache = { workspace = true, features = ["metrics", "producer", "server"] }
+
+# alloy
+url.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+
+# cli
+eyre.workspace = true
+tracing.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+serde = { workspace = true, features = ["derive", "std"] }
+
+# async
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

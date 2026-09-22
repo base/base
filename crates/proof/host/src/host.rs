@@ -301,6 +301,7 @@ mod tests {
                 rollup_config: RollupConfig::default(),
                 l1_config: ChainConfig::default(),
                 enable_experimental_witness_endpoint: false,
+                witness_cache_url: None,
             },
             data_dir: None,
         })

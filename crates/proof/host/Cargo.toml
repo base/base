@@ -26,6 +26,7 @@ base-proof-preimage = { workspace = true, features = ["std"] }
 base-proof-primitives = { workspace = true, features = ["serde", "std"] }
 base-common-genesis = { workspace = true, features = ["serde", "std"] }
 base-common-rpc-types-engine = { workspace = true, features = ["serde", "std"] }
+base-witness-cache = { workspace = true, features = ["client"] }
 
 # alloy
 alloy-rlp.workspace = true
@@ -72,6 +73,7 @@ metrics = [
 	"base-common-evm/metrics",
 	"base-consensus-providers/metrics",
 	"base-metrics/metrics",
+	"base-witness-cache/metrics",
 	"dep:metrics",
 ]
 precompiles = [ "dep:revm" ]
