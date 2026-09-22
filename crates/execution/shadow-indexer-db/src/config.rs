@@ -86,18 +86,32 @@ pub struct ShadowDbConfig {
 }
 
 impl ShadowDbConfig {
+    /// Open a connection pool without running migrations.
+    ///
+    /// Exactly one task per schema may call [`Self::init_pool`]; every other pool on that
+    /// schema, such as the retention sweeper's, must use this instead. This crate's
+    /// `CREATE INDEX CONCURRENTLY` migrations run outside a transaction, so sqlx's advisory
+    /// lock does not serialize concurrent [`Self::init_pool`] callers on the same schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection fails.
+    pub async fn connect_pool(&self) -> Result<PgPool> {
+        PgPoolOptions::new()
+            .max_connections(self.max_connections)
+            .acquire_timeout(self.connection_timeout)
+            .connect_with(self.connection.connect_options())
+            .await
+            .context("failed to connect to shadow indexer database")
+    }
+
     /// Initialize the database connection pool and run migrations.
     ///
     /// # Errors
     ///
     /// Returns an error when the connection or migrations fail.
     pub async fn init_pool(&self) -> Result<PgPool> {
-        let pool = PgPoolOptions::new()
-            .max_connections(self.max_connections)
-            .acquire_timeout(self.connection_timeout)
-            .connect_with(self.connection.connect_options())
-            .await
-            .context("failed to connect to shadow indexer database")?;
+        let pool = self.connect_pool().await?;
 
         // Migrations run at node startup, from a critical task: a failure here panics the
         // builder, and this schema has taken the mainnet builder down that way before. Both
