@@ -1,20 +1,48 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
+    io::Write as _,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use eyre::{Context, Result, bail};
 use serde_json::json;
 
 use crate::{
-    AcceptanceOptions, AcceptanceRunner, Aggregate, CheckResult, ExpectedManifest,
+    AcceptanceOptions, AcceptanceRunner, Aggregate, CheckResult, CiSuite, ExpectedManifest,
     ExpectedScenario, Provisioner, PublishArgs, Report, RunResult, ScenarioConfig, ScenarioResult,
     StageResult, Status,
 };
+
+/// Scenario suites accepted by CI discovery.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SelectionSuite {
+    /// Pull-request scenarios only.
+    Pr,
+    /// Extended scenarios only.
+    Extended,
+    /// Every scenario.
+    All,
+}
+
+/// One trusted matrix entry emitted by discovery.
+#[derive(Debug, serde::Serialize)]
+pub struct MatrixScenario {
+    /// Validated scenario identifier.
+    pub id: String,
+    /// Direct repository-relative TOML path.
+    pub path: String,
+}
+
+/// `GitHub` matrix document emitted by discovery.
+#[derive(Debug, serde::Serialize)]
+pub struct ScenarioMatrix {
+    /// Selected matrix entries in deterministic path order.
+    pub include: Vec<MatrixScenario>,
+}
 
 /// Process exit classification used by CI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +96,30 @@ pub enum AcceptanceCommand {
         /// Destination JSON file.
         #[arg(long)]
         output: PathBuf,
+    },
+    /// Discover, validate, and select checked-in scenarios for CI.
+    Select {
+        /// Direct scenario directory.
+        #[arg(long, default_value = "acceptance/scenarios")]
+        scenarios: PathBuf,
+        /// Suite to select.
+        #[arg(long, value_enum)]
+        suite: SelectionSuite,
+        /// Run identity.
+        #[arg(long)]
+        run_id: String,
+        /// Tested revision.
+        #[arg(long)]
+        tested_sha: String,
+        /// Destination expected-manifest JSON file.
+        #[arg(long)]
+        expected: PathBuf,
+        /// Destination matrix JSON file.
+        #[arg(long)]
+        matrix: PathBuf,
+        /// Optional `GitHub` output file receiving the compact matrix.
+        #[arg(long)]
+        github_output: Option<PathBuf>,
     },
     /// Provision and execute a scenario.
     Run {
@@ -187,6 +239,27 @@ impl AcceptanceCli {
                 fs::write(output, format!("{}\n", serde_json::to_string_pretty(&manifest)?))?;
                 Ok(ExitCode::Passed)
             }
+            AcceptanceCommand::Select {
+                scenarios,
+                suite,
+                run_id,
+                tested_sha,
+                expected,
+                matrix,
+                github_output,
+            } => {
+                let (manifest, selected) = CliRun::select(&scenarios, suite, run_id, tested_sha)?;
+                let matrix_json = serde_json::to_string(&selected)?;
+                fs::write(expected, format!("{}\n", serde_json::to_string_pretty(&manifest)?))?;
+                fs::write(matrix, format!("{}\n", serde_json::to_string_pretty(&selected)?))?;
+                if let Some(output) = github_output {
+                    writeln!(
+                        fs::OpenOptions::new().append(true).open(output)?,
+                        "matrix={matrix_json}"
+                    )?;
+                }
+                Ok(ExitCode::Passed)
+            }
             AcceptanceCommand::Run { path, output, no_build, run_id, tested_sha, repo_root } => {
                 let root = CliRun::resolve_repo(repo_root.as_deref().or_else(|| path.parent()))?;
                 CliRun {
@@ -251,6 +324,67 @@ impl AcceptanceCli {
 }
 
 impl CliRun {
+    /// Discovers direct regular TOML files and derives a manifest and matrix together.
+    pub fn select(
+        directory: &Path,
+        suite: SelectionSuite,
+        run_id: String,
+        tested_sha: String,
+    ) -> Result<(ExpectedManifest, ScenarioMatrix)> {
+        let mut paths = Vec::new();
+        for entry in fs::read_dir(directory).wrap_err("read scenario directory")? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                bail!("scenario must be a direct regular file: {}", path.display())
+            }
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| eyre::eyre!("scenario filename is not UTF-8"))?;
+            if Path::new(&name).components().count() != 1 || name == ".toml" {
+                bail!("unsafe scenario filename")
+            }
+            paths.push((name, path));
+        }
+        paths.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut ids = BTreeSet::new();
+        let mut scenarios = Vec::new();
+        let mut include = Vec::new();
+        for (name, path) in paths {
+            let config = ScenarioConfig::load(&path)?;
+            if !ids.insert(config.id.clone()) {
+                bail!("duplicate scenario id {}", config.id)
+            }
+            let selected = match suite {
+                SelectionSuite::Pr => config.ci.suite == CiSuite::Pr,
+                SelectionSuite::Extended => config.ci.suite == CiSuite::Extended,
+                SelectionSuite::All => true,
+            };
+            if selected {
+                scenarios.push(ExpectedScenario {
+                    id: config.id.clone(),
+                    checks: config.checks.iter().map(|check| check.id().into()).collect(),
+                });
+                include.push(MatrixScenario {
+                    id: config.id,
+                    path: directory.join(name).to_string_lossy().into_owned(),
+                });
+            }
+        }
+        if scenarios.is_empty() {
+            bail!("selected suite contains no scenarios")
+        }
+        Ok((
+            ExpectedManifest { schema_version: 1, run_id, tested_sha, scenarios },
+            ScenarioMatrix { include },
+        ))
+    }
+
     /// Executes one scenario while preserving its invocation identity and start time.
     pub async fn execute(self) -> Result<ExitCode> {
         if self.output.exists() {
@@ -453,5 +587,78 @@ impl CliRun {
             fs::copy(from, destination)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    fn copy(directory: &Path, source: &str, name: &str) {
+        fs::copy(Path::new("scenarios").join(source), directory.join(name)).unwrap();
+    }
+
+    #[test]
+    fn discovery_is_deterministic_and_manifest_matches_matrix() {
+        let temp = tempfile::tempdir().unwrap();
+        copy(temp.path(), "smoke.toml", "z.toml");
+        copy(temp.path(), "derivation.toml", "a.toml");
+        copy(temp.path(), "denim-transition.toml", "m.toml");
+        let (manifest, matrix) =
+            CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).unwrap();
+        assert_eq!(
+            manifest.scenarios.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["derivation", "denim-transition", "smoke"]
+        );
+        assert!(
+            manifest
+                .scenarios
+                .iter()
+                .map(|item| &item.id)
+                .eq(matrix.include.iter().map(|item| &item.id))
+        );
+        let (_, pr) =
+            CliRun::select(temp.path(), SelectionSuite::Pr, "run".into(), "sha".into()).unwrap();
+        assert_eq!(pr.include.len(), 1);
+        assert_eq!(pr.include[0].id, "smoke");
+        let (_, extended) =
+            CliRun::select(temp.path(), SelectionSuite::Extended, "run".into(), "sha".into())
+                .unwrap();
+        assert_eq!(extended.include.len(), 2);
+    }
+
+    #[test]
+    fn discovery_finds_new_toml_and_rejects_invalid_duplicate_and_empty_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        copy(temp.path(), "derivation.toml", "new.toml");
+        let (_, matrix) =
+            CliRun::select(temp.path(), SelectionSuite::Extended, "run".into(), "sha".into())
+                .unwrap();
+        assert_eq!(matrix.include[0].id, "derivation");
+        assert!(
+            CliRun::select(temp.path(), SelectionSuite::Pr, "run".into(), "sha".into()).is_err()
+        );
+        copy(temp.path(), "derivation.toml", "duplicate.toml");
+        assert!(
+            CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).is_err()
+        );
+        fs::remove_file(temp.path().join("duplicate.toml")).unwrap();
+        fs::write(temp.path().join("invalid.toml"), "not toml").unwrap();
+        assert!(
+            CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_rejects_toml_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        symlink(Path::new("../outside.toml"), temp.path().join("linked.toml")).unwrap();
+        assert!(
+            CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).is_err()
+        );
     }
 }

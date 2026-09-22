@@ -3,6 +3,9 @@ id = "smoke"
 description = "Basic production and validator agreement"
 timeout = "6m"
 
+[ci]
+suite = "pr"
+
 [[checks]]
 id = "chain-identity"
 kind = "chain_id"
