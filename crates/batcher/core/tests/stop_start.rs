@@ -1,4 +1,4 @@
-//! Integration tests for stop/start admin commands in [`BatchDriver`].
+//! Integration tests for the stop, start and flush admin commands in [`BatchDriver`].
 
 use std::{
     sync::{Arc, Mutex},

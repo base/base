@@ -298,17 +298,15 @@ where
     /// Drain encoding steps synchronously up to [`Self::STEP_BUDGET`].
     ///
     /// Stops at [`StepResult::Idle`] (nothing left to encode) or when the step budget runs
-    /// out. Returns `Err` on a fatal [`StepError`](base_batcher_encoder::StepError).
+    /// out. Returns `Err` on a fatal [`StepError`].
     fn drain_encoding(&mut self) -> Result<(), BatchDriverError> {
-        let mut budget = Self::STEP_BUDGET;
         let mut steps = 0usize;
         loop {
             match self.pipeline.step() {
                 Ok(StepResult::Idle) => break,
                 Ok(StepResult::BlockEncoded | StepResult::ChannelClosed) => {
                     steps += 1;
-                    budget -= 1;
-                    if budget == 0 {
+                    if steps == Self::STEP_BUDGET {
                         debug!(steps = %steps, "encoding step budget exhausted, yielding");
                         break;
                     }
@@ -474,12 +472,12 @@ where
     /// Derivation-status changes are also handled before unsafe blocks so pruning and
     /// recovery cannot be starved by sequential catchup.
     ///
-    /// [`AdminCommand::Stop`] immediately resets the pipeline, then drops
-    /// `Block` source events until [`AdminCommand::Start`] is
-    /// received. Reorg events propagate regardless of the stopped state. On
-    /// start the source is reset to catch up sequentially from the last known
-    /// safe L2 head. Stopping a stopped batcher or starting a running one does
-    /// nothing. Each command is answered once it has been applied.
+    /// [`AdminCommand::Stop`] immediately resets the pipeline, then drops `Block`
+    /// source events until [`AdminCommand::Start`] is received. Reorg events
+    /// propagate regardless of the stopped state. On start the source is reset to
+    /// catch up sequentially from the last known safe L2 head. Stopping a stopped
+    /// batcher or starting a running one does nothing. Each command is answered
+    /// once it has been applied.
     ///
     /// Non-fatal L1 head source errors loop internally to avoid polluting the
     /// return type with a no-op variant.
