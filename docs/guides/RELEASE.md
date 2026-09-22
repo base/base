@@ -32,7 +32,7 @@ Every commit pushed to the release branch triggers the **Create RC** workflow, w
 - Otherwise creates the next RC tag (e.g., `v0.6.0-rc.1`, `v0.6.0-rc.2`, …) at the triggering commit
 - Dispatches the independent **Build RC** workflow at that tag, then finishes without waiting for artifacts
 
-**Build RC** builds multi-arch Docker images and native binaries using **Build Release**. Docker images are tagged with the RC tag only (not `latest`). Each RC builds in its own workflow run, so newer merges do not cancel or wait for older artifact builds (subject to runner availability).
+**Build RC** builds multi-arch Docker images and native binaries using **Build Release**. The compatibility `node` image and every single-binary image receive the same RC tag only (not `latest`). Each RC builds in its own workflow run, so newer merges do not cancel or wait for older artifact builds (subject to runner availability).
 
 To create additional RCs, simply push more commits (bug fixes, backports) to the release branch.
 
@@ -43,7 +43,8 @@ Once you are satisfied with an RC, run the **Publish Release** workflow (`Action
 - Enter the version number (e.g., `0.6.0` — no `v` prefix, no `releases/` prefix)
 - The workflow validates that the release branch exists and `Cargo.toml` is not `0.0.0`
 - Creates the final tag `vX.Y.Z` on the release branch
-- Builds the `base` image once (`PROFILE=maxperf`) and tags it as `vX.Y.Z`, `X.Y`, `X`, and `latest` on `ghcr.io/base/node`
+- Builds the compatibility `node` image and the `base`, `base-reth-node`, `base-consensus`, `base-builder`, `basectl`, and `base-snapshotter` images for amd64 and arm64 (`PROFILE=maxperf`)
+- Tags every image as `vX.Y.Z`, `X.Y`, `X`, and `latest`
 - Creates a draft GitHub release with auto-generated changelog and uploads binaries
 - Review and publish the draft release on GitHub
 
