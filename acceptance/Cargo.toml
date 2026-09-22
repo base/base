@@ -1,0 +1,27 @@
+[package]
+name = "base-acceptance"
+description = "Configurable real-devnet acceptance scenarios and offline reports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+eyre.workspace = true
+chrono.workspace = true
+humantime.workspace = true
+clap = { workspace = true, features = ["derive"] }
+reqwest = { workspace = true, features = ["json"] }
+serde_json = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+toml = { workspace = true, features = ["parse", "serde", "display"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal", "process", "io-util", "net", "sync"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

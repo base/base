@@ -1,0 +1,35 @@
+schema_version = 1
+id = "denim-transition"
+description = "Production and validator agreement across Denim"
+timeout = "10m"
+
+[devnet.l2.forks]
+azul = { at_block = 20 }
+beryl = { at_block = 21 }
+cobalt = { at_block = 22 }
+denim = { at_block = 150 }
+zenith = { disabled = true }
+
+[[checks]]
+id = "before-denim"
+kind = "head_progress"
+endpoint = "builder"
+minimum_blocks = 3
+timeout = "30s"
+start = { before_fork = "denim", chain = "l2" }
+
+[[checks]]
+id = "after-denim"
+kind = "head_progress"
+endpoint = "builder"
+minimum_blocks = 5
+timeout = "45s"
+start = { after_fork = "denim", chain = "l2" }
+
+[[checks]]
+id = "post-denim-convergence"
+kind = "heads_converge"
+endpoints = ["builder", "validator"]
+max_lag_blocks = 5
+timeout = "90s"
+start = { after_fork = "denim", chain = "l2" }
