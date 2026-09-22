@@ -7,6 +7,7 @@ each run produces a portable JSON result and an offline visual report.
 The checked-in scenarios are:
 
 - `smoke`: chain identity, block production, and validator convergence.
+- `health`: sustained sampled health across all four L2 node roles.
 - `derivation`: unsafe production, safe-head derivation, and head freshness.
 - `denim-transition`: progress and convergence immediately before and after Denim.
 
@@ -96,6 +97,9 @@ are `l1`, `builder`, `validator`, `rpc`, and `shadow`. Supported check kinds are
 - `heads_converge`: at least two `endpoints`, optional `head` (`latest`, `safe`, or
   `finalized`), `max_lag_blocks`, and `timeout`.
 - `head_fresh`: `endpoint`, `maximum_age`, `duration`, and `timeout`.
+- `heads_healthy`: at least two distinct L2 `endpoints`, optional `warmup` (default
+  `0s`), `duration`, non-zero `minimum_blocks` per node, `maximum_age`,
+  `max_lag_blocks`, and `timeout`. The timeout includes warmup and observations.
 
 Every check may have one L2 `start` condition with exactly one of `before_fork` or
 `after_fork`. Checks run in file order. See `scenarios/` for complete examples.
@@ -230,3 +234,5 @@ It is a rendering example, not evidence of a real devnet run.
   apply the provisioning configuration. A supplied rollup verifies its schedule.
 - Results are bounded observations, not a proof of protocol correctness. A fork
   crossing records the first observed active block, not proof of fork behavior.
+- `heads_healthy` guarantees only the sampled windows; it cannot prove that no
+  node restarted between samples.
