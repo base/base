@@ -78,7 +78,7 @@ pub struct Inner {
 ///
 /// [`send_async`] enqueues a [`TxCandidate`] and returns a [`SendHandle`] that
 /// resolves when [`mine_block`] is called. The spawned [`BatchDriver`] task
-/// suspends on these handles; `Batcher::encode_only` returns once every
+/// suspends on these handles; [`Batcher::encode_only`] returns once every
 /// submission of a cycle has been enqueued, so [`mine_block`] can follow it directly.
 ///
 /// [`L1MinerTxManager`] is cheaply cloneable (Arc bump). Pass one clone to
@@ -92,6 +92,7 @@ pub struct Inner {
 /// [`mine_block`]: L1MinerTxManager::mine_block
 /// [`with_l1_head_tx`]: L1MinerTxManager::with_l1_head_tx
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
+/// [`Batcher::encode_only`]: crate::Batcher::encode_only
 /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
 #[derive(Debug, Clone)]
 pub struct L1MinerTxManager {
@@ -308,9 +309,11 @@ impl L1MinerTxManager {
     /// # Timing
     ///
     /// Call this once the spawned [`BatchDriver`] task has called [`send_async`] for
-    /// every submission of the cycle, which `Batcher::encode_only` guarantees on return.
+    /// every submission of the cycle, which [`Batcher::encode_only`] guarantees on return.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
+    /// [`BatchDriver`]: base_batcher_core::BatchDriver
+    /// [`Batcher::encode_only`]: crate::Batcher::encode_only
     pub fn mine_block(&self, l1: &mut L1Miner) -> u64 {
         self.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();

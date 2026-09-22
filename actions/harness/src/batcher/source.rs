@@ -15,8 +15,10 @@ pub enum BlockSourceItem {
     /// Answered when the driver waits on the source again, that is once it has taken every
     /// item queued before this one.
     ///
-    /// `BatchDriver::run` does all the work it can before waiting for the next event, so by
-    /// then the last of those items has been encoded and its frames submitted.
+    /// [`BatchDriver::run`] does all the work it can before waiting for the next event, so by
+    /// then the last of those items has been encoded and any frames it released submitted.
+    ///
+    /// [`BatchDriver::run`]: base_batcher_core::BatchDriver::run
     Marker(oneshot::Sender<()>),
 }
 

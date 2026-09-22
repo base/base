@@ -167,6 +167,9 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
 
 /// Source that never delivers an event and records, each time the driver waits on it, how
 /// many submissions have been dequeued so far.
+///
+/// Hand-rolled rather than mocked: the count must be read when the driver polls, not when
+/// the mock's scripted response is built.
 struct PollRecorder {
     recorded: Arc<Mutex<Recorded>>,
     dequeued_at_poll: Arc<Mutex<Vec<usize>>>,

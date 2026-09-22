@@ -73,8 +73,8 @@ pub enum BatcherError {
     /// A new batch cycle was started before prior submissions were mined.
     #[error("cannot start a batch cycle with outstanding frame submissions")]
     OutstandingSubmissions,
-    /// The driver rejected the end-of-cycle flush, for example because it is stopped.
-    #[error("driver rejected the flush: {0}")]
+    /// The end-of-cycle flush failed, for example because the driver is stopped.
+    #[error("flush failed: {0}")]
     Flush(#[from] AdminError),
     /// The driver exited, or did not catch up with the harness within the timeout.
     #[error("the batch driver exited or stalled")]
@@ -139,11 +139,6 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`advance`]: Batcher::advance
     pub fn new(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
-        Self::build(l2_source, rollup_config, config)
-    }
-
-    /// Shared constructor. Builds and spawns the [`BatchDriver`] task.
-    fn build(l2_source: S, rollup_config: &RollupConfig, config: BatcherConfig) -> Self {
         let l1_chain_id = rollup_config.l1_chain_id;
         let rollup_config = Arc::new(rollup_config.clone());
         let pipeline =
@@ -221,7 +216,7 @@ impl<S: L2BlockProvider> Batcher<S> {
 
         let mut block_count = 0u64;
         while let Some(block) = self.l2_source.next_block() {
-            self.send(L2BlockEvent::Block(Box::new(block)));
+            self.send(BlockSourceItem::Event(L2BlockEvent::Block(Box::new(block))))?;
             block_count += 1;
         }
         if block_count == 0 {
@@ -238,24 +233,20 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.wait_for_driver().await
     }
 
-    /// Queue an event for the driver's block source.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the driver task has already exited.
-    fn send(&self, event: L2BlockEvent) {
-        self.source_tx.send(BlockSourceItem::Event(event)).expect("driver task alive");
+    /// Queue an item for the driver's block source. Fails if the driver task has exited.
+    fn send(&self, item: BlockSourceItem) -> Result<(), BatcherError> {
+        self.source_tx.send(item).map_err(|_| BatcherError::DriverUnavailable)
     }
 
     /// Wait until the driver has taken everything sent to its block source so far and run
     /// the encode-and-submit pass that follows.
     async fn wait_for_driver(&self) -> Result<(), BatcherError> {
         let (reached_tx, reached_rx) = oneshot::channel();
-        self.source_tx.send(BlockSourceItem::Marker(reached_tx)).expect("driver task alive");
-        tokio::time::timeout(Duration::from_secs(10), reached_rx)
-            .await
-            .map_err(|_| BatcherError::DriverUnavailable)?
-            .map_err(|_| BatcherError::DriverUnavailable)
+        self.send(BlockSourceItem::Marker(reached_tx))?;
+        match tokio::time::timeout(Duration::from_secs(10), reached_rx).await {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(BatcherError::DriverUnavailable),
+        }
     }
 
     /// Returns the number of encoded-but-not-yet-staged pending frame submissions.
@@ -411,7 +402,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Signal that the batcher has been repointed to a different L2 node.
     ///
     /// Sends an [`L2BlockEvent::Reorg`] to the background [`BatchDriver`] and waits until
-    /// it has cleared the encoder, so blocks from the new chain can be sent right after.
+    /// it has applied it, so the encoder is known to be empty on return.
     ///
     /// # Panics
     ///
@@ -419,7 +410,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     ///
     /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub async fn signal_reorg(&self) {
-        self.send(L2BlockEvent::Reorg);
+        self.send(BlockSourceItem::Event(L2BlockEvent::Reorg)).expect("driver task alive");
         self.wait_for_driver().await.expect("driver applies the reorg");
     }
 
@@ -449,8 +440,7 @@ impl<S: L2BlockProvider> Batcher<S> {
         // oneshots, and publishes the block number to the L1 head watch.
         self.tx_manager.mine_block(l1);
 
-        // Yield to let the driver process receipts (in_flight.next())
-        // and the L1 head update (l1_head_rx.changed()).
+        // Yield to let the driver process the receipts and the L1 head event.
         tokio::task::yield_now().await;
 
         Ok(())
