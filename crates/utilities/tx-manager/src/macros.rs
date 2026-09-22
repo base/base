@@ -173,8 +173,8 @@ macro_rules! define_tx_manager_cli {
             )]
             pub tx_not_in_mempool_timeout: ::std::time::Duration,
 
-            /// Maximum time to poll for transaction confirmation before giving
-            /// up (e.g., "5m", "300s").
+            /// Maximum time to poll for a transaction that is not mined before
+            /// giving up (e.g., "5m", "300s").
             #[arg(
                 long = "tx-manager.confirmation-timeout",
                 env = concat!($prefix, "_", "CONFIRMATION_TIMEOUT"),

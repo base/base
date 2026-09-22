@@ -1495,8 +1495,8 @@ where
     /// Accumulated tasks are bounded by three mechanisms:
     /// - The `closed` flag causes all pollers to exit on shutdown.
     /// - Each poller exits once it delivers a receipt through the mpsc
-    ///   channel (or finds the channel closed because a different poller
-    ///   already delivered).
+    ///   channel, or as soon as the receiver is dropped because the send
+    ///   loop returned or was cancelled.
     /// - Polling frequency is governed by `receipt_query_interval`, so
     ///   RPC load is proportional to `bump_count × 1/interval`.
     pub fn wait_for_tx(
@@ -1510,7 +1510,13 @@ where
         tokio::spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
-            let receipt = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed).await;
+            // Stop polling once the receiver is dropped. Nobody can consume the receipt then.
+            let polling = Self::wait_mined(&send_state, &provider, tx_hash, &config, &closed);
+            let receipt = tokio::select! {
+                biased;
+                () = receipt_tx.closed() => None,
+                receipt = polling => receipt,
+            };
             if let Some(receipt) = receipt {
                 // Best-effort send — if the receiver is dropped, the
                 // send loop has already exited (e.g., another tx confirmed).
@@ -1532,7 +1538,12 @@ where
         self.runtime.spawn(async move {
             debug!(tx_hash = %tx_hash, "starting receipt polling");
 
-            let receipt = manager.wait_mined_for_tx(&send_state, tx_hash).await;
+            // Stop polling once the receiver is dropped. Nobody can consume the receipt then.
+            let receipt = tokio::select! {
+                biased;
+                () = receipt_tx.closed() => None,
+                receipt = manager.wait_mined_for_tx(&send_state, tx_hash) => receipt,
+            };
             if let Some(receipt) = receipt {
                 let _ = receipt_tx.send(receipt).await;
             }
@@ -1563,7 +1574,8 @@ where
     ///
     /// Returns `Some(receipt)` when the transaction reaches
     /// `num_confirmations` depth, or `None` if the manager is closed or
-    /// the `confirmation_timeout` deadline is exceeded.
+    /// the transaction is still not mined when the `confirmation_timeout`
+    /// deadline is exceeded.
     pub async fn wait_mined(
         send_state: &SendState,
         provider: &P,
@@ -1625,7 +1637,10 @@ where
                 }
             }
 
-            if runtime.now() >= deadline {
+            // Give up at the deadline only if the transaction is not mined. Once it is mined
+            // the send loop stops fee bumping and relies on this poller alone, so keep polling
+            // until the confirmation depth is reached.
+            if runtime.now() >= deadline && !send_state.is_mined(tx_hash) {
                 warn!(
                     tx_hash = %tx_hash,
                     timeout = ?config.confirmation_timeout,
@@ -1832,18 +1847,20 @@ mod tests {
         time::Duration,
     };
 
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxEip1559};
     use alloy_network::EthereumWallet;
     use alloy_node_bindings::Anvil;
-    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+    use alloy_primitives::{Address, B256, Bloom, Bytes, TxKind, U256};
     use alloy_provider::{ProviderBuilder, RootProvider};
+    use alloy_rpc_types_eth::{Block, TransactionReceipt};
     use alloy_signer_local::PrivateKeySigner;
     use alloy_transport::mock::Asserter;
     use base_runtime::{
         Clock,
-        deterministic::{Config, Runner},
+        deterministic::{Config, Context, Runner},
     };
     use rstest::rstest;
+    use tokio::sync::mpsc;
 
     use super::{BumpState, PreparedTx, SimpleTxManager, TxEnvelope};
     use crate::{
@@ -2057,6 +2074,135 @@ mod tests {
 
             assert!(receipt.is_none(), "receipt polling should stop at confirmation timeout");
             assert_eq!(ctx.now(), Duration::from_secs(3));
+        });
+    }
+
+    /// Build a successful receipt for `tx_hash` and the canonical block that contains it.
+    fn mined_receipt(tx_hash: B256, block_number: u64) -> (TransactionReceipt, Block) {
+        let block_hash = B256::with_last_byte(2);
+        let receipt = TransactionReceipt {
+            inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: Eip658Value::Eip658(true),
+                    cumulative_gas_used: 21_000,
+                    logs: vec![],
+                },
+                logs_bloom: Bloom::ZERO,
+            }),
+            transaction_hash: tx_hash,
+            transaction_index: Some(0),
+            block_hash: Some(block_hash),
+            block_number: Some(block_number),
+            gas_used: 21_000,
+            effective_gas_price: 1,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: Some(Address::ZERO),
+            contract_address: None,
+        };
+        let mut block: Block = Block::default();
+        block.header.hash = block_hash;
+
+        (receipt, block)
+    }
+
+    /// A mined transaction that reaches the confirmation depth only after the
+    /// confirmation timeout must still be delivered: once it is mined nothing
+    /// else watches it, so abandoning it would leave the send pending forever.
+    #[test]
+    fn wait_mined_keeps_polling_mined_tx_past_confirmation_timeout() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+
+            // Script the chain tip so the 5 required confirmations are only reached at tip 14,
+            // on the poll after the 3s timeout.
+            let asserter = Asserter::new();
+            for tip in [10u64, 10, 10, 10, 14] {
+                asserter.push_success(&tip);
+                asserter.push_success(&Some(&receipt));
+                asserter.push_success(&Some(&block));
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+            let send_state = SendState::new(3).expect("send state should be valid");
+            let config = TxManagerConfig {
+                num_confirmations: 5,
+                receipt_query_interval: Duration::from_secs(1),
+                confirmation_timeout: Duration::from_secs(3),
+                network_timeout: Duration::from_secs(30),
+                ..TxManagerConfig::default()
+            };
+
+            let confirmed = SimpleTxManager::<_, Context>::wait_mined_using_runtime(
+                &ctx,
+                &send_state,
+                &provider,
+                tx_hash,
+                &config,
+                &AtomicBool::new(false),
+            )
+            .await;
+
+            assert_eq!(confirmed.map(|receipt| receipt.transaction_hash), Some(tx_hash));
+            assert_eq!(ctx.now(), Duration::from_secs(4));
+        });
+    }
+
+    /// A poller stops querying L1 once the receipt receiver is dropped, as happens when the
+    /// send is cancelled, even if its transaction is mined and not yet confirmed.
+    #[test]
+    fn receipt_polling_stops_once_the_receiver_is_dropped() {
+        Runner::start(Config::seeded(0), |ctx| async move {
+            let tx_hash = B256::with_last_byte(1);
+            let (receipt, block) = mined_receipt(tx_hash, 10);
+
+            // Script a chain tip that never moves, so the mined transaction never reaches the
+            // 5 required confirmations.
+            let asserter = Asserter::new();
+            for _ in 0..8 {
+                asserter.push_success(&10u64);
+                asserter.push_success(&Some(&receipt));
+                asserter.push_success(&Some(&block));
+            }
+            let provider = ProviderBuilder::new().connect_mocked_client(asserter.clone());
+
+            let config = TxManagerConfig {
+                num_confirmations: 5,
+                receipt_query_interval: Duration::from_secs(1),
+                confirmation_timeout: Duration::from_secs(3),
+                network_timeout: Duration::from_secs(30),
+                ..TxManagerConfig::default()
+            };
+            let nonce_manager = NonceManager::with_runtime(
+                ctx.clone(),
+                provider.clone(),
+                Address::ZERO,
+                config.network_timeout,
+            );
+            let manager = SimpleTxManager {
+                provider,
+                runtime: ctx.clone(),
+                wallet: EthereumWallet::from(PrivateKeySigner::random()),
+                config,
+                nonce_manager,
+                chain_id: 1,
+                closed: Arc::new(AtomicBool::new(false)),
+                metrics: Arc::new(NoopTxMetrics),
+            };
+            let send_state = Arc::new(SendState::new(3).expect("send state should be valid"));
+            let (receipt_tx, receipt_rx) = mpsc::channel(1);
+
+            manager.spawn_wait_for_tx(send_state, tx_hash, receipt_tx);
+
+            // Let the poller see the transaction mined, then drop the receiver.
+            ctx.sleep(Duration::from_millis(2500)).await;
+            drop(receipt_rx);
+            let unused_responses = asserter.read_q().len();
+
+            ctx.sleep(Duration::from_secs(10)).await;
+            assert_eq!(asserter.read_q().len(), unused_responses);
         });
     }
 
