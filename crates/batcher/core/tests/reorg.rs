@@ -40,7 +40,7 @@ fn test_add_block_reorg_resets_pipeline_instead_of_fatal_error() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         );
         let handle = ctx.spawn(driver.run());
@@ -79,7 +79,7 @@ fn test_l2_reorg_event_resets_pipeline() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         );
         let handle = ctx.spawn(driver.run());
@@ -120,7 +120,7 @@ fn test_reorg_keeps_tracking_in_flight_submissions() {
                 drain_timeout: Duration::from_millis(10),
                 force_blobs_when_throttling: true,
             },
-            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
             PendingL1HeadSource,
         )
         .with_admin_rx(admin_rx);

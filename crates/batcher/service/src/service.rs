@@ -12,7 +12,7 @@ use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
     AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
-    ThrottleConfig, ThrottleController, ThrottleStrategy,
+    ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
@@ -643,11 +643,10 @@ impl BatcherService {
                 ServiceThrottle::Rpc(RpcThrottleClient::new(&urls)?)
             }
         };
-        let (throttle_config, throttle_strategy) = self.config.throttle.clone().map_or_else(
-            || (ThrottleConfig::default(), ThrottleStrategy::Off),
-            |cfg| (cfg, ThrottleStrategy::Linear),
-        );
-        let throttle = ThrottleController::new(throttle_config, throttle_strategy);
+        let throttle =
+            self.config.throttle.clone().map_or_else(ThrottleController::disabled, |cfg| {
+                ThrottleController::new(cfg, ThrottleStrategy::Linear)
+            });
 
         // Build the L1 head source: a hybrid of optional WS subscription + polling.
         let l1_head_subscription =
