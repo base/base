@@ -56,10 +56,13 @@ impl ShadowRetention {
         let mut ticker = interval(self.config.interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+        // `connect_pool`, not `init_pool`: migrations for this schema run only from the writer's
+        // critical task (see `ShadowDbConfig::connect_pool`). A sweep against a not-yet-migrated
+        // schema just fails and retries on the next tick like any other sweep failure.
         let repo = loop {
             ticker.tick().await;
 
-            match self.db_config.init_pool().await {
+            match self.db_config.connect_pool().await {
                 Ok(pool) => break ShadowRetentionRepo::new(pool),
                 Err(error) => error!(
                     target: "base::shadow-indexer",
