@@ -40,3 +40,35 @@ jobs:
           older-than: 60 days
           dry-run: ${{ inputs.dry_run }}
           validate: true
+
+      # The cleanup action fails when any explicitly configured package does not
+      # exist, so wait until the first release has created the complete set.
+      - name: Find split release images
+        id: split-images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          packages=(base base-reth-node base-consensus base-builder basectl base-snapshotter)
+          for package in "${packages[@]}"; do
+            if ! gh api "/orgs/${OWNER}/packages/container/${package}/versions?per_page=1" >/dev/null 2>&1; then
+              echo "::notice::Skipping split-image cleanup until ${package} exists and is readable"
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Clean up split release images
+        if: steps.split-images.outputs.ready == 'true'
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          owner: ${{ github.repository_owner }}
+          packages: base,base-reth-node,base-consensus,base-builder,basectl,base-snapshotter
+          delete-tags: "*"
+          delete-untagged: true
+          exclude-tags: "v*"
+          older-than: 60 days
+          dry-run: ${{ inputs.dry_run }}
+          validate: true
