@@ -12,11 +12,11 @@ use tokio::sync::{mpsc, oneshot};
 pub enum BlockSourceItem {
     /// Delivered to the driver as is.
     Event(L2BlockEvent),
-    /// Answered when the driver polls the source again, that is once it has taken every
+    /// Answered when the driver waits on the source again, that is once it has taken every
     /// item queued before this one.
     ///
-    /// `BatchDriver::run` polls its source only after a complete encode-and-submit pass, so
-    /// by then that pass has also run for the last of those items.
+    /// `BatchDriver::run` does all the work it can before waiting for the next event, so by
+    /// then the last of those items has been encoded and its frames submitted.
     Marker(oneshot::Sender<()>),
 }
 

@@ -1,5 +1,5 @@
 //! Integration tests for [`BatchDriver`] lifecycle: source exhaustion, flush, drain, and
-//! the ordering of source polls.
+//! the order of work and waiting in the loop.
 
 use std::{
     sync::{Arc, Mutex},
@@ -165,15 +165,15 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
     });
 }
 
-/// Source that never delivers an event and records, at every poll, how many submissions the
-/// driver has dequeued so far.
-struct PollObserver {
+/// Source that never delivers an event and records, each time the driver waits on it, how
+/// many submissions have been dequeued so far.
+struct PollRecorder {
     recorded: Arc<Mutex<Recorded>>,
     dequeued_at_poll: Arc<Mutex<Vec<usize>>>,
 }
 
 #[async_trait]
-impl UnsafeBlockSource for PollObserver {
+impl UnsafeBlockSource for PollRecorder {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
         let dequeued = self.recorded.lock().unwrap().dequeued.len();
         self.dequeued_at_poll.lock().unwrap().push(dequeued);
@@ -181,12 +181,10 @@ impl UnsafeBlockSource for PollObserver {
     }
 }
 
-/// The driver polls its block source only after a complete encode-and-submit pass, so when
-/// the source is polled again every submission released by the previous event has been
-/// handed to the tx manager. The action-test harness synchronises with the driver through
-/// this ordering.
+/// The driver does all the work it can before waiting for the next event: a receipt that
+/// frees a permit gets the next ready submission sent before any source is waited on again.
 #[test]
-fn test_source_is_polled_only_after_the_submit_pass() {
+fn test_driver_finishes_pending_work_before_waiting_for_events() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -194,7 +192,7 @@ fn test_source_is_polled_only_after_the_submit_pass() {
         pipeline.submissions.push_back(SubmissionStub::with_id(1));
         let tx_manager = ManualConfirmTxManager::default();
         let dequeued_at_poll = Arc::new(Mutex::new(Vec::new()));
-        let source = PollObserver {
+        let source = PollRecorder {
             recorded: Arc::clone(&recorded),
             dequeued_at_poll: Arc::clone(&dequeued_at_poll),
         };
@@ -217,8 +215,8 @@ fn test_source_is_polled_only_after_the_submit_pass() {
         );
         let handle = ctx.spawn(driver.run());
 
-        // Let the driver submit the first stub and poll the source, then confirm that stub so
-        // the receipt releases the second one.
+        // Let the driver submit the first stub and wait on the source, then confirm that stub
+        // so the receipt releases the second one.
         ctx.sleep(Duration::from_millis(1)).await;
         tx_manager.confirm_next(1);
         ctx.sleep(Duration::from_millis(1)).await;
@@ -228,7 +226,7 @@ fn test_source_is_polled_only_after_the_submit_pass() {
         assert_eq!(
             *dequeued_at_poll.lock().unwrap(),
             vec![1, 2],
-            "each poll must follow the submit pass released by the previous event"
+            "the submission released by the receipt must be sent before the driver waits again"
         );
     });
 }

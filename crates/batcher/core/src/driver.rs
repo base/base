@@ -218,8 +218,8 @@ where
     /// 1. **CPU phase**: drain encoding, apply throttle, recover txpool, submit pending frames.
     /// 2. **I/O phase**: block on `tokio::select!` until one external event fires.
     ///
-    /// Every event is therefore followed by a full CPU phase before the sources are polled
-    /// again. The action-test harness relies on this to synchronise with the driver.
+    /// Every event is therefore followed by a full CPU phase before the driver waits again,
+    /// so the work an event releases is never delayed until the next one.
     ///
     /// When shutting down (after cancellation or source exhaustion), the I/O phase is
     /// replaced by a bounded drain of all in-flight receipts.
