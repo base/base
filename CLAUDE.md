@@ -22,6 +22,9 @@
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
 - Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
 - Do not suppress Clippy warnings with `#![allow(missing_docs)]` or other allow-lints. Fix the underlying issue.
+- Create documentation only when it is substantive and useful in addition to the code: it should explain durable intent, non-obvious invariants, public contracts, operational procedures, or decisions that a reader cannot reliably recover from the implementation.
+- Do not add documentation merely to narrate straightforward code, satisfy a superficial documentation goal, or record an agent review with no enduring guidance. Prefer clear names, small focused logic, and tests; use a concise code comment only when it explains a non-obvious local constraint.
+- Before adding a standalone document, confirm that it has a durable audience and maintenance value. Update or remove it with the relevant behavior, and validate claims against the code and tests.
 
 ## Rust Structure and Style
 
