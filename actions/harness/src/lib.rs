@@ -36,7 +36,8 @@ mod derivation_fixture;
 
 mod batcher;
 pub use batcher::{
-    Batcher, BatcherConfig, BatcherError, Inner, L1MinerTxManager, L1SignedSubmission, Pending,
+    Batcher, BatcherConfig, BatcherError, BlockSourceItem, HarnessBlockSource, Inner,
+    L1MinerTxManager, L1SignedSubmission, Pending,
 };
 
 mod matrix;

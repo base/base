@@ -1,4 +1,5 @@
-//! Integration tests for [`BatchDriver`] lifecycle: source exhaustion, flush, and drain.
+//! Integration tests for [`BatchDriver`] lifecycle: source exhaustion, flush, drain, and
+//! the ordering of source polls.
 
 use std::{
     sync::{Arc, Mutex},
@@ -6,17 +7,18 @@ use std::{
 };
 
 use alloy_primitives::Address;
+use async_trait::async_trait;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleController,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, NeverConfirmTxManager, PendingL1HeadSource,
-        Recorded, SubmissionStub, TrackingPipeline,
+        DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, NeverConfirmTxManager,
+        PendingL1HeadSource, Recorded, SubmissionStub, TrackingPipeline,
     },
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
 use base_batcher_source::{
-    L2BlockEvent,
+    L2BlockEvent, SourceError, UnsafeBlockSource,
     test_utils::{ChannelBlockSource, InMemoryBlockSource},
 };
 use base_runtime::{
@@ -160,5 +162,73 @@ fn test_shutdown_drains_in_flight_before_returning_flush_error() {
         let r = recorded.lock().unwrap();
         assert_eq!(r.dequeued, vec![SubmissionId(0)]);
         assert_eq!(r.flush_count, 1);
+    });
+}
+
+/// Source that never delivers an event and records, at every poll, how many submissions the
+/// driver has dequeued so far.
+struct PollObserver {
+    recorded: Arc<Mutex<Recorded>>,
+    dequeued_at_poll: Arc<Mutex<Vec<usize>>>,
+}
+
+#[async_trait]
+impl UnsafeBlockSource for PollObserver {
+    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+        let dequeued = self.recorded.lock().unwrap().dequeued.len();
+        self.dequeued_at_poll.lock().unwrap().push(dequeued);
+        std::future::pending().await
+    }
+}
+
+/// The driver polls its block source only after a complete encode-and-submit pass, so when
+/// the source is polled again every submission released by the previous event has been
+/// handed to the tx manager. The action-test harness synchronises with the driver through
+/// this ordering.
+#[test]
+fn test_source_is_polled_only_after_the_submit_pass() {
+    Runner::start(Config::seeded(0), |ctx| async move {
+        let recorded = Arc::new(Mutex::new(Recorded::default()));
+        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
+        pipeline.submissions.push_back(SubmissionStub::with_id(0));
+        pipeline.submissions.push_back(SubmissionStub::with_id(1));
+        let tx_manager = ManualConfirmTxManager::default();
+        let dequeued_at_poll = Arc::new(Mutex::new(Vec::new()));
+        let source = PollObserver {
+            recorded: Arc::clone(&recorded),
+            dequeued_at_poll: Arc::clone(&dequeued_at_poll),
+        };
+
+        // A single permit: the second submission can only leave the pipeline once the
+        // receipt of the first one has been processed.
+        let driver = BatchDriver::new_without_derivation_status(
+            ctx.clone(),
+            pipeline,
+            source,
+            tx_manager.clone(),
+            BatchDriverConfig {
+                inbox: Address::ZERO,
+                max_pending_transactions: 1,
+                drain_timeout: Duration::from_millis(10),
+                force_blobs_when_throttling: true,
+            },
+            DaThrottle::new(ThrottleController::noop(), Arc::new(NoopThrottleClient)),
+            PendingL1HeadSource,
+        );
+        let handle = ctx.spawn(driver.run());
+
+        // Let the driver submit the first stub and poll the source, then confirm that stub so
+        // the receipt releases the second one.
+        ctx.sleep(Duration::from_millis(1)).await;
+        tx_manager.confirm_next(1);
+        ctx.sleep(Duration::from_millis(1)).await;
+
+        ctx.cancel();
+        assert!(handle.await.unwrap().is_ok());
+        assert_eq!(
+            *dequeued_at_poll.lock().unwrap(),
+            vec![1, 2],
+            "each poll must follow the submit pass released by the previous event"
+        );
     });
 }

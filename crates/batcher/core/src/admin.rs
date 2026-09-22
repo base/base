@@ -116,8 +116,8 @@ impl AdminHandle {
 
     /// Flush the current encoding channel, making its frames eligible for submission.
     ///
-    /// Returns [`AdminError::Stopped`] if the batcher is stopped. It does not wait for L1
-    /// inclusion.
+    /// Answered once the channel is closed, before its frames are submitted; it does not
+    /// wait for L1 inclusion. Returns [`AdminError::Stopped`] if the batcher is stopped.
     pub async fn flush(&self) -> AdminResult<()> {
         self.request(|reply| AdminCommand::Flush { reply }).await
     }

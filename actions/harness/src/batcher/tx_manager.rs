@@ -78,9 +78,8 @@ pub struct Inner {
 ///
 /// [`send_async`] enqueues a [`TxCandidate`] and returns a [`SendHandle`] that
 /// resolves when [`mine_block`] is called. The spawned [`BatchDriver`] task
-/// suspends on these handles; calling [`mine_block`] after
-/// `tokio::task::yield_now().await` gives the driver time to populate its
-/// in-flight set before receipts are fired.
+/// suspends on these handles; `Batcher::encode_only` returns once every
+/// submission of a cycle has been enqueued, so [`mine_block`] can follow it directly.
 ///
 /// [`L1MinerTxManager`] is cheaply cloneable (Arc bump). Pass one clone to
 /// [`BatchDriver`] and retain the other for [`mine_block`] calls from the test.
@@ -308,19 +307,10 @@ impl L1MinerTxManager {
     ///
     /// # Timing
     ///
-    /// Call this after `tokio::task::yield_now().await` so the spawned
-    /// [`BatchDriver`] task has had one scheduling turn to process blocks, call
-    /// [`send_async`] for each submission, and suspend waiting on the oneshot
-    /// receivers.
-    ///
-    /// On a `current_thread` tokio runtime (the default for `#[tokio::test]`) a
-    /// single yield is sufficient: [`InMemoryBlockSource::next`] and
-    /// [`send_async`] both complete without suspending, so the driver runs the
-    /// full encoding and submission loop in one turn before sticking on
-    /// `in_flight.next().await`.
+    /// Call this once the spawned [`BatchDriver`] task has called [`send_async`] for
+    /// every submission of the cycle, which `Batcher::encode_only` guarantees on return.
     ///
     /// [`send_async`]: L1MinerTxManager::send_async
-    /// [`InMemoryBlockSource::next`]: base_batcher_source::test_utils::InMemoryBlockSource
     pub fn mine_block(&self, l1: &mut L1Miner) -> u64 {
         self.stage_n_to_l1(l1, usize::MAX);
         let block = l1.mine_block().clone();
