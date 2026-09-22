@@ -1,0 +1,101 @@
+{
+  "schema_version": 2,
+  "checks": [
+    {
+      "id": "long-term-simplicity",
+      "description": "Determines whether the change makes the codebase simpler over time: fewer concepts, clearer ownership and boundaries, reduced duplication, smaller maintenance surface, and no avoidable configuration or operational burden.",
+      "decider_command_env": "VERIFY_CHANGES_LONG_TERM_SIMPLICITY_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_LONG_TERM_SIMPLICITY_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "rust-correctness",
+      "description": "Reviews Rust changes for correctness, error handling, API contracts, and regressions.",
+      "decider_command_env": "VERIFY_CHANGES_RUST_CORRECTNESS_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_RUST_CORRECTNESS_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 1800
+    },
+    {
+      "id": "consensus-safety",
+      "description": "Reviews consensus, execution, derivation, and chain-safety changes for invariant violations.",
+      "decider_command_env": "VERIFY_CHANGES_CONSENSUS_SAFETY_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_CONSENSUS_SAFETY_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 1800
+    },
+    {
+      "id": "async-concurrency",
+      "description": "Reviews asynchronous, concurrent, cancellation, and resource-lifetime changes.",
+      "decider_command_env": "VERIFY_CHANGES_ASYNC_CONCURRENCY_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_ASYNC_CONCURRENCY_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "ci-and-tooling",
+      "description": "Reviews CI, workflow, release, Docker, and developer-tooling changes.",
+      "decider_command_env": "VERIFY_CHANGES_CI_AND_TOOLING_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_CI_AND_TOOLING_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 1200
+    },
+    {
+      "id": "targeted-tests",
+      "description": "Chooses and runs focused tests, diagnoses failures, and may make minimal fixes when appropriate.",
+      "decider_command_env": "VERIFY_CHANGES_TARGETED_TESTS_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_TARGETED_TESTS_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 3600
+    },
+    {
+      "id": "verify-changes-cli",
+      "description": "Reviews changes to the verify-changes CLI for Git-worktree isolation, parallel execution, artifact integrity, protocol validation, and failure handling.",
+      "decider_command_env": "VERIFY_CHANGES_CLI_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_CLI_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 900
+    },
+    {
+      "id": "decider-contracts",
+      "description": "Reviews decider prompts, schemas, check selection rules, allowlist enforcement, and blocking-result semantics.",
+      "decider_command_env": "VERIFY_CHANGES_DECIDER_CONTRACTS_DECIDER_COMMAND",
+      "agent_command_env": "VERIFY_CHANGES_DECIDER_CONTRACTS_AGENT_COMMAND",
+      "capabilities": [
+        "read",
+        "shell",
+        "write"
+      ],
+      "timeout_seconds": 900
+    }
+  ]
+}
