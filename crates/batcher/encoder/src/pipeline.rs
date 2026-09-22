@@ -79,9 +79,6 @@ pub trait BatchPipeline: Send {
     /// Next L1 transaction, if any. Each call assigns a new [`SubmissionId`].
     fn next_submission(&mut self) -> Option<BatchSubmission>;
 
-    /// Whether [`next_submission`](Self::next_submission) would return `Some`.
-    fn has_ready_submission(&self) -> bool;
-
     /// Record L1 inclusion. Does not prune; [`reconcile_derivation`](Self::reconcile_derivation) does.
     ///
     /// Confirmed channels remain buffered so reconciliation can detect stalled derivation.

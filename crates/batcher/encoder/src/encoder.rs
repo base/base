@@ -550,15 +550,6 @@ impl BatchPipeline for BatchEncoder {
         Some(submission)
     }
 
-    fn has_ready_submission(&self) -> bool {
-        let effective_da_type = if self.blob_override && self.config.da_type == DaType::Calldata {
-            DaType::Blob
-        } else {
-            self.config.da_type
-        };
-        self.egress.has_ready_submission(&self.channels, effective_da_type, self.l1_head)
-    }
-
     fn confirm(&mut self, id: SubmissionId, l1_block: u64) {
         let Some(channel_ids) = self.egress.confirm(id) else {
             debug!(id = ?id, "ignoring confirmation for untracked submission");
@@ -1191,7 +1182,7 @@ mod tests {
         encoder.advance_l1_head(at_threshold);
         assert!(!has_open_channel(&encoder), "channel must close at effective timeout");
         assert!(!encoder.channels.is_empty());
-        assert!(encoder.has_ready_submission(), "timeout must release the partial blob");
+        assert!(encoder.next_submission().is_some(), "timeout must release the partial blob");
     }
 
     // --- max_blobs_per_tx tests ---
@@ -1227,14 +1218,16 @@ mod tests {
         encoder.add_block(make_block_with_user_tx(B256::ZERO)).unwrap();
         assert_eq!(encoder.step().unwrap(), StepResult::ChannelClosed);
         assert!(
-            !encoder.has_ready_submission(),
+            encoder.next_submission().is_none(),
             "size-closed partial blob must wait even when the input queue is empty"
         );
 
         encoder.flush().unwrap();
 
-        assert!(encoder.has_ready_submission(), "explicit flush must release the partial blob");
-        assert!(encoder.next_submission().is_some());
+        assert!(
+            encoder.next_submission().is_some(),
+            "explicit flush must release the partial blob"
+        );
     }
 
     #[test]
@@ -1265,7 +1258,7 @@ mod tests {
 
         encoder.advance_l1_head(14);
         assert!(
-            !encoder.has_ready_submission(),
+            encoder.next_submission().is_none(),
             "size-closed tails must remain held before the oldest channel timeout"
         );
 
@@ -1273,7 +1266,7 @@ mod tests {
         let submission = encoder.next_submission().expect("oldest channel timeout releases FIFO");
         encoder.requeue(submission.id);
         assert!(
-            encoder.has_ready_submission(),
+            encoder.next_submission().is_some(),
             "requeue must preserve an already-reached release deadline"
         );
     }
@@ -1289,6 +1282,7 @@ mod tests {
             BatchEncoder::new(Arc::new(RollupConfig::default()), config).expect("valid config");
 
         let mut parent_hash = B256::ZERO;
+        let mut submission = None;
         // Brotli may retain one 4 MiB window before exposing output. Feed
         // enough incompressible input to exercise emission without flushes.
         for seed in 1..=32 {
@@ -1296,19 +1290,19 @@ mod tests {
             parent_hash = block.header.hash_slow();
             encoder.add_block(block).unwrap();
             assert_eq!(encoder.step().unwrap(), StepResult::BlockEncoded);
-            if encoder.has_ready_submission() {
+            submission = encoder.next_submission();
+            if submission.is_some() {
                 break;
             }
         }
+        let submission = submission.unwrap_or_else(|| {
+            panic!(
+                "Brotli emitted {} compressed bytes with {} bytes available",
+                encoder.channels[0].compressed_bytes(),
+                encoder.channels[0].available_output()
+            )
+        });
         assert!(has_open_channel(&encoder), "full blob emission must not close the channel");
-        assert!(
-            encoder.has_ready_submission(),
-            "Brotli emitted {} compressed bytes with {} bytes available",
-            encoder.channels[0].compressed_bytes(),
-            encoder.channels[0].available_output()
-        );
-
-        let submission = encoder.next_submission().expect("open channel produced a full blob");
         let SubmissionPayload::Blobs(blobs) = submission.payload() else {
             panic!("expected blob submission");
         };
@@ -2027,7 +2021,7 @@ mod tests {
         let submissions = encoder.encode_and_drain().expect("encode_and_drain");
 
         assert!(!submissions.is_empty(), "drain must release size-closed channel tails");
-        assert!(!encoder.has_ready_submission(), "drain must consume every released tail");
+        assert!(encoder.next_submission().is_none(), "drain must consume every released tail");
     }
 
     /// `encode_and_drain` with no blocks added returns empty (Idle immediately).
