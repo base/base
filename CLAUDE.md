@@ -22,9 +22,10 @@
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
 - Begin every `mod.rs` file with a `//!` module doc comment describing its contents.
 - Do not suppress Clippy warnings with `#![allow(missing_docs)]` or other allow-lints. Fix the underlying issue.
-- Create documentation only when it is substantive and useful in addition to the code: it should explain durable intent, non-obvious invariants, public contracts, operational procedures, or decisions that a reader cannot reliably recover from the implementation.
-- Do not add documentation merely to narrate straightforward code, satisfy a superficial documentation goal, or record an agent review with no enduring guidance. Prefer clear names, small focused logic, and tests; use a concise code comment only when it explains a non-obvious local constraint.
-- Before adding a standalone document, confirm that it has a durable audience and maintenance value. Update or remove it with the relevant behavior, and validate claims against the code and tests.
+- Default to substantive product work. A change proposed without an explicit documentation request must deliver a real, observable improvement for users or operators: for example, a correctness, reliability, security, performance, usability, or operability improvement. Identify the affected user, the problem, the expected behavioral outcome, and focused validation before implementation.
+- Documentation is supporting material, not a substitute for product work. Do not open a documentation-only PR, a review report, or a prose-only cleanup from an exploratory task unless the user explicitly requested documentation. A documentation correction may accompany a substantive change when it is needed to use or operate that change correctly.
+- When documentation is explicitly requested or is necessary alongside a substantive change, it must explain durable intent, non-obvious invariants, public contracts, operational procedures, or decisions that clear code, tests, and concise local comments cannot convey. Do not narrate straightforward code, satisfy a superficial documentation goal, or record a non-finding.
+- Before opening a PR, confirm that the diff itself—not just its description—demonstrates the intended improvement and that validation exercises it. If no substantive, safely validated improvement is available in scope, report that outcome rather than manufacturing a PR.
 
 ## Rust Structure and Style
 
