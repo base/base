@@ -814,7 +814,9 @@ async fn cached_payload_witness(
 ) -> Option<ExecutionWitness> {
     async {
         let key = WitnessKey { parent_hash: parent_block_hash, attributes_digest };
-        match WitnessCacheClient::get(cache_url, key).await {
+        match base_metrics::time!(Metrics::payload_witness_cache_latency_seconds(), {
+            WitnessCacheClient::get(cache_url, key).await
+        }) {
             Ok(Some(witness)) => {
                 Metrics::payload_witness_cache_lookups_total(Metrics::PAYLOAD_CACHE_HIT)
                     .increment(1);
