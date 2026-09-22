@@ -251,7 +251,6 @@ fn test_throttle_transitions_from_active_to_inactive() {
     }
 
     Runner::start(Config::seeded(0), |ctx| async move {
-        // The test wakes the driver loop by sending a dummy block after changing the backlog.
         let (source, source_tx) = ChannelBlockSource::new();
 
         // Start with 2 MB backlog — above the default 1 MB threshold.

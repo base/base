@@ -28,7 +28,7 @@ use base_runtime::{
 /// An error from the block source is fatal: the driver exits with it instead of running
 /// without input.
 #[test]
-fn test_block_source_error_is_fatal() {
+fn test_block_source_closed_is_fatal() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let (source, source_tx) = ChannelBlockSource::new();
         let driver = BatchDriver::new_without_derivation_status(

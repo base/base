@@ -9,10 +9,7 @@ use crate::{L1HeadEvent, L1HeadSource, SourceError};
 ///
 /// Use [`ChannelL1HeadSource::new`] to obtain a `(source, sender)` pair.
 /// Events sent on the [`mpsc::UnboundedSender`] side are consumed by
-/// [`L1HeadSource::next`].
-///
-/// When the channel is empty the source parks on [`recv`](mpsc::UnboundedReceiver::recv)
-/// until a new event arrives. When all senders are dropped, `next` returns
+/// [`L1HeadSource::next`]. When all senders are dropped, `next` returns
 /// [`SourceError::Closed`].
 #[derive(Debug)]
 pub struct ChannelL1HeadSource {
@@ -30,12 +27,6 @@ impl ChannelL1HeadSource {
 #[async_trait]
 impl L1HeadSource for ChannelL1HeadSource {
     async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
-        // Non-blocking drain first so burst events don't require a yield.
-        match self.rx.try_recv() {
-            Ok(event) => return Ok(event),
-            Err(mpsc::error::TryRecvError::Disconnected) => return Err(SourceError::Closed),
-            Err(mpsc::error::TryRecvError::Empty) => {}
-        }
         self.rx.recv().await.ok_or(SourceError::Closed)
     }
 }

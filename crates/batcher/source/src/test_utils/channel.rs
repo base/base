@@ -13,7 +13,6 @@ use crate::{L2BlockEvent, SourceError, UnsafeBlockSource};
 /// [`SourceError::Closed`].
 #[derive(Debug)]
 pub struct ChannelBlockSource {
-    /// The receiving half of the unbounded channel.
     rx: mpsc::UnboundedReceiver<L2BlockEvent>,
 }
 
@@ -28,12 +27,6 @@ impl ChannelBlockSource {
 #[async_trait]
 impl UnsafeBlockSource for ChannelBlockSource {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-        match self.rx.try_recv() {
-            Ok(event) => return Ok(event),
-            Err(mpsc::error::TryRecvError::Disconnected) => return Err(SourceError::Closed),
-            Err(mpsc::error::TryRecvError::Empty) => {}
-        }
-
         self.rx.recv().await.ok_or(SourceError::Closed)
     }
 }

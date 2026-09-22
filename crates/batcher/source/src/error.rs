@@ -1,6 +1,6 @@
-//! Error types for block sources.
+//! Error type shared by the L2 block and L1 head sources.
 
-/// Errors produced by block sources.
+/// Errors produced by the L2 block and L1 head sources.
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
     /// Provider or RPC error.

@@ -13,7 +13,9 @@ use crate::{L2BlockEvent, SourceError};
 pub trait UnsafeBlockSource: Send {
     /// Wait for the next L2 block event.
     ///
-    /// Blocks (asynchronously) until a new block or reorg is available.
+    /// Blocks (asynchronously) until a new block or reorg is available. Any error is
+    /// fatal to the driver: implementations retry transient provider failures internally
+    /// and return [`SourceError::Closed`] only once nothing more will ever be delivered.
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError>;
 
     /// Reset the source to begin sequential catchup above `safe_head`.

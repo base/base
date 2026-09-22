@@ -23,6 +23,4 @@ pub enum DriverEvent {
     L1Head(u64),
     /// Derivation progress changed.
     DerivationStatus(DerivationStatus),
-    /// L1 head source permanently closed.
-    L1SourceClosed,
 }

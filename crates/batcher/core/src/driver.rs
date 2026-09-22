@@ -287,10 +287,6 @@ where
                 DriverEvent::DerivationStatus(status) => {
                     self.on_derivation_status(status);
                 }
-                DriverEvent::L1SourceClosed => {
-                    debug!("L1 head source closed, disabling arm");
-                    self.l1_head_source = None;
-                }
             }
         }
     }
@@ -479,8 +475,9 @@ where
     /// batcher or starting a running one does nothing. Each command is answered
     /// once it has been applied.
     ///
-    /// Non-fatal L1 head source errors loop internally to avoid polluting the
-    /// return type with a no-op variant.
+    /// L1 head source errors are handled internally to avoid polluting the return
+    /// type with a no-op variant: [`SourceError::Closed`] parks the arm for good,
+    /// any other error is logged and the source polled again.
     async fn next_event(&mut self) -> Result<DriverEvent, BatchDriverError> {
         loop {
             let event = tokio::select! {
@@ -544,13 +541,10 @@ where
                     }
                 }
 
-                event = self.source.next() => match event {
-                    Ok(L2BlockEvent::Block(_)) if self.stopped => {
-                        continue;
-                    }
-                    Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
-                    Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
-                    Err(e) => return Err(e.into()),
+                event = self.source.next() => match event? {
+                    L2BlockEvent::Block(_) if self.stopped => continue,
+                    L2BlockEvent::Block(block) => DriverEvent::Block(block),
+                    L2BlockEvent::Reorg => DriverEvent::Reorg,
                 },
 
                 Some((ids, outcome)) = self.submissions.next_settled() => {
@@ -565,7 +559,11 @@ where
                     }
                 } => match l1_event {
                     Ok(L1HeadEvent::NewHead(n)) => DriverEvent::L1Head(n),
-                    Err(SourceError::Closed) => DriverEvent::L1SourceClosed,
+                    Err(SourceError::Closed) => {
+                        warn!("L1 head source closed, L1 head tracking stopped");
+                        self.l1_head_source = None;
+                        continue;
+                    }
                     Err(e) => {
                         warn!(error = %e, "L1 head source error");
                         continue;
