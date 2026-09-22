@@ -21,6 +21,12 @@ pub use config::{
 mod provision;
 pub use provision::{EndpointMap, Ownership, Provisioner};
 
+mod protocol;
+pub use protocol::{
+    AuthenticatedHeader, BatchAttribution, BatchObserver, BlobEvidence, GlamsterdamCheck, Rpc,
+    Schedule, Submission, Submissions, SubmittedChannel, Transfer, TransferRequest, TransferTarget,
+};
+
 mod publish;
 pub use publish::{CommentMetadata, PrPublisher, PublishArgs};
 

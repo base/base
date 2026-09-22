@@ -10,8 +10,8 @@ use serde_json::json;
 use tokio::time::Instant;
 
 use crate::{
-    AcceptanceCheck, Aggregate, CheckResult, EndpointMap, ObservationState, Provisioner,
-    RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
+    AcceptanceCheck, Aggregate, CheckResult, EndpointMap, GlamsterdamCheck, ObservationState,
+    Provisioner, RpcObserver, ScenarioConfig, ScenarioResult, StageResult, Status,
 };
 
 /// Invocation-owned paths, attach endpoints, and image build policy.
@@ -37,6 +37,14 @@ impl AcceptanceRunner {
     /// Runs a scenario, preserving every expected check and lifecycle failure.
     pub async fn run(config: ScenarioConfig, options: AcceptanceOptions) -> Result<ScenarioResult> {
         config.validate()?;
+        if options.endpoints.is_some()
+            && config
+                .checks
+                .iter()
+                .any(|check| matches!(check, AcceptanceCheck::GlamsterdamBlobTransfers { .. }))
+        {
+            bail!("glamsterdam_blob_transfers rejects attach mode");
+        }
         if options.endpoints.is_some() && options.build {
             bail!("attach mode cannot build images");
         }
@@ -53,7 +61,7 @@ impl AcceptanceRunner {
             checks: config
                 .checks
                 .iter()
-                .map(|check| Self::blocked(check, "prerequisites not completed"))
+                .flat_map(|check| Self::blocked(check, "prerequisites not completed"))
                 .collect(),
             samples: Vec::new(),
             forks: Vec::new(),
@@ -110,7 +118,7 @@ impl AcceptanceRunner {
             result.stages.push(Self::stage(stage, Status::Error, started, &message));
             result.diagnostics.push(message);
         }
-        let check_status = [Status::Error, Status::Cancelled, Status::Blocked, Status::Failed]
+        let check_status = [Status::Error, Status::Cancelled, Status::Failed, Status::Blocked]
             .into_iter()
             .find(|status| result.checks.iter().any(|check| check.status == *status))
             .unwrap_or(Status::Passed);
@@ -231,7 +239,8 @@ impl AcceptanceRunner {
         if readiness_error.is_some() {
             return Ok(());
         }
-        for (index, check) in config.checks.iter().enumerate() {
+        let mut result_index = 0;
+        for check in &config.checks {
             if Instant::now() >= deadline {
                 break;
             }
@@ -275,13 +284,30 @@ impl AcceptanceRunner {
                 if window.before_fork.is_some()
                     && observer.block(builder, "latest", deadline).await?.timestamp >= boundary
                 {
-                    result.checks[index].status = Status::Error;
-                    result.checks[index].message =
+                    result.checks[result_index].status = Status::Error;
+                    result.checks[result_index].message =
                         format!("missed pre-activation window for {name}");
+                    result_index += 1;
                     continue;
                 }
             }
-            result.checks[index] =
+            if let AcceptanceCheck::GlamsterdamBlobTransfers { id, .. } = check {
+                let end = result_index + check.result_ids().len();
+                GlamsterdamCheck::run(
+                    id,
+                    &endpoints,
+                    &options.output,
+                    check.timeout(),
+                    &mut result.checks[result_index..end],
+                )
+                .await;
+                if result.checks[result_index..end].iter().any(|row| row.status != Status::Passed) {
+                    break;
+                }
+                result_index = end;
+                continue;
+            }
+            result.checks[result_index] =
                 observer.run(check, &endpoints, &mut result.samples, origin, deadline).await;
             if let Some(name) = check.start().and_then(|window| window.before_fork.as_ref()) {
                 let boundary = result
@@ -292,12 +318,13 @@ impl AcceptanceRunner {
                     .activation_timestamp;
                 let builder = RpcObserver::endpoint(&endpoints, "builder")?;
                 if observer.block(builder, "latest", deadline).await?.timestamp >= boundary {
-                    result.checks[index].status = Status::Error;
-                    result.checks[index].message = format!(
+                    result.checks[result_index].status = Status::Error;
+                    result.checks[result_index].message = format!(
                         "check window crossed {name} activation; pre-fork coverage is incomplete"
                     );
                 }
             }
+            result_index += 1;
         }
         Ok(())
     }
@@ -314,6 +341,9 @@ impl AcceptanceRunner {
         loop {
             let mut all = true;
             for role in &roles {
+                if matches!(role.as_str(), "beacon" | "builder-consensus" | "validator-consensus") {
+                    continue;
+                }
                 let url = RpcObserver::endpoint(endpoints, role)?;
                 match observer.chain_id(url, deadline).await {
                     Ok(chain) => {
@@ -359,6 +389,19 @@ impl AcceptanceRunner {
         let mut roles = BTreeSet::new();
         for check in &config.checks {
             match check {
+                AcceptanceCheck::GlamsterdamBlobTransfers { .. } => {
+                    roles.extend(
+                        [
+                            "l1",
+                            "builder",
+                            "validator",
+                            "beacon",
+                            "builder-consensus",
+                            "validator-consensus",
+                        ]
+                        .map(String::from),
+                    );
+                }
                 AcceptanceCheck::HeadsConverge { endpoints, .. }
                 | AcceptanceCheck::HeadsHealthy { endpoints, .. } => {
                     roles.extend(endpoints.iter().cloned())
@@ -423,20 +466,25 @@ impl AcceptanceRunner {
     }
 
     /// Preserves an expected check when a prerequisite prevents evaluation.
-    pub fn blocked(check: &AcceptanceCheck, message: &str) -> CheckResult {
-        CheckResult {
-            id: check.id().into(),
-            kind: check.kind().into(),
-            status: Status::Blocked,
-            duration_ms: 0,
-            expected: json!({ "configuration": check }),
-            observed: json!({}),
-            message: message.into(),
-            next_step: "inspect lifecycle errors and rerun with a fresh output directory".into(),
-            samples: 0,
-            rpc_errors: 0,
-            evidence: Vec::new(),
-        }
+    pub fn blocked(check: &AcceptanceCheck, message: &str) -> Vec<CheckResult> {
+        check
+            .result_ids()
+            .into_iter()
+            .map(|id| CheckResult {
+                id,
+                kind: check.kind().into(),
+                status: Status::Blocked,
+                duration_ms: 0,
+                expected: json!({ "configuration": check }),
+                observed: json!({}),
+                message: message.into(),
+                next_step: "inspect lifecycle errors and rerun with a fresh output directory"
+                    .into(),
+                samples: 0,
+                rpc_errors: 0,
+                evidence: Vec::new(),
+            })
+            .collect()
     }
 
     /// Waits for Ctrl-C or termination; cleanup remains outside the cancelled future.

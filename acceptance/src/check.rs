@@ -186,6 +186,9 @@ impl RpcObserver {
         state: &mut ObservationState<'_>,
     ) -> Result<String> {
         match check {
+            AcceptanceCheck::GlamsterdamBlobTransfers { .. } => {
+                bail!("protocol check must be dispatched by the acceptance runner")
+            }
             AcceptanceCheck::ChainId { endpoint, expected, .. } => {
                 state.expected = json!(expected);
                 match self.chain_id(Self::endpoint(endpoints, endpoint)?, deadline).await {
@@ -806,6 +809,7 @@ mod tests {
     use crate::{AcceptanceCheck, Span, Status};
 
     // Socket scheduling is real time; ordinary assertions must not benchmark the CI host.
+    // Tests of deadline expiry set a deliberately shorter deadline or a longer server delay.
     const RPC_BUDGET: Duration = Duration::from_secs(5);
 
     #[derive(Clone)]
@@ -832,6 +836,8 @@ mod tests {
                     let _ = socket.read(&mut request).await;
                     let mut reply = replies.lock().await.pop_front().unwrap_or(fallback);
                     tokio::time::sleep(reply.delay).await;
+                    // Numeric timestamps are test-only offsets resolved when the response is
+                    // served, so CPU scheduling cannot accidentally make a healthy head stale.
                     if let Ok(mut body) = serde_json::from_str::<Value>(&reply.body)
                         && let Some(offset) = body["result"]["timestamp"].as_i64()
                     {
@@ -908,7 +914,7 @@ mod tests {
             minimum_blocks: 1,
             maximum_age: Span(maximum_age),
             max_lag_blocks: 1,
-            timeout: Span(Duration::from_millis(60)),
+            timeout: Span(RPC_BUDGET),
             start: None,
         }
     }
@@ -930,7 +936,7 @@ mod tests {
                 &map,
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(80),
+                Instant::now() + RPC_BUDGET + Duration::from_secs(1),
             )
             .await
     }
@@ -1135,7 +1141,7 @@ mod tests {
                 .fresh(
                     &url,
                     "rpc",
-                    Duration::from_secs(1),
+                    RPC_BUDGET,
                     Duration::from_millis(10),
                     Instant::now() + RPC_BUDGET,
                     &mut state
@@ -1192,11 +1198,11 @@ mod tests {
         let mut samples = Vec::new();
         let result = observer()
             .run(
-                &progress(Duration::from_millis(10), 1),
+                &progress(Duration::from_secs(1), 1),
                 &BTreeMap::from([("rpc".into(), "http://127.0.0.1:1".into())]),
                 &mut samples,
                 Instant::now(),
-                Instant::now() + Duration::from_millis(20),
+                Instant::now() + RPC_BUDGET,
             )
             .await;
         assert_eq!(result.status, Status::Error);
@@ -1269,8 +1275,11 @@ mod tests {
     #[tokio::test]
     async fn health_enforces_freshness_and_request_deadline_edges() {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        let mut advancing = vec![block_at(10, 'a', now + 5); 2];
-        advancing.extend(vec![block_at(11, 'b', now + 5); 20]);
+        let mut advancing = vec![block(10, 'a'); 2];
+        advancing.extend(vec![block(11, 'b'); 20]);
+        for block in &mut advancing {
+            block["timestamp"] = json!(5);
+        }
         let result = run_health(
             replies(&advancing),
             replies(&advancing),
@@ -1279,7 +1288,7 @@ mod tests {
         )
         .await;
         assert_eq!(result.status, Status::Passed);
-        let future = replies(&[block_at(10, 'a', now + 10)]);
+        let future = replies(&[block_at(10, 'a', u64::MAX)]);
         let result =
             run_health(future.clone(), future, Duration::from_millis(4), Duration::from_secs(2))
                 .await;
@@ -1292,7 +1301,8 @@ mod tests {
         assert_eq!(result.status, Status::Failed);
         assert!(result.message.contains("freshness limit"));
 
-        let delayed = vec![Reply { delay: Duration::from_millis(70), body: rpc(block(10, 'a')) }];
+        let delayed =
+            vec![Reply { delay: RPC_BUDGET + Duration::from_secs(1), body: rpc(block(10, 'a')) }];
         let result =
             run_health(delayed.clone(), delayed, Duration::from_millis(4), Duration::from_secs(2))
                 .await;
