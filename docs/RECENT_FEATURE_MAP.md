@@ -53,6 +53,24 @@ Do **not** optimize, expand, or create new dependencies on the Flashblock
 builder. Treat a proposal that needs new Flashblock behavior as out of
 roadmap unless it is an explicit retirement-blocking fix.
 
+## Simplification and performance focus
+
+Direct simplification and performance work to these areas first. A change outside
+these areas needs a clear user or operator outcome that outweighs the cost of
+additional surface area.
+
+| Priority area | Simplify | Measure | Do not do |
+| --- | --- | --- | --- |
+| **200 ms block path and builder** | Remove Flashblock-builder callers, flags, adapters, metrics, and test-only plumbing as migration conditions are met. Keep one canonical builder/payload path. | End-to-end block-build latency, p95/p99 timing, throughput, CPU, allocations, and memory under representative mixed transaction workloads. | New Flashblock behavior or an unmeasured builder refactor. |
+| **Txpool and validity scheduling** | Collapse duplicate admission, wakeup, expiry, and invalidation paths; remove transitional indexes and compatibility code once callers move. | High-rate admission/replacement/expiry, predicate wakeup, invalidation, memory bounds, and the effect on block-build latency. | A microbenchmark that does not exercise realistic pool shape or downstream builder impact. |
+| **Execution state and trie access** | Remove redundant reads, conversions, caches, and compatibility layers only when ownership and invalidation remain clear. | Representative execution/state-read workloads, allocations, peak memory, and block processing latency. | Cache additions without an eviction/invalidation contract and benchmark evidence. |
+| **Proof production and recovery** | Consolidate duplicate orchestration, retry, registration, and recovery workflows; retire obsolete proving modes after migration. | Time-to-proof, queue delay, recovery time, concurrency, failure/restart behavior, and resource use. | Throughput work that hides regressions in recovery, correctness, or operator diagnosis. |
+| **Snapshots, sync, and node operations** | Keep one supported operational workflow and remove duplicated configuration, metrics, and runbooks as paths converge. | Snapshot/restart/sync-to-tip time, failure recovery, disk and memory use, and actionable observability. | New operator knobs or documentation-only changes without an operational improvement. |
+
+For every simplification, name the obsolete path and the condition that makes
+its removal safe. For every performance change, establish a baseline first and
+show a repeatable improvement on a representative benchmark or E2E workload.
+
 ## Decision rules for a PR
 
 Before implementing a change, state in the PR description:
