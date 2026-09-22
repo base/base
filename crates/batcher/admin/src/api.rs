@@ -12,15 +12,17 @@ use tracing::warn;
 
 #[rpc(server, namespace = "admin")]
 pub trait BatcherAdminApi {
-    /// Start block ingestion again after a previous stop.
+    /// Start block ingestion again after a previous stop. Does nothing if already running.
     #[method(name = "startBatcher")]
     async fn start_batcher(&self) -> RpcResult<()>;
 
-    /// Stop block ingestion; the driver task keeps running.
+    /// Stop block ingestion; the driver task keeps running. Does nothing if already stopped.
     #[method(name = "stopBatcher")]
     async fn stop_batcher(&self) -> RpcResult<()>;
 
-    /// Flush the current encoding channel, submitting any buffered frames.
+    /// Flush the current encoding channel, making its frames eligible for submission.
+    ///
+    /// Fails if the batcher is stopped.
     #[method(name = "flushBatcher")]
     async fn flush_batcher(&self) -> RpcResult<()>;
 
@@ -68,6 +70,7 @@ impl BatcherAdminApiServerImpl {
         let code = match e {
             AdminError::NotSupported(_) => -32601,
             AdminError::ChannelClosed => -32001,
+            AdminError::Stopped => -32002,
         };
         ErrorObjectOwned::owned(code, e.to_string(), None::<()>)
     }
@@ -128,5 +131,11 @@ mod tests {
     fn admin_error_channel_closed_uses_server_error_code() {
         let err = BatcherAdminApiServerImpl::admin_error(AdminError::ChannelClosed);
         assert_eq!(err.code(), -32001);
+    }
+
+    #[test]
+    fn admin_error_stopped_uses_invalid_state_code() {
+        let err = BatcherAdminApiServerImpl::admin_error(AdminError::Stopped);
+        assert_eq!(err.code(), -32002);
     }
 }

@@ -4,7 +4,7 @@ use base_batcher_encoder::SubmissionId;
 use base_common_consensus::BaseBlock;
 use tokio::sync::oneshot;
 
-use crate::{DerivationStatus, TxOutcome};
+use crate::{AdminResult, DerivationStatus, TxOutcome};
 
 /// Events the driver can receive from external sources during the I/O phase.
 #[derive(Debug)]
@@ -13,11 +13,14 @@ pub enum DriverEvent {
     Shutdown,
     /// New L2 unsafe block from the source.
     Block(Box<BaseBlock>),
-    /// Source (or admin) requested a force-flush of the current channel.
+    /// Source requested a force-flush of the current channel. No production source emits this,
+    /// only the action-test harness and tests.
     ///
     /// If the ack is set, it fires once every frame resulting from this flush has been
     /// encoded and handed to the tx manager.
-    Flush(Option<oneshot::Sender<()>>),
+    SourceFlush(Option<oneshot::Sender<()>>),
+    /// Admin requested a force-flush of the current channel; answered once the pipeline is flushed.
+    AdminFlush(oneshot::Sender<AdminResult<()>>),
     /// L2 reorganisation detected.
     Reorg,
     /// An in-flight L1 transaction settled, carrying one or more submissions.
