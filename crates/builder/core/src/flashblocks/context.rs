@@ -22,7 +22,7 @@ use base_execution_eip8130::IntrinsicGas;
 use base_execution_evm::{BaseEvmConfig, BaseNextBlockEnvAttributes};
 use base_execution_payload_builder::{
     BasePayloadBuilderAttributes, BuilderMetrics as SharedBuilderMetrics, CoinbaseTipAffordability,
-    ValidityMetrics, error::BasePayloadBuilderError,
+    GasAffordability, ValidityMetrics, error::BasePayloadBuilderError,
 };
 use base_execution_txpool::{
     BasePooledTx, GuardMetrics, PredicateContext, TimestampedTransaction,
@@ -1062,11 +1062,24 @@ impl BasePayloadBuilderCtx {
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(&tx, tx_payer_auth, evm.db_mut()) {
+            let gas_shortfall =
+                CoinbaseTipAffordability::gas_shortfall(&tx, tx_payer_auth, evm.db_mut());
+            if !matches!(gas_shortfall, GasAffordability::Affordable) {
+                // Payer-wide drain suspends the whole payer for the rest of the build and runs
+                // the existing pool reverse-index cleanup; a single over-large transaction is
+                // skipped on its own with the payer left active.
+                let reason =
+                    if let GasAffordability::PayerDrained { payer, balance } = gas_shortfall {
+                        best_txs.drop_payer_balance(payer, balance);
+                        "drained_gas_payer"
+                    } else {
+                        "unaffordable_gas"
+                    };
                 trace!(
                     target: "payload_builder",
                     tx_hash = ?tx_hash,
-                    "skipping transaction unable to pay gas plus declared coinbase tip"
+                    reason,
+                    "skipping EIP-8130 transaction unable to pay worst-case gas"
                 );
                 self.reject_current(
                     best_txs,
@@ -1075,8 +1088,8 @@ impl BasePayloadBuilderCtx {
                         payload_id: &payload_id,
                         info,
                         limits,
-                        reason: "unaffordable_coinbase_tip",
-                        detail: "sender and gas payer cannot cover worst-case gas plus the declared coinbase tip",
+                        reason,
+                        detail: "sender or gas payer cannot cover worst-case gas (and declared coinbase tip, if any)",
                     },
                     &tx,
                     ordering_position,

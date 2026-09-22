@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, TxHash, U256};
 use base_execution_txpool::{BasePooledTx, ParkableBestTransactions};
 pub use reth_payload_util::NoopPayloadTransactions;
 use reth_payload_util::PayloadTransactions;
@@ -48,6 +48,14 @@ where
 
     /// Excludes a predicate-parked transaction for the remainder of this iterator.
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool;
+
+    /// Drops remaining candidates paid by `payer` at `balance`.
+    ///
+    /// Pool-backed iterators run the mempool guard's balance reverse-index drop.
+    /// Default is a no-op so tests and non-pool adapters can ignore it.
+    fn drop_payer_balance(&mut self, payer: Address, balance: U256) {
+        let _ = (payer, balance);
+    }
 }
 
 impl<T, I> ParkablePayloadTransactions for reth_payload_util::BestPayloadTransactions<T, I>
@@ -147,6 +155,7 @@ where
 {
     inner: Box<dyn ParkableBestTransactions<T>>,
     current: Option<Arc<ValidPoolTransaction<T>>>,
+    on_payer_balance_drop: Option<Arc<dyn Fn(Address, U256) + Send + Sync>>,
 }
 
 impl<T> std::fmt::Debug for ParkableBestPayloadTransactions<T>
@@ -166,7 +175,17 @@ where
 {
     /// Creates a payload adapter over a parkable best iterator.
     pub fn new(inner: Box<dyn ParkableBestTransactions<T>>) -> Self {
-        Self { inner, current: None }
+        Self { inner, current: None, on_payer_balance_drop: None }
+    }
+
+    /// Runs `on_drop` when the builder observes an insolvent EIP-8130 payer so
+    /// the mempool guard can evict every transaction watching that balance.
+    pub fn with_payer_balance_drop(
+        mut self,
+        on_drop: impl Fn(Address, U256) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_payer_balance_drop = Some(Arc::new(on_drop));
+        self
     }
 }
 
@@ -181,6 +200,8 @@ where
             self.current.is_none(),
             "previous transaction must be lifecycle-managed before next"
         );
+        // Suspended-payer skipping happens in the mempool iterator (`inner`), so
+        // this adapter only tracks the current transaction for lifecycle calls.
         let transaction = self.inner.next()?;
         self.current = Some(Arc::clone(&transaction));
         Some(transaction.transaction.clone())
@@ -231,5 +252,12 @@ where
             transaction_hash,
             InvalidPoolTransactionError::other(PayloadTransactionInvalidated),
         )
+    }
+
+    fn drop_payer_balance(&mut self, payer: Address, balance: U256) {
+        self.inner.suspend_payer(payer);
+        if let Some(on_drop) = &self.on_payer_balance_drop {
+            on_drop(payer, balance);
+        }
     }
 }

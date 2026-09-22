@@ -46,7 +46,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{BestTransactionsAttributes, TransactionPool};
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database as _;
 use serde::{Deserialize, Serialize};
@@ -189,9 +189,22 @@ where
 
 impl<Pool, Client> BasePayloadBuilder<Pool, Client>
 where
-    Pool: PoolBounds,
+    Pool: PoolBounds + Clone,
     Client: ClientBounds,
 {
+    fn parkable_best_transactions(
+        &self,
+        attrs: BestTransactionsAttributes,
+    ) -> ParkableBestPayloadTransactions<Pool::Transaction> {
+        let pool = self.pool.clone();
+        ParkableBestPayloadTransactions::new(
+            self.pool.best_transactions_with_attributes_and_parking(attrs),
+        )
+        .with_payer_balance_drop(move |payer, balance| {
+            pool.invalidate_from_state_diff(&[AccountStateDiff::with_balance(payer, balance)]);
+        })
+    }
+
     fn get_base_payload_builder_ctx(
         &self,
         config: reth_basic_payload_builder::PayloadConfig<
@@ -427,9 +440,7 @@ where
         // Create best_transaction iterator
         let best_txs_attributes = ctx.best_transaction_attributes();
         let mut best_txs = BestFlashblocksTxs::new(
-            ParkableBestPayloadTransactions::new(
-                self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
-            ),
+            self.parkable_best_transactions(best_txs_attributes),
             self.config.rejection_cache.clone(),
         );
         let interval = self.config.flashblocks_interval;
@@ -628,9 +639,7 @@ where
 
         let best_txs_start_time = Instant::now();
         let best_txs_attributes = ctx.best_transaction_attributes();
-        best_txs.refresh_iterator(ParkableBestPayloadTransactions::new(
-            self.pool.best_transactions_with_attributes_and_parking(best_txs_attributes),
-        ));
+        best_txs.refresh_iterator(self.parkable_best_transactions(best_txs_attributes));
         let transaction_pool_fetch_time = best_txs_start_time.elapsed();
         BuilderMetrics::transaction_pool_fetch_duration().record(transaction_pool_fetch_time);
         BuilderMetrics::transaction_pool_fetch_gauge().set(transaction_pool_fetch_time);

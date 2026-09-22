@@ -4465,6 +4465,8 @@ dependencies = [
  "alloy-rlp",
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
+ "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
  "base-bundles",
  "base-common-chains",
  "base-common-consensus",

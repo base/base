@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, marker::PhantomData};
 
-use alloy_primitives::{Address, TxHash};
+use alloy_primitives::{Address, TxHash, U256};
 use base_execution_payload_builder::ParkablePayloadTransactions;
 use reth_payload_util::PayloadTransactions;
 use reth_transaction_pool::PoolTransaction;
@@ -151,6 +151,10 @@ where
 
     fn discard_parked(&mut self, transaction_hash: TxHash) -> bool {
         self.inner.discard_parked(transaction_hash)
+    }
+
+    fn drop_payer_balance(&mut self, payer: Address, balance: U256) {
+        self.inner.drop_payer_balance(payer, balance);
     }
 }
 

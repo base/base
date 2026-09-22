@@ -62,6 +62,8 @@ moka = { workspace = true, features = ["sync"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
 reth-provider.workspace = true
 reth-ethereum-forks.workspace = true
 metrics-exporter-prometheus.workspace = true

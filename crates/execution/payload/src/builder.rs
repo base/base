@@ -15,8 +15,8 @@ use base_common_consensus::{BaseTransaction, CoinbaseTip, Predeploys};
 use base_common_evm::L1BlockInfo;
 use base_execution_eip8130::IntrinsicGas;
 use base_execution_txpool::{
-    BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext, ValidityPredicate,
-    estimated_da_size::DataAvailabilitySized,
+    AccountStateDiff, BasePooledTx, GuardMetrics, ParkableTransactionPool, PredicateContext,
+    StateDiffInvalidation, ValidityPredicate, estimated_da_size::DataAvailabilitySized,
 };
 use base_observability_events::{
     GlobalTransactionEventWriter, TransactionEventProducer, TransactionEventType, transaction_event,
@@ -53,10 +53,10 @@ use tracing::{debug, debug_span, instrument, trace, warn};
 
 use crate::{
     Attributes, BasePayloadBuilderAttributes, BuilderMetrics, CoinbaseTipAffordability,
-    InclusionTracker, ParkableBestPayloadTransactions, ParkablePayloadTransactions,
-    ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker, PredicateReadRecorder,
-    StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation, config::BaseBuilderConfig,
-    error::BasePayloadBuilderError, payload::BaseBuiltPayload,
+    GasAffordability, InclusionTracker, ParkableBestPayloadTransactions,
+    ParkablePayloadTransactions, ParkedPredicateIndex, PayloadPrimitives, PredicateLoadTracker,
+    PredicateReadRecorder, StateChangeEffects, ValidityMetrics, ValidityPredicateEvaluation,
+    config::BaseBuilderConfig, error::BasePayloadBuilderError, payload::BaseBuiltPayload,
 };
 
 macro_rules! emit_native_validity_event {
@@ -560,7 +560,7 @@ where
 
 impl<Pool> BasePayloadTransactions<Pool> for ()
 where
-    Pool: ParkableTransactionPool,
+    Pool: ParkableTransactionPool + StateDiffInvalidation + Clone,
     Pool::Transaction: BasePooledTx,
 {
     fn best_transactions(
@@ -568,9 +568,14 @@ where
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl ParkablePayloadTransactions<Transaction = Pool::Transaction> {
+        let pool_for_drop = pool.clone();
         ParkableBestPayloadTransactions::new(
             pool.best_transactions_with_attributes_and_parking(attr),
         )
+        .with_payer_balance_drop(move |payer, balance| {
+            pool_for_drop
+                .invalidate_from_state_diff(&[AccountStateDiff::with_balance(payer, balance)]);
+        })
     }
 }
 
@@ -1118,16 +1123,29 @@ where
                 None => 0,
             };
 
-            if CoinbaseTipAffordability::unaffordable(
+            let gas_shortfall = CoinbaseTipAffordability::gas_shortfall(
                 &tx,
                 tx_payer_auth,
                 builder.evm_mut().db_mut(),
-            ) {
-                trace!(
-                    target: "payload_builder",
-                    tx_hash = ?tx.hash(),
-                    "skipping transaction unable to pay gas plus declared coinbase tip"
-                );
+            );
+            if !matches!(gas_shortfall, GasAffordability::Affordable) {
+                if let GasAffordability::PayerDrained { payer, balance } = gas_shortfall {
+                    // Payer-wide drain: suspend every candidate this payer funds for the rest
+                    // of the build (O(1), lazily skipped) and run the existing pool
+                    // reverse-index cleanup. A single over-large transaction does not land here.
+                    best_txs.drop_payer_balance(payer, balance);
+                    trace!(
+                        target: "payload_builder",
+                        tx_hash = ?tx.hash(),
+                        "skipping EIP-8130 transaction: gas payer drained"
+                    );
+                } else {
+                    trace!(
+                        target: "payload_builder",
+                        tx_hash = ?tx.hash(),
+                        "skipping EIP-8130 transaction unable to pay worst-case gas"
+                    );
+                }
                 if tx.eip8130_replay_id().is_none() {
                     best_txs.mark_invalid(tx.sender(), tx.nonce());
                 } else {

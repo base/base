@@ -56,6 +56,12 @@ impl AccountStateDiff {
         Self { address, ..Default::default() }
     }
 
+    /// Balance-only invalidation for a payer (or self-paying sender).
+    #[must_use]
+    pub fn with_balance(address: Address, balance: U256) -> Self {
+        Self { address, balance: Some(balance), ..Default::default() }
+    }
+
     fn push_exact_keys(&self, out: &mut Vec<InvalidationKey>) {
         if self.nonce_changed {
             out.push(InvalidationKey::ProtocolNonce(self.address));

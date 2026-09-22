@@ -197,8 +197,7 @@ where
             self.ready.remove(&hash);
             self.parked.remove(&hash);
         }
-        self.inner
-            .mark_invalid(&transaction, InvalidPoolTransactionError::other(PayerSuspended));
+        self.inner.mark_invalid(&transaction, InvalidPoolTransactionError::other(PayerSuspended));
     }
 
     /// Returns a complete priority key for a transaction.
@@ -240,10 +239,14 @@ where
         }
     }
 
-    /// Discards all locally tracked members of a terminally invalid lane.
+    /// Marks a lane terminally invalid so its head and every nonce successor are excluded.
     ///
-    /// Buffered descendants have already been consumed from `inner`. Invalidating the yielded lane
-    /// head notifies `inner`, whose lane bookkeeping excludes its remaining descendants.
+    /// O(1): it flips the lane state (dropping any descendants buffered in the overwritten
+    /// `Occupied` state) and clears a matching `source_head`. Staged `ready`/`parked` heads of
+    /// the lane are deliberately *not* scanned out here; [`Self::next`] drops them lazily when
+    /// they surface (one cheap pop each), which avoids a full-pool `retain` pass per invalidated
+    /// lane. `fill_source_head` skips later descendants pulled from `inner`, and the head
+    /// invalidation is forwarded to `inner` so its own lane bookkeeping excludes the rest.
     pub fn invalidate_lane(&mut self, lane: BestTransactionLane) {
         self.lanes.insert(lane, BestTransactionLaneState::Invalid);
         if self
@@ -254,13 +257,6 @@ where
         {
             self.source_head = None;
         }
-        self.parked.retain(|_, transaction| {
-            BestTransactionLane::for_transaction(transaction) != Some(lane)
-        });
-        self.ready.retain(|_, transaction| {
-            BestTransactionLane::for_transaction(transaction) != Some(lane)
-        });
-        self.ready_heap.retain(|(_, hash)| self.ready.contains_key(hash));
     }
 
     /// Pulls through blocked descendants until the next source candidate is lane-eligible.
@@ -349,8 +345,19 @@ where
                 self.source_head.take().expect("source priority requires a source transaction")
             };
 
-            // Lazily skip candidates whose gas payer was suspended. The first
-            // skip of a lane invalidates it, dropping its blocked descendants.
+            // Drop stale heads of a lane already marked invalid (by an earlier
+            // suspended-payer skip or an explicit `mark_invalid`). Its nonce
+            // successors cannot execute, so this cheap per-pop check is the lazy
+            // counterpart to a retain pass over the staged sets.
+            if BestTransactionLane::for_transaction(&transaction).is_some_and(|lane| {
+                matches!(self.lanes.get(&lane), Some(BestTransactionLaneState::Invalid))
+            }) {
+                continue;
+            }
+
+            // Lazily skip candidates whose gas payer was suspended. The first skip
+            // of a lane marks it invalid, so its blocked nonce successors are
+            // dropped by the check above as they surface.
             if self.is_gas_payer_suspended(&transaction) {
                 self.exclude_suspended(transaction);
                 continue;
@@ -424,31 +431,13 @@ where
     }
 
     fn suspend_payer(&mut self, payer: Address) {
-        // The flag is the only mandatory work: it is O(1) and covers every
-        // transaction this payer funds, now and as they surface. `next` skips
-        // them lazily. Purge candidates already staged so we neither yield nor
-        // rank them: draining a payer must not keep its transactions competing.
-        if !self.suspended_payers.insert(payer) {
-            return;
-        }
-        let source_suspended = self
-            .source_head
-            .as_ref()
-            .is_some_and(|transaction| self.is_gas_payer_suspended(transaction));
-        if source_suspended {
-            let transaction = self.source_head.take().expect("source head checked above");
-            self.exclude_suspended(transaction);
-        }
-        let staged: Vec<Arc<ValidPoolTransaction<T>>> = self
-            .ready
-            .values()
-            .chain(self.parked.values())
-            .filter(|transaction| self.is_gas_payer_suspended(transaction))
-            .map(Arc::clone)
-            .collect();
-        for transaction in staged {
-            self.exclude_suspended(transaction);
-        }
+        // Flag-only: O(1), and it covers every transaction this payer funds, both
+        // those already staged and those still to surface. `next` consults the
+        // cached flag on each pop and skips lazily; the first skip of a lane marks
+        // it invalid so its nonce successors stay blocked. Draining one payer must
+        // not trigger an eager scan of the staged sets or a per-lane retain pass
+        // over the whole pool.
+        self.suspended_payers.insert(payer);
     }
 }
 
@@ -666,7 +655,7 @@ mod tests {
     }
 
     #[test]
-    fn invalidating_lane_removes_its_ready_heap_entries() {
+    fn invalidating_a_lane_excludes_its_staged_head_lazily() {
         let signer = PrivateKeySigner::random();
         let transaction = transaction(&signer, U256::from(1), 0, 100);
         let lane = BestTransactionLane::for_transaction(&transaction).unwrap();
@@ -676,8 +665,9 @@ mod tests {
         best.push_ready(transaction);
         best.invalidate_lane(lane);
 
-        assert!(best.ready.is_empty());
-        assert!(best.ready_heap.is_empty());
+        // Marking the lane invalid is O(1); the staged head is not scanned out but
+        // dropped on the next pop, so nothing from the invalid lane is ever yielded.
+        assert!(best.next().is_none());
     }
 
     #[test]
