@@ -379,7 +379,7 @@ impl BatcherService {
         if self.config.stopped && self.config.admin_addr.is_none() {
             eyre::bail!(
                 "--stopped requires --admin-port: the batcher would start stopped with no way to \
-                 resume because the admin JSON-RPC server is not enabled"
+                 start it because the admin JSON-RPC server is not enabled"
             );
         }
         if self.config.l1_rpc_url.is_empty() {

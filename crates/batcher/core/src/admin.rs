@@ -15,7 +15,7 @@ pub const ADMIN_CHANNEL_CAPACITY: usize = 32;
 /// Serialised directly as the `admin_getBatcherStatus` JSON-RPC response.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatcherStatus {
-    /// Whether block ingestion is currently stopped (paused via admin or `--stopped` flag).
+    /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     pub stopped: bool,
     /// Number of L1 transactions submitted but not yet confirmed.
     pub in_flight: usize,
@@ -40,10 +40,10 @@ pub type AdminResult<T> = Result<T, AdminError>;
 /// Commands the admin HTTP server can send to the running driver task.
 #[derive(derive_more::Debug)]
 pub enum AdminCommand {
-    /// Resume block ingestion after a [`Pause`](Self::Pause).
-    Resume,
-    /// Pause block ingestion without stopping the driver task.
-    Pause,
+    /// Start block ingestion again after a [`Stop`](Self::Stop).
+    Start,
+    /// Stop block ingestion; the driver task keeps running.
+    Stop,
     /// Flush the current encoding channel.
     Flush {
         /// Fired once the driver's encoding and submission are both fully drained (not just
@@ -92,17 +92,17 @@ impl AdminHandle {
         (Self { tx }, rx)
     }
 
-    /// Resume block ingestion if currently paused.
-    pub async fn resume(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Resume).await
+    /// Start block ingestion again if currently stopped.
+    pub async fn start(&self) -> AdminResult<()> {
+        self.send(AdminCommand::Start).await
     }
 
-    /// Pause block ingestion without stopping the driver task.
+    /// Stop block ingestion; the driver task keeps running.
     ///
     /// In-flight submissions continue to resolve; no new blocks are ingested
-    /// until [`resume`](Self::resume) is called.
-    pub async fn pause(&self) -> AdminResult<()> {
-        self.send(AdminCommand::Pause).await
+    /// until [`start`](Self::start) is called.
+    pub async fn stop(&self) -> AdminResult<()> {
+        self.send(AdminCommand::Stop).await
     }
 
     /// Flush the current encoding channel, submitting any buffered frames.
@@ -187,10 +187,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn resume_returns_channel_closed_when_rx_dropped() {
+    async fn start_returns_channel_closed_when_rx_dropped() {
         let (handle, rx) = AdminHandle::channel();
         drop(rx);
-        let err = handle.resume().await.unwrap_err();
+        let err = handle.start().await.unwrap_err();
         assert!(matches!(err, AdminError::ChannelClosed));
     }
 

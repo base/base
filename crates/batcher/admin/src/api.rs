@@ -12,11 +12,11 @@ use tracing::warn;
 
 #[rpc(server, namespace = "admin")]
 pub trait BatcherAdminApi {
-    /// Resume block ingestion after a previous stop.
+    /// Start block ingestion again after a previous stop.
     #[method(name = "startBatcher")]
     async fn start_batcher(&self) -> RpcResult<()>;
 
-    /// Pause block ingestion without stopping the driver task.
+    /// Stop block ingestion; the driver task keeps running.
     #[method(name = "stopBatcher")]
     async fn stop_batcher(&self) -> RpcResult<()>;
 
@@ -76,11 +76,11 @@ impl BatcherAdminApiServerImpl {
 #[async_trait]
 impl BatcherAdminApiServer for BatcherAdminApiServerImpl {
     async fn start_batcher(&self) -> RpcResult<()> {
-        self.handle.resume().await.map_err(Self::admin_error)
+        self.handle.start().await.map_err(Self::admin_error)
     }
 
     async fn stop_batcher(&self) -> RpcResult<()> {
-        self.handle.pause().await.map_err(Self::admin_error)
+        self.handle.stop().await.map_err(Self::admin_error)
     }
 
     async fn flush_batcher(&self) -> RpcResult<()> {

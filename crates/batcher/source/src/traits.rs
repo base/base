@@ -18,7 +18,7 @@ pub trait UnsafeBlockSource: Send {
 
     /// Reset the source to begin sequential catchup above `safe_head`.
     ///
-    /// Called by the driver on resume after a pause, ensuring blocks between
+    /// Called by the driver on start after a stop, ensuring blocks between
     /// the last safe head and the current unsafe tip are not skipped. The
     /// source should validate the first block against the safe-head hash, then
     /// continue delivering subsequent blocks in order.
