@@ -216,9 +216,10 @@ mod tests {
     use async_trait::async_trait;
     use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
     use base_prover_service_protocol::{
-        GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-        HeartbeatRequest, HeartbeatResponse, RecordProofSessionRequest, RecordProofSessionResponse,
-        WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+        AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
+        GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+        RecordProofSessionRequest, RecordProofSessionResponse, WorkerSubmitProofRequest,
+        WorkerSubmitProofResponse,
     };
     use tokio::time::advance;
 
@@ -245,6 +246,13 @@ mod tests {
         ) -> Result<HeartbeatResponse, ProverServiceClientError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             std::future::pending().await
+        }
+
+        async fn abandon_proof(
+            &self,
+            _request: AbandonProofRequest,
+        ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+            unreachable!()
         }
 
         async fn submit_proof(

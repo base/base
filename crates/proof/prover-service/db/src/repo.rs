@@ -6,12 +6,13 @@ use sqlx::{PgPool, Result, Row};
 use uuid::Uuid;
 
 use crate::{
-    ApiProofType, ClaimAuth, ClaimProofJob, CompleteClaimedProofJob, CreateProofRequest,
-    CreateProofRequestError, CreateProofRequestOutcome, CreateProofRequestValidationError,
-    CreateProofSession, DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome,
-    HeartbeatProofJob, JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem,
-    ProofRequestPage, ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome,
-    SessionStatus, SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
+    AbandonProofJob, AbandonProofOutcome, ApiProofType, ClaimAuth, ClaimProofJob,
+    CompleteClaimedProofJob, CreateProofRequest, CreateProofRequestError,
+    CreateProofRequestOutcome, CreateProofRequestValidationError, CreateProofSession,
+    DeleteProofRequestOutcome, FailExpiredProofJobs, HeartbeatOutcome, HeartbeatProofJob,
+    JobLockState, ProofJob, ProofJobStatus, ProofRequest, ProofRequestListItem, ProofRequestPage,
+    ProofSession, ProofStatus, ProofType, RecordSessionOutcome, RetryOutcome, SessionStatus,
+    SessionType, SubmitProofOutcome, TeeKind, UpdateProofSession, UpdateReceipt,
     WorkerSessionUpsert, ZkVmKind, canonical_session_id,
 };
 
@@ -699,6 +700,97 @@ impl ProofRequestRepo {
             ClaimAuth::StaleLock => Ok(HeartbeatOutcome::StaleLock(job)),
             ClaimAuth::Expired => Ok(HeartbeatOutcome::Expired(job)),
         }
+    }
+
+    /// Abandon the currently owned proof job, requeueing it immediately while attempts remain.
+    pub async fn abandon_proof_job(&self, req: AbandonProofJob) -> Result<AbandonProofOutcome> {
+        let session_id = canonical_session_id(&req.session_id)
+            .map_err(|e| sqlx::Error::InvalidArgument(e.to_string()))?;
+        let mut tx = self.pool.begin().await?;
+        let columns = PROOF_JOB_RETURNING_COLUMNS;
+        let sql = format!(
+            r#"
+            SELECT {columns}, NOW() AS database_now
+            FROM proof_requests
+            WHERE COALESCE(session_id, id::text) = $1
+            FOR UPDATE
+            "#
+        );
+        let row = sqlx::query(&sql).bind(&session_id).fetch_optional(&mut *tx).await?;
+        let Some(row) = row else {
+            return Ok(AbandonProofOutcome::NotFound);
+        };
+        let job = row_to_proof_job(&row)?;
+        let now: chrono::DateTime<Utc> = row.get("database_now");
+
+        match ClaimAuth::classify(
+            JobLockState {
+                status: job.job_status,
+                lock_id: job.lock_id,
+                worker_id: job.worker_id.as_deref(),
+                lock_expires_at: job.lock_expires_at,
+            },
+            req.lock_id,
+            &req.worker_id,
+            now,
+        ) {
+            ClaimAuth::Authorized => {}
+            ClaimAuth::Terminal => return Ok(AbandonProofOutcome::Terminal(job)),
+            ClaimAuth::NotClaimed => return Ok(AbandonProofOutcome::NotClaimed(job)),
+            ClaimAuth::StaleLock => return Ok(AbandonProofOutcome::StaleLock(job)),
+            ClaimAuth::Expired => return Ok(AbandonProofOutcome::Expired(job)),
+        }
+
+        let exhausted = job.attempt >= i32::try_from(req.max_attempts).unwrap_or(i32::MAX);
+        if exhausted {
+            sqlx::query(
+                r#"
+                UPDATE proof_sessions
+                SET status = 'FAILED', error_message = $2, completed_at = NOW()
+                WHERE proof_request_id = $1 AND status IN ('SUBMITTING', 'RUNNING')
+                "#,
+            )
+            .bind(job.id)
+            .bind(&req.error_message)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        let sql = format!(
+            r#"
+            UPDATE proof_requests
+            SET job_status = $2,
+                status = $3,
+                error_message = $4,
+                completed_at = CASE WHEN $2 = 'FAILED' THEN NOW() ELSE NULL END,
+                worker_id = NULL,
+                lock_id = NULL,
+                lock_expires_at = NULL,
+                claimed_at = NULL,
+                last_heartbeat_at = NULL
+            WHERE id = $1
+            RETURNING {columns}
+            "#
+        );
+        let row = sqlx::query(&sql)
+            .bind(job.id)
+            .bind(if exhausted { "FAILED" } else { "PENDING" })
+            .bind(if exhausted {
+                ProofStatus::Failed.as_str()
+            } else {
+                ProofStatus::Created.as_str()
+            })
+            .bind(exhausted.then_some(req.error_message.as_str()))
+            .fetch_one(&mut *tx)
+            .await?;
+        let job = row_to_proof_job(&row)?;
+        tx.commit().await?;
+
+        Ok(if exhausted {
+            AbandonProofOutcome::Failed(job)
+        } else {
+            AbandonProofOutcome::Requeued(job)
+        })
     }
 
     /// Complete the currently owned worker proof job (`submitProof`).

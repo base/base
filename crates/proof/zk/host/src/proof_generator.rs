@@ -16,8 +16,8 @@ pub use base_proof_worker::{
 };
 use base_prover_service_client::{ProverServiceClientError, ProverWorkerProvider};
 use base_prover_service_protocol::{
-    BackendSession, BackendSessionState, ProofJob, ProofRequestKind, ProofResult, SessionType,
-    WorkerSubmitProofRequest, ZkBackend,
+    AbandonProofRequest, BackendSession, BackendSessionState, ProofJob, ProofRequestKind,
+    ProofResult, SessionType, WorkerSubmitProofRequest, ZkBackend,
 };
 use chrono::{DateTime, Utc};
 use thiserror::Error;
@@ -155,7 +155,7 @@ where
             "starting zk proof generation"
         );
 
-        let (result, permit) = self
+        let generated = self
             .with_heartbeat_while_generating(&request, async {
                 let result = self.prove_to_completion(&request).await?;
                 let permit = self.tasks.acquire_submission_permit().await;
@@ -184,7 +184,23 @@ where
                     );
                 }
                 _ => {}
-            })?;
+            });
+        let (result, permit) = match generated {
+            Ok(generated) => generated,
+            Err(error) => {
+                if matches!(
+                    error,
+                    ProofGeneratorError::Generate {
+                        source: ZkProverError::BackendSessionFailed { .. }
+                            | ZkProverError::BackendSessionNotFound { .. },
+                        ..
+                    }
+                ) {
+                    self.abandon_generation_failure(&request, &error).await;
+                }
+                return Err(error);
+            }
+        };
 
         let submit_request = WorkerSubmitProofRequest::try_from(ProofSubmitterRequest {
             session_id: request.claim.session_id.clone(),
@@ -207,6 +223,32 @@ where
         );
 
         Ok(())
+    }
+
+    async fn abandon_generation_failure(
+        &self,
+        request: &ProofGeneratorRequest,
+        error: &ProofGeneratorError,
+    ) {
+        if let Err(abandon_error) = self
+            .submitter
+            .client()
+            .abandon_proof(AbandonProofRequest {
+                session_id: request.claim.session_id.clone(),
+                lock_id: request.claim.lock_id.clone(),
+                worker_id: request.claim.worker_id.clone(),
+                error_message: error.to_string(),
+            })
+            .await
+        {
+            warn!(
+                session_id = %request.claim.session_id,
+                lock_id = %request.claim.lock_id,
+                worker_id = %request.claim.worker_id,
+                error = %abandon_error,
+                "failed to abandon zk proof job after generation failure"
+            );
+        }
     }
 
     async fn prove_to_completion(

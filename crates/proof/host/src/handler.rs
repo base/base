@@ -1,8 +1,10 @@
 use std::{
     any::Any,
     collections::{HashMap, HashSet, VecDeque},
+    future::Future,
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use alloy_consensus::Header;
@@ -14,6 +16,7 @@ use alloy_primitives::{Address, B64, B256, Bytes, keccak256};
 use alloy_provider::Provider;
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{Block, debug::ExecutionWitness};
+use alloy_transport::TransportError;
 use ark_ff::{BigInteger, PrimeField};
 use base_common_consensus::{HoloceneExtraData, JovianExtraData, Predeploys};
 use base_common_network::Base;
@@ -37,6 +40,7 @@ const PAYLOAD_WITNESS_PREFETCH_MAX_READY: usize = 16;
 const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_BLOCKS: usize = 128;
 const PAYLOAD_WITNESS_PREFETCH_MAX_SCHEDULED_LOOKAHEADS: usize = 128;
 const PAYLOAD_WITNESS_PREFETCH_PREIMAGE_WRITE_BATCH_SIZE: usize = 1024;
+const PAYLOAD_WITNESS_RPC_TIMEOUT: Duration = Duration::from_secs(60);
 const L1_HEADER_PREFETCH_LOOKBEHIND_BLOCKS: u64 = 512;
 // Keep several lookbehind windows ready without retaining every header seen by a long proof. Raw
 // L1 headers are hundreds of bytes each, so this bounds cached header bytes to a few MiB.
@@ -365,15 +369,12 @@ impl PayloadWitnessPrefetcher {
 
         let execute_payload_response =
             match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
-                self.inner
-                    .providers
-                    .l2
-                    .client()
-                    .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
-                        "debug_executePayload",
-                        (parent_block_hash, payload_attributes),
-                    )
-                    .await
+                fetch_payload_witness(
+                    &self.inner.providers.l2,
+                    parent_block_hash,
+                    payload_attributes,
+                )
+                .await
             }) {
                 Ok(response) => response,
                 Err(err) => {
@@ -782,6 +783,31 @@ fn panic_payload_message(payload: &(dyn Any + Send)) -> &str {
 
 fn payload_attributes_digest(payload_attributes: &BasePayloadAttributes) -> Result<B256> {
     Ok(keccak256(serde_json::to_vec(payload_attributes)?))
+}
+
+async fn fetch_payload_witness(
+    provider: &alloy_provider::RootProvider<Base>,
+    parent_block_hash: B256,
+    payload_attributes: BasePayloadAttributes,
+) -> Result<ExecutionWitness> {
+    payload_witness_request(
+        provider.client().request::<(B256, BasePayloadAttributes), ExecutionWitness>(
+            "debug_executePayload",
+            (parent_block_hash, payload_attributes),
+        ),
+        PAYLOAD_WITNESS_RPC_TIMEOUT,
+    )
+    .await
+}
+
+async fn payload_witness_request<F>(request: F, timeout: Duration) -> Result<ExecutionWitness>
+where
+    F: Future<Output = std::result::Result<ExecutionWitness, TransportError>>,
+{
+    tokio::time::timeout(timeout, request)
+        .await
+        .map_err(|_| HostError::PayloadWitnessTimeout(timeout))?
+        .map_err(HostError::from)
 }
 
 fn payload_attributes_from_l2_block(
@@ -1275,22 +1301,10 @@ async fn handle_hint_inner(
                 serde_json::from_slice(encoded_payload_attributes)?;
 
             let execute_payload_response =
-                match base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
-                    providers
-                        .l2
-                        .client()
-                        .request::<(B256, BasePayloadAttributes), ExecutionWitness>(
-                            "debug_executePayload",
-                            (parent_block_hash, payload_attributes),
-                        )
+                base_metrics::time!(Metrics::l2_proof_node_rpc_latency_seconds(), {
+                    fetch_payload_witness(&providers.l2, parent_block_hash, payload_attributes)
                         .await
-                }) {
-                    Ok(response) => response,
-                    Err(e) => {
-                        error!(error = %e, "debug_executePayload failed");
-                        return Ok(());
-                    }
-                };
+                })?;
 
             insert_execution_witness_preimages(Arc::clone(&kv), execute_payload_response).await?;
 
@@ -1648,5 +1662,34 @@ mod tests {
         }
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*requested_hash).into()).is_none());
         assert!(kv.read().await.get(PreimageKey::new_keccak256(*actual_hash).into()).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_payload_witness_foreground_rpc_failure_is_propagated() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("proof node unavailable");
+        let l2 = provider_builder::<Base>().connect_mocked_client(asserter);
+        let providers = test_providers(l2);
+        let kv: SharedKeyValueStore = Arc::new(RwLock::new(MemoryKeyValueStore::new()));
+        let mut cfg = test_cfg();
+        cfg.prover.enable_experimental_witness_endpoint = true;
+        let encoded_attributes = serde_json::to_vec(&BasePayloadAttributes::default()).unwrap();
+        let hint = HintType::L2PayloadWitness
+            .with_data(&[TEST_HASH.as_slice(), encoded_attributes.as_slice()]);
+
+        let error = handle_hint(hint, &cfg, &providers, kv).await.unwrap_err();
+
+        assert!(matches!(error, HostError::Transport(_)));
+    }
+
+    #[tokio::test]
+    async fn test_payload_witness_request_times_out() {
+        let request =
+            std::future::pending::<std::result::Result<ExecutionWitness, TransportError>>();
+        let timeout = Duration::from_millis(1);
+
+        let error = payload_witness_request(request, timeout).await.unwrap_err();
+
+        assert!(matches!(error, HostError::PayloadWitnessTimeout(actual) if actual == timeout));
     }
 }

@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 use backon::Retryable;
 use base_prover_service_protocol::{
-    GetNextProofRequest, GetNextProofResponse, GetProofSessionRequest, GetProofSessionResponse,
-    HeartbeatRequest, HeartbeatResponse, ProverWorkerApiClient, RecordProofSessionRequest,
-    RecordProofSessionResponse, WorkerSubmitProofRequest, WorkerSubmitProofResponse,
+    AbandonProofRequest, AbandonProofResponse, GetNextProofRequest, GetNextProofResponse,
+    GetProofSessionRequest, GetProofSessionResponse, HeartbeatRequest, HeartbeatResponse,
+    ProverWorkerApiClient, RecordProofSessionRequest, RecordProofSessionResponse,
+    WorkerSubmitProofRequest, WorkerSubmitProofResponse,
 };
 use base_retry::RetryConfig;
 use jsonrpsee::http_client::HttpClient;
@@ -31,6 +32,12 @@ pub trait ProverWorkerProvider: Send + Sync {
         &self,
         request: HeartbeatRequest,
     ) -> Result<HeartbeatResponse, ProverServiceClientError>;
+
+    /// Abandon a claimed proof job after generation fails.
+    async fn abandon_proof(
+        &self,
+        request: AbandonProofRequest,
+    ) -> Result<AbandonProofResponse, ProverServiceClientError>;
 
     /// Submit a proof result for a proof job.
     async fn submit_proof(
@@ -128,6 +135,23 @@ impl ProverWorkerClient {
             "heartbeating proof job"
         );
         Ok(self.inner.heartbeat(request).await?)
+    }
+
+    /// Abandon a claimed proof job after generation fails.
+    ///
+    /// Single-attempt: a lost success response cannot be replayed idempotently after the server
+    /// clears the fencing token. Lease expiry remains the fallback if delivery fails.
+    pub async fn abandon_proof(
+        &self,
+        request: AbandonProofRequest,
+    ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+        debug!(
+            session_id = %request.session_id,
+            lock_id = %request.lock_id,
+            worker_id = %request.worker_id,
+            "abandoning proof job"
+        );
+        Ok(self.inner.abandon_proof(request).await?)
     }
 
     /// Submit a proof result for a proof job.
@@ -242,6 +266,13 @@ impl ProverWorkerProvider for ProverWorkerClient {
         Self::heartbeat(self, request).await
     }
 
+    async fn abandon_proof(
+        &self,
+        request: AbandonProofRequest,
+    ) -> Result<AbandonProofResponse, ProverServiceClientError> {
+        Self::abandon_proof(self, request).await
+    }
+
     async fn submit_proof(
         &self,
         request: WorkerSubmitProofRequest,
@@ -277,10 +308,10 @@ mod tests {
     };
 
     use base_prover_service_protocol::{
-        BackendSession, BackendSessionState, GetProofSessionRequest, GetProofSessionResponse,
-        ProofJob, ProofJobStatus, ProofRequest, ProofRequestKind, ProofResult, ProofType,
-        ProverWorkerApiServer, RecordProofSessionRequest, RecordProofSessionResponse, SessionType,
-        ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
+        AbandonProofRequest, AbandonProofResponse, BackendSession, BackendSessionState,
+        GetProofSessionRequest, GetProofSessionResponse, ProofJob, ProofJobStatus, ProofRequest,
+        ProofRequestKind, ProofResult, ProofType, ProverWorkerApiServer, RecordProofSessionRequest,
+        RecordProofSessionResponse, SessionType, ZkBackend, ZkProofRequest, ZkProofResult, ZkVm,
     };
     use base_retry::RetryConfig;
     use chrono::Utc;
@@ -311,11 +342,13 @@ mod tests {
         reject_heartbeat: bool,
         get_next_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         heartbeat_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
+        abandon_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         submit_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         get_session_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         record_session_script: Arc<Mutex<VecDeque<ScriptedOutcome>>>,
         get_next_calls: Arc<AtomicU32>,
         heartbeat_calls: Arc<AtomicU32>,
+        abandon_calls: Arc<AtomicU32>,
         submit_calls: Arc<AtomicU32>,
         get_session_calls: Arc<AtomicU32>,
         record_session_calls: Arc<AtomicU32>,
@@ -341,11 +374,13 @@ mod tests {
                 reject_heartbeat: false,
                 get_next_script: Arc::new(Mutex::new(VecDeque::new())),
                 heartbeat_script: Arc::new(Mutex::new(VecDeque::new())),
+                abandon_script: Arc::new(Mutex::new(VecDeque::new())),
                 submit_script: Arc::new(Mutex::new(VecDeque::new())),
                 get_session_script: Arc::new(Mutex::new(VecDeque::new())),
                 record_session_script: Arc::new(Mutex::new(VecDeque::new())),
                 get_next_calls: Arc::new(AtomicU32::new(0)),
                 heartbeat_calls: Arc::new(AtomicU32::new(0)),
+                abandon_calls: Arc::new(AtomicU32::new(0)),
                 submit_calls: Arc::new(AtomicU32::new(0)),
                 get_session_calls: Arc::new(AtomicU32::new(0)),
                 record_session_calls: Arc::new(AtomicU32::new(0)),
@@ -364,6 +399,10 @@ mod tests {
 
         fn queue_heartbeat_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
             self.heartbeat_script.lock().expect("script lock").extend(outcomes);
+        }
+
+        fn queue_abandon_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
+            self.abandon_script.lock().expect("script lock").extend(outcomes);
         }
 
         fn queue_submit_outcomes<I: IntoIterator<Item = ScriptedOutcome>>(&self, outcomes: I) {
@@ -387,6 +426,10 @@ mod tests {
 
         fn heartbeat_calls(&self) -> u32 {
             self.heartbeat_calls.load(Ordering::SeqCst)
+        }
+
+        fn abandon_calls(&self) -> u32 {
+            self.abandon_calls.load(Ordering::SeqCst)
         }
 
         fn submit_calls(&self) -> u32 {
@@ -468,6 +511,32 @@ mod tests {
                     Some(request.lock_id),
                     Some(request.worker_id),
                     None,
+                ),
+            })
+        }
+
+        async fn abandon_proof(
+            &self,
+            request: AbandonProofRequest,
+        ) -> RpcResult<AbandonProofResponse> {
+            self.abandon_calls.fetch_add(1, Ordering::SeqCst);
+            match self.abandon_script.lock().expect("script lock").pop_front() {
+                Some(ScriptedOutcome::Retryable) => {
+                    return Err(unavailable_error("scripted abandon_proof retryable failure"));
+                }
+                Some(ScriptedOutcome::Fatal) => {
+                    return Err(invalid_params_error("scripted abandon_proof fatal failure"));
+                }
+                None | Some(ScriptedOutcome::Success) => {}
+            }
+
+            Ok(AbandonProofResponse {
+                job: proof_job(
+                    request.session_id,
+                    ProofJobStatus::Pending,
+                    None,
+                    None,
+                    Some(request.error_message),
                 ),
             })
         }
@@ -618,6 +687,15 @@ mod tests {
             lock_id: "lock-submit".to_owned(),
             worker_id: "worker-submit".to_owned(),
             result: proof_result(),
+        }
+    }
+
+    fn sample_abandon_request(session_id: &str) -> AbandonProofRequest {
+        AbandonProofRequest {
+            session_id: session_id.to_owned(),
+            lock_id: "lock-abandon".to_owned(),
+            worker_id: "worker-abandon".to_owned(),
+            error_message: "generation failed".to_owned(),
         }
     }
 
@@ -816,6 +894,25 @@ mod tests {
 
         assert!(err.is_retryable());
         assert_eq!(api_clone.heartbeat_calls(), 1);
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn worker_does_not_retry_retryable_abandon_proof() {
+        let api = MockWorkerApi::new();
+        api.queue_abandon_outcomes([ScriptedOutcome::Retryable, ScriptedOutcome::Success]);
+        let api_clone = api.clone();
+        let server = RunningWorkerServer::spawn_with_retry(api, fast_retry_config()).await;
+
+        let error = server
+            .client
+            .abandon_proof(sample_abandon_request("session-abandon-retry"))
+            .await
+            .expect_err("abandon_proof retryable error should not be retried");
+
+        assert!(error.is_retryable());
+        assert_eq!(api_clone.abandon_calls(), 1);
 
         server.shutdown().await;
     }

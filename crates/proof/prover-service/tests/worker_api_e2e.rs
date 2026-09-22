@@ -19,10 +19,11 @@ use base_prover_service_db::{
     ProofStatus as DbProofStatus, ZkVmKind,
 };
 use base_prover_service_protocol::{
-    GetNextProofRequest, HeartbeatRequest, ProofJobStatus, ProofRequest as ProtocolProofRequest,
-    ProofRequestKind, ProofResult, ProofType, ProverRequesterApiServer, ProverWorkerApiClient,
-    ProverWorkerApiServer, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest, ZkProofResult,
-    ZkVm,
+    AbandonProofRequest, BackendSessionState, GetNextProofRequest, GetProofSessionRequest,
+    HeartbeatRequest, ProofJobStatus, ProofRequest as ProtocolProofRequest, ProofRequestKind,
+    ProofResult, ProofType, ProverRequesterApiServer, ProverWorkerApiClient, ProverWorkerApiServer,
+    RecordProofSessionRequest, SessionType, WorkerSubmitProofRequest, ZkBackend, ZkProofRequest,
+    ZkProofResult, ZkVm,
 };
 use jsonrpsee::{
     core::client::Error as ClientError,
@@ -197,12 +198,75 @@ async fn worker_claim_heartbeat_submit_round_trip() {
         .expect_err("a non-owning lock must be rejected");
     assert_rpc_error_code(&stale, ERROR_FAILED_PRECONDITION);
 
+    server
+        .client
+        .record_proof_session(RecordProofSessionRequest {
+            session_id: session_id.clone(),
+            lock_id: lock_id.clone(),
+            worker_id: "worker-e2e".to_owned(),
+            session_type: SessionType::Stark,
+            backend_session_id: "backend-e2e".to_owned(),
+            state: BackendSessionState::Running,
+        })
+        .await
+        .expect("recording an active backend session should succeed");
+
+    let stale_abandon = server
+        .client
+        .abandon_proof(AbandonProofRequest {
+            session_id: session_id.clone(),
+            lock_id: Uuid::new_v4().to_string(),
+            worker_id: "worker-e2e".to_owned(),
+            error_message: "stale worker failure".to_owned(),
+        })
+        .await
+        .expect_err("a stale fencing token must not abandon the job");
+    assert_rpc_error_code(&stale_abandon, ERROR_FAILED_PRECONDITION);
+
+    let abandoned = server
+        .client
+        .abandon_proof(AbandonProofRequest {
+            session_id: session_id.clone(),
+            lock_id: lock_id.clone(),
+            worker_id: "worker-e2e".to_owned(),
+            error_message: "generation failed".to_owned(),
+        })
+        .await
+        .expect("the owning worker should abandon the job");
+    assert_eq!(abandoned.job.status, ProofJobStatus::Pending);
+    assert_eq!(abandoned.job.attempt, 1);
+
+    let active_session = server
+        .client
+        .get_proof_session(GetProofSessionRequest {
+            session_id: session_id.clone(),
+            session_type: SessionType::Stark,
+        })
+        .await
+        .expect("backend session lookup should succeed")
+        .session
+        .expect("active backend session should survive requeue");
+    assert_eq!(active_session.backend_session_id, "backend-e2e");
+    assert_eq!(active_session.state, BackendSessionState::Running);
+
+    let reclaimed = server
+        .client
+        .get_next_proof(worker_claim("worker-e2e-reclaim"))
+        .await
+        .expect("abandoned job should be immediately reclaimable")
+        .job
+        .expect("abandoned job should be returned without waiting for lease expiry");
+    assert_eq!(reclaimed.session_id, session_id);
+    assert_eq!(reclaimed.attempt, 2);
+    let reclaimed_lock_id = reclaimed.lock_id.expect("reclaimed job carries a new lock id");
+    assert_ne!(reclaimed_lock_id, lock_id);
+
     let submitted = server
         .client
         .submit_proof(WorkerSubmitProofRequest {
             session_id: session_id.clone(),
-            lock_id: lock_id.clone(),
-            worker_id: "worker-e2e".to_owned(),
+            lock_id: reclaimed_lock_id,
+            worker_id: "worker-e2e-reclaim".to_owned(),
             result: ProofResult::Compressed(ZkProofResult {
                 zk_vm: ZkVm::Sp1,
                 proof: vec![1, 2, 3].into(),
@@ -220,7 +284,7 @@ async fn worker_claim_heartbeat_submit_round_trip() {
         .expect("the submitted proof request should exist");
     assert_eq!(stored.status, DbProofStatus::Succeeded);
     assert!(stored.result_payload.is_some(), "submitted result payload should be persisted");
-    assert_eq!(stored.submitted_by_worker_id.as_deref(), Some("worker-e2e"));
+    assert_eq!(stored.submitted_by_worker_id.as_deref(), Some("worker-e2e-reclaim"));
 
     server.shutdown().await;
 }

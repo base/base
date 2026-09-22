@@ -1030,6 +1030,40 @@ pub struct HeartbeatProofJob {
     pub lock_duration_seconds: u32,
 }
 
+/// Parameters for abandoning the currently owned worker proof job.
+#[derive(Debug, Clone)]
+pub struct AbandonProofJob {
+    /// Public proof session identifier.
+    pub session_id: String,
+    /// Current worker fencing token.
+    pub lock_id: Uuid,
+    /// Worker identifier that owns the claim.
+    pub worker_id: String,
+    /// Proof generation failure message.
+    pub error_message: String,
+    /// Reclaim budget after which the job fails terminally.
+    pub max_attempts: u32,
+}
+
+/// Outcome of attempting to abandon a worker proof job.
+#[derive(Debug, Clone)]
+pub enum AbandonProofOutcome {
+    /// The job was made immediately claimable again.
+    Requeued(ProofJob),
+    /// The job exhausted its claim budget and failed terminally.
+    Failed(ProofJob),
+    /// No proof job exists for the supplied `session_id`.
+    NotFound,
+    /// The job exists but is not currently claimed.
+    NotClaimed(ProofJob),
+    /// The supplied worker or lock no longer owns the job.
+    StaleLock(ProofJob),
+    /// The lock matched the job but had expired.
+    Expired(ProofJob),
+    /// The job is already terminal.
+    Terminal(ProofJob),
+}
+
 /// Outcome of attempting to heartbeat a worker proof job.
 #[derive(Debug, Clone)]
 pub enum HeartbeatOutcome {
