@@ -36,7 +36,7 @@ pub struct NetworkDriver {
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkDriverError {
     /// An error occurred starting the libp2p Swarm.
-    #[error("error starting libp2p Swarm")]
+    #[error("error starting libp2p Swarm: {0}")]
     GossipStartError(#[from] TransportError<std::io::Error>),
     /// An error occurred starting the block signer client.
     #[error("error starting block signer client: {0}")]

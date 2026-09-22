@@ -226,14 +226,15 @@ complete evaluation. Infrastructure takes precedence when outcomes are mixed.
 The advisory Depot workflow discovers and validates every scenario, runs the selected
 suite as independent shards, uploads report bundles, and strictly aggregates expected results. Reports are artifacts;
 PR publication is available only when the trusted base revision contains the
-publisher. Same-repository PRs select `[ci] suite = "pr"` (currently only smoke).
+publisher. Same-repository PRs select `[ci] suite = "pr"`, running both smoke and
+Glamsterdam blob-transfer and post-fork health checks automatically.
 Scenarios without CI metadata default to `extended`; manual dispatch selects
 `pr`, `extended`, or `all`. Adding a scenario requires only its TOML file, not a
 workflow edit. The Rust `select` command emits both the matrix and matching expected
 manifest, including expanded protocol assertion IDs:
 
 ```console
-cargo run -p base-acceptance-cli -- select --suite extended \
+cargo run -p base-acceptance-cli -- select --suite pr \
   --run-id local --tested-sha "$(git rev-parse HEAD)" \
   --expected target/acceptance-expected.json --matrix target/acceptance-matrix.json
 ```

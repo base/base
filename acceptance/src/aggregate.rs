@@ -249,9 +249,15 @@ impl Aggregate {
             Ok(path) => path,
             Err(_) => return,
         };
+        let mut copied_paths = BTreeSet::new();
         for check in &mut scenario.checks {
             for evidence in &mut check.evidence {
                 let original = evidence.clone();
+                let relative = PathBuf::from("evidence").join(&scenario.id).join(&original);
+                if copied_paths.contains(&original) {
+                    *evidence = relative.to_string_lossy().into_owned();
+                    continue;
+                }
                 let source = bundle.join(&original);
                 let safe = Report::validate_evidence_path(&original)
                     .and_then(|_| source.canonicalize().map_err(Into::into))
@@ -272,8 +278,6 @@ impl Aggregate {
                         }
                         Ok((canonical, metadata.len()))
                     });
-                let relative =
-                    PathBuf::from("evidence").join(&scenario.id).join(&check.id).join(&original);
                 let copied = safe.and_then(|(canonical, size)| {
                     let destination = output.join(&relative);
                     fs::create_dir_all(destination.parent().expect("evidence has parent"))?;
@@ -281,12 +285,20 @@ impl Aggregate {
                     *copied_bytes += size;
                     Ok(())
                 });
-                if copied.is_ok() {
-                    *evidence = relative.to_string_lossy().into_owned();
-                } else {
-                    scenario.diagnostics.push(format!("evidence unavailable: {original}"));
-                    check.status = Status::Error;
-                    evidence.clear();
+                match copied {
+                    Ok(()) => {
+                        copied_paths.insert(original);
+                        *evidence = relative.to_string_lossy().into_owned();
+                    }
+                    Err(error) => {
+                        let message = format!("evidence unavailable: {original}: {error}");
+                        scenario.diagnostics.push(message.clone());
+                        check.status = Status::Error;
+                        check.message = message;
+                        check.next_step =
+                            "inspect scenario artifacts and aggregate diagnostics".into();
+                        evidence.clear();
+                    }
                 }
             }
             check.evidence.retain(|path| !path.is_empty());
@@ -581,6 +593,60 @@ mod tests {
         assert_eq!(fs::read_to_string(output.join(&checks[0].evidence[1])).unwrap(), "b");
         assert_eq!(checks[1].status, Status::Error);
         assert!(checks[1].evidence.is_empty());
+        assert!(checks[1].message.contains("evidence/logs/missing.txt"));
+        assert!(checks[1].next_step.contains("inspect scenario artifacts"));
+    }
+
+    #[test]
+    fn shared_evidence_is_copied_once_without_exhausting_the_aggregate_budget() {
+        let temp = TempDir::new().unwrap();
+        let results = temp.path().join("results");
+        let bundle = results.join("one");
+        fs::create_dir_all(bundle.join("evidence")).unwrap();
+        let log = vec![b'x'; 2 * 1024 * 1024];
+        fs::write(bundle.join("evidence/compose.log"), &log).unwrap();
+        let ids: Vec<_> = (0..12).map(|i| format!("check-{i}")).collect();
+        let names: Vec<_> = ids.iter().map(String::as_str).collect();
+        let mut shard = run("run-1", &names);
+        for check in &mut shard.scenarios[0].checks {
+            check.evidence = vec!["evidence/compose.log".into()];
+        }
+        write_json(&bundle.join("result.json"), &shard);
+        let manifest = ExpectedManifest {
+            scenarios: vec![ExpectedScenario { id: "scenario-a".into(), checks: ids }],
+            ..expected()
+        };
+        let result = aggregate(&temp, &manifest, &results, "shared");
+        assert!(result.passed(), "{:?}", result.scenarios[0].diagnostics);
+        let checks = &result.scenarios[0].checks;
+        assert!(checks.iter().all(|check| check.evidence == checks[0].evidence));
+        assert_eq!(
+            fs::read(temp.path().join("shared-output").join(&checks[0].evidence[0])).unwrap(),
+            log
+        );
+    }
+
+    #[test]
+    fn distinct_evidence_still_enforces_the_aggregate_budget() {
+        let temp = TempDir::new().unwrap();
+        let bundle = temp.path().join("bundle");
+        fs::create_dir_all(bundle.join("evidence")).unwrap();
+        fs::write(bundle.join("evidence/one.log"), b"a").unwrap();
+        fs::write(bundle.join("evidence/two.log"), b"b").unwrap();
+        let mut scenario = scenario(&["check-a", "check-b"]);
+        scenario.checks[0].evidence = vec!["evidence/one.log".into()];
+        scenario.checks[1].evidence = vec!["evidence/two.log".into()];
+        let mut copied = MAX_BYTES - 1;
+        Aggregate::copy_evidence(
+            &bundle.join("result.json"),
+            &temp.path().join("output"),
+            &mut scenario,
+            &mut copied,
+        );
+        assert_eq!(copied, MAX_BYTES);
+        assert_eq!(scenario.checks[0].status, Status::Passed);
+        assert_eq!(scenario.checks[1].status, Status::Error);
+        assert!(scenario.checks[1].message.contains("aggregate evidence exceeds 20 MiB"));
     }
 
     #[test]
@@ -623,7 +689,7 @@ mod tests {
             fs::read_to_string(output.join(&scenario.checks[0].evidence[0])).unwrap(),
             "allowed evidence"
         );
-        let directory = output.join("evidence/scenario-a/check-a/evidence");
+        let directory = output.join("evidence/scenario-a/evidence");
         assert_eq!(fs::read_dir(directory).unwrap().count(), 1);
     }
 }

@@ -611,11 +611,12 @@ mod tests {
         copy(temp.path(), "smoke.toml", "z.toml");
         copy(temp.path(), "derivation.toml", "a.toml");
         copy(temp.path(), "denim-transition.toml", "m.toml");
+        copy(temp.path(), "glamsterdam.toml", "g.toml");
         let (manifest, matrix) =
             CliRun::select(temp.path(), SelectionSuite::All, "run".into(), "sha".into()).unwrap();
         assert_eq!(
             manifest.scenarios.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
-            ["derivation", "denim-transition", "smoke"]
+            ["derivation", "glamsterdam", "denim-transition", "smoke"]
         );
         assert!(
             manifest
@@ -624,10 +625,17 @@ mod tests {
                 .map(|item| &item.id)
                 .eq(matrix.include.iter().map(|item| &item.id))
         );
-        let (_, pr) =
+        let (manifest, pr) =
             CliRun::select(temp.path(), SelectionSuite::Pr, "run".into(), "sha".into()).unwrap();
-        assert_eq!(pr.include.len(), 1);
-        assert_eq!(pr.include[0].id, "smoke");
+        assert_eq!(
+            pr.include.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            ["glamsterdam", "smoke"]
+        );
+        assert_eq!(manifest.scenarios[0].id, "glamsterdam");
+        assert_eq!(manifest.scenarios[0].checks.len(), 12);
+        assert_eq!(manifest.scenarios[0].checks[0], "fork-schedule");
+        assert_eq!(manifest.scenarios[0].checks[10], "fork-canonical");
+        assert_eq!(manifest.scenarios[0].checks[11], "post-fork-health");
         let (_, extended) =
             CliRun::select(temp.path(), SelectionSuite::Extended, "run".into(), "sha".into())
                 .unwrap();

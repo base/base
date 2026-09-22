@@ -1,0 +1,35 @@
+schema_version = 1
+id = "glamsterdam"
+description = "Real blob transfers across L1 Glamsterdam, followed by sustained L2 health"
+timeout = "18m"
+
+[ci]
+suite = "pr"
+
+[devnet]
+profile = "glamsterdam"
+
+[devnet.l1]
+validator_count = 64
+slot_duration = "6s"
+
+[devnet.l1.forks]
+glamsterdam = { activation_epoch = 8 }
+
+[devnet.l2]
+verifier_l1_confirmations = 0
+
+[[checks]]
+id = "fork"
+kind = "glamsterdam_blob_transfers"
+timeout = "14m"
+
+[[checks]]
+id = "post-fork-health"
+kind = "heads_healthy"
+endpoints = ["builder", "validator", "rpc"]
+duration = "60s"
+minimum_blocks = 3
+maximum_age = "30s"
+max_lag_blocks = 5
+timeout = "90s"
