@@ -17,6 +17,11 @@
 - Every crate and binary manifest must inherit workspace lints with `[lints] workspace = true`.
 - Do not enable dependency features in the workspace root `Cargo.toml`. Enable them only in the crates or binaries that need them to prevent feature leakage into `no_std` crates.
 
+## Product Direction
+
+- Read [`docs/RECENT_FEATURE_MAP.md`](docs/RECENT_FEATURE_MAP.md) before proposing or implementing product, protocol, builder, Flashblocks, proof, or operator work. It defines the active roadmap, deprecation commitments, and PR decision rules.
+- Do not add new Flashblocks behavior. Flashblocks and the Flashblock builder are deprecated; follow the retirement plan in the feature map, including removal of the builder by October 31, 2026 after 200 ms blocks are activated.
+
 ## Documentation and Lints
 
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
