@@ -11,4 +11,4 @@ Provides ordered L2 block polling, reorg detection, and L1 head tracking.
 - **`PollingBlockSource`** — fetches consecutive L2 blocks above a safe head
 - **`PollingSource`** — trait for fetching an L2 block by number
 - **`HybridL1HeadSource`** — combines L1 subscription and polling
-- **`test_utils`** (feature `test-utils`) — in-memory and channel-backed sources for tests
+- **`test_utils`** (feature `test-utils`) — channel-backed sources for tests

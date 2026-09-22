@@ -67,11 +67,11 @@ fn test_l1_head_source_advances_pipeline() {
     });
 }
 
-/// When the L1 head source is exhausted, the driver must disable that arm and
+/// When the L1 head source closes, the driver must disable that arm and
 /// continue running — it must not shut down. The L1 head delivered before
-/// exhaustion must be processed normally.
+/// the close must be processed normally.
 #[test]
-fn test_l1_source_exhausted_disables_arm_driver_continues() {
+fn test_l1_source_closed_disables_arm_driver_continues() {
     Runner::start(Config::seeded(0), |ctx| async move {
         let recorded = Arc::new(Mutex::new(Recorded::default()));
         let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
@@ -95,7 +95,7 @@ fn test_l1_source_exhausted_disables_arm_driver_continues() {
 
         l1_tx.send(L1HeadEvent::NewHead(77)).unwrap();
         ctx.sleep(Duration::from_millis(20)).await;
-        drop(l1_tx); // triggers Exhausted → L1SourceClosed
+        drop(l1_tx); // triggers Closed → L1SourceClosed
 
         // Driver must still be running after L1 source closes.
         ctx.sleep(Duration::from_millis(50)).await;

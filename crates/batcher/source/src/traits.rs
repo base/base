@@ -24,6 +24,6 @@ pub trait UnsafeBlockSource: Send {
     /// continue delivering subsequent blocks in order.
     ///
     /// The default implementation is a no-op, suitable for sources that do not
-    /// support positional reset (e.g. in-memory test sources).
+    /// support positional reset (e.g. channel-backed test sources).
     fn reset_catchup(&mut self, _safe_head: BlockInfo) {}
 }

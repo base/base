@@ -9,7 +9,7 @@ use crate::{AdminResult, DerivationStatus, TxOutcome};
 /// Events the driver can receive from external sources during the I/O phase.
 #[derive(Debug)]
 pub enum DriverEvent {
-    /// Cancellation token fired, or L2 source signalled exhausted.
+    /// Cancellation token fired.
     Shutdown,
     /// New L2 unsafe block from the source.
     Block(Box<BaseBlock>),
@@ -23,6 +23,6 @@ pub enum DriverEvent {
     L1Head(u64),
     /// Derivation progress changed.
     DerivationStatus(DerivationStatus),
-    /// L1 head source permanently closed (Exhausted or Closed error).
+    /// L1 head source permanently closed.
     L1SourceClosed,
 }

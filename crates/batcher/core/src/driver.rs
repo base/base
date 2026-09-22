@@ -83,15 +83,15 @@ where
     throttle: DaThrottle<TC>,
     /// L1 head source for chain head advancement.
     ///
-    /// Set to `None` after the source returns [`SourceError::Exhausted`] or
-    /// [`SourceError::Closed`], causing the driver to park that select arm forever.
+    /// Set to `None` after the source returns [`SourceError::Closed`], causing the
+    /// driver to park that select arm forever.
     l1_head_source: Option<L>,
     /// Last trusted L2 safe head.
     safe_head: Option<BlockInfo>,
     /// Ordered derivation-progress snapshots.
     derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
-    /// when draining on cancellation or source exhaustion.
+    /// when draining on cancellation.
     drain_timeout: Duration,
     /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     stopped: bool,
@@ -218,8 +218,8 @@ where
     /// driver waits again, so the work an event releases is done before the next one, up to
     /// the encoding step budget.
     ///
-    /// When shutting down (after cancellation or source exhaustion), the I/O phase is
-    /// replaced by a bounded drain of all in-flight receipts.
+    /// When shutting down after cancellation, the I/O phase is replaced by a bounded drain
+    /// of all in-flight receipts.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -550,7 +550,6 @@ where
                     }
                     Ok(L2BlockEvent::Block(block)) => DriverEvent::Block(block),
                     Ok(L2BlockEvent::Reorg) => DriverEvent::Reorg,
-                    Err(SourceError::Exhausted) => DriverEvent::Shutdown,
                     Err(e) => return Err(e.into()),
                 },
 
@@ -566,7 +565,7 @@ where
                     }
                 } => match l1_event {
                     Ok(L1HeadEvent::NewHead(n)) => DriverEvent::L1Head(n),
-                    Err(SourceError::Exhausted | SourceError::Closed) => DriverEvent::L1SourceClosed,
+                    Err(SourceError::Closed) => DriverEvent::L1SourceClosed,
                     Err(e) => {
                         warn!(error = %e, "L1 head source error");
                         continue;

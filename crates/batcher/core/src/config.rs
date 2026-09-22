@@ -10,7 +10,7 @@ pub struct BatchDriverConfig {
     /// Maximum number of in-flight transactions before back-pressure kicks in.
     pub max_pending_transactions: usize,
     /// Maximum time to wait for in-flight transactions to settle when draining
-    /// on cancellation or source exhaustion. Submissions that have not
+    /// on cancellation. Submissions that have not
     /// confirmed within this window are abandoned.
     pub drain_timeout: Duration,
     /// When `true` and DA-backlog throttling is active, force the encoder to
