@@ -14,7 +14,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{io::AsyncReadExt, process::Command};
 
-use crate::ScenarioConfig;
+use crate::{DevnetProfile, ScenarioConfig};
+
+const RETH_GLAMSTERDAM_IMAGE: &str = "ghcr.io/paradigmxyz/reth@sha256:8ce703acf113b2a20705b6e76adebed20f74ba8591bc7c9407203b2968aca70d";
+const LIGHTHOUSE_GLAMSTERDAM_IMAGE: &str =
+    "sigp/lighthouse@sha256:c0a6cf874d0a0596bf6c5c4e485103ac57af7ffd7b60272b4a26a9ebd05368f9";
 
 /// Logical node roles mapped to host-accessible execution RPC endpoints.
 pub type EndpointMap = BTreeMap<String, String>;
@@ -67,6 +71,7 @@ impl Provisioner {
         Self::restrict(&private, true)?;
         fs::create_dir(private.join("devnet"))?;
         self.write_environment(config)?;
+        self.write_profile(config)?;
         self.write_ports().await?;
         self.preflight().await?;
         if build {
@@ -127,6 +132,8 @@ impl Provisioner {
         };
         fs::write(private.join("ownership.json"), serde_json::to_vec_pretty(&owner)?)?;
         self.owned = true;
+        // Refresh the pinned genesis timestamp after potentially lengthy image builds and pulls.
+        self.write_environment(config)?;
         self.compose(
             &[
                 "up",
@@ -167,19 +174,23 @@ impl Provisioner {
             .ok_or_else(|| eyre::eyre!("Compose services missing"))?
             .keys()
         {
-            let port = match name.as_str() {
-                "l1-el" => Some(4545),
-                "base-builder" => Some(7545),
-                "base-client" => Some(8545),
-                "base-rpc" => Some(8645),
-                "base-shadow-validator" => Some(8845),
-                _ => None,
+            let ports: &[u16] = match name.as_str() {
+                "l1-el" => &[4545],
+                "l1-cl" => &[4052],
+                "base-builder" => &[7545, 7549],
+                "base-client" => &[8545, 8549],
+                "base-rpc" => &[8645],
+                "base-shadow-validator" => &[8845],
+                _ => &[],
             };
             overlay.push_str(&format!("  {}:\n    ports: !override", serde_json::to_string(name)?));
-            if let Some(port) = port {
-                overlay.push_str(&format!("\n      - \"127.0.0.1::{port}\"\n"));
-            } else {
+            if ports.is_empty() {
                 overlay.push_str(" []\n");
+            } else {
+                for port in ports {
+                    overlay.push_str(&format!("\n      - \"127.0.0.1::{port}\""));
+                }
+                overlay.push('\n');
             }
         }
         fs::write(self.output.join("private/ports.yml"), overlay)?;
@@ -191,11 +202,17 @@ impl Provisioner {
         let mut endpoints = BTreeMap::new();
         for (role, service, port) in [
             ("l1", "l1-el", "4545"),
+            ("beacon", "l1-cl", "4052"),
             ("builder", "base-builder", "7545"),
+            ("builder-consensus", "base-builder", "7549"),
             ("validator", "base-client", "8545"),
+            ("validator-consensus", "base-client", "8549"),
             ("rpc", "base-rpc", "8645"),
             ("shadow", "base-shadow-validator", "8845"),
         ] {
+            if role == "shadow" && self.output.join("private/profile.yml").exists() {
+                continue;
+            }
             let address = self.compose(&["port", service, port], Duration::from_secs(10)).await?;
             endpoints.insert(role.into(), format!("http://{}", address.trim()));
         }
@@ -223,14 +240,29 @@ impl Provisioner {
             bail!("unsupported characters in output directory");
         }
         let mut env = fs::read_to_string(self.repo.join("etc/docker/devnet-env"))?;
+        let genesis_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 15;
         env.push_str(&format!(
-            "\nDEVNET_ROOT={}\nPROFILE=dev\nBASE_SUCCINCT_ELF_REQUIRE=0\nL1_CHAIN_ID={}\nL2_CHAIN_ID={}\nL1_SLOT_DURATION_OVERRIDE={}\nBASE_NODE_VERIFIER_L1_CONFS={}\n",
+            "\nDEVNET_ROOT={}\nPROFILE=dev\nBASE_SUCCINCT_ELF_REQUIRE=0\nL1_CHAIN_ID={}\nL2_CHAIN_ID={}\nL1_SLOT_DURATION_OVERRIDE={}\nBASE_DEVNET_TIMESTAMP={}\nBASE_DEVNET_VALIDATOR_COUNT={}\nBASE_NODE_VERIFIER_L1_CONFS={}\n",
             root.display(),
             config.devnet.l1.chain_id,
             config.devnet.l2.chain_id,
             config.devnet.l1.slot_duration.0.as_secs(),
+            genesis_timestamp,
+            config.devnet.l1.validator_count,
             config.devnet.l2.verifier_l1_confirmations,
         ));
+        if let Some(fork) = &config.devnet.l1.forks.glamsterdam {
+            let activation = fork
+                .activation_epoch
+                .checked_mul(8)
+                .and_then(|slots| slots.checked_mul(config.devnet.l1.slot_duration.0.as_secs()))
+                .and_then(|offset| genesis_timestamp.checked_add(offset))
+                .ok_or_else(|| eyre::eyre!("Glamsterdam schedule overflow"))?;
+            env.push_str(&format!(
+                "BASE_DEVNET_AMSTERDAM_TIME={activation}\nBASE_DEVNET_GLOAS_EPOCH={}\n",
+                fork.activation_epoch
+            ));
+        }
         for (name, activation) in &config.devnet.l2.forks {
             env.push_str(&format!(
                 "L2_BASE_{}_BLOCK={}\n",
@@ -240,6 +272,47 @@ impl Provisioner {
         }
         let path = self.output.join("private/compose.env");
         fs::write(&path, env)?;
+        Self::restrict(&path, false)
+    }
+
+    /// Writes the reviewed profile-only Compose overrides.
+    pub fn write_profile(&self, config: &ScenarioConfig) -> Result<()> {
+        let path = self.output.join("private/profile.yml");
+        if config.devnet.profile == DevnetProfile::Canonical {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            return Ok(());
+        }
+        let overlay = format!(
+            r#"services:
+  l1-el:
+    image: {RETH_GLAMSTERDAM_IMAGE}
+  l1-cl:
+    image: {LIGHTHOUSE_GLAMSTERDAM_IMAGE}
+  l1-vc:
+    image: {LIGHTHOUSE_GLAMSTERDAM_IMAGE}
+  op-batcher:
+    profiles: ["acceptance-disabled"]
+  base-shadow-validator:
+    profiles: ["acceptance-disabled"]
+  base-batcher:
+    command: !override
+      - batcher
+      - --l1-rpc-url=http://l1-el:${{L1_HTTP_PORT}}
+      - --l2-rpc-url=http://base-builder:${{L2_BUILDER_HTTP_PORT}}
+      - --private-key=${{BATCHER_KEY}}
+      - --data-availability-type=blobs
+      - --max-channel-duration=2
+      - --poll-interval=1
+      - --sub-safety-margin=0
+      - --num-confirmations=1
+      - --metrics.enabled
+      - --metrics.addr=0.0.0.0
+      - --metrics.port=${{SHADOW_BATCHER_METRICS_PORT}}
+"#
+        );
+        fs::write(&path, overlay)?;
         Self::restrict(&path, false)
     }
 
@@ -278,7 +351,7 @@ impl Provisioner {
         )?)
     }
 
-    /// Verifies generated identity and both representations of every L2 schedule.
+    /// Verifies generated identities, schedules, validator material and activation pre-window.
     pub fn verify_artifacts(&self, config: &ScenarioConfig) -> Result<()> {
         let root = self.output.join("private/devnet");
         let rollup = root.join("l2/configs/rollup.json");
@@ -295,6 +368,45 @@ impl Provisioner {
         if l1.pointer("/config/chainId").and_then(Value::as_u64) != Some(config.devnet.l1.chain_id)
         {
             bail!("L1 genesis chain ID differs from scenario");
+        }
+        let chain: Value =
+            serde_json::from_slice(&fs::read(root.join("l1/configs/el/chain-config.json"))?)?;
+        if l1.get("config") != Some(&chain) {
+            bail!("L1 genesis and Base node chain config differ")
+        }
+        let validators = fs::read_dir(root.join("l1/configs/cl/validator_data/validators"))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .count() as u64;
+        if validators != config.devnet.l1.validator_count {
+            bail!("generated validator count {validators} differs from scenario")
+        }
+        if fs::metadata(root.join("l1/configs/cl/genesis.ssz"))?.len() == 0 {
+            bail!("generated consensus genesis is empty")
+        }
+        if let Some(fork) = &config.devnet.l1.forks.glamsterdam {
+            let activation = l1
+                .pointer("/config/amsterdamTime")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| eyre::eyre!("generated Amsterdam schedule is missing"))?;
+            let genesis = l1
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+                .ok_or_else(|| eyre::eyre!("generated L1 timestamp is invalid"))?;
+            let expected =
+                genesis + fork.activation_epoch * 8 * config.devnet.l1.slot_duration.0.as_secs();
+            let cl = fs::read_to_string(root.join("l1/configs/cl/config.yaml"))?;
+            if activation != expected
+                || !cl
+                    .lines()
+                    .any(|line| line == format!("GLOAS_FORK_EPOCH: {}", fork.activation_epoch))
+            {
+                bail!("generated Amsterdam and Gloas schedules do not match")
+            }
+            if SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() >= activation {
+                bail!("Glamsterdam activation pre-window was missed")
+            }
         }
         for (name, activation) in &config.devnet.l2.forks {
             let actual = genesis.pointer(&format!("/config/base/{name}")).and_then(Value::as_u64);
@@ -437,6 +549,10 @@ impl Provisioner {
         if ports.exists() {
             command.arg("--file").arg(ports);
         }
+        let profile = self.output.join("private/profile.yml");
+        if profile.exists() {
+            command.arg("--file").arg(profile);
+        }
         command.args(args).current_dir(&self.repo);
         for line in fs::read_to_string(&env_file)?.lines() {
             if let Some((key, _)) = line.split_once('=') {
@@ -504,16 +620,64 @@ impl Provisioner {
 
     /// Host endpoints of the canonical single-sequencer topology.
     pub fn default_endpoints() -> EndpointMap {
-        [("l1", 4545), ("builder", 7545), ("validator", 8545), ("rpc", 8645), ("shadow", 8845)]
-            .into_iter()
-            .map(|(role, port)| (role.into(), format!("http://127.0.0.1:{port}")))
-            .collect()
+        [
+            ("l1", 4545),
+            ("beacon", 4052),
+            ("builder", 7545),
+            ("builder-consensus", 7549),
+            ("validator", 8545),
+            ("validator-consensus", 8549),
+            ("rpc", 8645),
+            ("shadow", 8845),
+        ]
+        .into_iter()
+        .map(|(role, port)| (role.into(), format!("http://127.0.0.1:{port}")))
+        .collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scenario(profile: DevnetProfile) -> ScenarioConfig {
+        let source = match profile {
+            DevnetProfile::Canonical => {
+                r#"
+schema_version = 1
+id = "test"
+description = "test"
+[[checks]]
+id = "identity"
+kind = "chain_id"
+endpoint = "builder"
+expected = 84538453
+timeout = "5s"
+"#
+            }
+            DevnetProfile::Glamsterdam => {
+                r#"
+schema_version = 1
+id = "test"
+description = "test"
+[devnet]
+profile = "glamsterdam"
+[devnet.l1]
+validator_count = 64
+slot_duration = "6s"
+[devnet.l1.forks]
+glamsterdam = {}
+[[checks]]
+id = "identity"
+kind = "chain_id"
+endpoint = "builder"
+expected = 84538453
+timeout = "5s"
+"#
+            }
+        };
+        toml::from_str(source).unwrap()
+    }
 
     #[test]
     fn contender_cannot_release_owner_lock() {
@@ -544,6 +708,31 @@ mod tests {
         let mut provisioner = Provisioner::new(PathBuf::new(), dir.path().into(), "test");
         provisioner.cleanup().await.unwrap();
         assert_eq!(fs::read_to_string(sentinel).unwrap(), "developer data");
+    }
+
+    #[test]
+    fn canonical_profile_uses_unmodified_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("private")).unwrap();
+        let provisioner = Provisioner::new(PathBuf::new(), dir.path().into(), "test");
+        provisioner.write_profile(&scenario(DevnetProfile::Canonical)).unwrap();
+        assert!(!dir.path().join("private/profile.yml").exists());
+    }
+
+    #[test]
+    fn glamsterdam_profile_owns_clients_and_canonical_batcher() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("private")).unwrap();
+        let provisioner = Provisioner::new(PathBuf::new(), dir.path().into(), "test");
+        provisioner.write_profile(&scenario(DevnetProfile::Glamsterdam)).unwrap();
+        let overlay = fs::read_to_string(dir.path().join("private/profile.yml")).unwrap();
+        assert!(overlay.contains(RETH_GLAMSTERDAM_IMAGE));
+        assert!(overlay.contains(LIGHTHOUSE_GLAMSTERDAM_IMAGE));
+        assert!(overlay.contains("--private-key=${BATCHER_KEY}"));
+        assert!(overlay.contains("--data-availability-type=blobs"));
+        assert_eq!(overlay.matches("profiles: [\"acceptance-disabled\"]").count(), 2);
+        assert!(!overlay.contains("SHADOW_BATCHER_KEY"));
+        assert!(!overlay.contains("--shadow-mode"));
     }
 
     #[test]
