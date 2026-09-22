@@ -34,3 +34,4 @@ alloy-consensus = { workspace = true, features = ["std"] }
 [features]
 clap = [ "dep:clap" ]
 metrics = [ "base-metrics/metrics", "dep:metrics" ]
+test-utils = []

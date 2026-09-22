@@ -37,4 +37,5 @@ pub use l1_subscription::L1HeadSubscription;
 mod l1_hybrid;
 pub use l1_hybrid::HybridL1HeadSource;
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
