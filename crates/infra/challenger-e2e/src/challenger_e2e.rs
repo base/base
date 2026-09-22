@@ -142,16 +142,8 @@ impl ChallengerE2e {
                 .await?;
         Self::assert_game_a_settled(&config, &verifier, &provider, &challenger, game_a, path1)
             .await?;
-        Self::run_path4_then_3(
-            &config,
-            &fork_url,
-            &verifier,
-            &provider,
-            &driver,
-            &challenger,
-            game_b,
-        )
-        .await?;
+        Self::run_path4(&config, &fork_url, &verifier, &provider, &driver, &challenger, game_b)
+            .await?;
 
         Self::assert_bystanders_untouched(&verifier, &bystanders).await?;
 
@@ -653,18 +645,16 @@ impl ChallengerE2e {
         Ok(())
     }
 
-    /// Path 4 then whatever Path 4 leaves behind. Each step must move B's nonce.
+    /// Path 4, plus Path 3 when the TEE proof is nullified first.
     ///
     /// A dual-proof game takes two disputes to clear, and the challenger is
-    /// free to drop either proof first. With a TEE prover available it nullifies
-    /// the TEE proof, leaving a ZK-only game the next scan disputes as Path 3.
-    /// When the TEE request or submission fails it falls back to a ZK nullify —
-    /// a supported path, covered by the dual-proof ZK-fallback test in
-    /// `crates/proof/challenge/tests/driver.rs` — which leaves a TEE-only game
-    /// the next scan disputes as Path 1, by nullify or by challenge. Demanding
-    /// the TEE proof go first would sit out the whole dispute budget on a
-    /// challenger doing exactly what it is supposed to.
-    async fn run_path4_then_3(
+    /// free to drop either proof first. If B is registered as a TEE proposer it
+    /// nullifies the TEE proof, leaving a ZK-only game the next scan disputes as
+    /// Path 3. B is normally a throwaway, unregistered key, so the TEE submission
+    /// fails and the ZK fallback nullifies the global ZK verifier. The remaining
+    /// TEE proof cannot then be challenged with another ZK proof on the same fork,
+    /// so that branch ends after Path 4.
+    async fn run_path4(
         config: &Config,
         fork_url: &Url,
         verifier: &AggregateVerifierContractClient,
@@ -721,41 +711,21 @@ impl ChallengerE2e {
             info!(game = %game.address, "Path 3: ZK proof nullified");
         } else {
             info!(game = %game.address, "Path 4: ZK fallback nullified, TEE proof remains");
-            // `nonce + 1`, not `nonce`: the cleared ZK proof already accounts
-            // for one transaction, so the baseline `nonce` would let the
-            // nullify we just observed satisfy the dispute check below.
-            // Derived from the state read rather than sampled fresh -- a fresh
-            // read reintroduces the race the end-of-step delta removes.
-            let outcome = Self::await_dispute(
-                config,
-                verifier,
-                provider,
-                game.address,
-                challenger,
-                nonce + 1,
-                checkpoint.index + 1,
-            )
-            .await?;
-            info!(game = %game.address, ?outcome, "Path 1: the remaining TEE proof was disputed");
         }
 
-        // Two disputes clear a dual-proof game, whichever order they arrived in.
-        // Asserted once against the pre-patch baseline rather than per step: a
-        // per-step delta attributes both transactions to the first step whenever
-        // the challenger beats the poll, and then demands a third that is never
-        // coming.
+        let expected_transactions = if tee_cleared { 2 } else { 1 };
         let nonce_after = provider.get_transaction_count(challenger.address()).await?;
         ensure!(
-            nonce_after >= nonce + 2,
-            "both of game {}'s proofs are gone but the challenger sent {} transaction(s), not the \
-             two a dual-proof game takes; something other than the challenger disputed it",
+            nonce_after >= nonce + expected_transactions,
+            "game {} changed but the challenger sent {} transaction(s), fewer than the expected \
+             {expected_transactions}; something other than the challenger disputed it",
             game.address,
             nonce_after - nonce
         );
         info!(
             game = %game.address,
             transactions = nonce_after - nonce,
-            "the challenger cleared both of the dual-proof game's proofs"
+            "the challenger completed Path 4"
         );
         Ok(())
     }
