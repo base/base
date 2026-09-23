@@ -14,10 +14,50 @@ use crate::{BrotliLevel, CompressionError, CompressionStream};
 /// instead complete, deterministically signed EIP-1559 transactions with ABI-shaped calldata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransactionProfile {
-    /// Stable identifier printed in benchmark reports.
-    pub name: &'static str,
+    /// The fixture shape represented by this profile.
+    pub kind: TransactionKind,
     /// Complete encoded transaction length represented by one synthetic transaction.
     pub encoded_bytes: usize,
+}
+
+/// A supported signed transaction fixture shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionKind {
+    /// A native ETH transfer.
+    NativeEthTransfer,
+    /// An ERC-20 USDC transfer.
+    Erc20Transfer,
+    /// A B20 transfer.
+    B20Transfer,
+    /// A Uniswap V3 or aggregator swap.
+    UniswapV3Swap,
+    /// A Uniswap V2 swap.
+    UniswapV2Swap,
+    /// An x402 agentic payment.
+    X402Payment,
+    /// An ERC-4337 smart-wallet UserOp.
+    Erc4337UserOp,
+    /// A contract deployment.
+    ContractDeployment,
+    /// A generic contract call with the profile's model-size reference.
+    CustomCall,
+}
+
+impl TransactionKind {
+    /// Stable label used in reports.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NativeEthTransfer => "Native ETH transfer",
+            Self::Erc20Transfer => "ERC-20 transfer (USDC)",
+            Self::B20Transfer => "B20 transfer",
+            Self::UniswapV3Swap => "Uniswap V3 / aggregator swap",
+            Self::UniswapV2Swap => "Uniswap V2 swap",
+            Self::X402Payment => "x402 agentic payment",
+            Self::Erc4337UserOp => "ERC-4337 smart-wallet UserOp",
+            Self::ContractDeployment => "Contract deployment",
+            Self::CustomCall => "custom contract call",
+        }
+    }
 }
 
 /// Starting profiles from the transaction-size model.
@@ -25,14 +65,14 @@ pub struct TransactionProfile {
 /// These are inputs to a channel-compression experiment, not assertions about the encoding of a
 /// particular signed transaction. Add a new [`TransactionProfile`] to measure another type.
 pub const DEFAULT_TRANSACTION_PROFILES: [TransactionProfile; 8] = [
-    TransactionProfile { name: "Native ETH transfer", encoded_bytes: 100 },
-    TransactionProfile { name: "ERC-20 transfer (USDC)", encoded_bytes: 126 },
-    TransactionProfile { name: "B20 transfer", encoded_bytes: 126 },
-    TransactionProfile { name: "Uniswap V3 / aggregator swap", encoded_bytes: 261 },
-    TransactionProfile { name: "Uniswap V2 swap", encoded_bytes: 288 },
-    TransactionProfile { name: "x402 agentic payment", encoded_bytes: 315 },
-    TransactionProfile { name: "ERC-4337 smart-wallet UserOp", encoded_bytes: 448 },
-    TransactionProfile { name: "Contract deployment", encoded_bytes: 3261 },
+    TransactionProfile { kind: TransactionKind::NativeEthTransfer, encoded_bytes: 100 },
+    TransactionProfile { kind: TransactionKind::Erc20Transfer, encoded_bytes: 126 },
+    TransactionProfile { kind: TransactionKind::B20Transfer, encoded_bytes: 126 },
+    TransactionProfile { kind: TransactionKind::UniswapV3Swap, encoded_bytes: 261 },
+    TransactionProfile { kind: TransactionKind::UniswapV2Swap, encoded_bytes: 288 },
+    TransactionProfile { kind: TransactionKind::X402Payment, encoded_bytes: 315 },
+    TransactionProfile { kind: TransactionKind::Erc4337UserOp, encoded_bytes: 448 },
+    TransactionProfile { kind: TransactionKind::ContractDeployment, encoded_bytes: 3261 },
 ];
 
 /// Byte distribution used for synthetic transaction inputs.
@@ -106,7 +146,8 @@ pub struct IncrementalCompressionMeasurement {
 impl CompressionMeasurement {
     /// Returns compressed channel bytes attributed to each synthetic transaction.
     pub fn compressed_bytes_per_transaction(self) -> f64 {
-        self.compressed_bytes as f64 / self.scenario.transaction_count() as f64
+        let count = self.scenario.transaction_count();
+        if count == 0 { 0.0 } else { self.compressed_bytes as f64 / count as f64 }
     }
 
     /// Returns the whole-byte channel estimate attributed to each synthetic transaction.
@@ -120,7 +161,11 @@ impl CompressionMeasurement {
 
     /// Returns compressed bytes divided by uncompressed bytes.
     pub fn compression_ratio(self) -> f64 {
-        self.compressed_bytes as f64 / self.uncompressed_bytes as f64
+        if self.uncompressed_bytes == 0 {
+            0.0
+        } else {
+            self.compressed_bytes as f64 / self.uncompressed_bytes as f64
+        }
     }
 }
 
@@ -167,7 +212,7 @@ impl CompressionBenchmark {
         pattern: InputPattern,
         transaction_index: usize,
     ) -> (TxKind, U256, Vec<u8>) {
-        if profile.name == "Native ETH transfer" {
+        if profile.kind == TransactionKind::NativeEthTransfer {
             let mut state = transaction_index as u64 ^ 0xa076_1d64_78bd_642f;
             let mut recipient = [0u8; 20];
             for byte in &mut recipient {
@@ -187,14 +232,18 @@ impl CompressionBenchmark {
             );
         }
 
-        let (selector, calldata_len, target) = match profile.name {
-            "ERC-20 transfer (USDC)" | "B20 transfer" => ([0xa9, 0x05, 0x9c, 0xbb], 68, 0x11),
-            "Uniswap V3 / aggregator swap" => ([0x04, 0xe4, 0x5a, 0xaf], 228, 0x22),
-            "Uniswap V2 swap" => ([0x38, 0xed, 0x17, 0x39], 260, 0x33),
-            "x402 agentic payment" => ([0xe3, 0xee, 0x16, 0x0e], 292, 0x44),
-            "ERC-4337 smart-wallet UserOp" => ([0x1f, 0xad, 0x94, 0xe3], 450, 0x55),
-            "Contract deployment" => ([0x60, 0x00, 0x60, 0x00], 3800, 0),
-            _ => ([0, 0, 0, 0], profile.encoded_bytes, 0x66),
+        let (selector, calldata_len, target) = match profile.kind {
+            TransactionKind::Erc20Transfer | TransactionKind::B20Transfer => {
+                ([0xa9, 0x05, 0x9c, 0xbb], 68, 0x11)
+            }
+            TransactionKind::UniswapV3Swap => ([0x04, 0xe4, 0x5a, 0xaf], 228, 0x22),
+            TransactionKind::UniswapV2Swap => ([0x38, 0xed, 0x17, 0x39], 260, 0x33),
+            TransactionKind::X402Payment => ([0xe3, 0xee, 0x16, 0x0e], 292, 0x44),
+            TransactionKind::Erc4337UserOp => ([0x1f, 0xad, 0x94, 0xe3], 450, 0x55),
+            TransactionKind::ContractDeployment => ([0x60, 0x00, 0x60, 0x00], 3800, 0),
+            TransactionKind::CustomCall | TransactionKind::NativeEthTransfer => {
+                ([0, 0, 0, 0], profile.encoded_bytes, 0x66)
+            }
         };
         let mut input = Vec::with_capacity(calldata_len);
         input.extend_from_slice(&selector);
@@ -211,7 +260,7 @@ impl CompressionBenchmark {
             };
             input.push(byte);
         }
-        let to = if profile.name == "Contract deployment" {
+        let to = if profile.kind == TransactionKind::ContractDeployment {
             TxKind::Create
         } else {
             TxKind::Call(Address::repeat_byte(target))
@@ -228,8 +277,9 @@ impl CompressionBenchmark {
         self,
         scenario: CompressionScenario,
     ) -> Result<CompressionMeasurement, CompressionError> {
-        assert!(scenario.transactions_per_batch > 0, "transactions per batch must be nonzero");
-        assert!(scenario.batches_per_channel > 0, "batches per channel must be nonzero");
+        if scenario.transaction_count() == 0 {
+            return Err(CompressionError::InvalidScenario);
+        }
 
         let mut compressor = CompressionStream::new(BrotliLevel::DEFAULT);
         let batch_capacity =
@@ -264,12 +314,15 @@ impl CompressionBenchmark {
     /// Consequently it is efficient and the sum of [`IncrementalCompressionMeasurement`] values is
     /// exactly the final channel length. For a counterfactual "finished channel with versus without
     /// this transaction" measurement, callers must separately compress those two complete inputs.
+    /// It appends one transaction at a time to expose stable output; this changes append boundaries
+    /// from [`measure`](Self::measure), but not the resulting channel byte stream.
     pub fn measure_incremental(
         self,
         scenario: CompressionScenario,
     ) -> Result<Vec<IncrementalCompressionMeasurement>, CompressionError> {
-        assert!(scenario.transactions_per_batch > 0, "transactions per batch must be nonzero");
-        assert!(scenario.batches_per_channel > 0, "batches per channel must be nonzero");
+        if scenario.transaction_count() == 0 {
+            return Err(CompressionError::InvalidScenario);
+        }
 
         let transaction_count = scenario.transaction_count();
         let mut compressor = CompressionStream::new(BrotliLevel::DEFAULT);
@@ -301,7 +354,8 @@ impl CompressionBenchmark {
 mod tests {
     use super::*;
 
-    const PROFILE: TransactionProfile = TransactionProfile { name: "test", encoded_bytes: 256 };
+    const PROFILE: TransactionProfile =
+        TransactionProfile { kind: TransactionKind::CustomCall, encoded_bytes: 256 };
 
     #[test]
     fn measure_counts_all_synthetic_transaction_bytes() {
@@ -366,7 +420,7 @@ mod tests {
         assert_eq!(profiles.len(), 8);
         assert!(profiles.iter().all(|profile| profile.encoded_bytes > 0));
         assert_eq!(
-            profiles.map(|profile| profile.name),
+            profiles.map(|profile| profile.kind.label()),
             [
                 "Native ETH transfer",
                 "ERC-20 transfer (USDC)",
@@ -393,7 +447,7 @@ mod tests {
             let input_bytes: usize = fields.next().unwrap().parse().unwrap();
             let estimated_bytes: usize = fields.next().unwrap().parse().unwrap();
             assert!(fields.next().is_none(), "unexpected field in `{row}`");
-            assert_eq!(name, profile.name);
+            assert_eq!(name, profile.kind.label());
             assert_eq!(input_bytes, profile.encoded_bytes);
 
             let measurement = CompressionBenchmark

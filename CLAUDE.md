@@ -67,6 +67,10 @@ let bal = wallet.account.balance();
 
 ## Testing
 
+- For benchmarks and measurements, keep the modeled input, the measured output, and any derived
+  presentation value distinct. Validate checked-in results from the same deterministic path that
+  produces them, and make invalid configurations return errors rather than panic.
+
 - Keep unit tests colocated with their implementation in a `#[cfg(test)] mod tests { ... }` block. Do not create standalone `tests.rs` modules for unit tests.
 - Place `#[cfg(test)] mod tests { ... }` at the end of the file, after all non-test code.
 - Test observable behavior through public APIs. Do not create tautological or change-detector tests that duplicate production logic or assert incidental implementation details.

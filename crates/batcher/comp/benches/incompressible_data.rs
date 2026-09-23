@@ -6,13 +6,15 @@
 
 use std::hint::black_box;
 
-use base_comp::{CompressionBenchmark, CompressionScenario, InputPattern, TransactionProfile};
+use base_comp::{
+    CompressionBenchmark, CompressionScenario, InputPattern, TransactionKind, TransactionProfile,
+};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 const PROFILES: [TransactionProfile; 3] = [
-    TransactionProfile { name: "Native ETH transfer", encoded_bytes: 100 },
-    TransactionProfile { name: "ERC-4337 smart-wallet UserOp", encoded_bytes: 448 },
-    TransactionProfile { name: "Contract deployment", encoded_bytes: 3261 },
+    TransactionProfile { kind: TransactionKind::NativeEthTransfer, encoded_bytes: 100 },
+    TransactionProfile { kind: TransactionKind::Erc4337UserOp, encoded_bytes: 448 },
+    TransactionProfile { kind: TransactionKind::ContractDeployment, encoded_bytes: 3261 },
 ];
 
 const TRANSACTIONS_PER_BATCH: usize = 128;
@@ -30,11 +32,10 @@ fn bench_synthetic_channel_compression(c: &mut Criterion) {
                 transactions_per_batch: TRANSACTIONS_PER_BATCH,
                 batches_per_channel: BATCHES_PER_CHANNEL,
             };
-            let uncompressed_bytes =
-                profile.encoded_bytes.saturating_mul(scenario.transaction_count());
+            let uncompressed_bytes = benchmark.measure(scenario).unwrap().uncompressed_bytes;
             group.throughput(Throughput::Bytes(uncompressed_bytes as u64));
             group.bench_with_input(
-                BenchmarkId::new(pattern.label(), profile.name),
+                BenchmarkId::new(pattern.label(), profile.kind.label()),
                 &scenario,
                 |bench, scenario| {
                     bench.iter(|| black_box(benchmark.measure(black_box(*scenario)).unwrap()));

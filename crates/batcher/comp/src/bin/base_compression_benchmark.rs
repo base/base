@@ -4,7 +4,7 @@ use std::{env, process::ExitCode};
 
 use base_comp::{
     CompressionBenchmark, CompressionScenario, DEFAULT_TRANSACTION_PROFILES, InputPattern,
-    TransactionProfile,
+    TransactionKind, TransactionProfile,
 };
 
 const DEFAULT_TRANSACTIONS_PER_BATCH: usize = 128;
@@ -71,7 +71,7 @@ fn run() -> Result<(), String> {
                 {
                     println!(
                         "{},{},{},{},{},{},{}",
-                        profile.name,
+                        profile.kind.label(),
                         pattern.label(),
                         increment.transaction_index,
                         increment.uncompressed_bytes,
@@ -83,7 +83,7 @@ fn run() -> Result<(), String> {
             } else {
                 println!(
                     "{},{},{},{},{},{},{},{}",
-                    profile.name,
+                    profile.kind.label(),
                     pattern.label(),
                     scenario.transaction_count(),
                     measurement.uncompressed_bytes,
@@ -106,15 +106,15 @@ fn parse_usize(value: Option<String>, flag: &str) -> Result<usize, String> {
 
 fn parse_profile(value: Option<String>) -> Result<TransactionProfile, String> {
     let value = value.ok_or_else(|| "--profile requires NAME:ENCODED_BYTES".to_string())?;
-    let (name, encoded_bytes) =
+    let (_, encoded_bytes) =
         value.split_once(':').ok_or_else(|| "--profile must be NAME:ENCODED_BYTES".to_string())?;
     let encoded_bytes =
         encoded_bytes.parse().map_err(|_| format!("invalid encoded byte count in `{value}`"))?;
-    if name.is_empty() || encoded_bytes == 0 {
-        return Err("--profile requires a nonempty name and a nonzero byte count".to_string());
+    if encoded_bytes == 0 {
+        return Err("--profile requires a nonzero byte count".to_string());
     }
 
-    Ok(TransactionProfile { name: Box::leak(name.to_string().into_boxed_str()), encoded_bytes })
+    Ok(TransactionProfile { kind: TransactionKind::CustomCall, encoded_bytes })
 }
 
 fn print_header(transactions_per_batch: usize, batches_per_channel: usize, incremental: bool) {
@@ -137,7 +137,7 @@ fn print_header(transactions_per_batch: usize, batches_per_channel: usize, incre
 
 fn print_usage() {
     eprintln!(
-        "Usage: cargo run -p base-comp --features std --bin base-compression-benchmark -- [--transactions-per-batch N] [--batches-per-channel N] [--profile NAME:ENCODED_BYTES]... [--incremental]"
+        "Usage: cargo run -p base-comp --features benchmark --bin base-compression-benchmark -- [--transactions-per-batch N] [--batches-per-channel N] [--profile NAME:ENCODED_BYTES]... [--incremental]"
     );
 }
 
@@ -149,7 +149,7 @@ mod tests {
     fn parses_a_custom_transaction_profile() {
         let profile = parse_profile(Some("erc1155_transfer:512".to_string())).unwrap();
 
-        assert_eq!(profile.name, "erc1155_transfer");
+        assert_eq!(profile.kind, TransactionKind::CustomCall);
         assert_eq!(profile.encoded_bytes, 512);
     }
 

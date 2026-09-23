@@ -18,7 +18,7 @@ mod benchmark;
 #[cfg(feature = "benchmark")]
 pub use benchmark::{
     CompressionBenchmark, CompressionMeasurement, CompressionScenario,
-    DEFAULT_TRANSACTION_PROFILES, IncrementalCompressionMeasurement, InputPattern,
+    DEFAULT_TRANSACTION_PROFILES, IncrementalCompressionMeasurement, InputPattern, TransactionKind,
     TransactionProfile,
 };
 

@@ -36,6 +36,7 @@ required-features = ["benchmark"]
 [[bench]]
 name = "incompressible_data"
 harness = false
+required-features = ["benchmark"]
 
 [features]
 default = []

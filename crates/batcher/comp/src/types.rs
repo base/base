@@ -9,6 +9,9 @@ use crate::brotli::BrotliCompressor;
 /// A channel compression failure.
 #[derive(Debug, thiserror::Error)]
 pub enum CompressionError {
+    /// A compression benchmark scenario has no transactions.
+    #[error("compression scenario must contain at least one transaction")]
+    InvalidScenario,
     /// Brotli compression is unavailable without the standard library.
     #[cfg(not(feature = "std"))]
     #[error("brotli compression is not supported without the standard library")]
