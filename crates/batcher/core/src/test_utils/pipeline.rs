@@ -1,4 +1,8 @@
 //! Test [`BatchPipeline`] implementations for action-testing the batch driver.
+//!
+//! Hand-rolled rather than mocked: the driver ordering tests need one call log ordered across
+//! several trait methods, and the pipelines hold state (queued submissions, steps to encode)
+//! that the driver consumes while it runs.
 
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +34,8 @@ pub struct Recorded {
     pub safe_numbers: Vec<u64>,
     /// Number of times `flush()` was called.
     pub flush_count: usize,
-    /// Names of the recorded methods, in call order.
+    /// The calls the ordering tests look at (`add_block`, `confirm`, `flush`,
+    /// `advance_l1_head` when the head advances, `reconcile_derivation`), in call order.
     pub calls: Vec<&'static str>,
     /// Number of `step()` calls that encoded a block.
     pub encoded_steps: usize,
@@ -72,9 +77,9 @@ impl TrackingPipeline {
         }
     }
 
-    /// Make `step` encode `blocks` blocks before reporting idle.
-    pub const fn with_encoding_steps(mut self, blocks: usize) -> Self {
-        self.encoding_steps = blocks;
+    /// Make `step` report `steps` encoded blocks before reporting idle.
+    pub const fn with_encoding_steps(mut self, steps: usize) -> Self {
+        self.encoding_steps = steps;
         self
     }
 

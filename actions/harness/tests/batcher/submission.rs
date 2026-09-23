@@ -96,8 +96,8 @@ async fn batcher_soft_channel_target_derives_exact_blocks() {
 /// 2. Reorg to genesis **before** calling `confirm_staged` — frames are still
 ///    in `staged`, so `reorg_to` fires `Err(TxManagerError::Rpc("reorg"))` on
 ///    each oneshot responder.
-/// 3. The driver processes each `Receipt(id, Failed)` → `pipeline.requeue(id)`
-///    rewinds the encoder channel cursor. On the next loop iteration, the driver
+/// 3. The driver handles each failed receipt: `pipeline.requeue(id)` rewinds the
+///    encoder channel cursor. On the next loop iteration, the driver
 ///    calls `submit_pending()` → `send_async()` and the frames are back in the
 ///    `L1MinerTxManager` pending queue.
 /// 4. The same batcher stages the requeued frames and mines a new L1 block on
@@ -136,8 +136,8 @@ async fn batcher_reorg_during_submission() {
 
     // --- L1 reorg back to genesis (frames still in staged) ---
     // reorg_to fires Err(TxManagerError::Rpc("reorg")) for every staged item and
-    // sends L1 head 0. The driver's select! loop processes each Receipt(id, Failed)
-    // → pipeline.requeue(id), rewinding the channel cursor without re-encoding.
+    // sends L1 head 0. The driver handles each failed receipt with
+    // pipeline.requeue(id), rewinding the channel cursor without re-encoding.
     batcher.reorg(0, &mut h.l1);
     batcher.wait_until_requeued(1).await;
 

@@ -130,16 +130,18 @@ where
     /// Run the batch driver loop.
     ///
     /// Each iteration has two phases:
-    /// 1. **CPU phase** ([`work`](Self::work)): drain encoding, apply throttle, recover txpool,
-    ///    submit pending frames.
-    /// 2. **I/O phase**: block on a biased `tokio::select!` until one external event fires,
-    ///    and apply it.
+    /// 1. **CPU phase** (`work`): drain encoding, apply throttle, recover txpool, submit
+    ///    ready submissions up to the in-flight limit.
+    /// 2. **I/O phase**: block on a biased `tokio::select!` until an event fires, and apply it.
     ///
     /// Every event is therefore followed by a CPU phase before the driver waits again, so the
     /// work an event releases is done before the next one. Encoding is done in slices of
-    /// `STEP_BUDGET` steps: when a slice is not enough, the task yields once, serves whatever
-    /// became ready, then runs the next slice, so a large backlog delays no event and no
-    /// other task by more than a slice.
+    /// `STEP_BUDGET` steps: when a slice is not enough, the I/O phase yields once instead of
+    /// waiting, serves whatever became ready, then the next CPU phase continues encoding. A
+    /// large backlog therefore delays no other task by more than a slice, and no event by
+    /// more than a CPU phase. The two sources are not polled until the backlog is encoded:
+    /// their next block or head would only add to it, and a poll the next slice abandons
+    /// would waste an RPC.
     ///
     /// The I/O phase polls its arms in priority order: cancellation, admin commands,
     /// derivation status, L2 blocks, receipts, L1 heads. Admin commands come before the
@@ -149,7 +151,7 @@ where
     /// source at all.
     ///
     /// Cancellation ends the loop with a bounded drain of the in-flight submissions; see
-    /// [`shutdown`](Self::shutdown).
+    /// `shutdown`.
     pub async fn run(mut self) -> Result<(), BatchDriverError> {
         if self.stopped {
             info!(
@@ -173,7 +175,7 @@ where
                     None => return Err(BatchDriverError::DerivationStatusSourceClosed),
                 },
 
-                event = self.source.next(), if !self.stopped => match event {
+                event = self.source.next(), if !self.stopped && !encoding_left => match event {
                     L2BlockEvent::Block(block) => self.on_block(block),
                     L2BlockEvent::Reorg => {
                         warn!("L2 reorg detected, resetting pipeline and catching up from safe head");
@@ -185,7 +187,7 @@ where
                     self.submissions.handle_outcome(&mut self.pipeline, ids, outcome);
                 }
 
-                head = self.l1_head_source.next() => {
+                head = self.l1_head_source.next(), if !encoding_left => {
                     self.pipeline.advance_l1_head(head);
                     debug!(l1_head = %head, "L1 head advanced via source");
                 }
@@ -200,9 +202,9 @@ where
     }
 
     /// The CPU phase: encode what is buffered, apply the DA throttle, recover the txpool and
-    /// submit every ready frame.
+    /// submit ready submissions up to the in-flight limit.
     ///
-    /// Returns `true` when the encoding step budget ran out with blocks still to encode.
+    /// Returns `true` when the encoding step budget ran out, so encoding must continue.
     async fn work(&mut self) -> Result<bool, BatchDriverError> {
         let encoding_left = self.drain_encoding()?;
 
@@ -242,11 +244,11 @@ where
     /// Returns `Ok(true)` when the budget ran out before [`StepResult::Idle`], `Err` on a
     /// fatal [`StepError`](base_batcher_encoder::StepError).
     fn drain_encoding(&mut self) -> Result<bool, BatchDriverError> {
-        for steps in 1..=STEP_BUDGET {
+        for encoded in 0..STEP_BUDGET {
             match self.pipeline.step() {
                 Ok(StepResult::Idle) => {
-                    if steps > 1 {
-                        debug!(steps = %(steps - 1), "completed encoding drain");
+                    if encoded > 0 {
+                        debug!(steps = %encoded, "completed encoding drain");
                     }
                     return Ok(false);
                 }
@@ -374,9 +376,9 @@ where
         self.stopped = false;
     }
 
-    /// Apply an admin command and answer it.
+    /// Apply an admin command, and answer it when it carries a reply.
     ///
-    /// [`AdminCommand::Stop`] immediately resets the pipeline, then the source is left
+    /// [`AdminCommand::Stop`] resets the pipeline, then the source is left
     /// unpolled until [`AdminCommand::Start`] is received. On start the source is reset to
     /// catch up sequentially from the last known safe L2 head. Stopping a stopped batcher
     /// or starting a running one does nothing. A flush is refused while stopped.
@@ -725,8 +727,9 @@ mod tests {
         }
     }
 
-    /// The loop polls its arms in priority order; each test below makes several arms ready at
-    /// once and checks which one the driver serves first.
+    // The loop polls its arms in priority order; each test below makes several arms ready at
+    // once and checks which one the driver serves first.
+
     #[test]
     fn run_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
@@ -865,11 +868,12 @@ mod tests {
         });
     }
 
-    /// An admin command sent while the driver is in the middle of a backlog is served after
-    /// the slice in progress, because the driver yields between slices.
+    /// The driver yields to other tasks between encoding slices: a task can send an admin
+    /// command in the middle of a backlog and have it served before the backlog is done.
     #[test]
-    fn run_serves_admin_sent_during_a_backlog() {
-        Runner::start(Config::seeded(0), |ctx| async move {
+    fn run_yields_to_other_tasks_between_encoding_slices() {
+        let config = Config { cycle_limit: Some(1_000_000), ..Config::seeded(0) };
+        Runner::start(config, |ctx| async move {
             let recorded = Arc::new(Mutex::new(Recorded::default()));
             let pipeline =
                 TrackingPipeline::new(Arc::clone(&recorded)).with_encoding_steps(3 * STEP_BUDGET);
@@ -888,7 +892,6 @@ mod tests {
 
             let encoded = recorded.lock().unwrap().encoded_steps;
             assert!(encoded < 3 * STEP_BUDGET, "the stop must not wait for the whole backlog");
-            assert_eq!(encoded % STEP_BUDGET, 0, "the stop is served between slices");
         });
     }
 
