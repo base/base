@@ -2,6 +2,14 @@
 
 use std::fmt::Debug;
 
+use crate::{
+    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    metrics::StateMetrics,
+    proof::{
+        DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
+        DatabaseTrieWitness,
+    },
+};
 use alloy_primitives::keccak256;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reth_primitives_traits::{Account, Bytecode};
@@ -23,16 +31,6 @@ use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
-};
-use tracing::instrument;
-
-use crate::{
-    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
-    metrics::StateMetrics,
-    proof::{
-        DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
-        DatabaseTrieWitness,
-    },
 };
 
 /// State provider for external proofs storage.
@@ -236,14 +234,6 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 }
 
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
-    #[instrument(
-        skip_all,
-        fields(
-            state_reads = tracing::field::Empty,
-            state_misses = tracing::field::Empty,
-            state_seek_ns = tracing::field::Empty,
-        )
-    )]
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         let tx = self.ensure_tx()?;
@@ -263,14 +253,6 @@ impl<'a, Storage> StateProvider for BaseProofsStateProviderRef<'a, Storage>
 where
     Storage: BaseProofsStore + Clone,
 {
-    #[instrument(
-        skip_all,
-        fields(
-            state_reads = tracing::field::Empty,
-            state_misses = tracing::field::Empty,
-            state_seek_ns = tracing::field::Empty,
-        )
-    )]
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         self.storage_by_hashed_key(address, hashed_key)

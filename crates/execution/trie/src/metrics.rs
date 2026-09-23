@@ -134,8 +134,8 @@ base_metrics::define_metrics! {
 }
 
 impl StateMetrics {
-    /// Times one account or storage seek, counts it, and records those totals on the current
-    /// span. A returned key other than the requested key counts as a miss.
+    /// Times one account or storage seek and counts it. A returned key other than the requested
+    /// key counts as a miss.
     pub fn record_seek<T, E>(
         seek: impl FnOnce() -> Result<T, E>,
         hit: impl FnOnce(&T) -> bool,
@@ -143,18 +143,12 @@ impl StateMetrics {
         let started = Instant::now();
         let value = seek()?;
         let elapsed = started.elapsed();
-        let was_hit = hit(&value);
 
         Self::seek_duration_seconds().record(elapsed.as_secs_f64());
         Self::reads().increment(1);
-        if !was_hit {
+        if !hit(&value) {
             Self::misses().increment(1);
         }
-
-        let span = tracing::Span::current();
-        span.record("state_reads", 1u64);
-        span.record("state_misses", u64::from(!was_hit));
-        span.record("state_seek_ns", u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX));
         Ok(value)
     }
 }

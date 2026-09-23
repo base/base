@@ -3,6 +3,10 @@
 
 use std::fmt::Debug;
 
+use crate::{
+    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
+    api::BaseProofsBatchSession, metrics::StateMetrics,
+};
 use alloy_primitives::{
     keccak256,
     map::{B256Map, HashMap},
@@ -29,12 +33,6 @@ use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
     KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
-};
-use tracing::instrument;
-
-use crate::{
-    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
-    api::BaseProofsBatchSession, metrics::StateMetrics,
 };
 
 /// State provider that reads through an active [`BaseProofsBatchSession`]'s transaction.
@@ -278,14 +276,6 @@ impl<S: BaseProofsBatchSession> HashedPostStateProvider for BaseProofsBatchState
 }
 
 impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRef<'_, S> {
-    #[instrument(
-        skip_all,
-        fields(
-            state_reads = tracing::field::Empty,
-            state_misses = tracing::field::Empty,
-            state_seek_ns = tracing::field::Empty,
-        )
-    )]
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         let mut cursor = self
@@ -301,14 +291,6 @@ impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRe
 }
 
 impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRef<'_, S> {
-    #[instrument(
-        skip_all,
-        fields(
-            state_reads = tracing::field::Empty,
-            state_misses = tracing::field::Empty,
-            state_seek_ns = tracing::field::Empty,
-        )
-    )]
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         let mut cursor = self
