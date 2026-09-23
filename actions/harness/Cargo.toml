@@ -55,8 +55,8 @@ base-common-chains.workspace = true
 base-execution-evm.workspace = true
 base-consensus-rpc.workspace = true
 base-consensus-node.workspace = true
-base-batcher-source.workspace = true
-base-batcher-encoder.workspace = true
+base-batcher-source = { workspace = true, features = ["test-utils"] }
+base-batcher-encoder = { workspace = true, features = ["test-utils"] }
 base-consensus-safedb.workspace = true
 base-consensus-gossip.workspace = true
 base-consensus-engine.workspace = true
