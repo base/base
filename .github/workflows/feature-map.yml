@@ -1,0 +1,116 @@
+name: Feature map
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature-map-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Verify feature map
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check generated inventory
+        id: feature-map
+        continue-on-error: true
+        run: python3 etc/scripts/ci/check_feature_map.py --check
+
+      - name: Prepare review suggestion
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.feature-map.outcome == 'failure' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        id: suggestion
+        shell: bash
+        run: |
+          set -euo pipefail
+          begin_line="$(grep -n '^<!-- BEGIN GENERATED FEATURE MAP INVENTORY -->$' docs/FEATURE_MAP.md | cut -d: -f1)"
+          end_line="$(grep -n '^<!-- END GENERATED FEATURE MAP INVENTORY -->$' docs/FEATURE_MAP.md | cut -d: -f1)"
+          test -n "$begin_line"
+          test -n "$end_line"
+          python3 etc/scripts/ci/check_feature_map.py --write
+          echo "begin_line=$begin_line" >> "$GITHUB_OUTPUT"
+          echo "end_line=$end_line" >> "$GITHUB_OUTPUT"
+
+      - name: Suggest the current inventory in a review
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.feature-map.outcome == 'failure' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          START_LINE: ${{ steps.suggestion.outputs.begin_line }}
+          END_LINE: ${{ steps.suggestion.outputs.end_line }}
+        with:
+          script: |
+            const childProcess = require("child_process");
+            const fs = require("fs");
+            const document = fs.readFileSync("docs/FEATURE_MAP.md", "utf8");
+            const lines = document.split("\n");
+            const startLine = Number(process.env.START_LINE);
+            const endLine = Number(process.env.END_LINE);
+            const replacement = lines.slice(startLine - 1, endLine).join("\n");
+            const marker = "<!-- FEATURE_MAP_INVENTORY_SUGGESTION -->";
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            if (reviews.some(review => review.body?.includes(marker))) {
+              core.notice("An inventory suggestion already exists for this pull request.");
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              per_page: 100,
+            });
+            const review = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              event: "COMMENT",
+            };
+            const featureMap = files.find(file => file.filename === "docs/FEATURE_MAP.md");
+            const inventoryIsInDiff =
+              featureMap?.patch?.includes("BEGIN GENERATED FEATURE MAP INVENTORY") &&
+              featureMap.patch.includes("END GENERATED FEATURE MAP INVENTORY");
+            if (inventoryIsInDiff) {
+              review.body = `${marker}\n\nThe generated inventory is stale. Accept the inline suggestion, then update the high-level prose if this PR changes a responsibility or boundary.`;
+              review.comments = [{
+                path: "docs/FEATURE_MAP.md",
+                side: "RIGHT",
+                start_side: "RIGHT",
+                start_line: startLine,
+                line: endLine,
+                body: `\`\`\`suggestion\n${replacement}\n\`\`\``,
+              }];
+            } else {
+              const patch = childProcess.execFileSync(
+                "git",
+                ["diff", "--", "docs/FEATURE_MAP.md"],
+                { encoding: "utf8" },
+              );
+              review.body = `${marker}\n\nThe generated inventory is stale. GitHub can only apply a suggestion when the complete inventory block is already in the PR diff, so this review includes the exact patch instead. Apply it or run \`python3 etc/scripts/ci/check_feature_map.py --write\` locally, then update the high-level prose if this PR changes a responsibility or boundary.\n\n\`\`\`diff\n${patch}\n\`\`\``;
+            }
+            await github.rest.pulls.createReview(review);
+
+      - name: Fail when the map is stale
+        if: steps.feature-map.outcome == 'failure'
+        run: |
+          echo "Run: python3 etc/scripts/ci/check_feature_map.py --write"
+          exit 1
