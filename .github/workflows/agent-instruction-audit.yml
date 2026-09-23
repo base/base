@@ -1,0 +1,82 @@
+name: Skill Instruction Audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - AGENTS.md
+      - CLAUDE.md
+      - .agents/skills/**
+      - docs/FEATURE_MAP.md
+      - etc/scripts/ci/check_skills.py
+      - etc/scripts/ci/check_feature_map.py
+
+concurrency:
+  group: agent-instruction-audit-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  audit:
+    name: Audit skill instructions
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      group: BaseRunnerGroup
+    steps:
+      - name: Harden the runner (Block unauthorized outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            bun.sh:443
+            github.com:443
+            objects.githubusercontent.com:443
+            registry.npmjs.org:443
+            release-assets.githubusercontent.com:443
+            ${{ vars.LLM_GATEWAY_HOSTNAME }}:443
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Validate skill structure
+        id: skill-structure
+        continue-on-error: true
+        run: python3 etc/scripts/ci/check_skills.py --check
+
+      - name: Verify feature map
+        id: feature-map
+        continue-on-error: true
+        run: python3 etc/scripts/ci/check_feature_map.py --check
+
+      - name: Run agent instruction auditor
+        uses: anthropics/claude-code-action@1b8ee3b94104046d71fde52ec3557651ad8c0d71 # v1.0.29
+        env:
+          ANTHROPIC_BASE_URL: https://${{ vars.LLM_GATEWAY_HOSTNAME }}
+        with:
+          anthropic_api_key: ${{ secrets.LLM_GATEWAY_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          track_progress: false
+          prompt: |
+            Review only changed repository instructions, skills, the feature
+            map, or their deterministic checks. First read
+            `.agents/skills/agent-instruction-auditor/SKILL.md` and apply it to
+            the pull-request diff. Do not review unrelated product code.
+
+            Do not post praise or a comment when there are no findings. Before
+            posting, fetch existing bot comments and do not duplicate a
+            materially similar finding. If findings remain, post one top-level
+            comment beginning exactly with `<!-- AGENT_INSTRUCTION_AUDIT -->`.
+            Each finding must identify the file, line, hierarchy rule, and
+            required repair.
+          claude_args: |
+            --model claude-opus-4-6-default
+            --allowedTools "Bash(cat .agents/skills/agent-instruction-auditor/SKILL.md),Bash(git diff --check),Bash(git diff --name-only:*),Bash(git diff:*),Bash(git show HEAD:AGENTS.md),Bash(git show HEAD:CLAUDE.md),Bash(git show HEAD:.agents/skills/:*),Bash(git show HEAD:docs/FEATURE_MAP.md),Bash(git show HEAD:etc/scripts/ci/check_skills.py),Bash(git show HEAD:etc/scripts/ci/check_feature_map.py),Bash(gh pr diff:*),Bash(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments:*),Bash(gh pr comment ${{ github.event.pull_request.number }} --body:*)"
+
+      - name: Fail when deterministic instruction checks fail
+        if: steps.skill-structure.outcome == 'failure' || steps.feature-map.outcome == 'failure'
+        run: exit 1
