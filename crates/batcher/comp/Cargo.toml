@@ -16,14 +16,37 @@ thiserror.workspace = true
 
 brotli = { workspace = true, optional = true }
 derive_more = { workspace = true, features = ["debug"], optional = true }
+alloy-consensus = { workspace = true, features = ["std"], optional = true }
+alloy-eips = { workspace = true, features = ["std"], optional = true }
+alloy-primitives = { workspace = true, features = ["std"], optional = true }
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
 
 [dev-dependencies]
 base-protocol = { workspace = true, features = ["std"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 base-common-genesis = { workspace = true, features = ["std"] }
+criterion.workspace = true
+
+[[bin]]
+name = "base-compression-benchmark"
+path = "src/bin/base_compression_benchmark.rs"
+required-features = ["benchmark"]
+
+[[bench]]
+name = "incompressible_data"
+harness = false
 
 [features]
 default = []
+benchmark = [
+	"std",
+	"dep:alloy-consensus",
+	"dep:alloy-eips",
+	"dep:alloy-primitives",
+	"dep:alloy-signer",
+	"dep:alloy-signer-local",
+]
 std = [
 	"brotli?/std",
 	"dep:brotli",

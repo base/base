@@ -13,6 +13,15 @@ extern crate alloc;
 mod types;
 pub use types::{BrotliLevel, CompressionError};
 
+#[cfg(feature = "benchmark")]
+mod benchmark;
+#[cfg(feature = "benchmark")]
+pub use benchmark::{
+    CompressionBenchmark, CompressionMeasurement, CompressionScenario,
+    DEFAULT_TRANSACTION_PROFILES, IncrementalCompressionMeasurement, InputPattern,
+    TransactionProfile,
+};
+
 #[cfg(feature = "std")]
 mod brotli;
 #[cfg(feature = "std")]

@@ -3814,10 +3814,15 @@ dependencies = [
 name = "base-comp"
 version = "0.0.0"
 dependencies = [
+ "alloy-consensus 2.4.1",
+ "alloy-eips 2.4.1",
  "alloy-primitives",
+ "alloy-signer 2.4.1",
+ "alloy-signer-local 2.4.1",
  "base-common-genesis",
  "base-protocol",
  "brotli",
+ "criterion",
  "derive_more 2.1.1",
  "thiserror 2.0.19",
 ]
