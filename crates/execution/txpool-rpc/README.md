@@ -11,11 +11,11 @@ Exposes JSON-RPC APIs for transaction pool administration and transaction lifecy
 `AdminTxPoolApiImpl` provides admin-level pool management, while `TransactionStatusApiImpl`
 allows clients to query the current status of individual transactions by hash. The separate
 `SendRawTransactionValidityExtension` registers local ingress through
-`base_sendRawTransactionValidity` on both mempool/client nodes and builder nodes. Typed
+`base_sendRawTransactionValidity` on forwarding ingress nodes and builders. Typed
 validity predicates are preserved in the pool (and while forwarding to builders). This endpoint
-is experimental, but predicates are evaluated and enforced by the builder during block
-construction: a transaction is only included at a point where all of its predicates hold, and
-it is evicted once it can no longer be included.
+is registered at startup but accepts validity-bearing submissions only at Cobalt activation
+(or earlier with the experimental override). Predicates are enforced by the builder during
+block construction; an unsatisfied transaction is deferred and an expired one is evicted.
 
 ## Usage
 
@@ -28,14 +28,15 @@ base-txpool-rpc = { workspace = true }
 
 ```rust,ignore
 use base_txpool_rpc::{
-    DEFAULT_MAX_VALIDITY_PREDICATES, SendRawTransactionValidityExtension, TxPoolRpcConfig,
+    SendRawTransactionValidityConfig, SendRawTransactionValidityExtension, TxPoolRpcConfig,
     TxPoolRpcExtension,
 };
 
 runner.install_ext::<TxPoolRpcExtension>(TxPoolRpcConfig::default());
-// Install only when the node's explicit experimental validity flag is enabled.
-// The config is the maximum number of validity predicates accepted per transaction.
-runner.install_ext::<SendRawTransactionValidityExtension>(DEFAULT_MAX_VALIDITY_PREDICATES);
+// The endpoint is pre-registered; the override permits validity before Cobalt.
+runner.install_ext::<SendRawTransactionValidityExtension>(
+    SendRawTransactionValidityConfig { experimental_override: true, ..Default::default() },
+);
 ```
 
 ## License

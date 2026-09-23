@@ -97,6 +97,7 @@ impl BaseNodeExtension for BuilderApiExtension {
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let api = ShadowValidityBuilderApi::new(
                 ctx.pool().clone(),
+                ctx.provider().clone(),
                 config,
                 Arc::clone(&metering_provider),
             );
