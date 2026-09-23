@@ -153,8 +153,8 @@ pub fn build_test_genesis_cobalt() -> Genesis {
     genesis
 }
 
-/// Builds a test genesis with Denim, Everest, and Zenith enabled at timestamp 0.
-pub fn build_test_genesis_zenith() -> Genesis {
+/// Builds a test genesis with Denim and Everest enabled at timestamp 0.
+pub fn build_test_genesis_everest() -> Genesis {
     let mut genesis = build_test_genesis_cobalt();
     genesis.config.extra_fields.insert(
         "base".to_string(),
@@ -163,8 +163,7 @@ pub fn build_test_genesis_zenith() -> Genesis {
             "beryl": 0,
             "cobalt": 0,
             "denim": 0,
-            "everest": 0,
-            "zenith": 0
+            "everest": 0
         }),
     );
     genesis

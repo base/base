@@ -33,7 +33,7 @@ use tokio::time::{sleep, timeout};
 const L1_CHAIN_ID: u64 = 1337;
 const L2_CHAIN_ID: u64 = 84538453;
 const DENIM_ACTIVATION_BLOCK: u64 = 0;
-const ZENITH_ACTIVATION_BLOCK: u64 = 0;
+const EVEREST_ACTIVATION_BLOCK: u64 = 0;
 const TX_RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 const PENDING_TX_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -63,14 +63,14 @@ fn block_expiry_bound(current_block: u64) -> ValidityPredicate {
 }
 
 /// Starts a separate mempool and builder pair using the native Denim payload builder with validity
-/// transport enabled on both nodes and Zenith active for EIP-8130 transactions.
+/// transport enabled on both nodes and Everest active for EIP-8130 transactions.
 async fn start_validity_system() -> Result<SystemTestStack> {
     let system = SystemTestStackBuilder::new()
         .with_l1_chain_id(L1_CHAIN_ID)
         .with_l2_chain_id(L2_CHAIN_ID)
         .with_base_cobalt_activation_block(0)
         .with_base_denim_activation_block(DENIM_ACTIVATION_BLOCK)
-        .with_base_zenith_activation_block(ZENITH_ACTIVATION_BLOCK)
+        .with_base_everest_activation_block(EVEREST_ACTIVATION_BLOCK)
         .with_tx_forwarding(
             TxForwardingConfig::new(vec![]).with_resend_after_ms(2000).with_max_batch_size(100),
         )
@@ -455,7 +455,7 @@ async fn test_validity_transaction_submitted_directly_to_builder_is_included() -
     Ok(())
 }
 
-/// Verifies a Zenith EIP-8130 transaction can carry validity predicates through forwarding and be
+/// Verifies a Everest EIP-8130 transaction can carry validity predicates through forwarding and be
 /// included by the native Denim payload builder.
 #[tokio::test]
 async fn test_eip8130_validity_transaction_is_included_by_native_builder() -> Result<()> {

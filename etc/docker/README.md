@@ -190,8 +190,15 @@ Denim. Native payload building supports balance,
 storage, and block-number predicates; `flashblock_index` predicates remain specific
 to the Flashblocks builder and are rejected after the Denim cutover.
 
+Everest enables EIP-8130 account-abstraction transactions. Everest mode additionally
+activates Everest at block 100:
+
+```bash
+just devnet up everest
+```
+
 Zenith is the permanently unscheduled, genesis-only gate for future hardfork feature testing.
-Zenith mode additionally activates Zenith at block 100:
+Zenith mode additionally activates Everest and Zenith at block 100:
 
 ```bash
 just devnet up zenith
