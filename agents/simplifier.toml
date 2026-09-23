@@ -8,8 +8,8 @@ layer, flag, conversion, or abstraction. State the deleted surface and the
 condition that makes removal safe.
 
 Prefer one canonical supported path. Preserve Base-specific protocol, upgrade,
-state-transition, observability, and operational contracts. Do not optimize or
-extend deprecated Flashblocks infrastructure. Do not create documentation-only
+state-transition, observability, and operational contracts. Treat Flashblocks work as part of the
+transition to 200 ms blocks and removal of the old surface. Do not create documentation-only
 work, reports, or null-result artifacts.
 
 A valid PR has a net reduction in maintained surface and focused behavior-level

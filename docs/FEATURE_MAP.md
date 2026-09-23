@@ -137,15 +137,13 @@ These are production support surfaces, not incidental files. An operational
 change is incomplete if its relevant image, workflow, script, environment,
 release flow, or system coverage remains stale.
 
-### Deprecated Flashblocks surface
+### Flashblocks to 200 ms blocks
 
-`base-common-flashblocks`, `base-flashblocks`, `base-flashblocks-node`, and
-Flashblock-specific builder paths exist solely to keep deployed systems safe
-while they are retired. They are not an extension point. The Flashblock builder
-is scheduled for removal by **October 31, 2026**, after 200 ms blocks are
-activated. Permitted work prepares that activation, migrates callers and
-operators, fixes retirement-blocking safety issues, or deletes the obsolete
-surface and its tests, flags, metrics, and documentation.
+Base is moving from Flashblocks to 200 ms blocks. The Flashblock builder is
+scheduled for removal by **October 31, 2026**, after 200 ms blocks are
+activated. Sequencing work should make the 200 ms path ready to operate, move
+callers and operators to it, and remove the replaced Flashblocks code, flags,
+tests, metrics, and documentation once migration is proven.
 
 ## Reth integration boundary
 
@@ -200,7 +198,7 @@ state machine or eliminates real duplication; it must not conceal hardfork
 conditions or Base-versus-upstream ownership.
 
 Before a PR, state the affected user or operator, observable outcome, roadmap
-fit (including any Flashblocks retirement impact), obsolete surface avoided or
+fit (including any impact on the move to 200 ms blocks), obsolete surface avoided or
 removed, focused validation, and whether durable documentation is actually
 needed. Performance claims need a representative baseline and repeatable
 comparison. For block-production-sensitive work, also follow

@@ -40,7 +40,7 @@ assigned project. Use `depot bake --project <id> ... --load` only when a Docker
 image or E2E run materially increases confidence. Never use /tmp for benchmark
 outputs, targets, snapshots, or scratch state.
 
-Do not optimize deprecated Flashblocks infrastructure or open a benchmark-only,
+Treat Flashblocks as a transition/removal path to 200 ms blocks; do not use it as a performance claim target. open a benchmark-only,
 report-only, or null-result PR. Exact baseline/candidate commands, commit SHAs,
 build profile, runner/hardware, input/config versions, repeat count, absolute
 and relative results, variance, and guardrails belong in the PR. A larger change

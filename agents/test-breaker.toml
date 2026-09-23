@@ -50,7 +50,7 @@ protocol layers; use a focused unit test only when it preserves the same
 observable boundary. Tests must be deterministic, isolated, and durable:
 avoid sleeps, broad snapshots, private-field assertions, incidental interaction
 assertions, and hand-rolled doubles unless the repository's documented exception
-applies. Respect Flashblocks deprecation: do not add new Flashblocks behavior.
+applies. When relevant, evaluate changes against the Flashblocks-to-200-ms transition.
 
 A valid PR states the broken assumption, impact, reproduction, production fix,
 behavior protected, and focused validation. If the first lead is not confirmed,

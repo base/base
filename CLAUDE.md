@@ -20,7 +20,7 @@
 ## Product Direction
 
 - Read [`docs/FEATURE_MAP.md`](docs/FEATURE_MAP.md) before proposing or implementing product, protocol, builder, Flashblocks, proof, or operator work. It defines the active roadmap, deprecation commitments, and PR decision rules.
-- Do not add new Flashblocks behavior. Flashblocks and the Flashblock builder are deprecated; follow the retirement plan in the feature map, including removal of the builder by October 31, 2026 after 200 ms blocks are activated.
+- Base is moving from Flashblocks to 200 ms blocks. Follow the feature map for the migration and removal of the Flashblock builder by October 31, 2026 after 200 ms blocks are activated.
 - For legacy Optimism/pre-Holocene, upgrade, derivation, execution, and operator work, use the feature map to favor removing obsolete special cases and making supported state transitions, ownership, observability, and hardfork planning explicit.
 
 ## Documentation and Lints
