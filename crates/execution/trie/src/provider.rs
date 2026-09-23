@@ -24,9 +24,11 @@ use reth_trie_common::{
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
 };
+use tracing::instrument;
 
 use crate::{
     BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    metrics::StateMetrics,
     proof::{
         DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
         DatabaseTrieWitness,
@@ -92,13 +94,15 @@ impl<'a, Storage: BaseProofsStore + Clone> BaseProofsStateProviderRef<'a, Storag
         hashed_key: B256,
     ) -> ProviderResult<Option<StorageValue>> {
         let tx = self.ensure_tx()?;
-        Ok(self
+        let mut cursor = self
             .storage
             .storage_hashed_cursor_with_tx(&tx, keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, val)| (key == hashed_key).then_some(val)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, value)| (key == hashed_key).then_some(value)))
     }
 }
 
@@ -232,16 +236,26 @@ impl<'a, Storage: BaseProofsStore> HashedPostStateProvider
 }
 
 impl<'a, Storage: BaseProofsStore> AccountReader for BaseProofsStateProviderRef<'a, Storage> {
+    #[instrument(
+        skip_all,
+        fields(
+            state_reads = tracing::field::Empty,
+            state_misses = tracing::field::Empty,
+            state_seek_ns = tracing::field::Empty,
+        )
+    )]
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
         let tx = self.ensure_tx()?;
-        Ok(self
+        let mut cursor = self
             .storage
             .account_hashed_cursor_with_tx(&tx, self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, account)| (key == hashed_key).then_some(account)))
     }
 }
 
@@ -249,6 +263,14 @@ impl<'a, Storage> StateProvider for BaseProofsStateProviderRef<'a, Storage>
 where
     Storage: BaseProofsStore + Clone,
 {
+    #[instrument(
+        skip_all,
+        fields(
+            state_reads = tracing::field::Empty,
+            state_misses = tracing::field::Empty,
+            state_seek_ns = tracing::field::Empty,
+        )
+    )]
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
         self.storage_by_hashed_key(address, hashed_key)

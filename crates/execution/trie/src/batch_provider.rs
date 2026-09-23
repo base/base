@@ -30,10 +30,11 @@ use reth_trie_common::{
     KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
 };
+use tracing::instrument;
 
 use crate::{
     BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
-    api::BaseProofsBatchSession,
+    api::BaseProofsBatchSession, metrics::StateMetrics,
 };
 
 /// State provider that reads through an active [`BaseProofsBatchSession`]'s transaction.
@@ -277,28 +278,48 @@ impl<S: BaseProofsBatchSession> HashedPostStateProvider for BaseProofsBatchState
 }
 
 impl<S: BaseProofsBatchSession> AccountReader for BaseProofsBatchStateProviderRef<'_, S> {
+    #[instrument(
+        skip_all,
+        fields(
+            state_reads = tracing::field::Empty,
+            state_misses = tracing::field::Empty,
+            state_seek_ns = tracing::field::Empty,
+        )
+    )]
     fn basic_account(&self, address: &Address) -> ProviderResult<Option<Account>> {
         let hashed_key = keccak256(address.0);
-        Ok(self
+        let mut cursor = self
             .session
             .account_hashed_cursor(self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, account)| (key == hashed_key).then_some(account)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, account)| (key == hashed_key).then_some(account)))
     }
 }
 
 impl<S: BaseProofsBatchSession> StateProvider for BaseProofsBatchStateProviderRef<'_, S> {
+    #[instrument(
+        skip_all,
+        fields(
+            state_reads = tracing::field::Empty,
+            state_misses = tracing::field::Empty,
+            state_seek_ns = tracing::field::Empty,
+        )
+    )]
     fn storage(&self, address: Address, storage_key: B256) -> ProviderResult<Option<StorageValue>> {
         let hashed_key = keccak256(storage_key);
-        Ok(self
+        let mut cursor = self
             .session
             .storage_hashed_cursor(keccak256(address.0), self.block_number)
-            .map_err(Into::<ProviderError>::into)?
-            .seek(hashed_key)
-            .map_err(Into::<ProviderError>::into)?
-            .and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
+            .map_err(Into::<ProviderError>::into)?;
+        let found = StateMetrics::record_seek(
+            || cursor.seek(hashed_key).map_err(Into::<ProviderError>::into),
+            |found| found.as_ref().is_some_and(|(key, _)| *key == hashed_key),
+        )?;
+        Ok(found.and_then(|(key, storage)| (key == hashed_key).then_some(storage)))
     }
 }
 
