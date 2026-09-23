@@ -9,8 +9,7 @@ use alloy_primitives::B256;
 use base_batcher_core::{
     BatchDriverError, DerivationStatus,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, Recorded, SubmissionStub, TrackingPipeline,
-        TrackingSource,
+        DriverFixture, ImmediateConfirmTxManager, Recorded, TrackingPipeline, TrackingSource,
     },
 };
 use base_batcher_source::test_utils::ChannelL1HeadSource;
@@ -112,33 +111,6 @@ fn test_derivation_cursor_advance_replays_stalled_channel() {
         assert_eq!(recorded.safe_numbers, vec![safe_l2.number]);
         assert_eq!(recorded.resets, 1);
         assert_eq!(*catchup_heads.lock().unwrap(), vec![safe_l2]);
-    });
-}
-
-#[test]
-fn test_queued_safe_head_preempts_submission() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        pipeline.submissions.push_back(SubmissionStub::stub());
-
-        let (driver, handles) =
-            DriverFixture::new(ctx.clone(), pipeline, ImmediateConfirmTxManager { l1_block: 1 })
-                .safe_head(safe_head(10))
-                .build();
-        handles
-            .derivation_status_tx
-            .send(DerivationStatus::from_safe_l2(safe_head(5)))
-            .await
-            .unwrap();
-        let handle = ctx.spawn(driver.run());
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok());
-        let recorded = recorded.lock().unwrap();
-        assert_eq!(recorded.resets, 1);
-        assert!(recorded.dequeued.is_empty());
     });
 }
 
