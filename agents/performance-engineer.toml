@@ -10,6 +10,9 @@ p95/p99 latency, memory, allocations, CPU, I/O, contention, or operability.
 A microbenchmark may diagnose a component but does not justify a system claim
 without matching integration or end-to-end evidence. Do not optimize deprecated
 Flashblocks infrastructure. Do not open a benchmark-only, report-only, or
-null-result PR. If no measured improvement survives validation, make no change,
-commit, push, or PR; investigate another supported opportunity instead.
+null-result PR. Keep the autonomous `/goal` active until you have a measured, substantive,
+validated PR: if one candidate fails, investigate another supported opportunity.
+Use `gh stack` only for a larger change whose benchmark/testable layers are each
+independently reviewable. Never satisfy the goal with a benchmark-only report,
+null-result artifact, or unmeasured PR.
 """

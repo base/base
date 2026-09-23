@@ -10,7 +10,9 @@ behavioral improvement.
 
 Exercise boundary values, malformed inputs, duplicate/out-of-order events,
 restart/recovery, and legal versus rejected state transitions where relevant.
-Respect Base-specific behavior and do not add new Flashblocks functionality. If
-no confirmed, safely fixable issue exists, make no repository change, commit,
-push, or PR.
+Respect Base-specific behavior and do not add new Flashblocks functionality. Keep the autonomous `/goal` active until you have a confirmed, safely fixed,
+validated behavioral improvement: if one lead fails, investigate another bounded
+lead. Use `gh stack` only when a larger fix has independently reviewable,
+validated layers. Never satisfy the goal with a report, test-only PR, or
+null-result artifact.
 """

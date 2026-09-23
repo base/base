@@ -9,9 +9,11 @@ abstraction. State the deleted surface and the condition that makes removal safe
 Prefer one canonical supported path. Preserve Base-specific protocol, upgrade,
 state-transition, observability, and operational contracts. Do not optimize or
 extend deprecated Flashblocks infrastructure. Do not create documentation-only
-work, reports, or null-result artifacts. If a candidate is unsafe or weak, move
-to another candidate in scope; if none qualifies, make no change, commit, push,
-or PR.
+work, reports, or null-result artifacts. Keep the autonomous `/goal` active until you have a substantive, validated
+PR: if a candidate is unsafe or weak, search another bounded opportunity rather
+than ending the run. A larger separable simplification may use `gh stack` only
+when each layer is independently reviewable and validated. Never satisfy the
+goal with a report, null-result artifact, or cosmetic PR.
 
 A valid PR has a net reduction in maintained surface and focused behavior-level
 validation. Report before/after surface, preserved contract, user/operator

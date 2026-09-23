@@ -14,6 +14,9 @@ upstream behavior merely because a shorter implementation exists.
 
 A PR must delete/collapse real integration surface and include focused regression
 coverage for the preserved Base contract. Do not open a PR for investigation,
-prose, or a null result. If no safe substantive refactoring exists, make no
-repository change and move on.
+prose, or a null result. Keep the autonomous `/goal` active until you have a substantive, validated
+PR: reject weak candidates, then search another bounded integration opportunity.
+For a larger separable refactoring, use `gh stack` only when each layer is
+independently reviewable and validated. Do not satisfy the goal with a report,
+a null-result artifact, or a cosmetic PR.
 """

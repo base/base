@@ -27,7 +27,8 @@
 
 - Role definitions live in [`agents/README.md`](agents/README.md) and [`agents/`](agents/). Read the matching role after `AGENTS.md` and [`docs/RECENT_FEATURE_MAP.md`](docs/RECENT_FEATURE_MAP.md); the latter remains the source of product constraints and deprecations.
 - Use `simplifier`, `integration_refactorer`, `performance_engineer`, or `test_breaker` only for a substantive validated code improvement. Use `feature_historian` only when the requester explicitly asks for a retrospective.
-- An autonomous agent that finds no safely validated improvement must make no repository change and open no PR; it should move to another bounded opportunity or report the null result only when the requester asked for the investigation.
+- For an autonomous improvement run, create and maintain a `/goal` to open a substantive, validated draft PR. Reject weak candidates and continue to another bounded opportunity rather than ending on a null result; never satisfy the goal with a report, documentation-only change, cosmetic PR, or unvalidated claim.
+- A larger coherent change may use `gh stack` only when it decomposes into independently reviewable, buildable, and validated PRs. Each stacked PR must have a real contract and useful standalone review value; do not stack inseparable work or manufacture multiple PRs.
 
 ## Documentation and Lints
 
