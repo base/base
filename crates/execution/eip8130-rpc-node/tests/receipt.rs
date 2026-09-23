@@ -169,6 +169,19 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
         "receipt must surface the transaction's EIP-8130 metadata"
     );
 
+    let quantity =
+        |field: &str| -> eyre::Result<U256> { Ok(serde_json::from_value(json[field].clone())?) };
+    let total_fee = quantity("totalFee")?;
+    assert_eq!(
+        total_fee,
+        quantity("gasUsed")? * quantity("effectiveGasPrice")? + quantity("chainFee")?,
+        "totalFee must be gasUsed * effectiveGasPrice + chainFee"
+    );
+    assert!(
+        total_fee <= U256::from(200_000u64) * U256::from(1_000_000_000u64),
+        "totalFee must not exceed max_fee_per_gas * gas_limit"
+    );
+
     Ok(())
 }
 

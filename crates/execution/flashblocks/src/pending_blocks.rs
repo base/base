@@ -996,6 +996,8 @@ mod tests {
             payer: None,
             phase_statuses: None,
             metadata: None,
+            chain_fee: None,
+            total_fee: None,
         }
     }
 
@@ -1055,6 +1057,8 @@ mod tests {
             payer: None,
             phase_statuses: None,
             metadata: None,
+            chain_fee: None,
+            total_fee: None,
         }
     }
 
@@ -1338,6 +1342,8 @@ mod tests {
             payer: None,
             phase_statuses: None,
             metadata: None,
+            chain_fee: None,
+            total_fee: None,
         }
     }
 
@@ -1479,6 +1485,8 @@ mod tests {
             payer: None,
             phase_statuses: None,
             metadata: None,
+            chain_fee: None,
+            total_fee: None,
         };
 
         let header = Sealed::new_unchecked(Header::default(), B256::ZERO);

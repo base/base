@@ -4,14 +4,16 @@ use std::fmt::Debug;
 
 use alloy_consensus::{BlockHeader, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use base_common_chains::Upgrades;
-use base_common_consensus::{BaseReceipt, BaseTransaction};
+use base_common_consensus::{BaseReceipt, BaseTransaction, Eip8130Signed};
+use base_common_evm::BaseSpecId;
 use base_common_flz::tx_estimated_size_fjord as estimate_tx_compressed_size;
 use base_common_rpc_types::{
     BaseLogResponse, BaseTransactionReceipt, L1BlockInfo, TransactionReceiptFields,
 };
+use base_execution_eip8130::{FeeCheck, IntrinsicGas};
 use base_execution_evm::RethL1BlockInfo;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_node_api::{BlockBody, NodePrimitives};
@@ -317,6 +319,11 @@ pub struct BaseReceiptBuilder {
     pub phase_statuses: Option<Vec<u8>>,
     /// EIP-8130 opaque transaction metadata. `None` for non-EIP-8130 transactions.
     pub metadata: Option<alloy_primitives::Bytes>,
+    /// EIP-8130 chain fee (L1 data fee plus operator fee at the gas used). `None` for
+    /// non-EIP-8130 transactions.
+    pub chain_fee: Option<U256>,
+    /// EIP-8130 total fee charged to the payer. `None` for non-EIP-8130 transactions.
+    pub total_fee: Option<U256>,
 }
 
 impl BaseReceiptBuilder {
@@ -331,6 +338,7 @@ impl BaseReceiptBuilder {
     {
         let timestamp = input.meta.timestamp;
         let block_number = input.meta.block_number;
+        let base_fee = u128::from(input.meta.base_fee.unwrap_or_default());
         let tx_signed = *input.tx.inner();
 
         // EIP-8130 RPC-only fields, derived before `input` is consumed below. The payer is
@@ -393,17 +401,78 @@ impl BaseReceiptBuilder {
             .l1_block_info(chain_spec, tx_signed, l1_block_info)?
             .build();
 
-        Ok(Self { core_receipt, receipt_fields, payer, phase_statuses, metadata })
+        let mut chain_fee = None;
+        let mut total_fee = None;
+        if let Some(signed) = tx_signed.as_eip8130() {
+            let fees = Self::eip8130_fees(
+                chain_spec,
+                timestamp,
+                signed,
+                base_fee,
+                core_receipt.gas_used,
+                l1_block_info,
+            )?;
+            core_receipt.effective_gas_price = fees.0;
+            chain_fee = Some(fees.1);
+            total_fee = Some(fees.2);
+        }
+
+        Ok(Self {
+            core_receipt,
+            receipt_fields,
+            payer,
+            phase_statuses,
+            metadata,
+            chain_fee,
+            total_fee,
+        })
+    }
+
+    /// The EIP-8130 `(effective_gas_price, chain_fee, total_fee)` for a mined
+    /// transaction: the L1 data fee and operator fee are a chain fee inside
+    /// `max_fee_per_gas · effective_gas_limit`, so they lower the priority fee
+    /// rather than being charged on top.
+    fn eip8130_fees(
+        chain_spec: &impl Upgrades,
+        timestamp: u64,
+        signed: &Eip8130Signed,
+        base_fee: u128,
+        gas_used: u64,
+        l1_block_info: &mut base_common_evm::L1BlockInfo,
+    ) -> Result<(u128, U256, U256), BaseEthApiError> {
+        let tx = signed.tx();
+        let spec = BaseSpecId::from_timestamp(chain_spec, timestamp);
+        let encoded = signed.encoded_2718();
+        let payer_auth = IntrinsicGas::max_payer_auth_cost(signed)
+            .map_err(|_| BaseEthApiError::L1BlockFeeError)?;
+        let effective_gas_limit = FeeCheck::max_chargeable_gas(tx.gas_limit, payer_auth);
+        let max_chain_fee = l1_block_info.tx_cost(&encoded, U256::from(effective_gas_limit), spec);
+        let effective = FeeCheck::effective_gas_price_with_chain_fee(
+            tx.max_fee_per_gas,
+            tx.max_priority_fee_per_gas,
+            base_fee,
+            effective_gas_limit,
+            max_chain_fee,
+        )
+        .map_err(|_| BaseEthApiError::L1BlockFeeError)?;
+        let chain_fee = l1_block_info.tx_cost(&encoded, U256::from(gas_used), spec);
+        let total_fee =
+            U256::from(gas_used).saturating_mul(U256::from(effective)).saturating_add(chain_fee);
+        Ok((effective, chain_fee, total_fee))
     }
 
     /// Builds [`BaseTransactionReceipt`] by combining core L1 receipt fields and additional Base
     /// receipt fields.
     pub fn build(self) -> BaseTransactionReceipt {
-        let Self { core_receipt: inner, receipt_fields, payer, phase_statuses, metadata } = self;
-
-        let TransactionReceiptFields { l1_block_info, .. } = receipt_fields;
-
-        BaseTransactionReceipt { inner, l1_block_info, payer, phase_statuses, metadata }
+        BaseTransactionReceipt {
+            inner: self.core_receipt,
+            l1_block_info: self.receipt_fields.l1_block_info,
+            payer: self.payer,
+            phase_statuses: self.phase_statuses,
+            metadata: self.metadata,
+            chain_fee: self.chain_fee,
+            total_fee: self.total_fee,
+        }
     }
 }
 

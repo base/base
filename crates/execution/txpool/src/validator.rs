@@ -1222,7 +1222,7 @@ where
             intrinsic.payer_auth,
             signed.tx().max_fee_per_gas,
         );
-        let additional_fee = if self.requires_l1_data_gas_fee() {
+        let chain_fee = if self.requires_l1_data_gas_fee() {
             let mut info = self.block_info.l1_block_info.read().clone();
             let spec_id = BaseSpecId::from_timestamp(self.chain_spec(), now);
             info.tx_cost(
@@ -1236,9 +1236,17 @@ where
         } else {
             U256::ZERO
         };
-        let payer_max_cost = gas_charge
-            .saturating_add(additional_fee)
-            .saturating_add(if payer == sender { signed.tx().value() } else { U256::ZERO });
+        // The chain fee is charged within `max_cost`, never on top of it.
+        // Execution additionally requires room for the base fee, which the pool
+        // tracks separately.
+        if chain_fee > gas_charge {
+            return Err(InvalidTransactionError::FeeCapTooLow.into());
+        }
+        let payer_max_cost = gas_charge.saturating_add(if payer == sender {
+            signed.tx().value()
+        } else {
+            U256::ZERO
+        });
         // All three predicates are now inclusive block-timestamp *second* bounds
         // (`now <= bound`): the transaction's millisecond window is folded onto
         // the seconds axis by `tx_valid_before_secs`, which is nonce-mode-aware
@@ -3518,12 +3526,16 @@ mod tests {
     }
 
     #[test]
-    fn eip8130_payer_max_cost_includes_l1_and_operator_fees() {
+    fn eip8130_chain_fee_is_charged_within_max_cost() {
         let chain_config = ChainConfig::mainnet();
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
+        let tx = TxEip8130 {
+            gas_limit: 100_000,
+            max_fee_per_gas: 1_000_000_000_000,
+            ..minimal_valid_eoa_tx()
+        };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
             Eip8130Signed::new(tx, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
@@ -3569,11 +3581,27 @@ mod tests {
         );
         let spec_id = BaseSpecId::from_timestamp(&chain_spec, chain_config.isthmus_timestamp);
         let mut l1_block_info = base_execution_evm::parse_l1_info(&isthmus_data).unwrap();
-        let additional_fees = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
+        let chain_fee = l1_block_info.tx_cost(&encoded, U256::from(max_gas), spec_id);
 
-        assert!(!additional_fees.is_zero(), "fixture must charge L1/operator fees");
-        assert_eq!(state.payer_max_cost, gas_charge.saturating_add(additional_fees));
+        assert!(!chain_fee.is_zero(), "fixture must charge L1/operator fees");
+        assert!(chain_fee <= gas_charge);
+        assert_eq!(state.payer_max_cost, gas_charge);
         assert_eq!(state.manifest.payer_max_cost(), state.payer_max_cost);
+
+        // A fee cap too low to hold the chain fee is rejected.
+        let cheap = TxEip8130 {
+            gas_limit: 100_000,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 0,
+            ..minimal_valid_eoa_tx()
+        };
+        let signature = signer.sign_hash_sync(&cheap.sender_signature_hash()).unwrap();
+        let cheap =
+            Eip8130Signed::new(cheap, Bytes::from(signature.as_bytes().to_vec()), Bytes::new());
+        assert!(matches!(
+            validator.validate_eip8130_full(&cheap),
+            Err(InvalidPoolTransactionError::Consensus(InvalidTransactionError::FeeCapTooLow))
+        ));
     }
 
     #[test]

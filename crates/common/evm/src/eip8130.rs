@@ -862,6 +862,13 @@ impl Eip8130Executor {
             return Err(BaseTransactionError::eip8130("transaction validity window has expired"));
         }
 
+        // The L1 data fee and operator fee are the chain fee: they must fit in
+        // `max_fee_per_gas · effective_gas_limit` together with the base fee.
+        let max_payer_auth =
+            IntrinsicGas::max_payer_auth_cost(signed).map_err(BaseTransactionError::eip8130)?;
+        let effective_gas_limit = FeeCheck::max_chargeable_gas(gas_limit, max_payer_auth);
+        let chain_fee = Self::chain_fee(ctx, encoded, effective_gas_limit);
+
         let internals = EvmInternals::from_context(ctx);
         let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
 
@@ -962,9 +969,17 @@ impl Eip8130Executor {
                     gas_limit,
                 )?;
 
-            // 5. Fee caps and payer balance.
+            // 5. Fee caps, the chain fee within `max_cost`, and payer balance.
             FeeCheck::validate_fees(max_fee, max_priority, base_fee)
                 .map_err(BaseTransactionError::eip8130)?;
+            let effective = FeeCheck::effective_gas_price_with_chain_fee(
+                max_fee,
+                max_priority,
+                base_fee,
+                effective_gas_limit,
+                chain_fee,
+            )
+            .map_err(BaseTransactionError::eip8130)?;
             let payer_balance = sctx
                 .with_account_info(payer, |info| Ok(info.balance))
                 .map_err(BaseTransactionError::eip8130)?;
@@ -978,11 +993,22 @@ impl Eip8130Executor {
                 sender_intrinsic,
                 payer_auth,
                 execution_gas_available,
-                effective: FeeCheck::effective_gas_price(max_fee, max_priority, base_fee),
+                effective,
                 base_fee,
                 bump_protocol_nonce,
             })
         })
+    }
+
+    /// The chain fee at `gas`: the L1 data fee plus the operator fee.
+    fn chain_fee<DB>(ctx: &mut BaseContext<DB>, encoded: &[u8], gas: u64) -> U256
+    where
+        DB: AlloyDatabase,
+        BaseContext<DB>: BaseContextTr + ContextTr<Db = DB>,
+    {
+        let spec = ctx.cfg().spec();
+        let l1_cost = ctx.chain_mut().calculate_tx_l1_cost(encoded, spec);
+        l1_cost.saturating_add(ctx.chain().operator_fee_charge(encoded, U256::from(gas), spec))
     }
 
     /// Pre-charges the payer the worst-case fee and bumps the sender's protocol
@@ -1004,6 +1030,9 @@ impl Eip8130Executor {
             BaseContextTr + ContextTr<Db = DB, Tx = BaseTransaction<TxEnv>, Block = BlockEnv>,
     {
         ctx.tx.base.caller = outcome.sender;
+        // `GASPRICE` reads `min(max_fee, base_fee + priority)`; pin the priority
+        // to the chain-fee-adjusted one so it reports `outcome.effective`.
+        ctx.tx.base.gas_priority_fee = Some(outcome.effective.saturating_sub(outcome.base_fee));
 
         if outcome.bump_protocol_nonce {
             let mut sender_acc =
@@ -2434,6 +2463,50 @@ mod tests {
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
         assert!(outcome.state[&payer].info.balance < initial, "payer must be charged");
         assert!(outcome.state[&sender].info.balance.is_zero(), "sender must not be charged");
+    }
+
+    /// Runs a self-pay transaction whose only chain fee is a flat operator fee
+    /// of `operator_fee`, returning the gas used and the priority fee paid to
+    /// the beneficiary, or the EIP-8130 rejection reason.
+    fn transact_with_operator_fee(key_byte: u8, operator_fee: U256) -> Result<(u64, U256), String> {
+        let key = signing_key(key_byte);
+        let sender = eoa_address(&key);
+        let signed = eoa_signed(base_tx(), &key);
+        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), sender);
+        *evm.ctx_mut().chain_mut() = crate::L1BlockInfo {
+            l2_block: Some(U256::from(1u64)),
+            operator_fee_scalar: Some(U256::ZERO),
+            operator_fee_constant: Some(operator_fee),
+            ..Default::default()
+        };
+        match evm.transact_raw(into_base_tx(&signed)) {
+            Ok(outcome) => {
+                assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+                let tip =
+                    outcome.state.get(&BENEFICIARY).map_or(U256::ZERO, |acc| acc.info.balance);
+                Ok((outcome.result.tx_gas_used(), tip))
+            }
+            Err(EVMError::Transaction(BaseTransactionError::Eip8130(reason))) => Err(reason),
+            Err(err) => panic!("expected an EIP-8130 outcome, got {err:?}"),
+        }
+    }
+
+    /// The chain fee is paid out of `max_fee_per_gas · gas_limit`: whatever
+    /// headroom it leaves above the base fee caps the priority fee.
+    #[test]
+    fn chain_fee_caps_the_priority_fee() {
+        // max_cost 5e15, base cost 1e15, chain fee 3.5e15: 0.5 gwei of headroom
+        // per gas against a 1 gwei priority fee.
+        let (gas_used, tip) =
+            transact_with_operator_fee(0x36, U256::from(3_500_000_000_000_000u64)).unwrap();
+        assert_eq!(tip, U256::from(gas_used) * U256::from(500_000_000u64));
+    }
+
+    #[test]
+    fn chain_fee_beyond_max_cost_is_rejected() {
+        let reason =
+            transact_with_operator_fee(0x37, U256::from(4_000_000_000_000_001u64)).unwrap_err();
+        assert!(reason.contains("exceed the maximum cost"), "unexpected rejection: {reason}");
     }
 
     #[test]

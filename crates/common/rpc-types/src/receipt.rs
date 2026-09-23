@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_serde::OtherFields;
 use base_common_consensus::{
     BaseReceipt, BaseReceiptEnvelope, DepositReceipt, DepositReceiptWithBloom,
@@ -45,6 +45,18 @@ pub struct BaseTransactionReceipt {
     /// Always null for non-EIP-8130 transactions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
+    /// EIP-8130 chain fee in wei: the L1 data fee plus the operator fee at the
+    /// gas used, charged to the payer within `max_fee_per_gas · effective_gas_limit`.
+    ///
+    /// Always null for non-EIP-8130 transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_fee: Option<U256>,
+    /// EIP-8130 total fee in wei actually charged to the payer:
+    /// `gas_used · effective_gas_price + chain_fee`.
+    ///
+    /// Always null for non-EIP-8130 transactions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_fee: Option<U256>,
 }
 
 /// EIP-8130-specific fields attached to a transaction receipt response.

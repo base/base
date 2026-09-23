@@ -25,6 +25,16 @@ pub enum FeeError {
         max_fee: u128,
     },
 
+    /// The base fee plus the chain fee at the effective gas limit exceed
+    /// `max_cost = max_fee_per_gas · effective_gas_limit`.
+    #[error("base fee and chain fee {max_base_cost} exceed the maximum cost {max_cost}")]
+    MaxCostBelowBaseCost {
+        /// `max_fee_per_gas · effective_gas_limit`.
+        max_cost: U256,
+        /// `base_fee · effective_gas_limit + chain_fee(effective_gas_limit)`.
+        max_base_cost: U256,
+    },
+
     /// The gas payer's balance cannot cover the worst-case gas charge.
     #[error("gas payer balance {balance} is below the required {required}")]
     InsufficientBalance {
@@ -52,6 +62,42 @@ impl FeeCheck {
         // to keep this `const fn` (consistent with the other `FeeCheck` helpers).
         let cap = base_fee.saturating_add(max_priority_fee);
         if max_fee < cap { max_fee } else { cap }
+    }
+
+    /// Effective gas price when the chain levies a fee other than gas (the OP
+    /// Stack L1 data fee and operator fee), which must fit within
+    /// `max_cost = max_fee_per_gas · effective_gas_limit` alongside the base
+    /// fee:
+    ///
+    /// ```text
+    /// max_base_cost = base_fee · egl + chain_fee(egl)
+    /// priority      = min(max_priority_fee, (max_cost - max_base_cost) / egl)
+    /// effective     = base_fee + priority
+    /// ```
+    ///
+    /// `chain_fee` is the chain fee at `effective_gas_limit`. With a zero chain
+    /// fee this is [`Self::effective_gas_price`].
+    ///
+    /// # Errors
+    /// - [`FeeError::MaxCostBelowBaseCost`] — `max_base_cost > max_cost`.
+    pub fn effective_gas_price_with_chain_fee(
+        max_fee: u128,
+        max_priority_fee: u128,
+        base_fee: u128,
+        effective_gas_limit: u64,
+        chain_fee: U256,
+    ) -> Result<u128, FeeError> {
+        let gas = U256::from(effective_gas_limit);
+        let max_cost = gas.saturating_mul(U256::from(max_fee));
+        let max_base_cost = gas.saturating_mul(U256::from(base_fee)).saturating_add(chain_fee);
+        if max_base_cost > max_cost {
+            return Err(FeeError::MaxCostBelowBaseCost { max_cost, max_base_cost });
+        }
+        let headroom = max_cost.checked_sub(max_base_cost).unwrap_or_default().checked_div(gas);
+        let priority = headroom.map_or(0, |headroom| {
+            u128::try_from(headroom).unwrap_or(u128::MAX).min(max_priority_fee)
+        });
+        Ok(base_fee.saturating_add(priority))
     }
 
     /// Maximum gas the payer can be charged: `gas_limit + payer_auth_cost`. Payer
@@ -156,6 +202,45 @@ mod tests {
         assert_eq!(FeeCheck::effective_gas_price(100, 5, 80), 85);
         // base + tip above the cap -> capped at max_fee.
         assert_eq!(FeeCheck::effective_gas_price(100, 50, 80), 100);
+    }
+
+    #[test]
+    fn chain_fee_reduces_priority_within_max_cost() {
+        // No chain fee: identical to the EIP-1559 price.
+        assert_eq!(
+            FeeCheck::effective_gas_price_with_chain_fee(100, 5, 80, 1_000, U256::ZERO),
+            Ok(85)
+        );
+        assert_eq!(
+            FeeCheck::effective_gas_price_with_chain_fee(100, 50, 80, 1_000, U256::ZERO),
+            Ok(100)
+        );
+        // max_cost 100_000, base 80_000, chain fee 15_000: headroom 5 per gas.
+        assert_eq!(
+            FeeCheck::effective_gas_price_with_chain_fee(100, 50, 80, 1_000, U256::from(15_000)),
+            Ok(85)
+        );
+        // A small tip is unaffected by the remaining headroom.
+        assert_eq!(
+            FeeCheck::effective_gas_price_with_chain_fee(100, 2, 80, 1_000, U256::from(15_000)),
+            Ok(82)
+        );
+        // Chain fee consumes all headroom: priority is zero.
+        assert_eq!(
+            FeeCheck::effective_gas_price_with_chain_fee(100, 50, 80, 1_000, U256::from(20_000)),
+            Ok(80)
+        );
+    }
+
+    #[test]
+    fn chain_fee_above_headroom_is_rejected() {
+        assert_eq!(
+            FeeCheck::effective_gas_price_with_chain_fee(100, 5, 80, 1_000, U256::from(20_001)),
+            Err(FeeError::MaxCostBelowBaseCost {
+                max_cost: U256::from(100_000),
+                max_base_cost: U256::from(100_001),
+            })
+        );
     }
 
     #[test]
