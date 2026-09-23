@@ -130,7 +130,11 @@ async fn eip8130_receipt_reports_phase_statuses() -> eyre::Result<()> {
         max_fee_per_gas: 1_000_000_000,
         gas_limit: 200_000,
         account_changes: Vec::new(),
-        calls: vec![vec![Call { to: Account::Bob.address(), value: U256::ZERO, data: Bytes::new() }]],
+        calls: vec![vec![Call {
+            to: Account::Bob.address(),
+            value: U256::ZERO,
+            data: Bytes::new(),
+        }]],
         metadata: Bytes::from_static(&[0xab, 0xcd]),
         payer: None,
     };
