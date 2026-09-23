@@ -1,10 +1,13 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
+use std::time::Duration;
+
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chains::Upgrades;
 use base_common_consensus::EIP8130_TX_TYPE_ID;
 use base_common_genesis::RollupConfig;
+use base_execution_rpc::SequencerClient;
 use base_execution_txpool::{
     BasePooledTransaction, DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
     ValidityPredicate, deserialize_bounded_predicates,
@@ -40,6 +43,9 @@ pub const VALIDITY_TX_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 validity transactio
 
 /// Legacy full-block cadence used before Denim activates.
 const LEGACY_BLOCK_INTERVAL_MILLIS: u64 = 2_000;
+
+/// Maximum wait for a proxied validity submission to reach the sequencer.
+const SEQUENCER_VALIDITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -121,7 +127,7 @@ pub struct SendRawTransactionValidityApiImpl<Provider> {
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
     experimental_override: bool,
-    sequencer_client: Option<HttpClient>,
+    sequencer_client: Option<SequencerClient>,
     transaction_sender: tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>>,
 }
 
@@ -181,7 +187,7 @@ impl<Provider> SendRawTransactionValidityApiImpl<Provider> {
         self
     }
     /// Proxies validity submissions to the configured sequencer rather than the local pool.
-    pub fn with_sequencer_client(mut self, client: HttpClient) -> Self {
+    pub fn with_sequencer_client(mut self, client: SequencerClient) -> Self {
         self.sequencer_client = Some(client);
         self
     }
@@ -287,17 +293,19 @@ where
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
         if let Some(client) = &self.sequencer_client {
-            return client
-                .request("base_sendRawTransactionValidity", rpc_params![tx, options])
-                .await
-                .map_err(|error| match error {
-                    jsonrpsee::core::ClientError::Call(remote) => remote,
-                    other => ErrorObjectOwned::owned(
-                        ErrorCode::InternalError.code(),
-                        format!("failed to forward validity transaction: {other}"),
-                        None::<()>,
-                    ),
-                });
+            return tokio::time::timeout(
+                SEQUENCER_VALIDITY_REQUEST_TIMEOUT,
+                client.request("base_sendRawTransactionValidity", (tx, options)),
+            )
+            .await
+            .map_err(|_| {
+                ErrorObjectOwned::owned(
+                    ErrorCode::InternalError.code(),
+                    "sequencer validity request timed out",
+                    None::<()>,
+                )
+            })?
+            .map_err(ErrorObjectOwned::from);
         }
 
         let latest = self.latest_block_number_and_timestamp()?;
@@ -831,7 +839,7 @@ mod tests {
         let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
         let expected_hash = TxHash::repeat_byte(0x42);
         let mock = sequencer.mock(|when, then| {
-            when.method(POST).path("/").json_body(json!({
+            when.method(POST).path("/").header("x-demo", "forwarded").json_body(json!({
                 "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
                 "params": [raw, { "validity": options.validity }],
             }));
@@ -839,7 +847,11 @@ mod tests {
                 .header("content-type", "application/json")
                 .json_body(json!({"jsonrpc": "2.0", "id": 0, "result": expected_hash}));
         });
-        let client = HttpClientBuilder::default().build(sequencer.base_url()).unwrap();
+        let client = SequencerClient::new_http_with_headers(
+            sequencer.base_url(),
+            vec!["X-Demo=forwarded".to_string()],
+        )
+        .unwrap();
         let rpc = SendRawTransactionValidityApiImpl::new(
             pre_zenith_provider(),
             test_transaction_sender(),
@@ -866,7 +878,7 @@ mod tests {
                 }}),
             );
         });
-        let client = HttpClientBuilder::default().build(sequencer.base_url()).unwrap();
+        let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
         let rpc = SendRawTransactionValidityApiImpl::new(
             pre_zenith_provider(),
             test_transaction_sender(),

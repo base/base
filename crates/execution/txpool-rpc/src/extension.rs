@@ -1,11 +1,10 @@
 //! `TxPool` RPC extension for registering transaction pool management APIs.
 
+use base_execution_rpc::SequencerClient;
 pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
 };
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
-use http::header::{HeaderMap, HeaderName, HeaderValue};
-use jsonrpsee::http_client::HttpClientBuilder;
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
@@ -93,22 +92,10 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
             )
             .with_experimental_override(config.experimental_override);
             if let Some(url) = &config.sequencer_url {
-                let mut headers = HeaderMap::new();
-                for header in &config.sequencer_headers {
-                    let (name, value) = header.split_once('=').ok_or_else(|| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "invalid sequencer header; expected name=value",
-                        )
-                    })?;
-                    headers.insert(
-                        name.trim().parse::<HeaderName>()?,
-                        value.trim().parse::<HeaderValue>()?,
-                    );
-                }
-                api = api.with_sequencer_client(
-                    HttpClientBuilder::default().set_headers(headers).build(url)?,
-                );
+                api = api.with_sequencer_client(SequencerClient::new_http_with_headers(
+                    url,
+                    config.sequencer_headers.clone(),
+                )?);
             }
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())

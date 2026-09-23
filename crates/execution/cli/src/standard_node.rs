@@ -786,7 +786,7 @@ impl StandardBaseRethNode {
                         .sequencer
                         .clone()
                         .filter(|_| !args.rpc.enable_tx_forwarding),
-                    sequencer_headers: args.rpc.rollup_args.sequencer_headers.clone(),
+                    sequencer_headers: args.rpc.rollup_args.sequencer_headers,
                 },
             );
         }
