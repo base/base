@@ -4,7 +4,7 @@
 //! precompile boundary: the precompile result/output/error/halt types and the
 //! `AccountInfo`/`Bytecode` state types read and written by native precompiles.
 //!
-//! The enshrined precompile logic (b20, policy, nonce, tx-context) is written
+//! The enshrined precompile logic (b20, policy, nonce) is written
 //! against these types instead of naming `revm` directly, so the same logic can
 //! be reused across execution engines. This module is the single place that
 //! knows how to convert a base type into a concrete engine type: today only the

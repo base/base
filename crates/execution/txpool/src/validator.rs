@@ -1088,12 +1088,12 @@ where
         // Admission uses the same safe ceiling as `eth_estimateGas`, so a tx whose
         // `gas_limit` was set from the estimate is never rejected here and can
         // never be admitted only to OOG at inclusion. The non-monotonic,
-        // state-dependent costs are pinned to their worst case: both policy gates
-        // charged and zero revoke discount. Execution reprices them precisely.
+        // state-dependent revoke discount is pinned to zero; execution reprices
+        // it precisely.
         let intrinsic = IntrinsicGas::compute(
             signed,
             encoded.as_ref(),
-            &IntrinsicGasInput::worst_case(nonce_key_first_use, signed.tx().payer.is_some()),
+            &IntrinsicGasInput::worst_case(nonce_key_first_use),
         )
         .map_err(|_| Self::eip8130_error("intrinsic gas computation failed"))?;
         if intrinsic.execution_gas_available(signed.tx().gas_limit).is_none() {
@@ -3519,8 +3519,6 @@ mod tests {
         let chain_spec = everest_chain_spec();
         let signer = PrivateKeySigner::random();
         let sender = signer.address();
-        // Headroom above the worst-case intrinsic: admission pins the sender policy
-        // gate on, which the tight 50k fixture limit no longer covers.
         let tx = TxEip8130 { gas_limit: 100_000, ..minimal_valid_eoa_tx() };
         let signature = signer.sign_hash_sync(&tx.sender_signature_hash()).unwrap();
         let signed =
