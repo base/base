@@ -142,7 +142,6 @@ impl BaseTransactionRequest {
         let mut simulation = BaseRevm::from_recovered_tx(&envelope, account);
         if let Some(parts) = simulation.eip8130.as_mut() {
             parts.mode = Eip8130ExecutionMode::Simulate;
-            parts.simulation_sender_actor_id = aa.sender_actor_id;
         }
         Some(simulation)
     }
@@ -178,7 +177,7 @@ impl BaseTransactionRequest {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{address, b256};
+    use alloy_primitives::address;
     use alloy_rpc_types_eth::state::AccountOverride;
     use base_common_consensus::{Eip8130Constants, Eip8130Signed};
     use serde_json::json;
@@ -256,12 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn actor_hint_and_simulation_mode_are_retained() {
-        let actor = b256!("30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000");
-        let tx = simulation(json!({ "sender": SENDER, "calls": [], "senderActorId": actor }));
-        let parts = tx.eip8130.unwrap();
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
-        assert_eq!(parts.simulation_sender_actor_id, Some(actor));
+    fn simulation_mode_is_retained() {
+        let tx = simulation(json!({ "sender": SENDER, "calls": [] }));
+        assert_eq!(tx.eip8130.unwrap().mode, Eip8130ExecutionMode::Simulate);
     }
 
     #[test]

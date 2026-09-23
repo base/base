@@ -197,19 +197,9 @@ impl ActorAuthorizer {
                     expiry: state.default_eoa_expiry,
                 });
             }
-            // `_resolvePolicyTarget`: address(0) when ungated, else the policy
-            // manager (keyed by the self-actorId, shared keyspace). An ungated
-            // (full-owner) self costs no extra read. OPERATOR overrides POLICY.
-            let policy_target = if Eip8130Constants::sender_is_policy_gated(state.default_eoa_scope)
-            {
-                storage.get_policy_manager(account, recovered)?
-            } else {
-                Address::ZERO
-            };
             return Ok(ResolvedActor {
                 actor_id: recovered,
                 scope: state.default_eoa_scope,
-                policy_target,
                 expiry: state.default_eoa_expiry,
             });
         }
@@ -218,7 +208,7 @@ impl ActorAuthorizer {
 
     /// Loads `actor_config[actor_id][account]`, requires it to be bound to
     /// `authenticator` and not expired, and returns the authorization surface
-    /// (`scope`, resolved `policy_target`). Mirrors the shared tail
+    /// (`scope`, `expiry`). Mirrors the shared tail
     /// of `_authenticate` / `_authenticateK1`.
     fn resolve_bound(
         storage: &AccountConfigurationStorage<'_>,
@@ -238,16 +228,7 @@ impl ActorAuthorizer {
         if config.expiry != 0 && now > config.expiry {
             return Err(AuthorizeError::ActorExpired { actor_id, expiry: config.expiry });
         }
-        // `_resolvePolicyTarget`: address(0) when ungated, else the policy manager
-        // (never the signed commitment). Resolved from the `config` already in
-        // hand so an ungated actor costs no extra read and a gated one reads only
-        // the manager slot (no `actor_config` re-read). OPERATOR overrides POLICY.
-        let policy_target = if Eip8130Constants::sender_is_policy_gated(config.scope) {
-            storage.get_policy_manager(account, actor_id)?
-        } else {
-            Address::ZERO
-        };
-        Ok(ResolvedActor { actor_id, scope: config.scope, policy_target, expiry: config.expiry })
+        Ok(ResolvedActor { actor_id, scope: config.scope, expiry: config.expiry })
     }
 }
 
@@ -385,7 +366,6 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
             assert_eq!(resolved.actor_id, self_id);
             assert_eq!(resolved.scope, Eip8130Constants::SCOPE_OPERATOR);
-            assert_eq!(resolved.policy_target, Address::ZERO);
         });
     }
 
@@ -401,29 +381,6 @@ mod tests {
                 ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW),
                 Err(AuthorizeError::ActorExpired { actor_id: actor_id(account), expiry: NOW - 1 }),
             );
-        });
-    }
-
-    #[test]
-    fn gated_self_resolves_inline_policy_manager() {
-        let key = k1_key(0x11);
-        let account = k1_address(&key);
-        let self_id = actor_id(account);
-        let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            // Inline SCOPE_POLICY set: the self key is gated and resolves its policy
-            // target from `policy_manager[self][account]`.
-            acc.account_state
-                .at_mut(&account)
-                .write(pack_self(Eip8130Constants::SCOPE_POLICY, 0, false))
-                .unwrap();
-            acc.set_policy(account, self_id, manager, B256::ZERO).unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, account, HASH, &auth, NOW).unwrap();
-            assert_eq!(resolved.actor_id, self_id);
-            assert!(resolved.is_policy_gated());
-            assert_eq!(resolved.policy_target, manager);
         });
     }
 
@@ -457,15 +414,7 @@ mod tests {
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: id,
-                    scope: 0x04,
-                    policy_target: Address::ZERO,
-                    expiry: 0,
-                }
-            );
+            assert_eq!(resolved, ResolvedActor { actor_id: id, scope: 0x04, expiry: 0 });
         });
     }
 
@@ -507,26 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn gated_actor_resolves_policy_manager_target() {
-        let key = k1_key(0x22);
-        let id = actor_id(k1_address(&key));
-        let manager = address!("0x00000000000000000000000000000000000000d4");
-        let auth = blob(Eip8130Constants::K1_AUTHENTICATOR, &k1_sig(&key, HASH));
-        with_storage(|acc| {
-            acc.actors
-                .at_mut(&id)
-                .at_mut(&ACCOUNT)
-                .write(pack(Eip8130Constants::K1_AUTHENTICATOR, Eip8130Constants::SCOPE_POLICY, 0))
-                .unwrap();
-            acc.set_policy(ACCOUNT, id, manager, B256::ZERO).unwrap();
-            let resolved =
-                ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert!(resolved.is_policy_gated());
-            assert_eq!(resolved.policy_target, manager);
-        });
-    }
-
-    #[test]
     fn p256_resolves_keccak_xy_actor() {
         let key = p256_key(0x33);
         let (data, id) = p256_blob(&key, HASH);
@@ -539,15 +468,7 @@ mod tests {
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: id,
-                    scope: 0x02,
-                    policy_target: Address::ZERO,
-                    expiry: 0,
-                }
-            );
+            assert_eq!(resolved, ResolvedActor { actor_id: id, scope: 0x02, expiry: 0 });
         });
     }
 
@@ -582,15 +503,7 @@ mod tests {
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: outer_id,
-                    scope: 0x08,
-                    policy_target: Address::ZERO,
-                    expiry: 0,
-                }
-            );
+            assert_eq!(resolved, ResolvedActor { actor_id: outer_id, scope: 0x08, expiry: 0 });
         });
     }
 
@@ -725,15 +638,7 @@ mod tests {
                 .unwrap();
             let resolved =
                 ActorAuthorizer::authenticate_actor(acc, ACCOUNT, HASH, &auth, NOW).unwrap();
-            assert_eq!(
-                resolved,
-                ResolvedActor {
-                    actor_id: outer_id,
-                    scope: 0x08,
-                    policy_target: Address::ZERO,
-                    expiry: 0,
-                }
-            );
+            assert_eq!(resolved, ResolvedActor { actor_id: outer_id, scope: 0x08, expiry: 0 });
         });
     }
 

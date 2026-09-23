@@ -7,9 +7,9 @@
 //! EIP-8130 intrinsic gas schedule, validates the fee caps, applies the
 //! transaction's account changes (config changes, account creation, and
 //! delegation) — installing the deferred account-*code* effects — and
-//! pre-charges the gas payer. It then publishes the [transaction context]
-//! (sender / payer / actor id) and dispatches the transaction's `calls` as real
-//! EVM call frames, settling the final fee and refunding unused gas afterwards.
+//! pre-charges the gas payer. It then dispatches the transaction's `calls` as
+//! real EVM call frames, settling the final fee and refunding unused gas
+//! afterwards.
 //!
 //! Pre-call storage access goes through a gas-free [`JournalStorageProvider`], so
 //! the enshrined schedule is the single source of gas accounting for the pre-call
@@ -24,9 +24,8 @@
 //! `calls` is a two-level structure (`Vec<Vec<Call>>`): an ordered list of
 //! **phases**, each an ordered list of calls. Phases draw from a single gas pool
 //! and commit independently in sequence; the calls within a phase are atomic
-//! (all-or-nothing). If any call in a phase reverts (or is blocked by the policy
-//! gate), that phase's state changes are discarded and every later phase is
-//! skipped, but the gas already consumed is still charged and the transaction is
+//! (all-or-nothing). If any call in a phase reverts, that phase's state changes
+//! are discarded and every later phase is skipped, but the gas already consumed is still charged and the transaction is
 //! still included (nonce consumed, fee paid). Each call is dispatched from
 //! `sender` to `call.to` with `msg.value == call.value` and `tx.origin == sender`.
 //!
@@ -40,15 +39,14 @@
 //! reverted) is reported through the returned [`ExecutionResult`] variant
 //! ([`ExecutionResult::Success`] vs [`ExecutionResult::Revert`]).
 //!
-//! [transaction context]: TxContextStorage
 //! [`BaseEvm::transact_raw`]: crate::BaseEvm
 
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use alloy_evm::{Database as AlloyDatabase, EvmInternals};
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
-use base_common_precompiles::{NonceManagerStorage, TxContextStorage};
+use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
     AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
     IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
@@ -95,8 +93,8 @@ const POOL_SEARCH_MAX_ITERS: u32 = 16;
 const POOL_SEARCH_TOLERANCE_PER_MILLE: u64 = 15;
 
 /// The resolved pre-call context of an EIP-8130 transaction: the authorized
-/// actors, the policy gate target, and the gas/fee parameters needed to dispatch
-/// `calls` and settle the fee.
+/// accounts and the gas/fee parameters needed to dispatch `calls` and settle the
+/// fee.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Eip8130Outcome {
@@ -104,14 +102,6 @@ pub struct Eip8130Outcome {
     pub sender: Address,
     /// The resolved gas payer (the sender, for self-pay).
     pub payer: Address,
-    /// The authenticated sender actor's id (published to the transaction context
-    /// and used as the policy-gate subject).
-    pub sender_actor_id: B256,
-    /// Whether the authenticated sender actor has `SCOPE_POLICY`.
-    pub policy_gated: bool,
-    /// The policy gate target (`policy_manager(sender, actorId)`) resolved once
-    /// at authorization; every `call.to` must equal this when policy-gated.
-    pub policy_target: Address,
     /// The transaction's `gas_limit` (the sender-signed budget for sender
     /// authentication, intrinsic costs, account changes, and call execution).
     pub gas_limit: u64,
@@ -144,11 +134,10 @@ struct CallsResult {
     /// continuous EVM execution. It is clamped to `>= 0` and capped per
     /// EIP-3529 only once, in [`Eip8130Executor::settle_fees`].
     refund: i64,
-    /// `true` if any phase reverted (or was blocked by the policy gate); later
-    /// phases are then skipped.
+    /// `true` if any phase reverted; later phases are then skipped.
     reverted: bool,
-    /// The return data of the call that reverted the transaction (or the
-    /// `ActorPolicyViolation` payload for a policy-gate block); empty on success.
+    /// The return data of the call that reverted the transaction; empty on
+    /// success.
     output: Bytes,
     /// Per-phase execution status, one entry per phase in `calls` and in phase
     /// order: `0x01` if the phase committed, `0x00` if it reverted or was skipped
@@ -264,7 +253,7 @@ impl Eip8130Executor {
             };
 
         // Pre-charge the payer the worst-case fee (so `calls` cannot spend the
-        // gas reservation), publish the transaction context, and run `calls`.
+        // gas reservation), then run `calls`.
         let prepay = match Self::prepay(ctx, &outcome, &encoded, spec) {
             Ok(prepay) => prepay,
             Err(err) => {
@@ -383,9 +372,9 @@ impl Eip8130Executor {
     /// Unlike [`Self::execute`] it performs **no signature verification** and
     /// **no fee settlement**: like `eth_call`/`eth_estimateGas` for every other
     /// transaction type, estimation simulates from the request's `from` without a
-    /// signature. The sender actor and its policy are resolved from committed
-    /// account state (not from a recovered signer), so the proof-of-recovery
-    /// authorization token is never fabricated. This entrypoint is reachable only
+    /// signature. The sender is taken from the request (not from a recovered
+    /// signer), so the proof-of-recovery authorization token is never
+    /// fabricated. This entrypoint is reachable only
     /// from the read-only RPC simulation path; block execution and txpool
     /// admission always go through [`Self::execute`] with full verification.
     ///
@@ -410,16 +399,17 @@ impl Eip8130Executor {
                 Journal: core::fmt::Debug + JournalExt,
             >,
     {
-        // Clone the envelope + optional acting-actor hint before taking a mutable
-        // borrow of `ctx` (same pattern as `execute`).
-        let (signed, acting_actor_hint) = evm
+        // Clone the envelope before taking a mutable borrow of `ctx` (same
+        // pattern as `execute`).
+        let signed = evm
             .ctx()
             .tx()
             .eip8130_parts()
-            .map(|parts| (parts.signed.clone(), parts.simulation_sender_actor_id))
             .ok_or_else(|| {
                 BaseTransactionError::eip8130("transaction is not an EIP-8130 transaction")
-            })?;
+            })?
+            .signed
+            .clone();
 
         let ctx = evm.ctx_mut();
         let from = ctx.tx().base.caller;
@@ -443,15 +433,7 @@ impl Eip8130Executor {
                 BaseTransactionError::eip8130("missing enveloped transaction bytes")
             })?;
 
-        let outcome = match Self::simulate_resolve(
-            ctx,
-            &signed,
-            &encoded,
-            from,
-            base_fee,
-            acting_actor_hint,
-            now,
-        ) {
+        let outcome = match Self::simulate_resolve(ctx, &signed, &encoded, from, base_fee, now) {
             Ok(outcome) => outcome,
             Err(err) => {
                 Self::discard_transaction_state(evm);
@@ -740,25 +722,18 @@ impl Eip8130Executor {
     }
 
     /// Resolves the [`Eip8130Outcome`] for [`Self::simulate`]: applies account
-    /// changes, then resolves the acting actor (an optional RPC hint, else the
-    /// account's self-actor) and its policy from the post-apply journal — no
-    /// signature recovery — then prices intrinsic gas without
+    /// changes — no signature recovery — then prices intrinsic gas without
     /// validating or advancing the nonce or checking the payer balance. The
     /// authentication gas for the sender's (and any payer's) declared
     /// authenticator is priced from the synthesized auth-blob shape via
     /// [`IntrinsicGas`]. Storage writes land on the journal; the caller's
     /// checkpoint reverts them.
-    ///
-    /// `acting_actor_hint` is the optional `senderActorId` from the estimate
-    /// request. Without it, simulation publishes the self-actor (backward
-    /// compatible).
     fn simulate_resolve<DB>(
         ctx: &mut BaseContext<DB>,
         signed: &base_common_consensus::Eip8130Signed,
         encoded: &[u8],
         sender: Address,
         base_fee: u128,
-        acting_actor_hint: Option<B256>,
         now: u64,
     ) -> Result<Eip8130Outcome, BaseTransactionError>
     where
@@ -776,10 +751,7 @@ impl Eip8130Executor {
         let gas_limit = tx.gas_limit;
         let max_fee = tx.max_fee_per_gas;
         let max_priority = tx.max_priority_fee_per_gas;
-        // Use the declared payer (sponsor) so the published `TxContext` matches a
-        // real execution: a call that reads the payer from the `TxContext`
-        // precompile must see the same address it would on-chain, or it could take
-        // a different path and skew the estimate. No signature is verified here.
+        // Use the declared payer (sponsor); no signature is verified here.
         let payer = tx.payer.unwrap_or(sender);
 
         let internals = EvmInternals::from_context(ctx);
@@ -803,78 +775,28 @@ impl Eip8130Executor {
 
             // 2. Apply account changes and install deferred code effects so the
             //    calls run against post-change code and create/delegation gas is
-            //    priced. Must precede actor/policy resolution so an actor
-            //    authorized in this same estimate request is visible.
+            //    priced.
             Self::apply_account_changes(signed, sctx, sender, now)?;
 
-            // 3. Resolve the acting actor's real policy gate. No signature
-            //    recovery: the optional RPC hint names the intended actor (e.g. a
-            //    session key); absent that, fall back to the account's self-actor.
-            //    Policy is read from the post-apply journal so same-tx
-            //    authorizations are visible. Expiry is not enforced (estimation
-            //    prices the happy path); `get_policy` still treats a revoked
-            //    default-EOA self as ungated.
-            //
-            //    This real gate drives only the outcome's call-gating (whether
-            //    `call.to` must equal `policy_target`); it does NOT feed the
-            //    intrinsic-gas estimate, which pins the gate worst-case (step 5)
-            //    so the returned ceiling stays valid even if the gate flips
-            //    between estimation and inclusion (the gate is a non-monotonic
-            //    state-dependent cost).
-            let acc = AccountConfigurationStorage::new(sctx);
-            let sender_actor_id = acting_actor_hint
-                .unwrap_or_else(|| AccountConfigurationStorage::self_actor_id(sender));
-            // Resolve the acting scope via the effective-config resolver: an
-            // explicit `actor_config` entry, or the inline secp256k1 self (a
-            // revoked default EOA resolves to the empty config, i.e. scope 0).
-            // Then read the policy target with `get_policy_manager` only when
-            // gated, avoiding `get_policy`'s extra `policy_commitment` SLOAD on
-            // this estimation hot path (the commitment is unused here).
-            let actor_scope = acc
-                .resolve_actor_config(sender, sender_actor_id)
-                .map_err(BaseTransactionError::eip8130)?
-                .scope;
-            let policy_gated = Eip8130Constants::sender_is_policy_gated(actor_scope);
-            let policy_target = if policy_gated {
-                acc.get_policy_manager(sender, sender_actor_id)
-                    .map_err(BaseTransactionError::eip8130)?
-            } else {
-                Address::ZERO
-            };
-
-            // 4. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
+            // 3. Intrinsic gas (auth gas is priced from the auth-blob shape, so a
             //    stub signature of the right authenticator type estimates exactly).
             //    The estimate is a safe ceiling that execution can only meet or
-            //    undercharge. The non-monotonic, state-dependent costs are
-            //    therefore pinned to their worst case rather than resolved:
-            //      - both policy gates charged (their `policy_manager` SLOAD), so a
-            //        `gas_limit == estimate` submission never OOGs if a gate flips
-            //        on before inclusion. The payer's unsigned representative blob
-            //        is not authenticable here in any case.
-            //      - zero revoke discount, so revokes are priced at the full
-            //        three-reset worst case regardless of which slots are empty.
-            //    The monotonic, body-derivable nonce first-use cost stays resolved.
-            //    Execution reprices all of these precisely against the
-            //    authenticated actors and real state.
+            //    undercharge, so the non-monotonic, state-dependent revoke
+            //    discount is pinned to zero (revokes priced at the full
+            //    three-reset worst case regardless of which slots are empty). The
+            //    monotonic, body-derivable nonce first-use cost stays resolved.
+            //    Execution reprices the discount precisely against real state.
             let (sender_intrinsic, payer_auth, execution_gas_available) =
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    &IntrinsicGasInput::worst_case(nonce_key_first_use, tx.payer.is_some()),
+                    &IntrinsicGasInput::worst_case(nonce_key_first_use),
                     gas_limit,
                 )?;
-
-            // 5. Publish the transaction context for the `TxContext` precompile.
-            TxContextStorage::new(sctx)
-                .set_context(sender, payer, sender_actor_id)
-                .map_err(BaseTransactionError::eip8130)?;
 
             Ok(Eip8130Outcome {
                 sender,
                 payer,
-                sender_actor_id,
-                policy_gated,
-                policy_target,
                 gas_limit,
                 sender_intrinsic,
                 payer_auth,
@@ -888,8 +810,7 @@ impl Eip8130Executor {
 
     /// Runs the storage-backed pre-call pipeline (authorize, nonce, intrinsic
     /// gas, fee-cap check, account-change apply) over a gas-free
-    /// journal view and publishes the transaction context, returning the resolved
-    /// [`Eip8130Outcome`]. Storage writes land on the journal directly; the
+    /// journal view, returning the resolved [`Eip8130Outcome`]. Storage writes land on the journal directly; the
     /// caller discards the transaction on error.
     fn authorize_and_apply<DB>(
         ctx: &mut BaseContext<DB>,
@@ -959,11 +880,6 @@ impl Eip8130Executor {
                 TransactionAuthorizer::authorize_and_apply(signed, &mut acc, chain_id, now)
                     .map_err(BaseTransactionError::eip8130)?;
             let sender_actor = applied_tx.actors.sender.resolved;
-            let payer_policy_gated = applied_tx
-                .actors
-                .payer
-                .as_ref()
-                .is_some_and(|actor| actor.resolved.is_policy_gated());
             let sender = applied_tx.actors.sender.account;
             let payer = applied_tx.actors.payer.as_ref().map_or(sender, |p| p.account);
             // Defense-in-depth: `authorize_and_apply` -> `verify_sender` already
@@ -1039,7 +955,6 @@ impl Eip8130Executor {
                     signed,
                     encoded,
                     &IntrinsicGasInput::new(nonce_key_first_use)
-                        .with_policy_gates(sender_actor.is_policy_gated(), payer_policy_gated)
                         .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
                     gas_limit,
                 )?;
@@ -1053,18 +968,9 @@ impl Eip8130Executor {
             FeeCheck::validate_balance(payer_balance, gas_limit, payer_auth, max_fee)
                 .map_err(BaseTransactionError::eip8130)?;
 
-            // 6. Publish the transaction context (sender / payer / actor id) so it
-            //    is readable by the `TxContext` precompile during `calls`.
-            TxContextStorage::new(sctx)
-                .set_context(sender, payer, sender_actor.actor_id)
-                .map_err(BaseTransactionError::eip8130)?;
-
             Ok(Eip8130Outcome {
                 sender,
                 payer,
-                sender_actor_id: sender_actor.actor_id,
-                policy_gated: sender_actor.is_policy_gated(),
-                policy_target: sender_actor.policy_target,
                 gas_limit,
                 sender_intrinsic,
                 payer_auth,
@@ -1129,9 +1035,9 @@ impl Eip8130Executor {
 
     /// Dispatches the transaction's `calls` as EVM call frames, phase by phase,
     /// from a single gas `pool`. Each phase runs under a journal checkpoint: a
-    /// successful phase commits and its gas refund counts; a reverting phase (or
-    /// one blocked by the policy gate) rolls back, is charged for the gas already
-    /// consumed without refund, and skips every later phase.
+    /// successful phase commits and its gas refund counts; a reverting phase
+    /// rolls back, is charged for the gas already consumed without refund, and
+    /// skips every later phase.
     ///
     /// `pool` is the gas available to the calls (`gas_limit - sender_intrinsic`).
     /// Block execution passes `outcome.execution_gas_available`; the read-only
@@ -1172,17 +1078,6 @@ impl Eip8130Executor {
             let mut phase_output = Bytes::new();
 
             for call in phase {
-                // Policy gate: when the authenticating actor is gated, every
-                // `call.to` must equal the resolved policy target. A mismatched
-                // call is not dispatched and fails the phase deterministically
-                // with `ActorPolicyViolation`, charging no call gas for it.
-                if outcome.policy_gated && call.to != outcome.policy_target {
-                    phase_reverted = true;
-                    phase_output =
-                        Self::actor_policy_violation_data(outcome.sender_actor_id, call.to);
-                    break;
-                }
-
                 let frame = Self::run_call(
                     evm,
                     outcome.sender,
@@ -1724,35 +1619,19 @@ impl Eip8130Executor {
             })?;
         Ok((intrinsic.sender_intrinsic(), intrinsic.payer_auth, execution_gas_available))
     }
-
-    /// ABI-encodes the `ActorPolicyViolation(bytes32 actorId, address target)`
-    /// protocol revert: the 4-byte selector followed by the two 32-byte words.
-    fn actor_policy_violation_data(actor_id: B256, target: Address) -> Bytes {
-        // `keccak256(b"ActorPolicyViolation(bytes32,address)")[..4]`, hardcoded to
-        // avoid hashing on every policy-gate revert. The
-        // `actor_policy_violation_data_is_abi_encoded` test pins this against the
-        // canonical signature so it cannot silently drift.
-        const SELECTOR: [u8; 4] = [0x1f, 0x1c, 0x0d, 0x27];
-        let mut out = Vec::with_capacity(4 + 32 + 32);
-        out.extend_from_slice(&SELECTOR);
-        out.extend_from_slice(actor_id.as_slice());
-        out.extend_from_slice(target.into_word().as_slice());
-        Bytes::from(out)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloy_evm::{Evm, FromTxWithEncoded, precompiles::PrecompilesMap};
     use alloy_primitives::{Address, B256, Bytes, U256, address, bytes, keccak256};
-    use alloy_sol_types::{SolEvent, SolValue, sol};
+    use alloy_sol_types::SolEvent;
     use base_common_consensus::{
-        AccountChange, AccountChangeChannel, BaseTxEnvelope, Call, ChangeType, CreateEntry,
-        Eip8130Signed, InitialActor, Predeploys, SignedAccountChanges, SignedChange, TxEip8130,
+        AccountChange, BaseTxEnvelope, Call, CreateEntry, Eip8130Signed, InitialActor, Predeploys,
+        TxEip8130,
     };
     use base_common_precompiles::INonceManager;
     use base_execution_eip8130::AccountChangeApplier;
-    use base_precompile_storage::StorageCtx;
     use k256::ecdsa::SigningKey;
     use revm::{
         Database,
@@ -1765,10 +1644,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase,
-        Eip8130ExecutionMode,
-    };
+    use crate::{BaseEvm, BaseSpecId, BaseTransaction, BaseUpgrade, Builder, DefaultBase};
 
     const CHAIN_ID: u64 = 8453;
     const NOW: u64 = 1_000;
@@ -2192,15 +2068,8 @@ mod tests {
         // (a safe ceiling execution can only meet or undercharge). This
         // transaction calls a STOP contract (no nested calls, no SSTORE/
         // SELFDESTRUCT), so it loses no gas to EIP-150 forwarding and earns no
-        // refund. The only gap is the non-monotonic sender policy gate, which the
-        // estimate pins worst-case: this EOA sender is ungated, so the estimate
-        // exceeds the execution charge by exactly one pinned `policy_manager`
-        // COLD_SLOAD and by nothing else.
-        assert_eq!(
-            sim_gas,
-            exec_gas + base_execution_eip8130::Eip8130GasSchedule::COLD_SLOAD,
-            "estimate must be the execution charge plus exactly the pinned policy-gate SLOAD",
-        );
+        // refund, so the estimate equals the execution charge exactly.
+        assert_eq!(sim_gas, exec_gas, "estimate must equal the execution charge");
 
         // Estimation never commits: a fresh execution after it still bumps the
         // nonce from zero, proving no nonce was consumed by the simulation.
@@ -2481,116 +2350,6 @@ mod tests {
             .expect("configured-account estimation should succeed");
         assert!(result.is_success(), "estimation should report success");
         assert!(result.tx_gas_used() > 0, "estimated gas should be positive");
-    }
-
-    sol! {
-        struct ActorConfigAbi {
-            address authenticator;
-            uint48 expiry;
-            uint16 scope;
-        }
-    }
-
-    /// ABI-encodes `abi.encode(bytes32 actorId, ActorConfig, bytes policyData)`
-    /// for an `AuthorizeActor` op payload (mirrors `AccountChangeApplier`'s
-    /// decode shape).
-    fn authorize_change_data(
-        actor_id: B256,
-        authenticator: Address,
-        scope: u16,
-        expiry: u64,
-        policy_data: &[u8],
-    ) -> Bytes {
-        let abi = ActorConfigAbi {
-            authenticator,
-            expiry: alloy_primitives::aliases::U48::from(expiry),
-            scope,
-        };
-        Bytes::from((actor_id, abi, Bytes::copy_from_slice(policy_data)).abi_encode_params())
-    }
-
-    #[test]
-    fn simulate_sender_actor_id_hint_resolves_policy_after_account_changes() {
-        // Without a hint, simulate publishes the account's self-actor. Gate that
-        // self to `wrong` and authorize a session actor (gated to `allowed`) in
-        // the same estimate's accountChanges: a call to `allowed` then reverts
-        // under the self-actor, and succeeds only when `senderActorId` names the
-        // session actor — proving the hint changes policy resolution post-apply.
-        let owner = signing_key(0xa1);
-        let account = eoa_address(&owner);
-        let session = signing_key(0xa2);
-        let session_addr = eoa_address(&session);
-        let session_actor = AccountConfigurationStorage::self_actor_id(session_addr);
-        let allowed = address!("0x00000000000000000000000000000000000000d1");
-        let wrong = address!("0x00000000000000000000000000000000000000d2");
-        let commitment = B256::repeat_byte(0x42);
-
-        let mut policy_data = Vec::with_capacity(52);
-        policy_data.extend_from_slice(allowed.as_slice());
-        policy_data.extend_from_slice(commitment.as_slice());
-
-        let mut tx = base_tx();
-        tx.sender = Some(account);
-        tx.account_changes = vec![AccountChange::ConfigChange(SignedAccountChanges {
-            channel: AccountChangeChannel::Local,
-            sequence: 0,
-            changes: vec![SignedChange {
-                change_type: ChangeType::AuthorizeActor,
-                payload: authorize_change_data(
-                    session_actor,
-                    Eip8130Constants::K1_AUTHENTICATOR,
-                    Eip8130Constants::SCOPE_POLICY,
-                    0,
-                    &policy_data,
-                ),
-            }],
-            // Simulate's apply path does not verify config auth.
-            signature: Bytes::new(),
-        })];
-        tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
-        let signed = configured_signed(tx, &owner);
-
-        let mut evm = evm_with_accounts(
-            U256::from(10u64).pow(U256::from(18u64)),
-            account,
-            &[(allowed, bytes!("00")), (wrong, bytes!("00"))],
-        );
-        // Gate the account's self-actor away from `allowed` so the no-hint path
-        // hits the node policy gate.
-        seed_gated_sender(&mut evm, account, account, wrong);
-
-        // No hint → self-actor (gated to `wrong`) → ActorPolicyViolation.
-        {
-            let mut tx = into_base_tx(&signed);
-            tx.base.caller = account;
-            if let Some(parts) = tx.eip8130.as_mut() {
-                parts.mode = Eip8130ExecutionMode::Simulate;
-                parts.simulation_sender_actor_id = None;
-            }
-            evm.ctx_mut().tx = tx;
-            let result = Eip8130Executor::simulate(&mut evm).expect("simulate should not error");
-            let ExecutionResult::Revert { output, .. } = &result else {
-                panic!("expected policy-gate revert without hint, got {result:?}");
-            };
-            let expected = keccak256(b"ActorPolicyViolation(bytes32,address)");
-            assert_eq!(&output[..4], &expected[..4]);
-        }
-
-        // Hint → session actor (gated to `allowed`, authorized in accountChanges).
-        {
-            let mut tx = into_base_tx(&signed);
-            tx.base.caller = account;
-            if let Some(parts) = tx.eip8130.as_mut() {
-                parts.mode = Eip8130ExecutionMode::Simulate;
-                parts.simulation_sender_actor_id = Some(session_actor);
-            }
-            evm.ctx_mut().tx = tx;
-            let result = Eip8130Executor::simulate(&mut evm).expect("simulate should not error");
-            assert!(
-                result.is_success(),
-                "hinted session actor should pass the policy gate, got {result:?}"
-            );
-        }
     }
 
     #[test]
@@ -2978,14 +2737,6 @@ mod tests {
         assert!(slot0.is_none() || slot0 == Some(U256::ZERO), "phase 1 should have been skipped");
     }
 
-    /// Canonical Solidity packing of an `ActorConfig` word (authenticator 0..160,
-    /// expiry 160..208, scope 208..224).
-    fn pack_actor(authenticator: Address, scope: u16, expiry: u64) -> U256 {
-        U256::from_be_slice(authenticator.as_slice())
-            | (U256::from(expiry) << 160)
-            | (U256::from(scope) << 208)
-    }
-
     /// Signs `tx` for a configured sender as `K1_AUTHENTICATOR || sig`.
     fn configured_signed(tx: TxEip8130, signer: &SigningKey) -> Eip8130Signed {
         let hash = tx.sender_signature_hash();
@@ -2993,101 +2744,6 @@ mod tests {
         auth.extend_from_slice(Eip8130Constants::K1_AUTHENTICATOR.as_slice());
         auth.extend_from_slice(&eoa_sig(signer, hash));
         Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new())
-    }
-
-    /// Seeds a policy-gated k1 actor for `account`, authorized to the `signer`
-    /// key and gated to `target`, then commits it. POLICY-only (plus payer/nonce
-    /// grants): OPERATOR would override POLICY and leave the sender ungated.
-    fn seed_gated_sender(
-        evm: &mut BaseEvm<InMemoryDB, NoOpInspector, PrecompilesMap>,
-        account: Address,
-        signer_addr: Address,
-        target: Address,
-    ) {
-        use base_precompile_storage::Handler as _;
-        let actor_id = AccountConfigurationStorage::self_actor_id(signer_addr);
-        {
-            let ctx = evm.ctx_mut();
-            let internals = EvmInternals::from_context(ctx);
-            let mut provider = JournalStorageProvider::new(internals, Address::ZERO);
-            StorageCtx::enter(&mut provider, |sctx| {
-                let mut acc = AccountConfigurationStorage::new(sctx);
-                acc.actors
-                    .at_mut(&actor_id)
-                    .at_mut(&account)
-                    .write(pack_actor(
-                        Eip8130Constants::K1_AUTHENTICATOR,
-                        Eip8130Constants::SCOPE_POLICY
-                            | Eip8130Constants::SCOPE_SELF_PAYER
-                            | Eip8130Constants::SCOPE_NONCE,
-                        0,
-                    ))
-                    .unwrap();
-                acc.set_policy(account, actor_id, target, B256::ZERO).unwrap();
-            });
-        }
-        let state = evm.ctx_mut().journal_mut().finalize();
-        revm::DatabaseCommit::commit(evm.ctx_mut().journal_mut().db_mut(), state);
-    }
-
-    #[test]
-    fn policy_gate_blocks_call_to_unauthorized_target() {
-        let account = address!("0x00000000000000000000000000000000000000c5");
-        let allowed = address!("0x00000000000000000000000000000000000000c6");
-        let forbidden = address!("0x00000000000000000000000000000000000000c7");
-        let signer = signing_key(0x77);
-        let signer_addr = eoa_address(&signer);
-
-        let mut tx = base_tx();
-        tx.sender = Some(account);
-        tx.calls = vec![vec![Call { to: forbidden, value: U256::ZERO, data: Bytes::new() }]];
-        let signed = configured_signed(tx, &signer);
-
-        let mut evm = evm_with(U256::from(10u64).pow(U256::from(18u64)), account);
-        seed_gated_sender(&mut evm, account, signer_addr, allowed);
-
-        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should be included");
-        let ExecutionResult::Revert { output, .. } = &outcome.result else {
-            panic!("expected a policy-gate revert, got {:?}", outcome.result);
-        };
-        let expected_selector = keccak256(b"ActorPolicyViolation(bytes32,address)");
-        assert_eq!(&output[..4], &expected_selector[..4], "expected ActorPolicyViolation selector");
-        assert_eq!(&output[36..], forbidden.into_word().as_slice(), "target encoded in revert");
-    }
-
-    #[test]
-    fn policy_gate_allows_call_to_authorized_target() {
-        let account = address!("0x00000000000000000000000000000000000000c8");
-        let allowed = address!("0x00000000000000000000000000000000000000c9");
-        let signer = signing_key(0x88);
-        let signer_addr = eoa_address(&signer);
-
-        let mut tx = base_tx();
-        tx.sender = Some(account);
-        tx.calls = vec![vec![Call { to: allowed, value: U256::ZERO, data: Bytes::new() }]];
-        let signed = configured_signed(tx, &signer);
-
-        let mut evm = evm_with_accounts(
-            U256::from(10u64).pow(U256::from(18u64)),
-            account,
-            &[(allowed, bytes!("00"))],
-        );
-        seed_gated_sender(&mut evm, account, signer_addr, allowed);
-
-        let outcome = evm.transact_raw(into_base_tx(&signed)).expect("tx should execute");
-        assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
-    }
-
-    #[test]
-    fn actor_policy_violation_data_is_abi_encoded() {
-        let actor_id = B256::repeat_byte(0xab);
-        let target = address!("0x00000000000000000000000000000000000000cc");
-        let data = Eip8130Executor::actor_policy_violation_data(actor_id, target);
-        assert_eq!(data.len(), 68);
-        let expected_selector = keccak256(b"ActorPolicyViolation(bytes32,address)");
-        assert_eq!(&data[..4], &expected_selector[..4]);
-        assert_eq!(&data[4..36], actor_id.as_slice());
-        assert_eq!(&data[36..68], target.into_word().as_slice());
     }
 
     /// Builds a counterfactual-create [`Eip8130Signed`] for `key`'s owner whose

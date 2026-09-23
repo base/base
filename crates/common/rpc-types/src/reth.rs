@@ -484,35 +484,9 @@ mod tests {
     }
 
     #[test]
-    fn sender_actor_id_is_threaded_to_parts() {
-        // The optional acting-actor hint is RPC-only metadata: it must land on
-        // the simulation parts so `simulate_resolve` can publish it to TxContext
-        // (and resolve that actor's policy) instead of always using the self-actor.
-        let actor = alloy_primitives::b256!(
-            "0x30df39d5edcf9ed82b6d77d27bff1192ac265918000000000000000000000000"
-        );
-        let tx = sim_tx(json!({
-            "sender": SENDER,
-            "calls": [],
-            "senderActorId": actor,
-        }));
-        let parts = tx.eip8130.as_ref().expect("eip8130 parts");
-        assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
-        assert_eq!(
-            parts.simulation_sender_actor_id,
-            Some(actor),
-            "senderActorId must be threaded onto the simulation parts",
-        );
-    }
-
-    #[test]
-    fn absent_sender_actor_id_leaves_parts_hint_unset() {
+    fn simulation_tx_uses_simulate_mode() {
         let tx = sim_tx(json!({ "sender": SENDER, "calls": [] }));
         let parts = tx.eip8130.as_ref().expect("eip8130 parts");
         assert_eq!(parts.mode, Eip8130ExecutionMode::Simulate);
-        assert_eq!(
-            parts.simulation_sender_actor_id, None,
-            "without a hint the simulate path keeps the self-actor default",
-        );
     }
 }
