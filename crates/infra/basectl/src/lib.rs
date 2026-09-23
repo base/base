@@ -2,23 +2,25 @@
 
 mod commands;
 pub use commands::{
-    AddTarget, BanAction, BlockCommand, BlockSummaryJson, Cli, ClusterNodeScope, CommandOutcome,
-    Commands, ConductorAction, ConductorActionJson, ConductorActionName,
-    ConductorClusterActionArgs, ConductorCommand, ConductorCommands, ConductorFailureJson,
-    ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs, ConductorNodeJson,
-    ConductorStatusArgs, ConductorStatusJson, DestructiveClBulkArgs, DestructivePeerArgs,
-    DoctorCommand, ElSyncInfoJson, ExecutionStatsJson, FinalizeTarget, GameDetailsJson,
-    GameSummaryJson, GamesListJson, HeadJson, LeadershipStatus, MonitorCommands, NodeMetricsJson,
-    OptionalValue, P2pArgs, P2pCommand, P2pCommands, PausedSummaryJson, PeerAction, PeerActionJson,
-    PeerBulkAction, PeerBulkActionResultJson, PeerLayer, PeerTarget, PeersJson, ProofOutputStatus,
-    ProofResultJson, ProofStatusFilter, ProofSummaryJson, ProofsCommand, ProofsCommands,
-    ProofsFinalizeArgs, ProofsGamesArgs, ProofsListArgs, ProofsListJson, ProofsProposeArgs,
-    ProofsProposeJson, ProofsStatusArgs, ProofsStatusJson, ProofsSubmitArgs, ProofsSubmitJson,
-    SequencerAction, SequencerActionJson, SequencerCommand, SequencerCommands,
-    SequencerNodeActionArgs, SequencerNodeJson, SequencerRole, SequencerStartArgs,
-    SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand, SyncStatusJson, TipReferenceJson,
-    TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand, TxpoolCommands, TxpoolReadArgs,
-    TxpoolReadJson, UnsafeHeadSource, UpgradeReadinessCommand, ZkBackendOption,
+    AddTarget, BanAction, BatcherAction, BatcherActionArgs, BatcherActionJson, BatcherCommand,
+    BatcherCommands, BatcherStatusArgs, BatcherStatusJson, BlockCommand, BlockSummaryJson, Cli,
+    ClusterNodeScope, CommandOutcome, Commands, ConductorAction, ConductorActionJson,
+    ConductorActionName, ConductorClusterActionArgs, ConductorCommand, ConductorCommands,
+    ConductorFailureJson, ConductorFanoutJson, ConductorLeaderArgs, ConductorNodeActionArgs,
+    ConductorNodeJson, ConductorStatusArgs, ConductorStatusJson, DestructiveClBulkArgs,
+    DestructivePeerArgs, DoctorCommand, ElSyncInfoJson, ExecutionStatsJson, FinalizeTarget,
+    GameDetailsJson, GameSummaryJson, GamesListJson, HeadJson, LeadershipStatus, MonitorCommands,
+    NodeMetricsJson, OptionalValue, P2pArgs, P2pCommand, P2pCommands, PausedSummaryJson,
+    PeerAction, PeerActionJson, PeerBulkAction, PeerBulkActionResultJson, PeerLayer, PeerTarget,
+    PeersJson, ProofOutputStatus, ProofResultJson, ProofStatusFilter, ProofSummaryJson,
+    ProofsCommand, ProofsCommands, ProofsFinalizeArgs, ProofsGamesArgs, ProofsListArgs,
+    ProofsListJson, ProofsProposeArgs, ProofsProposeJson, ProofsStatusArgs, ProofsStatusJson,
+    ProofsSubmitArgs, ProofsSubmitJson, SequencerAction, SequencerActionJson, SequencerCommand,
+    SequencerCommands, SequencerNodeActionArgs, SequencerNodeJson, SequencerRole,
+    SequencerStartArgs, SequencerStatusArgs, SequencerStatusJson, SyncStatusCommand,
+    SyncStatusJson, TipReferenceJson, TipStatus, TxpoolClearArgs, TxpoolClearJson, TxpoolCommand,
+    TxpoolCommands, TxpoolReadArgs, TxpoolReadJson, UnsafeHeadSource, UpgradeReadinessCommand,
+    ZkBackendOption,
 };
 
 mod denim;
@@ -63,22 +65,24 @@ pub use doctor::{
 
 mod errors;
 pub use errors::{
-    BlockRefParseError, ConductorCommandError, DoctorArgsError, MissingConsensusRpcError,
-    NodeLookupError, P2pCommandError, P2pTargetError, ProofsCommandError, SequencerCommandError,
-    StateConvergenceTimeoutError, TxpoolCommandError,
+    BatcherCommandError, BlockRefParseError, ConductorCommandError, DoctorArgsError,
+    MissingBatcherRpcError, MissingConsensusRpcError, NodeLookupError, P2pCommandError,
+    P2pTargetError, ProofsCommandError, SequencerCommandError, StateConvergenceTimeoutError,
+    TxpoolCommandError,
 };
 
 mod rpc;
 pub use rpc::{
     BacklogBlock, BacklogFetchResult, BacklogProgress, BaseTxpoolContent, BaseTxpoolContentFrom,
-    BlockDaInfo, ClInfoReport, ClNodeIdentity, ConductorClusterSnapshot, ConductorControl,
-    ConductorFanoutAction, ConductorFanoutReport, ConductorNodeFailure, ConductorNodeStatus,
-    ConductorPollUpdate, DiscoveryInfo, EXPECTED_RESOLUTION_NEVER, ElInfoReport, ElNodeIdentity,
-    GameDetails, GameListFilter, GameStatus, GameSummary, GamesClient, InitialBacklog, L1BlockInfo,
-    L1ConnectionMode, LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection,
-    PeerListReport, PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller,
-    PodsSnapshot, ProofProposeRequest, ProofsClient, ProofsSnapshot, ProposalProofSubmitter,
-    RawInfoReport, RawPeerCounts, RawPeersReport, ReachabilityOutcome, ReachabilityResponse,
+    BatcherClient, BatcherStatus, BlockDaInfo, ClInfoReport, ClNodeIdentity,
+    ConductorClusterSnapshot, ConductorControl, ConductorFanoutAction, ConductorFanoutReport,
+    ConductorNodeFailure, ConductorNodeStatus, ConductorPollUpdate, DiscoveryInfo,
+    EXPECTED_RESOLUTION_NEVER, ElInfoReport, ElNodeIdentity, GameDetails, GameListFilter,
+    GameStatus, GameSummary, GamesClient, InitialBacklog, L1BlockInfo, L1ConnectionMode,
+    LatestProposal, NodeEndpoint, NodeInfoReport, PausedPeers, PeerDirection, PeerListReport,
+    PeerStatsReport, PeerSummary, PodGroupStatus, PodStatus, PodsPoller, PodsSnapshot,
+    ProofProposeRequest, ProofsClient, ProofsSnapshot, ProposalProofSubmitter, RawInfoReport,
+    RawPeerCounts, RawPeersReport, ReachabilityOutcome, ReachabilityResponse,
     SEQUENCER_ACTIVE_RPC_TIMEOUT, SnarkPlonkProofBytes, SubmittedProof, SubmitterKey,
     SyncStatusReport, TelemetryApiError, TelemetryClient, TelemetryClientError,
     TelemetryErrorResponse, TimestampedFlashblock, TxSummary, TxpoolClient, TxpoolCounts,

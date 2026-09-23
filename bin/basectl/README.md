@@ -315,6 +315,48 @@ Safety notes:
   before reporting success so an acknowledged RPC is not confused with the node
   actually reaching the desired state.
 
+### `basectl batcher`
+
+Batcher inspection and control commands, served by the batcher admin RPC.
+
+- `basectl batcher status` shows whether batch submission is stopped, the number
+  of L1 submissions in flight, and the DA backlog, through
+  `admin_getBatcherStatus`.
+- `basectl batcher stop` stops batch submission through `admin_stopBatcher`. The
+  batcher drops its buffered encoding state and the process keeps running.
+  Submissions already in flight keep settling, and `status` reports how many
+  remain. It does nothing if the batcher is already stopped.
+- `basectl batcher start` starts batch submission again from the safe L2 head
+  through `admin_startBatcher`. It does nothing if the batcher is already running.
+- `basectl batcher flush` closes the current channel through `admin_flushBatcher`
+  so its frames become eligible for submission. It fails while the batcher is
+  stopped.
+
+The admin RPC URL comes from the `--batcher-rpc` flag, then the
+`BASECTL_BATCHER_RPC` environment variable, then the selected config's
+`batcher_rpc` field. The built-in presets ship without a `batcher_rpc` because
+the batcher admin server is internal, so one of the three must be provided.
+
+| Flag                  | Description                                                                     |
+| --------------------- | ------------------------------------------------------------------------------- |
+| `--batcher-rpc <URL>` | Batcher admin RPC URL. Also `BASECTL_BATCHER_RPC` or config `batcher_rpc`.      |
+| `--json`              | For `status`, emit a structured JSON status instead of the pretty table output. |
+
+Destructive batcher commands also support:
+
+| Flag     | Description                                                                                                                |
+| -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `--yes`  | Skip the interactive confirmation prompt.                                                                                  |
+| `--json` | Emit a structured action outcome instead of pretty text. Requires `--yes` so scripts do not hang on an interactive prompt. |
+
+Safety notes:
+
+- `stop`, `start` and `flush` prompt with the network name and the admin RPC URL.
+- The network name in prompts and output is only the selected config. basectl
+  cannot check which chain the batcher behind the admin RPC URL serves.
+- Output, logs and errors only show the origin of the admin RPC URL, so
+  credentials in the URL never leak.
+
 ### `basectl doctor`
 
 Runs read-only diagnostics for a single node and prints one row per check. The
@@ -626,6 +668,27 @@ basectl -c devnet sequencer start op-conductor-0 --yes
 
 # Start a sequencer node with an explicit unsafe head hash
 basectl -c devnet sequencer start op-conductor-0 0x1111111111111111111111111111111111111111111111111111111111111111 --yes --json | jq .
+```
+
+### `basectl batcher`
+
+```sh
+# Show the batcher state, as JSON
+basectl -c sepolia batcher status --batcher-rpc http://your-batcher.example/ --json | jq .
+
+# The commands below rely on `BASECTL_BATCHER_RPC` or `batcher_rpc` from the selected config
+
+# Show the batcher state
+basectl -c sepolia batcher status
+
+# Stop batch submission
+basectl -c sepolia batcher stop --yes
+
+# Start batch submission again
+basectl -c sepolia batcher start --yes --json | jq .
+
+# Close the current channel so its frames can be submitted
+basectl -c sepolia batcher flush --yes
 ```
 
 ### `basectl doctor`
