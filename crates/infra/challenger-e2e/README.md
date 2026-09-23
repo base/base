@@ -5,7 +5,7 @@ Behavioural end-to-end test of the challenger.
 Forks the target L1 into a pod-local Anvil, hands the fork to a real
 `base-challenger` binary running alongside it, and asserts on what that
 challenger does — first that it leaves valid games alone, then that it
-disputes every classifier path we can stage honestly on that same fork.
+disputes the classifier paths that can run serially on the same fork.
 
 Patching an existing game rather than creating one is what keeps the test
 honest. The games were created and verified on the real chain before the fork
@@ -24,8 +24,8 @@ delta on B. Both are generated per run and never leave the pod.
 
 One process, one fork, two TEE-only in-progress games (newest-first, lookback
 50, ≥1 intermediate root, all above the anchor game). Game A is Path 1 / Path 2
-skip. Game B is Path 4 and then whichever path Path 4 leaves behind. The run
-bails if fewer than two such games exist.
+skip. Game B is Path 4, followed by Path 3 only when the TEE proof is removed
+first. The run bails if fewer than two such games exist.
 
 The anchor bound is not cosmetic: the scanner starts at one past the anchor
 game's factory index, so a game at or before the anchor is one the challenger
@@ -96,24 +96,21 @@ disputes games it was never given would pass the run.
    `verifyProposalProof`. `zkProver != 0` and `counteredIndex == 0`. After the
    quiet window, B is patched. The challenger must drop one of B's two proofs.
    B's nonce must advance.
-6. **Whatever Path 4 left behind.** A dual-proof game takes two disputes to
-   clear, and either proof may go first — so which assertion runs is decided by
-   what step 5 observed, not fixed in advance. TEE first (`tee=0`, `zk≠0`) is
-   **Path 3**: the next scan ZK-nullifies (`zkProver == 0`). ZK first is the
-   supported **TEE-fallback** case, where the TEE request or submission failed;
-   that leaves a TEE-only game (`tee≠0`, `zk=0`) and the next scan disputes it
-   as **Path 1**, by nullify or by challenge. Insisting on the TEE proof going
-   first would sit out the whole `CHALLENGER_E2E_DISPUTE_TIMEOUT` on a
-   correctly behaving challenger.
+6. **Whatever Path 4 left behind.** TEE first (`tee=0`, `zk≠0`) is **Path 3**:
+   the next scan ZK-nullifies (`zkProver == 0`). ZK first is the supported
+   **TEE-fallback** case, where the TEE request or submission failed. A ZK
+   nullification disables the global ZK verifier, so the remaining TEE proof
+   cannot then be challenged by another ZK proof on the same fork. That branch
+   ends after Path 4 instead of waiting for a transaction the verifier rejects
+   with `Nullified()`. The E2E's throwaway B key is not registered as a TEE
+   proposer, so current deployments take this branch after the TEE submission
+   is rejected with `InvalidProposer(B)`.
 
    Step 5 reads both prover fields in one observation, and a challenger that
    scans faster than `CHALLENGER_E2E_POLL_INTERVAL` may have cleared both
    before the first look; that is a third branch, not a failure. Attribution is
-   therefore one assertion at the end — B's nonce must have advanced by at
-   least two against the baseline taken before the patch — rather than one per
-   step. A per-step delta credits both transactions to the first step whenever
-   the challenger beats the poll, and then demands a third that is never
-   coming.
+   therefore one assertion at the end: B's nonce must advance once for ZK-first
+   Path 4, or twice when TEE-first Path 4 continues through Path 3.
 7. **No collateral damage.** Every bystander game snapshotted in step 0 must
    still read the same `(teeProver, zkProver, counteredIndex)`. Catches what
    the per-game assertions cannot see: a challenger misconfigured on
