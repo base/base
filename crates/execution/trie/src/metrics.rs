@@ -134,27 +134,22 @@ base_metrics::define_metrics! {
 }
 
 impl StateMetrics {
-    /// Times one account or storage seek and counts it. A returned key other than the requested
-    /// key counts as a miss.
+    /// Times one account or storage seek and counts it, including a seek that returns an error.
+    /// A successful seek where `hit` returns `false` counts as a miss.
     pub fn record_seek<T, E>(
         seek: impl FnOnce() -> Result<T, E>,
         hit: impl FnOnce(&T) -> bool,
     ) -> Result<T, E> {
-        let mut timer = base_metrics::timed!(Self::seek_duration_seconds());
-        let value = match seek() {
-            Ok(value) => value,
-            Err(error) => {
-                timer.disarm();
-                return Err(error);
-            }
+        let result = {
+            let _timer = base_metrics::timed!(Self::seek_duration_seconds());
+            seek()
         };
-        timer.stop();
 
         Self::reads().increment(1);
-        if !hit(&value) {
+        if result.as_ref().is_ok_and(|value| !hit(value)) {
             Self::misses().increment(1);
         }
-        Ok(value)
+        result
     }
 }
 
