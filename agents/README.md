@@ -14,6 +14,14 @@ PR/stack policy; the role files own their specialized quality bar.
 | `integration_refactorer` | Simplifying ownership, state transitions, and Base-to-upstream integration boundaries. | Replacing Base-specific behavior without proving the contract is preserved. |
 | `performance_engineer` | A representative, baseline-backed performance improvement. | An unmeasured optimization or a benchmark/report-only PR. |
 | `test_breaker` | A confirmed behavior bug plus a deterministic regression test and fix. | Adding tests without a real behavior improvement. |
+| `vertical_slice_completion` | Closing a small missing supported integration boundary. | Starting a new feature/framework. |
+| `observability_truth` | Making metrics/status reflect effective live state. | Adding telemetry without an operator decision it supports. |
+| `configuration_contract_breaker` | Breaking accepted-but-ignored or contradictory operator configuration. | Documentation instead of contract fixes. |
+| `upstream_boundary_steward` | Simplifying Base-to-upstream integration ownership. | Replacing Base-specific behavior for shorter code. |
+| `upgrade_plan_consistency` | Aligning activation, runtime schedule, config, and observability. | A second schedule or mapping layer. |
+| `operator_lifecycle_guardian` | Restart, recovery, and partial-failure ownership. | Adding lifecycle machinery without a failure contract. |
+| `deprecation_removal` | Removing proven obsolete paths and compatibility residue. | Unproven guard deletion. |
+| `transition_state_auditor` | Auditing explicit ownership and legal/illegal transition behavior. | Cosmetic state-machine rewrites. |
 
 ## Opportunity selection principle
 
