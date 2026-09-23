@@ -386,10 +386,7 @@ impl TxEip8130 {
     /// to cover their sum (in addition to gas and any coinbase tip). The sum
     /// saturates at [`U256::MAX`] rather than wrapping.
     pub fn total_call_value(&self) -> U256 {
-        self.calls
-            .iter()
-            .flatten()
-            .fold(U256::ZERO, |acc, call| acc.saturating_add(call.value))
+        self.calls.iter().flatten().fold(U256::ZERO, |acc, call| acc.saturating_add(call.value))
     }
 }
 
@@ -898,7 +895,10 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(tx.total_call_value(), U256::from(12u64));
-        assert_eq!(TxEip8130 { calls: vec![], ..Default::default() }.total_call_value(), U256::ZERO);
+        assert_eq!(
+            TxEip8130 { calls: vec![], ..Default::default() }.total_call_value(),
+            U256::ZERO
+        );
     }
 
     #[test]
