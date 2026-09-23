@@ -49,8 +49,9 @@ pub const DEFAULT_TRANSACTION_EVENT_MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 
 /// Maximum events inserted in one Postgres statement.
 ///
-/// Each row uses 12 bind parameters, so this stays below Postgres' 65,535 bind
-/// parameter limit with room for future columns.
+/// Each row uses 13 bind parameters, so this stays below Postgres' 65,535 bind
+/// parameter limit (5,000 x 13 = 65,000). Lower it before adding another
+/// column.
 pub const MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE: usize = 5_000;
 
 /// Session `lock_timeout` applied to each persist INSERT.
