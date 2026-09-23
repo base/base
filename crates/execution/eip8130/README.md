@@ -67,18 +67,22 @@ The crate keeps the protocol stages explicit while avoiding crate sprawl:
 formula:
 
 ```text
-intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + bytecode_cost
-              + account_changes_cost + sender_auth_cost + payer_auth_cost
+intrinsic_gas = AA_BASE_COST + tx_payload_cost + nonce_key_cost + value_transfer_cost
+              + bytecode_cost + account_changes_cost + sender_auth_cost + payer_auth_cost
 ```
 
 | Component | Source |
 |---|---|
 | `base` | `AA_BASE_COST` (15,000) |
-| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the caller-supplied EIP-2718 serialization of the signed transaction |
+| `payload` | EIP-2028 data-availability cost (16/non-zero, 4/zero byte) over the EIP-2718 serialization of the signed transaction with an empty `payer_auth` |
 | `nonce_key` | nonce-free `13,000`; otherwise first-use `22,100` / existing `5,000` (a cold SLOAD plus an SSTORE set or reset) |
+| `value_transfer` | `6,000` per call with `value > 0` and `to != sender` |
 | `bytecode` | per create entry: `32,000 + 200 · code_len` |
 | `account_changes` | per create entry: one fresh packed `account_state` write plus one fresh `actor_config` slot write per initial actor; policy actors set `policy_commitment`/`policy_manager`, while ungated actors pay the cold zero-to-zero touches that preserve access warming; per config-change entry: a packed `account_state` write covering the sequence advance and lock read — the first access to that slot in the transaction (create bootstrap or first config change) is a cold zero-to-nonzero write, later same-account bumps are only a warm SLOAD + dirty SSTORE (`200`, the slot was already modified earlier in the transaction) — its `auth` cost, and each mutated actor/policy slot; revokes conservatively price all three actor/policy resets, except each revoke slot execution resolves to be an empty zero-to-zero touch is discounted by the reset-vs-cold-noop delta (an inline secp256k1 self revoke discounts its always-empty `actor_config` slot plus each policy slot — `manager`/`commitment` — whose stored value is zero, so three empty slots when ungated and one to three when policy-gated, since the EIP permits a gated actor to carry a zero manager and/or commitment); a self-actor change adds no separate bump — its inline-self write is already covered by the config-change `account_state` cost and its `actor_config(self)` home by the per-change slot cost; per delegation entry: the `4,600` indicator deposit |
-| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD; `payer_auth` is `0` for self-pay |
+| `sender_auth` / `payer_auth` | authenticator execution gas + one cold config/state SLOAD; `payer_auth` adds the data cost of the `payer_auth` bytes, is `0` for self-pay, and must not exceed `MAX_AUTHENTICATION_GAS` (100,000) |
+
+A value-bearing call to an account that does not exist also pays `25,000` for
+account creation when it runs, since existence is only known at dispatch.
 
 `sender_intrinsic` excludes `payer_auth` (payer authentication is metered on top
 of `gas_limit`), so `execution_gas_available(gas_limit) = gas_limit -
