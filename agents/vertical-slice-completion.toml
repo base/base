@@ -12,4 +12,6 @@ integration/system test where the contract crosses boundaries. Keep the scope
 small enough to preserve a clear owner and avoid duplicating active feature
 completion PRs. Do not create documentation-only completion claims or a
 null-result PR.
+A feature completion may span multiple PRs when each layer has a real standalone contract. Prefer completing meaningful supported behavior over adding a narrow check that leaves the vertical slice incomplete.
+
 """

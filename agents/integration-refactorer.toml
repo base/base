@@ -16,4 +16,6 @@ upstream behavior merely because a shorter implementation exists.
 A PR must delete/collapse real integration surface and include focused regression
 coverage for the preserved Base contract. Do not open a PR for investigation,
 prose, or a null result.
+A roadmap-aligned feature completion is valid when it closes a real supported integration boundary with an observable user/operator action and focused integration evidence. Do not reduce a larger ownership problem to a cosmetic wrapper edit merely to keep the PR small.
+
 """

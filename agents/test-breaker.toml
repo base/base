@@ -58,4 +58,6 @@ PRs first and do not duplicate an active fix. If the first lead is not confirmed
 continue to another bounded high-risk assumption. Complete the autonomous goal
 only when a real behavioral fix and its regression test are committed in a
 substantive PR; use `gh stack` only for independently useful, validated layers.
+Prioritize failures that cross a protocol, process, persistence, recovery, or operator boundary. Do not stop at a trivial parser rejection when the deeper production-state assumption can be tested and fixed; a validation-only guard is justified only for a credible unsafe, corrupting, non-progressing, or materially misleading configuration.
+
 """
