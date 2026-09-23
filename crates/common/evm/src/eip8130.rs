@@ -48,8 +48,9 @@ use alloy_primitives::{Address, Bytes, U256};
 use base_common_consensus::{AccountChange, Delegation, Eip8130Constants, Predeploys};
 use base_common_precompiles::NonceManagerStorage;
 use base_execution_eip8130::{
-    AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect, FeeCheck,
-    IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator, TransactionAuthorizer,
+    AccountChangeApplier, AccountConfigurationStorage, ApplyError, DelegationEffect,
+    Eip8130GasSchedule, FeeCheck, IntrinsicGas, IntrinsicGasInput, NonceMode, NonceValidator,
+    TransactionAuthorizer,
 };
 use base_precompile_storage::{JournalStorageProvider, StorageCtx};
 use revm::{
@@ -790,7 +791,7 @@ impl Eip8130Executor {
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    &IntrinsicGasInput::worst_case(nonce_key_first_use),
+                    &IntrinsicGasInput::worst_case(sender, nonce_key_first_use),
                     gas_limit,
                 )?;
 
@@ -954,7 +955,7 @@ impl Eip8130Executor {
                 Self::resolve_execution_gas(
                     signed,
                     encoded,
-                    &IntrinsicGasInput::new(nonce_key_first_use)
+                    &IntrinsicGasInput::new(sender, nonce_key_first_use)
                         .with_revoke_discount_slots(applied_tx.revoke_discount_slots),
                     gas_limit,
                 )?;
@@ -1078,6 +1079,15 @@ impl Eip8130Executor {
             let mut phase_output = Bytes::new();
 
             for call in phase {
+                if Self::creates_account(evm, outcome.sender, call.to, call.value)? {
+                    let Some(left) = remaining.checked_sub(Eip8130GasSchedule::NEW_ACCOUNT_COST)
+                    else {
+                        remaining = 0;
+                        phase_reverted = true;
+                        break;
+                    };
+                    remaining = left;
+                }
                 let frame = Self::run_call(
                     evm,
                     outcome.sender,
@@ -1226,6 +1236,31 @@ impl Eip8130Executor {
         inspector.call_end(ctx, &inputs, &mut outcome);
     }
 
+    /// Whether a call moving `value` from `sender` to `to` creates `to`, so it
+    /// owes [`Eip8130GasSchedule::NEW_ACCOUNT_COST`]: `value` is non-zero,
+    /// `to` is empty (EIP-161), and `sender` can cover `value` (an unaffordable
+    /// call fails its balance check before the charge applies).
+    fn creates_account<DB, I, P>(
+        evm: &mut BaseEvm<DB, I, P>,
+        sender: Address,
+        to: Address,
+        value: U256,
+    ) -> Result<bool, EVMError<DB::Error, BaseTransactionError>>
+    where
+        DB: AlloyDatabase,
+        BaseContext<DB>: ContextTr<Db = DB, Journal: JournalExt>,
+    {
+        if value.is_zero() || to == sender {
+            return Ok(false);
+        }
+        let journal = evm.ctx_mut().journal_mut();
+        if !journal.load_account(to).map_err(EVMError::Database)?.data.is_empty() {
+            return Ok(false);
+        }
+        let balance = journal.load_account(sender).map_err(EVMError::Database)?.data.info.balance;
+        Ok(balance >= value)
+    }
+
     /// Dispatches a single protocol call (`from = sender`, transferring `value`
     /// wei to `to`) as a top-level EVM call frame with `gas_limit` and runs it to
     /// completion, returning the [`FrameResult`]. Reuses the Base handler's frame
@@ -1284,12 +1319,11 @@ impl Eip8130Executor {
             // reserved for `DELEGATECALL`): revm's frame init moves `value` from
             // `caller` to `to`, reverting the frame with `InsufficientBalance`
             // when the caller's spendable balance cannot cover it, and `msg.value`
-            // reads as `value` inside the callee. The value-transfer stipend and
-            // new-account (25000) gas that a `CALL` opcode would levy are not
-            // charged here: this directly-built top-level frame bypasses the
-            // opcode gas site, exactly as the zero-value path already did, so the
-            // sender's dispatched calls stay metered by the 8130 call-gas pool
-            // rather than the opcode gas model.
+            // reads as `value` inside the callee. This directly-built top-level
+            // frame bypasses the `CALL` opcode gas site, so no value surcharge or
+            // stipend applies: the value transfer is priced by the intrinsic
+            // `TX_VALUE_COST`, and account creation by `NEW_ACCOUNT_COST` in
+            // `execute_calls`.
             value: CallValue::Transfer(value),
             scheme: CallScheme::Call,
             is_static: false,
@@ -1814,6 +1848,31 @@ mod tests {
         assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
         let recipient_acc = outcome.state.get(&recipient).expect("recipient in state");
         assert_eq!(recipient_acc.info.balance, transfer, "recipient credited the call value");
+    }
+
+    /// A value-bearing call to an account that does not exist pays
+    /// `NEW_ACCOUNT_COST` on top of the same call to an existing account.
+    #[test]
+    fn value_call_to_new_account_charges_account_creation() {
+        let key = signing_key(0x53);
+        let sender = eoa_address(&key);
+        let recipient = address!("0x00000000000000000000000000000000000000e3");
+        let initial_balance = U256::from(10u64).pow(U256::from(18u64));
+        let mut tx = base_tx();
+        tx.calls = vec![vec![Call { to: recipient, value: U256::from(1u64), data: Bytes::new() }]];
+        let signed = eoa_signed(tx, &key);
+
+        let gas_used = |accounts: &[(Address, Bytes)]| {
+            let mut evm = evm_with_accounts(initial_balance, sender, accounts);
+            let outcome = evm.transact_raw(into_base_tx(&signed)).expect("value call should run");
+            assert!(outcome.result.is_success(), "expected success, got {:?}", outcome.result);
+            outcome.result.tx_gas_used()
+        };
+
+        assert_eq!(
+            gas_used(&[]) - gas_used(&[(recipient, bytes!("00"))]),
+            Eip8130GasSchedule::NEW_ACCOUNT_COST
+        );
     }
 
     /// A call whose `value` exceeds the sender's spendable balance (after the

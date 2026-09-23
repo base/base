@@ -403,6 +403,22 @@ impl Eip8130Signed {
         self.payer_auth.encode(out);
     }
 
+    /// EIP-2718 encoding with `payer_auth` replaced by the empty string: the
+    /// bytes `tx_payload_cost` bills to the sender.
+    #[must_use]
+    pub fn encoded_2718_without_payer_auth(&self) -> Vec<u8> {
+        let empty = Bytes::new();
+        let payload_length =
+            self.tx.rlp_encoded_fields_length() + self.sender_auth.length() + empty.length();
+        let mut out = Vec::with_capacity(1 + length_of_length(payload_length) + payload_length);
+        out.put_u8(Eip8130Constants::EIP8130_TX_TYPE);
+        Header { list: true, payload_length }.encode(&mut out);
+        self.tx.rlp_encode_fields(&mut out);
+        self.sender_auth.encode(&mut out);
+        empty.encode(&mut out);
+        out
+    }
+
     fn rlp_encoded_signed_length(&self) -> usize {
         let payload = self.rlp_payload_length();
         length_of_length(payload) + payload
