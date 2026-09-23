@@ -26,12 +26,12 @@ use reth_transaction_pool::{BatchTxRequest, PoolTransaction, TransactionOrigin, 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-/// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
-/// submitted before the Zenith hard fork is active at the latest block.
 /// Rejection message when validity ingress is wired but Cobalt has not activated.
 pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str =
     "validity transactions are gated behind the Cobalt hard fork";
 
+/// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
+/// submitted before the Zenith hard fork is active at the latest block.
 ///
 /// EIP-8130 validity transactions are fork-gated on Zenith; other transaction types (e.g. EIP-1559)
 /// carry validity predicates under the experimental flag alone.
