@@ -1,4 +1,4 @@
-//! Channel-backed [`UnsafeBlockSource`] for tests and in-process pipelines.
+//! Channel-backed [`UnsafeBlockSource`] for tests.
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -9,10 +9,10 @@ use crate::{L2BlockEvent, SourceError, UnsafeBlockSource};
 ///
 /// Use [`ChannelBlockSource::new`] to obtain a `(source, sender)` pair.
 /// Events sent on the [`mpsc::UnboundedSender`] side are consumed by
-/// [`UnsafeBlockSource::next`].
+/// [`UnsafeBlockSource::next`]. When all senders are dropped, `next` returns
+/// [`SourceError::Closed`].
 #[derive(Debug)]
 pub struct ChannelBlockSource {
-    /// The receiving half of the unbounded channel.
     rx: mpsc::UnboundedReceiver<L2BlockEvent>,
 }
 
@@ -27,13 +27,7 @@ impl ChannelBlockSource {
 #[async_trait]
 impl UnsafeBlockSource for ChannelBlockSource {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-        match self.rx.try_recv() {
-            Ok(event) => return Ok(event),
-            Err(mpsc::error::TryRecvError::Disconnected) => return Err(SourceError::Exhausted),
-            Err(mpsc::error::TryRecvError::Empty) => {}
-        }
-
-        self.rx.recv().await.ok_or(SourceError::Exhausted)
+        self.rx.recv().await.ok_or(SourceError::Closed)
     }
 }
 
@@ -77,12 +71,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exhausted_when_sender_dropped() {
+    async fn closed_when_sender_dropped() {
         let (mut source, tx) = ChannelBlockSource::new();
         drop(tx);
 
         let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Exhausted));
+        assert!(matches!(err, SourceError::Closed));
     }
 
     #[tokio::test]

@@ -6,7 +6,6 @@ use std::{
 };
 
 use alloy_primitives::Address;
-use async_trait::async_trait;
 use base_batcher_core::{
     BatchDriver, BatchDriverConfig, DaThrottle, ThrottleConfig, ThrottleController,
     ThrottleStrategy,
@@ -19,14 +18,13 @@ use base_batcher_encoder::{
     BatchPipeline, BatchSubmission, DerivationReconciliation, ReorgError, StepError, StepResult,
     SubmissionId,
 };
-use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-use tokio::sync::mpsc;
 
 /// When the DA backlog exceeds the threshold, the driver must call
 /// `set_max_da_size` on the throttle client with reduced limits.
@@ -252,25 +250,8 @@ fn test_throttle_transitions_from_active_to_inactive() {
         }
     }
 
-    // Source driven by an mpsc channel so the test can wake the driver loop
-    // by sending a dummy block event after changing the backlog.
-    struct ChannelSource {
-        rx: mpsc::UnboundedReceiver<L2BlockEvent>,
-    }
-
-    #[async_trait]
-    impl UnsafeBlockSource for ChannelSource {
-        async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
-            match self.rx.recv().await {
-                Some(event) => Ok(event),
-                // Channel closed: park until the driver is cancelled.
-                None => std::future::pending().await,
-            }
-        }
-    }
-
     Runner::start(Config::seeded(0), |ctx| async move {
-        let (source_tx, source_rx) = mpsc::unbounded_channel();
+        let (source, source_tx) = ChannelBlockSource::new();
 
         // Start with 2 MB backlog — above the default 1 MB threshold.
         let backlog = Arc::new(Mutex::new(2_000_000u64));
@@ -282,7 +263,7 @@ fn test_throttle_transitions_from_active_to_inactive() {
         let driver = BatchDriver::new_without_derivation_status(
             ctx.clone(),
             pipeline,
-            ChannelSource { rx: source_rx },
+            source,
             ImmediateConfirmTxManager { l1_block: 1 },
             BatchDriverConfig {
                 inbox: Address::ZERO,

@@ -16,5 +16,8 @@ pub trait L1HeadSource: Send {
     /// Implementations are responsible for deduplicating redundant head updates —
     /// if both a subscription and a poller deliver the same block number, only
     /// one `NewHead` event is emitted.
+    ///
+    /// [`SourceError::Closed`] stops L1 head tracking in the driver for good; any
+    /// other error is logged and the source polled again.
     async fn next(&mut self) -> Result<L1HeadEvent, SourceError>;
 }

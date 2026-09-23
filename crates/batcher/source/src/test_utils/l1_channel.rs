@@ -1,4 +1,4 @@
-//! Channel-backed [`L1HeadSource`] for tests and in-process pipelines.
+//! Channel-backed [`L1HeadSource`] for tests.
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -9,11 +9,8 @@ use crate::{L1HeadEvent, L1HeadSource, SourceError};
 ///
 /// Use [`ChannelL1HeadSource::new`] to obtain a `(source, sender)` pair.
 /// Events sent on the [`mpsc::UnboundedSender`] side are consumed by
-/// [`L1HeadSource::next`].
-///
-/// When the channel is empty the source parks on [`recv`](mpsc::UnboundedReceiver::recv)
-/// until a new event arrives. When all senders are dropped, `next` returns
-/// [`SourceError::Exhausted`].
+/// [`L1HeadSource::next`]. When all senders are dropped, `next` returns
+/// [`SourceError::Closed`].
 #[derive(Debug)]
 pub struct ChannelL1HeadSource {
     rx: mpsc::UnboundedReceiver<L1HeadEvent>,
@@ -30,13 +27,7 @@ impl ChannelL1HeadSource {
 #[async_trait]
 impl L1HeadSource for ChannelL1HeadSource {
     async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
-        // Non-blocking drain first so burst events don't require a yield.
-        match self.rx.try_recv() {
-            Ok(event) => return Ok(event),
-            Err(mpsc::error::TryRecvError::Disconnected) => return Err(SourceError::Exhausted),
-            Err(mpsc::error::TryRecvError::Empty) => {}
-        }
-        self.rx.recv().await.ok_or(SourceError::Exhausted)
+        self.rx.recv().await.ok_or(SourceError::Closed)
     }
 }
 
@@ -54,12 +45,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exhausted_when_sender_dropped() {
+    async fn closed_when_sender_dropped() {
         let (mut source, tx) = ChannelL1HeadSource::new();
         drop(tx);
 
         let err = source.next().await.unwrap_err();
-        assert!(matches!(err, SourceError::Exhausted));
+        assert!(matches!(err, SourceError::Closed));
     }
 
     #[tokio::test]

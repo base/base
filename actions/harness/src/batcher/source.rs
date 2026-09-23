@@ -40,7 +40,7 @@ impl HarnessBlockSource {
 impl UnsafeBlockSource for HarnessBlockSource {
     async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
         loop {
-            match self.rx.recv().await.ok_or(SourceError::Exhausted)? {
+            match self.rx.recv().await.ok_or(SourceError::Closed)? {
                 BlockSourceItem::Event(event) => return Ok(event),
                 BlockSourceItem::Marker(reached) => {
                     let _ = reached.send(());
@@ -84,10 +84,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn closed_channel_exhausts_the_source() {
+    async fn closed_channel_closes_the_source() {
         let (mut source, tx) = HarnessBlockSource::new();
         drop(tx);
 
-        assert!(matches!(source.next().await, Err(SourceError::Exhausted)));
+        assert!(matches!(source.next().await, Err(SourceError::Closed)));
     }
 }
