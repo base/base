@@ -211,8 +211,7 @@ async fn test_validity_transactions_require_explicit_opt_in() -> eyre::Result<()
 #[tokio::test]
 async fn test_validity_extensions_open_at_cobalt() -> eyre::Result<()> {
     let spec = BaseChainSpec::from_genesis(build_test_genesis_cobalt());
-    let config =
-        BuilderApiExtensionConfig::new(false, DEFAULT_MAX_VALIDITY_PREDICATES).with_noop_metering();
+    let config = BuilderApiExtensionConfig::new(false, DEFAULT_MAX_VALIDITY_PREDICATES);
     let harness = TestHarness::builder()
         .with_chain_spec(Arc::new(spec))
         .with_ext::<BuilderApiExtension>(config)
@@ -222,7 +221,6 @@ async fn test_validity_extensions_open_at_cobalt() -> eyre::Result<()> {
     let tx = ValidatedTransaction {
         sender: Account::Alice.address(),
         raw: Bytes::from_static(&[0xff]),
-        metering: None,
         extensions: TransactionValidity {
             validity: vec![ValidityPredicate::Balance {
                 address: Account::Alice.address(),

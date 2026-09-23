@@ -129,7 +129,7 @@ pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
 impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
     /// Creates a validity transaction ingress backed by the given pool and default limits.
     ///
-    /// The provider fork-gates the RPC method on the Zenith hard fork.
+    /// Cobalt gates validity ingress; EIP-8130 transactions additionally require Zenith.
     pub const fn new(pool: Pool, provider: Provider) -> Self {
         Self::with_validity_limits(
             pool,
@@ -141,7 +141,7 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
 
     /// Creates a validity transaction ingress with a predicate limit and default expiry window.
     ///
-    /// The provider fork-gates the RPC method on the Zenith hard fork.
+    /// Cobalt gates validity ingress; EIP-8130 transactions additionally require Zenith.
     pub const fn with_max_validity_predicates(
         pool: Pool,
         provider: Provider,
@@ -733,7 +733,7 @@ mod tests {
         let provider = MockEthProvider::<BasePrimitives>::new()
             .with_chain_spec(Arc::new(spec))
             .with_genesis_block();
-        let rpc = validity_rpc(provider);
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), provider);
         let request = || SendRawTransactionValidityOptions { validity: vec![] };
         assert_eq!(
             rpc.send_raw_transaction_validity(Bytes::new(), request()).await.unwrap_err().message(),
@@ -759,7 +759,7 @@ mod tests {
                     .build(),
             ))
             .with_genesis_block();
-        let rpc = validity_rpc(pre_cobalt.clone());
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_cobalt.clone());
         let rejected = rpc
             .send_raw_transaction_validity(
                 Bytes::new(),
@@ -786,7 +786,7 @@ mod tests {
                     .build(),
             ))
             .with_genesis_block();
-        let rejected = validity_rpc(cobalt)
+        let rejected = SendRawTransactionValidityApiImpl::new(validity_pool(), cobalt)
             .send_raw_transaction_validity(
                 Bytes::new(),
                 SendRawTransactionValidityOptions { validity: vec![] },
@@ -816,11 +816,8 @@ mod tests {
             vec!["X-Demo=forwarded".to_string()],
         )
         .unwrap();
-        let rpc = SendRawTransactionValidityApiImpl::new(
-            pre_zenith_provider(),
-            test_transaction_sender(),
-        )
-        .with_sequencer_client(client);
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider())
+            .with_sequencer_client(client);
         let hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap();
         assert_eq!(hash, expected_hash);
         mock.assert();
@@ -843,11 +840,8 @@ mod tests {
             );
         });
         let client = SequencerClient::new_http_with_headers(sequencer.base_url(), vec![]).unwrap();
-        let rpc = SendRawTransactionValidityApiImpl::new(
-            pre_zenith_provider(),
-            test_transaction_sender(),
-        )
-        .with_sequencer_client(client);
+        let rpc = SendRawTransactionValidityApiImpl::new(validity_pool(), pre_zenith_provider())
+            .with_sequencer_client(client);
         let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
         assert_eq!(error.code(), -32602);
         assert_eq!(error.message(), "upstream validity rejection");

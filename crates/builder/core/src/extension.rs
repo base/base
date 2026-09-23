@@ -66,7 +66,8 @@ impl BaseNodeExtension for BuilderApiExtension {
     fn apply(self: Box<Self>, builder: NodeHooks) -> NodeHooks {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
-            let api = ShadowValidityBuilderApi::new(ctx.pool().clone(), ctx.provider().clone(), config);
+            let api =
+                ShadowValidityBuilderApi::new(ctx.pool().clone(), ctx.provider().clone(), config);
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })
