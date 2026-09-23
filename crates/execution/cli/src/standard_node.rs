@@ -364,13 +364,12 @@ pub struct RpcStandardNodeArgs {
     )]
     pub validity_max_predicates: usize,
 
-    /// Maximum lifetime, in seconds, for an experimental validity transaction.
+    /// Maximum lifetime, in seconds, for a validity transaction.
     #[arg(
-        long = "experimental-validity-max-expiry-secs",
+        long = "validity-max-expiry-secs",
         default_value_t = DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
-        requires = "enable_experimental_validity_transactions"
     )]
-    pub experimental_validity_max_expiry_secs: u64,
+    pub validity_max_expiry_secs: u64,
 
     /// Builder RPC endpoints for transaction forwarding (one forwarder per URL), used by mempool nodes
     #[arg(
@@ -739,7 +738,7 @@ impl StandardBaseRethNode {
             runner.install_ext::<SendRawTransactionValidityExtension>(
                 SendRawTransactionValidityConfig {
                     max_validity_predicates: args.rpc.validity_max_predicates,
-                    max_validity_expiry_secs: args.rpc.experimental_validity_max_expiry_secs,
+                    max_validity_expiry_secs: args.rpc.validity_max_expiry_secs,
                     experimental_override: args.rpc.enable_experimental_validity_transactions,
                     sequencer_url: args
                         .rpc
@@ -948,7 +947,7 @@ mod tests {
             enable_tx_forwarding: false,
             enable_experimental_validity_transactions: false,
             validity_max_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
-            experimental_validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            validity_max_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             builder_rpc_urls: Vec::new(),
             tx_forwarding_resend_after_ms: DEFAULT_RESEND_AFTER_MS,
             tx_forwarding_batch_size: DEFAULT_MAX_BATCH_SIZE,
@@ -1073,7 +1072,7 @@ mod tests {
         assert!(!standard_args.rpc.enable_experimental_validity_transactions);
         assert_eq!(standard_args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
         assert_eq!(
-            standard_args.rpc.experimental_validity_max_expiry_secs,
+            standard_args.rpc.validity_max_expiry_secs,
             DEFAULT_MAX_VALIDITY_EXPIRY_SECS
         );
         assert!(!config.enabled);
@@ -1102,7 +1101,7 @@ mod tests {
             "--enable-experimental-validity-transactions",
             "--validity-max-predicates",
             "8",
-            "--experimental-validity-max-expiry-secs",
+            "--validity-max-expiry-secs",
             "45",
         ])
         .args;
@@ -1110,7 +1109,7 @@ mod tests {
         assert!(args.rpc.enable_tx_forwarding);
         assert!(args.rpc.enable_experimental_validity_transactions);
         assert_eq!(args.rpc.validity_max_predicates, 8);
-        assert_eq!(args.rpc.experimental_validity_max_expiry_secs, 45);
+        assert_eq!(args.rpc.validity_max_expiry_secs, 45);
         assert_eq!(args.rpc.builder_rpc_urls.len(), 1);
     }
 
@@ -1152,6 +1151,19 @@ mod tests {
 
         assert!(!args.rpc.enable_experimental_validity_transactions);
         assert_eq!(args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
+    }
+
+    #[test]
+    fn validity_max_expiry_secs_parses_without_experimental_override() {
+        let args = CommandParser::<StandardNodeArgs>::parse_from([
+            "base-reth",
+            "--validity-max-expiry-secs",
+            "45",
+        ])
+        .args;
+
+        assert!(!args.rpc.enable_experimental_validity_transactions);
+        assert_eq!(args.rpc.validity_max_expiry_secs, 45);
     }
 
     #[test]
