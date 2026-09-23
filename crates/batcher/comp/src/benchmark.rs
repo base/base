@@ -186,6 +186,17 @@ impl CompressionBenchmark {
         pattern: InputPattern,
         transaction_index: usize,
     ) -> Vec<u8> {
+        self.signed_transaction(&Self::fixture_signer(), profile, pattern, transaction_index)
+    }
+
+    /// Signs a fixture transaction using the deterministic benchmark signer.
+    fn signed_transaction(
+        self,
+        signer: &PrivateKeySigner,
+        profile: TransactionProfile,
+        pattern: InputPattern,
+        transaction_index: usize,
+    ) -> Vec<u8> {
         let (to, value, input) = self.fixture_call(profile, pattern, transaction_index);
         let transaction = TxEip1559 {
             chain_id: 8453,
@@ -198,11 +209,14 @@ impl CompressionBenchmark {
             access_list: Default::default(),
             input: Bytes::from(input),
         };
-        let signer =
-            PrivateKeySigner::from_bytes(&B256::repeat_byte(1)).expect("valid fixture key");
         let signature =
             signer.sign_hash_sync(&transaction.signature_hash()).expect("fixture signing succeeds");
         transaction.into_signed(signature).encoded_2718()
+    }
+
+    /// Returns the deterministic signer shared by one benchmark measurement.
+    fn fixture_signer() -> PrivateKeySigner {
+        PrivateKeySigner::from_bytes(&B256::repeat_byte(1)).expect("valid fixture key")
     }
 
     /// Builds ABI-shaped calldata for a scenario without requiring a deployed contract.
@@ -213,7 +227,10 @@ impl CompressionBenchmark {
         transaction_index: usize,
     ) -> (TxKind, U256, Vec<u8>) {
         if profile.kind == TransactionKind::NativeEthTransfer {
-            let mut state = transaction_index as u64 ^ 0xa076_1d64_78bd_642f;
+            let mut state = match pattern {
+                InputPattern::Pseudorandom => transaction_index as u64 ^ 0xa076_1d64_78bd_642f,
+                InputPattern::Incrementing => transaction_index as u64,
+            };
             let mut recipient = [0u8; 20];
             for byte in &mut recipient {
                 state ^= state << 13;
@@ -221,10 +238,16 @@ impl CompressionBenchmark {
                 state ^= state << 17;
                 *byte = state as u8;
             }
-            let mut value_state = transaction_index as u64 ^ 0xe703_7ed1_a0b4_28db;
-            value_state ^= value_state << 13;
-            value_state ^= value_state >> 7;
-            value_state ^= value_state << 17;
+            let value_state = match pattern {
+                InputPattern::Pseudorandom => {
+                    let mut value_state = transaction_index as u64 ^ 0xe703_7ed1_a0b4_28db;
+                    value_state ^= value_state << 13;
+                    value_state ^= value_state >> 7;
+                    value_state ^= value_state << 17;
+                    value_state
+                }
+                InputPattern::Incrementing => transaction_index as u64 + 1,
+            };
             return (
                 TxKind::Call(Address::from(recipient)),
                 U256::from((value_state % 10_000_000_000_000_000_000u64).max(1)),
@@ -281,6 +304,7 @@ impl CompressionBenchmark {
             return Err(CompressionError::InvalidScenario);
         }
 
+        let signer = Self::fixture_signer();
         let mut compressor = CompressionStream::new(BrotliLevel::DEFAULT);
         let batch_capacity =
             scenario.profile.encoded_bytes.saturating_mul(scenario.transactions_per_batch);
@@ -293,7 +317,8 @@ impl CompressionBenchmark {
                 let transaction_number = batch_index
                     .saturating_mul(scenario.transactions_per_batch)
                     .saturating_add(transaction_index);
-                batch.extend(self.synthetic_transaction(
+                batch.extend(self.signed_transaction(
+                    &signer,
                     scenario.profile,
                     scenario.pattern,
                     transaction_number,
@@ -324,13 +349,18 @@ impl CompressionBenchmark {
             return Err(CompressionError::InvalidScenario);
         }
 
+        let signer = Self::fixture_signer();
         let transaction_count = scenario.transaction_count();
         let mut compressor = CompressionStream::new(BrotliLevel::DEFAULT);
         let mut measurements = Vec::with_capacity(transaction_count);
 
         for transaction_index in 0..transaction_count {
-            let transaction =
-                self.synthetic_transaction(scenario.profile, scenario.pattern, transaction_index);
+            let transaction = self.signed_transaction(
+                &signer,
+                scenario.profile,
+                scenario.pattern,
+                transaction_index,
+            );
             let compressed_bytes = compressor.append(&transaction)?.len();
             measurements.push(IncrementalCompressionMeasurement {
                 transaction_index,
