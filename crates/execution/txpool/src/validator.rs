@@ -1804,10 +1804,10 @@ where
     }
 
     /// Returns `true` when an authenticator selector may be used directly on the
-    /// EIP-8130 transaction validation path.
+    /// EIP-8130 transaction validation path. Only the native k1 authenticator
+    /// is accepted.
     fn authenticator_allowed_for_tx_path(authenticator: &Address) -> bool {
         *authenticator == Eip8130Constants::K1_AUTHENTICATOR
-            || Eip8130Contracts::is_canonical_authenticator(authenticator)
     }
 
     /// Performs cheap selector-specific wire checks that do not require running
@@ -2843,6 +2843,17 @@ mod tests {
             Bytes::from(Address::ZERO.to_vec()),
         );
         assert_unsupported(TestValidator::validate_payer_auth(&signed));
+    }
+
+    /// A configured sender naming a canonical non-k1 authenticator is rejected
+    /// at admission.
+    #[test]
+    fn rejects_eip8130_non_k1_sender_authenticator() {
+        let tx = TxEip8130 { sender: Some(Address::repeat_byte(0xaa)), ..minimal_valid_eoa_tx() };
+        let mut auth = Eip8130Contracts::P256_AUTHENTICATOR.as_slice().to_vec();
+        auth.extend_from_slice(&[0u8; 64]);
+        let signed = Eip8130Signed::new(tx, Bytes::from(auth), Bytes::new());
+        assert_unsupported(TestValidator::validate_sender_auth(&signed));
     }
 
     /// Returns an authenticator address comfortably above the `K1_AUTHENTICATOR`
