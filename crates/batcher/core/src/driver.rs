@@ -18,37 +18,19 @@ use crate::{
     DerivationStatus, SubmissionQueue, ThrottleClient, ThrottleController, event::DriverEvent,
 };
 
-/// Initial L1 and derivation inputs consumed by a [`BatchDriver`].
+/// Everything a [`BatchDriver`] listens to.
 #[derive(Debug)]
-pub struct BatchDriverHeads<L> {
+pub struct BatchDriverInputs<S, L> {
+    /// Source of unsafe L2 blocks and reorg signals.
+    pub source: S,
     /// Source of live L1 head updates.
-    l1_head_source: L,
-    /// Live L1 head used to seed channel deadlines.
-    initial_l1_head: Option<u64>,
-    /// Initial derivation status and its ordered update stream.
-    derivation_feed: Option<(DerivationStatus, mpsc::Receiver<DerivationStatus>)>,
-}
-
-impl<L> BatchDriverHeads<L> {
-    /// Creates production head inputs from independent live and derivation clocks.
-    pub const fn new(
-        l1_head_source: L,
-        initial_l1_head: u64,
-        initial_status: DerivationStatus,
-        derivation_status_rx: mpsc::Receiver<DerivationStatus>,
-    ) -> Self {
-        Self {
-            l1_head_source,
-            initial_l1_head: Some(initial_l1_head),
-            derivation_feed: Some((initial_status, derivation_status_rx)),
-        }
-    }
-
-    /// Creates head inputs without derivation tracking for tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub const fn without_derivation(l1_head_source: L) -> Self {
-        Self { l1_head_source, initial_l1_head: None, derivation_feed: None }
-    }
+    pub l1_head_source: L,
+    /// Derivation status at startup.
+    pub initial_status: DerivationStatus,
+    /// Ordered derivation-status updates.
+    pub derivation_status_rx: mpsc::Receiver<DerivationStatus>,
+    /// Admin commands; see [`AdminHandle::channel`](crate::AdminHandle::channel).
+    pub admin_rx: mpsc::Receiver<AdminCommand>,
 }
 
 /// Async orchestration loop for the batcher.
@@ -82,16 +64,17 @@ where
     /// L1 head source for chain head advancement.
     l1_head_source: L,
     /// Last trusted L2 safe head.
-    safe_head: Option<BlockInfo>,
+    safe_head: BlockInfo,
     /// Ordered derivation-progress snapshots.
-    derivation_status_rx: Option<mpsc::Receiver<DerivationStatus>>,
+    derivation_status_rx: mpsc::Receiver<DerivationStatus>,
     /// Maximum wall-clock time to wait for in-flight submissions to settle
     /// when draining on cancellation.
     drain_timeout: Duration,
     /// Whether block ingestion is currently stopped (via admin or the `--stopped` flag).
     stopped: bool,
-    /// Admin command channel, wired in via [`Self::with_admin_rx`].
-    admin_rx: Option<mpsc::Receiver<AdminCommand>>,
+    /// Admin command channel. Once every [`AdminHandle`](crate::AdminHandle) is dropped, the
+    /// arm goes quiet.
+    admin_rx: mpsc::Receiver<AdminCommand>,
     /// When `true`, the driver toggles a blob-DA override on the pipeline
     /// whenever DA-backlog throttling activates. Lifted from
     /// [`BatchDriverConfig::force_blobs_when_throttling`].
@@ -112,95 +95,33 @@ where
     /// starving receipt processing and cancellation checks.
     pub const STEP_BUDGET: usize = 128;
 
-    /// Create a [`BatchDriver`] from live L1 and derivation inputs.
-    ///
-    /// Advances the pipeline to the initial L1 tip before the event loop starts
-    /// so channel duration is measured from that tip, not from block 0.
+    /// Create a [`BatchDriver`].
     pub fn new(
         runtime: R,
-        mut pipeline: P,
-        source: S,
+        pipeline: P,
         tx_manager: TM,
         config: BatchDriverConfig,
         throttle: DaThrottle<TC>,
-        heads: BatchDriverHeads<L>,
+        inputs: BatchDriverInputs<S, L>,
     ) -> Self {
-        let (initial_status, derivation_status_rx) = heads.derivation_feed.unzip();
-        if let Some(initial_l1_head) = heads.initial_l1_head {
-            pipeline.advance_l1_head(initial_l1_head);
-        }
         Self {
             runtime,
             pipeline,
-            source,
+            source: inputs.source,
             submissions: SubmissionQueue::new(
                 tx_manager,
                 config.inbox,
                 config.max_pending_transactions,
             ),
             throttle,
-            l1_head_source: heads.l1_head_source,
-            safe_head: initial_status.map(|status| status.safe_l2),
-            derivation_status_rx,
+            l1_head_source: inputs.l1_head_source,
+            safe_head: inputs.initial_status.safe_l2,
+            derivation_status_rx: inputs.derivation_status_rx,
             drain_timeout: config.drain_timeout,
-            stopped: false,
-            admin_rx: None,
+            stopped: config.stopped,
+            admin_rx: inputs.admin_rx,
             force_blobs_when_throttling: config.force_blobs_when_throttling,
         }
-    }
-
-    /// Create a driver without derivation-status tracking for tests that do not exercise it.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn new_without_derivation_status(
-        runtime: R,
-        pipeline: P,
-        source: S,
-        tx_manager: TM,
-        config: BatchDriverConfig,
-        throttle: DaThrottle<TC>,
-        l1_head_source: L,
-    ) -> Self {
-        Self::new(
-            runtime,
-            pipeline,
-            source,
-            tx_manager,
-            config,
-            throttle,
-            BatchDriverHeads::without_derivation(l1_head_source),
-        )
-    }
-
-    /// Attach a derivation-status feed to a test driver created without one.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn with_derivation_status_rx(
-        mut self,
-        initial: DerivationStatus,
-        rx: mpsc::Receiver<DerivationStatus>,
-    ) -> Self {
-        self.safe_head = Some(initial.safe_l2);
-        self.derivation_status_rx = Some(rx);
-        self
-    }
-
-    /// Wire an admin command channel into the driver.
-    ///
-    /// When set, the driver processes admin commands as part of its main
-    /// `select!` loop. When absent, the admin arm is permanently pending and
-    /// the driver behaves as if no admin server is configured.
-    pub fn with_admin_rx(mut self, rx: mpsc::Receiver<AdminCommand>) -> Self {
-        self.admin_rx = Some(rx);
-        self
-    }
-
-    /// Start the driver in a stopped state, deferring block ingestion until
-    /// [`AdminCommand::Start`] is received via the admin API.
-    ///
-    /// Equivalent to the batcher starting normally and immediately receiving
-    /// a stop command. Use this when the `--stopped` flag is set at startup.
-    pub const fn with_stopped(mut self, stopped: bool) -> Self {
-        self.stopped = stopped;
-        self
     }
 
     /// Run the batch driver loop.
@@ -323,21 +244,17 @@ where
     /// Reset volatile state and restart delivery above the latest safe head.
     fn reset_to_safe_head(&mut self, reason: &'static str) {
         self.reset_pipeline(reason);
-
-        if let Some(safe_head) = self.safe_head {
-            self.source.reset_catchup(safe_head);
-        }
+        self.source.reset_catchup(self.safe_head);
     }
 
     /// Reconcile buffered state with an ordered derivation-progress snapshot.
     fn on_derivation_status(&mut self, status: DerivationStatus) {
         let head = status.safe_l2;
-        let previous = self.safe_head.replace(head);
+        let previous = std::mem::replace(&mut self.safe_head, head);
 
-        if let Some(previous) = previous.filter(|previous| {
-            head.number < previous.number
-                || (head.number == previous.number && head.hash != previous.hash)
-        }) {
+        if head.number < previous.number
+            || (head.number == previous.number && head.hash != previous.hash)
+        {
             warn!(
                 previous_safe_l2 = %previous.number,
                 previous_safe_hash = %previous.hash,
@@ -376,11 +293,7 @@ where
     /// Apply derivation-status updates that arrived before the next CPU phase.
     fn apply_pending_derivation_status_updates(&mut self) -> Result<(), BatchDriverError> {
         loop {
-            let Some(rx) = self.derivation_status_rx.as_mut() else {
-                return Ok(());
-            };
-
-            match rx.try_recv() {
+            match self.derivation_status_rx.try_recv() {
                 Ok(status) => self.on_derivation_status(status),
                 Err(mpsc::error::TryRecvError::Empty) => return Ok(()),
                 Err(mpsc::error::TryRecvError::Disconnected) if self.runtime.is_cancelled() => {
@@ -400,7 +313,7 @@ where
     /// The triggering block will be re-delivered by the sequential poller.
     fn on_block(&mut self, block: Box<BaseBlock>) {
         let number = block.header.number;
-        if self.safe_head.is_some_and(|safe_head| number <= safe_head.number) {
+        if number <= self.safe_head.number {
             return;
         }
 
@@ -441,16 +354,12 @@ where
             return;
         }
 
-        if let Some(safe_head) = self.safe_head {
-            self.source.reset_catchup(safe_head);
-            info!(
-                stopped = false,
-                safe_l2 = %safe_head.number,
-                "batcher started via admin, catching up from safe head"
-            );
-        } else {
-            info!(stopped = false, "batcher started via admin");
-        }
+        self.source.reset_catchup(self.safe_head);
+        info!(
+            stopped = false,
+            safe_l2 = %self.safe_head.number,
+            "batcher started via admin, catching up from safe head"
+        );
         self.stopped = false;
     }
 
@@ -476,7 +385,7 @@ where
 
                 _ = self.runtime.cancelled() => DriverEvent::Shutdown,
 
-                cmd = Self::next_admin_cmd(&mut self.admin_rx) => {
+                Some(cmd) = self.admin_rx.recv() => {
                     match cmd {
                         AdminCommand::Flush { reply } if self.stopped => {
                             let _ = reply.send(Err(AdminError::Stopped));
@@ -519,18 +428,10 @@ where
                     continue;
                 }
 
-                derivation_status = async {
-                    if let Some(ref mut rx) = self.derivation_status_rx {
-                        rx.recv().await
-                    } else {
-                        std::future::pending::<Option<DerivationStatus>>().await
-                    }
-                } => {
-                    match derivation_status {
-                        Some(status) => DriverEvent::DerivationStatus(status),
-                        None => return Err(BatchDriverError::DerivationStatusSourceClosed),
-                    }
-                }
+                status = self.derivation_status_rx.recv() => match status {
+                    Some(status) => DriverEvent::DerivationStatus(status),
+                    None => return Err(BatchDriverError::DerivationStatusSourceClosed),
+                },
 
                 event = self.source.next() => match event {
                     L2BlockEvent::Block(_) if self.stopped => continue,
@@ -545,20 +446,6 @@ where
                 head = self.l1_head_source.next() => DriverEvent::L1Head(head),
             };
             return Ok(event);
-        }
-    }
-
-    /// Returns the next admin command, or parks forever if no channel is wired.
-    ///
-    /// Takes only the `Option<Receiver>` to avoid a full `&mut self` borrow
-    /// conflicting with the other `select!` arms.
-    async fn next_admin_cmd(rx: &mut Option<mpsc::Receiver<AdminCommand>>) -> AdminCommand {
-        match rx {
-            Some(rx) => match rx.recv().await {
-                Some(cmd) => cmd,
-                None => std::future::pending().await,
-            },
-            None => std::future::pending().await,
         }
     }
 }
@@ -591,7 +478,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     use crate::{
-        AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverHeads, DaThrottle,
+        AdminCommand, BatchDriver, BatchDriverConfig, BatchDriverInputs, DaThrottle,
         DerivationStatus, NoopThrottleClient, ThrottleController,
         event::DriverEvent,
         test_utils::{
@@ -648,38 +535,6 @@ mod tests {
         BlockInfo { hash: B256::with_last_byte(number as u8), number, ..Default::default() }
     }
 
-    #[test]
-    fn new_driver_seeds_pipeline_from_live_l1_head() {
-        Runner::start(Config::seeded(0), |ctx| async move {
-            let recorded = Arc::new(Mutex::new(Recorded::default()));
-            let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-            let (_status_tx, status_rx) = mpsc::channel(1);
-            let status = DerivationStatus::new(safe_head(10), safe_head(42));
-
-            let _driver = BatchDriver::new(
-                ctx,
-                pipeline,
-                QueuedSource::new(std::iter::empty()),
-                NeverConfirmTxManager,
-                BatchDriverConfig {
-                    inbox: Address::ZERO,
-                    max_pending_transactions: 1,
-                    drain_timeout: Duration::from_millis(10),
-                    force_blobs_when_throttling: true,
-                },
-                DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-                BatchDriverHeads::new(
-                    QueuedL1HeadSource::new(std::iter::empty()),
-                    50,
-                    status,
-                    status_rx,
-                ),
-            );
-
-            assert_eq!(recorded.lock().unwrap().l1_heads, vec![50]);
-        });
-    }
-
     /// Build a [`BatchSubmission`] whose single frame exactly fills one blob payload,
     /// leaving no room for any additional frame alongside it.
     ///
@@ -729,33 +584,55 @@ mod tests {
         }
     }
 
-    fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
-        runtime: R,
-        source_events: impl IntoIterator<Item = L2BlockEvent>,
-        l1_heads: impl IntoIterator<Item = u64>,
-        tx_manager: TM,
-    ) -> BatchDriver<
+    fn test_config() -> BatchDriverConfig {
+        BatchDriverConfig {
+            inbox: Address::ZERO,
+            max_pending_transactions: 1,
+            drain_timeout: Duration::from_millis(10),
+            force_blobs_when_throttling: true,
+            stopped: false,
+        }
+    }
+
+    /// The channels a [`driver_for_next_event`] driver listens to, kept by the test.
+    struct EventChannels {
+        admin_tx: mpsc::Sender<AdminCommand>,
+        status_tx: mpsc::Sender<DerivationStatus>,
+    }
+
+    type EventDriver<R, TM> = BatchDriver<
         R,
         TrackingPipeline,
         QueuedSource,
         TM,
         Arc<NoopThrottleClient>,
         QueuedL1HeadSource,
-    > {
-        BatchDriver::new_without_derivation_status(
+    >;
+
+    /// A driver whose source and L1 head source deliver the given events, then park.
+    fn driver_for_next_event<R: base_runtime::Runtime, TM: TxManager>(
+        runtime: R,
+        source_events: impl IntoIterator<Item = L2BlockEvent>,
+        l1_heads: impl IntoIterator<Item = u64>,
+        tx_manager: TM,
+    ) -> (EventDriver<R, TM>, EventChannels) {
+        let (admin_tx, admin_rx) = mpsc::channel(1);
+        let (status_tx, status_rx) = mpsc::channel(1);
+        let driver = BatchDriver::new(
             runtime,
             TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
-            QueuedSource::new(source_events),
             tx_manager,
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
+            test_config(),
             DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            QueuedL1HeadSource::new(l1_heads),
-        )
+            BatchDriverInputs {
+                source: QueuedSource::new(source_events),
+                l1_head_source: QueuedL1HeadSource::new(l1_heads),
+                initial_status: DerivationStatus::from_safe_l2(safe_head(0)),
+                derivation_status_rx: status_rx,
+                admin_rx,
+            },
+        );
+        (driver, EventChannels { admin_tx, status_tx })
     }
 
     #[derive(Debug, Default)]
@@ -844,20 +721,18 @@ mod tests {
     #[test]
     fn next_event_prioritizes_cancellation_over_ready_admin() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (admin_tx, admin_rx) = mpsc::channel(1);
-            let (reply, _reply_rx) = oneshot::channel();
-            admin_tx
-                .send(AdminCommand::Flush { reply })
-                .await
-                .expect("admin receiver should be open");
-
-            let mut driver = driver_for_next_event(
+            let (mut driver, channels) = driver_for_next_event(
                 ctx.clone(),
                 [L2BlockEvent::Block(Box::default())],
                 [9],
                 ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_admin_rx(admin_rx);
+            );
+            let (reply, _reply_rx) = oneshot::channel();
+            channels
+                .admin_tx
+                .send(AdminCommand::Flush { reply })
+                .await
+                .expect("admin receiver should be open");
 
             ctx.cancel();
 
@@ -869,20 +744,18 @@ mod tests {
     #[test]
     fn next_event_prioritizes_admin_before_source() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (admin_tx, admin_rx) = mpsc::channel(1);
-            let (reply, _reply_rx) = oneshot::channel();
-            admin_tx
-                .send(AdminCommand::Flush { reply })
-                .await
-                .expect("admin receiver should be open");
-
-            let mut driver = driver_for_next_event(
+            let (mut driver, channels) = driver_for_next_event(
                 ctx,
                 [L2BlockEvent::Block(Box::default())],
                 [9],
                 ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_admin_rx(admin_rx);
+            );
+            let (reply, _reply_rx) = oneshot::channel();
+            channels
+                .admin_tx
+                .send(AdminCommand::Flush { reply })
+                .await
+                .expect("admin receiver should be open");
 
             let event = driver.next_event().await.expect("next_event should succeed");
             assert!(matches!(event, DriverEvent::Flush(_)));
@@ -892,14 +765,12 @@ mod tests {
     #[test]
     fn next_event_prioritizes_source_before_receipts_and_heads() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (_status_tx, status_rx) = mpsc::channel(1);
-            let mut driver = driver_for_next_event(
+            let (mut driver, _channels) = driver_for_next_event(
                 ctx,
                 [L2BlockEvent::Block(Box::default())],
                 [9],
                 ImmediateConfirmTxManager { l1_block: 1 },
-            )
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
+            );
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
@@ -911,19 +782,17 @@ mod tests {
     #[test]
     fn next_event_prioritizes_derivation_status_before_source_and_receipts() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (status_tx, status_rx) = mpsc::channel(1);
-            status_tx
-                .send(DerivationStatus::from_safe_l2(safe_head(5)))
-                .await
-                .expect("derivation-status receiver should be open");
-
-            let mut driver = driver_for_next_event(
+            let (mut driver, channels) = driver_for_next_event(
                 ctx,
                 [L2BlockEvent::Block(Box::default())],
                 [9],
                 ImmediateConfirmTxManager { l1_block: 42 },
-            )
-            .with_derivation_status_rx(DerivationStatus::from_safe_l2(safe_head(0)), status_rx);
+            );
+            channels
+                .status_tx
+                .send(DerivationStatus::from_safe_l2(safe_head(5)))
+                .await
+                .expect("derivation-status receiver should be open");
             driver.pipeline.submissions.push_back(SubmissionStub::stub());
             driver.submissions.submit_pending(&mut driver.pipeline).await;
 
@@ -938,18 +807,13 @@ mod tests {
     #[test]
     fn next_event_prioritizes_derivation_status_before_l1_head() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            let (status_tx, status_rx) = mpsc::channel(1);
-            status_tx
+            let (mut driver, channels) =
+                driver_for_next_event(ctx, [], [9], ImmediateConfirmTxManager { l1_block: 1 });
+            channels
+                .status_tx
                 .send(DerivationStatus::from_safe_l2(safe_head(5)))
                 .await
                 .expect("derivation-status receiver should be open");
-
-            let mut driver =
-                driver_for_next_event(ctx, [], [9], ImmediateConfirmTxManager { l1_block: 1 })
-                    .with_derivation_status_rx(
-                        DerivationStatus::from_safe_l2(safe_head(0)),
-                        status_rx,
-                    );
 
             let event = driver.next_event().await.expect("next_event should succeed");
             assert!(matches!(
@@ -968,14 +832,13 @@ mod tests {
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             pipeline.submissions.push_back(SubmissionStub::stub());
 
-            let handle = ctx.spawn(
-                DriverFixture::build(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 42 },
-                )
-                .run(),
-            );
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                ImmediateConfirmTxManager { l1_block: 42 },
+            )
+            .build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -998,8 +861,9 @@ mod tests {
             let mut pipeline = TrackingPipeline::new(Arc::clone(&recorded));
             pipeline.submissions.push_back(SubmissionStub::stub());
 
-            let handle = ctx
-                .spawn(DriverFixture::build(ctx.clone(), pipeline, ImmediateFailTxManager).run());
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, ImmediateFailTxManager).build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -1033,14 +897,13 @@ mod tests {
                 })])],
             ));
 
-            let handle = ctx.spawn(
-                DriverFixture::build(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 1 },
-                )
-                .run(),
-            );
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                ImmediateConfirmTxManager { l1_block: 1 },
+            )
+            .build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -1071,15 +934,14 @@ mod tests {
             pipeline.submissions.push_back(SubmissionStub::with_id(0));
             pipeline.submissions.push_back(SubmissionStub::with_id(1));
 
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
-                    2,
-                )
-                .run(),
-            );
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
+            )
+            .max_pending(2)
+            .build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -1119,14 +981,13 @@ mod tests {
                 .collect();
             pipeline.submissions.push_back(submission);
 
-            let handle = ctx.spawn(
-                DriverFixture::build(
-                    ctx.clone(),
-                    pipeline,
-                    RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
-                )
-                .run(),
-            );
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                RecordingConfirmTxManager { l1_block: 10, candidates: Arc::clone(&candidates) },
+            )
+            .build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -1167,15 +1028,11 @@ mod tests {
             pipeline.submissions.push_back(blob_filling_submission(0));
             pipeline.submissions.push_back(blob_filling_submission(1));
 
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    NeverConfirmTxManager,
-                    1,
-                )
-                .run(),
-            );
+            let (driver, _handles) =
+                DriverFixture::new(ctx.clone(), pipeline, NeverConfirmTxManager)
+                    .max_pending(1)
+                    .build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -1200,15 +1057,14 @@ mod tests {
             pipeline.submissions.push_back(blob_filling_submission(1));
             pipeline.submissions.push_back(blob_filling_submission(2));
 
-            let handle = ctx.spawn(
-                DriverFixture::build_with_max_pending(
-                    ctx.clone(),
-                    pipeline,
-                    ImmediateConfirmTxManager { l1_block: 7 },
-                    1,
-                )
-                .run(),
-            );
+            let (driver, _handles) = DriverFixture::new(
+                ctx.clone(),
+                pipeline,
+                ImmediateConfirmTxManager { l1_block: 7 },
+            )
+            .max_pending(1)
+            .build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();
@@ -1235,7 +1091,8 @@ mod tests {
             let state = Arc::new(TxpoolBlockedState::default());
             let tx_manager = TxpoolBlockedOnceTxManager { state: Arc::clone(&state) };
 
-            let handle = ctx.spawn(DriverFixture::build(ctx.clone(), pipeline, tx_manager).run());
+            let (driver, _handles) = DriverFixture::new(ctx.clone(), pipeline, tx_manager).build();
+            let handle = ctx.spawn(driver.run());
 
             ctx.sleep(Duration::from_millis(50)).await;
             ctx.cancel();

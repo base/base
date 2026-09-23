@@ -5,14 +5,13 @@ Async orchestration core for the Base batcher.
 `BatchDriver` is the central type exported by this crate. It is generic over a `Runtime`, a
 `BatchPipeline` (frame encoding), an `UnsafeBlockSource` (L2 block delivery), an `L1HeadSource`
 (L1 chain head tracking), a `TxManager` (L1 submission), and a `ThrottleClient` (DA limit
-application). Construction takes `BatchDriverHeads`, which seeds the pipeline from the live L1
-tip so channel duration is not measured from block 0. The driver runs a single `tokio::select!`
-task that reacts to unsafe L2 blocks, derivation-status updates, L1 heads, completed transaction
-receipts, admin commands, and cancellation.
+application). Construction takes `BatchDriverInputs`, everything the driver listens to. The
+driver runs a single `tokio::select!` task that reacts to unsafe L2 blocks, derivation-status
+updates, L1 heads, completed transaction receipts, admin commands, and cancellation.
 Each arm advances the pipeline or adjusts submission pressure without blocking the others.
 
 `BatchDriverConfig` carries the L1 inbox address, in-flight transaction limit, shutdown drain
-timeout, and DA-throttle submission policy.
+timeout, DA-throttle submission policy, and whether block ingestion starts stopped.
 
 `SubmissionQueue` owns the entire L1 submission lifecycle. It holds the `TxManager`, a
 `FuturesUnordered` set of in-flight receipt futures, a counting `Semaphore` for backpressure, and

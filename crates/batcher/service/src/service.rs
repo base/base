@@ -12,10 +12,10 @@ use backon::Retryable;
 use base_balance_monitor::BalanceMonitorLayer;
 use base_batcher_admin::AdminServer;
 use base_batcher_core::{
-    AdminHandle, BatchDriver, BatchDriverHeads, DaThrottle, NoopThrottleClient, ThrottleClient,
+    AdminHandle, BatchDriver, BatchDriverInputs, DaThrottle, NoopThrottleClient, ThrottleClient,
     ThrottleController, ThrottleStrategy,
 };
-use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
+use base_batcher_encoder::{BatchEncoder, BatchPipeline, BatcherMetrics};
 use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
@@ -628,8 +628,11 @@ impl BatcherService {
             safe_l2,
             self.config.poll_interval,
         );
-        let encoder =
+        // Seed the encoder with the live L1 tip so channel duration is measured from it,
+        // not from block 0.
+        let mut encoder =
             BatchEncoder::new(Arc::clone(&rollup_config), self.config.encoder_config.clone())?;
+        encoder.advance_l1_head(initial_l1_head);
 
         // Build the throttle controller and the appropriate client. The throttle
         // RPC uses the L2 endpoint(s); `RpcThrottleClient` rotates per-call
@@ -714,33 +717,32 @@ impl BatcherService {
         background_tasks.push(("derivation status poller", derivation_status_handle));
 
         // Build the driver — all fallible setup is complete at this point.
-        let mut driver = BatchDriver::new(
+        let (admin_handle, admin_rx) = AdminHandle::channel();
+        let driver = BatchDriver::new(
             runtime,
             encoder,
-            source,
             tx_manager,
             base_batcher_core::BatchDriverConfig {
                 inbox: effective_batch_inbox,
                 max_pending_transactions: self.config.max_pending_transactions,
                 drain_timeout,
                 force_blobs_when_throttling: self.config.force_blobs_when_throttling,
+                stopped: self.config.stopped,
             },
             DaThrottle::new(throttle, throttle_client),
-            BatchDriverHeads::new(
+            BatchDriverInputs {
+                source,
                 l1_head_source,
-                initial_l1_head,
-                initial_derivation_status,
+                initial_status: initial_derivation_status,
                 derivation_status_rx,
-            ),
-        )
-        .with_stopped(self.config.stopped);
+                admin_rx,
+            },
+        );
 
+        // Drop the handle when there is no admin server: the driver's admin arm then stays
+        // quiet.
         let admin_server = match self.config.admin_addr {
-            Some(addr) => {
-                let (admin_handle, admin_rx) = AdminHandle::channel();
-                driver = driver.with_admin_rx(admin_rx);
-                Some(AdminServer::spawn(addr, admin_handle).await?)
-            }
+            Some(addr) => Some(AdminServer::spawn(addr, admin_handle).await?),
             None => None,
         };
 

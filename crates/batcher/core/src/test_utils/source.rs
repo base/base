@@ -2,8 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use alloy_consensus::Header;
 use async_trait::async_trait;
 use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
+use base_common_consensus::BaseBlock;
 use base_protocol::BlockInfo;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
@@ -46,7 +48,7 @@ impl UnsafeBlockSource for TrackingSource {
     }
 }
 
-/// [`UnsafeBlockSource`] that delivers exactly one default block then parks forever.
+/// [`UnsafeBlockSource`] that delivers exactly one block, numbered 1, then parks forever.
 #[derive(Debug)]
 pub struct OneBlockSource {
     delivered: bool,
@@ -70,7 +72,10 @@ impl UnsafeBlockSource for OneBlockSource {
     async fn next(&mut self) -> L2BlockEvent {
         if !self.delivered {
             self.delivered = true;
-            L2BlockEvent::Block(Box::default())
+            L2BlockEvent::Block(Box::new(BaseBlock {
+                header: Header { number: 1, ..Default::default() },
+                body: Default::default(),
+            }))
         } else {
             std::future::pending().await
         }
