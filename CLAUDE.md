@@ -72,6 +72,9 @@ let bal = wallet.account.balance();
 - Measure and report the actual work performed, not a proxy. Keep feature requirements, commands,
   documentation, and automated validation aligned, and document methodology choices that affect
   how results are interpreted.
+- Before pushing a change, run the applicable formatter, linter, tests, and target builds locally.
+  Treat CI as confirmation rather than the first place to discover routine validation failures;
+  keep automated fixes scoped to the intended change.
 
 - Keep unit tests colocated with their implementation in a `#[cfg(test)] mod tests { ... }` block. Do not create standalone `tests.rs` modules for unit tests.
 - Place `#[cfg(test)] mod tests { ... }` at the end of the file, after all non-test code.
