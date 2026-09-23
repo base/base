@@ -67,9 +67,11 @@ let bal = wallet.account.balance();
 
 ## Testing
 
-- For benchmarks and measurements, keep the modeled input, the measured output, and any derived
-  presentation value distinct. Validate checked-in results from the same deterministic path that
-  produces them, and make invalid configurations return errors rather than panic.
+- Benchmark and experimental-tool interfaces should use typed configuration, own their dynamic
+  data, and reject invalid inputs through normal error handling rather than panicking or leaking.
+- Measure and report the actual work performed, not a proxy. Keep feature requirements, commands,
+  documentation, and automated validation aligned, and document methodology choices that affect
+  how results are interpreted.
 
 - Keep unit tests colocated with their implementation in a `#[cfg(test)] mod tests { ... }` block. Do not create standalone `tests.rs` modules for unit tests.
 - Place `#[cfg(test)] mod tests { ... }` at the end of the file, after all non-test code.
