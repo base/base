@@ -229,7 +229,7 @@ impl BlockHandler {
         {
             // CHECK: If more than [`Self::MAX_BLOCKS_TO_KEEP`] different blocks have been received
             // for the same height, reject the block.
-            if seen_hashes_at_height.len() > Self::MAX_BLOCKS_TO_KEEP {
+            if seen_hashes_at_height.len() >= Self::MAX_BLOCKS_TO_KEEP {
                 return Err(BlockInvalidError::TooManyBlocks {
                     height: envelope.payload.block_number(),
                 });
@@ -591,7 +591,7 @@ pub(crate) mod tests {
 
         assert!(handler.block_valid(&envelope).is_ok());
 
-        let next_payloads = (0..=BlockHandler::MAX_BLOCKS_TO_KEEP)
+        let next_payloads = (0..BlockHandler::MAX_BLOCKS_TO_KEEP)
             .map(|_| {
                 let mut block = v1_valid_block();
                 // The blocks have the same height
