@@ -140,6 +140,10 @@ pub struct AggregateBenchmarkArgs {
     /// One or more self-contained snapshot run output directories to include.
     #[arg(required = true, value_name = "RUN_OUTPUT_DIR")]
     pub run_output_dirs: Vec<PathBuf>,
+    /// Emit one report page per client version plus a stable `latest` page for
+    /// each configured benchmark cohort.
+    #[arg(long)]
+    pub versioned_pages: bool,
 }
 
 /// Arguments for one snapshot-backed benchmark case.
@@ -748,12 +752,79 @@ impl AggregateBenchmarkArgs {
         }
 
         let mut runs = selected.into_values().collect::<Vec<_>>();
+        if self.versioned_pages {
+            runs = Self::versioned_pages(runs)?;
+        }
         runs.sort_by(|left, right| {
             let left_time = Self::parse_created_at(left).expect("selected run was validated");
             let right_time = Self::parse_created_at(right).expect("selected run was validated");
             right_time.cmp(&left_time).then_with(|| right.id.cmp(&left.id))
         });
         Self::write_metadata_atomically(&output_dir, &VisualizerMetadata { runs })
+    }
+
+    /// Re-indexes each configured benchmark cohort into stable version pages and
+    /// a `latest` alias. Sidecar artifacts remain immutable and are referenced
+    /// by both the version page and its latest alias.
+    fn versioned_pages(runs: Vec<VisualizerRun>) -> Result<Vec<VisualizerRun>> {
+        let mut by_cohort = BTreeMap::<String, Vec<VisualizerRun>>::new();
+        for run in runs {
+            let cohort = run
+                .test_config
+                .get("BenchmarkRun")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("run {} is missing string BenchmarkRun", run.id))?
+                .to_owned();
+            by_cohort.entry(cohort).or_default().push(run);
+        }
+
+        let mut pages = Vec::new();
+        for (cohort, cohort_runs) in by_cohort {
+            let latest_version = cohort_runs
+                .iter()
+                .max_by(|left, right| {
+                    Self::parse_created_at(left)
+                        .expect("selected run was validated")
+                        .cmp(&Self::parse_created_at(right).expect("selected run was validated"))
+                        .then_with(|| left.result.client_version.cmp(&right.result.client_version))
+                })
+                .map(|run| run.result.client_version.clone())
+                .expect("non-empty cohort");
+
+            for run in cohort_runs.iter().cloned() {
+                let mut version_page = run;
+                version_page.test_config.insert(
+                    "BenchmarkRun".to_owned(),
+                    serde_json::Value::String(format!(
+                        "{}--{}",
+                        cohort,
+                        Self::page_component(&version_page.result.client_version)
+                    )),
+                );
+                pages.push(version_page);
+            }
+            for run in
+                cohort_runs.into_iter().filter(|run| run.result.client_version == latest_version)
+            {
+                let mut latest_page = run;
+                latest_page.test_config.insert(
+                    "BenchmarkRun".to_owned(),
+                    serde_json::Value::String(format!("{cohort}--latest")),
+                );
+                pages.push(latest_page);
+            }
+        }
+        Ok(pages)
+    }
+
+    fn page_component(value: &str) -> String {
+        value
+            .chars()
+            .map(|character| match character {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => character,
+                _ => '-',
+            })
+            .collect()
     }
 
     fn validate_run_artifacts(run_output_dir: &Path) -> Result<()> {
@@ -1521,6 +1592,7 @@ real_token_setup:
         AggregateBenchmarkArgs {
             output_dir: root.path().to_path_buf(),
             run_output_dirs: vec![early, latest, distinct_scenario, distinct_version],
+            versioned_pages: false,
         }
         .run()
         .unwrap();
@@ -1542,6 +1614,58 @@ real_token_setup:
     }
 
     #[test]
+    fn aggregate_versioned_pages_preserve_history_and_add_latest_alias() {
+        let root = tempfile::tempdir().unwrap();
+        let old = write_aggregate_run(
+            root.path(),
+            "old",
+            "transfer-2s",
+            "base/old",
+            "2026-09-23T00:00:00.000Z",
+        );
+        let newest_200ms = write_aggregate_run(
+            root.path(),
+            "new-200ms",
+            "transfer-200ms",
+            "base/new",
+            "2026-09-23T00:01:00.000Z",
+        );
+        let newest_2s = write_aggregate_run(
+            root.path(),
+            "new-2s",
+            "transfer-2s",
+            "base/new",
+            "2026-09-23T00:02:00.000Z",
+        );
+
+        AggregateBenchmarkArgs {
+            output_dir: root.path().to_path_buf(),
+            run_output_dirs: vec![old, newest_200ms, newest_2s],
+            versioned_pages: true,
+        }
+        .run()
+        .unwrap();
+
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("metadata.json")).unwrap())
+                .unwrap();
+        let runs = metadata["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 5);
+        assert!(
+            runs.iter()
+                .any(|run| run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--latest")
+        );
+        assert!(runs.iter().any(|run| run["result"]["clientVersion"] == "base/old"));
+        assert!(
+            runs.iter()
+                .filter(
+                    |run| run["testConfig"]["BenchmarkRun"] == "sepolia-transfer-100mgas--latest"
+                )
+                .all(|run| run["result"]["clientVersion"] == "base/new")
+        );
+    }
+
+    #[test]
     fn aggregate_rejects_invalid_artifacts_without_replacing_metadata() {
         let root = tempfile::tempdir().unwrap();
         let prior = b"{\n  \"runs\": [\n    {\"id\": \"preserved\"}\n  ]\n}\n";
@@ -1553,6 +1677,7 @@ real_token_setup:
         let error = AggregateBenchmarkArgs {
             output_dir: root.path().to_path_buf(),
             run_output_dirs: vec![invalid],
+            versioned_pages: false,
         }
         .run()
         .unwrap_err();
