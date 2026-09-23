@@ -186,7 +186,7 @@ where
         };
         let predicates = transaction.validity_predicates().len();
         if let Some(signed) = transaction.as_eip8130()
-            && let Some(tip) = CoinbaseTip::decode(signed.tx(), transaction.sender())
+            && let Some(tip) = CoinbaseTip::decode(signed.tx())
         {
             return Priority::Value(UnifiedTipPriority::new(
                 tip,
@@ -297,14 +297,13 @@ where
 #[cfg(test)]
 mod tests {
     use alloy_eips::eip2718::Encodable2718;
-    use alloy_primitives::{Address, Bytes, U256};
+    use alloy_primitives::{Bytes, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
-    use alloy_sol_types::SolCall;
     use base_common_chains::ChainConfig;
     use base_common_consensus::{
         BasePooledTransaction as ConsensusPooledTransaction, BaseTransactionSigned, Call,
-        Eip8130Signed, IDefaultAccount, Predeploys, TxEip8130,
+        Eip8130Signed, Predeploys, TxEip8130,
     };
     use base_test_utils::Account;
     use reth_primitives_traits::Recovered;
@@ -414,12 +413,6 @@ mod tests {
         BasePooledTransaction::new(recovered, len)
     }
 
-    fn encode_execute(target: Address, value: U256) -> Bytes {
-        Bytes::from(
-            IDefaultAccount::executeCall { target, value, data: Default::default() }.abi_encode(),
-        )
-    }
-
     fn eip8130_pooled(
         max_fee_per_gas: u128,
         max_priority_fee_per_gas: u128,
@@ -429,9 +422,9 @@ mod tests {
         let signer = PrivateKeySigner::random();
         let calls = coinbase_tip.map_or_else(Vec::new, |amount| {
             vec![vec![Call {
-                to: signer.address(),
-                value: U256::ZERO,
-                data: encode_execute(Predeploys::SEQUENCER_FEE_VAULT, amount),
+                to: Predeploys::SEQUENCER_FEE_VAULT,
+                value: amount,
+                data: Bytes::new(),
             }]]
         });
         let tx = TxEip8130 {

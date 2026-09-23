@@ -261,8 +261,7 @@ async fn estimate_gas_for_eip8130_request_with_reverting_call_fails() -> eyre::R
 
 /// An EIP-8130 `eth_estimateGas` request that names no account (neither `from`
 /// nor `sender`) must be rejected rather than silently simulated from the zero
-/// address: the sender identity drives actor resolution, policy lookup, and
-/// auto-delegation.
+/// address: the sender identity drives actor resolution and policy lookup.
 #[tokio::test]
 async fn estimate_gas_for_eip8130_request_without_account_is_rejected() -> eyre::Result<()> {
     let (_harness, client) = setup().await?;

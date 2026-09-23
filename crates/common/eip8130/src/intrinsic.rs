@@ -64,9 +64,6 @@ pub struct IntrinsicGasInput {
     /// over the *reset* cost. Ignored for nonce-free (`NONCE_KEY_MAX`)
     /// transactions.
     pub nonce_key_first_use: bool,
-    /// Whether a code-less `sender` EOA is auto-delegated to `DEFAULT_ACCOUNT`
-    /// during block execution, incurring the delegation-indicator deposit.
-    pub sender_auto_delegated: bool,
     /// Whether sender authorization resolved a policy-bearing actor and therefore
     /// read its `policy_manager` slot in addition to its config/state slot.
     pub sender_policy_gated: bool,
@@ -93,10 +90,9 @@ pub struct IntrinsicGasInput {
 impl IntrinsicGasInput {
     /// Creates the intrinsic-gas state hints.
     #[must_use]
-    pub const fn new(nonce_key_first_use: bool, sender_auto_delegated: bool) -> Self {
+    pub const fn new(nonce_key_first_use: bool) -> Self {
         Self {
             nonce_key_first_use,
-            sender_auto_delegated,
             sender_policy_gated: false,
             payer_policy_gated: false,
             revoke_discount_slots: 0,
@@ -139,50 +135,10 @@ impl IntrinsicGasInput {
     /// drifting apart: both must feed [`IntrinsicGas::compute`] the *same* pinned
     /// input for the `estimate == admission >= execution` guarantee to hold.
     #[must_use]
-    pub const fn worst_case(
-        nonce_key_first_use: bool,
-        sender_auto_delegated: bool,
-        has_payer: bool,
-    ) -> Self {
-        Self::new(nonce_key_first_use, sender_auto_delegated)
+    pub const fn worst_case(nonce_key_first_use: bool, has_payer: bool) -> Self {
+        Self::new(nonce_key_first_use)
             .with_policy_gates(true, has_payer)
             .with_revoke_discount_slots(0)
-    }
-
-    /// Body-derivable worst-case for [`Self::sender_auto_delegated`], the single
-    /// classifier shared by estimation (`eth_estimateGas`), mempool admission,
-    /// and the execution auto-delegation state gate.
-    ///
-    /// Execution auto-delegates the sender (charging a `DELEGATION_DEPOSIT_COST`)
-    /// exactly when the transaction carries **neither** an
-    /// [`AccountChange::Delegation`] **nor** an [`AccountChange::Create`] entry
-    /// *and* the sender is code-less at inclusion. The entry conditions are
-    /// body-derivable; the code-less fact is non-monotonic — the sender's
-    /// on-chain code can flip between estimation and inclusion (e.g. a native
-    /// EIP-7702 revocation strips the delegation and re-arms auto-delegation). So
-    /// the safe body-derivable ceiling is "charge unless the transaction contains
-    /// a `Delegation` or `Create` entry":
-    ///
-    /// - A `Delegation` (zero or non-zero target) suppresses auto-delegation at
-    ///   execution unconditionally — a zero target is an owner-authorized request
-    ///   to remain undelegated — so it suppresses it here too.
-    /// - A `Create` always targets the sender account itself (EIP-8130 enforces
-    ///   `created.address == sender`), establishing the sender's EIP-8130 account
-    ///   and installing its code. A created account is not a plain code-less EOA,
-    ///   so execution never auto-delegates it — hence it suppresses here too.
-    /// - A `ConfigChange` or a call-only transaction never installs sender code,
-    ///   so it does not suppress either.
-    ///
-    /// Every path pins this same predicate — estimation and admission pin the gas
-    /// ceiling, and execution gates its (accurately repriced) state mutation on
-    /// it — so the `estimate == admission >= execution` guarantee holds; resolving
-    /// it from current code state on one path but not another silently breaks that
-    /// invariant.
-    #[must_use]
-    pub fn sender_auto_delegated(account_changes: &[AccountChange]) -> bool {
-        !account_changes
-            .iter()
-            .any(|change| matches!(change, AccountChange::Delegation(_) | AccountChange::Create(_)))
     }
 }
 
@@ -200,8 +156,6 @@ pub struct IntrinsicGas {
     pub bytecode: u64,
     /// `account_changes_cost` — config-change and delegation entries.
     pub account_changes: u64,
-    /// `auto_delegation_cost` — code-less sender auto-delegation.
-    pub auto_delegation: u64,
     /// `sender_auth_cost` — sender authenticator execution + its `authorize`
     /// SLOAD(s) (see `auth_sloads`).
     pub sender_auth: u64,
@@ -219,7 +173,6 @@ impl IntrinsicGas {
             .saturating_add(self.nonce_key)
             .saturating_add(self.bytecode)
             .saturating_add(self.account_changes)
-            .saturating_add(self.auto_delegation)
             .saturating_add(self.sender_auth)
             .saturating_add(self.payer_auth)
     }
@@ -369,12 +322,6 @@ impl IntrinsicGas {
             .saturating_mul(u64::from(discounted_slots));
         account_changes = account_changes.saturating_sub(revoke_discount);
 
-        let auto_delegation = if input.sender_auto_delegated {
-            Eip8130GasSchedule::DELEGATION_DEPOSIT_COST
-        } else {
-            0
-        };
-
         // Only the empty-`sender` path (`sender == None`) is a bare 65-byte
         // signature parsed via native ecrecover; a configured sender (and every
         // payer) is an `authenticator || data` blob and must not be parsed as a
@@ -400,7 +347,6 @@ impl IntrinsicGas {
             nonce_key,
             bytecode,
             account_changes,
-            auto_delegation,
             sender_auth,
             payer_auth,
         })
@@ -655,7 +601,7 @@ mod tests {
 
     const ACCOUNT: Address = address!("0x1111111111111111111111111111111111111111");
     const K1: Address = Eip8130Constants::K1_AUTHENTICATOR;
-    const EXISTING_KEY: IntrinsicGasInput = IntrinsicGasInput::new(false, false);
+    const EXISTING_KEY: IntrinsicGasInput = IntrinsicGasInput::new(false);
 
     fn signed(tx: TxEip8130, sender_auth: Vec<u8>, payer_auth: Vec<u8>) -> Eip8130Signed {
         Eip8130Signed::new(tx, Bytes::from(sender_auth), Bytes::from(payer_auth))
@@ -679,52 +625,6 @@ mod tests {
     fn intrinsic(signed: &Eip8130Signed, input: &IntrinsicGasInput) -> IntrinsicGas {
         IntrinsicGas::compute(signed, &encode(signed), input)
             .expect("canonical authenticators are scheduled")
-    }
-
-    fn create_entry() -> CreateEntry {
-        CreateEntry {
-            user_salt: Default::default(),
-            code: Bytes::from(vec![0x60u8; 4]),
-            initial_actors: vec![],
-        }
-    }
-
-    #[test]
-    fn sender_auto_delegated_ceiling_matches_execution_upper_bound() {
-        // No account changes: execution auto-delegates a code-less sender, so the
-        // body ceiling must charge the deposit.
-        assert!(IntrinsicGasInput::sender_auto_delegated(&[]));
-
-        // A call-only / `ConfigChange` transaction never installs sender code, so
-        // execution may still auto-delegate — charge the ceiling.
-        assert!(IntrinsicGasInput::sender_auto_delegated(&[AccountChange::ConfigChange(
-            SignedAccountChanges {
-                channel: AccountChangeChannel::Multichain,
-                sequence: 0,
-                changes: vec![],
-                signature: Bytes::new(),
-            }
-        )]));
-
-        // A `Create` always targets the sender account itself (EIP-8130 enforces
-        // `created.address == sender`), establishing the sender's EIP-8130 account
-        // and installing its code. A created account is not a plain code-less EOA,
-        // so execution never auto-delegates it — the classifier must suppress here
-        // too, on every path, so admission and estimate match execution exactly.
-        assert!(!IntrinsicGasInput::sender_auto_delegated(&[
-            AccountChange::Create(create_entry())
-        ]));
-
-        // Any `Delegation` entry — zero or non-zero target — sets
-        // `has_explicit_delegation`, which suppresses auto-delegation at execution
-        // unconditionally. Both must suppress the ceiling too (else admission
-        // over-budgets vs the estimate and rejects a `gas_limit == estimate` tx).
-        assert!(!IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Delegation(
-            Delegation { target: Address::ZERO }
-        )]));
-        assert!(!IntrinsicGasInput::sender_auto_delegated(&[AccountChange::Delegation(
-            Delegation { target: Address::repeat_byte(0x11) }
-        )]));
     }
 
     alloy_sol_types::sol! {
@@ -786,7 +686,6 @@ mod tests {
         assert_eq!(gas.nonce_key, Eip8130GasSchedule::NONCE_KEY_EXISTING_COST);
         assert_eq!(gas.bytecode, 0);
         assert_eq!(gas.account_changes, 0);
-        assert_eq!(gas.auto_delegation, 0);
         // native k1 exec + 1 cold SLOAD.
         assert_eq!(
             gas.sender_auth,
@@ -805,8 +704,7 @@ mod tests {
         assert_eq!(free.nonce_key, Eip8130GasSchedule::NONCE_FREE_COST);
 
         tx.nonce_key = U256::from(7u64);
-        let first =
-            intrinsic(&signed(tx, vec![0; 65], vec![]), &IntrinsicGasInput::new(true, false));
+        let first = intrinsic(&signed(tx, vec![0; 65], vec![]), &IntrinsicGasInput::new(true));
         assert_eq!(first.nonce_key, Eip8130GasSchedule::NONCE_KEY_FIRST_USE_COST);
     }
 
@@ -1403,13 +1301,6 @@ mod tests {
             policy_gated.payer_auth,
             Eip8130GasSchedule::AUTH_EXEC_P256 + Eip8130GasSchedule::COLD_SLOAD * 2
         );
-    }
-
-    #[test]
-    fn auto_delegation_adds_indicator_deposit() {
-        let tx = TxEip8130::default();
-        let gas = intrinsic(&signed(tx, vec![0; 65], vec![]), &IntrinsicGasInput::new(false, true));
-        assert_eq!(gas.auto_delegation, Eip8130GasSchedule::DELEGATION_DEPOSIT_COST);
     }
 
     #[test]

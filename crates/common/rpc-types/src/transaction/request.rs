@@ -115,8 +115,8 @@ pub struct Eip8130RequestFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Bytes>,
     /// The EIP-8130 sender account the batch dispatches from — the wire-level
-    /// `sender` identity that drives actor resolution, policy lookup, and
-    /// auto-delegation. Interchangeable with the standard `from`: the estimate
+    /// `sender` identity that drives actor resolution and policy lookup.
+    /// Interchangeable with the standard `from`: the estimate
     /// resolves the account as `sender` or `from`, and rejects a request where
     /// both are present but disagree, or where neither is set, as
     /// `INVALID_PARAMS`. A declared `sender` also selects the configured-account
