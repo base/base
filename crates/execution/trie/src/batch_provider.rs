@@ -3,10 +3,6 @@
 
 use std::fmt::Debug;
 
-use crate::{
-    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
-    api::BaseProofsBatchSession, metrics::StateMetrics,
-};
 use alloy_primitives::{
     keccak256,
     map::{B256Map, HashMap},
@@ -33,6 +29,11 @@ use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedPostStateSorted, HashedStorage,
     KeccakKeyHasher, MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
+};
+
+use crate::{
+    BaseProofsBatchHashedAccountCursorFactory, BaseProofsBatchTrieCursorFactory,
+    api::BaseProofsBatchSession, metrics::StateMetrics,
 };
 
 /// State provider that reads through an active [`BaseProofsBatchSession`]'s transaction.

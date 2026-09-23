@@ -2,14 +2,6 @@
 
 use std::fmt::Debug;
 
-use crate::{
-    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
-    metrics::StateMetrics,
-    proof::{
-        DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
-        DatabaseTrieWitness,
-    },
-};
 use alloy_primitives::keccak256;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use reth_primitives_traits::{Account, Bytecode};
@@ -31,6 +23,15 @@ use reth_trie_common::{
     AccountProof, ExecutionWitnessMode, HashedPostState, HashedStorage, KeccakKeyHasher,
     MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     updates::TrieUpdates,
+};
+
+use crate::{
+    BaseProofsStorage, BaseProofsStorageError, BaseProofsStore,
+    metrics::StateMetrics,
+    proof::{
+        DatabaseProof, DatabaseStateRoot, DatabaseStorageProof, DatabaseStorageRoot,
+        DatabaseTrieWitness,
+    },
 };
 
 /// State provider for external proofs storage.
