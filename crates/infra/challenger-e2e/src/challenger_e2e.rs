@@ -149,15 +149,17 @@ impl ChallengerE2e {
         Self::assert_game_a_settled(&config, &verifier, &provider, &challenger, game_a, path1)
             .await?;
         if config.scenario == Scenario::Path1Path2 {
+            ensure!(
+                matches!(path1, Path1Outcome::ZkChallenge),
+                "Path 2 dispute requires Path 1 to land as a ZK challenge"
+            );
             Self::run_path2(
                 &config,
-                &fork_url,
+                Self::fork_config(&config, &fork_url, &driver, game_a),
                 &verifier,
                 &provider,
-                &driver,
                 &challenger,
                 game_a,
-                path1,
                 checkpoint,
             )
             .await?;
@@ -590,22 +592,14 @@ impl ChallengerE2e {
     /// Path 1 challenge, then require the challenger to nullify that challenge.
     async fn run_path2(
         config: &Config,
-        fork_url: &Url,
+        fork_config: ForkConfig,
         verifier: &AggregateVerifierContractClient,
         provider: &RootProvider,
-        driver: &PrivateKeySigner,
         challenger: &PrivateKeySigner,
         game: Candidate,
-        path1: Path1Outcome,
         checkpoint: Checkpoint,
     ) -> Result<()> {
-        ensure!(
-            matches!(path1, Path1Outcome::ZkChallenge),
-            "Path 2 dispute requires Path 1 to land as a ZK challenge"
-        );
-
         let nonce = provider.get_transaction_count(challenger.address()).await?;
-        let fork_config = Self::fork_config(config, fork_url, driver, game);
         checkpoint
             .restore(&fork_config, verifier)
             .await
