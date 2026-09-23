@@ -7,7 +7,10 @@
 //!   cargo test -p audit-archiver-lib --test postgres_transaction_events -- --ignored
 //! ```
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use audit_archiver_lib::{
     MAX_TRANSACTION_EVENT_INSERT_BATCH_SIZE, PgTransactionEventSink, RejectedTransactionEventQuery,
@@ -16,15 +19,22 @@ use audit_archiver_lib::{
 use base_observability_events::TransactionEvent;
 use chrono::Utc;
 use serde_json::json;
-use sqlx::{Executor, PgPool, postgres::PgPoolOptions};
+use sqlx::{Executor, PgPool, migrate::Migrator, postgres::PgPoolOptions};
 use testcontainers::{ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 
-/// `testcontainers-modules` still defaults to Postgres 11, which rejects CTE
-/// `AS MATERIALIZED` (Postgres 12+). Production RDS is Postgres 17.
-const POSTGRES_TAG: &str = "16-alpine";
+/// Production RDS is Postgres 17. `testcontainers-modules` still defaults to
+/// Postgres 11, which lacks the partitioning features the schema relies on.
+const POSTGRES_TAG: &str = "17-alpine";
+
+/// Hot class partitions for one UTC day, as created by migration 005.
+const HOT_PARTITIONS_SQL: &str = "SELECT c.relname::text FROM pg_inherits i \
+     JOIN pg_class c ON c.oid = i.inhrelid \
+     WHERE i.inhparent = 'transaction_events_hot'::regclass \
+     ORDER BY c.relname";
 
 struct PostgresHarness {
+    port: u16,
     database_url: String,
     _container: testcontainers::ContainerAsync<Postgres>,
 }
@@ -34,7 +44,11 @@ impl PostgresHarness {
         let container = Postgres::default().with_tag(POSTGRES_TAG).start().await?;
         let port = container.get_host_port_ipv4(5432).await?;
         let database_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-        Ok(Self { database_url, _container: container })
+        Ok(Self { port, database_url, _container: container })
+    }
+
+    fn url_for(&self, user: &str, password: &str) -> String {
+        format!("postgres://{user}:{password}@127.0.0.1:{}/postgres", self.port)
     }
 }
 
@@ -73,6 +87,36 @@ async fn cleanup(pool: &PgPool, event_id: &str) {
         .await;
 }
 
+async fn event_ids_like(pool: &PgPool, prefix: &str) -> anyhow::Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+    )
+    .bind(format!("{prefix}-%"))
+    .fetch_all(pool)
+    .await?)
+}
+
+async fn hot_partitions(pool: &PgPool) -> anyhow::Result<Vec<String>> {
+    Ok(sqlx::query_scalar(HOT_PARTITIONS_SQL).fetch_all(pool).await?)
+}
+
+/// Writes the embedded migrations up to and including `last_version` into a
+/// temporary directory, so tests can build a database at an older schema.
+fn migrations_through(last_version: i64) -> anyhow::Result<PathBuf> {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let target = std::env::temp_dir().join(format!("audit-migrations-{}", unique_event_id()));
+    std::fs::create_dir_all(&target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let version: i64 = name.split('_').next().unwrap_or_default().parse()?;
+        if version <= last_version {
+            std::fs::copy(entry.path(), target.join(name))?;
+        }
+    }
+    Ok(target)
+}
+
 #[tokio::test]
 async fn transaction_events_ready_without_postgres_sink() {
     PgTransactionEventSink::check_optional_schema_ready(None).await.unwrap();
@@ -107,7 +151,7 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
             required_version
         } if required_version == expected_version
     ));
-    assert!(err.to_string().contains("001_transaction_events.sql"));
+    assert!(err.to_string().contains("005_transaction_events_partitioned.sql"));
 
     Ok(())
 }
@@ -116,9 +160,25 @@ async fn transaction_events_unready_when_migration_version_is_missing() -> anyho
 fn transaction_events_migration_version_matches_sqlx_migration_metadata() -> anyhow::Result<()> {
     assert_eq!(
         PgTransactionEventSink::required_migration_version().map_err(anyhow::Error::msg)?,
-        1,
-        "001_transaction_events.sql should resolve to sqlx migration version 1"
+        5,
+        "005_transaction_events_partitioned.sql should resolve to sqlx migration version 5"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn transaction_events_unready_on_pre_partition_schema() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(4)?).await?.run(&pool).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
+
+    let err = sink.check_schema_ready().await.unwrap_err();
+    assert!(
+        matches!(err, TransactionEventSchemaReadinessError::RequiredMigrationMissing { .. }),
+        "new pods must not go ready against the unpartitioned table: {err}"
+    );
+
     Ok(())
 }
 
@@ -143,21 +203,76 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
 }
 
 #[tokio::test]
-async fn postgres_retention_index_is_applied() -> anyhow::Result<()> {
+async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(migrations_through(4)?).await?.run(&pool).await?;
+    sqlx::query(
+        "INSERT INTO transaction_events \
+         (event_id, schema_version, event_time, producer, event_type, network, data) \
+         VALUES ('legacy-row', 'transaction-event/v1', now(), 'base-builder', \
+                 'BUILDER_ACCEPTED', 'base-mainnet', '{}'::jsonb)",
+    )
+    .execute(&pool)
+    .await?;
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events").fetch_one(&pool).await?;
+    assert_eq!(rows, 0, "migration 005 replaces the table instead of copying rows");
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(versions, vec![1, 2, 3, 4, 5], "migration history is preserved");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_schema_is_partitioned_by_class_then_day() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
 
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS ( \
-            SELECT 1 FROM pg_indexes \
-            WHERE schemaname = 'public' \
-              AND indexname = 'transaction_events_event_type_ingested_at_idx' \
-        )",
+    let class_partitions: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_inherits i \
+         JOIN pg_class c ON c.oid = i.inhrelid \
+         WHERE i.inhparent = 'transaction_events'::regclass \
+         ORDER BY c.relname",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        class_partitions,
+        vec!["transaction_events_cold", "transaction_events_hot", "transaction_events_warm"]
+    );
+
+    // Migration 005 seeds yesterday through three days ahead.
+    let today = Utc::now().date_naive();
+    let expected: Vec<String> = (-1..=3)
+        .map(|offset| {
+            format!(
+                "transaction_events_hot_{}",
+                (today + chrono::Duration::days(offset)).format("%Y%m%d")
+            )
+        })
+        .collect();
+    assert_eq!(hot_partitions(&pool).await?, expected);
+
+    let dropped_indexes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pg_indexes \
+         WHERE schemaname = 'public' \
+           AND indexname IN ( \
+             'transaction_events_payload_id_event_time_idx', \
+             'transaction_events_producer_event_type_event_time_idx', \
+             'transaction_events_event_type_ingested_at_idx' \
+           )",
     )
     .fetch_one(&pool)
     .await?;
-    assert!(exists);
+    assert_eq!(dropped_indexes, 0, "unused indexes are not recreated");
 
     Ok(())
 }
@@ -209,216 +324,169 @@ async fn postgres_sink_chunks_large_direct_inserts() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-async fn postgres_retention_deletes_expired_rows_in_batches() -> anyhow::Result<()> {
+async fn postgres_sink_dedupes_retried_events_and_routes_by_class() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
     let event_prefix = unique_event_id();
-
-    let events = (0..3).map(|index| event(&format!("{event_prefix}-{index}"))).collect::<Vec<_>>();
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
-         WHERE event_id IN ($1, $2)",
-    )
-    .bind(format!("{event_prefix}-0"))
-    .bind(format!("{event_prefix}-1"))
-    .execute(&pool)
-    .await?;
-
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 1,
-            max_batches: 10,
-            ..Default::default()
-        })
-        .await?;
-    assert_eq!(outcome.rows_deleted, 2);
-    assert_eq!(outcome.hot_rows_deleted, 2);
-    assert_eq!(outcome.batches, 5);
-
-    let remaining: Vec<String> = sqlx::query_scalar(
-        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .fetch_all(&pool)
-    .await?;
-    assert_eq!(remaining, vec![format!("{event_prefix}-2")]);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn postgres_retention_uses_per_class_cutoffs() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
-    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let event_prefix = unique_event_id();
-
     let events = [
-        event_with_type(&format!("{event_prefix}-hot-old"), "BUILDER_ACCEPTED"),
-        event_with_type(&format!("{event_prefix}-warm-mid"), "INGRESS_RECEIVED"),
-        event_with_type(&format!("{event_prefix}-cold-mid"), "SIMULATION_FAILED"),
-        event_with_type(&format!("{event_prefix}-hot-fresh"), "BUILDER_ACCEPTED"),
+        event(&format!("{event_prefix}-hot")),
+        event_with_type(&format!("{event_prefix}-warm"), "INGRESS_RECEIVED"),
+        event_with_type(&format!("{event_prefix}-cold"), "SIMULATION_FAILED"),
     ];
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '4 days' \
-         WHERE event_id = $1",
-    )
-    .bind(format!("{event_prefix}-hot-old"))
-    .execute(&pool)
-    .await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '8 days' \
-         WHERE event_id IN ($1, $2)",
-    )
-    .bind(format!("{event_prefix}-warm-mid"))
-    .bind(format!("{event_prefix}-cold-mid"))
-    .execute(&pool)
-    .await?;
 
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 3,
-            warm_days: 7,
-            cold_days: 30,
-            delete_batch_size: 10,
-            max_batches: 10,
-            ..Default::default()
-        })
-        .await?;
-    assert_eq!(outcome.hot_rows_deleted, 1);
-    assert_eq!(outcome.warm_rows_deleted, 1);
-    assert_eq!(outcome.cold_rows_deleted, 0);
-    assert_eq!(outcome.rows_deleted, 2);
+    let first = sink.insert_events(&events).await?;
+    assert_eq!(first.inserted_event_ids.len(), 3);
+    let retry = sink.insert_events(&events).await?;
+    assert!(retry.inserted_event_ids.is_empty(), "retried events must conflict");
 
-    let remaining: Vec<String> = sqlx::query_scalar(
-        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
+    let classes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT event_id, tableoid::regclass::text FROM transaction_events \
+         WHERE event_id LIKE $1 ORDER BY event_id",
     )
     .bind(format!("{event_prefix}-%"))
     .fetch_all(&pool)
     .await?;
+    let today = Utc::now().date_naive().format("%Y%m%d");
     assert_eq!(
-        remaining,
-        vec![format!("{event_prefix}-cold-mid"), format!("{event_prefix}-hot-fresh")]
+        classes,
+        vec![
+            (format!("{event_prefix}-cold"), format!("transaction_events_cold_{today}")),
+            (format!("{event_prefix}-hot"), format!("transaction_events_hot_{today}")),
+            (format!("{event_prefix}-warm"), format!("transaction_events_warm_{today}")),
+        ]
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn postgres_expires_at_lifecycle_events_with_peer_classes() -> anyhow::Result<()> {
+async fn postgres_maintenance_backfills_window_and_drops_expired_days() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let now = Utc::now();
+
+    let first = sink.maintain_partitions_at(now).await?;
+    assert!(first.lock_acquired);
+    assert_eq!(first.partitions_dropped, 0);
+    // Default windows: hot 3, warm 7, cold 30 days back, plus three ahead.
+    // The migration already seeded yesterday through three days ahead.
+    assert!(first.partitions_created > 0, "maintenance backfills each retention window");
+    let second = sink.maintain_partitions_at(now).await?;
+    assert_eq!(second.partitions_created, 0, "maintenance is idempotent");
+
     let event_prefix = unique_event_id();
-
-    let events = [
-        event_with_type(&format!("{event_prefix}-admission"), "TXPOOL_SEND_RAW_TRANSACTION"),
-        event_with_type(
-            &format!("{event_prefix}-validity-admission"),
-            "TXPOOL_SEND_RAW_TRANSACTION_VALIDITY",
-        ),
-        event_with_type(&format!("{event_prefix}-rejected"), "BUILDER_REJECTED"),
-        event_with_type(&format!("{event_prefix}-deferred"), "BUILDER_DEFERRED"),
-        event_with_type(&format!("{event_prefix}-expired"), "BUILDER_EXPIRED"),
-        event_with_type(&format!("{event_prefix}-included"), "BUILDER_INCLUDED"),
-    ];
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '4 days' \
-         WHERE event_id IN ($1, $2, $3)",
-    )
-    .bind(format!("{event_prefix}-rejected"))
-    .bind(format!("{event_prefix}-deferred"))
-    .bind(format!("{event_prefix}-expired"))
-    .execute(&pool)
-    .await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '8 days' \
-         WHERE event_id IN ($1, $2, $3)",
-    )
-    .bind(format!("{event_prefix}-admission"))
-    .bind(format!("{event_prefix}-validity-admission"))
-    .bind(format!("{event_prefix}-included"))
-    .execute(&pool)
+    sink.insert_events(&[
+        event(&format!("{event_prefix}-hot")),
+        event_with_type(&format!("{event_prefix}-warm"), "INGRESS_RECEIVED"),
+    ])
     .await?;
 
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 3,
-            warm_days: 7,
-            cold_days: 30,
-            delete_batch_size: 10,
-            max_batches: 10,
-            ..Default::default()
-        })
+    // Five days later, today's hot partition is past its 3-day window plus
+    // grace; the warm partition is still inside its 7-day window.
+    let later = sink.maintain_partitions_at(now + chrono::Duration::days(5)).await?;
+    assert!(later.partitions_dropped > 0);
+    assert_eq!(event_ids_like(&pool, &event_prefix).await?, vec![format!("{event_prefix}-warm")]);
+    let today_hot = format!("transaction_events_hot_{}", now.date_naive().format("%Y%m%d"));
+    assert!(!hot_partitions(&pool).await?.contains(&today_hot));
+    let leftover: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
+        .bind(&today_hot)
+        .fetch_one(&pool)
         .await?;
-    assert_eq!(outcome.hot_rows_deleted, 3);
-    assert_eq!(outcome.warm_rows_deleted, 2);
-    assert_eq!(outcome.cold_rows_deleted, 0);
-
-    let remaining: Vec<(String, String)> = sqlx::query_as(
-        "SELECT event_id, event_type FROM transaction_events \
-         WHERE event_id LIKE $1 ORDER BY event_id",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .fetch_all(&pool)
-    .await?;
-    assert_eq!(remaining, vec![(format!("{event_prefix}-included"), "BUILDER_INCLUDED".into())]);
+    assert_eq!(leftover, None, "dropped partitions are not left detached");
 
     Ok(())
 }
 
 #[tokio::test]
-async fn postgres_expire_walks_keyset_across_batches() -> anyhow::Result<()> {
+async fn postgres_maintenance_drops_leftover_detached_partitions() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let event_prefix = unique_event_id();
-    let events: Vec<_> = (0..5).map(|i| event(&format!("{event_prefix}-hot-{i}"))).collect();
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
-         WHERE event_id LIKE $1",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .execute(&pool)
-    .await?;
-
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 2,
-            max_batches: 10,
-            ..Default::default()
-        })
-        .await?;
-    assert_eq!(outcome.hot_rows_deleted, 5);
-    assert!(outcome.batches >= 3, "expected multiple keyset pages, got {}", outcome.batches);
-
-    let remaining: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
-            .bind(format!("{event_prefix}-%"))
+    let ahead = Utc::now().date_naive() + chrono::Duration::days(3);
+    let detached: bool =
+        sqlx::query_scalar("SELECT transaction_events_detach_partition('hot', $1)")
+            .bind(ahead)
             .fetch_one(&pool)
             .await?;
-    assert_eq!(remaining, 0);
+    assert!(detached);
+
+    let outcome = sink.maintain_partitions().await?;
+
+    assert!(outcome.partitions_dropped >= 1, "leftover detached table is dropped");
+    let name = format!("transaction_events_hot_{}", ahead.format("%Y%m%d"));
+    assert!(
+        hot_partitions(&pool).await?.contains(&name),
+        "the in-window day is recreated as an attached partition"
+    );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn postgres_retention_skips_when_another_replica_holds_lock() -> anyhow::Result<()> {
+async fn postgres_maintenance_skips_ddl_that_hits_lock_timeout() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::connect(&harness.database_url, 1)
+        .await?
+        .with_retention_config(TransactionEventRetentionConfig {
+            partition_lock_timeout_ms: 200,
+            ..Default::default()
+        })?;
+    let pool = PgPoolOptions::new().max_connections(2).connect(&harness.database_url).await?;
+    let later = Utc::now() + chrono::Duration::days(10);
+
+    // A long-running reader of the hot class blocks DETACH's ACCESS
+    // EXCLUSIVE lock but not ATTACH's SHARE UPDATE EXCLUSIVE lock.
+    let mut reader = pool.begin().await?;
+    sqlx::query("LOCK TABLE transaction_events_hot IN ACCESS SHARE MODE")
+        .execute(&mut *reader)
+        .await?;
+    let before = hot_partitions(&pool).await?;
+
+    let started = Instant::now();
+    let blocked = sink.maintain_partitions_at(later).await?;
+    assert!(blocked.lock_timeouts > 0, "blocked detaches are skipped, not fatal");
+    assert!(started.elapsed() < Duration::from_secs(10));
+    let during = hot_partitions(&pool).await?;
+    assert!(before.iter().all(|name| during.contains(name)), "no hot partition was detached");
+
+    reader.rollback().await?;
+    let retried = sink.maintain_partitions_at(later).await?;
+    assert_eq!(retried.lock_timeouts, 0);
+    let after = hot_partitions(&pool).await?;
+    assert!(before.iter().all(|name| !after.contains(name)), "the next pass drops them");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_maintenance_does_not_leak_lock_timeout() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let ingest_pool =
+        PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let retention_pool =
+        PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    let sink = PgTransactionEventSink::new_with_retention_pool(ingest_pool, retention_pool.clone());
+    sink.maintain_partitions().await?;
+
+    let lock_timeout: String =
+        sqlx::query_scalar("SHOW lock_timeout").fetch_one(&retention_pool).await?;
+    assert_eq!(
+        lock_timeout, "0",
+        "SET LOCAL lock_timeout leaked onto the pooled connection: {lock_timeout}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_maintenance_skips_when_another_replica_holds_lock() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
@@ -429,65 +497,89 @@ async fn postgres_retention_skips_when_another_replica_holds_lock() -> anyhow::R
         .await?;
     assert!(locked);
 
-    let outcome = sink.expire_old_events(TransactionEventRetentionConfig::default()).await?;
-    assert_eq!(outcome.rows_deleted, 0);
-    assert_eq!(outcome.batches, 0);
-    assert_eq!(outcome.hot_rows_deleted, 0);
-    assert_eq!(outcome.warm_rows_deleted, 0);
-    assert_eq!(outcome.cold_rows_deleted, 0);
+    let outcome = sink.maintain_partitions().await?;
+    assert!(!outcome.lock_acquired);
+    assert_eq!(outcome.partitions_created, 0);
+    assert_eq!(outcome.partitions_dropped, 0);
 
     transaction.rollback().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn postgres_retention_skips_locked_expired_rows() -> anyhow::Result<()> {
+async fn postgres_maintenance_uses_retention_pool_when_ingest_is_busy() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
-    let pool = PgPoolOptions::new().max_connections(2).connect(&harness.database_url).await?;
-    let event_prefix = unique_event_id();
+    let ingest_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_millis(500))
+        .connect(&harness.database_url)
+        .await?;
+    let retention_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(1))
+        .connect(&harness.database_url)
+        .await?;
+    let sink = PgTransactionEventSink::new_with_retention_pool(ingest_pool.clone(), retention_pool);
 
-    let events =
-        [event(&format!("{event_prefix}-locked")), event(&format!("{event_prefix}-unlocked"))];
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
-         WHERE event_id IN ($1, $2)",
-    )
-    .bind(format!("{event_prefix}-locked"))
-    .bind(format!("{event_prefix}-unlocked"))
-    .execute(&pool)
-    .await?;
+    let _held = ingest_pool.acquire().await?;
+    let outcome =
+        tokio::time::timeout(Duration::from_secs(10), sink.maintain_partitions())
+            .await
+            .expect("maintenance should use the retention pool instead of waiting on ingest")?;
+    assert!(outcome.lock_acquired);
 
-    let mut held = pool.begin().await?;
-    sqlx::query("SELECT * FROM transaction_events WHERE event_id = $1 FOR UPDATE")
-        .bind(format!("{event_prefix}-locked"))
-        .execute(&mut *held)
+    Ok(())
+}
+
+/// Mirrors production roles: the migration role owns the schema and tables,
+/// and the runtime role only has DML plus EXECUTE on the partition functions.
+#[tokio::test]
+async fn postgres_runtime_role_maintains_partitions_through_definer_functions() -> anyhow::Result<()>
+{
+    let harness = PostgresHarness::new().await?;
+    let admin = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    for statement in [
+        "CREATE ROLE audit_archiver_migration LOGIN PASSWORD 'migration'",
+        "CREATE ROLE audit_archiver LOGIN PASSWORD 'runtime'",
+        "CREATE ROLE unrelated LOGIN PASSWORD 'unrelated'",
+        "ALTER SCHEMA public OWNER TO audit_archiver_migration",
+    ] {
+        admin.execute(statement).await?;
+    }
+
+    PgTransactionEventSink::migrate(&harness.url_for("audit_archiver_migration", "migration"))
         .await?;
 
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 10,
-            max_batches: 10,
-            ..Default::default()
-        })
+    let runtime_url = harness.url_for("audit_archiver", "runtime");
+    let sink = PgTransactionEventSink::connect(&runtime_url, 1).await?;
+    sink.check_schema_ready().await?;
+    assert!(sink.maintain_partitions().await?.partitions_created > 0);
+
+    let event_id = unique_event_id();
+    sink.insert_events(&[event(&event_id)]).await?;
+    assert_eq!(sink.events_by_block_number(123, 10).await?.len(), 1);
+
+    let later = sink.maintain_partitions_at(Utc::now() + chrono::Duration::days(5)).await?;
+    assert!(later.partitions_dropped > 0, "runtime role can drop expired partitions");
+
+    let runtime = PgPoolOptions::new().max_connections(1).connect(&runtime_url).await?;
+    let partition = format!(
+        "transaction_events_hot_{}",
+        (Utc::now().date_naive() + chrono::Duration::days(3)).format("%Y%m%d")
+    );
+    let direct_drop = runtime.execute(format!("DROP TABLE {partition}").as_str()).await;
+    assert!(direct_drop.is_err(), "runtime role must not own partitions");
+
+    let unrelated = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&harness.url_for("unrelated", "unrelated"))
         .await?;
-    assert_eq!(outcome.hot_rows_deleted, 1);
-    assert_eq!(outcome.rows_deleted, 1);
+    let call = sqlx::query("SELECT transaction_events_detach_partition('hot', current_date)")
+        .execute(&unrelated)
+        .await;
+    assert!(call.is_err(), "partition functions are not executable by PUBLIC");
 
-    let remaining: Vec<String> = sqlx::query_scalar(
-        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .fetch_all(&pool)
-    .await?;
-    assert_eq!(remaining, vec![format!("{event_prefix}-locked")]);
-
-    held.rollback().await?;
     Ok(())
 }
 
@@ -503,11 +595,13 @@ async fn postgres_insert_fails_fast_when_conflicting_row_is_locked() -> anyhow::
     let mut held = pool.begin().await?;
     sqlx::query(
         "INSERT INTO transaction_events \
-         (event_id, schema_version, event_time, producer, event_type, network, data) \
-         VALUES ($1, 'transaction-event/v1', now(), 'base-builder', 'BUILDER_ACCEPTED', \
+         (event_id, schema_version, event_time, retention_class, producer, event_type, network, \
+          data) \
+         VALUES ($1, 'transaction-event/v1', $2, 'hot', 'base-builder', 'BUILDER_ACCEPTED', \
                  'base-mainnet', '{}'::jsonb)",
     )
     .bind(&event_id)
+    .bind(pending.event_time)
     .execute(&mut *held)
     .await?;
 
@@ -544,176 +638,6 @@ async fn postgres_insert_does_not_leak_lock_timeout() -> anyhow::Result<()> {
         lock_timeout, "1s",
         "SET LOCAL lock_timeout leaked onto the pooled connection: {lock_timeout}"
     );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn postgres_expire_does_not_leak_statement_timeout() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let ingest_pool =
-        PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let retention_pool =
-        PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::new_with_retention_pool(ingest_pool, retention_pool.clone());
-    sink.expire_old_events(TransactionEventRetentionConfig {
-        max_batches: 3,
-        ..Default::default()
-    })
-    .await?;
-
-    let statement_timeout: String =
-        sqlx::query_scalar("SHOW statement_timeout").fetch_one(&retention_pool).await?;
-    assert_eq!(
-        statement_timeout, "0",
-        "SET LOCAL statement_timeout leaked onto the pooled connection: {statement_timeout}"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn postgres_expire_statement_timeout_advances_to_later_classes() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
-    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let event_prefix = unique_event_id();
-
-    let events = [
-        event(&format!("{event_prefix}-hot")),
-        event_with_type(&format!("{event_prefix}-warm"), "TXPOOL_SEND_RAW_TRANSACTION"),
-        event_with_type(&format!("{event_prefix}-cold"), "SIMULATION_FAILED"),
-    ];
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
-         WHERE event_id LIKE $1",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .execute(&pool)
-    .await?;
-
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 10,
-            max_batches: 10,
-            statement_timeout_ms: 200,
-            test_hot_sleep_ms: Some(2_000),
-            ..Default::default()
-        })
-        .await?;
-    assert_eq!(outcome.hot_rows_deleted, 0, "timed-out hot class must not fail the pass");
-    assert_eq!(outcome.warm_rows_deleted, 1);
-    assert_eq!(outcome.cold_rows_deleted, 1);
-
-    let remaining: Vec<String> = sqlx::query_scalar(
-        "SELECT event_id FROM transaction_events WHERE event_id LIKE $1 ORDER BY event_id",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .fetch_all(&pool)
-    .await?;
-    assert_eq!(remaining, vec![format!("{event_prefix}-hot")]);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn postgres_expire_timeout_then_limit_one_deletes_hot_rows() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
-    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    let event_prefix = unique_event_id();
-
-    let events = [
-        event(&format!("{event_prefix}-hot-a")),
-        event(&format!("{event_prefix}-hot-b")),
-        event_with_type(&format!("{event_prefix}-warm"), "TXPOOL_SEND_RAW_TRANSACTION"),
-    ];
-    sink.insert_events(&events).await?;
-    sqlx::query(
-        "UPDATE transaction_events SET ingested_at = now() - interval '10 days' \
-         WHERE event_id LIKE $1",
-    )
-    .bind(format!("{event_prefix}-%"))
-    .execute(&pool)
-    .await?;
-
-    let outcome = sink
-        .expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 10,
-            max_batches: 20,
-            statement_timeout_ms: 200,
-            test_hot_sleep_ms: Some(2_000),
-            test_hot_sleep_min_limit: Some(2),
-            ..Default::default()
-        })
-        .await?;
-    assert_eq!(outcome.hot_rows_deleted, 2);
-    assert_eq!(outcome.warm_rows_deleted, 1);
-
-    let remaining: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM transaction_events WHERE event_id LIKE $1")
-            .bind(format!("{event_prefix}-%"))
-            .fetch_one(&pool)
-            .await?;
-    assert_eq!(remaining, 0);
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn postgres_expire_uses_retention_pool_when_ingest_is_busy() -> anyhow::Result<()> {
-    let harness = PostgresHarness::new().await?;
-    PgTransactionEventSink::migrate(&harness.database_url).await?;
-    let ingest_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_millis(500))
-        .connect(&harness.database_url)
-        .await?;
-    let retention_pool = PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_secs(1))
-        .connect(&harness.database_url)
-        .await?;
-    let sink = PgTransactionEventSink::new_with_retention_pool(ingest_pool.clone(), retention_pool);
-    let event_id = unique_event_id();
-    sink.insert_events(&[event(&event_id)]).await?;
-    sqlx::query("UPDATE transaction_events SET ingested_at = now() - interval '10 days' WHERE event_id = $1")
-        .bind(&event_id)
-        .execute(&ingest_pool)
-        .await?;
-
-    let _held = ingest_pool.acquire().await?;
-    let started = Instant::now();
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(5),
-        sink.expire_old_events(TransactionEventRetentionConfig {
-            hot_days: 7,
-            warm_days: 7,
-            cold_days: 7,
-            delete_batch_size: 10,
-            max_batches: 10,
-            ..Default::default()
-        }),
-    )
-    .await
-    .expect("expire should acquire the retention pool instead of waiting on ingest")?;
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "expire waited too long with the ingest pool checked out: {:?}",
-        started.elapsed()
-    );
-    assert_eq!(outcome.hot_rows_deleted, 1);
-    assert_eq!(outcome.rows_deleted, 1);
 
     Ok(())
 }
