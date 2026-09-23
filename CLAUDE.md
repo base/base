@@ -23,6 +23,12 @@
 - Do not add new Flashblocks behavior. Flashblocks and the Flashblock builder are deprecated; follow the retirement plan in the feature map, including removal of the builder by October 31, 2026 after 200 ms blocks are activated.
 - For legacy Optimism/pre-Holocene, upgrade, derivation, execution, and operator work, use the feature map to favor removing obsolete special cases and making supported state transitions, ownership, observability, and hardfork planning explicit.
 
+## Autonomous Agent Roles
+
+- Role definitions live in [`agents/README.md`](agents/README.md) and [`agents/`](agents/). Read the matching role after `AGENTS.md` and [`docs/RECENT_FEATURE_MAP.md`](docs/RECENT_FEATURE_MAP.md); the latter remains the source of product constraints and deprecations.
+- Use `simplifier`, `integration_refactorer`, `performance_engineer`, or `test_breaker` only for a substantive validated code improvement. Use `feature_historian` only when the requester explicitly asks for a retrospective.
+- An autonomous agent that finds no safely validated improvement must make no repository change and open no PR; it should move to another bounded opportunity or report the null result only when the requester asked for the investigation.
+
 ## Documentation and Lints
 
 - Use `#![doc = include_str!("../README.md")]` for crate documentation in `lib.rs`; never use `//!` comments there.
