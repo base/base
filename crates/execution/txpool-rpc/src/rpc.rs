@@ -121,6 +121,7 @@ pub struct SendRawTransactionValidityApiImpl<Provider> {
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
     experimental_override: bool,
+    sequencer_client: Option<HttpClient>,
     transaction_sender: tokio::sync::mpsc::UnboundedSender<BatchTxRequest<BasePooledTransaction>>,
 }
 
@@ -170,12 +171,18 @@ impl<Provider> SendRawTransactionValidityApiImpl<Provider> {
             max_validity_predicates,
             max_validity_expiry_secs,
             experimental_override: false,
+            sequencer_client: None,
             transaction_sender,
         }
     }
     /// Allows validity submissions before Cobalt for experimental deployments.
     pub const fn with_experimental_override(mut self, enabled: bool) -> Self {
         self.experimental_override = enabled;
+        self
+    }
+    /// Proxies validity submissions to the configured sequencer rather than the local pool.
+    pub fn with_sequencer_client(mut self, client: HttpClient) -> Self {
+        self.sequencer_client = Some(client);
         self
     }
 }
@@ -279,6 +286,20 @@ where
         tx: Bytes,
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
+        if let Some(client) = &self.sequencer_client {
+            return client
+                .request("base_sendRawTransactionValidity", rpc_params![tx, options])
+                .await
+                .map_err(|error| match error {
+                    jsonrpsee::core::ClientError::Call(remote) => remote,
+                    other => ErrorObjectOwned::owned(
+                        ErrorCode::InternalError.code(),
+                        format!("failed to forward validity transaction: {other}"),
+                        None::<()>,
+                    ),
+                });
+        }
+
         let latest = self.latest_block_number_and_timestamp()?;
         if !self.experimental_override {
             let active = latest.is_some_and(|(_, timestamp)| {
@@ -801,6 +822,60 @@ mod tests {
             .await
             .unwrap_err();
         assert!(rejected.message().contains("validity predicates must not be empty"));
+    }
+
+    #[tokio::test]
+    async fn proxies_validity_with_predicates_without_local_submission() {
+        let sequencer = MockServer::start();
+        let raw = Bytes::from_static(&[0x02]);
+        let options = SendRawTransactionValidityOptions { validity: all_predicate_variants() };
+        let expected_hash = TxHash::repeat_byte(0x42);
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).path("/").json_body(json!({
+                "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
+                "params": [raw, { "validity": options.validity }],
+            }));
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"jsonrpc": "2.0", "id": 0, "result": expected_hash}));
+        });
+        let client = HttpClientBuilder::default().build(sequencer.base_url()).unwrap();
+        let rpc = SendRawTransactionValidityApiImpl::new(
+            pre_zenith_provider(),
+            test_transaction_sender(),
+        )
+        .with_sequencer_client(client);
+        let hash = rpc.send_raw_transaction_validity(raw, options).await.unwrap();
+        assert_eq!(hash, expected_hash);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn proxy_preserves_sequencer_rejection() {
+        let sequencer = MockServer::start();
+        let raw = Bytes::from_static(&[0x02]);
+        let options = SendRawTransactionValidityOptions { validity: vec![] };
+        let mock = sequencer.mock(|when, then| {
+            when.method(POST).path("/").json_body(json!({
+                "jsonrpc": "2.0", "id": 0, "method": "base_sendRawTransactionValidity",
+                "params": [raw, { "validity": [] }],
+            }));
+            then.status(200).header("content-type", "application/json").json_body(
+                json!({"jsonrpc": "2.0", "id": 0, "error": {
+                    "code": -32602, "message": "upstream validity rejection"
+                }}),
+            );
+        });
+        let client = HttpClientBuilder::default().build(sequencer.base_url()).unwrap();
+        let rpc = SendRawTransactionValidityApiImpl::new(
+            pre_zenith_provider(),
+            test_transaction_sender(),
+        )
+        .with_sequencer_client(client);
+        let error = rpc.send_raw_transaction_validity(raw, options).await.unwrap_err();
+        assert_eq!(error.code(), -32602);
+        assert_eq!(error.message(), "upstream validity rejection");
+        mock.assert();
     }
 
     #[test]

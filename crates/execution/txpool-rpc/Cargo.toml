@@ -33,6 +33,7 @@ alloy-primitives.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
+http.workspace = true
 
 # misc
 serde.workspace = true

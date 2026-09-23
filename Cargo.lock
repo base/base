@@ -6553,6 +6553,7 @@ dependencies = [
  "base-observability-events",
  "base-test-utils",
  "eyre",
+ "http 1.4.2",
  "httpmock",
  "jsonrpsee",
  "reth-chainspec",

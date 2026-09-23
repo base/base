@@ -16,6 +16,8 @@ validity predicates are preserved in the pool (and while forwarding to builders)
 is registered at startup but accepts validity-bearing submissions only at Cobalt activation
 (or earlier with the experimental override). Predicates are enforced by the builder during
 block construction; an unsatisfied transaction is deferred and an expired one is evicted.
+Regular RPC nodes with a configured sequencer URL proxy this method, including predicates and
+the upstream error response, rather than admitting the transaction into their local pool.
 
 ## Usage
 

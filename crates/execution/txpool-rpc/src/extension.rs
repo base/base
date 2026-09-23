@@ -4,6 +4,8 @@ pub use base_execution_txpool::{
     DEFAULT_MAX_VALIDITY_EXPIRY_SECS, DEFAULT_MAX_VALIDITY_PREDICATES,
 };
 use base_node_runner::{BaseNodeExtension, BaseRpcContext, FromExtensionConfig, NodeHooks};
+use http::header::{HeaderMap, HeaderName, HeaderValue};
+use jsonrpsee::http_client::HttpClientBuilder;
 use reth_rpc_server_types::RethRpcModule;
 
 use crate::{
@@ -46,7 +48,7 @@ impl BaseNodeExtension for TxPoolRpcExtension {
 }
 
 /// Configuration for local validity-bearing transaction ingress.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SendRawTransactionValidityConfig {
     /// Maximum number of validity predicates accepted per transaction.
     pub max_validity_predicates: usize,
@@ -54,6 +56,10 @@ pub struct SendRawTransactionValidityConfig {
     pub max_validity_expiry_secs: u64,
     /// Accept validity transactions before Cobalt activates.
     pub experimental_override: bool,
+    /// Upstream sequencer RPC for query nodes that proxy rather than build transactions.
+    pub sequencer_url: Option<String>,
+    /// HTTP headers sent to the upstream sequencer, in `name=value` form.
+    pub sequencer_headers: Vec<String>,
 }
 
 impl Default for SendRawTransactionValidityConfig {
@@ -62,6 +68,8 @@ impl Default for SendRawTransactionValidityConfig {
             max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
             experimental_override: false,
+            sequencer_url: None,
+            sequencer_headers: Vec::new(),
         }
     }
 }
@@ -77,13 +85,31 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
         let config = self.config;
         builder.add_rpc_module(move |ctx: &mut BaseRpcContext<'_>| {
             let transaction_sender = ctx.registry.eth_api().eth_api().tx_batch_sender().clone();
-            let api = SendRawTransactionValidityApiImpl::with_validity_limits(
+            let mut api = SendRawTransactionValidityApiImpl::with_validity_limits(
                 ctx.provider().clone(),
                 config.max_validity_predicates,
                 config.max_validity_expiry_secs,
                 transaction_sender,
             )
             .with_experimental_override(config.experimental_override);
+            if let Some(url) = &config.sequencer_url {
+                let mut headers = HeaderMap::new();
+                for header in &config.sequencer_headers {
+                    let (name, value) = header.split_once('=').ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "invalid sequencer header; expected name=value",
+                        )
+                    })?;
+                    headers.insert(
+                        name.trim().parse::<HeaderName>()?,
+                        value.trim().parse::<HeaderValue>()?,
+                    );
+                }
+                api = api.with_sequencer_client(
+                    HttpClientBuilder::default().set_headers(headers).build(url)?,
+                );
+            }
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })
