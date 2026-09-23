@@ -564,7 +564,7 @@ mod tests {
             "--builder-rpc-urls",
             "http://localhost:8545",
             "--enable-experimental-validity-transactions",
-            "--experimental-validity-max-predicates",
+            "--validity-max-predicates",
             "8",
         ]));
 
@@ -576,7 +576,7 @@ mod tests {
 
         assert!(launch_config.standard.rpc.enable_tx_forwarding);
         assert!(launch_config.standard.rpc.enable_experimental_validity_transactions);
-        assert_eq!(launch_config.standard.rpc.experimental_validity_max_predicates, 8);
+        assert_eq!(launch_config.standard.rpc.validity_max_predicates, 8);
         assert_eq!(launch_config.standard.rpc.builder_rpc_urls.len(), 1);
     }
 
