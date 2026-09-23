@@ -49,3 +49,19 @@ evidence. Do not add a speculative framework or a feature with no supported
 consumer. When the right improvement is larger, plan a small PR stack with
 independently useful layers instead of shrinking the work into a superficial
 guard.
+
+## Production-quality bar
+
+A qualifying agent PR should resemble a maintained production change: it either
+fixes a reproduced end-to-end failure, removes a complete obsolete production
+path, consolidates a meaningful ownership boundary, or completes a supported
+operator/user capability. The diff should explain the root cause and the
+before/after behavior, not merely reject a convenient invalid input.
+
+Use the smallest coherent implementation, not the smallest possible patch. A
+substantial change owns its affected lifecycle or transition end to end, updates
+all required callers/tests, and leaves one canonical behavior. Prefer a focused
+integration or full affected-package test in addition to a regression test. A
+format, metadata, diff, or compile attempt alone is not sufficient validation;
+if the relevant test cannot run in the current environment, keep the goal active
+and find a viable validation route before claiming the PR is ready.
