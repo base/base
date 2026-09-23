@@ -462,6 +462,14 @@ pub const MAX_TRANSACTION_EVENT_QUERY_LIMIT: i64 = 2_000;
 const REQUIRED_TRANSACTION_EVENT_MIGRATION_DESCRIPTION: &str = "transaction events partitioned";
 static TRANSACTION_EVENT_MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
+/// Versions of the pre-partition migrations (001-004) that migration 005
+/// replaced.
+///
+/// They are no longer embedded, so databases that recorded them are migrated
+/// straight to 005, whatever state those migrations left behind. 005 drops
+/// every object they created.
+const RETIRED_TRANSACTION_EVENT_MIGRATION_VERSIONS: std::ops::RangeInclusive<i64> = 1..=4;
+
 /// Required sqlx migration version for transaction event storage.
 fn required_transaction_event_migration_version() -> Result<i64, &'static str> {
     let mut matching_migrations = TRANSACTION_EVENT_MIGRATOR.iter().filter(|migration| {
@@ -621,9 +629,16 @@ impl PgTransactionEventSink {
     }
 
     /// Runs pending Postgres migrations.
+    ///
+    /// Databases may still record the retired 001-004 migrations. Those are
+    /// ignored, but any other applied migration missing from this binary is an
+    /// error, as it would be without retirement.
     pub async fn migrate(database_url: &str) -> Result<()> {
         let pool = PgPoolOptions::new().max_connections(1).connect(database_url).await?;
-        TRANSACTION_EVENT_MIGRATOR.run(&pool).await?;
+        check_no_unknown_applied_migrations(&pool).await?;
+        let mut migrator = sqlx::migrate!("./migrations");
+        migrator.set_ignore_missing(true);
+        migrator.run(&pool).await?;
         Ok(())
     }
 
@@ -1167,6 +1182,40 @@ fn persist_retry_sqlstate(code: &str) -> Option<&'static str> {
         "55P03" => Some("lock_timeout"),
         _ => None,
     }
+}
+
+/// Fails if the database records a migration this binary does not embed,
+/// other than the retired pre-partition migrations.
+///
+/// sqlx's own check is disabled so recorded 001-004 rows are accepted; this
+/// keeps the check for everything else.
+async fn check_no_unknown_applied_migrations(pool: &PgPool) -> Result<()> {
+    let migrations_table_exists: bool =
+        sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
+            .fetch_one(pool)
+            .await?;
+    if !migrations_table_exists {
+        return Ok(());
+    }
+
+    let applied: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await?;
+    let embedded: HashSet<i64> =
+        TRANSACTION_EVENT_MIGRATOR.iter().map(|migration| migration.version).collect();
+    let unknown: Vec<i64> = applied
+        .into_iter()
+        .filter(|version| {
+            !embedded.contains(version)
+                && !RETIRED_TRANSACTION_EVENT_MIGRATION_VERSIONS.contains(version)
+        })
+        .collect();
+    anyhow::ensure!(
+        unknown.is_empty(),
+        "database records transaction event migrations {unknown:?} that this audit-archiver does not embed; deploy a newer migrator"
+    );
+    Ok(())
 }
 
 fn is_lock_timeout(err: &sqlx::Error) -> bool {

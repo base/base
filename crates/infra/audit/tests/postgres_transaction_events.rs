@@ -100,10 +100,11 @@ async fn hot_partitions(pool: &PgPool) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar(HOT_PARTITIONS_SQL).fetch_all(pool).await?)
 }
 
-/// Writes the embedded migrations up to and including `last_version` into a
-/// temporary directory, so tests can build a database at an older schema.
-fn migrations_through(last_version: i64) -> anyhow::Result<PathBuf> {
-    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
+/// Writes the retired pre-partition migrations up to and including
+/// `last_version` into a temporary directory, so tests can build a database
+/// at an older schema.
+fn legacy_migrations_through(last_version: i64) -> anyhow::Result<PathBuf> {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy_migrations");
     let target = std::env::temp_dir().join(format!("audit-migrations-{}", unique_event_id()));
     std::fs::create_dir_all(&target)?;
     for entry in std::fs::read_dir(source)? {
@@ -170,7 +171,7 @@ fn transaction_events_migration_version_matches_sqlx_migration_metadata() -> any
 async fn transaction_events_unready_on_pre_partition_schema() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    Migrator::new(migrations_through(4)?).await?.run(&pool).await?;
+    Migrator::new(legacy_migrations_through(4)?).await?.run(&pool).await?;
     let sink = PgTransactionEventSink::connect(&harness.database_url, 1).await?;
 
     let err = sink.check_schema_ready().await.unwrap_err();
@@ -206,7 +207,7 @@ async fn transaction_events_ready_after_required_migration() -> anyhow::Result<(
 async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::Result<()> {
     let harness = PostgresHarness::new().await?;
     let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
-    Migrator::new(migrations_through(4)?).await?.run(&pool).await?;
+    Migrator::new(legacy_migrations_through(4)?).await?.run(&pool).await?;
     sqlx::query(
         "INSERT INTO transaction_events \
          (event_id, schema_version, event_time, producer, event_type, network, data) \
@@ -226,6 +227,94 @@ async fn postgres_partition_migration_discards_pre_partition_rows() -> anyhow::R
             .fetch_all(&pool)
             .await?;
     assert_eq!(versions, vec![1, 2, 3, 4, 5], "migration history is preserved");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_fresh_database_only_runs_the_partitioned_baseline() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(versions, vec![5]);
+
+    Ok(())
+}
+
+/// Mainnet shape: 003 dropped the rejected index and recorded, then 004's
+/// concurrent rebuild was killed before recording. Migrating must not run 004
+/// against the old table, and the invalid index must not survive.
+#[tokio::test]
+async fn postgres_migrates_past_an_unrecorded_004_with_an_invalid_index() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    Migrator::new(legacy_migrations_through(3)?).await?.run(&pool).await?;
+    sqlx::query(
+        "INSERT INTO transaction_events \
+         (event_id, schema_version, event_time, producer, event_type, network, data) \
+         SELECT 'legacy-' || n, 'transaction-event/v1', now(), 'base-builder', \
+                'BUILDER_REJECTED', 'base-mainnet', '{}'::jsonb \
+         FROM generate_series(1, 2) AS n",
+    )
+    .execute(&pool)
+    .await?;
+    // A failed concurrent build leaves an invalid index behind under the name
+    // 004 would skip with IF NOT EXISTS.
+    let failed = sqlx::query(
+        "CREATE UNIQUE INDEX CONCURRENTLY transaction_events_rejected_event_time_idx \
+         ON transaction_events (event_type)",
+    )
+    .execute(&pool)
+    .await;
+    assert!(failed.is_err(), "duplicate event types make the build fail");
+    let invalid: bool = sqlx::query_scalar(
+        "SELECT NOT indisvalid FROM pg_index \
+         WHERE indexrelid = 'transaction_events_rejected_event_time_idx'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(invalid);
+
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(versions, vec![1, 2, 3, 5], "004 is retired, not run");
+    let (valid, partitioned): (bool, bool) = sqlx::query_as(
+        "SELECT i.indisvalid, c.relkind = 'I' FROM pg_index i \
+         JOIN pg_class c ON c.oid = i.indexrelid \
+         WHERE i.indexrelid = 'transaction_events_rejected_event_time_idx'::regclass",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(valid && partitioned, "the index is 005's partitioned index, not the leftover");
+    PgTransactionEventSink::connect(&harness.database_url, 1).await?.check_schema_ready().await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn postgres_migrate_rejects_unknown_applied_migrations() -> anyhow::Result<()> {
+    let harness = PostgresHarness::new().await?;
+    PgTransactionEventSink::migrate(&harness.database_url).await?;
+    let pool = PgPoolOptions::new().max_connections(1).connect(&harness.database_url).await?;
+    sqlx::query(
+        "INSERT INTO _sqlx_migrations \
+         (version, description, success, checksum, execution_time) \
+         VALUES (99, 'from a newer binary', true, '\\x00'::bytea, 0)",
+    )
+    .execute(&pool)
+    .await?;
+
+    let err = PgTransactionEventSink::migrate(&harness.database_url).await.unwrap_err();
+    assert!(err.to_string().contains("[99]"), "{err}");
 
     Ok(())
 }

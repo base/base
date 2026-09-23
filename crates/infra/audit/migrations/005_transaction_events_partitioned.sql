@@ -11,6 +11,12 @@
 -- no longer produces dead tuples, index bloat, or long vacuums. Each day's
 -- random-key indexes (event_id, tx_hash, ...) stay small enough to cache.
 --
+-- This is the baseline schema. The pre-partition migrations 001-004 are no
+-- longer embedded; audit-archiver ignores their _sqlx_migrations rows, so a
+-- database reaches this schema from any state they left behind, including a
+-- 004 index build that never recorded. Dropping the table removes every
+-- object they created.
+--
 -- Bound the DROP's lock wait so a long-running vacuum or query on the old
 -- table fails this migration quickly instead of queueing ingest behind it.
 -- The migrator can simply be retried.
