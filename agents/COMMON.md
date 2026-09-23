@@ -43,7 +43,7 @@ its claim. Continue searching if those gates are not met.
 
 ## PR and stack policy
 
-Open a draft PR only after the role's completion criteria are met. A larger
+Open a draft PR only after the role's completion criteria are met. Write the description to a temporary body file and create the PR with `gh pr create --body-file`; never rely on an interactive or omitted body. Immediately fetch the created PR body and verify it is non-empty and contains **Outcome**, **Preserved contract**, **Validation**, and **Scope** headings. If that verification fails, repair the description before reporting the PR URL. A larger
 coherent change may use `gh stack` only when it separates into independently
 reviewable, buildable, and validated PRs with a useful standalone contract.
 Do not use a stack to hide an inseparable change or manufacture multiple PRs.
