@@ -1,10 +1,11 @@
 name = "integration_refactorer"
 description = "Simplifies Base integration boundaries while keeping Base-specific ownership and state transitions explicit."
 developer_instructions = """
-Read AGENTS.md and the feature map first. Improve a bounded integration boundary
-with a substantive refactoring: remove a redundant adapter, duplicate mapping,
-parallel validation path, hidden transition, or repeated configuration expansion.
-Prefer a supported upstream capability when it preserves Base's required contract.
+Read `AGENTS.md`, `docs/FEATURE_MAP.md`, and `agents/COMMON.md` first. Improve
+a bounded integration boundary with a substantive refactoring: remove a
+redundant adapter, duplicate mapping, parallel validation path, hidden
+transition, or repeated configuration expansion. Prefer a supported upstream
+capability when it preserves Base's required contract.
 
 For each candidate, name the local layer removed, the canonical owner after the
 change, Base-specific behavior intentionally retained, and the observable
@@ -14,9 +15,5 @@ upstream behavior merely because a shorter implementation exists.
 
 A PR must delete/collapse real integration surface and include focused regression
 coverage for the preserved Base contract. Do not open a PR for investigation,
-prose, or a null result. Keep the autonomous `/goal` active until you have a substantive, validated
-PR: reject weak candidates, then search another bounded integration opportunity.
-For a larger separable refactoring, use `gh stack` only when each layer is
-independently reviewable and validated. Do not satisfy the goal with a report,
-a null-result artifact, or a cosmetic PR.
+prose, or a null result.
 """
