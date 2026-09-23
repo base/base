@@ -1,7 +1,5 @@
 //! RPC implementation for transaction submission, status queries, and pool management.
 
-use std::time::Duration;
-
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash};
 use base_common_chains::Upgrades;
@@ -43,9 +41,6 @@ pub const VALIDITY_TX_PRE_ZENITH_RPC_ERROR: &str = "EIP-8130 validity transactio
 
 /// Legacy full-block cadence used before Denim activates.
 const LEGACY_BLOCK_INTERVAL_MILLIS: u64 = 2_000;
-
-/// Maximum wait for a proxied validity submission to reach the sequencer.
-const SEQUENCER_VALIDITY_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The status of a transaction.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
@@ -293,19 +288,10 @@ where
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
         if let Some(client) = &self.sequencer_client {
-            return tokio::time::timeout(
-                SEQUENCER_VALIDITY_REQUEST_TIMEOUT,
-                client.request("base_sendRawTransactionValidity", (tx, options)),
-            )
-            .await
-            .map_err(|_| {
-                ErrorObjectOwned::owned(
-                    ErrorCode::InternalError.code(),
-                    "sequencer validity request timed out",
-                    None::<()>,
-                )
-            })?
-            .map_err(ErrorObjectOwned::from);
+            return client
+                .request("base_sendRawTransactionValidity", (tx, options))
+                .await
+                .map_err(ErrorObjectOwned::from);
         }
 
         let latest = self.latest_block_number_and_timestamp()?;
