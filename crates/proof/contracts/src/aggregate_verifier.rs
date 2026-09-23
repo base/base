@@ -234,6 +234,9 @@ sol! {
 
         /// Returns the address of the `AnchorStateRegistry` contract.
         function anchorStateRegistry() external view returns (address);
+
+        /// Returns the TEE verifier used by this game.
+        function TEE_VERIFIER() external view returns (address);
     }
 }
 
@@ -442,6 +445,17 @@ impl AggregateVerifierContractClient {
     /// Creates a new client backed by the given L1 provider.
     pub const fn new(provider: RootProvider) -> Self {
         Self { provider }
+    }
+
+    /// Returns the TEE verifier used by a game.
+    pub async fn tee_verifier_address(
+        &self,
+        game_address: Address,
+    ) -> Result<Address, ContractError> {
+        let contract =
+            IAggregateVerifier::IAggregateVerifierInstance::new(game_address, &self.provider);
+
+        contract_call!(contract.TEE_VERIFIER().call(), "TEE_VERIFIER failed")
     }
 
     /// Reads `version()` from a verifier and reports which interval ABI that address speaks.

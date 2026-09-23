@@ -130,6 +130,31 @@ disputes games it was never given would pass the run.
    a message that says the check could not be completed rather than that the
    challenger moved something.
 
+## `CHALLENGER_E2E_SCENARIO=path3`
+
+Step 6 only reaches Path 3 when the challenger happens to drop the TEE proof
+first, which current deployments do not: B is not a registered TEE proposer, so
+Path 4 takes the ZK-fallback branch and the run ends there. This scenario stages
+the Path 3 shape directly instead of waiting for it.
+
+Game B is given a real SNARK of its canonical roots as in step 5, then patched
+as in step 6. A then drops B's TEE proof through the game's own
+`nullify(TEE, ...)`, so the game reaches the exact state a real TEE
+nullification produces — `proofCount` and `expectedResolution` included —
+rather than the approximation a storage write would leave. A has no enclave to
+sign with, so the game's `TEE_VERIFIER()` is replaced with a runtime that
+returns `true` for the duration of that one transaction and restored
+immediately after; the restore is asserted, because a fork left with a
+permissive verifier would pass every assertion that follows. The challenger's
+own proof and nullification run against the real, restored verifiers.
+
+What is left is `(teeProver == 0, zkProver != 0, counteredIndex == 0)` over an
+invalid root — `InvalidZkProposal`. The challenger must clear `zkProver`,
+leave `counteredIndex` at 0, and move B's nonce.
+
+Each destructive scenario ends by nullifying a *global* verifier, so they
+cannot share a fork: run `all`, `path1-path2` and `path3` in separate pods.
+
 ## Required environment
 
 `BASE_CHALLENGER_*` is shared with the challenger under test — both read the
@@ -145,7 +170,7 @@ is pointed at and talks to the same prover-service.
 | `BASE_CHALLENGER_GAME_TYPE` | Yes | `AggregateVerifier` game type |
 | `BASE_CHALLENGER_ANCHOR_STATE_REGISTRY_ADDR` | Yes | `AnchorStateRegistry` on L1; read to find the scanner's lower bound |
 | `CHALLENGER_E2E_ANVIL_PORT` | No (default `18545`) | Fork port; not 8545, which the production challenger reserves for its signer sidecar |
-| `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for the existing combined run, or `path1-path2` for complete Path 2 coverage |
+| `CHALLENGER_E2E_SCENARIO` | No (default `all`) | `all` for the existing combined run, `path1-path2` for complete Path 2 coverage, or `path3` for an unconditional Path 3 |
 | `CHALLENGER_E2E_CHALLENGER_METRICS_URL` | No (default `http://127.0.0.1:7300/metrics`) | Prometheus endpoint of the challenger under test |
 | `CHALLENGER_E2E_GAME_LOOKBACK` | No (default `50`) | Factory indices searched for two games to corrupt |
 | `CHALLENGER_E2E_STARTUP_TIMEOUT` | No (default `5m`) | Budget for the fork and the first scan |
