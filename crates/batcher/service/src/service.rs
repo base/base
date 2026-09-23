@@ -376,6 +376,12 @@ impl BatcherService {
         if self.config.poll_interval.is_zero() {
             eyre::bail!("poll_interval must be greater than zero");
         }
+        if self.config.max_pending_transactions == 0 {
+            eyre::bail!(
+                "max_pending_transactions must be greater than zero: the batcher would never \
+                 submit a transaction"
+            );
+        }
         if self.config.stopped && self.config.admin_addr.is_none() {
             eyre::bail!(
                 "--stopped requires --admin-port: the batcher would start stopped with no way to \
@@ -782,6 +788,21 @@ mod tests {
         assert!(
             error.to_string().contains("test-op"),
             "timeout error should name the operation, got {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn setup_rejects_zero_max_pending_transactions() {
+        let config = BatcherConfig { max_pending_transactions: 0, ..BatcherConfig::default() };
+
+        let error = BatcherService::new(config)
+            .setup(TokioRuntime::new())
+            .await
+            .expect_err("a batcher that can never submit must not start");
+
+        assert!(
+            error.to_string().contains("max_pending_transactions"),
+            "error should name the setting, got {error}"
         );
     }
 }
