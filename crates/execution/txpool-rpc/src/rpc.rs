@@ -26,6 +26,10 @@ use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool}
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
+/// Rejection message when validity ingress is wired but Cobalt has not activated.
+pub const VALIDITY_TX_PRE_COBALT_RPC_ERROR: &str =
+    "validity transactions are gated behind the Cobalt hard fork";
+
 /// Rejection message returned when an EIP-8130 (account abstraction) validity transaction is
 /// submitted before the Zenith hard fork is active at the latest block.
 ///
@@ -117,6 +121,7 @@ pub struct SendRawTransactionValidityApiImpl<Pool, Provider> {
     provider: Provider,
     max_validity_predicates: usize,
     max_validity_expiry_secs: u64,
+    experimental_override: bool,
 }
 
 impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
@@ -158,7 +163,12 @@ impl<Pool, Provider> SendRawTransactionValidityApiImpl<Pool, Provider> {
         max_validity_predicates: usize,
         max_validity_expiry_secs: u64,
     ) -> Self {
-        Self { pool, provider, max_validity_predicates, max_validity_expiry_secs }
+        Self { pool, provider, max_validity_predicates, max_validity_expiry_secs, experimental_override: false }
+    }
+    /// Allows validity submissions before Cobalt for experimental deployments.
+    pub const fn with_experimental_override(mut self, enabled: bool) -> Self {
+        self.experimental_override = enabled;
+        self
     }
 }
 
@@ -263,6 +273,22 @@ where
         tx: Bytes,
         options: SendRawTransactionValidityOptions,
     ) -> RpcResult<TxHash> {
+        let latest = self.latest_block_number_and_timestamp()?;
+        if !self.experimental_override {
+            let active = latest.is_some_and(|(_, timestamp)| {
+                self.provider.chain_spec().is_cobalt_active_at_timestamp(
+                    timestamp.saturating_add(LEGACY_BLOCK_INTERVAL_MILLIS / 1_000),
+                )
+            });
+            if !active {
+                return Err(ErrorObjectOwned::owned(
+                    ErrorCode::InvalidParams.code(),
+                    VALIDITY_TX_PRE_COBALT_RPC_ERROR,
+                    None::<()>,
+                ));
+            }
+        }
+
         ValidityPredicate::validate_batch(&options.validity, self.max_validity_predicates)
             .map_err(|error| {
                 ErrorObjectOwned::owned(
@@ -276,7 +302,6 @@ where
         // head exists, also reject bounds already in the past and bounds outside the configured
         // wall-clock window. This validates the submission without injecting or rewriting a
         // predicate.
-        let latest = self.latest_block_number_and_timestamp()?;
         let expiry_validation = match latest {
             Some((latest_block, latest_timestamp)) => {
                 ValidityPredicate::validate_block_expiry_bounds(
@@ -384,13 +409,13 @@ mod tests {
         BaseBlock, BasePooledTransaction as ConsensusPooledTransaction, BasePrimitives,
         Eip8130Signed, TxEip8130,
     };
-    use base_common_genesis::BaseUpgrade;
+    use base_common_genesis::{BaseUpgrade, RuntimeUpgradeRegistry};
     use base_execution_chainspec::{BaseChainSpec, BaseChainSpecBuilder};
     use base_observability_events::{
         TransactionEventBuilder, TransactionEventCapture, TransactionEventProducer,
         TransactionEventType,
     };
-    use base_test_utils::build_test_genesis_zenith;
+    use base_test_utils::{build_test_genesis, build_test_genesis_zenith};
     use httpmock::prelude::*;
     use reth_chainspec::ForkCondition;
     use reth_provider::test_utils::MockEthProvider;
@@ -675,6 +700,79 @@ mod tests {
             events[0].data["validity_predicates"],
             serde_json::to_value(all_predicate_variants()).unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_cobalt_schedule_enables_existing_rpc() {
+        let chain_id = 9_100_202;
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+        let mut genesis = build_test_genesis();
+        genesis.config.chain_id = chain_id;
+        let spec = BaseChainSpec::from_genesis(genesis);
+        let provider = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(spec))
+            .with_genesis_block();
+        let rpc = validity_rpc(provider);
+        let request = || SendRawTransactionValidityOptions { validity: vec![] };
+        assert_eq!(
+            rpc.send_raw_transaction_validity(Bytes::new(), request()).await.unwrap_err().message(),
+            VALIDITY_TX_PRE_COBALT_RPC_ERROR
+        );
+        RuntimeUpgradeRegistry::set_activation_timestamp(chain_id, BaseUpgrade::Cobalt, 2);
+        assert!(
+            rpc.send_raw_transaction_validity(Bytes::new(), request())
+                .await
+                .unwrap_err()
+                .message()
+                .contains("validity predicates must not be empty")
+        );
+        RuntimeUpgradeRegistry::clear_chain(chain_id);
+    }
+
+    #[tokio::test]
+    async fn validity_ingress_opens_at_cobalt_without_restart() {
+        let pre_cobalt = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(
+                BaseChainSpecBuilder::base_mainnet()
+                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Never)
+                    .build(),
+            ))
+            .with_genesis_block();
+        let rpc = validity_rpc(pre_cobalt.clone());
+        let rejected = rpc
+            .send_raw_transaction_validity(
+                Bytes::new(),
+                SendRawTransactionValidityOptions { validity: vec![] },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.message(), VALIDITY_TX_PRE_COBALT_RPC_ERROR);
+
+        let override_rpc = rpc.with_experimental_override(true);
+        let rejected = override_rpc
+            .send_raw_transaction_validity(
+                Bytes::new(),
+                SendRawTransactionValidityOptions { validity: vec![] },
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected.message().contains("validity predicates must not be empty"));
+
+        let cobalt = MockEthProvider::<BasePrimitives>::new()
+            .with_chain_spec(Arc::new(
+                BaseChainSpecBuilder::base_mainnet()
+                    .with_fork(BaseUpgrade::Cobalt, ForkCondition::Timestamp(0))
+                    .build(),
+            ))
+            .with_genesis_block();
+        let rejected = validity_rpc(cobalt)
+            .send_raw_transaction_validity(
+                Bytes::new(),
+                SendRawTransactionValidityOptions { validity: vec![] },
+            )
+            .await
+            .unwrap_err();
+        assert!(rejected.message().contains("validity predicates must not be empty"));
     }
 
     #[test]

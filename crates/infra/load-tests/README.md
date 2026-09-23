@@ -160,7 +160,7 @@ delay is measured for logging but is no longer included in the JSON output.
 | Config | Target | Notes |
 |--------|--------|-------|
 | `devnet.yaml` | Local devnet | Uses Anvil Account #1 |
-| `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet`. Requires the node validity flags for end-to-end enforcement |
+| `validity-devnet.yaml` | Local devnet | Validity (conditional) workload; routes half the senders through `base_sendRawTransactionValidity`. Run with `FUNDER_KEY=... just load-test run validity-devnet`. Before Cobalt, enable the experimental validity override on both ingress and builder |
 | `real-token-devnet.yaml.template` | Local devnet | Rendered by `just load-test real-token` after deploying the devnet WETH/USDC harness |
 | `validity-stress.yaml.template` | Local devnet | Rendered by `just load-test validity-stress` with a freshly deployed `DoubleCounter` |
 | `sepolia.yaml` | Base Sepolia | Requires `FUNDER_KEY` |
@@ -467,22 +467,16 @@ confirm the spike landed via the `by_cohort` / `fullest_block` breakdown in the
 summary. Exactly one of `value` or `offset` may be set on a `block_number`
 predicate; setting both or neither is a configuration error.
 
-**Required flags for end-to-end evaluation.** For predicates to actually be
-evaluated (not merely transported), the target environment must be configured so
-that:
-
-1. The ingress/sequencer node is started with
-   `--enable-experimental-validity-transactions`. This flag hard-requires
-   transaction forwarding, so it must be accompanied by `--enable-tx-forwarding`
-   and at least one `--builder-rpc-urls=<url>`; the node refuses to start
-   otherwise. Only with this flag set is the `base_sendRawTransactionValidity`
-   endpoint registered.
-2. The builder is started with
-   `--builder.enable-experimental-validity-transactions`. That flag both
-   registers `base_sendRawTransactionValidity` on the builder and accepts
-   forwarded validity metadata. If it is not set, forwarded transactions that
-   carry predicates are **rejected** ("transaction extensions are disabled"), so
-   a misconfiguration fails loudly rather than silently dropping predicates.
+**Required setup for end-to-end evaluation.** The ingress and builder must run a
+version that pre-registers the validity RPC. The endpoint and builder extension
+acceptance become active at Cobalt, without a restart at activation. Before Cobalt,
+opt in on ingress with `--enable-experimental-validity-transactions` and on the
+builder with `--builder.enable-experimental-validity-transactions`. If forwarding
+is used, configure `--enable-tx-forwarding` and `--builder-rpc-urls=<url>` on ingress.
+The submission proxy must also route `base_sendRawTransactionValidity` to that ingress.
+Rejected requests must not be retried as plain `eth_sendRawTransaction`.
+Both build paths evaluate state and block predicates. `flashblock_index` requires the
+flashblocks path; the native/Denim builder permanently rejects that predicate.
 3. The builder runs the flashblocks build path (the only builder path wired in
    the shipped binaries), which is where predicates are evaluated against state.
 

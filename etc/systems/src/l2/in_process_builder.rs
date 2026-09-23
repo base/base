@@ -192,7 +192,10 @@ impl InProcessBuilder {
         let mut hooks = NodeHooks::new();
         if accept_validity_transactions {
             hooks = Box::new(SendRawTransactionValidityExtension::from_config(
-                SendRawTransactionValidityConfig::default(),
+                SendRawTransactionValidityConfig {
+                    experimental_override: true,
+                    ..Default::default()
+                },
             ))
             .apply(hooks);
         }
