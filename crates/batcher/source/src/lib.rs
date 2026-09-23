@@ -22,9 +22,6 @@ pub use polling::{PollingBlockSource, PollingSource};
 mod stream_subscription;
 pub use stream_subscription::{KeepAliveSubscription, PendingSubscription, StreamSubscription};
 
-mod channel;
-pub use channel::ChannelBlockSource;
-
 mod l1_event;
 pub use l1_event::L1HeadEvent;
 
@@ -39,8 +36,5 @@ pub use l1_subscription::L1HeadSubscription;
 
 mod l1_hybrid;
 pub use l1_hybrid::HybridL1HeadSource;
-
-mod l1_channel;
-pub use l1_channel::ChannelL1HeadSource;
 
 pub mod test_utils;

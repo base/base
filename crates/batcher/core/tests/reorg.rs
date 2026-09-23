@@ -14,7 +14,7 @@ use base_batcher_core::{
         Recorded, ReorgPipeline, SubmissionStub, TrackingPipeline,
     },
 };
-use base_batcher_source::{ChannelBlockSource, L2BlockEvent};
+use base_batcher_source::{L2BlockEvent, test_utils::ChannelBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},

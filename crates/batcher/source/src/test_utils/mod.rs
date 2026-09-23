@@ -5,8 +5,13 @@ use std::collections::VecDeque;
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 
-pub use crate::{ChannelBlockSource, ChannelL1HeadSource};
 use crate::{L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource};
+
+mod channel;
+pub use channel::ChannelBlockSource;
+
+mod l1_channel;
+pub use l1_channel::ChannelL1HeadSource;
 
 /// In-memory block source for action tests and unit tests.
 ///

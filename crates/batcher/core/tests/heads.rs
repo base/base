@@ -14,7 +14,7 @@ use base_batcher_core::{
         SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
-use base_batcher_source::{ChannelL1HeadSource, L1HeadEvent};
+use base_batcher_source::{L1HeadEvent, test_utils::ChannelL1HeadSource};
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
