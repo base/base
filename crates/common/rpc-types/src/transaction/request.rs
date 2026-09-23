@@ -146,8 +146,9 @@ pub struct Eip8130RequestFields {
     /// filler-byte stub of the right length); you need not sign first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_auth: Option<Bytes>,
-    /// Sponsoring payer account. When set, the estimate includes payer
-    /// authentication gas (metered on top of the gas limit, as in execution).
+    /// Sponsoring payer account, or the zero address for open payer mode. When
+    /// set, the estimate includes payer authentication gas (metered on top of
+    /// the gas limit, as in execution).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payer: Option<Address>,
     /// Raw payer authentication blob (`authenticator(20) || data`) whose shape

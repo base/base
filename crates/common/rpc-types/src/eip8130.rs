@@ -109,6 +109,16 @@ impl BaseTransactionRequest {
 
         let (payer, payer_auth) = match aa.payer {
             None => (None, Bytes::new()),
+            Some(Eip8130Constants::OPEN_PAYER) => {
+                let blob = match &aa.payer_auth {
+                    Some(blob) => {
+                        Self::check_auth_len(blob, false)?;
+                        blob.clone()
+                    }
+                    None => Self::default_bare_auth(),
+                };
+                (Some(Eip8130Constants::OPEN_PAYER), blob)
+            }
             Some(payer) => {
                 let blob = match &aa.payer_auth {
                     Some(blob) => {

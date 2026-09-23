@@ -65,7 +65,9 @@ impl CoinbaseTipAffordability {
             return false;
         };
         let sender = tx.sender();
-        let payer = signed.tx().payer.unwrap_or(sender);
+        let Some(payer) = signed.resolved_payer(sender) else {
+            return true;
+        };
         Self::unaffordable_tip(
             sender,
             payer,
