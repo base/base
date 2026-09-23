@@ -1113,10 +1113,7 @@ mod tests {
         assert_eq!(standard_args.rpc.rollup_args.sequencer, None);
         assert!(!standard_args.rpc.enable_experimental_validity_transactions);
         assert_eq!(standard_args.rpc.validity_max_predicates, DEFAULT_MAX_VALIDITY_PREDICATES);
-        assert_eq!(
-            standard_args.rpc.validity_max_expiry_secs,
-            DEFAULT_MAX_VALIDITY_EXPIRY_SECS
-        );
+        assert_eq!(standard_args.rpc.validity_max_expiry_secs, DEFAULT_MAX_VALIDITY_EXPIRY_SECS);
         assert!(!config.enabled);
         assert!(config.builder_urls.is_empty());
         assert!(!config.inline_simulation);
