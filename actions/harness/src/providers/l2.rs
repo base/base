@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use alloy_eips::BlockNumHash;
-use alloy_primitives::map::HashMap;
+use alloy_primitives::{B256, map::HashMap};
 use async_trait::async_trait;
 use base_common_consensus::BaseBlock;
 use base_common_genesis::{RollupConfig, SystemConfig};
@@ -16,7 +16,7 @@ pub enum L2ProviderError {
     BlockNotFound(u64),
     /// System config not found.
     #[error("system config not found for L2 block {0}")]
-    SystemConfigNotFound(u64),
+    SystemConfigNotFound(B256),
 }
 
 impl From<L2ProviderError> for PipelineErrorKind {
@@ -28,7 +28,8 @@ impl From<L2ProviderError> for PipelineErrorKind {
 /// In-memory L2 chain provider for action tests.
 ///
 /// Implements [`L2ChainProvider`] and [`BatchValidationProvider`] using
-/// maps keyed by block number. Tests pre-populate it via [`insert_block`] and
+/// blocks keyed by number and system configs keyed by L2 block hash. Tests pre-populate it via
+/// [`insert_block`] and
 /// [`insert_system_config`].
 ///
 /// The genesis L2 block and its system config must be inserted before the
@@ -43,8 +44,8 @@ pub struct ActionL2ChainProvider {
     blocks: Arc<Mutex<HashMap<u64, L2BlockInfo>>>,
     /// Base blocks (headers + txs) by block number, needed for batch validation.
     base_blocks: Arc<Mutex<HashMap<u64, BaseBlock>>>,
-    /// System configs by L2 block number.
-    system_configs: Arc<Mutex<HashMap<u64, SystemConfig>>>,
+    /// System configs by L2 block hash.
+    system_configs: Arc<Mutex<HashMap<B256, SystemConfig>>>,
 }
 
 impl ActionL2ChainProvider {
@@ -81,7 +82,7 @@ impl ActionL2ChainProvider {
             .unwrap_or_else(|| SystemConfig { gas_limit: 30_000_000, ..Default::default() });
 
         provider.insert_block(genesis_l2);
-        provider.insert_system_config(rollup_config.genesis.l2.number, genesis_config);
+        provider.insert_system_config(rollup_config.genesis.l2.hash, genesis_config);
         provider
     }
 
@@ -95,9 +96,9 @@ impl ActionL2ChainProvider {
         self.base_blocks.lock().expect("L2 base blocks lock poisoned").insert(number, block);
     }
 
-    /// Insert a system config for the given L2 block number.
-    pub fn insert_system_config(&self, number: u64, config: SystemConfig) {
-        self.system_configs.lock().expect("L2 system configs lock poisoned").insert(number, config);
+    /// Insert a system config for the given L2 block hash.
+    pub fn insert_system_config(&self, hash: B256, config: SystemConfig) {
+        self.system_configs.lock().expect("L2 system configs lock poisoned").insert(hash, config);
     }
 }
 
@@ -131,14 +132,12 @@ impl BatchValidationProvider for ActionL2ChainProvider {
 impl L2ChainProvider for ActionL2ChainProvider {
     type Error = L2ProviderError;
 
-    async fn system_config_by_number(
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
         _rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, L2ProviderError> {
-        // Walk back from `number` to find the nearest config at or before this block.
         let system_configs = self.system_configs.lock().expect("L2 system configs lock poisoned");
-        let config = (0..=number).rev().find_map(|n| system_configs.get(&n).copied());
-        config.ok_or(L2ProviderError::SystemConfigNotFound(number))
+        system_configs.get(&hash).copied().ok_or(L2ProviderError::SystemConfigNotFound(hash))
     }
 }

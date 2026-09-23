@@ -95,7 +95,7 @@ pub enum TestProviderError {
     L2BlockNotFound,
     /// The system config was not found.
     #[error("System config not found")]
-    SystemConfigNotFound(u64),
+    SystemConfigNotFound(B256),
 }
 
 impl From<TestProviderError> for PipelineErrorKind {
@@ -161,8 +161,8 @@ pub struct TestL2ChainProvider {
     pub short_circuit: bool,
     /// Blocks
     pub base_blocks: Vec<BaseBlock>,
-    /// System configs
-    pub system_configs: HashMap<u64, SystemConfig>,
+    /// System configs, keyed by L2 block hash.
+    pub system_configs: HashMap<B256, SystemConfig>,
 }
 
 impl TestL2ChainProvider {
@@ -170,7 +170,7 @@ impl TestL2ChainProvider {
     pub const fn new(
         blocks: Vec<L2BlockInfo>,
         base_blocks: Vec<BaseBlock>,
-        system_configs: HashMap<u64, SystemConfig>,
+        system_configs: HashMap<B256, SystemConfig>,
     ) -> Self {
         Self { blocks, short_circuit: false, base_blocks, system_configs }
     }
@@ -204,14 +204,11 @@ impl BatchValidationProvider for TestL2ChainProvider {
 impl L2ChainProvider for TestL2ChainProvider {
     type Error = TestProviderError;
 
-    async fn system_config_by_number(
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
         _: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as L2ChainProvider>::Error> {
-        self.system_configs
-            .get(&number)
-            .ok_or_else(|| TestProviderError::SystemConfigNotFound(number))
-            .cloned()
+        self.system_configs.get(&hash).ok_or(TestProviderError::SystemConfigNotFound(hash)).cloned()
     }
 }

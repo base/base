@@ -2,7 +2,7 @@
 
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
-use alloy_eips::BlockId;
+use alloy_consensus::Header;
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_client::RpcClient;
@@ -38,8 +38,10 @@ pub struct AlloyL2ChainProvider {
     trust_rpc: bool,
     /// The rollup configuration.
     rollup_config: Arc<RollupConfig>,
-    /// The `block_by_number` LRU cache.
-    block_by_number_cache: LruCache<u64, BaseBlock>,
+    /// The `block_by_number` LRU cache. Shares blocks with `block_by_hash_cache`.
+    block_by_number_cache: LruCache<u64, Arc<BaseBlock>>,
+    /// The `block_by_hash` LRU cache. Shares blocks with `block_by_number_cache`.
+    block_by_hash_cache: LruCache<B256, Arc<BaseBlock>>,
 }
 
 impl AlloyL2ChainProvider {
@@ -71,6 +73,7 @@ impl AlloyL2ChainProvider {
             trust_rpc,
             rollup_config,
             block_by_number_cache: LruCache::new(NonZeroUsize::new(cache_size).unwrap()),
+            block_by_hash_cache: LruCache::new(NonZeroUsize::new(cache_size).unwrap()),
         }
     }
 
@@ -84,88 +87,55 @@ impl AlloyL2ChainProvider {
         self.inner.get_block_number().await
     }
 
-    /// Verifies that a block's hash matches the expected hash when `trust_rpc` is false.
+    /// Fetches the [`BaseBlock`] with the given hash, caching the result.
+    async fn block_by_hash(
+        &mut self,
+        hash: B256,
+    ) -> Result<Arc<BaseBlock>, AlloyL2ChainProviderError> {
+        if let Some(block) = self.block_by_hash_cache.get(&hash) {
+            return Ok(Arc::clone(block));
+        }
+
+        const METHOD: &str = "l2_block_by_hash";
+        Metrics::l2_chain_requests(METHOD).increment(1);
+        let block = base_metrics::time!(Metrics::request_duration(METHOD), {
+            self.inner.get_block_by_hash(hash).full().await
+        })
+        .map_err(|e| {
+            Metrics::l2_chain_errors(METHOD).increment(1);
+            AlloyL2ChainProviderError::Transport(e)
+        })?
+        .ok_or(AlloyL2ChainProviderError::BlockHashNotFound(hash))?
+        .map_header(|header| header.into_inner())
+        .into_consensus()
+        .map_transactions(|t| t.inner.inner.into_inner());
+
+        self.verify_block_hash(&block.header, hash)?;
+        let block = Arc::new(block);
+        // A block found by hash carries no claim to being canonical at its height, so do not
+        // seed the number-keyed cache from this lookup.
+        self.block_by_hash_cache.put(hash, Arc::clone(&block));
+        Ok(block)
+    }
+
+    /// Verifies that a header hashes to the expected hash when `trust_rpc` is false.
     fn verify_block_hash(
         &self,
-        block_hash: B256,
+        header: &Header,
         expected_hash: B256,
     ) -> Result<(), RpcError<TransportErrorKind>> {
         if self.trust_rpc {
             return Ok(());
         }
 
-        if block_hash != expected_hash {
+        let actual_hash = header.hash_slow();
+        if actual_hash != expected_hash {
             return Err(RpcError::local_usage_str(&format!(
-                "Block hash mismatch: expected {expected_hash:?}, got {block_hash:?}"
+                "Block hash mismatch: expected {expected_hash:?}, got {actual_hash:?}"
             )));
         }
 
         Ok(())
-    }
-
-    /// Returns the [`L2BlockInfo`] for the given [`BlockId`]. [None] is returned if the block
-    /// does not exist.
-    pub async fn block_info_by_id(
-        &mut self,
-        id: BlockId,
-    ) -> Result<Option<L2BlockInfo>, RpcError<TransportErrorKind>> {
-        let method_name = match id {
-            BlockId::Number(_) => "l2_block_ref_by_number",
-            BlockId::Hash(_) => "l2_block_ref_by_hash",
-        };
-
-        Metrics::l2_chain_requests(method_name).increment(1);
-
-        let raw_block = base_metrics::time!(Metrics::request_duration(method_name), {
-            match &id {
-                BlockId::Number(num) => self.inner.get_block_by_number(*num).full().await,
-                BlockId::Hash(hash) => self.inner.get_block_by_hash(hash.block_hash).full().await,
-            }
-        });
-
-        let result = async {
-            let block = match id {
-                BlockId::Number(_) => raw_block?,
-                BlockId::Hash(hash) => {
-                    let block = raw_block?;
-
-                    // Verify block hash matches if we fetched by hash
-                    if let Some(ref b) = block {
-                        self.verify_block_hash(b.header.hash, hash.block_hash)?;
-                    }
-
-                    block
-                }
-            };
-
-            match block {
-                Some(block) => {
-                    let consensus_block = block
-                        .map_header(|header| header.into_inner())
-                        .into_consensus()
-                        .map_transactions(|t| t.inner.inner);
-
-                    let l2_block = L2BlockInfo::from_block_and_genesis(
-                        &consensus_block,
-                        &self.rollup_config.genesis,
-                    )
-                    .map_err(|_| {
-                        RpcError::local_usage_str(
-                            "failed to construct L2BlockInfo from block and genesis",
-                        )
-                    })?;
-                    Ok(Some(l2_block))
-                }
-                None => Ok(None),
-            }
-        }
-        .await;
-
-        if result.is_err() {
-            Metrics::l2_chain_errors(method_name).increment(1);
-        }
-
-        result
     }
 
     /// Creates a new [`AlloyL2ChainProvider`] from the provided [`url::Url`].
@@ -198,12 +168,15 @@ pub enum AlloyL2ChainProviderError {
     /// Failed to find a block.
     #[error("Failed to fetch block {0}")]
     BlockNotFound(u64),
+    /// Failed to find a block by hash.
+    #[error("Failed to fetch block {0}")]
+    BlockHashNotFound(B256),
     /// Failed to construct [`L2BlockInfo`] from the block and genesis.
     #[error("Failed to construct L2BlockInfo from block {0} and genesis")]
     L2BlockInfoConstruction(u64),
     /// Failed to convert the block into a [`SystemConfig`].
     #[error("Failed to convert block {0} into SystemConfig")]
-    SystemConfigConversion(u64),
+    SystemConfigConversion(B256),
 }
 
 impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
@@ -214,6 +187,10 @@ impl From<AlloyL2ChainProviderError> for PipelineErrorKind {
             }
             AlloyL2ChainProviderError::BlockNotFound(number) => {
                 ResetError::BlockNotFound(alloy_eips::BlockId::Number(number.into())).reset()
+            }
+            // A missing hash was reorged out; retrying the same lookup cannot succeed.
+            AlloyL2ChainProviderError::BlockHashNotFound(hash) => {
+                ResetError::BlockNotFound(hash.into()).reset()
             }
             AlloyL2ChainProviderError::L2BlockInfoConstruction(_) => Self::Temporary(
                 PipelineError::Provider("L2 block info construction failed".to_string()),
@@ -237,7 +214,7 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
 
     async fn block_by_number(&mut self, number: u64) -> Result<BaseBlock, Self::Error> {
         if let Some(block) = self.block_by_number_cache.get(&number) {
-            return Ok(block.clone());
+            return Ok((**block).clone());
         }
 
         for attempt in 1..=L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
@@ -253,12 +230,15 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
                 })?;
 
             if let Some(block) = block {
-                let block = block
-                    .map_header(|header| header.into_inner())
-                    .into_consensus()
-                    .map_transactions(|t| t.inner.inner.into_inner());
-                self.block_by_number_cache.put(number, block.clone());
-                return Ok(block);
+                let block = Arc::new(
+                    block
+                        .map_header(|header| header.into_inner())
+                        .into_consensus()
+                        .map_transactions(|t| t.inner.inner.into_inner()),
+                );
+                self.block_by_hash_cache.put(block.header.hash_slow(), Arc::clone(&block));
+                self.block_by_number_cache.put(number, Arc::clone(&block));
+                return Ok((*block).clone());
             }
 
             if attempt < L2_BLOCK_VISIBILITY_RETRY_ATTEMPTS {
@@ -289,14 +269,14 @@ impl BatchValidationProvider for AlloyL2ChainProvider {
 impl L2ChainProvider for AlloyL2ChainProvider {
     type Error = AlloyL2ChainProviderError;
 
-    async fn system_config_by_number(
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
         rollup_config: Arc<RollupConfig>,
     ) -> Result<SystemConfig, <Self as BatchValidationProvider>::Error> {
-        let block = self.block_by_number(number).await?;
+        let block = self.block_by_hash(hash).await?;
         to_system_config(&block, &rollup_config)
-            .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(number))
+            .map_err(|_| AlloyL2ChainProviderError::SystemConfigConversion(hash))
     }
 }
 
@@ -328,7 +308,8 @@ mod tests {
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // SystemConfigConversion is a decode failure — transient.
-        let kind: PipelineErrorKind = AlloyL2ChainProviderError::SystemConfigConversion(0).into();
+        let kind: PipelineErrorKind =
+            AlloyL2ChainProviderError::SystemConfigConversion(B256::ZERO).into();
         assert!(matches!(kind, PipelineErrorKind::Temporary(_)));
 
         // L2 BlockNotFound: the pipeline only requests blocks that should exist on the
@@ -479,13 +460,27 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_block_by_number_callers_preserve_transport_errors() {
+    async fn test_l2_chain_provider_callers_preserve_transport_errors() {
         let server = MockServer::start_async().await;
-        let mock = server
+        let number_mock = server
             .mock_async(|when, then| {
                 when.method(POST)
                     .path("/")
                     .json_body_includes(r#"{"method":"eth_getBlockByNumber"}"#);
+                then.respond_with(|req| {
+                    HttpMockResponse::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(json_rpc_error_response(req))
+                        .build()
+                });
+            })
+            .await;
+        let hash_mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/")
+                    .json_body_includes(r#"{"method":"eth_getBlockByHash"}"#);
                 then.respond_with(|req| {
                     HttpMockResponse::builder()
                         .status(200)
@@ -501,11 +496,12 @@ mod tests {
         assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
 
         let err = provider
-            .system_config_by_number(42, Arc::new(RollupConfig::default()))
+            .system_config_by_l2_hash(B256::ZERO, Arc::new(RollupConfig::default()))
             .await
             .unwrap_err();
         assert!(matches!(err, AlloyL2ChainProviderError::Transport(_)));
 
-        mock.assert_calls_async(2).await;
+        number_mock.assert_calls_async(1).await;
+        hash_mock.assert_calls_async(1).await;
     }
 }

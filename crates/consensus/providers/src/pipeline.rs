@@ -4,7 +4,7 @@ use core::fmt::Debug;
 use std::sync::Arc;
 
 use alloy_genesis::ChainConfig;
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use async_trait::async_trait;
 use base_common_genesis::{RollupConfig, SystemConfig};
 use base_consensus_derive::{
@@ -181,11 +181,11 @@ impl Pipeline for OnlinePipeline {
         self.inner.rollup_config()
     }
 
-    /// Returns the [`SystemConfig`] by L2 number.
-    async fn system_config_by_number(
+    /// Returns the [`SystemConfig`] for the L2 block with the given hash.
+    async fn system_config_by_l2_hash(
         &mut self,
-        number: u64,
+        hash: B256,
     ) -> Result<SystemConfig, PipelineErrorKind> {
-        self.inner.system_config_by_number(number).await
+        self.inner.system_config_by_l2_hash(hash).await
     }
 }

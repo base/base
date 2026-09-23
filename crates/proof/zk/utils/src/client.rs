@@ -41,7 +41,7 @@ where
 
 // Sourced from kona/crates/driver/src/core.rs with modifications to use the L2 provider's caching
 // system. After each block execution, we update the L2 provider's caches (header_by_number,
-// block_by_number, system_config_by_number, l2_block_info_by_number) with the new block data. This
+// block_by_number, system_config_by_l2_hash, l2_block_info_by_number) with the new block data. This
 // ensures subsequent lookups for this block number can be served directly from cache rather than
 // requiring oracle queries.
 /// Advances the derivation pipeline to the target block number.
