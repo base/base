@@ -984,8 +984,7 @@ where
             }
 
             let has_validity_predicates = !tx.validity_predicates().is_empty();
-            let coinbase_tip =
-                tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx(), tx.sender()));
+            let coinbase_tip = tx.as_eip8130().and_then(|signed| CoinbaseTip::decode(signed.tx()));
             let has_coinbase_tip = coinbase_tip.is_some();
             if has_validity_predicates {
                 validity_consideration_index += 1;
