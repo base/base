@@ -37,6 +37,7 @@ impl UnsafeBlockSource for ChannelBlockSource {
 mod tests {
     use alloy_primitives::B256;
     use base_common_consensus::BaseBlock;
+    use futures::FutureExt;
 
     use super::*;
 
@@ -108,5 +109,13 @@ mod tests {
             _ => panic!("expected Block(2)"),
         }
         assert!(matches!(source.next().await, L2BlockEvent::Reorg));
+    }
+
+    #[tokio::test]
+    async fn parks_once_all_senders_are_dropped() {
+        let (mut source, tx) = ChannelBlockSource::new();
+        drop(tx);
+
+        assert!(source.next().now_or_never().is_none(), "a closed source must park");
     }
 }

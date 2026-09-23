@@ -218,8 +218,6 @@ impl L1MinerTxManager {
     /// Staged items without receipts in `block` remain staged. This models the
     /// production transaction manager's receipt polling: RPC submission can succeed
     /// before the transaction is included by L1.
-    ///
-    /// [`BatchDriver`]: base_batcher_core::BatchDriver
     pub fn confirm_block(&self, block: &L1Block) {
         let responses = {
             let mut inner = self.inner.lock().unwrap();

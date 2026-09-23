@@ -10,9 +10,8 @@ use async_trait::async_trait;
 pub trait L1HeadSource: Send {
     /// Wait for the next L1 head block number.
     ///
-    /// Blocks (asynchronously) until a new L1 head block number is available.
-    /// Implementations are responsible for deduplicating redundant head updates:
-    /// if both a subscription and a poller deliver the same block number, it is
-    /// emitted once.
+    /// Blocks (asynchronously) until an L1 head block number is available, and never
+    /// resolves once nothing more will arrive. A repeated or lower number is harmless:
+    /// the pipeline ignores heads that do not advance.
     async fn next(&mut self) -> u64;
 }

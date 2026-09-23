@@ -13,8 +13,9 @@ use crate::L2BlockEvent;
 pub trait UnsafeBlockSource: Send {
     /// Wait for the next L2 block event.
     ///
-    /// Blocks (asynchronously) until a new block or reorg is available. Implementations
-    /// retry transient provider failures internally.
+    /// Blocks (asynchronously) until a new block or reorg is available, and never resolves
+    /// once nothing more will arrive. Implementations retry transient provider failures
+    /// internally.
     async fn next(&mut self) -> L2BlockEvent;
 
     /// Reset the source to begin sequential catchup above `safe_head`.

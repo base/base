@@ -48,8 +48,7 @@ impl UnsafeBlockSource for TrackingSource {
 
 /// [`UnsafeBlockSource`] that delivers exactly one default block then parks forever.
 ///
-/// Useful for tests that need a single block ingestion event without the source
-/// closing afterwards.
+/// Useful for tests that need a single block ingestion event.
 #[derive(Debug)]
 pub struct OneBlockSource {
     delivered: bool,

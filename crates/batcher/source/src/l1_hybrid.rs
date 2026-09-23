@@ -62,10 +62,10 @@ impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
     async fn next(&mut self) -> u64 {
         loop {
             tokio::select! {
-                head = self.sub.next() => {
-                    match head {
-                        Some(n) => {
-                            if let Some(head) = self.process(n) {
+                next = self.sub.next() => {
+                    match next {
+                        Some(head) => {
+                            if let Some(head) = self.process(head) {
                                 return head;
                             }
                             // Stale or duplicate: loop for the next one.
@@ -78,8 +78,8 @@ impl<P: L1HeadPolling> L1HeadSource for HybridL1HeadSource<P> {
                 }
                 _ = self.interval.next() => {
                     match self.poller.latest_head().await {
-                        Ok(n) => {
-                            if let Some(head) = self.process(n) {
+                        Ok(head) => {
+                            if let Some(head) = self.process(head) {
                                 return head;
                             }
                             // Stale or duplicate: loop for the next one.

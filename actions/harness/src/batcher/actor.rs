@@ -338,7 +338,7 @@ impl<S: L2BlockProvider> Batcher<S> {
     }
 
     /// Fire receipts for all staged items from `block` and yield to let
-    /// the driver process confirmations and the L1 head event.
+    /// the driver process confirmations and the new L1 head.
     pub async fn confirm_staged(&self, block: &L1Block) {
         self.tx_manager.confirm_block(block);
         tokio::task::yield_now().await;
@@ -436,10 +436,10 @@ impl<S: L2BlockProvider> Batcher<S> {
         self.try_encode_only().await?;
 
         // Mine one L1 block: submits all pending txs/blobs, fires receipt
-        // oneshots, and publishes the block number to the L1 head watch.
+        // oneshots, and sends the new L1 head to the driver.
         self.tx_manager.mine_block(l1);
 
-        // Yield to let the driver process the receipts and the L1 head event.
+        // Yield to let the driver process the receipts and the new L1 head.
         tokio::task::yield_now().await;
 
         Ok(())

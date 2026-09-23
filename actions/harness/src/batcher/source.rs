@@ -83,4 +83,13 @@ mod tests {
         assert!(next.await.is_err(), "no event must be returned");
         assert!(reached_rx.await.is_ok());
     }
+
+    #[tokio::test]
+    async fn parks_once_the_harness_is_gone() {
+        let (mut source, tx) = HarnessBlockSource::new();
+        drop(tx);
+
+        let next = tokio::time::timeout(Duration::from_millis(10), source.next());
+        assert!(next.await.is_err(), "a closed source must park");
+    }
 }

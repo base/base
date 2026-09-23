@@ -1,5 +1,5 @@
-//! Integration tests for [`BatchDriver`] lifecycle: drain, and the order of work and
-//! waiting in the loop.
+//! Integration tests for [`BatchDriver`] lifecycle: drain and the order of work and waiting
+//! in the loop.
 
 use std::{
     sync::{Arc, Mutex},

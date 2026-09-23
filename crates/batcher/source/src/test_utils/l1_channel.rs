@@ -8,7 +8,7 @@ use crate::L1HeadSource;
 /// An [`L1HeadSource`] backed by a `tokio::sync::mpsc` unbounded channel.
 ///
 /// Use [`ChannelL1HeadSource::new`] to obtain a `(source, sender)` pair.
-/// Events sent on the [`mpsc::UnboundedSender`] side are consumed by
+/// Head numbers sent on the [`mpsc::UnboundedSender`] side are consumed by
 /// [`L1HeadSource::next`]. Once all senders are dropped, `next` parks forever.
 #[derive(Debug)]
 pub struct ChannelL1HeadSource {
@@ -35,10 +35,12 @@ impl L1HeadSource for ChannelL1HeadSource {
 
 #[cfg(test)]
 mod tests {
+    use futures::FutureExt;
+
     use super::*;
 
     #[tokio::test]
-    async fn receive_l1_head_event() {
+    async fn receive_l1_head() {
         let (mut source, tx) = ChannelL1HeadSource::new();
         tx.send(42).unwrap();
 
@@ -68,5 +70,13 @@ mod tests {
         assert_eq!(source.next().await, 1);
         assert_eq!(source.next().await, 2);
         assert_eq!(source.next().await, 3);
+    }
+
+    #[tokio::test]
+    async fn parks_once_all_senders_are_dropped() {
+        let (mut source, tx) = ChannelL1HeadSource::new();
+        drop(tx);
+
+        assert!(source.next().now_or_never().is_none(), "a closed source must park");
     }
 }
