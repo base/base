@@ -222,6 +222,36 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 1
 
+      - name: Backfill unified image target
+        if: matrix.image.target == 'unified'
+        run: |
+          # The workflow comes from main, but the checked-out release tag may predate
+          # the unified target introduced alongside this matrix entry.
+          if ! grep -qF 'target "unified"' etc/docker/docker-bake.hcl; then
+            cat >> etc/docker/docker-bake.hcl <<'EOF'
+
+          target "unified" {
+            inherits = ["_rust-service-common"]
+            target = "unified"
+            args = {
+              CARGO_CHEF_ARGS = "--package base"
+              CARGO_FEATURES = PROFILE == "profiling" ? "--features=jemalloc-prof" : ""
+              SCCACHE_CACHE_ID = "rust-services-unified-sccache"
+            }
+            tags = ["base-unified:local"]
+          }
+          EOF
+          fi
+
+          if ! grep -qF 'AS unified' etc/docker/Dockerfile.rust-services; then
+            cat >> etc/docker/Dockerfile.rust-services <<'EOF'
+
+          FROM runtime-base AS unified
+          COPY --from=base-builder /app/base ./base
+          ENTRYPOINT ["./base"]
+          EOF
+          fi
+
       - name: Prepare image labels
         id: image-labels
         run: |
