@@ -12,10 +12,12 @@ use crate::{L1HeadEvent, L1HeadPolling, L1HeadSource, L1HeadSubscription, Source
 ///
 /// Deduplicates head numbers so that the same block number is only reported once.
 /// Stale reads (same or lower block number than last reported) are also silently dropped.
+///
 /// When the subscription stream ends, the source keeps delivering heads from the poller.
 #[derive(derive_more::Debug)]
 pub struct HybridL1HeadSource<S, P, C> {
-    /// The head number stream returned by `S::take_stream`.
+    /// The head number stream returned by `S::take_stream`, swapped for a pending stream
+    /// once it ends.
     ///
     /// Declared before `_subscription` so it is dropped first, ensuring the
     /// stream's underlying transport is released before the provider is torn down.
@@ -95,7 +97,7 @@ where
                         }
                         Some(Err(e)) => return Err(e),
                         None => {
-                            tracing::warn!("L1 head subscription ended, polling only");
+                            tracing::warn!("L1 head subscription ended; falling back to polling");
                             self.sub = futures::stream::pending().boxed();
                         }
                     }
@@ -202,24 +204,24 @@ mod tests {
     #[test]
     fn test_hybrid_l1_polls_after_subscription_ends() {
         Runner::start(Config::seeded(0), |ctx| async move {
-            // The stream delivers one head and ends. The poller returns a new head on every
-            // call, so the test holds whichever arm `select!` polls first.
+            // The stream and the poller both start at head 5; the stream then ends and the
+            // poller keeps returning a new head on every call. Whichever arm `select!` polls
+            // first, the other one's 5 is a duplicate and the heads that follow come from the
+            // poller.
             let stream = futures::stream::once(async { Ok(5u64) });
             let mut source = HybridL1HeadSource::new(
                 ctx,
                 StreamSub(stream.boxed()),
-                IncrementingPoller(AtomicU64::new(6)),
+                IncrementingPoller(AtomicU64::new(5)),
                 Duration::from_secs(100),
             );
 
-            let mut previous = 0;
+            let mut heads = Vec::new();
             for _ in 0..3 {
                 let L1HeadEvent::NewHead(head) = source.next().await.unwrap();
-                assert!(head > previous, "heads must keep increasing after the stream ends");
-                previous = head;
+                heads.push(head);
             }
-            // The stream had one head, so at least two of the three came from the poller.
-            assert!(previous >= 7);
+            assert_eq!(heads, [5, 6, 7]);
         });
     }
 
