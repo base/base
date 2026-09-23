@@ -156,18 +156,17 @@ async fn forwards_validity_to_every_builder() -> Result<()> {
     let (second_tx, mut second_rx) = mpsc::unbounded_channel();
     let second = MockBuilder::spawn(second_tx, None, None).await?;
     let config = TxForwardingConfig::new(vec![first.url.clone(), second.url.clone()]);
-    // EIP-1559 validity transactions are gated by the experimental flag alone (not Cobalt), so this
-    // exercises the flow against a pre-Cobalt genesis.
+    // Exercise the explicit experimental override against a pre-Cobalt genesis.
     let chain_spec = Arc::new(BaseChainSpec::from_genesis(build_test_genesis()));
-    let harness =
-        TestHarness::builder()
-            .with_ext::<SendRawTransactionValidityExtension>(
-                SendRawTransactionValidityConfig::default(),
-            )
-            .with_ext::<TxForwardingExtension>(config)
-            .with_chain_spec(chain_spec)
-            .build()
-            .await?;
+    let harness = TestHarness::builder()
+        .with_ext::<SendRawTransactionValidityExtension>(SendRawTransactionValidityConfig {
+            experimental_override: true,
+            ..Default::default()
+        })
+        .with_ext::<TxForwardingExtension>(config)
+        .with_chain_spec(chain_spec)
+        .build()
+        .await?;
     let raw = signed_eip1559_transaction();
     let validity = serde_json::from_value(serde_json::json!({
         "type": "storage",

@@ -52,6 +52,8 @@ pub struct SendRawTransactionValidityConfig {
     pub max_validity_predicates: usize,
     /// Maximum validity-transaction lifetime, in seconds.
     pub max_validity_expiry_secs: u64,
+    /// Accept validity transactions before Cobalt activates.
+    pub experimental_override: bool,
 }
 
 impl Default for SendRawTransactionValidityConfig {
@@ -59,6 +61,7 @@ impl Default for SendRawTransactionValidityConfig {
         Self {
             max_validity_predicates: DEFAULT_MAX_VALIDITY_PREDICATES,
             max_validity_expiry_secs: DEFAULT_MAX_VALIDITY_EXPIRY_SECS,
+            experimental_override: false,
         }
     }
 }
@@ -79,7 +82,8 @@ impl BaseNodeExtension for SendRawTransactionValidityExtension {
                 config.max_validity_predicates,
                 config.max_validity_expiry_secs,
                 transaction_sender,
-            );
+            )
+            .with_experimental_override(config.experimental_override);
             ctx.modules.merge_configured(api.into_rpc())?;
             Ok(())
         })
