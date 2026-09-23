@@ -35,7 +35,7 @@ pub enum TransactionKind {
     UniswapV2Swap,
     /// An x402 agentic payment.
     X402Payment,
-    /// An ERC-4337 smart-wallet UserOp.
+    /// An ERC-4337 smart-wallet `UserOp`.
     Erc4337UserOp,
     /// A contract deployment.
     ContractDeployment,
@@ -115,7 +115,7 @@ impl CompressionScenario {
 }
 
 /// Bytes observed after writing and finishing a synthetic derivation channel.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompressionMeasurement {
     /// The scenario that was measured.
     pub scenario: CompressionScenario,

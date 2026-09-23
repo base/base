@@ -41,14 +41,17 @@ required-features = ["benchmark"]
 [features]
 default = []
 benchmark = [
-	"std",
 	"dep:alloy-consensus",
 	"dep:alloy-eips",
 	"dep:alloy-primitives",
 	"dep:alloy-signer",
 	"dep:alloy-signer-local",
+	"std",
 ]
 std = [
+	"alloy-consensus?/std",
+	"alloy-eips?/std",
+	"alloy-primitives?/std",
 	"brotli?/std",
 	"dep:brotli",
 	"dep:derive_more",

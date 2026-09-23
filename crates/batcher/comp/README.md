@@ -27,7 +27,7 @@ cargo run -p base-comp --features benchmark --bin base-compression-benchmark -- 
 ```
 
 The default report covers: Native ETH transfer, ERC-20 transfer (USDC), B20 transfer, Uniswap V3
-/ aggregator swap, Uniswap V2 swap, x402 agentic payment, ERC-4337 smart-wallet UserOp, and
+/ aggregator swap, Uniswap V2 swap, x402 agentic payment, ERC-4337 smart-wallet `UserOp`, and
 contract deployment.
 
 The checked-in [incompressible-data results](benchmarks/incompressible-data.csv) are the rounded
