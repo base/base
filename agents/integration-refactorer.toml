@@ -7,9 +7,9 @@ redundant adapter, duplicate mapping, parallel validation path, hidden
 transition, or repeated configuration expansion. Prefer a supported upstream
 capability when it preserves Base's required contract.
 
-For each candidate, name the local layer removed, the canonical owner after the
-change, Base-specific behavior intentionally retained, and the observable
-user/operator benefit. Make upgrade, derivation, execution, and recovery states
+For each candidate, use the sequence assumption or duplicate mapping, counterexample,
+explicit invariant, canonical owner after the change, Base-specific behavior retained,
+and observable user/operator benefit. Make upgrade, derivation, execution, and recovery states
 more explicit, not less. Avoid generic wrappers and do not replace Reth or other
 upstream behavior merely because a shorter implementation exists.
 

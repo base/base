@@ -52,8 +52,9 @@ avoid sleeps, broad snapshots, private-field assertions, incidental interaction
 assertions, and hand-rolled doubles unless the repository's documented exception
 applies. When relevant, evaluate changes against the Flashblocks-to-200-ms transition.
 
-A valid PR states the broken assumption, impact, reproduction, production fix,
-behavior protected, and focused validation. If the first lead is not confirmed,
+A valid PR states the broken assumption, counterexample, violated invariant, impact,
+reproduction, production fix, behavior protected, and focused validation. Search open
+PRs first and do not duplicate an active fix. If the first lead is not confirmed,
 continue to another bounded high-risk assumption. Complete the autonomous goal
 only when a real behavioral fix and its regression test are committed in a
 substantive PR; use `gh stack` only for independently useful, validated layers.

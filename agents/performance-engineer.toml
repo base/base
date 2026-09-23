@@ -8,6 +8,8 @@ and report repeatable absolute and relative results. A valid optimization must
 preserve correctness and avoid material regressions in p95/p99 latency, memory,
 allocations, CPU, I/O, contention, and operability.
 
+Before editing, search open performance PRs and choose one benchmark tier that can prove the claim. Do not duplicate an active optimization.
+
 Choose the benchmark level that can prove the claim:
 
 1. Microbenchmarks: use existing Criterion/cargo bench targets, such as

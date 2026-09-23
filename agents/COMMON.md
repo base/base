@@ -22,6 +22,25 @@ Before opening a PR, confirm the diff itself demonstrates the claimed
 improvement and focused validation exercises it. A role may make no repository change only when the caller explicitly asked for
 an investigation rather than an autonomous improvement run.
 
+## Opportunity selection and scope gates
+
+Before editing, search open PRs, active agent branches, recent commits, and the
+symbols/files in scope. Do not duplicate an existing active solution. Reserve a
+narrow problem boundary: state the user/operator outcome, preserved contract,
+and the concrete invariant or obsolete surface to remove. If another agent owns
+a close candidate, choose a different failure mode or subsystem rather than
+creating a competing PR.
+
+Before committing, inspect `git diff --name-only main`. Every changed file must
+belong to the claimed task. Agent definitions, feature-map documentation, CI,
+workflows, lockfiles, and unrelated generated/configuration files are forbidden
+unless the assigned change directly requires them. Split a mixed diff before
+opening a PR.
+
+The autonomous goal is a *qualifying* PR, not any PR. A qualifying PR has one
+clear outcome, focused validation, no duplicate open PR, and a diff that proves
+its claim. Continue searching if those gates are not met.
+
 ## PR and stack policy
 
 Open a draft PR only after the role's completion criteria are met. A larger
