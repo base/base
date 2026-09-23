@@ -19,10 +19,8 @@ documentation-only change, benchmark-only claim, test-only change, or null
 result.
 
 Before opening a PR, confirm the diff itself demonstrates the claimed
-improvement and focused validation exercises it. A role may make no repository
-change when the caller asked only for an investigation or retrospective; the
-`feature_historian` role is never an autonomous improvement run unless its
-caller explicitly re-scopes it.
+improvement and focused validation exercises it. A role may make no repository change only when the caller explicitly asked for
+an investigation rather than an autonomous improvement run.
 
 ## PR and stack policy
 

@@ -14,4 +14,3 @@ PR/stack policy; the role files own their specialized quality bar.
 | `integration_refactorer` | Simplifying ownership, state transitions, and Base-to-upstream integration boundaries. | Replacing Base-specific behavior without proving the contract is preserved. |
 | `performance_engineer` | A representative, baseline-backed performance improvement. | An unmeasured optimization or a benchmark/report-only PR. |
 | `test_breaker` | A confirmed behavior bug plus a deterministic regression test and fix. | Adding tests without a real behavior improvement. |
-| `feature_historian` | An explicitly requested retrospective. | Autonomous product-improvement work. |
