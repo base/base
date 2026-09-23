@@ -3,9 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use base_batcher_source::{
-    L1HeadEvent, L1HeadSource, L2BlockEvent, SourceError, UnsafeBlockSource,
-};
+use base_batcher_source::{L1HeadSource, L2BlockEvent, UnsafeBlockSource};
 use base_protocol::BlockInfo;
 
 /// [`UnsafeBlockSource`] that parks the select arm forever.
@@ -18,7 +16,7 @@ pub struct PendingSource;
 
 #[async_trait]
 impl UnsafeBlockSource for PendingSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         std::future::pending().await
     }
 }
@@ -39,7 +37,7 @@ impl TrackingSource {
 
 #[async_trait]
 impl UnsafeBlockSource for TrackingSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         std::future::pending().await
     }
 
@@ -72,10 +70,10 @@ impl Default for OneBlockSource {
 
 #[async_trait]
 impl UnsafeBlockSource for OneBlockSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         if !self.delivered {
             self.delivered = true;
-            Ok(L2BlockEvent::Block(Box::default()))
+            L2BlockEvent::Block(Box::default())
         } else {
             std::future::pending().await
         }
@@ -91,7 +89,7 @@ pub struct PendingL1HeadSource;
 
 #[async_trait]
 impl L1HeadSource for PendingL1HeadSource {
-    async fn next(&mut self) -> Result<L1HeadEvent, SourceError> {
+    async fn next(&mut self) -> u64 {
         std::future::pending().await
     }
 }

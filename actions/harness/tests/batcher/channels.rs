@@ -376,8 +376,8 @@ async fn multi_frame_channel_with_empty_l1_gap_derives_correctly() {
     // Mine an empty L1 block 2. The channel was already closed by encode_only()
     // (its admin flush), so no staged items are confirmed here. The call to
     // confirm_staged is used solely to advance the driver's L1 head to block 2
-    // via L1HeadEvent::NewHead — confirm_all fires zero receipts and just sends
-    // the head event. The remaining frames are already in `pending`.
+    // through the L1 head channel: confirm_all fires zero receipts and just sends
+    // the head. The remaining frames are already in `pending`.
     h.l1.mine_block();
     chain.push(h.l1.tip().clone());
     batcher.confirm_staged(h.l1.tip()).await;

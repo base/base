@@ -1,5 +1,5 @@
-//! Integration tests for [`BatchDriver`] lifecycle: source errors, drain, and the order of
-//! work and waiting in the loop.
+//! Integration tests for [`BatchDriver`] lifecycle: drain, and the order of work and
+//! waiting in the loop.
 
 use std::{
     sync::{Arc, Mutex},
@@ -12,48 +12,16 @@ use base_batcher_core::{
     BatchDriver, BatchDriverConfig, BatchDriverError, DaThrottle, NoopThrottleClient,
     ThrottleController,
     test_utils::{
-        DriverFixture, ImmediateConfirmTxManager, ManualConfirmTxManager, NeverConfirmTxManager,
-        PendingL1HeadSource, Recorded, SubmissionStub, TrackingPipeline,
+        DriverFixture, ManualConfirmTxManager, NeverConfirmTxManager, PendingL1HeadSource,
+        Recorded, SubmissionStub, TrackingPipeline,
     },
 };
 use base_batcher_encoder::{ChannelLimit, StepError, SubmissionId};
-use base_batcher_source::{
-    L2BlockEvent, SourceError, UnsafeBlockSource, test_utils::ChannelBlockSource,
-};
+use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
 use base_runtime::{
     Cancellation, Clock, Spawner,
     deterministic::{Config, Runner},
 };
-
-/// An error from the block source is fatal: the driver exits with it instead of running
-/// without input.
-#[test]
-fn test_block_source_closed_is_fatal() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let (source, source_tx) = ChannelBlockSource::new();
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            TrackingPipeline::new(Arc::new(Mutex::new(Recorded::default()))),
-            source,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            PendingL1HeadSource,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        // Closing the channel makes the source fail on its next poll.
-        drop(source_tx);
-
-        let result = handle.await.unwrap();
-        assert!(matches!(result, Err(BatchDriverError::Source(SourceError::Closed))));
-    });
-}
 
 /// When cancellation fires while a submission is in-flight with a
 /// `NeverConfirmTxManager`, the drain timeout must fire and the driver must
@@ -129,7 +97,7 @@ struct PollRecorder {
 
 #[async_trait]
 impl UnsafeBlockSource for PollRecorder {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         let dequeued = self.recorded.lock().unwrap().dequeued.len();
         self.dequeued_at_poll.lock().unwrap().push(dequeued);
         std::future::pending().await

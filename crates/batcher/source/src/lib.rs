@@ -19,9 +19,6 @@ pub use traits::UnsafeBlockSource;
 mod polling;
 pub use polling::{PollingBlockSource, PollingSource};
 
-mod l1_event;
-pub use l1_event::L1HeadEvent;
-
 mod l1_source;
 pub use l1_source::L1HeadSource;
 

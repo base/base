@@ -14,7 +14,7 @@ use base_batcher_core::{
         SubmissionStub, TrackingPipeline, TrackingSource,
     },
 };
-use base_batcher_source::{L1HeadEvent, test_utils::ChannelL1HeadSource};
+use base_batcher_source::test_utils::ChannelL1HeadSource;
 use base_protocol::BlockInfo;
 use base_runtime::{
     Cancellation, Clock, Spawner,
@@ -53,7 +53,7 @@ fn test_l1_head_source_advances_pipeline() {
         let handle = ctx.spawn(driver.run());
 
         // Send a new L1 head via the channel.
-        l1_tx.send(L1HeadEvent::NewHead(42)).unwrap();
+        l1_tx.send(42).unwrap();
         ctx.sleep(Duration::from_millis(50)).await;
         ctx.cancel();
 
@@ -62,50 +62,6 @@ fn test_l1_head_source_advances_pipeline() {
         assert!(
             r.l1_heads.contains(&42),
             "advance_l1_head must be called with the source value, got {:?}",
-            r.l1_heads
-        );
-    });
-}
-
-/// When the L1 head source closes, the driver keeps running without L1 head
-/// updates instead of shutting down. The L1 head delivered before the close
-/// must be processed normally.
-#[test]
-fn test_l1_source_closed_driver_continues() {
-    Runner::start(Config::seeded(0), |ctx| async move {
-        let recorded = Arc::new(Mutex::new(Recorded::default()));
-        let pipeline = TrackingPipeline::new(Arc::clone(&recorded));
-        let (l1_source, l1_tx) = ChannelL1HeadSource::new();
-
-        let driver = BatchDriver::new_without_derivation_status(
-            ctx.clone(),
-            pipeline,
-            PendingSource,
-            ImmediateConfirmTxManager { l1_block: 1 },
-            BatchDriverConfig {
-                inbox: Address::ZERO,
-                max_pending_transactions: 1,
-                drain_timeout: Duration::from_millis(10),
-                force_blobs_when_throttling: true,
-            },
-            DaThrottle::new(ThrottleController::disabled(), Arc::new(NoopThrottleClient)),
-            l1_source,
-        );
-        let handle = ctx.spawn(driver.run());
-
-        l1_tx.send(L1HeadEvent::NewHead(77)).unwrap();
-        ctx.sleep(Duration::from_millis(20)).await;
-        drop(l1_tx); // the source returns Closed on its next poll
-
-        // Driver must still be running after L1 source closes.
-        ctx.sleep(Duration::from_millis(50)).await;
-        ctx.cancel();
-
-        assert!(handle.await.unwrap().is_ok(), "driver must continue after L1 source closes");
-        let r = recorded.lock().unwrap();
-        assert!(
-            r.l1_heads.contains(&77),
-            "L1 head delivered before close must be processed, got {:?}",
             r.l1_heads
         );
     });

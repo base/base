@@ -97,7 +97,7 @@ pub enum BatcherError {
 /// 4. Wait for the driver's next submit pass (a second marker), after which every
 ///    resulting submission has been handed to the tx manager, not just the first.
 /// 5. Mine one L1 block via the shared [`L1MinerTxManager`], firing all
-///    receipt oneshots and delivering an [`L1HeadEvent::NewHead`] to the driver.
+///    receipt oneshots and delivering the new L1 head to the driver.
 /// 6. Yield to let the driver confirm receipts and advance its L1 head.
 ///
 /// The driver's [`BatchEncoder`] state is persistent across `advance()` calls.
@@ -106,7 +106,6 @@ pub enum BatcherError {
 /// [`advance`]: Batcher::advance
 /// [`BatchDriver`]: base_batcher_core::BatchDriver
 /// [`ChannelL1HeadSource`]: base_batcher_source::test_utils::ChannelL1HeadSource
-/// [`L1HeadEvent::NewHead`]: base_batcher_source::L1HeadEvent
 pub struct Batcher<S: L2BlockProvider> {
     /// The L2 block source to drain on each [`advance`](Batcher::advance) cycle.
     l2_source: S,
@@ -147,8 +146,8 @@ impl<S: L2BlockProvider> Batcher<S> {
         let (source, source_tx) = HarnessBlockSource::new();
         let (admin, admin_rx) = AdminHandle::channel();
 
-        // L1 head source: mine_block() sends L1HeadEvent::NewHead; the driver
-        // calls advance_l1_head() when the channel delivers an event.
+        // L1 head source: mine_block() sends the mined block number; the driver
+        // calls advance_l1_head() when the channel delivers it.
         let (l1_source, l1_head_tx) = ChannelL1HeadSource::new();
 
         let tx_manager =
@@ -348,8 +347,8 @@ impl<S: L2BlockProvider> Batcher<S> {
     /// Simulate an L1 reorg back to `block_number`.
     ///
     /// Truncates the L1 chain via [`L1Miner::reorg_to`], fires failure
-    /// receipts for every item in `pending` and `staged`, and publishes
-    /// [`L1HeadEvent::NewHead`] to the driver.
+    /// receipts for every item in `pending` and `staged`, and publishes the new
+    /// L1 head to the driver.
     ///
     /// Items already confirmed via [`confirm_staged`] (and thus living in
     /// the driver's own `in_flight` set) are **not** covered — see

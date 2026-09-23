@@ -136,7 +136,7 @@ async fn batcher_reorg_during_submission() {
 
     // --- L1 reorg back to genesis (frames still in staged) ---
     // reorg_to fires Err(TxManagerError::Rpc("reorg")) for every staged item
-    // and sends L1HeadEvent::NewHead(0). The driver's select! loop processes
+    // and sends L1 head 0. The driver's select! loop processes
     // each Receipt(id, Failed) → pipeline.requeue(id), rewinding the channel
     // cursor without re-encoding.
     batcher.reorg(0, &mut h.l1);

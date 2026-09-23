@@ -4,7 +4,7 @@
 //! test, and the harness must interleave sync markers with the events it feeds in FIFO order.
 
 use async_trait::async_trait;
-use base_batcher_source::{L2BlockEvent, SourceError, UnsafeBlockSource};
+use base_batcher_source::{L2BlockEvent, UnsafeBlockSource};
 use tokio::sync::{mpsc, oneshot};
 
 /// One item queued for the driver's block source.
@@ -38,13 +38,14 @@ impl HarnessBlockSource {
 
 #[async_trait]
 impl UnsafeBlockSource for HarnessBlockSource {
-    async fn next(&mut self) -> Result<L2BlockEvent, SourceError> {
+    async fn next(&mut self) -> L2BlockEvent {
         loop {
-            match self.rx.recv().await.ok_or(SourceError::Closed)? {
-                BlockSourceItem::Event(event) => return Ok(event),
-                BlockSourceItem::Marker(reached) => {
+            match self.rx.recv().await {
+                Some(BlockSourceItem::Event(event)) => return event,
+                Some(BlockSourceItem::Marker(reached)) => {
                     let _ = reached.send(());
                 }
+                None => std::future::pending().await,
             }
         }
     }
@@ -64,10 +65,10 @@ mod tests {
         tx.send(BlockSourceItem::Marker(reached_tx)).unwrap();
         tx.send(BlockSourceItem::Event(L2BlockEvent::Reorg)).unwrap();
 
-        assert!(matches!(source.next().await, Ok(L2BlockEvent::Reorg)));
+        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
         assert!(reached_rx.try_recv().is_err(), "the marker must wait for the next poll");
 
-        assert!(matches!(source.next().await, Ok(L2BlockEvent::Reorg)));
+        assert!(matches!(source.next().await, L2BlockEvent::Reorg));
         assert!(reached_rx.try_recv().is_ok(), "the next poll must answer the marker");
     }
 
@@ -81,13 +82,5 @@ mod tests {
         let next = tokio::time::timeout(Duration::from_millis(10), source.next());
         assert!(next.await.is_err(), "no event must be returned");
         assert!(reached_rx.await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn closed_channel_closes_the_source() {
-        let (mut source, tx) = HarnessBlockSource::new();
-        drop(tx);
-
-        assert!(matches!(source.next().await, Err(SourceError::Closed)));
     }
 }

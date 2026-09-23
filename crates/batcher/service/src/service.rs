@@ -16,7 +16,7 @@ use base_batcher_core::{
     ThrottleController, ThrottleStrategy,
 };
 use base_batcher_encoder::{BatchEncoder, BatcherMetrics};
-use base_batcher_source::{HybridL1HeadSource, PollingBlockSource, SourceError};
+use base_batcher_source::{HybridL1HeadSource, PollingBlockSource};
 use base_common_network::Base;
 use base_consensus_rpc::RollupNodeApiClient;
 use base_protocol::BlockInfo;
@@ -198,9 +198,7 @@ impl BatcherService {
     ///
     /// `l1_head_subscription_active` is 1 while the subscription streams heads, and 0 once
     /// the batcher relies on polling alone.
-    async fn build_l1_head_stream(
-        url: Option<&Url>,
-    ) -> BoxStream<'static, Result<u64, SourceError>> {
+    async fn build_l1_head_stream(url: Option<&Url>) -> BoxStream<'static, u64> {
         let active = BatcherMetrics::l1_head_subscription_active();
         active.set(0.0);
 
@@ -229,7 +227,7 @@ impl BatcherService {
             .map(move |header| {
                 // Capture the provider: dropping it closes the connection and ends the stream.
                 let _keep_alive = &ws_provider;
-                Ok(header.number)
+                header.number
             })
             // Mark the subscription down once alloy gives up reconnecting and the stream ends.
             .chain(stream::poll_fn(move |_| {
@@ -817,7 +815,7 @@ mod tests {
         for expected in 1..=2 {
             miner.raw_request::<(), String>("evm_mine".into(), ()).await.unwrap();
             let head = tokio::time::timeout(Duration::from_secs(5), heads.next()).await;
-            assert!(matches!(head.unwrap(), Some(Ok(head)) if head == expected));
+            assert_eq!(head.unwrap(), Some(expected));
         }
     }
 }
